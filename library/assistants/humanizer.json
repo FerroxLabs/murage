@@ -9,7 +9,7 @@
     "summary": "Catches AI-tells in your drafts and rewrites them to read human. Diagnose first, then rewrite for rhythm and vocabulary. Plugs into your Voiceprint file so the result sounds like you, not a model.\n\nJob-to-be-done: **make AI-drafted copy read like a person wrote it**. Diagnose the tells, rewrite for rhythm and vocabulary, and layer your voice on top. Takes existing copy in; ships polished copy out. Does not write fresh originals. That is Copy's job.",
     "category": "Write",
     "author": {
-      "name": "Wayland"
+      "name": "Ferrox Labs"
     },
     "license": "Apache-2.0",
     "tags": [

@@ -212,7 +212,7 @@ it.skipIf(process.platform === "win32")("tags a computer that was not ready as a
   expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "use my computer", threadId: bot.threadId })).status).toBe(202);
   await expect.poll(async () => (await activities(bot.threadId, "error:")).length, { timeout: 20_000 }).toBe(1);
   const [failure] = await activities(bot.threadId, "error:");
-  expect(failure.tool.name).toBe("error: CUA Driver is not ready for this computer — check permissions and restart Murage");
+  expect(failure.tool.name).toBe("error: CUA Driver is not ready for this computer: check permissions and restart Murage");
   expect(failure.tool.localFailure).toBe("computer");
 }, 60_000);
 

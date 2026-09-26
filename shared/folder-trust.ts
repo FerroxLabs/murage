@@ -126,6 +126,6 @@ export function folderTrustDisplayName(name: string | undefined | null): string 
   const notice = folderTrustNotice(name);
   if (!notice) return undefined;
   return notice.kind === "withheld"
-    ? `Folder not trusted — ${notice.sources} left out`
-    : `Folder trusted — ${notice.sources} apply from the next turn`;
+    ? `Folder not trusted: ${notice.sources} left out`
+    : `Folder trusted: ${notice.sources} apply from the next turn`;
 }

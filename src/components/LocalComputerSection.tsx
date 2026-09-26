@@ -158,7 +158,7 @@ export function LocalComputerSection() {
     ) return;
     if (
       action === "recreate" &&
-      !window.confirm("Replace the existing Local VM with the pinned image and safety limits? Files and browser sign-ins in its durable workspace will remain.")
+      !window.confirm("Replace the existing Local VM with the pinned image and resource limits? Files and browser sign-ins in its durable workspace will remain.")
     ) return;
     setPending(action);
     setError(null);
@@ -347,7 +347,7 @@ export function LocalComputerSection() {
             {perBot ? (
               <div className="text-[13px] leading-relaxed text-ink-secondary">
                 {perBotRuntimeUnsupported
-                  ? "Apple container requires an explicit host port, so Murage will not guess or expose one. Install or start Docker or Podman for safe per-bot dynamic loopback ports."
+                  ? "Apple container requires an explicit host port, so Murage will not guess or expose one. Install or start Docker or Podman for per-bot dynamic loopback ports."
                   : <>
                       Choose <b className="text-ink">Local VM</b> for a bot, open that bot's Computer panel, then create its desktop there. Murage assigns a private workspace and an available loopback viewer port automatically.
                     </>}

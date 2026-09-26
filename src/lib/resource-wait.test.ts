@@ -15,7 +15,7 @@ describe("resourceWaitLabel", () => {
 
   it("says a queued routine is waiting for a free thread slot", () => {
     expect(resourceWaitLabel({ resource: "thread-slot" }))
-      .toBe("Waiting for a free slot — this bot is already working on three threads");
+      .toBe("Waiting for a free slot: this bot is already working on three threads");
   });
 
   it("stays generic without a visible title and for unknown kinds", () => {

@@ -39,11 +39,6 @@ function roleMarkdown(spec) {
   return existsSync(f) ? readFileSync(f, "utf8").trim() : "";
 }
 
-function launcher(id) {
-  const f = join(WT, "assistants/launchers", `${id}.md`);
-  return existsSync(f) ? readFileSync(f, "utf8").trim() : "";
-}
-
 // weekly:monday:11:00 -> a daily routine restricted to that weekday.
 // quarterly/annual cannot be expressed by RoutineSchedule (routines.ts:12-14),
 // which is only { once } | { daily, time, weekdays[] }. Those are reported and
@@ -116,7 +111,11 @@ for (const team of teams) {
     }];
   });
 
-  const bulletin = clamp(launcher(team.id) || team.description || team.name, 12000);
+  // The channel's instructions are what the owner reads in its header and
+  // what every member reads each turn. The upstream launcher prompt spoke to a
+  // lead Murage never creates, in the old product's name, so it is not used:
+  // the team's purpose is, and it never names the team, so a rename stays true.
+  const bulletin = clamp(team.description || `Run ${team.name} as a crew.`, 160);
   const pkg = {
     format: "murage.package",
     version: 1,

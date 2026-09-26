@@ -498,7 +498,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       if (!supportsAntigravityStreamInput(version)) {
         pending.delete(threadId);
         const reason = version
-          ? `Antigravity CLI ${ANTIGRAVITY_STREAM_INPUT_MIN_VERSION}+ is required for safe prompt delivery (found ${version}). Run \`agy update\`.`
+          ? `Antigravity CLI ${ANTIGRAVITY_STREAM_INPUT_MIN_VERSION}+ is required to send prompts reliably (found ${version}). Run \`agy update\`.`
           : `\`${config.cli}\` CLI not found`;
         emit({ ...base(threadId, turnId), type: "runtime.error", message: reason });
         emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "unsupported_cli", cost: null });

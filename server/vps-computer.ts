@@ -387,7 +387,7 @@ function statusProblem(status: VpsComputerStatus): string | null {
   if (!status.managed) return "The VPS container name is occupied by a container Murage did not create";
   if (status.network === "unsafe") return "The VPS container uses an unapproved network or publishes ports; refusing to use it";
   if (status.mounts === "unsafe") return "The VPS container has host mounts; refusing to use it";
-  if (status.security === "unsafe") return "The VPS container is missing Murage safety limits";
+  if (status.security === "unsafe") return "The VPS container is missing Murage resource limits";
   if (status.container === "stopped") return "The Murage VPS container is stopped";
   if (status.desktop_error) return `The VPS Cua desktop failed to start: ${status.desktop_error}`;
   if (!status.desktopReady) return "The VPS container started, but Cua Driver is not ready yet";
@@ -743,7 +743,7 @@ async function withVpsLifecycleLock<T>(key: string, operation: () => Promise<T>,
         release();
         if (lifecycleLocks.get(key) === current) lifecycleLocks.delete(key);
       });
-      throw Object.assign(new Error("the VPS is being prepared — try again shortly"), { status: 409 });
+      throw Object.assign(new Error("the VPS is being prepared: try again shortly"), { status: 409 });
     }
   }
   try {
@@ -766,7 +766,7 @@ export async function vpsComputerAction(
   runner: VpsCommandRunner = defaultRunner,
 ): Promise<VpsComputerStatus> {
   const alias = vpsSshAlias(cfg);
-  if (!alias) throw Object.assign(new Error("VPS is not configured — add an SSH config alias in App Settings → Connections"), { status: 409 });
+  if (!alias) throw Object.assign(new Error("VPS is not configured: add an SSH config alias in App Settings → Connections"), { status: 409 });
   const key = `${alias}:${vpsContainerName(botId)}`;
   // A provision already running for this VPS (another turn, or the panel)
   // is the answer this one wants too: share it rather than queue behind it.
@@ -814,7 +814,7 @@ export async function vpsComputerAction(
         if (before.container === "missing") return before;
         if (!before.managed) {
           throw Object.assign(
-            new Error("The VPS container name is occupied by a container Murage did not create — remove it on the VPS yourself"),
+            new Error("The VPS container name is occupied by a container Murage did not create: remove it on the VPS yourself"),
             { status: 409 },
           );
         }
@@ -891,7 +891,7 @@ export async function vpsComputerJoin(
   const connection = viewerConnections.get(`${alias}:${status.container_name}`);
   if (!connection) {
     throw Object.assign(
-      new Error("This VPS computer predates secure live desktop access — replace its managed container once"),
+      new Error("This VPS computer predates secure live desktop access: replace its managed container once"),
       { status: 409 },
     );
   }
@@ -957,7 +957,7 @@ export function vpsComputerMcp(cfg: AppConfig, botId: string, containerRef?: str
   env: Record<string, string>;
 } {
   const alias = vpsSshAlias(cfg);
-  if (!alias) throw new Error("VPS is not configured — add an SSH config alias first");
+  if (!alias) throw new Error("VPS is not configured: add an SSH config alias first");
   return {
     command: process.execPath,
     args: [SPAWNED_PROXIES.vpsContainerMcp, alias, containerRef ?? vpsContainerName(botId)],
@@ -967,10 +967,10 @@ export function vpsComputerMcp(cfg: AppConfig, botId: string, containerRef?: str
 
 export function vpsDriverError(driverKind: string, computerMcp: boolean): string | null {
   if (driverKind === "boxAgent") {
-    return "The Computer engine runs its agent on Box and cannot use a self-hosted VPS — choose Claude or an ACP engine";
+    return "The Computer engine runs its agent on Box and cannot use a self-hosted VPS: choose Claude or an ACP engine";
   }
   if (!computerMcp) {
-    return "This model engine cannot mount a self-hosted VPS computer — choose Claude or an ACP engine";
+    return "This model engine cannot mount a self-hosted VPS computer: choose Claude or an ACP engine";
   }
   return null;
 }

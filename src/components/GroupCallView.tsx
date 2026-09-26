@@ -269,7 +269,7 @@ export function GroupCall({ group, members }: { group: Group; members: Bot[] }) 
       if (defaultResponderRef.current.kind === "mentions" && !routed.addressed) {
         listen();
         const names = membersRef.current.map((member) => member.name).join(", ");
-        setNote("Say a member's name" + (names ? " — " + names : "") + " — or say everyone.");
+        setNote("Say a member's name" + (names ? " (" + names + ")" : "") + ", or say everyone.");
         return;
       }
 

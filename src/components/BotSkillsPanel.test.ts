@@ -382,7 +382,7 @@ describe("switching a skill on and off", () => {
   });
 
   const refusal = (code: "needs-review" | "blocked") =>
-    Object.assign(new Error(code === "blocked" ? "This skill was blocked by the safety check and can't be switched on." : "This skill needs a look before it can be switched on."), {
+    Object.assign(new Error(code === "blocked" ? "This skill was blocked by the skill check and can't be switched on." : "This skill needs a look before it can be switched on."), {
       status: 409,
       body: { code, scan: { contentHash: "c".repeat(64), findings: [{ message: "Sends data to an outside website" }, { message: "Sends data to an outside website" }, { message: "Contains text you cannot see" }] } },
     });
@@ -422,7 +422,7 @@ describe("switching a skill on and off", () => {
   it("never asks about a Blocked skill: it stays off and says why", async () => {
     const list = track([skill({ enabled: false })]);
     const result = await toggleSkillEnabled({ botId: "bot-1", name: "chart-analysis", enabled: true, apply: list.apply, request: async () => { throw refusal("blocked"); } });
-    expect(result).toEqual({ ok: false, error: "Could not enable \u201cchart-analysis\u201d. This skill was blocked by the safety check and can't be switched on." });
+    expect(result).toEqual({ ok: false, error: "Could not enable \u201cchart-analysis\u201d. This skill was blocked by the skill check and can't be switched on." });
     expect(list.current[0]!.enabled).toBe(false);
   });
 });

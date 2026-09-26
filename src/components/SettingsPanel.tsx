@@ -84,7 +84,7 @@ function BotUsageCard({ bot }: { bot: Bot }) {
         </div>
         <div>
           <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Cost</div>
-          <div className="mt-0.5 tabular-nums text-ink">{hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : "—"}</div>
+          <div className="mt-0.5 tabular-nums text-ink">{hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : "Unknown"}</div>
         </div>
       </div>
       <div className="mt-2 text-[12px] text-ink-secondary">
@@ -161,7 +161,7 @@ function WorkingFolder({ bot }: { bot: Bot }) {
           <input
             className={cn(inputCls, "font-mono text-[12.5px]")}
             aria-label="Working folder path"
-            placeholder="Private bot workspace — or an absolute path"
+            placeholder="Private bot workspace, or an absolute path"
             value={draft ?? bot.cwd ?? ""}
             onChange={(e) => setDraft(e.target.value)}
           />
@@ -672,7 +672,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                   we could not keep for a thread that had already been sent
                   one. Sending nothing is true on every engine. */}
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                Default effort for new threads{bot.modelSelection.effort ? "" : " — the engine decides"}
+                Default effort for new threads{bot.modelSelection.effort ? "" : " (the engine decides)"}
               </div>
               <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
                 {([undefined, ...engine.capabilities.effortLevels] as const).map((level, i) => (

@@ -46,7 +46,7 @@ const TOOLS = [
   {
     name: "dweb_opencode_run",
     description:
-      "Run a model on dweb's opencode integration and wait for the result. Give a command for the model to process; optionally pick a model with the 'model' arg (defaults to dweb's choice). Can take several minutes — use this for long-running model work and report the output back verbatim.",
+      "Run a model on dweb's opencode integration and wait for the result. Give a command for the model to process; optionally pick a model with the 'model' arg (defaults to dweb's choice). Can take several minutes: use this for long-running model work and report the output back verbatim.",
     inputSchema: {
       type: "object",
       properties: {

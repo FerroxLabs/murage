@@ -75,7 +75,7 @@ describe("skill library guard", () => {
     writeFileSync(skillMd, readFileSync(skillMd, "utf8").replace("name: ab-test-design", "name: ab-test-designs"));
     expect(unresolvable(root)).toEqual([
       "  ab-test-design -> library skill \"ab-test-design\" declares frontmatter name \"ab-test-designs\" " +
-        "but its directory and manifest id are \"ab-test-design\" — " +
+        "but its directory and manifest id are \"ab-test-design\": " +
         "SKILL.md frontmatter name must equal the directory name",
     ]);
   });

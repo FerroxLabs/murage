@@ -1234,7 +1234,7 @@ async function listConnectedAccounts(
     seenCursors.add(next);
     cursor = next;
   }
-  throw new Error("Composio account inventory exceeded the pagination safety limit");
+  throw new Error("Composio account inventory exceeded the page limit");
 }
 
 async function listSessionToolkits(
@@ -1262,7 +1262,7 @@ async function listSessionToolkits(
     seenCursors.add(next);
     cursor = next;
   }
-  throw new Error("Composio toolkit inventory exceeded the pagination safety limit");
+  throw new Error("Composio toolkit inventory exceeded the page limit");
 }
 
 function summarizeAccounts(accounts: ConnectedAccountResponse[], slugs: string[]) {
@@ -1582,6 +1582,10 @@ const CURATED: ToolkitCard[] = [
   { slug: "stripe", label: "Stripe", blurb: "Payments and customers", domain: "stripe.com", logo: null },
 ];
 
+// The connection service's own toolkits (its search, its helpers) are
+// plumbing, not apps, and product copy never names the service.
+const SERVICE_NAME = /composio/i;
+
 let toolkitCache: { at: number; cards: ToolkitCard[]; identity: string } | null = null;
 let toolkitRequestGeneration = 0;
 const MAX_CATALOG_PAGES = 20;
@@ -1636,11 +1640,15 @@ export async function listToolkits(cfg: AppConfig, options: { signal?: AbortSign
           if (!t || typeof t !== "object") continue;
           const slug = String(t.slug ?? t.key ?? t.name ?? "").trim().toLowerCase();
           // the connection service's own toolkit is plumbing, not an app
-          if (!slug || slug === "composio" || cardsBySlug.has(slug)) continue;
+          const label = String(t.name ?? t.slug ?? "");
+          if (!slug || SERVICE_NAME.test(slug) || SERVICE_NAME.test(label) || cardsBySlug.has(slug)) continue;
+          const blurb = String(t.meta?.description ?? t.description ?? "");
           cardsBySlug.set(slug, {
             slug,
-            label: String(t.name ?? t.slug ?? ""),
-            blurb: String(t.meta?.description ?? t.description ?? "").slice(0, 90),
+            label,
+            // product copy never names the connection service, even in an
+            // app's own description
+            blurb: SERVICE_NAME.test(blurb) ? "" : blurb.slice(0, 90),
             logo: t.meta?.logo ?? t.logo ?? null,
             noAuth: t.no_auth === true,
             domain: null,

@@ -19,7 +19,7 @@ describe("stopped while an action was running on the screen", () => {
     expect(TURN_STOPPED_DESKTOP_ACTION_NOTE).toBe(STOPPED_MID_DESKTOP_ACTION);
     const markup = renderToStaticMarkup(createElement(StoppedMidActionRow));
     expect(markup).toContain('role="status"');
-    expect(markup).toContain("Stopped while an action was running on your screen — it may have finished anyway. Check the screen before retrying.");
+    expect(markup).toContain("Stopped while an action was running on your screen. It may have finished anyway. Check the screen before retrying.");
     expect(markup).not.toContain("break-all");
     expect(isStoppedMidDesktopAction(STOPPED_MID_DESKTOP_ACTION)).toBe(true);
     expect(isStoppedMidDesktopAction(TURN_STOPPED_NOTE)).toBe(false);

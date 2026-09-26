@@ -9,7 +9,7 @@
     "summary": "Voice-profile builder - captures how you write so any AI can write as you. Samples beat self-report.\n\nJob-to-be-done: **capture how the user actually writes** in one portable markdown file the user pastes into any model — Claude Projects, ChatGPT custom instructions, Gemini Gems, API system prompts — so drafts sound like them instead of like a polite committee version of them.",
     "category": "Write",
     "author": {
-      "name": "Wayland"
+      "name": "Ferrox Labs"
     },
     "license": "Apache-2.0",
     "tags": [

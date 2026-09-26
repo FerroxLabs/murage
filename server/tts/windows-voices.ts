@@ -68,7 +68,7 @@ export function parseVoiceList(stdout: string): Voice[] {
     voices.push({
       id,
       label: id,
-      description: [locale, sample].filter(Boolean).join(" — "),
+      description: [locale, sample].filter(Boolean).join(": "),
     });
   }
   return voices;

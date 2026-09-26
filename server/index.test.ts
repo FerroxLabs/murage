@@ -2771,12 +2771,12 @@ describe("harness HTTP API", () => {
       expect(messages.at(-1)).toMatchObject({
         kind: "activity",
         tool: {
-          name: "Quill is archived and can't respond — restore it or mention an active room member.",
+          name: "Quill is archived and can't respond: restore it or mention an active room member.",
           ok: false,
         },
       });
 
-      const archivedError = "Quill is archived and can't respond — restore it or mention an active room member.";
+      const archivedError = "Quill is archived and can't respond: restore it or mention an active room member.";
       const beforeMixedMention = messages.filter((message: { tool?: { name?: string } }) =>
         message.tool?.name === archivedError
       ).length;
@@ -2818,7 +2818,7 @@ describe("harness HTTP API", () => {
       expect(messages.at(-1)).toMatchObject({
         kind: "activity",
         tool: {
-          name: "No active room members can respond — restore an archived bot or add an active member.",
+          name: "No active room members can respond: restore an archived bot or add an active member.",
           ok: false,
         },
       });
@@ -3552,6 +3552,13 @@ describe("harness HTTP API", () => {
       // the reason is carried through rather than invented here
       expect(typeof short.body.skillErrors[0].error).toBe("string");
       expect(short.body.skillErrors[0].error.length).toBeGreaterThan(0);
+      // and the owner sees it where they will look: the bot's own
+      // conversation says which skill is missing, not only a toast that
+      // goes away (0.1.60 Linux customer pass, D7)
+      const thread = short.body.bots[0].threadId;
+      const messages = (await desktopApi("GET", `/api/threads/${thread}/messages?limit=50`)).body.messages as Array<{ role: string; kind?: string; text?: string }>;
+      const note = messages.find(message => message.role === "bot" && message.text?.includes("no-such-library-skill"));
+      expect(note?.text).toBe("One skill I came with is not switched on yet: no-such-library-skill (it could not be installed). You can check my skills in my settings, under Skills.");
     } finally {
       for (const bot of short.body.bots ?? []) await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
@@ -3562,6 +3569,8 @@ describe("harness HTTP API", () => {
     try {
       expect(clean.status).toBe(201);
       expect(clean.body.skillErrors).toEqual([]);
+      const cleanMessages = (await desktopApi("GET", `/api/threads/${clean.body.bots[0].threadId}/messages?limit=50`)).body.messages as Array<{ text?: string }>;
+      expect(cleanMessages.some(message => message.text?.includes("not switched on"))).toBe(false);
     } finally {
       for (const bot of clean.body.bots ?? []) await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
@@ -6296,7 +6305,7 @@ describe("harness HTTP API", () => {
         .find((candidate: { id: string }) => candidate.id === bot.id)?.busy, { timeout: 5_000 }).toBe(false);
       const deletion = await isolatedApi("DELETE", `/api/bots/${bot.id}`, undefined, isolatedDesktopHeaders);
       expect(deletion.status).toBe(503);
-      expect(deletion.body.error).toMatch(/cleanup journal could not be read safely/i);
+      expect(deletion.body.error).toMatch(/cleanup journal could not be read/i);
       expect((await isolatedApi("GET", "/api/bots?messages=0")).body.bots.some((candidate: { id: string }) => candidate.id === bot.id)).toBe(true);
     } finally {
       if (createdBotId) {

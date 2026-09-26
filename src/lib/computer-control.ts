@@ -60,14 +60,14 @@ export async function transitionComputerControlLease<
   const { action, syncNativeBrowser, requestControl, setNativeBrowserControl } = input;
   if (action === "dismiss-help") return requestControl(action);
   if (action === "take" && syncNativeBrowser && !(await setNativeBrowserControl(true))) {
-    throw new Error("Murage could not pause this bot's browser safely");
+    throw new Error("Murage could not pause this bot's browser");
   }
   const snap = await requestControl(action);
   if (snap.held !== (action === "take")) {
     throw new Error(`Murage could not ${action === "take" ? "confirm" : "release"} computer control`);
   }
   if (action === "release" && syncNativeBrowser && !(await setNativeBrowserControl(false))) {
-    throw new Error("The computer was released, but the browser remains paused for safety");
+    throw new Error("The computer was released, but the browser stays paused");
   }
   return snap;
 }

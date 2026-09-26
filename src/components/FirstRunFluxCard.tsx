@@ -72,7 +72,7 @@ const copy = FIRST_RUN_COPY.flux.key;
  * Unknown view answers the cautious one: the milder claim is the one that is
  * never wrong.
  */
-export function fluxRecommendation(view: { agents?: readonly unknown[]; nothingToThinkWith?: boolean } | null | undefined): string {
+export function fluxRecommendation(view: { agents?: readonly unknown[]; signedOutAgents?: readonly unknown[]; nothingToThinkWith?: boolean } | null | undefined): string {
   // The heading's own answer wins when the server gave one. An engine can be
   // listed and still unable to think (seen on Windows), and then counting
   // `agents` put "you are already up and running" under "your bots need a
@@ -80,7 +80,13 @@ export function fluxRecommendation(view: { agents?: readonly unknown[]; nothingT
   if (view?.nothingToThinkWith === true) return copy.recommendationBare;
   if (!view?.agents) return copy.recommendation;
   if (view.agents.length === 0) return view.nothingToThinkWith === false ? copy.recommendation : copy.recommendationBare;
-  return copy.recommendationBonus;
+  // "Already up and running" is a claim about what detection FOUND. The
+  // engine Murage ships (`installed: false`) answers only once this very key
+  // is in, so on a box where nothing was found it made the card say the
+  // person had been running all along (0.1.60 Linux customer pass).
+  const found = view.agents.filter((agent) => (agent as { installed?: unknown } | null)?.installed !== false);
+  if (found.length > 0) return copy.recommendationBonus;
+  return (view.signedOutAgents?.length ?? 0) > 0 ? copy.recommendation : copy.recommendationBare;
 }
 
 /**

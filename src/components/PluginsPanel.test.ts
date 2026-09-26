@@ -28,12 +28,14 @@ import {
   connectorActionLabel,
   connectorPanelFieldsFrom,
   connectorPrimaryAction,
+  connectedTabSummary,
   EMPTY_CONNECTOR_PANEL_FIELDS,
   FLUXROUTER_BILLING_URL,
   formatLegacyCutoff,
   mergeCompleteConnectorStatus,
   migrationFromClaim,
   PluginsPanel,
+  preloadConnectedApps,
   type ConnectorPanelFields,
 } from "./PluginsPanel";
 
@@ -399,7 +401,7 @@ describe("the connected-apps lock", () => {
     // against the live catalogue, so the copy names apps instead of a number.
     expect(en["connectedApps.lock.title"]).toBe("Connect your apps");
     expect(en["connectedApps.lock.body"]).toBe(
-      "Hundreds of apps, including Gmail, Slack, Notion and GitHub — your bots can use them. Add your Flux Router key to unlock them, with a free daily allowance included.",
+      "Your bots can use hundreds of apps, including Gmail, Slack, Notion and GitHub. Add your Flux Router key to unlock them, with a free daily allowance included.",
     );
     expect(Object.values(en).some(value => /\d+\+ (?:more |)apps|and \d+\+ more/.test(value))).toBe(false);
     expect(en["connectedApps.lock.button"]).toBe("Add Flux Router key");
@@ -538,5 +540,55 @@ describe("when Murage's original connected-apps service has retired", () => {
       expect(copy).toMatch(/retired/);
       expect(copy.split(/(?<=\.)\s+/).length).toBeLessThanOrEqual(2);
     }
+  });
+});
+
+// Linux customer pass, 0.1.60: the Connected tab said 12 while the bot,
+// asked, listed 11 apps. The tab counted every status entry with an account
+// in any state, plus plumbing the list never shows; the bot can use only the
+// apps with an account that works.
+describe("the Connected tab's count", () => {
+  const card = (slug: string) => ({ slug, label: slug, blurb: "", logo: null, domain: null });
+  const cards = ["gmail", "github", "slack", "notion"].map(card);
+  it("counts the apps a bot can use, and says how many more are not ready", () => {
+    const summary = connectedTabSummary(cards, {
+      gmail: { connected: true, accounts: [{ id: "a", status: "ACTIVE" }, { id: "b", status: "ACTIVE" }] },
+      github: { connected: true, accounts: [{ id: "c", status: "ACTIVE" }] },
+      slack: { connected: false, status: "EXPIRED", accounts: [{ id: "d", status: "EXPIRED" }] },
+      composio_search: { connected: true },
+      notion: { connected: false },
+    });
+    expect(summary).toEqual({ ready: 2, notReady: 1, note: "1 more app is not ready yet. Finish connecting it or reconnect it below." });
+  });
+  it("says nothing extra when every connection works", () => {
+    expect(connectedTabSummary(cards, { gmail: { connected: true } }).note).toBe("");
+    expect(connectedTabSummary(null, { gmail: { connected: true }, composio: { connected: true } }).ready).toBe(1);
+  });
+});
+
+// Windows customer pass, 0.1.60 (D9): the first open after an update said
+// "No connected apps yet" and the Marketplace offered Connect on apps that
+// were connected, until Refresh. The inventory had been warmed before the
+// connection backend was ready, and its empty answer was kept as the truth.
+describe("an inventory read before the connection backend is ready", () => {
+  it("is not kept as the truth, so the next open asks again", async () => {
+    const answers = [
+      { configured: false, credentialStore: "ok", services: {} },
+      { configured: true, credentialStore: "ok", services: { gmail: { connected: true, accounts: [{ id: "a", status: "ACTIVE" }] } } },
+    ];
+    storeStub.api.mockImplementation(async () => answers.shift() as never);
+    try {
+      const early = await preloadConnectedApps(true);
+      expect(early).toMatchObject({ authoritative: false, backendReady: false });
+      const next = await preloadConnectedApps();
+      expect(next.authoritative).toBe(true);
+      expect(Object.keys(next.services)).toEqual(["gmail"]);
+    } finally {
+      storeStub.api.mockImplementation(async () => { throw new Error("no request may leave the locked panel"); });
+    }
+  });
+
+  it("keeps the panel checking, not empty, while it waits for the backend", () => {
+    expect(panel).toMatch(/backendReady === false[\s\S]{0,400}setInventoryPhase\("loading"\)/);
   });
 });

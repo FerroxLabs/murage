@@ -47,7 +47,7 @@ const COMMIT_HASH = /^[0-9a-f]{40}$/;
 // everything listed here survives a rollback untouched. Categories follow
 // Roo-Code's checkpoint excludes: VCS internals, dependency trees, build
 // output, caches, logs, secrets, media, archives, databases, model weights.
-const EXCLUDES = `# Murage checkpoint excludes — never snapshotted, never removed by restore
+const EXCLUDES = `# Murage checkpoint excludes: never snapshotted, never removed by restore
 .git/
 .svn/
 .hg/
@@ -384,7 +384,7 @@ export async function checkpointsEnabled(botId: string, cwd: string): Promise<bo
  * over the "restored" commit. Excluded and gitignored files are untouched. */
 export async function restore(botId: string, cwd: string, hash: string, options: { assertCurrent?: () => void } = {}): Promise<RestoreResult> {
   if (disabledBots.has(botId)) {
-    return { ok: false, error: "checkpoints are disabled for this bot until the app restarts (an earlier snapshot failed — see the server log)" };
+    return { ok: false, error: "checkpoints are disabled for this bot until the app restarts (an earlier snapshot failed: see the server log)" };
   }
   if (!(await gitAvailable())) return { ok: false, error: "git is not installed on this machine" };
   const reason = refusalReason(cwd);
@@ -411,7 +411,7 @@ export async function restore(botId: string, cwd: string, hash: string, options:
       if (!safety.complete) {
         return {
           ok: false,
-          error: "restore stopped because some current files could not be added to the safety checkpoint",
+          error: "restore stopped because some current files could not be added to the checkpoint taken before a restore",
         };
       }
       // Index AND work tree move to the source; HEAD stays put. --staged

@@ -26,7 +26,7 @@ interface AllowPermissionResult {
 }
 const dead = () => {
   for (const resolve of waiting.values()) {
-    resolve({ behavior: "deny", message: "Murage: permission broker unavailable — skip this action" });
+    resolve({ behavior: "deny", message: "Murage: permission broker unavailable, so skip this action" });
   }
   waiting.clear();
 };
@@ -72,7 +72,7 @@ const TOOLS = [
   {
     name: "ask_user",
     description:
-      "Ask the human who owns this bot a question and wait for their answer. Use whenever you need a decision, a preference, missing information, or sign-off before doing something consequential — do not guess on things the owner would want to decide. Returns their answer as text.",
+      "Ask the human who owns this bot a question and wait for their answer. Use whenever you need a decision, a preference, missing information, or sign-off before doing something consequential: do not guess on things the owner would want to decide. Returns their answer as text.",
     inputSchema: {
       type: "object",
       properties: {

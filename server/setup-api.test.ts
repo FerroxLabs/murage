@@ -179,6 +179,29 @@ describe("the first run on a real server whose engine never answers", () => {
     await checklist();
     expect((await setupCards()).find((card) => card.key === setupCardKey("hello", "welcome"))?.settled).toBe(true);
   });
+
+  // Linux customer pass, 0.1.60: a new conversation opened on the Chief
+  // during setup took the title "Getting you set up" too, so the list showed
+  // two. Only the conversation setup is happening in carries that title.
+  it("names only the setup conversation, not a new one opened beside it", async () => {
+    const tasksOf = async () => ((await api("GET", "/api/bots", undefined, desktop)).body.bots
+      .find((bot: { id: string }) => bot.id === chiefBotId).tasks as Array<{ threadId: string; title?: string }>);
+    const setupThread = (await tasksOf()).find((task) => task.title === "Getting you set up");
+    expect(setupThread).toBeDefined();
+    const created = await api("POST", `/api/bots/${chiefBotId}/tasks`, {}, desktop);
+    expect(created.status).toBe(201);
+    try {
+      await checklist();
+      await checklist();
+      const titles = (await tasksOf()).map((task) => task.title);
+      expect(titles.filter((title) => title === "Getting you set up")).toHaveLength(1);
+    } finally {
+      // back to the setup conversation, and the extra one gone, so the rest
+      // of the walk reads the thread it has always read
+      expect((await api("POST", `/api/bots/${chiefBotId}/tasks/${setupThread!.threadId}`, undefined, desktop)).status).toBe(200);
+      await api("DELETE", `/api/bots/${chiefBotId}/tasks/${created.body.task.threadId}`, undefined, desktop);
+    }
+  });
 });
 
 describe("POST /api/setup/routine", () => {

@@ -40,6 +40,35 @@ export interface ConnectorStatus {
   }>;
 }
 
+/**
+ * What the Connected tab's count says, and the line under it.
+ *
+ * It counted every status entry with an account in any state, including the
+ * connection service's own plumbing that the list never shows, so the tab
+ * said 12 while a bot, asked, listed the 11 apps it could use (0.1.60 Linux
+ * customer pass). The count is now the apps a bot can use; an app whose only
+ * account is expired, failed or half connected is told apart in words.
+ */
+export function connectedTabSummary(
+  cards: ReadonlyArray<{ slug: string }> | null,
+  status: Record<string, ConnectorStatus>,
+): { ready: number; notReady: number; note: string } {
+  const apps = cards ? new Set(cards.map((card) => card.slug)) : null;
+  let ready = 0;
+  let notReady = 0;
+  for (const [slug, service] of Object.entries(status)) {
+    if (/composio/i.test(slug) || (apps && !apps.has(slug))) continue;
+    if (service.connected) ready++;
+    else if (service.accounts?.length) notReady++;
+  }
+  const note = notReady === 0
+    ? ""
+    : notReady === 1
+      ? "1 more app is not ready yet. Finish connecting it or reconnect it below."
+      : `${notReady} more apps are not ready yet. Finish connecting them or reconnect them below.`;
+  return { ready, notReady, note };
+}
+
 // The panel is a modal and unmounts whenever it closes. Keep the last known
 // account inventory at module scope so reopening never flashes every service
 // as disconnected while a fresh secure status check runs in the background.
@@ -52,12 +81,19 @@ let connectorStatusRequest: Promise<ConnectorInventory> | null = null;
  * lock stands down and the panel shows what it remembers, as it always did. */
 let credentialStoreUnreadable = false;
 const CONNECTOR_STATUS_CACHE_MS = 30_000;
+/** How long the panel keeps asking while the connection backend comes up. */
+const BACKEND_WAIT_MS = 1_500;
+const BACKEND_WAIT_TRIES = 10;
 
 export interface ConnectorInventory {
   services: Record<string, ConnectorStatus>;
   /** false when the server could not read the credential store: the list is
    * then "we do not know", and nothing may be cleared on the strength of it */
   authoritative: boolean;
+  /** false when the server answered before its connection backend was
+   * ready (the first moments after a launch or an update). Its empty list
+   * means "not yet", never "nothing is connected". */
+  backendReady?: boolean;
 }
 
 /** Warm the account inventory once the app server is ready. Concurrent panel
@@ -80,6 +116,11 @@ export function preloadConnectedApps(force = false): Promise<ConnectorInventory>
         return { services: readCachedInventory()?.services ?? {}, authoritative: false };
       }
       credentialStoreUnreadable = false;
+      // Not ready yet: remembered accounts, if any, stand; nothing is cached
+      // on the strength of an answer that does not know.
+      if (response.configured === false) {
+        return { services: readCachedInventory()?.services ?? {}, authoritative: false, backendReady: false };
+      }
       cachedConnectorStatus = services;
       cachedConnectorStatusAt = Date.now();
       cachedConnectorStatusAuthoritative = true;
@@ -522,11 +563,25 @@ export function PluginsPanel() {
       });
   }, []);
 
+  const backendWait = useRef<{ tries: number; timer?: ReturnType<typeof setTimeout> }>({ tries: 0 });
+  const refreshConnectedStatusRef = useRef<((force?: boolean) => Promise<Record<string, ConnectorStatus>>) | null>(null);
+  useEffect(() => () => clearTimeout(backendWait.current.timer), []);
   const refreshConnectedStatus = useCallback((force = false): Promise<Record<string, ConnectorStatus>> => {
     const requestGenerations = new Map(statusGenerations.current);
     setRefreshing(true);
     return preloadConnectedApps(force)
-      .then(({ services, authoritative }) => {
+      .then(({ services, authoritative, backendReady }) => {
+        clearTimeout(backendWait.current.timer);
+        if (backendReady === false && backendWait.current.tries < BACKEND_WAIT_TRIES) {
+          // Asked too early, just after a launch or an update: keep saying
+          // "Checking" and ask again, rather than painting "No connected apps
+          // yet" and a Connect button on apps that are connected.
+          backendWait.current.tries++;
+          setInventoryPhase("loading");
+          backendWait.current.timer = setTimeout(() => void refreshConnectedStatusRef.current?.(true), BACKEND_WAIT_MS);
+          return services;
+        }
+        if (backendReady !== false) backendWait.current.tries = 0;
         setStale(!authoritative);
         setInventoryPhase(authoritative ? "ready" : "error");
         setStatus((current) => mergeCompleteConnectorStatus(
@@ -549,6 +604,8 @@ export function PluginsPanel() {
       })
       .finally(() => setRefreshing(false));
   }, []);
+
+  refreshConnectedStatusRef.current = refreshConnectedStatus;
 
   const loadConnectionInventory = useCallback((force = false) => {
     const hadCachedInventory = cachedConnectorStatus !== null;
@@ -818,7 +875,8 @@ export function PluginsPanel() {
   const visible = matching.filter((card) =>
     tab === "marketplace" || status[card.slug]?.connected || Boolean(status[card.slug]?.accounts?.length)
   );
-  const connectedCount = Object.values(status).filter((service) => service.connected || service.accounts?.length).length;
+  const connectedSummary = connectedTabSummary(cards, status);
+  const connectedCount = connectedSummary.ready;
   const connectedEmptyCopy = connectedInventoryCopy(inventoryPhase);
   const close = () => dispatch({ type: "togglePlugins", open: false });
 
@@ -1032,6 +1090,9 @@ export function PluginsPanel() {
               <div className="mb-3 text-[12px] font-medium text-ink-secondary">
                 {tab === "connected" ? "Your connections" : search ? "Search results" : "Available apps"}
               </div>
+              {tab === "connected" && connectedSummary.note && (
+                <p role="status" className="mb-3 text-[12.5px] text-ink-secondary">{connectedSummary.note}</p>
+              )}
               <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
               {visible.map((card) => {
               const serviceStatus = status[card.slug];

@@ -126,7 +126,7 @@ async function providerErrorDetail(response: Response): Promise<string> {
     const clean = (value: unknown, max: number) => typeof value === "string" && value.trim() ? redactSecretsInText(value.replace(/\s+/g, " ").trim()).slice(0, max) : "";
     const code = clean(error.code, 80), message = clean(error.message, 300);
     if (!code && !message) return "";
-    return `: ${[code, message].filter(Boolean).join(" — ")}`;
+    return `: ${[code, message].filter(Boolean).join(": ")}`;
   } catch { return ""; }
 }
 

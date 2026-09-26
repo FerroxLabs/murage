@@ -468,7 +468,7 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip 
     <button
       type="button"
       disabled={transcribing}
-      aria-label={listening ? "Listening — release to transcribe" : transcribing ? "Transcribing" : "Hold to talk"}
+      aria-label={listening ? "Listening. Release to transcribe" : transcribing ? "Transcribing" : "Hold to talk"}
       title={listening ? "Release to transcribe" : transcribing ? "Transcribing…" : "Hold to talk"}
       onPointerDown={(event) => {
         event.preventDefault();

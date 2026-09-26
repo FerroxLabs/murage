@@ -547,7 +547,7 @@ test("the folder control opens the effective workspace, not settings", async ({ 
   // task folder cannot read as the bot's default.
   await expect(chip).toHaveAttribute(
     "aria-label",
-    "Open this task's files — This task's folder: /Users/fixture/Murage/analyst/tasks/q3-revenue-reconciliation",
+    "Open this task's files: This task's folder: /Users/fixture/Murage/analyst/tasks/q3-revenue-reconciliation",
   );
   await chip.click();
   expect(await page.evaluate(() => (window as unknown as Fixture).filesOpened)).toEqual([{ botId: "analyst", threadId: "thread-1" }]);
@@ -578,7 +578,7 @@ test("a task with no folder of its own falls back to the bot's, and says which",
   await setWidth(page, 1024);
   await expect(page.getByRole("button", { name: /^Open this bot's files/ })).toHaveAttribute(
     "aria-label",
-    "Open this bot's files — This bot's folder: /Users/fixture/Murage/analyst",
+    "Open this bot's files: This bot's folder: /Users/fixture/Murage/analyst",
   );
 });
 

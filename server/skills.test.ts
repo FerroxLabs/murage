@@ -76,7 +76,7 @@ describe("parseSkillMd", () => {
     if (!("error" in parsed)) expect(parsed.body).toContain("Do the thing.");
   });
 
-  it("rejects names the spec rejects — including traversal shapes", () => {
+  it("rejects names the spec rejects: including traversal shapes", () => {
     for (const bad of ["Code-Review", "code_review", "-lead", "a--b", "..", "a/b", ""]) {
       const parsed = parseSkillMd(SKILL(bad));
       expect("error" in parsed, `name ${JSON.stringify(bad)} must be rejected`).toBe(true);
@@ -144,10 +144,10 @@ describe("parseSkillMd", () => {
 
   it("unescapes a double-quoted description instead of leaving the backslashes in the prompt", () => {
     const parsed = parseSkillMd(
-      '---\nname: runway\ndescription: "The user asks \\"how long do we have\\" — load whenever burn is on the table."\n---\nbody',
+      '---\nname: runway\ndescription: "The user asks \\"how long do we have\\": load whenever burn is on the table."\n---\nbody',
     );
     expect(parsed).toMatchObject({
-      description: 'The user asks "how long do we have" — load whenever burn is on the table.',
+      description: 'The user asks "how long do we have": load whenever burn is on the table.',
     });
   });
 });
@@ -1359,8 +1359,8 @@ describe("review warnings are computed lazily and unchanged", () => {
     expect.stringContaining("base64"),
     expect.stringContaining("curl|sh"),
     expect.stringContaining("invisible"),
-    'skipped supporting file "reference.md" — v1 imports only SKILL.md',
-    'skipped supporting file "run.sh" — v1 imports only SKILL.md',
+    'skipped supporting file "reference.md": v1 imports only SKILL.md',
+    'skipped supporting file "run.sh": v1 imports only SKILL.md',
   ];
 
   let library: string;

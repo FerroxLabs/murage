@@ -201,11 +201,29 @@ export function useChatHeaderLayout(
     if (index !== 0) setIndex(0);
   }
 
+  // The name itself is watched too. Windows customer pass, 0.1.60 (D10): the
+  // header settled with the name squeezed to "E" beside a long conversation
+  // title, because something narrowed the name without changing the header's
+  // box or any input the ladder is keyed on. Whatever narrows it, the ladder
+  // hears it and takes the next step.
+  const [nameTick, setNameTick] = useState(0);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (!header || typeof ResizeObserver === "undefined") return;
+    const name = header.querySelector<HTMLElement>("[data-chat-header-name]");
+    if (!name) return;
+    const observer = new ResizeObserver(() => {
+      if (!headerFits(measureHeader(header))) setNameTick((tick) => tick + 1);
+    });
+    observer.observe(name);
+    return () => observer.disconnect();
+  }, [headerRef, contentKey]);
+
   useLayoutEffect(() => {
     const header = headerRef.current;
     if (!header) return;
     if (!headerFits(measureHeader(header)) && index < HEADER_LAYOUTS.length - 1) setIndex(index + 1);
-  }, [headerRef, index, contentWidth, contentKey, fontsTick]);
+  }, [headerRef, index, contentWidth, contentKey, fontsTick, nameTick]);
 
   // A font change restarts from the richest layout (the first `fonts.ready`
   // resolution is the initial one and changes nothing).

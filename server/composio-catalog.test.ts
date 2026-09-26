@@ -33,6 +33,19 @@ describe("marketplace catalog traversal", () => {
     expect((await listToolkits(project("no-self"))).cards.map(card => card.slug)).toEqual(["gmail", "slack"]);
   });
 
+  it("drops every card named for the connection service and never shows its name in a blurb", async () => {
+    // Linux customer pass: the card still appeared under a sibling slug.
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ items: [
+      { slug: "gmail", meta: { description: "Read and send email" } },
+      { slug: "composio_search", name: "Composio Search" },
+      { slug: "tooling", name: "Composio", meta: { description: "Composio enables AI Agents" } },
+      { slug: "helper", name: "Helper", meta: { description: "Built on Composio for agents" } },
+    ] })));
+    const cards = (await listToolkits(project("no-self-siblings"))).cards;
+    expect(cards.map(card => card.slug)).toEqual(["gmail", "helper"]);
+    expect(JSON.stringify(cards)).not.toMatch(/composio/i);
+  });
+
   it("forwards managed cursors without exposing a project key", async () => {
     setManagedBrokerAccess({ url: "https://broker.example.test", token: "b".repeat(64) });
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {

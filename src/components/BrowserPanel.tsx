@@ -440,11 +440,11 @@ export function LegacyBrowserPanel({
           // The person may already be typing into the native page. Keep the
           // agent gated even though the durable lease endpoint failed; a
           // subsequent Take control click retries the server transition.
-          setError("Browser control could not be confirmed. The bot remains paused here for safety. Retry Take control.");
+          setError("Browser control could not be confirmed. The bot stays paused here. Retry Take control.");
         } else if (result.failed === "durable-release") {
-          setError("Control could not be handed back. The bot remains paused here for safety. Retry Hand back.");
+          setError("Control could not be handed back. The bot stays paused here. Retry Hand back.");
         } else if (result.failed === "native-release") {
-          setError("The server released control, but this browser remains paused locally for safety. Reopen the Browser panel to retry.");
+          setError("The server released control, but this browser stays paused here. Reopen the Browser panel to retry.");
         }
         if (action === "take") nativeTakePending.current = false;
         return false;

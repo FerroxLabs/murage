@@ -49,7 +49,7 @@ export function assertSafeCliArgv(
   if (platform !== "win32") return;
   if (estimatedWindowsCommandLineChars(resolved) <= WINDOWS_SAFE_COMMAND_LINE_CHARS) return;
   const error = new Error(
-    "agent CLI launch arguments exceed Windows' safe command-line limit; pass large prompts through stdin or a file",
+    "agent CLI launch arguments exceed Windows' command-line limit; pass large prompts through stdin or a file",
   ) as NodeJS.ErrnoException;
   error.code = "ENAMETOOLONG";
   throw error;
@@ -138,7 +138,7 @@ export function describeSpawnFailure(err: NodeJS.ErrnoException, cli: string): S
   if (err.code === "ENOENT")
     return { message: `\`${cli}\` isn't installed, or isn't on this app's PATH`, setup: true };
   if (err.code === "EACCES" || err.code === "EPERM")
-    return { message: `\`${cli}\` isn't executable — check its file permissions`, setup: true };
+    return { message: `\`${cli}\` isn't executable: check its file permissions`, setup: true };
   if (err.code === "ENAMETOOLONG")
     return {
       message: `\`${cli}\` received too much launch data for Windows; update this provider or pass its prompt through stdin/a file`,

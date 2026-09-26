@@ -124,7 +124,7 @@ it("publishes a question with one button per option, numbered text, and the desk
   const f = questionFixture([single]); await f.publish(); await f.publish();
   expect(f.sendMessage).toHaveBeenCalledTimes(1);
   const sent = f.sendMessage.mock.calls[0][0];
-  expect(sent.text).toContain("Ember has a question\nFormat: Which format should the report use?\n\n1. Summary — A short overview\n2. Detailed");
+  expect(sent.text).toContain("Ember has a question\nFormat: Which format should the report use?\n\n1. Summary: A short overview\n2. Detailed");
   expect(sent.text).toContain("Expires in 30 minutes");
   expect(sent.keyboard.map((row: any[]) => row.map(item => item.text))).toEqual([["Summary"], ["Detailed"], ["Reply with text", "Skip question"]]);
   for (const item of f.buttons()) expect(Buffer.byteLength(item.data)).toBeLessThanOrEqual(64);

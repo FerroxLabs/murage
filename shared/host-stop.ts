@@ -26,7 +26,7 @@ export function hostStoppedReason(name: string | undefined | null): string | und
  * `hostStoppedLabel` in src/lib/host-stop.ts and reads the same reason. */
 export function hostStoppedDisplayName(name: string | undefined | null): string | undefined {
   const reason = hostStoppedReason(name);
-  return reason ? `Stopped — ${reason}` : undefined;
+  return reason ? `Stopped: ${reason}` : undefined;
 }
 
 /** The line a turn the PERSON stopped leaves when the stop withdrew a desktop
@@ -34,7 +34,7 @@ export function hostStoppedDisplayName(name: string | undefined | null): string 
  * input already sent to the OS, so it says to look before retrying. Like a
  * host stop it is not a tool run: it stays visible with Tool calls off. */
 export const STOPPED_MID_DESKTOP_ACTION =
-  "Stopped while an action was running on your screen — it may have finished anyway. Check the screen before retrying.";
+  "Stopped while an action was running on your screen. It may have finished anyway. Check the screen before retrying.";
 
 export function isStoppedMidDesktopAction(name: string | undefined | null): boolean {
   return name === STOPPED_MID_DESKTOP_ACTION;

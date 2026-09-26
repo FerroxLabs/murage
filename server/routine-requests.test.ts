@@ -1189,7 +1189,7 @@ describe("RoutineRequestService", () => {
     const card = store.messagesFor("thread-a")[0]!.card!;
     expect(card.subtitle).toContain("Action: Update routine");
     expect(card.subtitle).toContain("Name: Still paused");
-    expect(card.subtitle).toContain("Next run: None — this routine remains paused");
+    expect(card.subtitle).toContain("Next run: None: this routine remains paused");
     expect(card.subtitle).toContain("Instructions:\nStay paused");
   });
 

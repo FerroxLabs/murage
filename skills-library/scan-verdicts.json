@@ -183,12 +183,9 @@
    "rules": []
   },
   "ai-agent-patterns": {
-   "verdict": "review",
-   "contentHash": "f24e09a1d9126c24b93069e042b974934221c6242e5606f0d6416d8f5aa0b065",
-   "rules": [
-    "SG5",
-    "skillspector:P6.1"
-   ]
+   "verdict": "clean",
+   "contentHash": "794632cac51ae8799ebe89fd32eb455f5d4fd05087f2eb9dea52c119e552aa74",
+   "rules": []
   },
   "ai-automation-builder": {
    "verdict": "clean",
@@ -4207,12 +4204,9 @@
    "rules": []
   },
   "freelance-rate-calculator": {
-   "verdict": "review",
-   "contentHash": "fc77d5a47f25fab50ce76b756b5ef41a12ffeb9444af81e63084d76c0de5a076",
-   "rules": [
-    "skillspector:AR2.2",
-    "skillspector:MP3.1"
-   ]
+   "verdict": "clean",
+   "contentHash": "125180e5bbea9455e6bc17c76bf2f0379e548c365cb5453a728422d819b02423",
+   "rules": []
   },
   "freelance-writer-launcher": {
    "verdict": "clean",
@@ -10617,11 +10611,9 @@
    "rules": []
   },
   "user-research-plan": {
-   "verdict": "review",
-   "contentHash": "160ed954253b7a2b60f9b61e6904be2ac0d9858f8c3c34b9f5b501f58cf69937",
-   "rules": [
-    "skillspector:E4.1"
-   ]
+   "verdict": "clean",
+   "contentHash": "643bde2b2259b7a9feccacb757c96caf0367b7cd599c28a3bb9e9e4a08692d4a",
+   "rules": []
   },
   "user-story-writer": {
    "verdict": "clean",

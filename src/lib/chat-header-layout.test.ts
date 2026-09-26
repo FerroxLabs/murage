@@ -163,3 +163,14 @@ describe("the bot name always keeps a usable track", () => {
     expect(headerFits({ contentWidth: 320, overflow: 0, nameWidth: 30, nameNatural: 30 })).toBe(true);
   });
 });
+
+// Windows customer pass, 0.1.60 (D10): the name was left at "E" beside a long
+// conversation title. The ladder is keyed on what it knows to change; the
+// name's own width is watched as well, so an unkeyed change still steps it.
+describe("the name is watched, not only the header", () => {
+  it("re-runs the fit when the name narrows", () => {
+    const hook = readFileSync(new URL("./chat-header-layout.ts", import.meta.url), "utf8");
+    expect(hook).toMatch(/querySelector<HTMLElement>\("\[data-chat-header-name\]"\)[\s\S]{0,200}new ResizeObserver[\s\S]{0,200}headerFits\(measureHeader\(header\)\)/);
+    expect(hook).toMatch(/\[headerRef, index, contentWidth, contentKey, fontsTick, nameTick\]/);
+  });
+});

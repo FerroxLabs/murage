@@ -99,7 +99,7 @@ for (const [skin, width] of [["dark", 1100], ["light", 1100], ["dark", 390], ["l
   await open(page, { skin, width });
   await expect(lock(page)).toBeVisible();
   await expect(page.getByRole("heading", { name: "Connect your apps", exact: true })).toBeVisible();
-  await expect(page.getByText("Hundreds of apps, including Gmail, Slack, Notion and GitHub — your bots can use them. Add your Flux Router key to unlock them, with a free daily allowance included.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Your bots can use hundreds of apps, including Gmail, Slack, Notion and GitHub. Add your Flux Router key to unlock them, with a free daily allowance included.", { exact: true })).toBeVisible();
   await expect(primary(page)).toBeVisible();
   await expect(page.getByRole("button", { name: "Have your own Composio key? Add it under Advanced.", exact: true })).toBeVisible();
   // The live panel's controls are not there to be found.
@@ -189,7 +189,7 @@ for (const which of ["flux", "composio"] as const) test(`with a ${which} key the
   await expect(page.locator('[data-connector-action="slack"]')).toBeVisible();
   await expect.poll(() => connectorHits).toContain("GET /api/connectors/catalog");
   expect(connectorHits).toContain("GET /api/connectors/connected");
-  if (which === "composio") await expect(page.getByText("Connected with your own Composio key.", { exact: false })).toBeVisible();
+  if (which === "composio") await expect(page.getByText("Connected with your own key.", { exact: false })).toBeVisible();
   await page.screenshot({ path: info.outputPath(`unlocked-${which}.png`) });
 });
 

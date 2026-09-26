@@ -31,7 +31,7 @@ export const LOCAL_MODELS_GROUP = "Local models";
 export const CUSTOM_MODELS_GROUP = "Custom models";
 /** The Local rail's single row when this computer has no local server at all
  *  — a state the user can act on instead of an absence they must notice. */
-export const NO_LOCAL_SERVER_ROW = "No local server detected — add one in Settings → Models";
+export const NO_LOCAL_SERVER_ROW = "No local server detected. Add one in Settings → Models";
 export const pickerKey = (s: PickerSelection): string => JSON.stringify([s.instanceId, s.connectionId ?? null, s.model]);
 /** Dollars per million OUTPUT tokens, and the band each range earns.
  *
@@ -209,7 +209,7 @@ export function pickerTriggerTitle(
   selectedLabel: string,
   connectionLabel?: string,
 ): string {
-  if (!engineName && selectedLabel === NO_MODEL_CHOSEN) return "No model chosen yet — open this to pick one";
+  if (!engineName && selectedLabel === NO_MODEL_CHOSEN) return "No model chosen yet. Open this to pick one";
   return [engineName ?? "Unavailable engine", selectedLabel, connectionLabel].filter(Boolean).join(" · ");
 }
 /** The line under the search box. "0 compatible chat models" is true and
@@ -242,9 +242,9 @@ export function pickerEmptyState(
 /** The picker's warning marker, in plain words. Empty when there is nothing to
  *  warn about — an untested model is not accused of anything. */
 export function localToolsWarning(row: PickerModel): string {
-  if (row.chatOnly) return "Chat only — this engine sends no tools, so it can chat with any model";
-  if (row.localTools === "failed") return "Tools test failed — chat only, not usable for bot work";
-  if (row.localTools === "partial") return "Tools test passed with gaps — see Settings → Models";
+  if (row.chatOnly) return "Chat only: this engine sends no tools, so it can chat with any model";
+  if (row.localTools === "failed") return "Tools test failed: chat only, not usable for bot work";
+  if (row.localTools === "partial") return "Tools test passed with gaps. See Settings → Models";
   return "";
 }
 /** Is this row served by Flux Router — either one of Murage's own `flux-*`

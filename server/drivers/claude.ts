@@ -24,6 +24,7 @@ import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
 import { awaitCliTreeStopped, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { approvalSummary } from "../../shared/approval-summary.ts";
 
 import type {
   DriverCreateInput,
@@ -322,14 +323,14 @@ function questionTimeoutFor(value: unknown): number {
   const ms = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : QUESTION_TIMEOUT_MS;
   return Math.min(Math.max(ms, 1_000), 24 * 60 * 60_000);
 }
-const DUPLICATE_ASK_ID_NOTE = "Murage: duplicate ask id — skipping this request.";
+const DUPLICATE_ASK_ID_NOTE = "Murage: duplicate ask id, so this request is skipped.";
 
 /** The system-source reply for an ask that outlives the turn — used both to
  * drain in-flight `pending` asks on close() and to answer one that arrives
  * on an already-closed broker (see the `closed` branch below). */
 function systemEndedReply(kind: Ask["kind"]): { behavior: AskBehavior; message: string } {
   return kind === "question"
-    ? { behavior: "answer", message: "Murage: the turn is ending — wrap up." }
+    ? { behavior: "answer", message: "Murage: the turn is ending, so wrap up." }
     : { behavior: "deny", message: "Murage: the turn ended" };
 }
 
@@ -338,7 +339,7 @@ function askSummary(ask: Ask): string {
   const input = ask.input ?? {};
   if (ask.questions?.length) return ask.questions[0]!.question.slice(0, 300);
   if (typeof input.question === "string") return input.question.slice(0, 300);
-  if (typeof input.command === "string") return input.command.slice(0, 200);
+  if (typeof input.command === "string") return approvalSummary(input.command);
   if (typeof input.url === "string") return input.url.slice(0, 200);
   const text = JSON.stringify(input);
   return text === "{}" ? (ask.tool ?? "tool") : text.slice(0, 200);

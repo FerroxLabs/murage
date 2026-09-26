@@ -37,8 +37,8 @@ export function SecretRequestCard({
     : secret.resumed
       ? "Bot resumed without seeing the key"
       : error
-        ? "The key is safe; resuming failed"
-        : "Waiting to resume safely";
+        ? "The key is stored; resuming failed"
+        : "Waiting to resume";
 
   // A successful decline has no durable card to show. If its continuation
   // failed, bring the card back with the same retry affordance as a saved key.

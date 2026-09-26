@@ -319,7 +319,7 @@
   "searchSettings.intro": "Nutze die Suchtools deiner Engine oder wähle einen separaten Suchanbieter. Beim Speichern dieser Einstellungen wird keine Suche ausgeführt.",
   "searchSettings.unavailable": "Die Sucheinstellungen sind noch nicht verfügbar. Öffne die Einstellungen erneut, sobald die Verbindung wiederhergestellt ist.",
   "searchSettings.provider": "Suchanbieter",
-  "searchSettings.engineOption": "Engine-Tools — kein separates Suchkonto",
+  "searchSettings.engineOption": "Engine-Tools: kein separates Suchkonto",
   "searchSettings.offHelp": "Aus deaktiviert nur die integrierte Suche von Murage. Unabhängige Suchtools der Engine und von MCP können weiterhin verfügbar sein.",
   "searchSettings.engineHelp": "Deine Engine behält ihre bestehenden Tools. Ein Konto bei Tavily oder Exa ist nicht erforderlich.",
   "searchSettings.externalHelp": "Suchanfragen werden an den gewählten Drittanbieter gesendet und können zusätzliche Kosten verursachen. Es wird nicht automatisch auf einen anderen Anbieter ausgewichen.",
@@ -559,8 +559,8 @@
   "folderTrust.statusUpstream": "Vertrauenswürdig durch Ihre eigene Fuigo-Installation (fuigo --trust) – seine Dateien gelten unabhängig davon, was Murage gespeichert hat",
   "folderTrust.statusNothing": "Hier gibt es noch nichts, dem vertraut werden könnte",
   "folderTrust.statusRefused": "Die Züge dieses Bots würden nicht starten: {reason}",
-  "folderTrust.statusNotGated": "Von der Engine dieses Bots nicht gesperrt — die Dateien des Ordners gelten wie bisher",
-  "folderTrust.perMember": "Pro Mitglied — die Engine jedes Mitglieds entscheidet selbst:",
+  "folderTrust.statusNotGated": "Von der Engine dieses Bots nicht gesperrt: die Dateien des Ordners gelten wie bisher",
+  "folderTrust.perMember": "Pro Mitglied: die Engine jedes Mitglieds entscheidet selbst:",
   "folderTrust.forget": "Vergessen",
   "folderTrust.forgetError": "Die Vertrauensentscheidung für diesen Ordner konnte nicht vergessen werden."
 }

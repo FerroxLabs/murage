@@ -621,7 +621,7 @@ export function LocalVmWorkspace({
         setControlledBotId(null);
       })
       .catch(() => {
-        setControlError("The removed pane could not hand control back safely.");
+        setControlError("The removed pane could not hand control back cleanly.");
       });
   }, [controlPort, slots]);
 
@@ -711,7 +711,7 @@ export function LocalVmWorkspace({
         setControlledBotId(botId);
       } catch {
         setControlledBotId(controlledBotIdRef.current);
-        setControlError("Control could not switch safely. Any remaining hold stayed paused.");
+        setControlError("Control could not switch cleanly. Any remaining hold stayed paused.");
       } finally {
         controlBusyRef.current = false;
         setControlPending(false);

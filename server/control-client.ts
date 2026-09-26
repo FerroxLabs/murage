@@ -138,7 +138,7 @@ export function createControlClient(options?: {
  * happened, don't retry blindly, and how to wait properly. */
 export const CONTROL_REFUSAL =
   "A person has taken control of this computer, so this call was NOT performed. " +
-  "Do not retry it — the screen is changing under their hands. " +
+  "Do not retry it: the screen is changing under their hands. " +
   "Call computer_request_help (no reason needed) to wait for them to finish, " +
   "then take a fresh screenshot before your next action.";
 
@@ -147,7 +147,7 @@ export const CONTROL_REFUSAL =
  * pause, not to call anything. */
 export const CONTROL_REFUSAL_PLAIN =
   "A person has taken control of this computer, so this call was NOT performed. " +
-  "Do not retry it — the screen is changing under their hands. " +
+  "Do not retry it: the screen is changing under their hands. " +
   "Pause this task, tell the person you are waiting for them to hand control back, " +
   "and take a fresh screenshot before your next action once they have.";
 

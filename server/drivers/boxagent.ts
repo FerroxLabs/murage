@@ -89,7 +89,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       const boxId = computer && (!computer.kind || computer.kind === "box") ? computer.boxId : undefined;
       if (!token) throw new Error("Cloud VM is not connected yet. Add your Box key in App Settings → Tools & Connections.");
       if (!boxId) {
-        throw new Error("this bot has no computer yet — open the Computer panel and provision one");
+        throw new Error("this bot has no computer yet: open the Computer panel and provision one");
       }
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       const turnId = newId();
@@ -97,7 +97,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
 
       const prompt = [
         turn.system,
-        "You are working on your own cloud computer — its desktop, Chrome, and shell are yours.",
+        "You are working on your own cloud computer: its desktop, Chrome, and shell are yours.",
         "",
         turn.text,
       ]
@@ -217,7 +217,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               }
             }
             if (Date.now() - startedAt > 30 * 60_000) {
-              throw new Error("box run exceeded 30 minutes — interrupted");
+              throw new Error("box run exceeded 30 minutes: interrupted");
             }
           }
           // Murage stopped the turn: the shared cancelled state every driver

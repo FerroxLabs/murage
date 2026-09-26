@@ -558,8 +558,8 @@ function TabStrip({ pane, dispatch, currentScope, labelForScope }: {
               aria-controls={`workspace-file-panel-${tab.id}`}
               tabIndex={activeTab ? 0 : -1}
               aria-selected={activeTab}
-              aria-label={foreign ? `${label} — ${t("workspacePane.fromConversation", { scope: labelForScope(tab.scope) })}` : label}
-              title={foreign ? `${tab.relativePath} — ${t("workspacePane.fromConversation", { scope: labelForScope(tab.scope) })}` : tab.relativePath}
+              aria-label={foreign ? `${label}: ${t("workspacePane.fromConversation", { scope: labelForScope(tab.scope) })}` : label}
+              title={foreign ? `${tab.relativePath}: ${t("workspacePane.fromConversation", { scope: labelForScope(tab.scope) })}` : tab.relativePath}
               className={cn("flex min-w-0 items-center gap-1.5 py-1 pl-2 pr-8 focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus", tab.mode === "preview" && !tab.pinned && "italic")}
               onClick={() => dispatch({ type: "activate", id: tab.id })}
               onKeyDown={event => {
@@ -805,7 +805,7 @@ function WorkspaceDocument({ tab, api, dispatch, editorFor, editors, nativeActio
           <button type="button" className={button} onClick={() => setCopyName(null)}>{t("workspacePane.closeUnsaved.cancel")}</button>
         </form>
       )}
-      {read && read.bytes > 0 && <p className="text-[11.5px] text-ink-secondary">{t("workspacePane.workingFile", { size: formatFileSize(read.bytes), modified: read.modifiedAt ? new Date(read.modifiedAt).toLocaleString() : "—" })} · {t("workspacePane.workingFileNote")}</p>}
+      {read && read.bytes > 0 && <p className="text-[11.5px] text-ink-secondary">{t("workspacePane.workingFile", { size: formatFileSize(read.bytes), modified: read.modifiedAt ? new Date(read.modifiedAt).toLocaleString() : "unknown" })} · {t("workspacePane.workingFileNote")}</p>}
       {notice && <p role="status" data-testid="workspace-document-notice" className="text-[12.5px] text-ink-secondary">{notice}</p>}
       {error && <p role="alert" className="text-[12.5px] text-danger">{error}</p>}
       {missing && <p role="alert" data-testid="workspace-document-missing" className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[12.5px]">{t("workspacePane.missingOnDisk")}</p>}

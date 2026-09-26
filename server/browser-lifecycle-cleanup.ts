@@ -104,7 +104,7 @@ export async function finalizeBrowserCleanupMutation<T>(options: {
 
 function unavailableJournalError(error: Error): Error & { status: number } {
   return Object.assign(new Error(
-    "The browser cleanup journal could not be read safely. Browser profile reuse and deletion are blocked "
+    "The browser cleanup journal could not be read. Browser profile reuse and deletion are blocked "
     + `until the journal is repaired (${error.message}).`,
   ), { status: 503, cause: error });
 }

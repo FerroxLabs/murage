@@ -21,6 +21,7 @@ import { t } from "@/lib/i18n";
 import { isRasterDataUrl, MarkdownImage } from "./ImageMedia";
 import { LocalMedia } from "./MediaPlayer";
 import { remarkWindowsPathDestinations } from "@/lib/markdown-windows-paths";
+import { remarkLoneListNumbers } from "@/lib/markdown-lone-number";
 import { relativeFileLink } from "@/lib/workspace-links";
 import { conversationLinkPath } from "@/lib/media-resolve";
 import { api } from "@/state/store";
@@ -300,7 +301,7 @@ function SaveFileLink({ filePath, children }: { filePath: string; children?: Rea
       <button
         type="button"
         onClick={() => void save()}
-        title={`Save a copy — ${filePath}`}
+        title={`Save a copy: ${filePath}`}
         className="[overflow-wrap:anywhere] text-left text-accent underline decoration-accent/40 hover:decoration-accent"
       >
         {children}
@@ -372,7 +373,7 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
   return (
     <div className="chat-md min-w-0 [&>*+*]:mt-2">
       <Markdown
-        remarkPlugins={[remarkGfm, remarkWindowsPathDestinations]}
+        remarkPlugins={[remarkGfm, remarkWindowsPathDestinations, remarkLoneListNumbers]}
         rehypePlugins={rehypePlugins}
         urlTransform={urlTransform}
         components={{
@@ -453,8 +454,9 @@ function ChatMarkdownComponent({ text, streaming = false, scope }: {
           ul({ children }: { children?: ReactNode }) {
             return <ul className="list-disc space-y-1 pl-5">{children}</ul>;
           },
-          ol({ children }: { children?: ReactNode }) {
-            return <ol className="list-decimal space-y-1 pl-5">{children}</ol>;
+          ol({ children, start }: { children?: ReactNode; start?: number }) {
+            // a list that begins at 3 must count from 3, not 1
+            return <ol start={start} className="list-decimal space-y-1 pl-5">{children}</ol>;
           },
           h1({ children }: { children?: ReactNode }) {
             return <div className="mt-2 text-[16px] font-semibold">{children}</div>;

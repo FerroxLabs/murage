@@ -43,7 +43,7 @@ export function parseVoiceList(stdout: string): Voice[] {
     const [, name, locale, sample] = match;
     const id = name.trim();
     if (!id) continue;
-    voices.push({ id, label: id, description: `${locale} — ${sample.trim()}` });
+    voices.push({ id, label: id, description: `${locale}: ${sample.trim()}` });
   }
   return voices;
 }

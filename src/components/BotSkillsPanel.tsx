@@ -481,14 +481,14 @@ export function SkillsBody(props: SkillsBodyProps) {
         )}
         {skill && !skill.enabled && skill.scan?.verdict === "blocked" && (
           <div role="note" className="mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">
-            This skill was blocked by the safety check and can't be switched on.
+            This skill was blocked by the skill check and can't be switched on.
             <ul className="mt-1 list-disc pl-4">{skillFindingLines(skill.scan).map((line) => <li key={line}>{line}</li>)}</ul>
           </div>
         )}
         {skill && props.confirming?.name === skill.name && (
           <div role="alertdialog" aria-label="Use this skill anyway?" className="mt-2 rounded-lg border border-warning/40 bg-card p-3 text-[12.5px] text-ink">
             <div className="font-medium">Use {skill.name} anyway?</div>
-            <p className="mt-1 text-ink-secondary">The safety check found:</p>
+            <p className="mt-1 text-ink-secondary">The skill check found:</p>
             <ul className="mt-1 list-disc pl-4 text-ink-secondary">{props.confirming.lines.map((line) => <li key={line}>{line}</li>)}</ul>
             <div className="mt-3 flex gap-2">
               <button type="button" onClick={() => props.onConfirm?.(true)} className="rounded-lg bg-warning px-3 py-1.5 text-[12.5px] font-medium text-white">Use it anyway</button>

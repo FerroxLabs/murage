@@ -48,7 +48,7 @@ function directoryIdentity(path:string):string {
   const missing:string[]=[];let current=path;
   for(;;){
     try{const canonical=join(realpathSync.native(current),...missing.reverse());return process.platform==="win32"?canonical.toLowerCase():canonical;}
-    catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw new Error("Claude configuration directory cannot be resolved safely.");const parent=dirname(current);if(parent===current)throw new Error("Claude configuration directory cannot be resolved safely.");missing.push(basename(current));current=parent;}
+    catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw new Error("Claude configuration directory cannot be resolved.");const parent=dirname(current);if(parent===current)throw new Error("Claude configuration directory cannot be resolved.");missing.push(basename(current));current=parent;}
   }
 }
 export function assertSeparateClaudeAccount(instances:InstanceConfigMap,id:string,entry:InstanceConfig):void {

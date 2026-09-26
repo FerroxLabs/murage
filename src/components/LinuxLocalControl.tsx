@@ -84,8 +84,8 @@ export function LinuxLocalControl() {
           <div className="flex gap-2 text-[12px] leading-relaxed text-ink-secondary">
             <AlertTriangle size={15} className="mt-0.5 shrink-0 text-danger" />
             <span>
-              Local control is available on Ubuntu Xorg. It remains disabled on Wayland until its input-safety
-              boundary is validated. Sign out and choose <strong className="font-medium text-ink">Ubuntu on Xorg</strong>
+              Local control is available on Ubuntu Xorg. It remains disabled on Wayland until its input
+              protection is validated. Sign out and choose <strong className="font-medium text-ink">Ubuntu on Xorg</strong>
               {" "}to use This computer; Chat, Cloud, Local VM, and screen preview still work here.
             </span>
           </div>

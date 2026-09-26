@@ -33,7 +33,7 @@ const render = (results: FolderTrustResult[] | null) => renderAt("/work/repo", r
 
 describe("folderTrustStatusLabel", () => {
   it("says what the engine will do with the folder's files on this bot's turn", () => {
-    expect(folderTrustStatusLabel(status())).toBe("Not decided yet — the first turn here will ask");
+    expect(folderTrustStatusLabel(status())).toBe("Not decided yet. The first turn here will ask");
     expect(folderTrustStatusLabel(status({ record: { decision: "trust", decidedAt: 1, source: "picker" } }))).toBe("Trusted");
     expect(folderTrustStatusLabel(status({ record: { decision: "reject", decidedAt: 1, source: "card" } }))).toBe("Not trusted");
     expect(folderTrustStatusLabel(status({ upstreamTrusted: true, record: { decision: "reject", decidedAt: 1, source: "card" } }))).toContain("Trusted by your own Fuigo install");
@@ -48,7 +48,7 @@ describe("folderTrustStatusLabel", () => {
     expect(folderTrustStatusLabel(refused)).toBe("This bot's turns would not start: Selected provider connection is disabled or unavailable");
     expect(folderTrustStatusKind(refused)).toBe("refused");
     const cloud = status({ upstreamStore: "none", engineGates: false, instanceId: "computer", upstreamTrusted: false });
-    expect(folderTrustStatusLabel(cloud)).toBe("Not gated by this bot's engine — the folder's files apply as they always did");
+    expect(folderTrustStatusLabel(cloud)).toBe("Not gated by this bot's engine: the folder's files apply as they always did");
     expect(folderTrustStatusKind(cloud)).toBe("not-gated");
     // an older server without the fields: the FUIGOTRUST3 verdicts, unchanged
     const legacy: FolderTrustStatus = { gated: true, sources: ["AGENTS.md"], record: null, upstreamTrusted: true };
@@ -73,13 +73,13 @@ describe("folderTrustVerdicts", () => {
     const otherHome = result("Cy", { upstreamTrusted: false, upstreamStore: "own", instanceId: "fuigo-other-home", record: { decision: "reject", decidedAt: 1, source: "card" } });
     expect(folderTrustVerdicts([native, routed, otherHome])).toEqual({ shared: null, perMember: [native, routed, otherHome] });
     const html = render([native, routed, otherHome]);
-    expect(html).toContain("Per member — each member&#x27;s own engine decides:");
+    expect(html).toContain("Per member. Each member&#x27;s own engine decides:");
     expect(html).toContain('data-folder-trust-status="per-member"');
     // each member, by name, with its own verdict — the first member's is
     // never shown as the room's
     expect(html).toMatch(/data-folder-trust-status="upstream" data-folder-trust-member="Ada"[^<]*<svg.*?<\/svg><span[^>]*>Ada:<\/span>Trusted by your own Fuigo install/);
     expect(html).toMatch(/data-folder-trust-status="undecided" data-folder-trust-member="Bob"/);
-    expect(html).toContain("Bob:</span>Not decided yet — the first turn here will ask");
+    expect(html).toContain("Bob:</span>Not decided yet. The first turn here will ask");
     expect(html).toMatch(/data-folder-trust-status="reject" data-folder-trust-member="Cy"/);
     expect(html).toContain("Cy:</span>Not trusted");
     // one Forget for the record that exists, and the sources line once

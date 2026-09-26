@@ -157,7 +157,7 @@ export function formatObserved(page: ObservedPage): string {
   const notes = [...(page.notes ?? []), ...(wall ? [wallNote(wall)] : [])];
   const empty = page.readiness === "unknown" ? "Readiness unknown: no accessible content observed yet." : "(empty page)";
   if (page.yaml !== undefined && page.yaml !== null) {
-    return [`Browser — ${page.title || "Untitled"}: ${url}`, page.yaml || empty, ...notes].join("\n");
+    return [`Browser: ${page.title || "Untitled"}: ${url}`, page.yaml || empty, ...notes].join("\n");
   }
   const lines = page.elements.map((element) => {
     const flags = [
@@ -167,7 +167,7 @@ export function formatObserved(page: ObservedPage): string {
     ].filter(Boolean);
     return `${element.ref} ${element.role} ${JSON.stringify(element.name)}${flags.length ? ` (${flags.join(", ")})` : ""}`;
   });
-  return [`Browser — ${page.title || "Untitled"}: ${url}`, lines.join("\n") || (page.readiness === "unknown" ? empty : "No interactive elements found."), ...notes].join("\n");
+  return [`Browser: ${page.title || "Untitled"}: ${url}`, lines.join("\n") || (page.readiness === "unknown" ? empty : "No interactive elements found."), ...notes].join("\n");
 }
 
 export type HostRequest = (operation: string, body?: object) => Promise<unknown>;
@@ -212,7 +212,7 @@ export const TOOLS = [
   {
     name: "browser_navigate",
     description:
-      "Open a web address in this bot's built-in browser tab (the user can watch it in the Browser panel). Returns the page's interactive elements with refs — do not follow it with browser_snapshot.",
+      "Open a web address in this bot's built-in browser tab (the user can watch it in the Browser panel). Returns the page's interactive elements with refs: do not follow it with browser_snapshot.",
     inputSchema: { type: "object", properties: { url: { type: "string", description: "http(s) address; the scheme may be omitted." } }, required: ["url"] },
   },
   {
@@ -232,7 +232,7 @@ export const TOOLS = [
   },
   {
     name: "browser_fill",
-    description: "Replace the text of one field ref with new text, then return the page. Never enter passwords, payment details, or one-time codes — ask the user to do that in the Browser panel.",
+    description: "Replace the text of one field ref with new text, then return the page. Never enter passwords, payment details, or one-time codes: ask the user to do that in the Browser panel.",
     inputSchema: { type: "object", properties: { ref: REF_PROPERTY, text: { type: "string", maxLength: 4000 } }, required: ["ref", "text"] },
   },
   {
@@ -286,7 +286,7 @@ export const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        text: { type: "string", description: "Text to wait for, anywhere in the document — not only the part on screen." },
+        text: { type: "string", description: "Text to wait for, anywhere in the document: not only the part on screen." },
         url: { type: "string", description: "A substring the address must contain." },
         timeout_ms: { type: "integer", minimum: 250, maximum: 30000 },
       },
@@ -296,7 +296,7 @@ export const TOOLS = [
   {
     name: "browser_read",
     description:
-      "Read the page's rendered text (articles, results, tables) as plain text. Covers the whole document, not just the part on screen, so browser_scroll does not change what it returns; a long page is cut with a note saying so. For understanding content, not for acting — use browser_snapshot for things to click.",
+      "Read the page's rendered text (articles, results, tables) as plain text. Covers the whole document, not just the part on screen, so browser_scroll does not change what it returns; a long page is cut with a note saying so. For understanding content, not for acting: use browser_snapshot for things to click.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -376,7 +376,7 @@ async function requestTakeover(reason: string, request: HostRequest, waitMs = TA
     if (!state.held && !state.helpOpen) {
       const page = await observed(request, "snapshot");
       const lead = sawHold
-        ? "The user has finished and handed control back. Here is the page as it is now — continue from it, and never repeat what they did."
+        ? "The user has finished and handed control back. Here is the page as it is now: continue from it, and never repeat what they did."
         : "The user dismissed the request without taking control. Carry on yourself if you can, or ask them in chat.";
       return { content: [{ type: "text", text: `${lead}\n\n${page.content[0]?.type === "text" ? page.content[0].text : ""}` }] };
     }

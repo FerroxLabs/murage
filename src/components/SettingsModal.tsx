@@ -200,7 +200,7 @@ export function updatesSubtitle(s: UpdaterState | null): string {
         : s?.status === "downloading"
           ? s.percent == null ? "Starting download…" : `Downloading ${Math.round(s.percent)}%`
           : s?.status === "downloaded"
-            ? s.installMode === "handoff" ? `${s.version} ready — finish in a terminal` : `${s.version} ready — restart to apply`
+            ? s.installMode === "handoff" ? `${s.version} ready. Finish in a terminal` : `${s.version} ready. Restart to apply`
             : s?.status === "installing"
               ? "Preparing the update…"
               : s?.status === "handed-off"

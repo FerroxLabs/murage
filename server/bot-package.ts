@@ -242,7 +242,7 @@ export function renderBotPackageMarkdown(document: ParsedBotPackage): string {
   const pkg = parseBotPackage(document).package;
   const frontmatter = stringifyYaml({ emberbot: EMBERBOT_MARKDOWN_VERSION, ...pkg }, { lineWidth: 0 }).trim();
   const agents = pkg.agents.map((agent) => [
-    `### ${agent.name} — ${agent.title || "Specialist"}`,
+    `### ${agent.name}: ${agent.title || "Specialist"}`,
     `**Role key:** \`${agent.key}\``,
     `**Role:** ${agent.role === "chief" ? "Chief of Staff" : agent.role === "leader" ? "Team leader" : agent.role === "individual" ? "Individual bot" : pkg.chiefOfStaff === agent.key ? "Chief of Staff (blueprint intent)" : "Team member"}${agent.team ? ` · ${agent.team}` : ""}`,
     agent.playbooks?.length ? `**Use these playbooks:** ${agent.playbooks.map((key) => `\`${key}\``).join(", ")}` : "",
@@ -267,7 +267,7 @@ export function renderBotPackageMarkdown(document: ParsedBotPackage): string {
           : `once at ${routine.schedule.at}`
     }  `,
     `**Run limit:** ${routine.timeoutMinutes === undefined ? "none" : `${routine.timeoutMinutes} minutes`}  `,
-    "**Initial state:** paused — the user must enable it",
+    "**Initial state:** paused until the user enables it",
     "",
     routine.prompt,
   ].join("\n")).join("\n\n");

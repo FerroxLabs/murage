@@ -352,7 +352,7 @@ export function suggestTeam(profile: ProjectProfile): TeamSuggestion {
       description: `You do the hands-on work in ${profile.name}: read the folder, make the change, show the result.${stackLine(profile)}`,
       appearance: { color: "blue" },
     });
-    reasons.builder = "No specific stack detected — a generalist covers the ground.";
+    reasons.builder = "No specific stack detected: a generalist covers the ground.";
   }
 
   const manifest: TeamManifestV2 = {

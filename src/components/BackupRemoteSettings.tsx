@@ -200,7 +200,7 @@ export function OffsiteCleanup({r}:{r:RemoteController}){
    </>}
    {currentPreview.lockRelease&&<p className="text-[12px] text-warning">The provider did not confirm the repository lock was released. Removal may be refused until the lock is cleared at the provider.</p>}
   </div>}
-  {status.retention&&<p role="status" className="text-[13px] text-ink-secondary">Last removal: {status.retention.state==="complete"?"completed":status.retention.state==="needs-review"?"needs review — "+(status.retention.error?retentionIssues[status.retention.error]:"the result could not be confirmed"):"not finished; needs review"}. This is saved evidence, not a live storage check.</p>}
+  {status.retention&&<p role="status" className="text-[13px] text-ink-secondary">Last removal: {status.retention.state==="complete"?"completed":status.retention.state==="needs-review"?"needs review: "+(status.retention.error?retentionIssues[status.retention.error]:"the result could not be confirmed"):"not finished; needs review"}. This is saved evidence, not a live storage check.</p>}
   {status.retention&&["needs-review","forgetting","pruning"].includes(status.retention.state)&&status.retention.previewId&&<button className={buttonClass} type="button" disabled={locked||!binding||!bridge.clearRetentionReview} onClick={()=>void run("clear",async(api,expected)=>{const previewId=status.retention?.previewId;if(!binding||!previewId)return;await api.clearRetentionReview!(binding.ref,binding.revision,previewId);await refresh(expected);if(mounted.current)setNotice("Removal review cleared. Preview again before removing anything.");})}>{busy==="clear"?"Clearing review…":"Mark removal reviewed"}</button>}
   <RemoteMessages r={r} area="cleanup"/>
  </div>;

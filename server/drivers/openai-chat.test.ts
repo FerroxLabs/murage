@@ -577,7 +577,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(completed).toMatchObject({ ok: false, stopReason: "error" });
     expect(replies(recorder.events)).toEqual([]);
     expect(errors(recorder.events)).toEqual([
-      "Could not reach chat.invalid — nothing answered there. Check that the server is running and that its address is right.",
+      "Could not reach chat.invalid: nothing answered there. Check that the server is running and that its address is right.",
     ]);
     expect(errors(recorder.events)[0]).not.toContain("fetch failed");
   });
@@ -594,7 +594,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
 
     expect(completed).toMatchObject({ ok: false, stopReason: "error" });
     expect(errors(events)).toEqual([
-      "Could not reach chat.invalid — nothing answered there. Check that the server is running and that its address is right.",
+      "Could not reach chat.invalid: nothing answered there. Check that the server is running and that its address is right.",
     ]);
   });
 

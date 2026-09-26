@@ -258,7 +258,7 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
       await expect.poll(() => busy(bot.id), { timeout: 15_000, interval: 100 }).toBe(false);
       expect((await botView(bot.id))?.tasks?.[0]?.activity).toBe("idle");
       const messages = await messagesOf(bot.threadId);
-      expect(messages.some((message) => message.kind === "activity" && (message.tool?.name ?? "").startsWith("retrying — attempt 2/"))).toBe(true);
+      expect(messages.some((message) => message.kind === "activity" && (message.tool?.name ?? "").startsWith("retrying: attempt 2/"))).toBe(true);
       expect(messages.map((message) => message.tool?.name ?? "").filter((name) => name.startsWith("error:"))).toEqual([]);
       // and a follow-up send dispatches at once instead of queueing behind
       // a run that will never settle

@@ -489,7 +489,7 @@ export function resolveFuigoCli(
     accessSync(bundled, constants.X_OK);
   } catch {
     throw new Error(
-      `fuigo is unavailable: the bundled engine at ${bundled} is not executable — its executable bit did not ` +
+      `fuigo is unavailable: the bundled engine at ${bundled} is not executable; its executable bit did not ` +
         "survive packaging",
     );
   }

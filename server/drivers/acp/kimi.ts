@@ -549,7 +549,7 @@ const support: AcpSupport = {
   resolveModels: (env) => mergeLocalInject(readKimiModelCatalog(env), env),
   defaultCli: "kimi",
   nativeSource: "kimi.acp",
-  loginNote: "Kimi Code CLI is not signed in — run `kimi login` in a terminal",
+  loginNote: "Kimi Code CLI is not signed in: run `kimi login` in a terminal",
 
   // Official installers put the binary on PATH without requiring an existing
   // Node install. Keep the commands platform-specific so Windows never gets a

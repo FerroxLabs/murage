@@ -234,5 +234,5 @@ export function endpointName(url: string | undefined | null): string {
  *  the server, then check again." — src/components/LocalModelsSettings.tsx).
  *  Stays inside ERROR_MESSAGE_MAX so the transcript does not truncate it. */
 export function unreachableEndpointMessage(url: string | undefined | null): string {
-  return `Could not reach ${endpointName(url)} — nothing answered there. Check that the server is running and that its address is right.`;
+  return `Could not reach ${endpointName(url)}: nothing answered there. Check that the server is running and that its address is right.`;
 }

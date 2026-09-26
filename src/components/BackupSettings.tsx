@@ -211,7 +211,7 @@ export function RecoveryKeyKeepsafe({s}:{s:ScheduleController}) {
   if(!createdKey)return null;
   return <div role="status" className="min-w-0 space-y-2 rounded-lg border border-hairline/40 p-3 text-[13px] text-ink">
     <p className="break-words font-medium">Your recovery key is {createdKey.label}, saved in {createdKey.folder}.</p>
-    <p className="text-ink-secondary">It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else — a USB drive, another computer, or your password manager.</p>
+    <p className="text-ink-secondary">It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else: a USB drive, another computer, or your password manager.</p>
     {keyCopy&&<p className="break-words text-ink-secondary">A copy was saved as {keyCopy}.</p>}
     {s.saveKeyCopy&&<div className="flex flex-wrap gap-2">
       <button type="button" className={primaryButton} disabled={s.busy} onClick={s.saveKeyCopy}>Save a copy…</button>

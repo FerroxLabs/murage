@@ -215,7 +215,7 @@ export function registerArtifact(db: DatabaseSync, storageRoot: string, input: A
   } catch (error) {
     if (error instanceof ArtifactError) throw error;
     if ((error as NodeJS.ErrnoException).code === "ENOENT") fail(404, "That file was not found inside this task's workspace.");
-    fail(409, "The file could not be safely saved. The original was preserved.");
+    fail(409, "The file could not be saved. The original was preserved.");
   }
 }
 
