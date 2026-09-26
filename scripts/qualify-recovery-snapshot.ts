@@ -10,6 +10,7 @@ import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { writeInstallationArchive } from "../server/installation-archive.ts";
 import { prepareInstallationRestore } from "../server/installation-restore-preparation.ts";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
+import { initializeMessageTables } from "../server/message-tables.ts";
 
 assert.equal(process.platform, "win32");
 assert.equal(process.env.GITHUB_ACTIONS, "true");
@@ -36,9 +37,8 @@ for (const scenario of ["cancel", "identity", "unc", "overlap", "idle", "concurr
   writeFileSync(join(source, "config.json"), JSON.stringify(config));
   writeFileSync(join(source, "bots.json"), JSON.stringify([{ id: "bot", threadId: "t", name: "Preserved", busy: false }]));
   const db = new DatabaseSync(join(source, "messages.db"));
-  db.exec(`PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
-    CREATE TABLE messages(thread_id TEXT,id TEXT,at INTEGER,role TEXT,kind TEXT,text TEXT,json TEXT,PRIMARY KEY(thread_id,id));
-    CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY,active_leaf_id TEXT);`);
+  // The app's own tables: the snapshot accepts only definitions it creates.
+  db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;"); initializeMessageTables(db);
   let sequence = 0;
   const insert = () => {
     const id = `m${++sequence}`;
