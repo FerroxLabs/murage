@@ -6,7 +6,8 @@
 // (the page's CSP allows only its own files), read by renderer.js and by
 // installation-recovery-messages.node-test.mjs.
 (function (root) {
-  const KEY_WRONG = "That recovery key doesn't open this backup, so nothing was restored. Choose the recovery key that was made with this backup (murage-recovery-key.txt, or your copy of it).";
+  // age reports a wrong key and a damaged file the same way, so this names both.
+  const KEY_WRONG = "Murage couldn't open this backup with that recovery key, so nothing was restored. Either the key isn't the one made with this backup, or the backup file is damaged. Try your copy of the key, or choose another backup.";
   const KEY_NOT_A_KEY = "That file isn't a Murage recovery key. Choose murage-recovery-key.txt, or the copy of it you saved.";
   const KEY_INSIDE = "Keep the recovery key outside Murage's own data folder, then choose it from there.";
   const KEY_NEEDS_ORIGINAL = "To make a backup here, choose the original recovery key file Murage made, not a copy that was edited.";

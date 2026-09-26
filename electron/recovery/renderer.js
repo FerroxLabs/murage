@@ -5,7 +5,7 @@ const recoveryMessage = code => globalThis.murageRecoveryMessages.sentence(code)
 function render(state) {
   current = state;
   document.documentElement.dataset.skin = state.context?.skin === "light" ? "light" : "dark";
-  byId("page-heading").textContent=state.context?.backupMode?"Backup mode":"Recover this installation";
+  byId("page-heading").textContent=state.context?.backupMode?"Backup mode":"Restore or recover Murage";
   byId("encrypted-backup").hidden=!state.encryptedAvailable;
   byId("reason").textContent = state.context?.reason || "Murage needs your attention before it can start. Your data is kept as it is.";
   byId("location").textContent = state.context?.dataDirectory || "Murage can't see its data folder right now.";
