@@ -725,6 +725,16 @@ export class ConversationDeletions {
       for (const root of new Set([dirs.workspaces, realWorkspaces].filter((dir): dir is string => Boolean(dir)))) folders.push(nodePath.join(root, botId));
       for (const root of [dirs.workspaces, dirs.skillState, dirs.checkpoints]) record(removeConfined(root, nodePath.join(root, botId)), nodePath.join(root, botId), removed, failed);
     }
+    // Antigravity's own per-thread folder when a turn has none
+    // (drivers/antigravity.ts: workspaces/<thread id>), and the engine
+    // history kept for it.
+    for (const threadId of threadIds) {
+      const own = nodePath.join(dirs.workspaces, threadId);
+      const stat = lstatOrNull(own);
+      if (!stat || stat.isSymbolicLink() || !stat.isDirectory() || lstatOrNull(nodePath.join(own, "threads"))) continue;
+      for (const root of new Set([dirs.workspaces, realWorkspaces].filter((dir): dir is string => Boolean(dir)))) folders.push(nodePath.join(root, threadId));
+      record(removeConfined(dirs.workspaces, own), own, removed, failed);
+    }
     // pinned bundles can exist for a thread whose folder was never made
     for (const botId of listDir(dirs.skillState).filter((name) => ID.test(name))) {
       for (const threadId of threadIds) {

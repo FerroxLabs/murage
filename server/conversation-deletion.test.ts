@@ -118,6 +118,7 @@ function messagesDb(dir: string) {
 function seed(data: string, fuigoHome: string, claudeHome: string, codexHome: string, db: DatabaseSync) {
   const desk = join(data, "workspaces", BOT, "threads", THREAD);
   touch(join(desk, "notes", "pipeline.md"), "mail");
+  touch(join(data, "workspaces", THREAD, "agy-notes.md"), "mail");
   touch(join(data, "workspaces", BOT, "MEMORY.md"), "bot memory");
   touch(join(data, "workspaces", BOT, "threads", OTHER, "keep.md"));
   touch(join(data, "events", `${THREAD}.ndjson`));
@@ -167,6 +168,7 @@ describe("ConversationDeletions", () => {
     expect(order).toEqual(["commit", "settle-before-files"]);
 
     expect(existsSync(seeded.desk)).toBe(false);
+    expect(existsSync(join(data, "workspaces", THREAD))).toBe(false);
     expect(existsSync(join(data, "events", `${THREAD}.ndjson`))).toBe(false);
     expect(existsSync(join(data, "native", `${THREAD}.ndjson`))).toBe(false);
     expect(existsSync(join(data, "native", `${THREAD}.previous.ndjson`))).toBe(false);
