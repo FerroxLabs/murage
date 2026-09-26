@@ -201,6 +201,8 @@ describe("a mktemp file made in the bot's own folder", () => {
     // the exact commands from the report
     'tmp=$(mktemp ./scratch.XXXXXX); echo hello > "$tmp"; rtk read "$tmp"; rm "$tmp"',
     'tmp=$(mktemp notes-tmp.XXXXXX) && echo hi > "$tmp" && cat "$tmp" && rm "$tmp"',
+    // the exact command from the 0.1.60 Linux re-test 2 (R1 / D3)
+    'tmp=$(mktemp ./tmp.XXXXXX); echo x > "$tmp"; rm "$tmp"; echo cleaned',
     'tmp=$(mktemp); echo hello > "$tmp"; rm "$tmp"',
     // the other ways a bot writes the same thing
     'tmp=$(mktemp -p "$PWD"); echo x > "$tmp"; rm "$tmp"',
@@ -234,6 +236,15 @@ describe("a mktemp file made in the bot's own folder", () => {
       expect(deletesPlacedInside(command, own)).toBe(true);
     });
   }
+
+  // the same command on a Linux home (0.1.60 Linux re-test 2, R1 / D3)
+  it("placed inside on a Linux home: the Linux report's exact command", () => {
+    const linuxThread = "/home/tester/.murage/workspaces/ember/threads/t1";
+    const linux: StopLinePlace = { cwd: linuxThread, roots: [linuxThread, "/tmp"], home: "/home/tester", knownRecipients: new Set() };
+    const command = 'tmp=$(mktemp ./tmp.XXXXXX); echo x > "$tmp"; rm "$tmp"; echo cleaned';
+    expect(classifyStopLine("Bash", { command }, command, linux)).toBeNull();
+    expect(deletesPlacedInside(command, linux)).toBe(true);
+  });
 
   const outside: Array<[string, string]> = [
     ['tmp=$(mktemp ../x.XXXX); rm "$tmp"', "Delete 1 item outside its folder: ~/.murage/workspaces/dax/threads/x.XXXX"],
