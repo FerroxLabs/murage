@@ -35,7 +35,7 @@ test("the off-site control folder accepts the case-folded data-folder spelling W
  // The same spelling drives the whole create flow the Backups page uses.
  const documents=path.join(home,"Documents");mkdirSync(documents);
  const store=createRemotePasswordStore({excludedRoots:()=>[installation,ensureRemoteControlDirectory(control)],readProtected:async()=>({}),updateProtected:async derive=>derive({}),
-  createFolders:()=>[documents],createExcludedRoots:async()=>[],restrict:()=>{},uid:1});
+  createFolders:()=>[documents],createExcludedRoots:async()=>[],restrict:()=>{},restrictDirectory:()=>{},checkPrivate:()=>{},uid:1});
  return store.create().then(created=>{assert.match(path.basename(created.path),/^murage-offsite-password\.txt$/i);});
 });
 
@@ -65,17 +65,53 @@ test("real Windows: control folder, work tree and password file work through the
  assert.equal(path.dirname(created.path).toLowerCase(),documents.toLowerCase());
 });
 
-test("Windows off-site state lives in a short folder under the app's settings, POSIX beside the data folder (W-D2)",async()=>{
+test("Windows off-site state lives in a short folder under local app data, POSIX beside the data folder (W-D2, W-A4)",async()=>{
  const {remoteControlDirectory}=await import("./backup-remote-runtime.mjs");
  const digest="c9a82ed042c951deeb69a7b63e9ec69aed1bfc533b8ac2666f8c70dcb68da2b5";
  // A restored install's control folder, as it was on the VM.
  const restored=`c:\\users\\sam lee\\appdata\\roaming\\murage\\recovered-installations\\790e917b-f351-445f-8995-948856a70103\\.murage-backup-control\\${digest}`;
  const posix=`/home/sam/.murage-backup-control/${digest}`;
- assert.equal(remoteControlDirectory({control:posix,userData:"/home/sam/.config/murage",platform:"linux"}),posix);
- const windows=remoteControlDirectory({control:restored,userData:"C:\\Users\\Sam Lee\\AppData\\Roaming\\murage",platform:"win32"});
- assert.equal(windows,`C:\\Users\\Sam Lee\\AppData\\Roaming\\murage\\offsite\\${digest.slice(0,16)}`);
+ assert.equal(remoteControlDirectory({control:posix,userData:"/home/sam/.config/murage",localAppData:null,platform:"linux"}),posix);
+ const windows=remoteControlDirectory({control:restored,userData:"C:\\Users\\Sam Lee\\AppData\\Roaming\\murage",localAppData:"C:\\Users\\Sam Lee\\AppData\\Local",platform:"win32"});
+ assert.equal(windows,`C:\\Users\\Sam Lee\\AppData\\Local\\murage\\offsite\\${digest.slice(0,16)}`);
  // remote\<uuid>\<revision>\ssh-XXXXXX\known_hosts, plus a mkdtemp name, stays well inside 248.
  const deepest=[windows,"remote","1932102c-386c-4e31-923b-bc7f5eabe20c","12345","restic-restore-XXXXXX","known_hosts"].join("\\");
  assert.ok(deepest.length<180,`${deepest.length}`);
- assert.throws(()=>remoteControlDirectory({control:"c:\\x\\not-a-digest",userData:"C:\\u",platform:"win32"}),/BACKUP_REMOTE_REVIEW_REQUIRED/);
+ // Without usable local app data, a local userData still works.
+ assert.equal(remoteControlDirectory({control:restored,userData:"C:\\Users\\Sam Lee\\AppData\\Roaming\\murage",localAppData:null,platform:"win32"}),`C:\\Users\\Sam Lee\\AppData\\Roaming\\murage\\offsite\\${digest.slice(0,16)}`);
+ assert.throws(()=>remoteControlDirectory({control:"c:\\x\\not-a-digest",userData:"C:\\u",localAppData:"C:\\l",platform:"win32"}),/BACKUP_REMOTE_REVIEW_REQUIRED/);
+});
+
+// W-A4 (0.1.60 audit): with AppData\Roaming redirected to a network share
+// (Folder Redirection in company estates) userData is a UNC path. icacls and
+// ssh refuse it, so `<userData>\offsite` left off-site copies unavailable.
+test("a redirected (UNC) AppData still gives a local off-site folder that icacls and ssh accept (W-A4)",async()=>{
+ const {remoteControlDirectory}=await import("./backup-remote-runtime.mjs");
+ const {ownerOnlyIcaclsArguments}=await import("./backup-windows-acl.mjs");
+ const digest="a".repeat(64),control=`c:\\users\\sam lee\\.murage-backup-control\\${digest}`;
+ const userData="\\\\fs01\\profiles$\\samlee\\AppData\\Roaming\\murage";
+ const offsite=remoteControlDirectory({control,userData,localAppData:"C:\\Users\\samlee\\AppData\\Local",platform:"win32"});
+ const remote=`${offsite}\\remote`;
+ assert.doesNotThrow(()=>ownerOnlyIcaclsArguments(remote,"S-1-12-1-1-2-3-4",{directory:true}),remote);
+ assert.ok(!remote.startsWith("\\\\"),`BackupRestic.sshScratch() refuses UNC: ${remote}`);
+ // No usable local folder at all: refused up front, never a network path.
+ assert.throws(()=>remoteControlDirectory({control,userData,localAppData:null,platform:"win32"}),/BACKUP_REMOTE_REVIEW_REQUIRED/);
+ assert.throws(()=>remoteControlDirectory({control,userData,localAppData:"\\\\fs01\\local",platform:"win32"}),/BACKUP_REMOTE_REVIEW_REQUIRED/);
+});
+test("local app data is read from the environment in its real spelling, never as a network path (W-A4)",async()=>{
+ const {localAppDataDirectory}=await import("./backup-remote-runtime.mjs");
+ const realpath=value=>value.replace("SAMLEE~1","Sam Lee");
+ assert.equal(localAppDataDirectory({LOCALAPPDATA:"C:\\Users\\SAMLEE~1\\AppData\\Local"},{realpath}),"C:\\Users\\Sam Lee\\AppData\\Local");
+ for(const LOCALAPPDATA of [undefined,"","relative","\\\\fs01\\x","C:\\a\"b"])assert.equal(localAppDataDirectory({LOCALAPPDATA},{realpath}),null,String(LOCALAPPDATA));
+ assert.equal(localAppDataDirectory({LOCALAPPDATA:"C:\\gone"},{realpath:()=>{throw Error("ENOENT");}}),null);
+ assert.equal(localAppDataDirectory({LOCALAPPDATA:"H:\\x"},{realpath:()=>"\\\\?\\UNC\\fs01\\x"}),null);
+});
+
+test("real Windows: the off-site folder is created under local app data, owner-only below it (W-A4)",{skip:process.platform!=="win32"&&"real NTFS and icacls only"},async()=>{
+ const {remoteControlDirectory,localAppDataDirectory,ensureRemoteControlDirectory,remoteSshDirectory}=await import("./backup-remote-runtime.mjs");
+ const local=localAppDataDirectory();assert.ok(local);
+ const control=remoteControlDirectory({control:`c:\\nowhere\\${"f".repeat(64)}`,userData:"\\\\fs01\\redirected",localAppData:local,platform:"win32"});
+ assert.equal(ensureRemoteControlDirectory(control),control);
+ const ssh=remoteSshDirectory(control);assert.ok(ssh.toLowerCase().startsWith(local.toLowerCase()));
+ assert.ok(control.endsWith(`\\murage\\offsite\\${"f".repeat(16)}`));fs.rmSync(control,{recursive:true,force:true});
 });
