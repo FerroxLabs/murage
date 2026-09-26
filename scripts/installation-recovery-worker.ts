@@ -34,7 +34,7 @@ try {
   // Log-only, redacted: the step, errno and tool exit behind the code.
   let cause;try{cause=describeCaptureError(error)??undefined;}catch{/* Keep the original failure. */}
   // The item inside the data folder the refusal is about, so the page can name it.
-  const path=captureFailurePath(error&&typeof error==="object"&&"path" in error?error.path:undefined);
+  let path;try{path=captureFailurePath(error&&typeof error==="object"&&"path" in error?error.path:undefined);}catch{/* Keep the original failure. */}
   reply = { ok: false, error: code, ...(path?{path}:{}), ...(retainedDirectory?{retainedDirectory}:{}),...(backupAgeAttestation?{backupAgeAttestation}:{}),...(cause?{cause}:{}) };
   exitCode = 1;
 }
