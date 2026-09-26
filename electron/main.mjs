@@ -18,7 +18,7 @@ import { backupRefusal } from "./backup-waiting.mjs";
 import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
-import { exportRemoteBackup } from "./backup-remote-export.mjs";
+import { downloadFolderShared, exportRemoteBackup } from "./backup-remote-export.mjs";
 import { remoteWorkDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
@@ -3423,7 +3423,21 @@ async function initializeBackupRemoteHost(){
     readProtected,updateProtected:updateSecureCredentialDocument,selectPassword:()=>passwords.select(),createPassword:()=>passwords.create(),copyPassword:passwordRef=>passwords.saveCopy(passwordRef),
     latestVerified:()=>backupScheduleHost.latestVerifiedArtifact(),
     latestReceipt:()=>backupScheduleHost.internalStatus().lastVerified,
-    chooseDownloadFolder:async()=>{const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",properties:["openDirectory","createDirectory"]});return result.canceled?null:result.filePaths[0]??null;},
+    // Starts in the home folder, which only its owner can change on every
+    // desktop Murage runs on. A folder others can change (Ubuntu's ~/Documents
+    // is group-writable) is refused right here, by name, with what to pick,
+    // instead of after the download as "could not be confirmed" (Linux D8).
+    chooseDownloadFolder:async()=>{
+      for(;;){
+        const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",defaultPath:app.getPath("home"),properties:["openDirectory","createDirectory"]});
+        const folder=result.canceled?null:result.filePaths[0]??null;
+        if(!folder||!downloadFolderShared(folder))return folder;
+        const answer=await dialog.showMessageBox(mainWindow,{type:"warning",buttons:["Cancel","Choose another folder"],defaultId:1,cancelId:0,noLink:true,
+          message:`Other accounts on this computer can change the folder "${path.basename(folder)||folder}", so Murage won't save a backup there.`,
+          detail:`A backup is only saved where nobody else can swap the file while it is written. Folder: ${folder}\n\nChoose your home folder, or a folder only you can change. To keep using this one, remove the others' write access first, for example: chmod go-w "${folder}"`});
+        if(answer.response!==1)return null;
+      }
+    },
     exportDownloaded:async(copy,folder)=>exportRemoteBackup(copy,folder,{sourceRoot:control,excludedRoots:[installation,app.getPath("userData"),control]}),
     // SFTP uses the system's own OpenSSH client at a fixed absolute path; a
     // missing one reaches the window as "how to add it". The owner pressing
