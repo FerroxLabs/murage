@@ -68,3 +68,22 @@ export function withSignedOutEngines<T extends { decisions: number; connections:
   if (rows.length === 0) return page;
   return { ...page, decisions: page.decisions + rows.length, connections: page.connections + rows.length };
 }
+
+/**
+ * The counts every Inbox tab reads, whichever tab is open.
+ *
+ * The signed-out rows were only worked out on the two tabs that SHOW them
+ * (Needs you and Connections), and the counts were folded from that same
+ * list. So on Routines, Results and All the tabs read "Needs you (1),
+ * Connections (0)" and on Needs you "(3), (2)" for the same Inbox. The rows
+ * a tab shows and the numbers every tab shows are now separate: the numbers
+ * always count every engine still signed out of, less the ones answered here.
+ */
+export function inboxTabCounts<T extends { decisions: number; connections: number }>(
+  page: T | null,
+  view: SetupView | null | undefined,
+  answered: ReadonlySet<string>,
+): T | null {
+  if (!page) return null;
+  return withSignedOutEngines(page, signedOutEngineRows(view).filter(row => !answered.has(`engine:${row.id}`)));
+}

@@ -7,7 +7,7 @@
 // first thing asked of it fails.
 import { describe, expect, it } from "vitest";
 
-import { signedOutEngineRows, withSignedOutEngines } from "./signed-out-engines";
+import { inboxTabCounts, signedOutEngineRows, withSignedOutEngines } from "./signed-out-engines";
 import type { SetupView } from "../../shared/setup";
 
 const agent = (id: string, name: string, signInCommand?: string) =>
@@ -86,3 +86,23 @@ describe("what they do to the numbers", () => {
     expect(next.connections).toBe(2);
   });
 });
+
+describe("the Inbox tab counts (D9)", () => {
+  const page = { decisions: 1, approvals: 1, questions: 0, connections: 0 };
+  const twoOut = view({ signedOutAgents: [agent("droid", "Droid"), agent("qwen", "Qwen")] });
+
+  it("count every signed-out engine, whichever tab is open", () => {
+    // Needs you and Connections list these rows; Routines, Results and All
+    // do not. The numbers on the tabs must not depend on that.
+    expect(inboxTabCounts(page, twoOut, new Set())).toEqual({ decisions: 3, approvals: 1, questions: 0, connections: 2 });
+  });
+
+  it("drop an engine the person has just answered here", () => {
+    expect(inboxTabCounts(page, twoOut, new Set(["engine:qwen"]))).toEqual({ decisions: 2, approvals: 1, questions: 0, connections: 1 });
+  });
+
+  it("say nothing before the Inbox has answered", () => {
+    expect(inboxTabCounts(null, twoOut, new Set())).toBeNull();
+  });
+});
+

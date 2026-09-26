@@ -422,6 +422,26 @@ it("raises a dead credential that only the runs know about", () => {
   expect(page.approvals + page.questions + page.connections).toBe(page.decisions);
 });
 
+it("gives every tab the same counts, whichever tab is open (D9)", () => {
+  // The dead credential used to be looked for on three views only, so the
+  // same Inbox said "Needs you (1)" on Results and All and more on Needs you.
+  const { db } = fixture(), T0 = 1_758_500_000_000, HOUR = 3_600_000, now = T0 + 9 * HOUR;
+  runRow(db, "moss", "Gmail triage", 0, T0 + 5 * HOUR, true, DEAD_TOKEN);
+  const counts = (view?: "decisions" | "approvals" | "questions" | "connections" | "routines" | "results" | "all") => {
+    const page = listInbox(db, view ? { view } : {}, morning, now);
+    return { decisions: page.decisions, approvals: page.approvals, questions: page.questions, connections: page.connections };
+  };
+  const expected = counts("decisions");
+  expect(expected.connections).toBe(1);
+  for (const view of ["approvals", "questions", "connections", "routines", "results", "all"] as const) {
+    expect(counts(view), view).toEqual(expected);
+  }
+  // The rows are still listed only where they belong.
+  expect(listInbox(db, { view: "results" }, morning, now).restore).toBeUndefined();
+  expect(listInbox(db, { view: "all" }, morning, now).restore).toBeUndefined();
+  expect(listInbox(db, { view: "connections" }, morning, now).restore).toHaveLength(1);
+});
+
 it("stops asking the moment a run works again", () => {
   // It clears ITSELF, which is why it is allowed to badge at all and the
   // signed-out activity row is not. The verdict is the last run.
