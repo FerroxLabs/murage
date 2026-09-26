@@ -538,7 +538,7 @@ describe("a call reaches the browser door", () => {
 // vite keeps a chunk's source name ahead of its hash rather than replacing
 // it, so DOMPurify built as `purify.es-Cz4mVeUR.js`. The old pattern's
 // `[\w-]+` stopped at the first dot and refused it, which the E4 first-paint
-// budget check caught on the real build (Hetzner, d489043f) before it ever
+// budget check caught on the real build (build server, d489043f) before it ever
 // reached a phone. The fix admits internal dots; these pin that the fix does
 // not also admit a traversal.
 describe("a dotted chunk name reaches the browser door", () => {

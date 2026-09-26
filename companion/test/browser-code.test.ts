@@ -79,7 +79,7 @@ const store: BrowserDeviceStore = {
 
 const identity: BoundIdentity = {
   scheme: "http",
-  hosts: new Set(["macbook.tail0a48a4.ts.net", "127.0.0.1"]),
+  hosts: new Set(["macbook.tailexample.ts.net", "127.0.0.1"]),
 };
 
 let door: Server | null = null;
@@ -139,7 +139,7 @@ const knock = (
 ): Promise<Answer> =>
   new Promise((resolve, reject) => {
     const headers: Record<string, string> = {
-      host: `macbook.tail0a48a4.ts.net:${doorPort}`,
+      host: `macbook.tailexample.ts.net:${doorPort}`,
       "sec-fetch-site": "same-origin",
       ...extra,
     };
@@ -159,7 +159,7 @@ const knock = (
 /** Exactly what the served page sends: a same-origin POST carrying Origin,
  * which is what the door's rule 4 requires of every write. */
 const submitCode = (code: string): Promise<Answer> =>
-  knock("POST", "/session", { origin: `http://macbook.tail0a48a4.ts.net:${doorPort}` }, JSON.stringify({ credential: code }));
+  knock("POST", "/session", { origin: `http://macbook.tailexample.ts.net:${doorPort}` }, JSON.stringify({ credential: code }));
 
 const bodyOf = (answer: Answer): Record<string, unknown> => JSON.parse(answer.body);
 
@@ -677,7 +677,7 @@ describe("pairing from the app replaces its own old record", () => {
   });
 
   it("replaces the record at the door, so a reinstall does not take a second slot", async () => {
-    const origin = { origin: `http://macbook.tail0a48a4.ts.net:${doorPort}` };
+    const origin = { origin: `http://macbook.tailexample.ts.net:${doorPort}` };
     const install = "ios-install-0123456789abcdef";
     const first = await knock("POST", "/session", origin, JSON.stringify({ credential: registry.openPairing().token, installId: install }));
     expect(first.status).toBe(201);
@@ -761,7 +761,7 @@ describe("signing this device out, from the device", () => {
     expect(answer.status).toBe(201);
     return String(answer.headers["set-cookie"]?.[0] ?? "").split(";")[0].split("=")[1];
   };
-  const origin = () => ({ origin: `http://macbook.tail0a48a4.ts.net:${doorPort}` });
+  const origin = () => ({ origin: `http://macbook.tailexample.ts.net:${doorPort}` });
 
   it("removes the whole device, clears the cookie and ends its streams", async () => {
     const cookie = await signedIn();

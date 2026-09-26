@@ -48,12 +48,12 @@ it("rejects non-Markdown and cleans resources if browser download activation thr
 it("inside the phone app, hands the export route to native by URL instead of reading it here", async () => {
   const saveFile = vi.fn(async () => undefined);
   vi.stubGlobal("murageNative", { hello: async () => ({ version: 1, methods: ["saveFile"] }), saveFile });
-  vi.stubGlobal("location", { href: "https://desk.tail0a48a4.ts.net/" });
+  vi.stubGlobal("location", { href: "https://desk.tailexample.ts.net/" });
   try {
     expect(await downloadConversation("task/one", "Quarterly report")).toBe("conversation-quarterly-report.md");
     expect(saveFile).toHaveBeenCalledWith({
       kind: "url",
-      url: "https://desk.tail0a48a4.ts.net/api/threads/task%2Fone/export?format=markdown",
+      url: "https://desk.tailexample.ts.net/api/threads/task%2Fone/export?format=markdown",
       filename: "conversation-quarterly-report.md",
     });
     expect(fetchMock).not.toHaveBeenCalled();

@@ -19,7 +19,7 @@ const target:ResticSftpTarget={kind:"sftp",remoteRef:"remote-one",revision:3,cre
 describe("SFTP destination fields cannot become ssh options",()=>{
   it("accepts ordinary names, addresses and folders",()=>{
     for(const host of ["nas.example.com","192.168.1.20","my-nas","::1","fe80::1:2","a.b-c.d"])expect(sftpHostSchema.safeParse(host).success,host).toBe(true);
-    for(const user of ["backup","sean.d","user_1","Admin-2"])expect(sftpUserSchema.safeParse(user).success,user).toBe(true);
+    for(const user of ["backup","sam.d","user_1","Admin-2"])expect(sftpUserSchema.safeParse(user).success,user).toBe(true);
     for(const folder of ["murage","murage/backups","/volume1/homes/backup/murage","/srv/restic-repo","backups/2026.09"])expect(sftpFolderSchema.safeParse(folder).success,folder).toBe(true);
   });
   it("rejects leading dashes, whitespace, quotes, control characters and path escapes",()=>{

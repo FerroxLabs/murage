@@ -54,7 +54,7 @@ let harnessPort = 0;
 let door: Server;
 let doorPort = 0;
 
-const DEVICE = { id: "dev_1", name: "Sean's iPhone", cloudDesktopAccess: false };
+const DEVICE = { id: "dev_1", name: "Sam's iPhone", cloudDesktopAccess: false };
 const sessions = new Map<string, { id: string; expiresAt: number }>();
 const devices: BrowserDeviceStore = {
   redeem: (credential) =>
@@ -98,11 +98,11 @@ const limiter: SignInLimiter = {
   },
 };
 
-let computerName = "Sean's computer";
+let computerName = "Sam's computer";
 
 const identity: BoundIdentity = {
   scheme: "http",
-  hosts: new Set(["macbook.tail0a48a4.ts.net", "127.0.0.1"]),
+  hosts: new Set(["macbook.tailexample.ts.net", "127.0.0.1"]),
 };
 
 beforeAll(async () => {
@@ -150,7 +150,7 @@ beforeEach(() => {
   asked = [];
   limiterLocked = false;
   limiterCalls = 0;
-  computerName = "Sean's computer";
+  computerName = "Sam's computer";
 });
 
 interface Answer {
@@ -175,7 +175,7 @@ const knock = (
 ): Promise<Answer> =>
   new Promise((resolve, reject) => {
     const headers: Record<string, string> = {
-      host: `macbook.tail0a48a4.ts.net:${doorPort}`,
+      host: `macbook.tailexample.ts.net:${doorPort}`,
       "sec-fetch-site": "same-origin",
       ...extra,
     };
@@ -196,7 +196,7 @@ const knock = (
 
 /** Writes carry an Origin; rule 4 of the origin gate requires it. */
 const write = (extra: Record<string, string> = {}) => ({
-  origin: `http://macbook.tail0a48a4.ts.net:${doorPort}`,
+  origin: `http://macbook.tailexample.ts.net:${doorPort}`,
   ...extra,
 });
 
@@ -214,7 +214,7 @@ describe("the launcher's probe", () => {
   it("says what this door is and what it is called, with no session", async () => {
     const answer = await knock("GET", "/healthz");
     expect(answer.status).toBe(200);
-    expect(JSON.parse(answer.body)).toEqual({ ok: true, name: "Sean's computer", mobile: 1 });
+    expect(JSON.parse(answer.body)).toEqual({ ok: true, name: "Sam's computer", mobile: 1 });
     expect(answer.headers["content-type"]).toBe("application/json");
     expect(answer.headers["cache-control"]).toBe("private, no-store");
     expect(answer.headers["set-cookie"]).toBeUndefined();

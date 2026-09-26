@@ -141,10 +141,10 @@ function scripted(states, { start = 1_000 } = {}) {
 test("reports the device that paired through this window", async () => {
   const s = scripted([
     { pairing: { token: TOKEN }, devices: [{ name: "Old", createdAt: 10 }] },
-    { pairing: null, devices: [{ name: "Old", createdAt: 10 }, { name: "Sean's iPhone", createdAt: 3_500 }] },
+    { pairing: null, devices: [{ name: "Old", createdAt: 10 }, { name: "Sam's iPhone", createdAt: 3_500 }] },
   ]);
   const result = await watchPairing({ port: 1, token: TOKEN, expiresAt: 601_000, openedAt: 1_000, intervalMs: 2_000, ...s });
-  assert.deepEqual(result, { outcome: "paired", device: "Sean's iPhone" });
+  assert.deepEqual(result, { outcome: "paired", device: "Sam's iPhone" });
   assert.equal(s.ticks[0], "Expires in 10:00.");
 });
 

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliCompressSync, constants } from "node:zlib";
 
-/** 720 KiB at brotli quality 11. Measured on Hetzner at d489043f: 698.0 KiB
+/** 720 KiB at brotli quality 11. Measured on the build server at d489043f: 698.0 KiB
  *  after the E1–E3 splits, `ceil(698/10)*10 + 20` KiB per the plan's decision
  *  rule. Lower it when the first paint shrinks further; never raise it to
  *  make a regression pass. */

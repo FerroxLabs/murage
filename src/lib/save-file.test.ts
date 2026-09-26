@@ -13,7 +13,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   link = { href: "", download: "", rel: "", referrerPolicy: "", click: vi.fn(), remove: vi.fn() };
   vi.stubGlobal("document", { createElement: vi.fn(() => link), body: { appendChild: vi.fn() } });
-  vi.stubGlobal("location", { href: "https://desk.tail0a48a4.ts.net/", origin: "https://desk.tail0a48a4.ts.net" });
+  vi.stubGlobal("location", { href: "https://desk.tailexample.ts.net/", origin: "https://desk.tailexample.ts.net" });
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
 });
@@ -60,7 +60,7 @@ describe("inside the phone app", () => {
   it("hands a server file over by absolute URL, so its bytes never cross the channel", async () => {
     const saveFile = nativeSave();
     await saveUrl("/api/artifacts/a1/download", "report.pdf");
-    expect(saveFile).toHaveBeenCalledWith({ kind: "url", url: "https://desk.tail0a48a4.ts.net/api/artifacts/a1/download", filename: "report.pdf" });
+    expect(saveFile).toHaveBeenCalledWith({ kind: "url", url: "https://desk.tailexample.ts.net/api/artifacts/a1/download", filename: "report.pdf" });
     expect(link.click).not.toHaveBeenCalled();
   });
 
@@ -101,7 +101,7 @@ describe("inside the phone app", () => {
   it("reads a blob: link locally and sends its bytes, since native cannot fetch it", async () => {
     const saveFile = nativeSave();
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["png-bytes"], { type: "image/png" }))));
-    await saveUrl("blob:https://desk.tail0a48a4.ts.net/1234", "photo.png");
+    await saveUrl("blob:https://desk.tailexample.ts.net/1234", "photo.png");
     expect(saveFile.mock.calls.map(([r]) => r.kind)).toEqual(["begin", "chunk", "end"]);
     expect(saveFile.mock.calls[0]![0]).toMatchObject({ mime: "image/png", filename: "photo.png" });
   });
@@ -163,14 +163,14 @@ describe("reading a data: URL", () => {
 });
 
 describe("where a save link's bytes live", () => {
-  const ORIGIN = "https://desk.tail0a48a4.ts.net";
+  const ORIGIN = "https://desk.tailexample.ts.net";
   it("is one rule: page bytes, this server, or somewhere else", () => {
-    expect(saveSource("blob:https://desk.tail0a48a4.ts.net/1", ORIGIN)).toBe("page");
+    expect(saveSource("blob:https://desk.tailexample.ts.net/1", ORIGIN)).toBe("page");
     expect(saveSource("DATA:image/png;base64,AA==", ORIGIN)).toBe("page");
     expect(saveSource("/api/attachments/a1", ORIGIN)).toBe("server");
     expect(saveSource(`${ORIGIN}/api/attachments/a1`, ORIGIN)).toBe("server");
-    expect(saveSource("https://desk.tail0a48a4.ts.net.evil.example/x", ORIGIN)).toBe("external");
-    expect(saveSource("http://desk.tail0a48a4.ts.net/x", ORIGIN)).toBe("external");
+    expect(saveSource("https://desk.tailexample.ts.net.evil.example/x", ORIGIN)).toBe("external");
+    expect(saveSource("http://desk.tailexample.ts.net/x", ORIGIN)).toBe("external");
     expect(saveSource("https://cdn.example.com/x", ORIGIN)).toBe("external");
   });
 

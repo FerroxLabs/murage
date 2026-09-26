@@ -72,7 +72,7 @@ describe("first-paint payload budget", () => {
   it("no longer flags a dotted chunk name as a door miss", () => {
     // vite keeps a chunk's source name ahead of its hash, e.g.
     // `purify.es-Cz4mVeUR.js` — the door 404'd this until the fix (E4
-    // first-paint budget, Hetzner build d489043f, first paint 698.0 KiB).
+    // first-paint budget, build server, d489043f, first paint 698.0 KiB).
     const { dist } = fixture({ lazyName: "assets/purify.es-Cz4mVeUR.js" });
     const result = checkBudget(dist, 1_000_000);
     expect(result.doorMisses).toEqual([]);

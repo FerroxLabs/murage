@@ -14,7 +14,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const ORIGIN = "https://desk.tail0a48a4.ts.net";
+const ORIGIN = "https://desk.tailexample.ts.net";
 
 describe("opening a page outside Murage", () => {
   it("uses the desktop bridge when there is one", async () => {
@@ -67,8 +67,8 @@ describe("which clicks the phone app takes over", () => {
   it("sends a download link to another site to the system browser, never to native saveFile", () => {
     expect(nativeClickAction(anchor({ href: "https://cdn.example.com/x.zip", hasDownload: true, download: "x.zip" }), ORIGIN))
       .toEqual({ kind: "external", url: "https://cdn.example.com/x.zip" });
-    expect(nativeClickAction(anchor({ href: "http://desk.tail0a48a4.ts.net/x.zip", hasDownload: true }), ORIGIN))
-      .toEqual({ kind: "external", url: "http://desk.tail0a48a4.ts.net/x.zip" });
+    expect(nativeClickAction(anchor({ href: "http://desk.tailexample.ts.net/x.zip", hasDownload: true }), ORIGIN))
+      .toEqual({ kind: "external", url: "http://desk.tailexample.ts.net/x.zip" });
     expect(nativeClickAction(anchor({ href: "file:///etc/hosts", hasDownload: true }), ORIGIN)).toBeNull();
     expect(nativeClickAction(anchor({ href: "data:image/png;base64,AA==", hasDownload: true, download: "a.png" }), ORIGIN))
       .toEqual({ kind: "save", url: "data:image/png;base64,AA==", filename: "a.png" });

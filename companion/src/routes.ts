@@ -249,7 +249,7 @@ export const MERMAID_FRAME_FILE = /^\/mermaid-frame-[0-9a-f]{16}\.html$/;
  * The stem allows internal dots (`(?:\.[\w-]+)*`) because vite keeps a
  * chunk's source name ahead of its hash — `purify.es-Cz4mVeUR.js` — and this
  * door 404'd it while the desktop, which does not go through this pattern,
- * worked (E4 first-paint budget, Hetzner build d489043f). Every dot is still
+ * worked (E4 first-paint budget, build server, d489043f). Every dot is still
  * required to be followed by at least one `[\w-]` character, so `..`, a
  * leading dot, a `/`, and a percent-encoded dot all still fail: there is no
  * empty segment this can produce.
