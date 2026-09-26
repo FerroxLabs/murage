@@ -16148,14 +16148,16 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
       if (bot && (directThreadBusy(bot.id,m[2]) || routines!.isActiveThread(m[2]))) {
-        return json(res, 409, { error: "this task is running: stop it first" });
+        return json(res, 409, { error: "This conversation is still working. Stop it first, then delete it." });
       }
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
       const threadId = m[2];
       const { result: updated, report } = bot
         ? await runConversationDeletion(conversationDeletions, botDeletionInput(bot, [threadId]), () => store.deleteTask(bot.id, threadId), () => retireEngineSessions([threadId]))
         : { result: null, report: null };
-      if (!updated || !report) return json(res, 400, { error: "a bot keeps at least one task" });
+      // The store leaves a fresh conversation when this was the last one, so
+      // a null result now only means the bot or the conversation is gone.
+      if (!updated || !report) return json(res, 404, { error: "That conversation is already gone." });
       revokeInternalThread(m[2]);
       taskAllowances.clearThread(m[2]);
       turnCwdByThread.delete(m[2]);

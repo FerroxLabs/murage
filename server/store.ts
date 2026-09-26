@@ -2706,16 +2706,22 @@ export class Store {
     this.emit({ type: "bot", botId });
   }
 
-  /** Delete a task and its transcript. A bot always keeps one. */
+  /** Delete a task and its transcript. A bot always keeps one: deleting the
+   * last one leaves a fresh, empty "New task" in its place, the same as a
+   * channel's last conversation (deleteGroupTask). It used to be refused
+   * after the owner had confirmed it, with "a bot keeps at least one task". */
   deleteTask(botId: string, threadId: string): BotRecord | null {
     const bot = this.bot(botId);
-    if (!bot || !bot.tasks || bot.tasks.length < 2) return null;
-    if (!bot.tasks.some((t) => t.threadId === threadId)) return null;
-    bot.tasks = bot.tasks.filter((t) => t.threadId !== threadId);
+    if (!bot || !bot.tasks?.some((t) => t.threadId === threadId)) return null;
+    if (bot.tasks.length < 2) this.createTask(botId, undefined, false);
+    bot.tasks = bot.tasks!.filter((t) => t.threadId !== threadId);
     this.deleteThreadRecord(threadId);
     if (bot.threadId === threadId) {
-      bot.threadId = bot.tasks[0]!.threadId;
-      bot.resumeCursors = { ...bot.tasks[0]!.resumeCursors };
+      const next = bot.tasks[0]!;
+      bot.threadId = next.threadId;
+      bot.resumeCursors = { ...next.resumeCursors };
+      bot.rewound = next.rewound;
+      bot.pinnedMessageId = next.pinnedMessageId;
     }
     this.saveBots();
     this.emit({ type: "bot", botId });

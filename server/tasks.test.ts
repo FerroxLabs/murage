@@ -140,7 +140,7 @@ describe("tasks", () => {
     expect(titleFromMessage("x".repeat(80))).toHaveLength(48);
   });
 
-  it("deletes a task with its transcript, but never the last one", async () => {
+  it("deletes a task with its transcript, and deleting the last one leaves a fresh one", async () => {
     const { store } = await freshStore();
     const bot = store.createBot();
     const first = bot.threadId;
@@ -153,8 +153,19 @@ describe("tasks", () => {
     expect(store.bot(bot.id)!.threadId).toBe(first);
     expect(store.messagesFor(second.threadId)).toHaveLength(0);
 
-    expect(store.deleteTask(bot.id, first)).toBeNull();
+    // The owner confirmed deleting the only conversation and was told "a bot
+    // keeps at least one task". It is now deleted, like a channel's last one,
+    // and a fresh empty conversation takes its place.
+    store.appendMessage(first, { role: "user", kind: "text", text: "the only one" });
+    const after = store.deleteTask(bot.id, first)!;
+    expect(after).toBeTruthy();
     expect(store.tasks(bot.id)).toHaveLength(1);
+    expect(after.threadId).not.toBe(first);
+    expect(store.tasks(bot.id)[0]!.threadId).toBe(after.threadId);
+    expect(store.tasks(bot.id)[0]!.title).toBe("New task");
+    expect(store.messagesFor(first)).toHaveLength(0);
+    expect(store.messagesFor(after.threadId)).toHaveLength(0);
+    expect(store.deleteTask(bot.id, "no-such-thread")).toBeNull();
   });
 
   it("adopts a pre-tasks bot's endless thread as its first task", async () => {

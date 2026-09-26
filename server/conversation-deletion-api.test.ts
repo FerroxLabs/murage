@@ -145,3 +145,21 @@ it("removes a channel conversation's member folders and engine history, then a b
   expect(existsSync(botSession)).toBe(false);
   expect(existsSync(rootSession)).toBe(false);
 }, 60_000);
+
+it("deletes a bot's only conversation and leaves a fresh one, like a channel's", async () => {
+  const models = (await api("GET", "/api/instances")).body.instances.find((engine: any) => engine.instanceId === "verification").models.options;
+  const bot = (await api("POST", "/api/bots", { name: "Only one", modelSelection: { instanceId: "verification", model: models[0].id } })).body.bot;
+  const only = bot.threadId as string;
+  expect((await api("GET", "/api/bots?messages=0")).body.bots.find((item: any) => item.id === bot.id).tasks).toHaveLength(1);
+  // The owner was offered Delete, confirmed it, and got "a bot keeps at least one task".
+  const deleted = await api("DELETE", `/api/bots/${bot.id}/tasks/${only}`);
+  expect(deleted.status, JSON.stringify(deleted.body)).toBe(200);
+  expect(deleted.body.bot.threadId).not.toBe(only);
+  expect(deleted.body.bot.tasks).toHaveLength(1);
+  expect(deleted.body.bot.tasks[0]).toMatchObject({ threadId: deleted.body.bot.threadId, title: "New task" });
+  expect(deleted.body.bot.messages).toEqual([]);
+  // Any failure left is a plain sentence, never internal wording.
+  const again = await api("DELETE", `/api/bots/${bot.id}/tasks/${only}`);
+  expect(again.status).toBe(404);
+  expect(again.body.error).toBe("That conversation is already gone.");
+}, 30_000);

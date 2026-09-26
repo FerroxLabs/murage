@@ -58,7 +58,7 @@ import { checkSession, onSignedOut, sessionSignedOut } from "@/lib/session-check
 import { onSaveFailed } from "@/lib/save-file";
 import { callNative, nativeAvailable } from "@/lib/native-shell";
 import { isPhoneClient } from "@/lib/phone-client";
-import { deletionNote } from "@/lib/deletion-notes";
+import { deletionErrorSentence, deletionNote } from "@/lib/deletion-notes";
 
 const MAX_ROUTINE_RUNS = 2_000;
 const ACTIVE_ROUTINE_RUN_STATUSES = new Set<RoutineRun["status"]>(["queued", "running", "waiting", "needs-you"]);
@@ -2703,7 +2703,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 dispatch({ type: "botPatched", bot: r.bot });
               }
             })
-            .catch(showError);
+            .catch((e: unknown) => showError(new Error(deletionErrorSentence(e))));
           break;
         // Channel tasks mirror bot tasks, but hydrate the whole channel so
         // switching atomically replaces its transcript, folder and pin.
@@ -2726,7 +2726,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "deleteGroupTask":
           api(`/api/groups/${action.groupId}/tasks/${action.threadId}`, { method: "DELETE" })
             .then((r: any) => { showDeletionNote(r); if (r?.group) dispatch({ type: "groupPatched", group: r.group }); })
-            .catch(showError);
+            .catch((e: unknown) => showError(new Error(deletionErrorSentence(e))));
           break;
         case "interruptGroup":
           api(`/api/groups/${action.groupId}/interrupt`, action.queueIds?.length
