@@ -120,12 +120,13 @@ test("rename, members, lead and delete from the team heading menu (1440, light)"
   // Members: add Cal, remove Ben, make Cal the lead.
   await renamed.getByRole("checkbox", { name: "Cal", exact: true }).click();
   await expect(renamed.getByRole("checkbox", { name: "Cal", exact: true })).toHaveAttribute("aria-checked", "true");
-  await renamed.getByRole("checkbox", { name: "Ben", exact: true }).click();
+  // D11: a click on the NAME toggles the row, not only the round check.
+  await renamed.getByRole("checkbox", { name: "Ben", exact: true }).getByText("Ben", { exact: true }).click();
   await expect(renamed.getByText("Leaves this team when you save")).toBeVisible();
   await renamed.getByRole("combobox", { name: "Team lead" }).selectOption({ label: "Cal" });
   await page.screenshot({ path: testInfo.outputPath("team-members-draft-1440-light.png") });
   await renamed.getByRole("button", { name: "Save members" }).click();
-  await expect(renamed.getByRole("status")).toHaveText("Members saved.");
+  await expect(renamed.getByRole("status")).toHaveText("Added Cal. Removed Ben. Cal leads the team now.");
   expect(await storedBot("cal")).toMatchObject({ section: "Ops Crew", chiefOfStaff: true });
   expect(await storedBot("ava")).toMatchObject({ section: "Ops Crew", chiefOfStaff: false });
   expect((await storedBot("ben")).section ?? "").toBe("");
@@ -169,7 +170,7 @@ test("channel details open the team, and archive-on-delete at phone width (390, 
   // Lead change alone.
   await dialog.getByRole("combobox", { name: "Team lead" }).selectOption({ label: "Sue" });
   await dialog.getByRole("button", { name: "Save members" }).click();
-  await expect(dialog.getByRole("status")).toHaveText("Members saved.");
+  await expect(dialog.getByRole("status")).toHaveText("Sue leads the team now.");
   expect(await storedBot("sue")).toMatchObject({ chiefOfStaff: true });
   expect(await storedBot("sid")).toMatchObject({ chiefOfStaff: false });
   await page.keyboard.press("Escape");
