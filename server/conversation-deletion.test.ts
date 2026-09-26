@@ -191,6 +191,71 @@ describe("ConversationDeletions", () => {
     for (const item of report.leftovers) expect(`${item.what} ${item.where}`).not.toMatch(/\u2014|\bsafe(ly)?\b|\//i);
   });
 
+  it("removes only this conversation's lines and side files from Claude Code's and Codex's shared history", async () => {
+    const data = fresh("data");
+    const claudeHome = fresh("claude");
+    const codexHome = fresh("codex");
+    const db = messagesDb(data);
+    const desk = join(data, "workspaces", BOT, "threads", THREAD);
+    touch(join(desk, "a.md"), "x");
+    const sid = "5f0c7f4e-1111-4222-8333-444455556666", otherSid = "5f0c7f4e-9999-4222-8333-444455556666";
+    const project = join(claudeHome, "projects", desk.replace(/[^a-zA-Z0-9]/g, "-"));
+    touch(join(project, `${sid}.jsonl`), `${JSON.stringify({ sessionId: sid, cwd: desk, slug: "quiet-river" })}\n`);
+    touch(join(project, sid, "tool-results", "r.txt"), MARKER_TEXT);
+    touch(join(claudeHome, "history.jsonl"), [
+      JSON.stringify({ display: MARKER_TEXT, pastedContents: { 1: { contentHash: "aaaaaaaaaaaaaaaa" } }, timestamp: 1, project: desk, sessionId: sid }),
+      JSON.stringify({ display: "older line, no session id", timestamp: 2, project: desk }),
+      JSON.stringify({ display: "another project", pastedContents: { 1: { contentHash: "bbbbbbbbbbbbbbbb" } }, timestamp: 3, project: "/elsewhere", sessionId: otherSid }),
+      "",
+    ].join("\n"));
+    touch(join(claudeHome, "paste-cache", "aaaaaaaaaaaaaaaa.txt"), MARKER_TEXT);
+    touch(join(claudeHome, "paste-cache", "bbbbbbbbbbbbbbbb.txt"), "kept");
+    for (const [dir, name] of [["file-history", `${sid}/abc@v1`], ["debug", `${sid}.txt`], ["tasks", `${sid}/1.json`], ["session-env", `${sid}/hook.sh`], ["image-cache", `${sid}/1.png`], ["uploads", `${sid}/f.pdf`], ["plans", "quiet-river.md"], ["plans", "quiet-river-agent-1.md"]]) touch(join(claudeHome, dir!, name!), MARKER_TEXT);
+    touch(join(claudeHome, "file-history", otherSid, "x@v1"), "kept");
+    touch(join(claudeHome, "plans", "loud-sea.md"), "kept");
+    const tid = "019a0000-aaaa-7bbb-8ccc-000000000001";
+    touch(join(codexHome, "sessions", "2026", "09", "25", `rollout-2026-09-25T10-00-00-${tid}.jsonl`), `${JSON.stringify({ type: "session_meta", payload: { id: tid, cwd: desk } })}\n`);
+    touch(join(codexHome, "history.jsonl"), `${JSON.stringify({ session_id: tid, ts: 1, text: MARKER_TEXT })}\n${JSON.stringify({ session_id: "other", ts: 2, text: "kept" })}\n`);
+    touch(join(codexHome, "session_index.jsonl"), `${JSON.stringify({ id: tid, thread_name: MARKER_TEXT })}\n${JSON.stringify({ id: "other", thread_name: "kept" })}\n`);
+    touch(join(codexHome, "shell_snapshots", `${tid}.abc.sh`), "env");
+    touch(join(codexHome, "shell_snapshots", "other.abc.sh"), "env");
+    const state = new DatabaseSync(join(codexHome, "state_5.sqlite"));
+    state.exec("CREATE TABLE threads(id TEXT PRIMARY KEY, cwd TEXT, first_user_message TEXT); CREATE TABLE thread_spawn_edges(parent_thread_id TEXT, child_thread_id TEXT);");
+    state.prepare("INSERT INTO threads VALUES(?,?,?)").run(tid, desk, MARKER_TEXT);
+    state.prepare("INSERT INTO threads VALUES(?,?,?)").run("other", "/elsewhere", "kept");
+    state.close();
+    const logs = new DatabaseSync(join(codexHome, "logs_2.sqlite"));
+    logs.exec("CREATE TABLE logs(thread_id TEXT, feedback_log_body TEXT)");
+    logs.prepare("INSERT INTO logs VALUES(?,?)").run(tid, MARKER_TEXT);
+    logs.close();
+
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
+    const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "claude", home: claudeHome }, { engine: "codex", home: codexHome }] }, () => true);
+    expect(report.failed).toEqual([]);
+    expect(existsSync(project)).toBe(false);
+    const history = readFileSync(join(claudeHome, "history.jsonl"), "utf8");
+    expect(history).not.toContain(MARKER_TEXT);
+    expect(history).not.toContain("older line");
+    expect(history).toContain("another project");
+    expect(existsSync(join(claudeHome, "history.jsonl.lock"))).toBe(false);
+    expect(existsSync(join(claudeHome, "paste-cache", "aaaaaaaaaaaaaaaa.txt"))).toBe(false);
+    expect(existsSync(join(claudeHome, "paste-cache", "bbbbbbbbbbbbbbbb.txt"))).toBe(true);
+    for (const [dir, name] of [["file-history", sid], ["debug", `${sid}.txt`], ["tasks", sid], ["session-env", sid], ["image-cache", sid], ["uploads", sid], ["plans", "quiet-river.md"], ["plans", "quiet-river-agent-1.md"]]) expect(existsSync(join(claudeHome, dir!, name!)), `${dir}/${name}`).toBe(false);
+    expect(existsSync(join(claudeHome, "file-history", otherSid))).toBe(true);
+    expect(existsSync(join(claudeHome, "plans", "loud-sea.md"))).toBe(true);
+    for (const file of ["history.jsonl", "session_index.jsonl"]) {
+      const text = readFileSync(join(codexHome, file), "utf8");
+      expect(text).not.toContain(MARKER_TEXT);
+      expect(text).toContain("kept");
+    }
+    expect(existsSync(join(codexHome, "shell_snapshots", `${tid}.abc.sh`))).toBe(false);
+    expect(existsSync(join(codexHome, "shell_snapshots", "other.abc.sh"))).toBe(true);
+    const after = new DatabaseSync(join(codexHome, "state_5.sqlite"));
+    expect(after.prepare("SELECT id FROM threads").all().map((row) => row.id)).toEqual(["other"]);
+    after.close();
+    for (const file of ["state_5.sqlite", "logs_2.sqlite"]) expect(readFileSync(join(codexHome, file)).includes(MARKER_TEXT), file).toBe(false);
+  });
+
   it("leaves a Claude Code folder whose sessions name another folder", async () => {
     const data = fresh("data");
     const claudeHome = fresh("claude");

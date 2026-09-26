@@ -1694,7 +1694,7 @@ function deletionEngineHomes(): DeletionEngineHome[] {
       const configDir = entry?.config && typeof entry.config === "object" && !Array.isArray(entry.config) ? (entry.config as { configDir?: unknown }).configDir : undefined;
       try { claudeDir = resolveClaudeConfigDir(typeof configDir === "string" ? configDir : undefined, env); } catch { claudeDir = undefined; }
     }
-    for (const home of engineHomeFor(engine, env, claudeDir)) homes.push({ engine, home });
+    for (const home of engineHomeFor(engine, env, claudeDir)) homes.push({ engine, home, ...(engine === "codex" && env.CODEX_SQLITE_HOME ? { sqliteHome: env.CODEX_SQLITE_HOME } : {}) });
   }
   return homes;
 }

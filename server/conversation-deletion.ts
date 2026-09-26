@@ -25,10 +25,11 @@
 //    and cleared only after the files are gone; boot finishes any record a
 //    crash left behind.
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, ftruncateSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, ftruncateSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import nodePath from "node:path";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
+import zlib from "node:zlib";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { blake3Hex } from "./blake3.ts";
@@ -40,7 +41,7 @@ const ARTIFACT_BLOB = /^[a-f0-9]{64}\.[a-z0-9]{1,12}$/;
 const FIRST_LINE_BYTES = 1024 * 1024;
 
 export type DeletionEngine = "fuigo" | "grok" | "claude" | "codex";
-export interface DeletionEngineHome { engine: DeletionEngine; home: string }
+export interface DeletionEngineHome { engine: DeletionEngine; home: string; /** Codex: CODEX_SQLITE_HOME when set */ sqliteHome?: string }
 /** Something this deletion could not remove, in words the owner can act on. */
 /** Something this deletion could not remove, in plain words the app shows
  * as "<what>, in <where>." Never a path to another conversation. */
@@ -309,49 +310,159 @@ function removeFuigoSessions(home: string, folders: string[], memoryFolders: str
   }
 }
 
-/** Every `cwd` the Claude Code session files in `dir` name. */
-function claudeSessionFolders(dir: string): string[] {
-  const found: string[] = [];
+/** Every `cwd` and per-session `slug` the Claude Code session files in `dir` name. */
+function claudeSessionFacts(dir: string): { folders: string[]; sessionIds: string[]; slugs: string[] } {
+  const folders: string[] = [];
+  const sessionIds: string[] = [];
+  const slugs = new Set<string>();
   for (const name of listDir(dir)) {
     if (!name.endsWith(".jsonl")) continue;
+    const id = name.slice(0, -".jsonl".length);
+    if (ID.test(id)) sessionIds.push(id);
     const head = readHead(nodePath.join(dir, name), 256 * 1024);
     if (head === null) continue;
     for (const line of head.split("\n")) {
       try {
-        const row = JSON.parse(line) as { cwd?: unknown };
-        if (typeof row.cwd === "string") found.push(row.cwd);
+        const row = JSON.parse(line) as { cwd?: unknown; slug?: unknown };
+        if (typeof row.cwd === "string") folders.push(row.cwd);
+        if (typeof row.slug === "string" && ID.test(row.slug)) slugs.add(row.slug);
       } catch { /* a cut last line */ }
     }
   }
-  return found;
+  return { folders, sessionIds, slugs: [...slugs] };
 }
 
+/** Rewrite a JSONL file without the rows `drop` picks, atomically, keeping
+ * its mode. A torn or non-JSON line is kept as it is. */
+export function rewriteJsonlAtomic(path: string, drop: (row: Record<string, unknown>) => boolean): number {
+  const stat = lstatOrNull(path);
+  if (!stat || !stat.isFile() || stat.isSymbolicLink()) return 0;
+  let removed = 0;
+  const kept = readFileSync(path, "utf8").split("\n").filter((line) => {
+    if (!line.trim()) return true;
+    try {
+      const row = JSON.parse(line) as unknown;
+      if (row && typeof row === "object" && drop(row as Record<string, unknown>)) {
+        removed++;
+        return false;
+      }
+    } catch { /* kept */ }
+    return true;
+  });
+  if (removed) writeFileAtomic(path, kept.join("\n"), { mode: stat.mode & 0o777 });
+  return removed;
+}
+
+/** Claude Code takes `<file>.lock` as a directory while it writes history
+ * (stale after 10 s). Hold the same lock for the rewrite. */
+function withClaudeHistoryLock<T>(file: string, work: () => T): T | undefined {
+  const lock = `${file}.lock`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      mkdirSync(lock);
+      try { return work(); } finally { try { rmdirSync(lock); } catch { /* gone */ } }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const held = lstatOrNull(lock);
+      if (held && Date.now() - held.mtimeMs > 10_000) { try { rmdirSync(lock); } catch { /* taken back */ } continue; }
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** Claude Code: the folder's `projects/<key>` (sessions, subagents, tool
+ * results), the sessions' lines in `history.jsonl` and the paste cache only
+ * they used, and every per-session side file (Claude Code 2.1.282: file
+ * history, debug log, tasks, session env, image cache, uploads, plans). */
 function removeClaudeProjects(home: string, folders: string[], removed: string[], failed: string[], leftovers: DeletionLeftover[]): void {
   const api = pathApiFor(home);
   const projects = api.join(home, "projects");
   const ours = (cwd: string) => folders.some((folder) => sameFolder(folder, cwd));
+  const sessionIds = new Set<string>();
+  const slugs = new Set<string>();
+  let removedProject = false;
   for (const folder of folders) {
     const key = claudeProjectKey(folder);
     const names = "exact" in key ? [key.exact] : listDir(projects).filter((name) => name.startsWith(key.prefix));
     for (const name of names) {
       const dir = api.join(projects, name);
       if (!lstatOrNull(dir)) continue;
-      const named = claudeSessionFolders(dir);
+      const facts = claudeSessionFacts(dir);
       // A lossy key: another folder can share it. Remove only when every
       // session inside names this conversation's folder (and, for the cut
       // long form, at least one does).
-      if (named.some((cwd) => !ours(cwd)) || ("prefix" in key && !named.length)) {
+      if (facts.folders.some((cwd) => !ours(cwd)) || ("prefix" in key && !facts.folders.length)) {
         if ("exact" in key) leftovers.push({ what: "Claude Code's history of this conversation", where: "Claude Code's project history, filed under a name another folder shares" });
         continue;
       }
+      for (const id of facts.sessionIds) sessionIds.add(id);
+      for (const slug of facts.slugs) slugs.add(slug);
       record(removeConfined(projects, dir), dir, removed, failed);
+      removedProject = true;
+    }
+  }
+  if (!removedProject && !sessionIds.size) return;
+  const history = api.join(home, "history.jsonl");
+  const pastes = new Set<string>();
+  try {
+    const outcome = withClaudeHistoryLock(history, () => rewriteJsonlAtomic(history, (row) => {
+      const mine = (typeof row.sessionId === "string" && sessionIds.has(row.sessionId)) || (typeof row.project === "string" && ours(row.project));
+      if (mine && row.pastedContents && typeof row.pastedContents === "object") {
+        for (const paste of Object.values(row.pastedContents as Record<string, { contentHash?: unknown }>)) {
+          if (typeof paste?.contentHash === "string" && /^[a-f0-9]{16,64}$/.test(paste.contentHash)) pastes.add(paste.contentHash);
+        }
+      }
+      return mine;
+    }));
+    if (outcome === undefined) {
+      if (lstatOrNull(history)) failed.push(history);
+    } else if (outcome) removed.push(history);
+  } catch {
+    failed.push(history);
+  }
+  const remaining = lstatOrNull(history) ? readFileSync(history, "utf8") : "";
+  for (const hash of pastes) {
+    if (remaining.includes(hash)) continue;
+    const file = api.join(home, "paste-cache", `${hash}.txt`);
+    record(removeConfined(api.join(home, "paste-cache"), file), file, removed, failed);
+  }
+  for (const id of sessionIds) {
+    for (const [dir, name] of [["file-history", id], ["debug", `${id}.txt`], ["tasks", id], ["session-env", id], ["image-cache", id], ["uploads", id]] as const) {
+      const target = api.join(home, dir, name);
+      record(removeConfined(api.join(home, dir), target), target, removed, failed);
+    }
+  }
+  const latest = api.join(home, "debug", "latest");
+  try {
+    const stat = lstatOrNull(latest);
+    if (stat?.isSymbolicLink() && [...sessionIds].some((id) => readlinkSync(latest).endsWith(`${id}.txt`))) unlinkSync(latest);
+  } catch { /* left */ }
+  const plans = api.join(home, "plans");
+  for (const name of listDir(plans)) {
+    if ([...slugs].some((slug) => name === `${slug}.md` || name === `${slug}.workshop.md` || (name.startsWith(`${slug}-agent-`) && name.endsWith(".md")))) {
+      record(removeConfined(plans, api.join(plans, name)), api.join(plans, name), removed, failed);
     }
   }
 }
 
-/** Codex keeps one rollout file per session under sessions/YYYY/MM/DD and
- * archived_sessions/, whose first line (`session_meta`) names the folder. */
-function removeCodexRollouts(home: string, folders: string[], removed: string[], failed: string[]): void {
+/** The first line of a Codex rollout, plain or zstd-compressed. */
+function codexRolloutHead(file: string): string | undefined {
+  if (file.endsWith(".jsonl")) return readHead(file)?.split("\n", 1)[0];
+  try {
+    const zstd = (zlib as unknown as { zstdDecompressSync?: (input: Buffer) => Buffer }).zstdDecompressSync;
+    if (!zstd || !lstatOrNull(file)?.isFile()) return undefined;
+    return zstd(readFileSync(file)).toString("utf8").split("\n", 1)[0];
+  } catch {
+    return undefined;
+  }
+}
+
+/** Codex: rollout files (sessions/YYYY/MM/DD and archived_sessions) whose
+ * first line (`session_meta`) names the folder; then, by those thread ids,
+ * the lines in history.jsonl and session_index.jsonl, shell snapshots, and
+ * the rows in its SQLite stores (state, logs, memories, goals, history). */
+function removeCodexRollouts(home: string, folders: string[], removed: string[], failed: string[], sqliteHome?: string): void {
   const api = pathApiFor(home);
   const candidates: string[] = [];
   const sessions = api.join(home, "sessions");
@@ -361,19 +472,61 @@ function removeCodexRollouts(home: string, folders: string[], removed: string[],
         for (const file of listDir(api.join(sessions, year, month, day))) candidates.push(api.join(sessions, year, month, day, file));
   const archived = api.join(home, "archived_sessions");
   for (const file of listDir(archived)) candidates.push(api.join(archived, file));
+  const threadIds = new Set<string>();
   for (const file of candidates) {
-    if (!/^rollout-.+\.jsonl$/.test(api.basename(file))) continue;
-    const head = readHead(file);
-    const first = head?.split("\n", 1)[0];
+    if (!/^rollout-.+\.jsonl(\.zst)?$/.test(api.basename(file))) continue;
+    const first = codexRolloutHead(file);
     if (!first) continue;
     try {
-      const row = JSON.parse(first) as { type?: unknown; payload?: { cwd?: unknown } };
+      const row = JSON.parse(first) as { type?: unknown; payload?: { cwd?: unknown; id?: unknown } };
       const cwd = row.payload?.cwd;
       if (row.type !== "session_meta" || typeof cwd !== "string" || !folders.some((folder) => sameFolder(folder, cwd))) continue;
+      if (typeof row.payload?.id === "string" && ID.test(row.payload.id)) threadIds.add(row.payload.id);
     } catch {
       continue;
     }
     record(removeConfined(home, file), file, removed, failed);
+  }
+  if (!threadIds.size) return;
+  for (const [file, field] of [["history.jsonl", "session_id"], ["session_index.jsonl", "id"]] as const) {
+    const path = api.join(home, file);
+    try {
+      if (rewriteJsonlAtomic(path, (row) => typeof row[field] === "string" && threadIds.has(row[field] as string))) removed.push(path);
+    } catch {
+      failed.push(path);
+    }
+  }
+  const snapshots = api.join(home, "shell_snapshots");
+  for (const name of listDir(snapshots)) {
+    if ([...threadIds].some((id) => name.startsWith(`${id}.`))) record(removeConfined(snapshots, api.join(snapshots, name)), api.join(snapshots, name), removed, failed);
+  }
+  const dbDir = sqliteHome || home;
+  for (const name of listDir(dbDir).filter((item) => /^(state|logs|memories|goals|thread_history)_\d+\.sqlite$/.test(item))) {
+    const path = pathApiFor(dbDir).join(dbDir, name);
+    if (!lstatOrNull(path)?.isFile()) continue;
+    let db: DatabaseSync | undefined;
+    try {
+      db = new DatabaseSync(path);
+      db.exec("PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;");
+      const ids = [...threadIds];
+      const marks = ids.map(() => "?").join(",");
+      let changed = 0;
+      for (const { name: table } of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>) {
+        if (!/^\w+$/.test(table)) continue;
+        const columns = new Set((db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>).map((column) => column.name));
+        for (const column of ["thread_id", "parent_thread_id", "child_thread_id", ...(table === "threads" ? ["id"] : [])]) {
+          if (columns.has(column)) changed += Number(db.prepare(`DELETE FROM "${table}" WHERE "${column}" IN (${marks})`).run(...ids).changes);
+        }
+      }
+      if (changed) {
+        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        removed.push(path);
+      }
+    } catch {
+      failed.push(path);
+    } finally {
+      db?.close();
+    }
   }
 }
 
@@ -606,17 +759,12 @@ export class ConversationDeletions {
 
   private removeEngineHistory(homes: DeletionEngineHome[], folders: string[], memoryFolders: string[], removed: string[], failed: string[], leftovers: DeletionLeftover[]): void {
     const seen = new Set<string>();
-    for (const { engine, home } of homes) {
+    for (const { engine, home, sqliteHome } of homes) {
       if (seen.has(`${engine}\0${home}`)) continue;
       seen.add(`${engine}\0${home}`);
-      const before = removed.length;
       if (engine === "fuigo" || engine === "grok") removeFuigoSessions(home, folders, memoryFolders, removed, failed);
       else if (engine === "claude") removeClaudeProjects(home, folders, removed, failed, leftovers);
-      else if (engine === "codex") removeCodexRollouts(home, folders, removed, failed);
-      if (removed.length === before) continue;
-      const name = { fuigo: "Fuigo", grok: "Grok", claude: "Claude Code", codex: "Codex" }[engine];
-      const shared = { fuigo: "its logs and memory folders", grok: "its logs and memory folders", claude: "history.jsonl and its per-session side files", codex: "history.jsonl and its logs" }[engine];
-      leftovers.push({ what: `Pieces of this conversation in ${shared}`, where: `${name}'s shared history on this computer` });
+      else if (engine === "codex") removeCodexRollouts(home, folders, removed, failed, sqliteHome);
     }
   }
 
