@@ -165,3 +165,27 @@ for (const backupMode of [false, true]) test(`recovery-window ownership sentence
   assert.equal(retry, backupMode ? "Return to workspace" : "Retry startup");
   assert.ok(shown.includes(`choose ${retry}.`), shown);
 });
+
+// D1 (0.1.60 Windows re-test 3): the page said "Downloading and verifying…"
+// while Murage was only waiting for the folder dialog. Main now reports the
+// phase; the preload forwards only the two known phases and can unsubscribe.
+test("the download phase reaches the page through the preload, and only its two phases", () => {
+  const listeners = new Map();
+  const electron = { contextBridge: { exposeInMainWorld: (name, api) => { exposed[name] = api; } },
+    ipcRenderer: { invoke: async () => ({}), sendSync: () => "", on: (channel, fn) => listeners.set(channel, fn), once: () => {}, send: () => {}, removeListener: (channel, fn) => { if (listeners.get(channel) === fn) listeners.delete(channel); }, removeAllListeners: () => {} },
+    webUtils: { getPathForFile: () => "" } };
+  const exposed = {};
+  const context = { require: name => { if (name === "electron") return electron; throw Error("preload may not require " + name); },
+    process: { argv: [`--murage-renderer-origin=${ORIGIN}`], platform: process.platform, env: {} }, location: { origin: ORIGIN },
+    console, setTimeout, clearTimeout, queueMicrotask, URL, module: { exports: {} }, exports: {} };
+  context.globalThis = context;
+  vm.runInNewContext(readFileSync(new URL("./preload.cjs", import.meta.url), "utf8"), context);
+  const seen = [];
+  const stop = exposed.muragebox.backupRemote.onDownloadPhase(phase => seen.push(phase));
+  const forward = listeners.get("backup-remote:download-phase");
+  forward({}, "choosing"); forward({}, "anything else"); forward({}, "downloading");
+  assert.deepEqual(seen, ["choosing", "downloading"]);
+  stop(); assert.equal(listeners.has("backup-remote:download-phase"), false);
+  const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
+  assert.match(main, /phase\("choosing"\);[^]*?mainWindow\.focus\(\);[^]*?showOpenDialog\(mainWindow,\{title:"Save remote backup in a new subfolder"/);
+});

@@ -125,6 +125,11 @@ contextBridge.exposeInMainWorld("muragebox", {
     reconcileLatest: (remoteRef, revision, jobId) => ipcRenderer.invoke("backup-remote:reconcileLatest", remoteRef, revision, jobId),
     listBackups: (remoteRef, revision) => ipcRenderer.invoke("backup-remote:listBackups", remoteRef, revision),
     downloadBackup: (remoteRef, revision, snapshotId) => ipcRenderer.invoke("backup-remote:downloadBackup", remoteRef, revision, snapshotId),
+    onDownloadPhase: listener => {
+      const forward = (_event, phase) => { if (phase === "choosing" || phase === "downloading") listener(phase); };
+      ipcRenderer.on("backup-remote:download-phase", forward);
+      return () => ipcRenderer.removeListener("backup-remote:download-phase", forward);
+    },
     saveMaintenanceCredentials: (remoteRef, revision, credentials) => ipcRenderer.invoke("backup-remote:saveMaintenanceCredentials", remoteRef, revision, credentials),
     previewRetention: (remoteRef, revision, policy) => ipcRenderer.invoke("backup-remote:previewRetention", remoteRef, revision, policy),
     applyRetention: (remoteRef, revision, policy, previewId) => ipcRenderer.invoke("backup-remote:applyRetention", remoteRef, revision, policy, previewId),

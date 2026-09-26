@@ -3467,11 +3467,18 @@ async function initializeBackupRemoteHost(){
     // desktop Murage runs on. A folder others can change (Ubuntu's ~/Documents
     // is group-writable) is refused right here, by name, with what to pick,
     // instead of after the download as "could not be confirmed" (Linux D8).
+    // The download waits on this dialog, so the page says so ("choosing"),
+    // and the window is brought forward first so the dialog is never left
+    // behind another window (0.1.60 Windows re-test 3 D1: the page read
+    // "Downloading and verifying…" while the folder dialog sat unanswered).
     chooseDownloadFolder:async()=>{
+      const phase=value=>{try{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("backup-remote:download-phase",value);}catch{/* the page keeps its busy label */}};
       for(;;){
+        phase("choosing");
+        try{if(mainWindow&&!mainWindow.isDestroyed()){if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();}}catch{/* the dialog still opens */}
         const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",defaultPath:app.getPath("home"),properties:["openDirectory","createDirectory"]});
         const folder=result.canceled?null:result.filePaths[0]??null;
-        if(!folder||!downloadFolderShared(folder))return folder;
+        if(!folder||!downloadFolderShared(folder)){if(folder)phase("downloading");return folder;}
         const answer=await dialog.showMessageBox(mainWindow,{type:"warning",buttons:["Cancel","Choose another folder"],defaultId:1,cancelId:0,noLink:true,
           message:`Other accounts on this computer can change the folder "${path.basename(folder)||folder}", so Murage won't save a backup there.`,
           detail:`A backup is only saved where nobody else can swap the file while it is written. Folder: ${folder}\n\nChoose your home folder, or a folder only you can change. To keep using this one, remove the others' write access first, for example: chmod go-w "${folder}"`});
