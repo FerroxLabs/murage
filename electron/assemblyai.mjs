@@ -30,7 +30,13 @@ export async function mintAssemblyAIStreamingToken(
     if (response.status === 401 || response.status === 403) {
       throw new Error("AssemblyAI rejected this API key. Replace it in Transcription settings.");
     }
-    throw new Error(`Could not start cloud transcription (HTTP ${response.status}).`);
+    if (response.status === 429) {
+      throw new Error("AssemblyAI is receiving too many requests from this key right now. Wait a minute, then try again.");
+    }
+    if (response.status >= 500) {
+      throw new Error("AssemblyAI isn't answering right now, so recording can't start. Try again in a few minutes.");
+    }
+    throw new Error("Could not start cloud transcription. Check your AssemblyAI key in Transcription settings, then try again.");
   }
   const token = String(body?.token ?? "").trim();
   if (!token) throw new Error("AssemblyAI returned an invalid temporary token.");
