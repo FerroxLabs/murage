@@ -11,6 +11,7 @@
 // time, never at queue time, because the user might have just turned
 // approvePeerComms on between queueing and draining.
 
+import { DELEGATION_OUTCOMES } from "../shared/record-values.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -65,7 +66,8 @@ interface PendingDelegationItem extends DelegationItem {
   waitingOnBusy?: boolean;
 }
 
-export type DelegationOutcome = "done" | "failed" | "denied" | "expired" | "cancelled" | "busy_gave_up" | "dropped" | "error";
+/** Declared in shared/record-values.ts, which the backup reads too. */
+export type DelegationOutcome = typeof DELEGATION_OUTCOMES[number];
 
 /** The durable terminal record of one handoff: what the delegating bot reads
  * back with check_delegation / wait_delegation. Bounded and pruned — this is

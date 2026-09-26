@@ -17,6 +17,7 @@ import { completeRoutineWatchCheck, createRoutineWatchState, pauseRoutineWatch, 
 import { readRoutineWatchBinding, routineWatchInputSchema } from "./routine-watch-integration.ts";
 import { turnStopped, turnSucceeded } from "./turn-outcome.ts";
 import { isUnseenRoutineProblem } from "../shared/routine-problems.ts";
+import { ROUTINE_RUN_ON, ROUTINE_RUN_STATUSES, ROUTINE_RUN_TRIGGERS, ROUTINE_TARGETS } from "../shared/record-values.ts";
 import { ROUTINE_GRANTS_MAX, isRoutineGrantKey, loadRoutinePermissionMode, routineGrantKeys, routinePermissionModeInput, type RoutinePermissionMode } from "./routine-permissions.ts";
 
 export type RoutineSchedule =
@@ -27,8 +28,8 @@ export type RoutineSchedule =
 /** `cloud` runs the agent itself inside the bot's Box VM. `ember` keeps
  * using the provider selected on the EMBER and only borrows its configured
  * computer tools, if any. */
-export type RoutineRunOn = "ember" | "cloud";
-export type RoutineTarget = "bot" | "room-goal";
+export type RoutineRunOn = typeof ROUTINE_RUN_ON[number];
+export type RoutineTarget = typeof ROUTINE_TARGETS[number];
 export type RoutineGoalStatus = Exclude<GroupGoalRunStatus, "working">;
 
 export interface RoutineContextAttachment {
@@ -41,21 +42,15 @@ export interface RoutineContextAttachment {
 
 const persistedSourceThreadId = z.string().trim().min(1).optional().catch(undefined);
 
-export type RoutineRunTrigger = "schedule" | "manual" | "webhook" | "channel";
+/** Declared in shared/record-values.ts, which the backup reads too. */
+export type RoutineRunTrigger = typeof ROUTINE_RUN_TRIGGERS[number];
 
-export type RoutineRunStatus =
-  | "queued"
-  | "running"
-  | "waiting"
-  /** The run limit came while a card was waiting on the owner. The turn
-   * stays open on that card with its clock stopped; answering it resumes the
-   * same run with a fresh run limit. Still active: it holds the routine's
-   * next occurrences back, and Cancel run ends it. */
-  | "needs-you"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "missed";
+/** Declared in shared/record-values.ts, which the backup reads too.
+ * "needs-you": the run limit came while a card was waiting on the owner. The
+ * turn stays open on that card with its clock stopped; answering it resumes
+ * the same run with a fresh run limit. Still active: it holds the routine's
+ * next occurrences back, and Cancel run ends it. */
+export type RoutineRunStatus = typeof ROUTINE_RUN_STATUSES[number];
 
 /** A run with a live turn (working, or waiting on a person). */
 const LIVE_RUN_STATUSES: readonly RoutineRunStatus[] = ["running", "waiting", "needs-you"];

@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { WEBHOOK_ATTEMPT_OUTCOMES } from "../shared/record-values.ts";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -130,7 +131,7 @@ const webhookAttemptSchema = z.object({
   id: z.string().min(1),
   webhookId: z.string().min(1),
   receivedAt: z.number().finite().nonnegative(),
-  outcome: z.enum(["accepted", "captured", "duplicate", "ignored", "rejected"]),
+  outcome: z.enum(WEBHOOK_ATTEMPT_OUTCOMES),
   statusCode: z.number().int().min(100).max(599),
   eventName: z.string().optional(),
   preview: z.string().optional(),
