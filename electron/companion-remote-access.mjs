@@ -246,6 +246,27 @@ export function sameTarget(left, right) {
   return a !== null && a === b;
 }
 
+/** Where a tailnet's HTTPS certificates are switched on. One place, so the
+ * desktop copy (`src/lib/tailnet-https.ts`) and this message cannot drift. */
+export const TAILSCALE_DNS_ADMIN_URL = "https://login.tailscale.com/admin/dns";
+
+/** The first `https://login.tailscale.com/…` link in Tailscale's own output.
+ * Newer CLIs answer a tailnet that has not allowed serve with a sentence on
+ * one line and the link that fixes it three lines down; quoting only the
+ * first line kept the sentence and dropped the fix. Anything not on
+ * Tailscale's console host is left out: this text is shown to the owner as
+ * advice. */
+function tailscaleConsoleLink(text) {
+  for (const match of String(text).matchAll(/https:\/\/[^\s"'<>]+/g)) {
+    try {
+      if (new URL(match[0]).hostname === "login.tailscale.com") return match[0];
+    } catch {
+      /* not a URL after all */
+    }
+  }
+  return null;
+}
+
 /** Turn a failed `serve` invocation into a reason a person can act on.
  *
  * Failing opaquely is the specific thing this module was built not to do. The
@@ -265,8 +286,9 @@ export function classifyServeFailure(stderr) {
     return {
       reason: "no-certificates",
       message:
-        "Your tailnet does not have HTTPS certificates enabled, so Tailscale cannot serve a secure address. " +
-        "Enable HTTPS (and MagicDNS) for your tailnet in the Tailscale admin console, then turn this on again. " +
+        "Your tailnet does not have HTTPS certificates turned on, so Tailscale cannot give Murage a secure address. " +
+        `Open the Tailscale admin console at ${TAILSCALE_DNS_ADMIN_URL}, make sure MagicDNS is on, and under ` +
+        "HTTPS Certificates choose Enable HTTPS. Then turn this on again. " +
         "Browser access still works over plain HTTP on your tailnet in the meantime.",
     };
   }
@@ -279,11 +301,11 @@ export function classifyServeFailure(stderr) {
     };
   }
   const first = text.split("\n").map((line) => line.trim()).find(Boolean);
+  const link = tailscaleConsoleLink(text);
+  const said = first ? `Tailscale could not put a secure address in front of Murage: ${first}` : "Tailscale could not put a secure address in front of Murage.";
   return {
     reason: "failed",
-    message: first
-      ? `Tailscale could not put a secure address in front of Murage: ${first}`
-      : "Tailscale could not put a secure address in front of Murage.",
+    message: link && !(first ?? "").includes(link) ? `${said} Tailscale says to open ${link}` : said,
   };
 }
 

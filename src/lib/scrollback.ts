@@ -19,12 +19,35 @@ import type { AppState, Message } from "@/state/store";
  * the switch reply hold the same rows. */
 export const MESSAGE_PAGE_SIZE = 100;
 
+/** A phone's boot page per thread (spec §6 phone mode). One row, which the
+ * server widens to reach back to every open request card and the active
+ * branch head (server newestPageLimit), so a phone still sees what needs it
+ * and each thread's latest line, without every thread's history. `0` would
+ * be settings only: no cards, no latest line, and nothing to page back from. */
+export const PHONE_HYDRATE_PAGE = 1;
+
+export function hydratePageSize(phone: boolean): number {
+  return phone ? PHONE_HYDRATE_PAGE : MESSAGE_PAGE_SIZE;
+}
+
+/** A conversation holding less than a newest page while the server has more:
+ * a phone's slim boot page. A snapshot or switch always holds at least a full
+ * page when there is more, so on the desktop this is never true. */
+export function needsNewestPage(owner: { messages: Message[]; hasMore?: boolean }): boolean {
+  return Boolean(owner.hasMore) && owner.messages.length < MESSAGE_PAGE_SIZE;
+}
+
 /** The largest page the server hands out; a jump walks back in these. */
 export const MESSAGE_PAGE_MAX = 200;
 
 /** A jump gives up after this many pages (40,000 messages) rather than
  * walking an enormous thread down one request at a time forever. */
 export const MAX_JUMP_PAGES = 200;
+
+/** A link someone tapped walks back only this far (1,000 messages) and then
+ * leaves the reader on the thread: a crafted `msg=` must not page a phone
+ * through a whole transcript over cellular (final review M5). */
+export const DEEP_LINK_MAX_PAGES = 5;
 
 type OlderMessagesAction =
   | { type: "loadOlderMessages"; threadId: string }
@@ -60,6 +83,9 @@ export function createScrollback(deps: ScrollbackDeps) {
   /** One page walk per thread at a time: a scroll-triggered page and a jump
    * asking from the same oldest message would fetch the same rows twice. */
   const busy = new Map<string, Promise<unknown>>();
+  /** Threads whose `busy` walk is a `loadOlder` page, which clears the
+   * loading flag itself when it lands; any other walk is a jump's. */
+  const paging = new Set<string>();
   const exclusive = <T>(threadId: string, task: () => Promise<T>): Promise<T> => {
     const running = task().finally(() => {
       if (busy.get(threadId) === running) busy.delete(threadId);
@@ -72,11 +98,17 @@ export function createScrollback(deps: ScrollbackDeps) {
   /** The page before the oldest message this client holds. A no-op while a
    * page for the thread is already on the wire. */
   const loadOlder = (threadId: string): Promise<void> | undefined => {
-    if (busy.has(threadId)) return undefined;
     const owner = ownerOf(deps.getState(), threadId);
     // Captured now: `loadOlderMessages` does not move it, so this is the
     // value the reducer compares when the answer lands.
     const generation = generationOf(threadId);
+    if (busy.has(threadId)) {
+      // A jump's walk holds the thread and may never answer this request
+      // (a probe, a message already held): clear the flag the store set, or
+      // "Load earlier" stays disabled. Our own page clears it when it lands.
+      if (!paging.has(threadId)) deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: Boolean(owner?.hasMore) });
+      return undefined;
+    }
     deps.dispatch({ type: "loadOlderMessages", threadId });
     const before = owner?.messages[0]?.id;
     if (!owner?.hasMore || !before) {
@@ -85,6 +117,7 @@ export function createScrollback(deps: ScrollbackDeps) {
       deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: false });
       return undefined;
     }
+    paging.add(threadId);
     return exclusive(threadId, async () => {
       try {
         const page = await deps.request(pagePath(threadId, `limit=${MESSAGE_PAGE_SIZE}&before=${encodeURIComponent(before)}`));
@@ -93,6 +126,8 @@ export function createScrollback(deps: ScrollbackDeps) {
         // Clear the flag on the way out, or scrolling up never asks again.
         deps.dispatch({ type: "olderMessages", threadId, generation, messages: [], hasMore: true });
         deps.onError(error);
+      } finally {
+        paging.delete(threadId);
       }
     });
   };
@@ -101,8 +136,9 @@ export function createScrollback(deps: ScrollbackDeps) {
    * it. The walk is contiguous — pages always continue from the oldest held
    * row — so the transcript never has a hole the reader could scroll across
    * without noticing. "missing" means the message is not in this thread, the
-   * thread moved on while pages were in flight, or the walk hit its cap. */
-  const loadThrough = async (threadId: string, messageId: string): Promise<JumpOutcome> => {
+   * thread moved on while pages were in flight, or the walk hit its cap
+ * (`maxPages`, which a deep link lowers to DEEP_LINK_MAX_PAGES). */
+  const loadThrough = async (threadId: string, messageId: string, maxPages = MAX_JUMP_PAGES): Promise<JumpOutcome> => {
     // The switch that precedes most jumps has been dispatched, not rendered.
     let owner = ownerOf(deps.getState(), threadId);
     for (let tries = 0; !owner && tries < 20; tries++) {
@@ -125,7 +161,7 @@ export function createScrollback(deps: ScrollbackDeps) {
       }
       const generation = generationOf(threadId);
       let before = start;
-      for (let pages = 0; pages < MAX_JUMP_PAGES; pages++) {
+      for (let pages = 0; pages < maxPages; pages++) {
         if (generationOf(threadId) !== generation) return "missing";
         deps.dispatch({ type: "loadOlderMessages", threadId });
         let page: ScrollbackPage;

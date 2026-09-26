@@ -19,7 +19,7 @@ test.beforeAll(async () => {
       if(id==="\0avatar-speech")return `export const useSpeech=()=>({caption:"",error:null});`;
       if(id==="\0avatar-push")return `export const usePushToTalk=()=>false;`;
       if(id!=="\0avatar-entry")return;
-      return `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{CallOverlay}from'/src/components/CallView.tsx';import'/src/styles.css';
+      return `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{CallOverlay}from'/src/components/CallControls.tsx';import'/src/styles.css';
         function Fixture(){const[bot,setBot]=useState({id:'portrait-bot',name:'Ada',color:'green',busy:true,messages:[],avatarUrl:'/api/attachments/portrait.png',avatarCrop:'circle'});window.setAvatar=patch=>setBot(current=>({...current,...patch}));return React.createElement(CallOverlay,{bot});}createRoot(document.getElementById('root')).render(React.createElement(Fixture));`;
     },configureServer(vite){vite.middlewares.use((req,res,next)=>{if(req.url!=="/__call")return next();res.setHeader("content-type","text/html");res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/__call.js"></script>');});}
   }]});await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;

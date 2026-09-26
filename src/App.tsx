@@ -1,17 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Menu } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
 import { initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
-import { BotSettingsDialog } from "@/components/BotSettingsDialog";
 import { PluginsPanel, preloadConnectedApps } from "@/components/PluginsPanel";
-import { ComputerPanel } from "@/components/ComputerPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
-import { SettingsModal } from "@/components/SettingsModal";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
+import { RemoteConnectionBanner } from "@/components/RemoteConnectionBanner";
+import { SignedOutCard } from "@/components/SignedOutCard";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
@@ -29,9 +28,27 @@ import { trackVisualViewport } from "@/lib/visual-viewport";
 import { setLocale } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { InstallPrompt } from "./components/InstallPrompt";
+import { useDeepLinks } from "@/components/useDeepLinks";
+import { LazyFallback } from "@/components/LazyFallback";
+import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
+
+// Opened by a tap, so loaded by one (spec §6). Settings alone pulls in every
+// settings page and, through House rules and the skill editor, Tiptap; a phone
+// that never opens them never downloads them. One Suspense per surface, so a
+// panel loading does not blank one that is already open. One LazyBoundary per
+// surface too, so a chunk that fails to arrive costs that panel a retry
+// button, not the whole app (LazyBoundary.tsx).
+const BotSettings = retryableLazy(() => import("@/components/BotSettingsDialog").then((module) => ({ default: module.BotSettingsDialog })));
+const Computer = retryableLazy(() => import("@/components/ComputerPanel").then((module) => ({ default: module.ComputerPanel })));
+const Settings = retryableLazy(() => import("@/components/SettingsModal").then((module) => ({ default: module.SettingsModal })));
+const BotSettingsDialog = BotSettings.Component;
+const ComputerPanel = Computer.Component;
+const SettingsModal = Settings.Component;
 
 function Shell() {
   const { state, dispatch } = useStore();
+  // #open=<thread>&msg=<message> and the phone app's notificationOpened.
+  useDeepLinks();
   // The same cached `GET /api/setup` the phase bar reads, so the band and the
   // view underneath it cannot disagree about whose screen this is.
   const { view: setupView } = useSetupView();
@@ -269,6 +286,10 @@ function Shell() {
           dead server is indistinguishable from a dozen broken features from
           in here, and that cost the owner an hour on 2026-09-22. */}
       <ServerLifecycleBanner />
+      {/* The remote counterpart: a phone or browser whose computer went quiet. */}
+      {desktop === false && <RemoteConnectionBanner connected={state.connected} signedOut={state.signedOut === true} />}
+      {/* Only after the door itself said 401 (lib/session-check.ts). */}
+      {state.signedOut && <SignedOutCard />}
       {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
       {/* The first run's phases, as a band ABOVE whatever is in the main view
@@ -333,22 +354,40 @@ function Shell() {
           </div>
           {!state.connected && (
             <div className="text-[12px]">
-              This usually clears on its own. If it does not, quit Murage and open it again.
+              {desktop === true
+                ? "This usually clears on its own. If it does not, quit Murage and open it again."
+                : "This usually clears on its own once your computer is awake and online."}
             </div>
           )}
         </main>
       )}
-      {state.settingsOpen && bot && <BotSettingsDialog key={bot.id} bot={bot} />}
+      {state.settingsOpen && bot && (
+        <LazyBoundary onRetry={BotSettings.retry} onDismiss={() => dispatch({ type: "toggleSettings", open: false })}>
+          <Suspense fallback={<LazyFallback />}>
+            <BotSettingsDialog key={bot.id} bot={bot} />
+          </Suspense>
+        </LazyBoundary>
+      )}
       {state.computerOpen && bot && (
-        <ComputerPanel
-          key={bot.id}
-          bot={bot}
-          onOpenVmWorkspace={openLocalVmWorkspace}
-          onExpandBrowser={openBrowserWorkspace}
-        />
+        <LazyBoundary onRetry={Computer.retry} onDismiss={() => dispatch({ type: "toggleComputer", open: false })}>
+          <Suspense fallback={<LazyFallback />}>
+            <ComputerPanel
+              key={bot.id}
+              bot={bot}
+              onOpenVmWorkspace={openLocalVmWorkspace}
+              onExpandBrowser={openBrowserWorkspace}
+            />
+          </Suspense>
+        </LazyBoundary>
       )}
       {state.inspectorOpen && bot && <InspectorPanel bot={bot} />}
-      {state.appSettingsOpen && <SettingsModal />}
+      {state.appSettingsOpen && (
+        <LazyBoundary onRetry={Settings.retry} onDismiss={() => dispatch({ type: "toggleAppSettings", open: false })}>
+          <Suspense fallback={<LazyFallback />}>
+            <SettingsModal />
+          </Suspense>
+        </LazyBoundary>
+      )}
       {state.pluginsOpen && <PluginsPanel />}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}

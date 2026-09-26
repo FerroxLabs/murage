@@ -54,9 +54,13 @@ import {
   type PhonePairingAttemptLock,
   type PhonePairingAttemptQueue,
 } from "../lib/phone-setup";
+import { tailnetHttpsHelp } from "../lib/tailnet-https";
 import { useDesktopSurface } from "../lib/use-surface";
 import type { CompanionAccountState } from "../types/muragebox";
 import { ConnectionDetail } from "./ConnectionDetail";
+import { KeepAwakeOffer } from "./KeepAwakeOffer";
+import { ReplaceOldDevice } from "./ReplaceOldDevice";
+import { TailnetHttpsHelpCard } from "./TailnetHttpsHelp";
 
 export interface PhoneDevice {
   id: string;
@@ -71,6 +75,12 @@ export interface CompanionState {
   keepAwake: boolean;
   port: number;
   devices: PhoneDevice[];
+  /** The companion's device cap. Optional: an older sidecar does not say. */
+  maxDevices?: number;
+  /** Every paired device, least recently seen first — sent only once the
+   * fleet is full, and rendered as "Replace an old device" while a pairing
+   * window is open. Empty or absent means there is room. */
+  replaceCandidates?: PhoneDevice[];
   connectedDeviceIds?: string[];
   pairing: { code: string; token: string; expiresAt: number } | null;
   addresses?: string[];
@@ -1301,6 +1311,7 @@ export function PhoneSetupFlowView({
 
   if (c.phase === "intro") {
     const readiness = webUiReadiness(c);
+    const httpsHelp = tailnetHttpsHelp(c.remoteAccess);
     return (
       <div className="flex flex-col items-center text-center">
         <div className="flex size-14 items-center justify-center rounded-2xl bg-accent/12 text-accent">
@@ -1317,6 +1328,7 @@ export function PhoneSetupFlowView({
           onRecheck={c.refreshTailscale}
           desktop={desktop}
         />
+        {httpsHelp && <TailnetHttpsHelpCard help={httpsHelp} className="mt-3 w-full max-w-[420px]" />}
         <button
           onClick={c.start}
           disabled={!c.state || c.busy || c.accountBusy || !readiness.ready}
@@ -1535,6 +1547,7 @@ export function PhoneSetupFlowView({
         <p className="mt-1.5 text-[13px] text-ink-secondary">
           It can now open chats, answer approvals, and send new work.
         </p>
+        <KeepAwakeOffer c={c} className="mt-5 w-full max-w-[420px] rounded-xl border border-hairline/50 px-3 py-3" />
         <button
           onClick={() => {
             c.finish();
@@ -1602,6 +1615,14 @@ export function PhoneSetupFlowView({
           </div>
           <div className="mt-1.5">Signs in one device, then it is spent. Expires in {c.secondsLeft}s.</div>
         </div>
+      )}
+      {!c.pairingExpired && c.state?.pairing && (
+        <ReplaceOldDevice
+          candidates={c.state?.replaceCandidates ?? []}
+          max={c.state?.maxDevices}
+          busy={c.busy}
+          onReplace={(id) => void c.act((companion) => companion.revoke(id))}
+        />
       )}
       {c.pairingExpired && (
         <button onClick={c.refreshCode} className="mt-5 rounded-lg bg-accent px-5 py-2.5 text-[14px] font-medium text-white">

@@ -18,6 +18,7 @@ import {
 } from "./ConnectedAppsLock";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { t } from "@/lib/i18n";
+import { openExternalPage } from "@/lib/open-external";
 
 interface ToolkitCard {
   slug: string;
@@ -727,19 +728,10 @@ export function PluginsPanel() {
   }, [lockState]);
 
   const openConnectUrl = async (url: string) => {
-    if (window.muragebox?.openExternal) {
-      await window.muragebox.openExternal(url);
-      return;
-    }
-    // Browser development fallback. If a popup blocker rejects the first
-    // asynchronous open, the visible Continue button retries from a direct
-    // user gesture using the URL retained in pendingUrls.
-    const opened = window.open("", "_blank");
-    if (!opened) throw new Error("Your browser blocked the connection page. Click Continue to open it.");
-    // Open a same-origin blank page first so the OAuth origin never receives
-    // an opener reference, while a real null remains a reliable blocked signal.
-    opened.opener = null;
-    opened.location.replace(url);
+    // If a popup blocker rejects the first asynchronous open, the visible
+    // Continue button retries from a direct user gesture using the URL
+    // retained in pendingUrls.
+    await openExternalPage(url, "Your browser blocked the connection page. Click Continue to open it.");
   };
 
   const startPolling = (slug: string) => {

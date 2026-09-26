@@ -2,16 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Loader2, PlugZap, RefreshCw, X } from "lucide-react";
 
 import { api, type Message } from "@/state/store";
+import { openExternalPage } from "@/lib/open-external";
 
 async function openConnectionPage(url: string) {
-  if (window.muragebox?.openExternal) {
-    await window.muragebox.openExternal(url);
-    return;
-  }
-  const opened = window.open("", "_blank");
-  if (!opened) throw new Error("Your browser blocked the connection page. Allow pop-ups, then try again.");
-  opened.opener = null;
-  opened.location.replace(url);
+  await openExternalPage(url, "Your browser blocked the connection page. Allow pop-ups, then try again.");
 }
 
 export function ConnectorCard({ botId, threadId, message }: { botId: string; threadId: string; message: Message }) {

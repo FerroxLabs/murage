@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { conversationExportFilename, downloadConversation } from "./conversation-export";
+import { resetNativeShellForTest } from "./native-shell";
 
 const auth = vi.hoisted(() => ({ ensure: vi.fn(), headers: vi.fn(() => ({ "x-murage-surface-secret": "synthetic-proof" })) }));
 vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopSurfaceHeaders: auth.headers }));
@@ -21,6 +22,10 @@ it("pins URL and filename before authentication, supplies proof and cleans downl
   let release!: () => void;
   auth.ensure.mockImplementation(() => new Promise<void>(resolve => { release = resolve; }));
   const pending = downloadConversation("task/one", "Quarterly report");
+  // The native-availability check ahead of `ensure` resolves over a few
+  // microtask ticks (no bridge is stubbed in this test); wait for it to
+  // reach `ensure` before releasing it, instead of assuming it is synchronous.
+  while (!auth.ensure.mock.calls.length) await Promise.resolve();
   expect(fetchMock).not.toHaveBeenCalled(); release();
   expect(await pending).toBe("conversation-quarterly-report.md");
   expect(fetchMock).toHaveBeenCalledWith("/api/threads/task%2Fone/export?format=markdown", { headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } });
@@ -39,6 +44,23 @@ it("rejects non-Markdown and cleans resources if browser download activation thr
   link.click.mockImplementation(() => { throw Error("Download unavailable"); });
   await expect(downloadConversation("task", "Report")).rejects.toThrow("Download unavailable");
   expect(link.remove).toHaveBeenCalledOnce(); vi.runAllTimers(); expect(URL.revokeObjectURL).toHaveBeenCalledOnce();
+});
+it("inside the phone app, hands the export route to native by URL instead of reading it here", async () => {
+  const saveFile = vi.fn(async () => undefined);
+  vi.stubGlobal("murageNative", { hello: async () => ({ version: 1, methods: ["saveFile"] }), saveFile });
+  vi.stubGlobal("location", { href: "https://desk.tail0a48a4.ts.net/" });
+  try {
+    expect(await downloadConversation("task/one", "Quarterly report")).toBe("conversation-quarterly-report.md");
+    expect(saveFile).toHaveBeenCalledWith({
+      kind: "url",
+      url: "https://desk.tail0a48a4.ts.net/api/threads/task%2Fone/export?format=markdown",
+      filename: "conversation-quarterly-report.md",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(link.click).not.toHaveBeenCalled();
+  } finally {
+    resetNativeShellForTest();
+  }
 });
 it("keeps filenames bounded and safe on supported desktop platforms", () => {
   expect(conversationExportFilename("../../CON\u0000: secret\\path")).toBe("conversation-con-secret-path.md");

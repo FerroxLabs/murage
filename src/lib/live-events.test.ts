@@ -474,6 +474,15 @@ describe("desktop proof recovery", () => {
     stop();
   });
 
+  it("asks a refusing harness once per page, not once per API call", async () => {
+    // A phone through the door: every api() call awaits the secret first.
+    const request = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", request);
+    for (let call = 0; call < 5; call++) expect(await ensureDesktopSurfaceSecret()).toBe("");
+    expect(request).toHaveBeenCalledExactlyOnceWith(DEV_SECRET_PATH);
+    expect(desktopSurfaceSecretNeedsRetry()).toBe(false);
+  });
+
   it("does not probe a forbidden secret endpoint on remote reconnects", async () => {
     const request = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
     vi.stubGlobal("fetch", request);
@@ -577,5 +586,73 @@ describe("the secret's production path", () => {
         `the phone lets ${method} /api/desktop-secret through`,
       ).toBe(404);
     }
+  });
+});
+
+describe("a stream that died because the session did", () => {
+  it("stops reconnecting once the door says this browser is signed out", async () => {
+    const fixture = harness();
+    let answer!: (signedIn: boolean) => void;
+    const stillSignedIn = vi.fn(() => new Promise<boolean>((resolve) => { answer = resolve; }));
+    const onError = vi.fn();
+    openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true, onError, stillSignedIn }, fixture.platform);
+    fixture.sources[0]!.error();
+    expect(onError).toHaveBeenCalledOnce();
+    expect(stillSignedIn).toHaveBeenCalledOnce();
+    answer(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.advanceTimersByTime(60_000);
+    fixture.windowTarget.emit("online");
+    fixture.documentTarget.emit("visibilitychange");
+    expect(fixture.sources).toHaveLength(1);
+    expect(fixture.windowTarget.count("online")).toBe(0);
+  });
+
+  it("keeps reconnecting when the door says signed in, or cannot be reached", async () => {
+    const fixture = harness();
+    const stop = openLiveEvents(
+      { onFrame: vi.fn(), onSnapshotRequired: async () => true, stillSignedIn: async () => true },
+      fixture.platform,
+    );
+    fixture.sources[0]!.error();
+    await Promise.resolve();
+    vi.advanceTimersByTime(500);
+    expect(fixture.sources).toHaveLength(2);
+    stop();
+  });
+});
+
+describe("the phone app coming back to the front", () => {
+  it("replaces even a stream that looks healthy, since iOS can freeze a socket without an error", () => {
+    const fixture = harness();
+    let resume: (() => void) | undefined;
+    const unsubscribe = vi.fn();
+    const onError = vi.fn();
+    const stop = openLiveEvents(
+      { onFrame: vi.fn(), onSnapshotRequired: async () => true, onError },
+      { ...fixture.platform, resumeSignal: (listener) => { resume = listener; return unsubscribe; } },
+    );
+    fixture.sources[0]!.open();
+    resume!();
+    expect(fixture.sources[0]!.close).toHaveBeenCalled();
+    expect(fixture.sources).toHaveLength(2);
+    expect(onError).toHaveBeenCalledOnce(); // the old stream is reported gone, then replaced
+    stop();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    resume!();
+    expect(fixture.sources).toHaveLength(2);
+  });
+
+  it("does nothing on resume while offline; the online event reconnects instead", () => {
+    const fixture = harness();
+    let resume: (() => void) | undefined;
+    openLiveEvents(
+      { onFrame: vi.fn(), onSnapshotRequired: async () => true },
+      { ...fixture.platform, resumeSignal: (listener) => { resume = listener; return () => {}; } },
+    );
+    fixture.setOnline(false);
+    resume!();
+    expect(fixture.sources).toHaveLength(1);
   });
 });

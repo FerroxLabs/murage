@@ -6,7 +6,8 @@ import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Square, Target, T
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { compactPlaceholder } from "@/lib/composer-placeholder";
-import { useNarrowViewport } from "@/lib/media-query";
+import { enterSends } from "@/lib/composer-enter";
+import { useCoarsePointer, useNarrowViewport } from "@/lib/media-query";
 import { newSendId } from "@/lib/send-id";
 import { openIntakeCard, replyToIntake } from "@/lib/onboarding-intake";
 import {
@@ -233,6 +234,7 @@ export function Composer({
     ? (members?.find((b) => b.id === group.busyBotId)?.name ?? (group.working ? "The team" : "A bot"))
     : (bot?.name ?? "The bot");
   const narrowPlaceholder = useNarrowViewport();
+  const coarsePointer = useCoarsePointer();
   // Per-thread draft: switching bots unmounts this component, so both the
   // text and its attachment chips have to outlive it (see lib/drafts).
   const draftId = group
@@ -1103,6 +1105,7 @@ export function Composer({
           <textarea
           ref={inputRef}
           rows={1}
+          enterKeyHint={coarsePointer ? "enter" : "send"}
           value={text}
           onChange={(e) => {
             editText(e.target.value);
@@ -1196,8 +1199,9 @@ export function Composer({
               onEditLast();
               return;
             }
-            // Shift+Enter inserts a newline; plain Enter sends
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            // Mouse and keyboard: Enter sends, Shift+Enter is a newline.
+            // Touch: Return is a newline and the arrow button sends.
+            if (enterSends({ key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, isComposing: e.nativeEvent.isComposing }, coarsePointer)) {
               e.preventDefault();
               send();
             }

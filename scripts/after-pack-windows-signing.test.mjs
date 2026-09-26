@@ -65,7 +65,7 @@ function fixture() {
   // Supply the runtime preconditions enforced before signing. The dedicated
   // after-pack-memory tests retain real architecture/absence negative coverage.
   const server = path.join(resources, "server");
-  const runtimePath = "node_modules/onnxruntime-node";
+  const runtimePath = "node_modules/onnxruntime-node", sharpPath = "node_modules/sharp";
   const runtime = path.join(server, runtimePath);
   const native = path.join(runtime, "bin/napi-v6/win32/x64");
   fs.mkdirSync(native, { recursive: true });
@@ -77,6 +77,7 @@ function fixture() {
     platform: "win32", arch: "x64", packages: [
       { name: "@huggingface/transformers", version: "4.2.0", path: "node_modules/@huggingface/transformers" },
       { name: "onnxruntime-node", version: "1.24.3", path: runtimePath },
+      { name: "sharp", version: "0.34.5", path: sharpPath },
     ],
   }));
   const header = Buffer.alloc(128);
@@ -84,6 +85,10 @@ function fixture() {
   header.write("PE\0\0", 0x40); header.writeUInt16LE(0x8664, 0x44);
   for (const name of ["onnxruntime_binding.node", "onnxruntime.dll", "DirectML.dll", "dxcompiler.dll", "dxil.dll"])
     fs.writeFileSync(path.join(native, name), header);
+  const sharpNative = path.join(server, sharpPath, "node_modules/@img/sharp-win32-x64/lib");
+  fs.mkdirSync(sharpNative, { recursive: true });
+  fs.writeFileSync(path.join(server, sharpPath, "package.json"), JSON.stringify({ name: "sharp", version: "0.34.5" }));
+  for (const name of ["sharp-win32-x64.node", "libvips-42.dll"]) fs.writeFileSync(path.join(sharpNative, name), header);
   const helper = path.join(resources, "fuigo-probe", "launcher.exe"), helperManifest = path.join(resources, "fuigo-probe", "manifest.json");
   fs.writeFileSync(helper, header);
   fs.writeFileSync(helperManifest, JSON.stringify({ schema: 1, target: "win32-x64", executable: "launcher.exe", binarySha256: createHash("sha256").update(header).digest("hex") }));

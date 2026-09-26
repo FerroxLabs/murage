@@ -28,10 +28,12 @@ import {
 } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
 import type { Routine } from "@/lib/routines";
+import { callNative, nativeHas } from "@/lib/native-shell";
 import { ApiKeyRow } from "./ApiKeys";
 import { cn } from "@/lib/cn";
 import { useNarrowViewport } from "@/lib/media-query";
 import { usePageVisible } from "@/lib/page-visible";
+import { isPhoneClient, phonePollMs } from "@/lib/phone-client";
 import { CloudBackendPicker } from "./CloudBackendPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { RoutineEditor } from "./RoutinesPage";
@@ -583,6 +585,9 @@ export function ComputerPanel({
   // Every preview poll below gates on visibility and slows way down for an
   // idle bot — a drawer left open overnight must not keep shooting.
   const pageVisible = usePageVisible();
+  // A phone also gets no live frames (store: screens off), so the poll below
+  // is its only feed; half the rate keeps a drawer left open off the radio.
+  const phone = isPhoneClient();
   const live = state.screens[bot.id];
   const liveNotice = state.screenNotices?.[bot.id];
   const sseFlowing = Boolean(bot.busy && live);
@@ -603,7 +608,7 @@ export function ComputerPanel({
       }
     };
     void shoot();
-    const timer = setInterval(shoot, bot.busy ? 4000 : 30_000);
+    const timer = setInterval(shoot, phonePollMs(bot.busy ? 4000 : 30_000, phone));
     return () => {
       alive = false;
       clearInterval(timer);
@@ -629,7 +634,7 @@ export function ComputerPanel({
       }
     };
     void shoot();
-    const timer = window.setInterval(() => void shoot(), bot.busy ? 3000 : 30_000);
+    const timer = window.setInterval(() => void shoot(), phonePollMs(bot.busy ? 3000 : 30_000, phone));
     return () => {
       alive = false;
       window.clearInterval(timer);
@@ -796,7 +801,7 @@ export function ComputerPanel({
     // A plain-web development session still needs a synchronous blank tab;
     // the packaged app uses the reliable Electron viewer window below.
     let fallbackTab: Window | null = null;
-    if (!window.muragebox?.desktopViewer && !window.muragebox?.openExternal) {
+    if (!window.muragebox?.desktopViewer && !window.muragebox?.openExternal && !nativeHas("openExternal")) {
       fallbackTab = window.open("", "_blank");
       if (fallbackTab) fallbackTab.opener = null;
     }
@@ -818,6 +823,9 @@ export function ComputerPanel({
         if (!opened) throw new Error("Murage could not open the live desktop");
       } else if (fallbackTab) {
         fallbackTab.location.replace(viewerUrl);
+      } else if (nativeHas("openExternal")) {
+        // The phone app: the live desktop opens in the system browser.
+        await callNative("openExternal", viewerUrl);
       } else if (window.muragebox?.openExternal) {
         const opened = await window.muragebox.openExternal(viewerUrl);
         if (!opened) throw new Error("Murage could not open the live desktop link");

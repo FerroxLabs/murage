@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { BROWSER_DENIED, BROWSER_STATIC, denyReason, type Surface } from "../src/routes.ts";
+import { BROWSER_DENIED, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isInboxRoute, needsLaunchProof, type Surface } from "../src/routes.ts";
 
 const ask = (method: string, path: string, authenticated = true, surface: Surface = "device") =>
   denyReason({ method, path, authenticated, surface });
@@ -264,6 +264,7 @@ describe("surfaces do not converge", () => {
     for (const entry of BROWSER_STATIC) {
       const path =
         entry.path.source === "^\\/$" ? "/"
+        : entry.path === MERMAID_FRAME_FILE ? "/mermaid-frame-0123456789abcdef.html"
         : entry.path.source.includes("assets") ? "/assets/index-B7zzSDok.js"
         : entry.path.source.includes("chat|rooms") ? "/chat/bot_123"
         : entry.path.source.includes("icons") ? "/icons/murage-192.png"
@@ -486,5 +487,135 @@ describe("the new-bot intake reaches the browser door", () => {
     ]) {
       expect(askBrowser("GET", path), path).not.toBeNull();
     }
+  });
+});
+
+// ── a call, from a browser ───────────────────────────────────────────────
+//
+// Calls run in the web layer on the phone (spec §5), and every piece of that
+// was refused at this door: the utterance splitter, the call note, the speech
+// model and the ONNX runtime that runs it. `.mjs` is the one the spec did not
+// name — the runtime imports its glue as a module (`src/lib/silero-vad.ts:16`),
+// and a refused `.mjs` is a call that never hears anyone.
+describe("a call reaches the browser door", () => {
+  const call: Array<[string, string]> = [
+    ["POST", "/api/tts/prepare"],
+    ["POST", "/api/bots/bot_123/call-note"],
+    ["GET", "/vad/silero_vad.onnx"],
+    ["GET", "/assets/ort-wasm-simd-threaded-B3x9Qz_d.wasm"],
+    ["GET", "/assets/ort-wasm-simd-threaded-B3x9Qz_d.mjs"],
+  ];
+
+  it("allows what the call screen fetches, at the browser door and only there", () => {
+    for (const [method, path] of call) {
+      expect(askBrowser(method, path), path).toBeNull();
+      expect(askBrowser(method, path, false)?.status, path).toBe(401);
+      // The phone's native surface did not ask for any of these.
+      expect(ask(method, path), path).not.toBeNull();
+    }
+  });
+
+  it("opens exactly those, not their neighbours", () => {
+    for (const [method, path] of [
+      ["GET", "/api/tts/prepare"],
+      ["POST", "/api/tts/prepare/extra"],
+      ["GET", "/api/bots/bot_123/call-note"],
+      // The call's fast half is open to POST only (C9, server/voice/call-access.ts).
+      ["GET", "/api/bots/bot_123/voice-host"],
+      ["GET", "/vad/other.onnx"],
+      ["GET", "/vad/silero_vad.onnx.bak"],
+      ["GET", "/assets/x.exe"],
+      ["GET", "/assets/../devices.wasm"],
+      ["GET", "/assets/sub/x.wasm"],
+    ] as const) {
+      expect(askBrowser(method, path), `${method} ${path}`).not.toBeNull();
+    }
+  });
+});
+
+// ── a chunk with a dot in its stem ───────────────────────────────────────
+//
+// vite keeps a chunk's source name ahead of its hash rather than replacing
+// it, so DOMPurify built as `purify.es-Cz4mVeUR.js`. The old pattern's
+// `[\w-]+` stopped at the first dot and refused it, which the E4 first-paint
+// budget check caught on the real build (Hetzner, d489043f) before it ever
+// reached a phone. The fix admits internal dots; these pin that the fix does
+// not also admit a traversal.
+describe("a dotted chunk name reaches the browser door", () => {
+  it("allows the DOMPurify chunk vite actually built", () => {
+    expect(askBrowser("GET", "/assets/purify.es-Cz4mVeUR.js")).toBeNull();
+  });
+
+  it("still refuses every way to fake a dot into a traversal", () => {
+    for (const path of [
+      "/assets/a..js",
+      "/assets/.js",
+      "/assets/x/../y.js",
+      "/assets/%2e%2e.js",
+      "/assets/a.js.map",
+    ]) {
+      expect(askBrowser("GET", path), path).not.toBeNull();
+    }
+  });
+});
+
+describe("the Inbox reaches the browser door", () => {
+  it("allows the list and the read/snooze/clear marks to a signed-in browser", () => {
+    expect(askBrowser("GET", "/api/inbox")).toBeNull();
+    expect(askBrowser("POST", "/api/inbox/state")).toBeNull();
+  });
+
+  it("sends a browser that has not signed in to /enter", () => {
+    expect(askBrowser("GET", "/api/inbox", false)).toEqual({ status: 401, error: "sign in", signIn: "/enter" });
+  });
+
+  it("opens exactly two routes, not a family", () => {
+    for (const [method, path] of [
+      ["POST", "/api/inbox"],
+      ["GET", "/api/inbox/state"],
+      ["DELETE", "/api/inbox/state"],
+      ["GET", "/api/inbox/state/extra"],
+      ["GET", "/api/inboxes"],
+      ["GET", "/api/inbox/../config"],
+    ] as const) {
+      expect(askBrowser(method, path), `${method} ${path}`).not.toBeNull();
+    }
+  });
+
+  it("stays off the device door, which the new app does not use", () => {
+    expect(ask("GET", "/api/inbox")).not.toBeNull();
+    expect(ask("POST", "/api/inbox/state")).not.toBeNull();
+  });
+
+  it("names the routes that carry the launch proof, and only those", () => {
+    expect(isInboxRoute("GET", "/api/inbox")).toBe(true);
+    expect(isInboxRoute("POST", "/api/inbox/state")).toBe(true);
+    expect(isInboxRoute("POST", "/api/inbox")).toBe(false);
+    expect(isInboxRoute("GET", "/api/bots")).toBe(false);
+  });
+});
+
+describe("routes that carry the sidecar's launch proof", () => {
+  it("covers the Inbox and both call routes", () => {
+    expect(needsLaunchProof("GET", "/api/inbox")).toBe(true);
+    expect(needsLaunchProof("POST", "/api/inbox/state")).toBe(true);
+    expect(needsLaunchProof("POST", "/api/bots/bot_1/voice-host")).toBe(true);
+    expect(needsLaunchProof("POST", "/api/bots/bot_1/call-note")).toBe(true);
+    expect(needsLaunchProof("GET", "/api/bots/bot_1/voice-host")).toBe(false);
+    expect(needsLaunchProof("POST", "/api/bots/bot_1/messages")).toBe(false);
+    expect(needsLaunchProof("POST", "/api/bots/../voice-host")).toBe(false);
+  });
+
+  it("covers an image upload, and none of its neighbours", () => {
+    expect(needsLaunchProof("POST", "/api/attachments")).toBe(true);
+    expect(needsLaunchProof("GET", "/api/attachments")).toBe(false);
+    expect(needsLaunchProof("GET", "/api/attachments/11111111-1111-4111-8111-111111111111.png")).toBe(false);
+    expect(needsLaunchProof("POST", "/api/attachments/11111111-1111-4111-8111-111111111111.png")).toBe(false);
+    expect(needsLaunchProof("POST", "/api/files")).toBe(false);
+  });
+
+  it("lets a signed-in browser reach voice-host", () => {
+    expect(askBrowser("POST", "/api/bots/bot_1/voice-host")).toBeNull();
+    expect(askBrowser("GET", "/api/bots/bot_1/voice-host")).not.toBeNull();
   });
 });

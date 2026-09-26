@@ -11,6 +11,7 @@ export interface GepaPackagingContext {
 export const GEPA_MANIFEST_UNAVAILABLE:"unavailable";
 export const GEPA_UNAVAILABLE_TARGETS:readonly ["darwin-x64"];
 export function validatePackagedGepa(resources:string,context:GepaPackagingContext):ReturnType<typeof verifyGepaBundle>|null|undefined;
+export function validatePackagedThumbnailRuntime(server:string,manifest:{packages?:{name:string;version:string;path:string}[]},platform:string,arch:string,required?:boolean):Promise<{available:true;package:"sharp";version:string;files:string[]}|{available:false;package:"sharp";missing:string}>;
 export function validatePackagedMemoryRuntime(resources:string,platform:string,archValue:string|number,required?:boolean):Promise<Record<string,unknown>|undefined>;
 export default function afterPack(context:GepaPackagingContext & {
   appOutDir:string;

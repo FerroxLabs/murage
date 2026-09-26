@@ -63,6 +63,27 @@ export function isCloudDesktopJoin(method: string, path: string): boolean {
   return method === CLOUD_DESKTOP_JOIN_ROUTE.method && CLOUD_DESKTOP_JOIN_ROUTE.path.test(path);
 }
 
+/** The two Inbox routes. The harness scopes them to the threads a companion
+ * can see, and only believes the companion is asking when the private launch
+ * proof comes with the request — so the browser door adds its own proof to
+ * exactly these, alongside the cloud-desktop join (`browser.ts`). */
+export function isInboxRoute(method: string, path: string): boolean {
+  return (method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state");
+}
+
+const CALL_ROUTE = /^\/api\/bots\/[\w-]+\/(?:voice-host|call-note)$/;
+/** An image upload. Bound to a conversation (`?threadId=`), the harness
+ *  takes it only with the launch proof, then only for a thread the phone's
+ *  sidebar shows (server/index.ts, `mayReadThread`). */
+export function isImageUpload(method: string, path: string): boolean {
+  return method === "POST" && path === "/api/attachments";
+}
+/** Routes the harness answers only when the sidecar proves it forwarded them:
+ *  the Inbox (C2), a call's two routes (C9) and an image upload. */
+export function needsLaunchProof(method: string, path: string): boolean {
+  return isInboxRoute(method, path) || (method === "POST" && CALL_ROUTE.test(path)) || isImageUpload(method, path);
+}
+
 /** Requests that speak as the owner: answering a card, and the owner's own
  * chat words. The harness takes a yes on a card (allow, allow for this task,
  * or an answer to a question), and records a message as the owner's, only
@@ -202,6 +223,12 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // belongs at the keyboard, not on a credential that lives in a pocket.
 ];
 
+/** The diagram frame's built name (`scripts/vite-render-plugin.ts`
+ * `frameFileName`): sixteen lowercase hex digits of its content hash, exactly.
+ * Exported because the door serves this one static page differently from the
+ * shell — framed, sandboxed, never rewritten (`browser.ts` `relayStatic`). */
+export const MERMAID_FRAME_FILE = /^\/mermaid-frame-[0-9a-f]{16}\.html$/;
+
 /** The UI shell itself, served only at the browser door.
  *
  * Anchored and exact, and enumerated rather than wildcarded, for one reason
@@ -212,9 +239,20 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
  * under a `.js` URL and breaks the app in a way that survives reload. An
  * unmatched static path is a 404 at this door instead.
  *
- * `/assets/` carries vite's content hashes. Measured against the real build:
- * all 311 files in `dist/assets` match `[\w-]+\.(js|css)`, so the pattern is
- * the hash alphabet plus the extensions the build actually emits — not `.*`.
+ * `/assets/` carries vite's content hashes, so the pattern is the hash
+ * alphabet plus the extensions the build actually emits — not `.*`. `wasm`
+ * and `mjs` are ONNX Runtime's, which the call's speech detector loads by URL
+ * (`src/lib/silero-vad.ts:15-16`): the glue is imported as a module, so a
+ * refused `.mjs` is a call that never hears anyone. `onnx` is here for the
+ * day the model moves into the hashed tree; today's lives under `/vad/`.
+ *
+ * The stem allows internal dots (`(?:\.[\w-]+)*`) because vite keeps a
+ * chunk's source name ahead of its hash — `purify.es-Cz4mVeUR.js` — and this
+ * door 404'd it while the desktop, which does not go through this pattern,
+ * worked (E4 first-paint budget, Hetzner build d489043f). Every dot is still
+ * required to be followed by at least one `[\w-]` character, so `..`, a
+ * leading dot, a `/`, and a percent-encoded dot all still fail: there is no
+ * empty segment this can produce.
  *
  * `browser.ts` imports this list as well as consuming it through
  * `denyReason`, because it has to know which allowed paths go to the static
@@ -222,14 +260,20 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
 export const BROWSER_STATIC: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/$/ },
   { method: "GET", path: /^\/index\.html$/ },
-  { method: "GET", path: /^\/assets\/[\w-]+\.(?:js|css|woff2|svg|png|json)$/ },
+  { method: "GET", path: /^\/assets\/[\w-]+(?:\.[\w-]+)*\.(?:js|mjs|css|woff2|svg|png|json|wasm|onnx)$/ },
   { method: "GET", path: /^\/app-icon\.svg$/ },
   { method: "GET", path: /^\/murage-logo(?:-dark)?\.png$/ },
   { method: "GET", path: /^\/favicon\.ico$/ },
+  // The speech detector's model (`public/vad`, fetched by
+  // `src/lib/silero-vad.ts:36`). One file, by name: `/vad/*` would be the
+  // first wildcard on this list, and there is nothing else in there.
+  { method: "GET", path: /^\/vad\/silero_vad\.onnx$/ },
   // The diagram frame (src/mermaid-frame): chat renders Mermaid inside a
-  // sandboxed, opaque-origin iframe loaded from this one static page. The
-  // harness serves it with its own `sandbox allow-scripts` CSP header.
-  { method: "GET", path: /^\/mermaid-frame\.html$/ },
+  // sandboxed, opaque-origin iframe loaded from this one static page. A build
+  // names it by its content, so it is 5 MB a phone downloads once per release
+  // rather than once per diagram. The plain `/mermaid-frame.html` is the dev
+  // server's name and is deliberately not here.
+  { method: "GET", path: MERMAID_FRAME_FILE },
   // Not in `dist/` today — the vite build emits neither, measured. Listed so
   // the door does not have to change the day the PWA files land, and harmless
   // until then because a miss is a 404 here rather than the SPA fallback.
@@ -350,6 +394,13 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/respond$/ },
 
+  // The Inbox: what is waiting on you, and read, snooze and clear marks. The
+  // harness hands a proven companion only the threads its sidebar shows, and
+  // a mark can only find an item inside that list (server/inbox-access.ts).
+  // Answering stays on /respond above; a mark never answers anything.
+  { method: "GET", path: /^\/api\/inbox$/ },
+  { method: "POST", path: /^\/api\/inbox\/state$/ },
+
   // attachments and share-sheet documents
   { method: "POST", path: /^\/api\/attachments$/ },
   { method: "GET", path: /^\/api\/attachments\/[\w-]+\.(?:png|jpe?g|gif|webp)$/i },
@@ -358,6 +409,17 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // voice out, never the workspace key
   { method: "GET", path: /^\/api\/tts\/voices$/ },
   { method: "POST", path: /^\/api\/tts\/speak$/ },
+  // Splits a reply into utterances and says whether a voice is set up. It
+  // reads no key and writes nothing (`server/index.ts:16460-16466`); without
+  // it every spoken reply on a remote call fails before its first word.
+  { method: "POST", path: /^\/api\/tts\/prepare$/ },
+  // The note a call leaves in its conversation (`server/voice/call-note.ts`).
+  // The harness is still the boundary: it answers only when this door adds
+  // its launch proof, and only for a bot the phone's sidebar shows
+  // (`server/voice/call-access.ts`).
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/call-note$/ },
+  // The fast half of a call, same rule (`server/voice/voice-host-route.ts`).
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/voice-host$/ },
   // voice in, same rule — and the whole reason this exists, since the browser
   // door is the surface with no native dictation helper at all
   { method: "POST", path: /^\/api\/voice\/transcribe$/ },

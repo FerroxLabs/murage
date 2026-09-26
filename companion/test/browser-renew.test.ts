@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { AddressInfo } from "node:net";
 import { createContext, runInContext } from "node:vm";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   RENEW_INTERVAL_MS,
@@ -31,10 +31,13 @@ import {
 } from "../src/browser.ts";
 import {
   DeviceRegistry,
+  PENDING_TTL_MS,
   SESSION_ABSOLUTE_MS,
   SESSION_IDLE_MS,
   SESSION_MAX_LIFETIME_MS,
+  successorValue,
 } from "../src/devices.ts";
+import { SESSION_SECRET_FILE } from "../src/session-secret.ts";
 import { DATA_DIR } from "../src/state.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -49,6 +52,21 @@ const pair = (registry: DeviceRegistry, name = "Sean's laptop") => {
 const storedSessions = (): Array<Record<string, unknown>> =>
   JSON.parse(readFileSync(join(DATA_DIR, "devices.json"), "utf8")).devices[0].sessions ?? [];
 
+/** What a browser does with a renewal: take the successor, then present it
+ * on its next request, which commits it. */
+const rotate = (registry: DeviceRegistry, value: string) => {
+  const renewed = registry.renewSession(value);
+  if (renewed) registry.resolveSession(renewed.value);
+  return renewed;
+};
+
+/** Far enough on that renewal is due again. */
+const dayLater = () => vi.setSystemTime(Date.now() + DAY + 60_000);
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 describe("renewing a browser session, in the registry", () => {
   beforeEach(() => {
@@ -62,6 +80,7 @@ describe("renewing a browser session, in the registry", () => {
     const opened = registry.openSession(device.id, "Chrome on Mac")!;
     const createdAt = storedSessions()[0].createdAt;
 
+    dayLater();
     const renewed = registry.renewSession(opened.value)!;
     expect(renewed).not.toBeNull();
     expect(renewed.value).not.toBe(opened.value);
@@ -89,7 +108,10 @@ describe("renewing a browser session, in the registry", () => {
     const opened = registry.openSession(device.id, "Chrome on Mac")!;
 
     let value = opened.value;
-    for (let i = 0; i < 5; i += 1) value = registry.renewSession(value)!.value;
+    for (let i = 0; i < 5; i += 1) {
+      dayLater();
+      value = rotate(registry, value)!.value;
+    }
     expect(registry.resolveSession(value)).not.toBeNull();
 
     expect(registry.revoke(device.id)).toBe(true);
@@ -111,7 +133,7 @@ describe("renewing a browser session, in the registry", () => {
       // The other browser is used just as often, and is not renewed. It is
       // the control: it is what every session did before this change.
       registry.resolveSession(silent.value);
-      const renewed = registry.renewSession(value);
+      const renewed = rotate(registry, value);
       // Every one of these succeeds, INCLUDING the ones past day 90. That is
       // the change: before it, day 90 was the end of the road for a session
       // that had done nothing wrong except keep being used.
@@ -137,7 +159,7 @@ describe("renewing a browser session, in the registry", () => {
     let alive = true;
     for (let day = 10; day <= 400 && alive; day += 10) {
       vi.setSystemTime(createdAt + day * DAY);
-      const renewed = registry.renewSession(value);
+      const renewed = rotate(registry, value);
       if (!renewed) {
         alive = false;
         // It died at the ceiling, not before it and not after.
@@ -147,6 +169,7 @@ describe("renewing a browser session, in the registry", () => {
       }
       value = renewed.value;
       expect(renewed.session.expiresAt).toBeLessThanOrEqual(createdAt + SESSION_MAX_LIFETIME_MS);
+      expect(renewed.expiresAt).toBeLessThanOrEqual(createdAt + SESSION_MAX_LIFETIME_MS);
     }
     expect(alive).toBe(false);
     expect(registry.resolveSession(value)).toBeNull();
@@ -187,6 +210,7 @@ describe("renewing a browser session, in the registry", () => {
     mkdirSync(file);
     writeFileSync(join(file, "occupied"), "x");
 
+    dayLater();
     expect(registry.renewSession(opened.value)).toBeNull();
 
     rmSync(file, { recursive: true, force: true });
@@ -194,6 +218,225 @@ describe("renewing a browser session, in the registry", () => {
     // The cookie the browser is holding still works, in memory and on disk.
     expect(registry.resolveSession(opened.value)?.device.id).toBe(device.id);
     expect(new DeviceRegistry().resolveSession(opened.value)?.device.id).toBe(device.id);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Recoverable renewal. A phone suspended mid-response, or a network that
+// drops, loses the renewal reply. What it still holds must keep working, and
+// asking again must hand it the same successor, never a second one.
+// ─────────────────────────────────────────────────────────────────────────
+describe("renewal is derived, idempotent and committed on first use", () => {
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+    vi.useRealTimers();
+  });
+
+  const signedIn = () => {
+    const registry = new DeviceRegistry();
+    const { device } = pair(registry);
+    const opened = registry.openSession(device.id, "Murage on iPhone")!;
+    return { registry, device, value: opened.value };
+  };
+
+  const pendingGeneration = (): number =>
+    (storedSessions()[0].pending as { generation: number } | undefined)?.generation ?? 0;
+
+  it("is not due until a day after the credential became current", () => {
+    const { registry, value } = signedIn();
+    const start = Date.now();
+    expect(registry.renewSession(value)).toBeNull();
+    vi.setSystemTime(start + DAY - 60_000);
+    expect(registry.renewSession(value)).toBeNull();
+    vi.setSystemTime(start + DAY + 60_000);
+    expect(registry.renewSession(value)).not.toBeNull();
+  });
+
+  it("gives a retry whose response was lost the identical successor", () => {
+    const { registry, value } = signedIn();
+    dayLater();
+    const first = registry.renewSession(value)!;
+    const retry = registry.renewSession(value)!;
+    expect(retry.value).toBe(first.value);
+    expect(retry.value).not.toBe(value);
+    // One generation spent, not two, and the plaintext never reaches the file.
+    expect(pendingGeneration()).toBe(1);
+    expect(readFileSync(join(DATA_DIR, "devices.json"), "utf8")).not.toContain(first.value);
+    // Nothing is committed yet, so the value the phone holds still works.
+    expect(registry.resolveSession(value)).not.toBeNull();
+  });
+
+  it("cannot be confused by responses that arrive out of order", () => {
+    const { registry, value } = signedIn();
+    dayLater();
+    const early = registry.renewSession(value)!;
+    const late = registry.renewSession(value)!;
+    // Whichever reply lands last in the cookie jar, it is the same value.
+    expect(late.value).toBe(early.value);
+    expect(registry.resolveSession(late.value)).not.toBeNull();
+    // A renewal still in flight with the retired value changes nothing and
+    // never un-commits what the phone now holds.
+    expect(registry.renewSession(value)).toBeNull();
+    expect(registry.resolveSession(early.value)).not.toBeNull();
+  });
+
+  it("commits on the first request that presents the successor, and only then retires the old value", () => {
+    const { registry, device, value } = signedIn();
+    dayLater();
+    const { value: next } = registry.renewSession(value)!;
+    expect(registry.resolveSession(value)).not.toBeNull();
+
+    const committed = registry.resolveSession(next)!;
+    expect(committed.session.pending).toBeUndefined();
+    expect(committed.session.committedAt).toBe(Date.now());
+    expect(registry.resolveSession(value)).toBeNull();
+    // Durable in both directions.
+    expect(new DeviceRegistry().resolveSession(value)).toBeNull();
+    expect(new DeviceRegistry().resolveSession(next)?.device.id).toBe(device.id);
+  });
+
+  it("commits through the renewal route too, and is then not due for another day", () => {
+    const { registry, value } = signedIn();
+    dayLater();
+    const { value: next } = registry.renewSession(value)!;
+    const committed = registry.renewSession(next)!;
+    expect(committed.value).toBe(next);
+    expect(committed.expiresAt).toBe(committed.session.expiresAt);
+    expect(registry.resolveSession(value)).toBeNull();
+    expect(registry.renewSession(next)).toBeNull();
+  });
+
+  it("stops accepting an unused successor after a week, and leaves the current value alone", () => {
+    const { registry, value } = signedIn();
+    dayLater();
+    const stale = registry.renewSession(value)!.value;
+    vi.setSystemTime(Date.now() + PENDING_TTL_MS + 60_000);
+    expect(registry.resolveSession(stale)).toBeNull();
+    expect(registry.resolveSession(value)).not.toBeNull();
+
+    const fresh = registry.renewSession(value)!;
+    expect(fresh.value).not.toBe(stale);
+    expect(pendingGeneration()).toBe(2);
+    expect(registry.resolveSession(stale)).toBeNull();
+  });
+
+  it("hands out the same successor after a restart", () => {
+    const { registry, value } = signedIn();
+    dayLater();
+    const before = registry.renewSession(value)!.value;
+
+    const restarted = new DeviceRegistry();
+    expect(restarted.renewSession(value)!.value).toBe(before);
+    expect(restarted.resolveSession(before)).not.toBeNull();
+    expect(new DeviceRegistry().resolveSession(value)).toBeNull();
+  });
+
+  it("revoking the device kills the current value and the successor", () => {
+    const { registry, device, value } = signedIn();
+    dayLater();
+    const next = registry.renewSession(value)!.value;
+    expect(registry.revoke(device.id)).toBe(true);
+    expect(registry.resolveSession(value)).toBeNull();
+    expect(registry.resolveSession(next)).toBeNull();
+    expect(registry.renewSession(value)).toBeNull();
+    const restarted = new DeviceRegistry();
+    expect(restarted.resolveSession(value)).toBeNull();
+    expect(restarted.resolveSession(next)).toBeNull();
+  });
+
+  it("signs a browser out whichever of the two values it presents", () => {
+    const { registry, value } = signedIn();
+    dayLater();
+    const next = registry.renewSession(value)!.value;
+    expect(registry.closeSession(next)).toBe(true);
+    expect(registry.resolveSession(value)).toBeNull();
+    expect(registry.resolveSession(next)).toBeNull();
+  });
+
+  it("never reuses a generation, across sessions or across a restart", () => {
+    const { registry, device, value } = signedIn();
+    const other = registry.openSession(device.id, "Safari on iPad")!.value;
+    dayLater();
+    registry.renewSession(value);
+    registry.renewSession(other);
+    const generations = storedSessions().map((s) => (s.pending as { generation: number }).generation);
+    expect(generations.sort()).toEqual([1, 2]);
+
+    const restarted = new DeviceRegistry();
+    const next = restarted.renewSession(value)!.value;
+    restarted.resolveSession(next);
+    dayLater();
+    restarted.renewSession(next);
+    expect(Math.max(...storedSessions().map((s) => (s.pending as { generation: number } | undefined)?.generation ?? 0))).toBe(3);
+  });
+
+  it("derives from the session's id and creation time as well as its hash", () => {
+    const secret = Buffer.alloc(32, 7);
+    const base = { id: "11111111-2222-3333-4444-555555555555", createdAt: 1, hash: "ab".repeat(32) };
+    const value = successorValue(secret, base, 1);
+    expect(value.startsWith("murage_browser_")).toBe(true);
+    expect(successorValue(secret, base, 1)).toBe(value);
+    expect(successorValue(secret, { ...base, id: "66666666-7777-8888-9999-000000000000" }, 1)).not.toBe(value);
+    expect(successorValue(secret, { ...base, createdAt: 2 }, 1)).not.toBe(value);
+    expect(successorValue(secret, base, 2)).not.toBe(value);
+    expect(successorValue(Buffer.alloc(32, 8), base, 1)).not.toBe(value);
+  });
+
+  it("fails closed, changing nothing, when there is no secret to derive from", () => {
+    const { registry, value } = signedIn();
+    rmSync(SESSION_SECRET_FILE, { force: true });
+    mkdirSync(SESSION_SECRET_FILE);
+    try {
+      dayLater();
+      expect(registry.renewSession(value)).toBeNull();
+      expect(storedSessions()[0].pending).toBeUndefined();
+      expect(registry.resolveSession(value)).not.toBeNull();
+    } finally {
+      rmSync(SESSION_SECRET_FILE, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a successor it can no longer re-send, rather than deriving over it", () => {
+    // The secret file was lost and recreated between the renewal and its
+    // retry. The phone whose reply got through holds that successor; deriving
+    // a new one over it would sign that phone out.
+    const { registry, value } = signedIn();
+    dayLater();
+    const sent = registry.renewSession(value)!.value;
+    const before = storedSessions()[0].pending;
+    writeFileSync(SESSION_SECRET_FILE, `${"ab".repeat(32)}\n`);
+
+    const restarted = new DeviceRegistry();
+    expect(restarted.renewSession(value)).toBeNull();
+    expect(storedSessions()[0].pending).toEqual(before);
+    // What was sent still commits, by its hash.
+    expect(restarted.resolveSession(sent)).not.toBeNull();
+    expect(restarted.resolveSession(value)).toBeNull();
+  });
+
+  it("does not sign a browser out with a successor that has aged out", () => {
+    const { registry, value } = signedIn();
+    dayLater();
+    const stale = registry.renewSession(value)!.value;
+    vi.setSystemTime(Date.now() + PENDING_TTL_MS + 60_000);
+    expect(registry.closeSession(stale)).toBe(false);
+    expect(registry.resolveSession(value)).not.toBeNull();
+    expect(new DeviceRegistry().resolveSession(value)).not.toBeNull();
+  });
+
+  it("reads a generation past what a double counts exactly as malformed", () => {
+    // Left as it was, the counter could never move again and this device
+    // could never renew.
+    const { value } = signedIn();
+    const file = join(DATA_DIR, "devices.json");
+    const stored = JSON.parse(readFileSync(file, "utf8"));
+    stored.devices[0].sessionGeneration = 2 ** 60;
+    writeFileSync(file, JSON.stringify(stored));
+
+    const restarted = new DeviceRegistry();
+    dayLater();
+    expect(restarted.renewSession(value)).not.toBeNull();
+    expect(pendingGeneration()).toBe(1);
   });
 });
 
@@ -281,6 +524,7 @@ beforeAll(async () => {
         sessionDeadline: (sessionId) => registry.sessionDeadline(sessionId),
         closeSession: (value) => registry.closeSession(value),
         renewSession: (value) => registry.renewSession(value),
+        signOutDevice: (value) => registry.signOutDevice(value),
       },
       headersTimeoutMs: 4000,
     }),
@@ -335,6 +579,7 @@ const signIn = async (): Promise<string> => {
 describe("the door's renewal route", () => {
   it("rotates the cookie and retires the one that was presented", async () => {
     const first = await signIn();
+    dayLater();
     const answer = await knock("POST", "/session/renew", {
       ...write(),
       cookie: `${cookieName("http")}=${first}`,
@@ -387,6 +632,103 @@ describe("the door's renewal route", () => {
 
     // None of the three rotated anything.
     expect((await knock("GET", "/session", header)).status).toBe(200);
+  });
+
+  /** Make every write to devices.json fail, as a full disk would. */
+  const failWrites = (target: DeviceRegistry = registry) => {
+    (target as unknown as { persist: () => void }).persist = () => {
+      throw new Error("disk full");
+    };
+    return () => delete (target as unknown as { persist?: unknown }).persist;
+  };
+  const inMemory = () => JSON.stringify((registry as unknown as { devices: unknown }).devices);
+  /** What a restart would read. The stubbed `persist` means the file cannot
+   * have changed, so this checks what it holds instead: the successor still
+   * pending and the old value still current. The reloaded registry cannot
+   * write either, or presenting the successor would commit it here. */
+  const expectDiskUncommitted = (first: string, next: string) => {
+    const restarted = new DeviceRegistry();
+    failWrites(restarted);
+    expect(restarted.resolveSession(first)).not.toBeNull();
+    expect(restarted.resolveSession(next)?.session.pending).toBeDefined();
+  };
+
+  it("still serves a successor it could not commit, and commits it on the next request", async () => {
+    const first = await signIn();
+    dayLater();
+    const next = cookieOf(await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${first}` }));
+    const memory = inMemory();
+
+    const restore = failWrites();
+    try {
+      // Pending on disk is an authorisation, so the request is served...
+      expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${next}` })).status).toBe(200);
+      // ...and nothing moved: not the hash, not the pending, not the cap.
+      expect(inMemory()).toBe(memory);
+      expectDiskUncommitted(first, next);
+      expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(200);
+    } finally {
+      restore();
+    }
+
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${next}` })).status).toBe(200);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(401);
+  });
+
+  it("answers a renewal it could not commit with silence, and changes nothing", async () => {
+    const first = await signIn();
+    dayLater();
+    const next = cookieOf(await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${first}` }));
+    const memory = inMemory();
+
+    const restore = failWrites();
+    try {
+      const answer = await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${next}` });
+      expect(answer.status).toBe(204);
+      expect(answer.headers["set-cookie"]).toBeUndefined();
+      expect(inMemory()).toBe(memory);
+      expectDiskUncommitted(first, next);
+    } finally {
+      restore();
+    }
+
+    // Both values still sign in until the successor is committed.
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(200);
+    expect((await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${next}` })).status).toBe(200);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(401);
+  });
+
+  it("says nothing while renewal is not due", async () => {
+    const cookie = await signIn();
+    const answer = await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${cookie}` });
+    expect(answer.status).toBe(204);
+    expect(answer.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it("gives a retried renewal the same cookie, and keeps the old one working until the new one is used", async () => {
+    const first = await signIn();
+    dayLater();
+    const header = { ...write(), cookie: `${cookieName("http")}=${first}` };
+    // The first reply is "lost": the browser never stored it and asks again.
+    const lost = await knock("POST", "/session/renew", header);
+    const retried = await knock("POST", "/session/renew", header);
+    expect(retried.status).toBe(200);
+    expect(cookieOf(retried)).toBe(cookieOf(lost));
+
+    // Until the new value is presented, the old one is still a sign-in.
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(200);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${cookieOf(retried)}` })).status).toBe(200);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(401);
+  });
+
+  it("refreshes the cookie when the successor itself is presented for renewal", async () => {
+    const first = await signIn();
+    dayLater();
+    const next = cookieOf(await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${first}` }));
+    const again = await knock("POST", "/session/renew", { ...write(), cookie: `${cookieName("http")}=${next}` });
+    expect(again.status).toBe(200);
+    expect(cookieOf(again)).toBe(next);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${first}` })).status).toBe(401);
   });
 });
 
@@ -490,6 +832,43 @@ describe("the browser actually calls it", () => {
     expect(calls).toHaveLength(3);
   });
 
+  it("presents a new cookie straight away, which is what commits it", async () => {
+    const calls: Array<{ url: string; method: unknown }> = [];
+    const sandbox = {
+      fetch: (url: string, init: Record<string, unknown>) => {
+        calls.push({ url, method: init?.method });
+        return Promise.resolve(url === "/session/renew" ? { status: 200 } : { status: 200 });
+      },
+      setInterval: () => 0,
+      Date: { now: () => 1_700_000_000_000 },
+      document: { visibilityState: "visible", addEventListener: () => {} },
+    };
+    createContext(sandbox);
+    runInContext(renewalScript(), sandbox);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual([
+      { url: "/session/renew", method: "POST" },
+      { url: "/session", method: undefined },
+    ]);
+  });
+
+  it("asks for nothing more when the door had nothing to renew", async () => {
+    const calls: string[] = [];
+    const sandbox = {
+      fetch: (url: string) => {
+        calls.push(url);
+        return Promise.resolve({ status: 204 });
+      },
+      setInterval: () => 0,
+      Date: { now: () => 1_700_000_000_000 },
+      document: { visibilityState: "visible", addEventListener: () => {} },
+    };
+    createContext(sandbox);
+    runInContext(renewalScript(), sandbox);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual(["/session/renew"]);
+  });
+
   it("puts the script in even when the shell has lost its closing tag", () => {
     expect(injectRenewal("<html><body>x</body></html>")).toContain("</script></body>");
     // A shell with no </body> still runs a trailing script; refusing to
@@ -507,6 +886,7 @@ describe("the browser actually calls it", () => {
 
   it("keeps the absolute cap it advertises in the cookie", async () => {
     const cookie = await signIn();
+    dayLater();
     const answer = await knock("POST", "/session/renew", {
       ...write(),
       cookie: `${cookieName("http")}=${cookie}`,

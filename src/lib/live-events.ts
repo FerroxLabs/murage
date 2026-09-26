@@ -1,3 +1,5 @@
+import { onNativeEvent } from "./native-shell";
+
 /**
  * Supervise one browser EventSource for `/api/events`.
  *
@@ -42,6 +44,8 @@ export interface LiveEventsPlatform {
   isVisible: () => boolean;
   isOnline: () => boolean;
   now: () => number;
+  /** The phone app's `resume` (spec §3.6). Absent everywhere else. */
+  resumeSignal?: (listener: () => void) => () => void;
 }
 
 export interface LiveEventsHandlers {
@@ -53,6 +57,10 @@ export interface LiveEventsHandlers {
   onSnapshotRequired: () => Promise<boolean>;
   onOpen?: () => void;
   onError?: () => void;
+  /** Asked after the stream drops. EventSource never reveals the status that
+   * ended it, so a dead session looks exactly like a host that went to
+   * sleep; false ends the supervisor instead of retrying forever. */
+  stillSignedIn?: () => Promise<boolean>;
   screens?: boolean;
   staleMs?: number;
   retryMinMs?: number;
@@ -90,6 +98,11 @@ const bridgeSecret = (): string => {
 let desktopSecret = bridgeSecret();
 let pendingSecret: Promise<string> | null = null;
 let secretRetryable = false;
+/** The harness said 403/404: this renderer is not the desktop, and asking
+ * again cannot change that for the life of the page. Every `api()` call
+ * awaits `ensureDesktopSurfaceSecret`, so without this a phone re-asked on
+ * each request and filled the door's log with 404s. */
+let secretRefused = false;
 
 /** A failed secret lookup cannot confirm that this renderer is remote. */
 export function desktopSurfaceSecretNeedsRetry(): boolean {
@@ -125,6 +138,7 @@ export function ensureDesktopSurfaceSecret(refresh = false): Promise<string> {
     secretRetryable = false;
     return Promise.resolve(desktopSecret);
   }
+  if (secretRefused) return Promise.resolve(desktopSecret);
   // Deliberately NOT behind `import.meta.env.DEV`.
   //
   // It used to be, and that left a real configuration with no path to the
@@ -158,6 +172,7 @@ export function ensureDesktopSurfaceSecret(refresh = false): Promise<string> {
     .fetch(DEV_SECRET_PATH)
     .then((res) => {
       secretRetryable = res.ok || (res.status !== 403 && res.status !== 404);
+      if (res.status === 403 || res.status === 404) secretRefused = true;
       return res.ok ? res.json() : null;
     })
     .then((body: { secret?: unknown } | null) => {
@@ -186,6 +201,7 @@ export function setDesktopSurfaceSecretForTest(value: string): void {
   desktopSecret = value;
   pendingSecret = null;
   secretRetryable = false;
+  secretRefused = false;
 }
 
 export function liveEventsUrl(options?: { since?: string | null; screens?: boolean }): string {
@@ -290,6 +306,7 @@ function browserPlatform(overrides: Partial<LiveEventsPlatform>): LiveEventsPlat
       overrides.isVisible ?? (() => !browserDocument || browserDocument.visibilityState === "visible"),
     isOnline: overrides.isOnline ?? (() => globalThis.navigator?.onLine !== false),
     now: overrides.now ?? Date.now,
+    resumeSignal: overrides.resumeSignal ?? ((listener) => onNativeEvent("resume", listener)),
   };
 }
 
@@ -356,6 +373,7 @@ export function openLiveEvents(
   };
 
   let connect: () => void;
+  let stop: () => void;
   const scheduleReconnect = () => {
     if (stopped || retryTimer !== null || !platform.isOnline() || !platform.isVisible()) return;
     const exponent = Math.min(retryAttempt, 20);
@@ -373,6 +391,13 @@ export function openLiveEvents(
     closeSource();
     handlers.onError?.();
     scheduleReconnect();
+    // Asked in parallel with the retry, so an asleep host costs no delay;
+    // a signed-out answer cancels the retry it is racing.
+    if (handlers.stillSignedIn) {
+      void handlers.stillSignedIn().then((signedIn) => {
+        if (!signedIn) stop();
+      }, () => {});
+    }
   };
 
   const openSource = () => {
@@ -526,7 +551,18 @@ export function openLiveEvents(
   platform.windowTarget?.addEventListener("focus", onFocus);
   platform.documentTarget?.addEventListener("visibilitychange", onVisibilityChange);
 
-  return () => {
+  // Resume is the phone app's own word that the page is back in front. A
+  // suspended iOS WebView can hand back a socket that died without an error,
+  // and the 40 s stale watchdog would leave the person looking at old state
+  // for that long; replace it now, and forgive earlier backoff.
+  const stopResume =
+    platform.resumeSignal?.(() => {
+      if (stopped) return;
+      retryAttempt = 0;
+      reconnectNow(source !== null);
+    }) ?? null;
+
+  stop = () => {
     if (stopped) return;
     stopped = true;
     clearInterval(staleTimer);
@@ -535,5 +571,7 @@ export function openLiveEvents(
     platform.windowTarget?.removeEventListener("online", onOnline);
     platform.windowTarget?.removeEventListener("focus", onFocus);
     platform.documentTarget?.removeEventListener("visibilitychange", onVisibilityChange);
+    stopResume?.();
   };
+  return stop;
 }

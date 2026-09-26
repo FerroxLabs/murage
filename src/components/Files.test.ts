@@ -10,9 +10,14 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { Files, type FilesBot } from "./Files";
+import { Files, downloadSavedArtifact, type FilesBot } from "./Files";
+import { resetNativeShellForTest } from "@/lib/native-shell";
+import type { Artifact } from "../../shared/artifacts";
+
+const auth = vi.hoisted(() => ({ ensure: vi.fn(), headers: vi.fn(() => ({ "x-murage-surface-secret": "synthetic-proof" })) }));
+vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopSurfaceHeaders: auth.headers }));
 
 const source = readFileSync(fileURLToPath(new URL("./Files.tsx", import.meta.url)), "utf8");
 const bots: FilesBot[] = [
@@ -86,5 +91,39 @@ describe("wiring the browser proof depends on", () => {
   it("reloads the saved list after a workspace version is saved, and says which it was", () => {
     expect(source).toContain('setNotice(t(saved.pinnedRevision ? "filesWorkspace.saved" : "filesWorkspace.savedUnpinned", { name: saved.artifact.name }));');
     expect(source).toMatch(/const savedFromWorkspace[\s\S]{0,320}setRevision\(value => value \+ 1\);/);
+  });
+});
+
+// R6 (D4 fix round 1): the artifact download route is desktop-authority-only
+// (server/desktop-policy.ts DESKTOP_AUTHORITY_ROUTES) and answers 404 for
+// anything that cannot prove the desktop surface — a phone cannot, so
+// downloadSavedArtifact must never ask native to fetch the route itself.
+describe("downloadSavedArtifact stays on the desktop-proof fetch", () => {
+  const artifact: Artifact = {
+    id: "artifact-1", name: "Weekly report", filename: "weekly-report.md", kind: "text", mime: "text/markdown",
+    bytes: 42, sha256: "synthetic-sha", createdAt: Date.now(), botId: "research", botName: "Research bot",
+    threadId: "task", relativePath: "reports/weekly.md", sourceState: "current", savedState: "available",
+    sourceConversationAvailable: true,
+  };
+  beforeEach(() => {
+    auth.ensure.mockReset().mockResolvedValue(undefined);
+    vi.stubGlobal("document", { createElement: vi.fn(() => ({ href: "", download: "", rel: "", referrerPolicy: "", click: vi.fn(), remove: vi.fn() })), body: { appendChild: vi.fn() } });
+    vi.stubGlobal("window", { setTimeout });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("synthetic bytes")));
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:synthetic");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetNativeShellForTest(); });
+
+  it("never calls murageNative.saveFile, even when the phone app advertises it", async () => {
+    const saveFile = vi.fn(async () => undefined);
+    vi.stubGlobal("murageNative", { hello: async () => ({ version: 1, methods: ["saveFile"] }), saveFile });
+    await downloadSavedArtifact(artifact);
+    expect(saveFile).not.toHaveBeenCalled();
+    expect(auth.ensure).toHaveBeenCalledOnce();
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/artifacts/artifact-1/download",
+      { headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } },
+    );
   });
 });

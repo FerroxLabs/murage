@@ -93,3 +93,82 @@ export function windowAfterPrepend<W extends { start: number; end: number | null
     end: window.end === null ? null : window.end + shift,
   };
 }
+
+/** The most transcript rows mounted at once (spec §6). Reading back used to
+ * grow the window without end: every "Show earlier" added a window and none
+ * was ever taken away, so an hour of scrollback on a phone meant thousands of
+ * live rows. Three windows is one on screen with a window of slack each way. */
+export const MAX_MOUNTED_ROWS = TRANSCRIPT_WINDOW_SIZE * 3;
+
+export interface WindowBounds {
+  start: number;
+  /** null: a live tail that grows with appends. */
+  end: number | null;
+}
+
+/** "Show earlier" (or reaching the top). The start steps back; past the cap
+ * the newest rows unmount, and the end becomes finite so "Show later" can
+ * bring them back. The reader is reading back, so the rows dropped are the
+ * ones below the screen. */
+export function expandEarlier(
+  bounds: WindowBounds,
+  total: number,
+  size: number = TRANSCRIPT_WINDOW_SIZE,
+  cap: number = MAX_MOUNTED_ROWS,
+): WindowBounds {
+  const start = expandWindowStart(Math.min(bounds.start, total), size);
+  const end = bounds.end === null ? total : Math.min(bounds.end, total);
+  if (end - start <= cap) return { start, end: end >= total ? null : end };
+  return { start, end: start + cap };
+}
+
+/** "Show later". The mirror image: the end steps forward, and past the cap
+ * the oldest rows unmount. Reaching the end of the thread is a live tail
+ * again. */
+export function expandLater(
+  bounds: WindowBounds,
+  total: number,
+  size: number = TRANSCRIPT_WINDOW_SIZE,
+  cap: number = MAX_MOUNTED_ROWS,
+): WindowBounds {
+  const end = bounds.end === null ? total : Math.min(total, bounds.end + size);
+  const start = Math.max(bounds.start, end - cap);
+  return { start, end: end >= total ? null : end };
+}
+
+/** A tail the reader is following grows with every append; a long live
+ * session would mount rows without end. Past the cap it is cut back to one
+ * fresh window. Only while following: the reader is pinned to the bottom, so
+ * rows leaving the top were already off screen. A reader who scrolled up is
+ * never moved (anchored window, see resolveTranscriptWindow). */
+export function trimFollowedTail(
+  bounds: WindowBounds,
+  total: number,
+  following: boolean,
+  size: number = TRANSCRIPT_WINDOW_SIZE,
+  cap: number = MAX_MOUNTED_ROWS,
+): WindowBounds {
+  if (!following || bounds.end !== null || total - bounds.start <= cap) return bounds;
+  return { start: tailWindowStart(total, size), end: null };
+}
+
+/** A page the reader asked for, revealed at the top (windowAfterPrepend's
+ * `reveal`). The window keeps its start so the page appears; past the cap the
+ * newest rows unmount, as for expandEarlier. Without this, reading back
+ * through the server's pages mounted every page. */
+export function capRevealedWindow<W extends WindowBounds>(
+  bounds: W,
+  total: number,
+  cap: number = MAX_MOUNTED_ROWS,
+): W {
+  const end = bounds.end === null ? total : Math.min(bounds.end, total);
+  if (end - bounds.start <= cap) return asLiveTail(bounds, total);
+  return { ...bounds, end: bounds.start + cap };
+}
+
+/** A window that reaches the newest row is the live tail: `end: null`, so it
+ * grows with appends and the reader can follow it. A finite end at the last
+ * row would hold new messages back while the view looked like the bottom. */
+export function asLiveTail<W extends { end: number | null }>(window: W, total: number): W {
+  return window.end !== null && window.end >= total ? { ...window, end: null } : window;
+}

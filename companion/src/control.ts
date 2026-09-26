@@ -15,7 +15,7 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 
 import type { BrowserDoor } from "./browser.ts";
-import { PAIRING_TTL_MS, type DeviceRegistry } from "./devices.ts";
+import { MAX_DEVICES, PAIRING_TTL_MS, type DeviceRegistry } from "./devices.ts";
 import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts";
 import { lanAddresses, tailnetName, tailscaleAddress } from "./listener.ts";
 import { defaultHostName } from "./mdns.ts";
@@ -236,6 +236,11 @@ export function companionState(options: ControlOptions) {
     ),
     pairing: pairing ? { code: pairing.code, token: pairing.token, expiresAt: pairing.expiresAt } : null,
     devices: options.devices.list(),
+    // The pairing screen's answer to a full fleet: the cap, and — only once
+    // it is reached — every device least recently seen first, so the one to
+    // replace is at the top. Replacing is the ordinary revoke below.
+    maxDevices: MAX_DEVICES,
+    replaceCandidates: options.devices.replaceCandidates(),
     // An empty `devices` is only trustworthy when the list could be read. When
     // it could not, say so in the field the panel already renders as needing
     // attention, rather than showing an empty fleet as if it were true.
@@ -498,6 +503,15 @@ function render(s) {
       "<p class=dim>Expires in <span id=left></span>s. Type it on your phone, or in a browser on another computer.</p>" +
       "<button id=cancel>Cancel</button>"
     : "<h2>Pair a phone</h2><p class=dim>The code lasts ${pairingMinutes()} minutes.</p><button id=start>Start pairing</button>";
+  if (s.pairing && s.replaceCandidates && s.replaceCandidates.length) {
+    el("pair").innerHTML +=
+      "<h2>Replace an old device</h2><p class=dim>This computer already has " + s.maxDevices +
+      " devices, so a new one cannot join. Remove one you no longer use. The code above keeps working.</p><ul>" +
+      s.replaceCandidates.map((d) =>
+        "<li><div class='grow'><div class=name>" + esc(d.name) + "</div>" +
+        "<div class=dim>Last seen " + ago(d.lastSeenAt) + "</div></div>" +
+        "<button data-replace='" + esc(d.id) + "'>Replace</button></li>").join("") + "</ul>";
+  }
 
   el("devices").innerHTML =
     "<h2>Paired devices</h2>" +
@@ -514,6 +528,9 @@ function render(s) {
   el("cancel")?.addEventListener("click", async () => render(await api("/pairing", "DELETE")));
   for (const b of document.querySelectorAll("[data-revoke]")) {
     b.addEventListener("click", async () => render(await api("/devices/" + b.dataset.revoke, "DELETE")));
+  }
+  for (const b of document.querySelectorAll("[data-replace]")) {
+    b.addEventListener("click", async () => render(await api("/devices/" + b.dataset.replace, "DELETE")));
   }
   for (const b of document.querySelectorAll("[data-cloud]")) {
     b.addEventListener("click", async () => render(await api(

@@ -27,9 +27,11 @@ import { createServer, request, type Server } from "node:http";
 import { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { createContext, runInContext } from "node:vm";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  clearedCookie,
   codeEntryScript,
   countsAgainstSignIn,
   cookieName,
@@ -47,7 +49,7 @@ import {
   type BrowserDeviceStore,
   type SignInLimiter,
 } from "../src/browser.ts";
-import { DeviceRegistry } from "../src/devices.ts";
+import { DeviceRegistry, MAX_DEVICES } from "../src/devices.ts";
 import { DATA_DIR } from "../src/state.ts";
 
 /** The real registry, reset per test. Real rather than a fake, because the
@@ -57,19 +59,22 @@ let registry = new DeviceRegistry();
 /** Every credential `redeem` was asked about, so "the door never reached the
  * registry" is an assertion about calls rather than about status codes. */
 let asked: string[] = [];
+/** Every device the door asked to have its streams ended. */
+let disconnected: string[] = [];
 /** Swapped by the rate-limit tests; null means the door makes its own. */
 let limiter: SignInLimiter | null = null;
 
 const store: BrowserDeviceStore = {
-  redeem: (credential, name, pairRequestId) => {
+  redeem: (credential, name, pairRequestId, installId) => {
     asked.push(credential);
-    return registry.redeem(credential, name, pairRequestId);
+    return registry.redeem(credential, name, pairRequestId, installId);
   },
   openSession: (deviceId, label) => registry.openSession(deviceId, label),
   resolveSession: (value) => registry.resolveSession(value),
   sessionDeadline: (sessionId) => registry.sessionDeadline(sessionId),
   closeSession: (value) => registry.closeSession(value),
   renewSession: (value) => registry.renewSession(value),
+  signOutDevice: (value) => registry.signOutDevice(value),
 };
 
 const identity: BoundIdentity = {
@@ -89,6 +94,9 @@ const openDoor = async (): Promise<void> => {
       harnessPort: 1,
       identity: () => identity,
       devices: store,
+      disconnectDevice: (deviceId: string) => {
+        disconnected.push(deviceId);
+      },
       ...(limiter ? { signInLimiter: limiter } : {}),
     }),
   );
@@ -108,6 +116,7 @@ beforeEach(async () => {
   rmSync(join(DATA_DIR, "devices.json"), { force: true });
   registry = new DeviceRegistry();
   asked = [];
+  disconnected = [];
   limiter = null;
   await openDoor();
 });
@@ -490,5 +499,348 @@ describe("normalising what a person typed", () => {
     expect(normalizeCredential(` ${token} `)).toBe(token);
     expect(normalizeCredential(undefined)).toBe("");
     expect(normalizeCredential(42)).toBe("42");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 6. THE APP: the Murage phone app is a webview too, and must not be told
+//    to leave itself
+// ─────────────────────────────────────────────────────────────────────────
+describe("the phone app is not told to open a real browser", () => {
+  /** Run `/enter`'s real script, from the real response, with a credential in
+   * the fragment and just enough DOM to reach the warning. RUN it rather than
+   * grep it: the check is a loop over marks, and the question is what it
+   * decides for a given user agent. */
+  const enterWith = async (userAgent: string): Promise<{ warning: string; tapOffered: boolean }> => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const [script] = inlineScripts(page.body);
+    const elements = new Map<string, Record<string, unknown>>();
+    const byId = (id: string): Record<string, unknown> => {
+      let element = elements.get(id);
+      if (!element) {
+        element = { hidden: true, disabled: false, textContent: "", value: "", addEventListener: () => {}, focus: () => {} };
+        elements.set(id, element);
+      }
+      return element;
+    };
+    const sandbox = {
+      document: { getElementById: byId },
+      navigator: { userAgent },
+      location: { hash: "#murage_pair_abc" },
+      history: { replaceState: () => {} },
+      fetch: () => new Promise(() => {}),
+      setInterval: () => 0,
+      clearInterval: () => {},
+    };
+    createContext(sandbox);
+    runInContext(script, sandbox);
+    return { warning: String(byId("w").textContent), tapOffered: byId("go").hidden === false };
+  };
+
+  const ANDROID_WEBVIEW =
+    "Mozilla/5.0 (Linux; Android 14; Pixel 7 Build/UQ1A.240205.004; wv) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Version/4.0 Chrome/130.0.6723.58 Mobile Safari/537.36";
+  const IOS_WEBVIEW =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
+
+  it("still warns a webview that is not ours", async () => {
+    // The control: without it the two tests below would pass on a script
+    // that never warns anybody.
+    const { warning } = await enterWith(ANDROID_WEBVIEW);
+    expect(warning).toContain("built-in browser");
+  });
+
+  it("does not warn inside the Murage app on Android, whose webview says `; wv)`", async () => {
+    const { warning, tapOffered } = await enterWith(`${ANDROID_WEBVIEW} MurageApp/1.0.0 (android)`);
+    expect(warning).toBe("");
+    // The tap stays. A crawler does not press buttons, and neither does
+    // anything else that is not a person.
+    expect(tapOffered).toBe(true);
+  });
+
+  it("does not warn inside the Murage app on iPhone either", async () => {
+    expect((await enterWith(`${IOS_WEBVIEW} MurageApp/1.0.0 (ios)`)).warning).toBe("");
+  });
+
+  it("still warns the chat apps the list was written for, even ones that mention us", async () => {
+    // The token only exempts the app it names. Instagram's webview does not
+    // become ours by carrying an unrelated string somewhere else in it.
+    expect((await enterWith(`${IOS_WEBVIEW} Instagram 312.0.0.32.112`)).warning).toContain("built-in browser");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// The app's install id, carried through /enter
+// ─────────────────────────────────────────────────────────────────────────
+interface StubNode {
+  textContent: string;
+  hidden: boolean;
+  disabled: boolean;
+  value: string;
+  listeners: Record<string, () => void>;
+  addEventListener(type: string, fn: () => void): void;
+  focus(): void;
+}
+
+/** Run the served `/enter` script against a stub page with `hash` in the
+ * address bar. `replies` answer its POSTs in order. */
+const runEnter = (html: string, hash: string, replies: Array<{ ok: boolean; body: Record<string, unknown> }>) => {
+  const nodes = new Map<string, StubNode>();
+  const node = (id: string): StubNode => {
+    let found = nodes.get(id);
+    if (!found) {
+      const listeners: Record<string, () => void> = {};
+      found = {
+        textContent: "",
+        hidden: true,
+        disabled: false,
+        value: "",
+        listeners,
+        addEventListener: (type, fn) => {
+          listeners[type] = fn;
+        },
+        focus: () => {},
+      };
+      nodes.set(id, found);
+    }
+    return found;
+  };
+  const posted: Array<Record<string, unknown>> = [];
+  const sandbox = {
+    location: { hash, replace: () => {} },
+    history: { replaceState: () => {} },
+    navigator: { userAgent: "Mozilla/5.0 (iPhone) MurageApp/1.0 (ios)" },
+    document: { getElementById: node },
+    fetch: (_url: string, init: { body: string }) => {
+      posted.push(JSON.parse(init.body));
+      const reply = replies.shift() ?? { ok: true, body: {} };
+      return Promise.resolve({ ok: reply.ok, json: () => Promise.resolve(reply.body) });
+    },
+    setInterval: () => 0,
+    clearInterval: () => {},
+  };
+  createContext(sandbox);
+  runInContext(inlineScripts(html)[0], sandbox);
+  return { node, posted };
+};
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+describe("pairing from the app replaces its own old record", () => {
+  it("sends the install id from the fragment, and the credential without it", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node, posted } = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", []);
+    node("go").listeners.click();
+    await settle();
+    expect(posted).toEqual([{ credential: "murage_pair_abc", installId: "ios-install-0123456789abcdef" }]);
+  });
+
+  it("sends exactly what it always sent when there is no install id", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node, posted } = runEnter(page.body, "#murage_pair_abc", []);
+    node("go").listeners.click();
+    await settle();
+    expect(posted).toEqual([{ credential: "murage_pair_abc" }]);
+  });
+
+  it("keeps the install id when the link fails and the person types the code instead", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node, posted } = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", [
+      { ok: false, body: { error: "that code has expired" } },
+    ]);
+    node("go").listeners.click();
+    await settle();
+    expect(node("cf").hidden).toBe(false);
+    node("cc").value = "123456";
+    node("cb").listeners.click();
+    await settle();
+    expect(posted[1]).toEqual({ credential: "123456", installId: "ios-install-0123456789abcdef" });
+  });
+
+  it("types a code exactly as it always did when there is no install id", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const failed = runEnter(page.body, "#murage_pair_abc", [{ ok: false, body: { error: "that code has expired" } }]);
+    failed.node("go").listeners.click();
+    await settle();
+    failed.node("cc").value = "123456";
+    failed.node("cb").listeners.click();
+    await settle();
+    expect(failed.posted[1]).toEqual({ credential: "123456" });
+
+    // A bookmarked /enter with no fragment at all, and the sign-in page.
+    const bare = runEnter(page.body, "", []);
+    bare.node("cc").value = "654321";
+    bare.node("cb").listeners.click();
+    await settle();
+    expect(bare.posted).toEqual([{ credential: "654321" }]);
+    expect(codeEntryScript()).toContain("JSON.stringify({ credential: code })");
+  });
+
+  it("replaces the record at the door, so a reinstall does not take a second slot", async () => {
+    const origin = { origin: `http://macbook.tail0a48a4.ts.net:${doorPort}` };
+    const install = "ios-install-0123456789abcdef";
+    const first = await knock("POST", "/session", origin, JSON.stringify({ credential: registry.openPairing().token, installId: install }));
+    expect(first.status).toBe(201);
+    const oldCookie = String(first.headers["set-cookie"]?.[0] ?? "").split(";")[0].split("=")[1];
+
+    const second = await knock("POST", "/session", origin, JSON.stringify({ credential: registry.openPairing().token, installId: install }));
+    expect(second.status).toBe(201);
+    expect(registry.count()).toBe(1);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${oldCookie}` })).status).toBe(401);
+  });
+});
+
+describe("pairing into a full fleet", () => {
+  const fillFleet = () => {
+    for (let i = 0; i < MAX_DEVICES; i += 1) {
+      const result = registry.redeem(registry.openPairing().token, `Phone ${i}`);
+      if ("error" in result) throw new Error(result.error);
+    }
+  };
+
+  it("tells the phone why, lists the devices, and does not count it as a guess", async () => {
+    fillFleet();
+    const token = registry.openPairing().token;
+    const refused = await submitCode(token);
+    expect(refused.status).toBe(401);
+    const body = bodyOf(refused);
+    expect(body.reason).toBe("full");
+    expect((body.devices as unknown[]).length).toBe(MAX_DEVICES);
+    expect(body.retryAfter).toBeUndefined();
+
+    // Replaced on the computer, then the same link again.
+    registry.revoke(registry.replaceCandidates()[0].id);
+    expect((await submitCode(token)).status).toBe(201);
+  });
+
+  it("answers a wrong code as wrong, and names no devices to a guesser", async () => {
+    fillFleet();
+    const { code } = registry.openPairing();
+    const refused = await submitCode(code === "000000" ? "111111" : "000000");
+    expect(refused.status).toBe(401);
+    const body = bodyOf(refused);
+    expect(body.reason).toBe("wrong");
+    expect(body.devices).toBeUndefined();
+  });
+
+  it("puts a Try again button on /enter instead of spending the link", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node, posted } = runEnter(page.body, "#murage_pair_abc", [
+      { ok: false, body: { error: "this computer already has the most devices it can pair — replace an old one on your computer, then try again", reason: "full", devices: [] } },
+      { ok: true, body: {} },
+    ]);
+    node("go").listeners.click();
+    await settle();
+    expect(node("go").disabled).toBe(false);
+    expect(node("go").textContent).toBe("Try again");
+    expect(node("t").textContent).toBe("This computer has too many devices");
+    node("go").listeners.click();
+    await settle();
+    expect(posted).toHaveLength(2);
+  });
+
+  it("drops the Try again label once a retry fails for another reason", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node } = runEnter(page.body, "#murage_pair_abc", [
+      { ok: false, body: { error: "this computer already has the most devices it can pair — replace an old one on your computer, then try again", reason: "full", devices: [] } },
+      { ok: false, body: { error: "that pairing code has expired — start pairing again", reason: "expired" } },
+    ]);
+    node("go").listeners.click();
+    await settle();
+    expect(node("go").textContent).toBe("Try again");
+    node("go").listeners.click();
+    await settle();
+    expect(node("go").textContent).toBe("Sign in on this device");
+    expect(node("t").textContent).toBe("Could not sign in");
+  });
+});
+
+describe("signing this device out, from the device", () => {
+  const signedIn = async (): Promise<string> => {
+    const answer = await submitCode(registry.openPairing().token);
+    expect(answer.status).toBe(201);
+    return String(answer.headers["set-cookie"]?.[0] ?? "").split(";")[0].split("=")[1];
+  };
+  const origin = () => ({ origin: `http://macbook.tail0a48a4.ts.net:${doorPort}` });
+
+  it("removes the whole device, clears the cookie and ends its streams", async () => {
+    const cookie = await signedIn();
+    const [device] = registry.list();
+    const answer = await knock("DELETE", "/session/device", { ...origin(), cookie: `${cookieName("http")}=${cookie}` });
+    expect(answer.status).toBe(200);
+    // Cleared with exactly the attributes the door sets it with, or the
+    // browser keeps the live cookie beside the empty one. Spelled out, not
+    // only compared with `clearedCookie`, so a change to both at once fails.
+    const cleared = String(answer.headers["set-cookie"]?.[0] ?? "");
+    expect(cleared).toBe("murage_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+    expect(cleared).toBe(clearedCookie(identity));
+    expect(registry.count()).toBe(0);
+    expect(disconnected).toEqual([device.id]);
+    expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${cookie}` })).status).toBe(401);
+  });
+
+  it("is a write, so nothing cross-site can sign a phone out", async () => {
+    const cookie = await signedIn();
+    const header = { cookie: `${cookieName("http")}=${cookie}` };
+    expect((await knock("DELETE", "/session/device", header)).status).toBe(403);
+    expect((await knock("DELETE", "/session/device", { ...header, origin: "http://evil.example" })).status).toBe(403);
+    expect((await knock("GET", "/session/device", header)).status).toBe(404);
+    expect(registry.count()).toBe(1);
+  });
+
+  it("answers a stranger with a sign-in, and revokes nothing", async () => {
+    await signedIn();
+    const answer = await knock("DELETE", "/session/device", origin());
+    expect(answer.status).toBe(401);
+    expect(bodyOf(answer)).toEqual({ error: "sign in", signIn: "/enter" });
+    expect(registry.count()).toBe(1);
+    expect(disconnected).toEqual([]);
+  });
+
+  /** Sign out with the registry unable to write, then again once it can. */
+  const failThenRetry = async (cookie: string): Promise<void> => {
+    const [device] = registry.list();
+    const header = { ...origin(), cookie: `${cookieName("http")}=${cookie}` };
+    // SAFETY: private `persist` shadowed on this registry only.
+    const writable = registry as unknown as { persist?: () => void };
+    writable.persist = () => {
+      throw new Error("EROFS: read-only file system, open '/Users/someone/.murage-companion/devices.json'");
+    };
+    try {
+      const failed = await knock("DELETE", "/session/device", header);
+      expect(failed.status).toBe(500);
+      expect(bodyOf(failed)).toEqual({ error: "could not sign this device out on the computer — try again" });
+      // The cookie is kept: the device is still paired, and this is the one
+      // credential able to ask again.
+      expect(failed.headers["set-cookie"]).toBeUndefined();
+      expect(disconnected).toEqual([]);
+      expect(registry.list().map((d) => d.id)).toEqual([device.id]);
+    } finally {
+      delete writable.persist;
+    }
+    // Still paired on disk, and the same cookie still signs in.
+    expect(new DeviceRegistry().list().map((d) => d.id)).toEqual([device.id]);
+    expect((await knock("GET", "/session", { cookie: header.cookie })).status).toBe(200);
+
+    const retried = await knock("DELETE", "/session/device", header);
+    expect(retried.status).toBe(200);
+    expect(registry.count()).toBe(0);
+    expect(disconnected).toEqual([device.id]);
+  };
+
+  it("keeps the device and the cookie when the removal cannot be written", async () => {
+    await failThenRetry(await signedIn());
+  });
+
+  it("keeps them too when the cookie is a successor nobody has used yet", async () => {
+    try {
+      const cookie = await signedIn();
+      vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000 + 60_000);
+      const successor = registry.renewSession(cookie);
+      expect(successor).not.toBeNull();
+      await failThenRetry(successor!.value);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

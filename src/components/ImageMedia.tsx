@@ -23,6 +23,8 @@ import { ChevronLeft, ChevronRight, Download, ImageOff, Maximize2, X } from "luc
 
 import { attachmentImageUrl } from "@/lib/composer-attachments";
 import { artifactReferenceSource, attachmentReferenceSource } from "@/lib/image-reference";
+import { rememberServedOriginal, requestedWidth, servedOriginal, THUMBNAIL_SIZES, thumbnailSrcSet, truePixelWidth, wasServedOriginal } from "@/lib/image-thumbnail";
+import { useDesktopSurface } from "@/lib/use-surface";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { ImageReferenceSource, MediaAssetSource } from "../../shared/media-assets";
@@ -169,15 +171,26 @@ export function resolveMarkdownImage(src: string | undefined, alt: string | unde
 
 // ── Inline thumbnail ─────────────────────────────────────────────────────
 
-export function ImageThumb({ item, label, onOpen, className, imgClassName }: {
+export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes = THUMBNAIL_SIZES }: {
   item: ImageMediaItem;
   label: string;
   onOpen: () => void;
   className?: string;
   imgClassName?: string;
+  /** The `sizes` this thumbnail renders at, for the srcset above. Callers
+   * whose layout is narrower than the shared default (a gallery capped at
+   * 260px, a Markdown column) pass their own. */
+  sizes?: string;
 }) {
   // callers key this by item.id, so a new image starts unfailed
   const [failed, setFailed] = useState(false);
+  // E12 never upscales: an image already at or below the widest `?w=` comes
+  // back as the original, which a srcset would draw shrunken (see
+  // servedOriginal). Sticky per source so a remount does not flash small.
+  const [smallOriginal, setSmallOriginal] = useState(() => wasServedOriginal(item.src));
+  // Phones and browsers only (M6): the Electron desktop draws the original,
+  // as it did before E12, and never asks the harness to resize.
+  const desktop = useDesktopSurface();
   if (failed) {
     // stays visible: a missing image says so instead of silently vanishing
     return (
@@ -192,6 +205,7 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName }: {
       </span>
     );
   }
+  const srcSet = desktop === false && !smallOriginal ? thumbnailSrcSet(item.src) : undefined;
   return (
     <button
       type="button"
@@ -206,11 +220,28 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName }: {
       )}
     >
       <img
+        // A new element when the srcset is dropped: Chromium keeps the old
+        // candidate's density on a live <img> after srcset is removed, so the
+        // original drew at a fraction of its size (phone verification f2).
+        key={srcSet ? "srcset" : "original"}
         src={item.src}
+        srcSet={srcSet}
+        sizes={srcSet ? sizes : undefined}
         alt={item.alt}
         loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
+        onLoad={(event) => {
+          // naturalWidth here is density-corrected by the srcset; measure the
+          // file's true pixels instead (see servedOriginal).
+          const current = event.currentTarget.currentSrc;
+          if (requestedWidth(current) === undefined) return;
+          void truePixelWidth(current).then((pixels) => {
+            if (!servedOriginal(current, pixels)) return;
+            rememberServedOriginal(item.src);
+            setSmallOriginal(true);
+          });
+        }}
         onError={() => setFailed(true)}
         className={cn(
           "block max-w-full transition-transform duration-200 group-hover/image:scale-[1.015] motion-reduce:transition-none motion-reduce:group-hover/image:scale-100",
@@ -228,11 +259,12 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName }: {
 }
 
 /** One image with its own lightbox. */
-export function ImageMedia({ item, label, className, imgClassName }: {
+export function ImageMedia({ item, label, className, imgClassName, sizes }: {
   item: ImageMediaItem;
   label?: string;
   className?: string;
   imgClassName?: string;
+  sizes?: string;
 }) {
   const [open, setOpen] = useState(false);
   const items = useMemo(() => [item], [item]);
@@ -245,6 +277,7 @@ export function ImageMedia({ item, label, className, imgClassName }: {
         onOpen={() => setOpen(true)}
         className={className}
         imgClassName={imgClassName}
+        sizes={sizes}
       />
       {open && <ImageLightbox items={items} index={0} onClose={() => setOpen(false)} />}
     </>
@@ -253,12 +286,13 @@ export function ImageMedia({ item, label, className, imgClassName }: {
 
 /** Several images from one message. Previous/next stays inside `items`: the
  * set the caller was already allowed to show, never a wider cache. */
-export function ImageGallery({ items, className, thumbClassName, imgClassName, label }: {
+export function ImageGallery({ items, className, thumbClassName, imgClassName, label, sizes }: {
   items: ImageMediaItem[];
   className?: string;
   thumbClassName?: string;
   imgClassName?: string;
   label: (item: ImageMediaItem) => string;
+  sizes?: string;
 }) {
   // selection by identity: if the set changes under an open dialog, a removed
   // image closes it instead of the index silently landing on a neighbour
@@ -275,6 +309,7 @@ export function ImageGallery({ items, className, thumbClassName, imgClassName, l
             label={label(item)}
             onOpen={() => setSelectedId(item.id)}
             className={thumbClassName}
+            sizes={sizes}
             imgClassName={imgClassName}
           />
         ))}
@@ -489,10 +524,45 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
 
 // ── Surface wrappers ─────────────────────────────────────────────────────
 
-/** A screen frame from the bot's computer, enlargeable in place. */
-export function ScreenFrameMedia({ png, mime, className }: { png: string; mime?: string; className?: string }) {
-  const item = useMemo(() => screenFrameItem(png, mime), [png, mime]);
-  return <ImageMedia item={item} label={t("media.screenFrame.open")} className={className} imgClassName="h-auto w-full" />;
+/** A screen frame from the bot's computer, enlargeable in place. On a phone
+ * the bytes already on screen may be capped to `PHONE_SCREEN_FRAME_WIDTH`
+ * (E13); `fetchOriginal`, when given, is asked for the untouched frame the
+ * moment the enlarged view opens, so pinch-zoom is not stuck at the capped
+ * width. The capped frame stays visible until it resolves — never a blank
+ * dialog, and nothing is asked for on the desktop path, which is already
+ * the original. */
+export function ScreenFrameMedia({ png, mime, className, fetchOriginal }: {
+  png: string;
+  mime?: string;
+  className?: string;
+  fetchOriginal?: () => Promise<{ png: string; mime: string } | null>;
+}) {
+  const capped = useMemo(() => screenFrameItem(png, mime), [png, mime]);
+  const [open, setOpen] = useState(false);
+  const [original, setOriginal] = useState<ImageMediaItem | null>(null);
+  const items = useMemo(() => [original ?? capped], [original, capped]);
+  return (
+    <>
+      <ImageThumb
+        key={capped.id}
+        item={capped}
+        label={t("media.screenFrame.open")}
+        onOpen={() => {
+          setOpen(true);
+          if (fetchOriginal && !original) {
+            fetchOriginal()
+              .then((full) => {
+                if (full) setOriginal(screenFrameItem(full.png, full.mime));
+              })
+              .catch(() => {});
+          }
+        }}
+        className={className}
+        imgClassName="h-auto w-full"
+      />
+      {open && <ImageLightbox items={items} index={0} onClose={() => setOpen(false)} />}
+    </>
+  );
 }
 
 /** The Files browser's saved-copy image preview. */
@@ -510,6 +580,11 @@ const CARD = "my-1 inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1
 
 /** A Markdown `![alt](src)` inside a chat or room message. Rendered inside a
  * paragraph, so everything here is phrasing content (spans, buttons, img). */
+// A Markdown image sits in the message column, not the fixed-width gallery
+// grid: about 90% of a phone's viewport, or the bubble's own cap on wider
+// screens.
+const MARKDOWN_IMAGE_SIZES = "(max-width: 767.98px) 90vw, 640px";
+
 export function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const resolved = useMemo(() => resolveMarkdownImage(src, alt), [src, alt]);
   // permission to fetch lasts as long as this rendered image, and only for
@@ -517,7 +592,7 @@ export function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const [allowedUrl, setAllowedUrl] = useState<string | null>(null);
 
   if (resolved.kind === "inline") {
-    return <ImageMedia item={resolved.item} className="my-1 rounded-lg border border-hairline/30" imgClassName="max-h-96" />;
+    return <ImageMedia item={resolved.item} className="my-1 rounded-lg border border-hairline/30" imgClassName="max-h-96" sizes={MARKDOWN_IMAGE_SIZES} />;
   }
   if (resolved.kind === "external") {
     if (allowedUrl === resolved.url) {
@@ -527,6 +602,7 @@ export function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
           item={{ id: `external:${resolved.url}`, src: resolved.url, name, alt: resolved.alt, source: "external-link", download: false }}
           className="my-1 rounded-lg border border-hairline/30"
           imgClassName="max-h-96"
+          sizes={MARKDOWN_IMAGE_SIZES}
         />
       );
     }

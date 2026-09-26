@@ -26,6 +26,7 @@ import { mediaHintForPath } from "@/lib/composer-attachments";
 import { forgetLocalMedia, localMedia, type LocalMediaRequest, type LocalMediaResolution, type MediaApi, type MediaUnplayableReason } from "@/lib/media-resolve";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+import { reportSaveFailure, saveUrl } from "@/lib/save-file";
 import { api as defaultApi } from "@/state/store";
 import type { MediaAsset, MediaAssetKind, MediaAssetSource } from "../../shared/media-assets";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
@@ -283,12 +284,7 @@ export function MediaPlayerCard({ asset, url, expiresAt, refresh, className, pro
     void askAgain().then(next => {
       if (!next) return;
       setSource(next);
-      if (typeof document === "undefined") return;
-      const anchor = document.createElement("a");
-      anchor.href = next.url;
-      anchor.download = asset.name;
-      anchor.referrerPolicy = "no-referrer";
-      anchor.click();
+      void saveUrl(next.url, asset.name).catch(reportSaveFailure);
     });
   };
 

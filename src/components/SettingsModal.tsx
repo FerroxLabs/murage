@@ -34,6 +34,7 @@ import { TelegramSettings } from "./TelegramSettings";
 import { SlackSettings } from "./SlackSettings";
 import { DiscordSettings } from "./DiscordSettings";
 import { StarterProfiles } from "./StarterProfiles";
+import { RemoteSignOut } from "./RemoteSignOut";
 import { openFirstRun } from "@/lib/first-run";
 import { cn } from "@/lib/cn";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -808,6 +809,10 @@ export function SettingsModal() {
                 {desktop === true && <AnnouncementsSettings />}
                 <DiagnosticsRow />
                 <AnalyticsRow />
+                {/* Confirmed remote only. `undefined` renders the neutral
+                  * thing, and the desktop has no session to sign out of: the
+                  * route lives on the browser door alone. */}
+                {desktop === false && <RemoteSignOut />}
               </>
             )}
 

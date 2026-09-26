@@ -226,6 +226,10 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: production UI build
         run: pnpm exec vite build
+      - name: First-paint payload budget
+        # spec §6; one shard is enough, every shard built the same dist/
+        if: matrix.human_shard == 1
+        run: pnpm check:bundle-budget
       - name: Run human specs
         env:
           MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch

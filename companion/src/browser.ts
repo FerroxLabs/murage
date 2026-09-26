@@ -27,12 +27,13 @@
 //  - `funnel` never appears anywhere in this design. `serve` is
 //    tailnet-scoped; `funnel` is the public internet, and the two subcommands
 //    differ by one word.
-import { request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders, type Server, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 
 import { cleanDeviceName, type PublicDevice } from "./devices.ts";
-import { BROWSER_STATIC, denyReason, isCloudDesktopJoin, isRoutineWrite, launchProofHeaders } from "./routes.ts";
+import { BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isImageUpload, isInboxRoute, isRoutineWrite, launchProofHeaders, needsLaunchProof } from "./routes.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
+import { compressBuffer, compressStream, isCompressible, MIN_COMPRESS_BYTES, negotiateEncoding, type Encoding } from "./encoding.ts";
 
 /** The identity this door actually answers to.
  *
@@ -54,14 +55,15 @@ export interface BoundIdentity {
 
 /** The slice of `DeviceRegistry` this door needs. Structural rather than the
  * class, so a test can state the world in a few lines — and so it is visible
- * at a glance that the door can pair, sign in, and sign out, and cannot
- * revoke, list or enumerate anything. */
+ * at a glance that the door can pair, sign in, sign out, and revoke only the
+ * device its own cookie belongs to. It cannot list or enumerate anything. */
 export interface BrowserDeviceStore {
   redeem(
     credential: string,
     name: unknown,
     pairRequestId?: unknown,
-  ): { device: PublicDevice; token: string } | { error: string; reason?: string };
+    installId?: unknown,
+  ): { device: PublicDevice; token: string } | { error: string; reason?: string; devices?: Array<{ name: string; lastSeenAt: number }> };
   openSession(deviceId: string, label: unknown): { value: string; session: { expiresAt: number } } | null;
   /** `sessionId` names the session RECORD, which survives renewal; the cookie
    * does not. Long-lived streams are bound to it. */
@@ -77,12 +79,17 @@ export interface BrowserDeviceStore {
    * Never extends or revives anything. */
   sessionDeadline(sessionId: string): number | null;
   closeSession(value: string | undefined): boolean;
-  /** Rotate the credential of a live session, inside its existing device
-   * record. `null` for anything that is not a live session — the door turns
-   * that into a silent no-op, never a sign-out. */
+  /** Revoke the device this session belongs to; its id, or null when the
+   * value is not a live session. Throws when it cannot be written down. */
+  signOutDevice(value: string | undefined): string | null;
+  /** Renew a live session (`DeviceRegistry.renewSession`): the successor to
+   * set as the cookie, the same successor again on a retry, or the committed
+   * value when the successor itself is presented. `expiresAt` is the cap that
+   * cookie will carry. `null` for anything else, including "not due yet" —
+   * the door turns that into a silent no-op, never a sign-out. */
   renewSession(
     value: string | undefined,
-  ): { value: string; session: { expiresAt: number } } | null;
+  ): { value: string; expiresAt: number } | null;
 }
 
 export interface BrowserDoorOptions {
@@ -99,17 +106,35 @@ export interface BrowserDoorOptions {
    * one session — terminates it in flight. The same tracker the device port
    * uses, for the same reason and with the same disposer contract. */
   connected?: (deviceId: string, disconnect: () => void, sessionId?: string) => () => void;
-  /** How long the harness may take to produce response *headers*. Tests only. */
+  /** End every live stream a device owns, bearer ones included. Called after
+   * a device signs itself out, the same call the control page makes after a
+   * revoke. */
+  disconnectDevice?: (deviceId: string) => void;
+  /** How long the harness may take to produce response *headers*, counted
+   * from when the request body has been forwarded whole. Tests only. */
   headersTimeoutMs?: number;
+  /** How long an upload may send no bytes at all before it is given up on.
+   * Tests only. */
+  bodyIdleTimeoutMs?: number;
   /** The sign-in rate limiter. Injectable so a test can drive its clock;
    * every real door gets its own from `createSignInLimiter`. */
   signInLimiter?: SignInLimiter;
+  /** What this computer is called, for `GET /healthz`. The same name the
+   * device door hands a phone when it pairs (`index.ts` `machineName`), so a
+   * workspace the launcher saved and the pairing agree on what to call it.
+   * Optional: a door without one answers "Murage". */
+  serverName?: () => string;
 }
 
 /** Headers only. Once they arrive the clock is off and the body may take as
  * long as it likes — an SSE stream is a response that deliberately never
  * ends. Same value and same reasoning as the device proxy. */
 const HEADERS_TIMEOUT_MS = 30_000;
+
+/** An upload is judged by progress, not by its total time: a 10 MiB photo
+ * from a phone on a slow cellular link can take minutes and is fine as long
+ * as bytes keep arriving. Silence this long means it stalled. */
+const BODY_IDLE_TIMEOUT_MS = 30_000;
 
 /** A JSON response is buffered whole before it can be scrubbed. Far above any
  * real payload; it exists to have a ceiling at all. */
@@ -142,6 +167,14 @@ const STATIC_MIME: Readonly<Record<string, string>> = {
   ".json": "application/json",
   ".woff2": "font/woff2",
   ".webmanifest": "application/manifest+json",
+  // ONNX Runtime's glue is imported as a module, and a module served as
+  // anything but JavaScript is refused; its WebAssembly is compiled by
+  // streaming, which requires exactly this type. The same pair the harness
+  // maps (`server/index.ts:521-525`).
+  ".mjs": "text/javascript; charset=utf-8",
+  ".wasm": "application/wasm",
+  // The speech model is opaque bytes to everything but the runtime.
+  ".onnx": "application/octet-stream",
 };
 
 /** Headers on every response this door writes. No CORS headers appear here or
@@ -155,6 +188,9 @@ const BASE_HEADERS = {
   "referrer-policy": "no-referrer",
   // The shell is not a frameable document, and neither is anything else here.
   "x-frame-options": "DENY",
+  // Every response, whether or not this one was compressed: a cache that
+  // kept a brotli body must never hand it to a client that asked for plain.
+  vary: "Accept-Encoding",
 } as const;
 
 const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
@@ -170,6 +206,38 @@ const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
   });
   res.end(text);
 };
+
+/** One whole body, compressed when the browser can decode it and it is big
+ * enough to be worth it. What is handed in here is final — the door has
+ * finished rewriting it — which is the whole of the rule about what may be
+ * compressed. A zlib failure sends the plain bytes rather than failing a
+ * request whose content was fine. */
+function sendBody(
+  res: ServerResponse,
+  status: number,
+  headers: OutgoingHttpHeaders,
+  body: Buffer,
+  encoding: Encoding | null,
+): void {
+  if (!encoding || body.byteLength < MIN_COMPRESS_BYTES) {
+    res.writeHead(status, { ...headers, "content-length": body.byteLength });
+    res.end(body);
+    return;
+  }
+  const chosen: Encoding = encoding;
+  compressBuffer(body, chosen).then(
+    (packed) => {
+      if (res.destroyed) return;
+      res.writeHead(status, { ...headers, "content-encoding": chosen, "content-length": packed.byteLength });
+      res.end(packed);
+    },
+    () => {
+      if (res.destroyed) return;
+      res.writeHead(status, { ...headers, "content-length": body.byteLength });
+      res.end(body);
+    },
+  );
+}
 
 /** The host out of a `Host` header, port removed.
  *
@@ -500,6 +568,72 @@ export function staticContentType(path: string): string | null {
   return STATIC_MIME[path.slice(dot).toLowerCase()] ?? null;
 }
 
+/** How long a browser may keep one static file.
+ *
+ * Hashed assets are immutable by construction; the shell never is. The speech
+ * model is neither: its name is fixed and it changes only with a release, and
+ * it is 2.2 MB that every call fetches. A day is long enough that a phone on
+ * cellular stops paying for it per call, and short enough that a model
+ * shipped in an update is in use by tomorrow. */
+export function staticCacheControl(path: string): string {
+  if (path.startsWith("/assets/") || MERMAID_FRAME_FILE.test(path)) return "private, max-age=31536000, immutable";
+  if (path === "/vad/silero_vad.onnx") return "private, max-age=86400";
+  return "private, no-store";
+}
+
+/** The diagram frame's response policy, written by this door because it
+ * writes every static response's headers from its own table rather than
+ * relaying the harness's — which is how the harness's `sandbox allow-scripts`
+ * (`server/index.ts:16869`) was being dropped, and the one line that keeps
+ * the page an opaque origin even when it is opened directly went with it.
+ *
+ * No `frame-ancestors`, and no `X-Frame-Options` either: DENY refuses even the
+ * app's own iframe, which is the only way the page is ever shown, and what
+ * someone else framing it would get is an opaque page with no secrets that
+ * the session cookie does not reach cross-site anyway. */
+const FRAME_CSP = "sandbox allow-scripts";
+
+/** The headers every static response is written with. */
+function staticHeaders(path: string, expected: string): Record<string, string> {
+  const headers: Record<string, string> = { ...BASE_HEADERS, "cache-control": staticCacheControl(path), "content-type": expected };
+  if (MERMAID_FRAME_FILE.test(path)) {
+    delete headers["x-frame-options"];
+    headers["content-security-policy"] = FRAME_CSP;
+  }
+  return headers;
+}
+
+/** The harness routes whose `cache-control` this door passes on instead of
+ * replacing. Both serve bytes that never change under their name: an
+ * attachment is stored under a generated filename, and a message image is the
+ * image of a settled message (`server/index.ts:11983-11988`, `:12119-12124`).
+ * The same two patterns `BROWSER_ALLOWED` lets through. */
+const UPSTREAM_CACHEABLE: ReadonlyArray<RegExp> = [
+  /^\/api\/attachments\/[\w-]+\.(?:png|jpe?g|gif|webp)$/i,
+  /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/image$/,
+];
+
+/** The harness's own cache lifetime for this response when this door keeps
+ * it, or null for the door's `no-store`.
+ *
+ * `no-store` on everything was the right default and the wrong answer here:
+ * a phone scrolling back through a chat of photos downloaded every one of
+ * them again, every time, over cellular. Kept only for a successful GET on
+ * the two routes above, and only when the harness itself said `private` — no
+ * cache shared between a person and this door may hold their pictures, and a
+ * harness that stops saying `private` gets `no-store` rather than trust. */
+export function keptCacheControl(
+  method: string,
+  path: string,
+  status: number,
+  upstream: string | string[] | undefined,
+): string | null {
+  if (method !== "GET" || status !== 200 || typeof upstream !== "string") return null;
+  if (!UPSTREAM_CACHEABLE.some((route) => route.test(path))) return null;
+  const value = upstream.trim();
+  return /^private\s*(?:,|$)/i.test(value) ? value : null;
+}
+
 /** Read a body as raw bytes, bounded, so it can be inspected and then
  * forwarded byte-for-byte. */
 const readRaw = (req: IncomingMessage, limit = 64 * 1024): Promise<Buffer> =>
@@ -611,8 +745,16 @@ function codeEntryMarkup(hidden: boolean): string {
  * does. There is deliberately no `<form>` element either — a form whose
  * script failed to load would navigate with the code in the query string,
  * putting the credential in an access log, which is the one place the whole
- * fragment design exists to keep it out of. */
-export function codeEntryScript(): string {
+ * fragment design exists to keep it out of.
+ *
+ * `installIdVar` names a variable in the enclosing script that holds the phone
+ * app's install id (see `enterPage`), so a typed code sent from a page the app
+ * opened still replaces that install's old record rather than taking a second
+ * slot. Without it the body is exactly `{ credential }`, as it always was. */
+export function codeEntryScript(installIdVar?: string): string {
+  const body = installIdVar
+    ? `${installIdVar} ? { credential: code, installId: ${installIdVar} } : { credential: code }`
+    : "{ credential: code }";
   return `(function () {
   var box = document.getElementById("cf");
   if (!box || typeof fetch !== "function") return;
@@ -660,7 +802,7 @@ export function codeEntryScript(): string {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ credential: code })
+      body: JSON.stringify(${body})
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (body) {
         if (r.ok) { location.replace("/"); return; }
@@ -742,16 +884,26 @@ ${CODE_ENTRY_STYLE}
   ${codeEntryMarkup(true)}
 </main>
 <script nonce="${nonce}">
-${codeEntryScript()}
 (function () {
   var say = function (title, detail) {
     document.getElementById("t").textContent = title;
     document.getElementById("m").textContent = detail || "";
   };
-  var credential = location.hash.slice(1);
+  var fragment = location.hash.slice(1);
+  // The phone app appends its install id after the credential, so pairing
+  // again after a reinstall replaces its own old record instead of taking a
+  // new slot. A camera-app scan has no such suffix and pairs as it always
+  // did. indexOf, not a regular expression: see the note below about this
+  // being a template literal.
+  var cut = fragment.indexOf("&installId=");
+  var credential = cut < 0 ? fragment : fragment.slice(0, cut);
+  var installId = cut < 0 ? "" : fragment.slice(cut + 11);
   // Before anything else, and before any network call: the address bar and
   // the session history must not keep it.
   history.replaceState(null, "", "/enter");
+  // The typed-code field, wired inside this scope so that a code typed after
+  // the link failed carries the same install id the link did.
+  ${codeEntryScript("installId")}
   if (!credential) {
     // Not a dead end any more. This page is reached with an empty fragment by
     // anyone who bookmarked it, and by every device that cannot scan — so it
@@ -797,12 +949,19 @@ ${codeEntryScript()}
   // Note for anyone editing this string: no backticks, and no backslashes.
   // Both belong to the template literal, not to the script.
 
+  // The Murage phone app is a webview as well, and on Android its user agent
+  // carries the same "; wv)" as every other one. There the webview IS the
+  // browser: the app keeps its cookies and the session is meant to live in
+  // it, so telling the person to leave would send them somewhere the app
+  // cannot follow. The token only decides whether a sentence is shown; it
+  // grants nothing, so a spoofed one costs nobody anything.
+  var ourApp = ua.indexOf("MurageApp/") !== -1;
   var webview = false;
   var marks = ["Line/", "FBAN", "FBAV", "Instagram", "WhatsApp", "MicroMessenger", "; wv)"];
   for (var i = 0; i < marks.length; i++) {
     if (ua.indexOf(marks[i]) !== -1) { webview = true; break; }
   }
-  if (webview) {
+  if (webview && !ourApp) {
     warn.textContent = "You are in an app's built-in browser. Its sign-in will not carry over to Chrome or Safari, and this code can only be used once. Open this link in your normal browser first.";
   }
   go.hidden = false;
@@ -812,16 +971,27 @@ ${codeEntryScript()}
     fetch("/session", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ credential: credential })
+      body: JSON.stringify(installId ? { credential: credential, installId: installId } : { credential: credential })
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (body) {
         if (r.ok) { location.replace("/"); return; }
+        if (body.reason === "full") {
+          // Right code, full computer. The code is not spent, so once an old
+          // device is replaced there, this same button signs in.
+          say("This computer has too many devices", "On your computer, Murage lists them under Replace an old device. Replace one, then tap Try again.");
+          go.textContent = "Try again";
+          go.disabled = false;
+          return;
+        }
         say("Could not sign in", body.error || "That code is no longer valid.");
         // The link failed — expired, already spent, or guessed to death. The
         // person is standing in front of the computer that can show them a
         // new code, so offer the field rather than making them go back and
         // relay a second link by hand.
         document.getElementById("cf").hidden = false;
+        // A retry after "full" can fail for another reason, and "Try again"
+        // would promise a second tap that no longer does anything.
+        go.textContent = "Sign in on this device";
       });
     }).catch(function () {
       say("Could not reach Murage", "The app may have stopped on your computer.");
@@ -911,6 +1081,10 @@ const RENEW_MIN_GAP_MS = 60_000;
  * not told, because there is nothing it could usefully do about it and the
  * one thing it must never do is sign somebody out that the server has not.
  *
+ * A 200 is followed by one `GET /session`, which presents the new cookie and
+ * so commits it (see `DeviceRegistry.renewSession`). Without it, a tab that
+ * then sat idle would leave its successor uncommitted until it aged out.
+ *
  * NOTE FOR ANYONE EDITING THE STRING BELOW: it is a TEMPLATE LITERAL. A
  * backtick ends it and a backslash is consumed as an escape before JavaScript
  * ever sees it — that is how a word-boundary escape in `enterPage` once
@@ -931,6 +1105,13 @@ export function renewalScript(): string {
     last = now;
     try {
       fetch("/session/renew", { method: "POST", credentials: "same-origin" }).then(
+        function (r) {
+          // A 200 set a new cookie. Present it once, now, while the page is
+          // known to be awake: that commits it on the server, and a committed
+          // value can never age out the way an unused successor does.
+          if (r && r.status === 200) return fetch("/session", { credentials: "same-origin" });
+        }
+      ).then(
         function () {},
         function () {}
       );
@@ -949,6 +1130,62 @@ export function renewalScript(): string {
 })();`;
 }
 
+/** The app shell's Content-Security-Policy, for one response's nonce.
+ *
+ * The shell had none, and chat renders some raw HTML. Each line is here for
+ * something the app actually loads, and says what:
+ *
+ *  - `script-src`: the bundle and its lazy chunks from 'self'; the inline
+ *    scripts (the pre-paint skin stamp in `index.html`, the renewal script
+ *    this door adds) by this response's nonce. A nonce rather than a hash
+ *    because the stamp is whatever `vite build` left in `dist/index.html`,
+ *    and a hash pinned here would break on the next edit to that file.
+ *    `wasm-unsafe-eval` is WebAssembly compilation for the call's speech
+ *    detector (`src/lib/silero-vad.ts`); it permits no string evaluation.
+ *  - `style-src 'unsafe-inline'`: React's style props are exempt, but
+ *    KaTeX's markup, TipTap's injected sheet and the sandboxed previews' own
+ *    `<style>` are not — and a `srcdoc` frame inherits this policy.
+ *  - `img-src`: pasted and generated images are data: and blob:; connector
+ *    logos are remote (`PluginsPanel.tsx:409-414`). Chat never fetches a
+ *    remote image on sight (`ChatMarkdown.tsx:401`), so `https:` here admits
+ *    logos, not tracking pixels in model text.
+ *  - `connect-src`: the API and the event stream are same-origin. The one
+ *    foreign socket is the skill recorder's live transcription
+ *    (`src/lib/assemblyai-transcription.ts:20`), named exactly.
+ *  - `frame-src 'self'`: the diagram frame, same-origin by URL and made
+ *    opaque by its own sandbox header. `srcdoc` previews are not governed
+ *    by it; their `sandbox=""` already runs no script.
+ *  - `frame-ancestors 'none'` says what `X-Frame-Options: DENY` says, for
+ *    browsers that read only this. */
+export function shellCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval'`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self' wss://streaming.assemblyai.com",
+    "frame-src 'self'",
+    "worker-src 'self'",
+    "manifest-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
+
+/** Give every `<script>` in the shell this response's nonce.
+ *
+ * Every one, including the module entry that `'self'` would already allow:
+ * the shell is this build's own document, read whole from the harness, and a
+ * script tag in it is one the build put there. Only the shell goes through
+ * here — never the diagram frame, whose own policy names its script by hash. */
+export function withScriptNonce(html: string, nonce: string): string {
+  return html.replace(/<script(?=[\s>])/gi, `<script nonce="${nonce}"`);
+}
+
 /** Put the renewal script into the shell document.
  *
  * Before `</body>` when there is one, appended when there is not — an SPA
@@ -956,14 +1193,11 @@ export function renewalScript(): string {
  * trailing script in, and refusing to inject would silently give back the
  * ninety-day product this change exists to replace.
  *
- * No nonce, and that is checked rather than assumed: neither this door nor
- * the harness sends a Content-Security-Policy on the shell, and `dist/
- * index.html` carries no CSP meta — it already runs an inline script of its
- * own to stamp the colour scheme before first paint. The day a policy lands,
- * this is the second script that needs a nonce and the first one will have
- * shown the way. */
-export function injectRenewal(html: string): string {
-  const tag = `<script>${renewalScript()}</script>`;
+ * It carries the shell's nonce when there is one (`relayShell` always passes
+ * it); without it `shellCsp` would refuse the very script that keeps the
+ * session alive, silently. */
+export function injectRenewal(html: string, nonce?: string): string {
+  const tag = `<script${nonce ? ` nonce="${nonce}"` : ""}>${renewalScript()}</script>`;
   const close = html.lastIndexOf("</body>");
   if (close < 0) return html + tag;
   return html.slice(0, close) + tag + html.slice(close);
@@ -1166,6 +1400,31 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
     const gate = originGate(req, identity);
     if (gate) return sendJson(res, gate.status, { error: gate.error });
 
+    // ── the launcher's probe ─────────────────────────────────────────────
+    //
+    // The phone app asks this before it loads anything, to tell three cases
+    // apart: this door (200 with `mobile`), an older door (any other answer —
+    // it 401s a path it does not know), and nothing at all. So it answers
+    // without a session, and it is answered here, above the cookie and above
+    // the sign-in limiter, on purpose: a launcher retrying every few seconds
+    // on a flaky tailnet must never be what spends or checks the budget of
+    // the person typing a code.
+    //
+    // Below the origin gate, not above it. The Host allowlist is still what
+    // stops a rebound DNS name from reading the computer's name back, and a
+    // native HTTP client sends neither `Origin` nor `Sec-Fetch-*`, so it
+    // passes the gate the way `curl` does. No CORS header, like everything
+    // else here: a page on another origin cannot read the answer.
+    //
+    // The name discloses nothing a tailnet peer does not already have: the
+    // MagicDNS name is usually the same words, and the Bonjour record has
+    // broadcast it on the LAN since the first release.
+    if (path === "/healthz") {
+      if (method !== "GET" && method !== "HEAD") return sendJson(res, 404, { error: `no route: ${method} ${path}` });
+      const name = [...(options.serverName?.() || "Murage")].slice(0, 200).join("");
+      return sendJson(res, 200, { ok: true, name, mobile: 1 });
+    }
+
     // ── first contact ────────────────────────────────────────────────────
     if (method === "GET" && path === "/enter") {
       const nonce = randomBytes(16).toString("base64");
@@ -1193,10 +1452,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
     // have been a credential rotation any cross-site `<img>` could trigger.
     //
     // The failure answer is 204 with no body and no `Set-Cookie`: nothing
-    // happened, nothing to say. Not 401 — a 401 here would invite a client to
-    // conclude it had been signed out, which is precisely the outcome renewal
-    // exists to avoid and which no client should ever infer from a
-    // best-effort background call.
+    // happened, nothing to say. That includes "not due yet", which is most
+    // calls: the page asks on every load and unlock, and the registry only
+    // derives a successor a day after the last commit. Not 401 — a 401 here
+    // would invite a client to conclude it had been signed out, which is
+    // precisely the outcome renewal exists to avoid.
     if (path === "/session/renew") {
       if (method !== "POST") return sendJson(res, 404, { error: `no route: ${method} ${path}` });
       // Nothing in the body is read. Drain it so the socket can be reused
@@ -1209,9 +1469,38 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
         res.end();
         return;
       }
-      const maxAge = Math.floor((renewed.session.expiresAt - Date.now()) / 1000);
+      // The successor's own cap, not the current value's: once it is
+      // committed, this is how long it lives.
+      const maxAge = Math.floor((renewed.expiresAt - Date.now()) / 1000);
       res.setHeader("set-cookie", sessionCookie(renewed.value, identity, maxAge));
-      return sendJson(res, 200, { ok: true, expiresAt: renewed.session.expiresAt });
+      return sendJson(res, 200, { ok: true, expiresAt: renewed.expiresAt });
+    }
+
+    // ── "Sign out this device", from the device ─────────────────────────
+    //
+    // Sidecar-owned, like `/session`. DELETE, so the origin gate's rule 4
+    // applies: a write must carry our `Origin`, which is the CSRF story for
+    // a route that removes a device. It revokes the DEVICE, not the one
+    // session — see `DeviceRegistry.signOutDevice`.
+    if (path === "/session/device") {
+      if (method !== "DELETE") return sendJson(res, 404, { error: `no route: ${method} ${path}` });
+      req.resume();
+      const cookie = readCookie(req.headers.cookie, cookieName(identity.scheme));
+      let deviceId: string | null;
+      try {
+        deviceId = options.devices.signOutDevice(cookie);
+      } catch {
+        // The device is still on disk and still in memory. Saying "signed
+        // out" would be false, and clearing the cookie would hide the only
+        // credential able to retry. No detail: it names paths on the computer.
+        return sendJson(res, 500, { error: "could not sign this device out on the computer — try again" });
+      }
+      if (!deviceId) return sendJson(res, 401, { error: "sign in", signIn: "/enter" });
+      // Browser streams already ended with their sessions (`onSessionEnded`);
+      // this also ends any bearer stream the device held.
+      options.disconnectDevice?.(deviceId);
+      res.setHeader("set-cookie", clearedCookie(identity));
+      return sendJson(res, 200, { ok: true });
     }
 
     if (path === "/session") {
@@ -1238,6 +1527,10 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
             const result = options.devices.redeem(
               normalizeCredential(body.credential),
               browserLabel(String(req.headers["user-agent"] ?? "")),
+              undefined,
+              // The phone app's install id, when `/enter` was opened by the
+              // app. Absent from every camera-app scan and typed code.
+              body.installId,
             );
             if ("error" in result) {
               // Each case keeps the registry's own sentence — expired,
@@ -1245,6 +1538,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
               // because a person who typed six digits needs to know which of
               // those happened to know what to do next.
               const payload: Record<string, unknown> = { error: result.error };
+              // The stable code, for the page to act on rather than parse
+              // prose. `full` also lists the devices, least recently seen
+              // first, so the person knows why and what to replace.
+              if (result.reason) payload.reason = result.reason;
+              if (result.reason === "full" && result.devices) payload.devices = result.devices;
               if (countsAgainstSignIn(result.reason)) {
                 const locked = signIn.fail(client);
                 if (locked) {
@@ -1342,9 +1640,25 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
         error: "cloud desktop access is off for this device — enable it in Murage → Settings → Phone",
       });
     }
-    if (isCloudDesktopJoin(method, path) && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
-      return sendJson(res, 503, { error: "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start" });
+    const carriesProof = isCloudDesktopJoin(method, path) || needsLaunchProof(method, path);
+    if (carriesProof && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
+      return sendJson(res, 503, {
+        error: isInboxRoute(method, path)
+          ? "the Inbox requires Murage and its companion to be started together by the desktop app or murage start"
+          : isImageUpload(method, path)
+            ? "sending images requires Murage and its companion to be started together by the desktop app or murage start"
+            : needsLaunchProof(method, path)
+              ? "calls require Murage and its companion to be started together by the desktop app or murage start"
+              : "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start",
+      });
     }
+
+    // What this browser can decode, decided once. `forwardedHeaders` never
+    // passes `accept-encoding` upstream, so the harness always answers in
+    // plain bytes and every compressed body below is one this door made after
+    // it finished rewriting: scrubbed JSON, the shell with its nonce and
+    // renewal script in. Never the other way round.
+    const encoding = negotiateEncoding(req.headers["accept-encoding"]);
 
     const forward = (body: Buffer | null): void => {
       const staticType = method === "GET" ? staticContentType(path) : null;
@@ -1356,27 +1670,38 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           method,
           headers: {
             ...forwardedHeaders(req, body),
+            // The owner-voice routes and the cloud-desktop join (routes.ts,
+            // shared with the device door), plus this door's own proof for the
+            // Inbox, a call's routes and an image upload, already refused
+            // above without one.
             ...launchProofHeaders(method, path, options.companionToken),
+            ...(carriesProof ? { "x-murage-companion-token": options.companionToken! } : {}),
           },
         },
         (harness) => {
-          clearTimeout(headersDeadline);
+          stopClocks();
           const contentType = String(harness.headers["content-type"] ?? "");
 
-          if (staticType) return relayStatic(harness, res, staticType, path);
+          if (staticType) return relayStatic(harness, res, staticType, path, encoding);
 
           if (contentType.includes("text/event-stream")) {
             const auth = resolved ? { deviceId: resolved.device.id, sessionId: resolved.sessionId } : null;
             return relayStream(harness, res, method, path, auth, options);
           }
 
-          const encoding = String(harness.headers["content-encoding"] ?? "").trim().toLowerCase();
-          if (!isJson(contentType) || (encoding && encoding !== "identity")) {
+          const upstreamEncoding = String(harness.headers["content-encoding"] ?? "").trim().toLowerCase();
+          if (!isJson(contentType) || (upstreamEncoding && upstreamEncoding !== "identity")) {
             // Images and anything else: byte for byte, no parsing. An encoded
             // body reaches here too — `forwardedHeaders` never sends
             // accept-encoding, so this is a guard rather than a path, and it
             // passes through intact rather than scrubbed and broken.
-            res.writeHead(harness.statusCode ?? 200, { ...harness.headers, ...BASE_HEADERS });
+            const status = harness.statusCode ?? 200;
+            res.writeHead(status, {
+              ...harness.headers,
+              ...BASE_HEADERS,
+              "cache-control":
+                keptCacheControl(method, path, status, harness.headers["cache-control"]) ?? BASE_HEADERS["cache-control"],
+            });
             harness.on("error", () => res.destroy());
             harness.pipe(res);
             return;
@@ -1427,12 +1752,10 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
             delete headers["content-length"];
             delete headers["content-encoding"];
             delete headers["transfer-encoding"];
-            res.writeHead(status, {
-              ...headers,
-              ...BASE_HEADERS,
-              "content-length": Buffer.byteLength(text),
-            });
-            res.end(text);
+            // Compressed here and nowhere earlier: these are the bytes `scrub`
+            // produced, so nothing it withheld can ride along inside a
+            // compressed copy of the original.
+            sendBody(res, status, { ...headers, ...BASE_HEADERS }, Buffer.from(text, "utf8"), encoding);
           }
         },
       );
@@ -1442,18 +1765,47 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       });
       req.on("error", () => upstream.destroy());
 
-      let timedOut = false;
-      const headersDeadline = setTimeout(() => {
-        timedOut = true;
-        upstream.destroy(new Error("the harness sent no response headers"));
-      }, options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS);
-      headersDeadline.unref?.();
+      // Two clocks, one after the other. While the body is still going up,
+      // only silence counts: an upload that keeps sending bytes may take as
+      // long as the link needs. Once the harness has the whole request, the
+      // headers clock measures the harness alone. A request with no body
+      // finishes at once, so for it this is the old single deadline.
+      let timedOut: "harness" | "upload" | null = null;
+      let headersDeadline: ReturnType<typeof setTimeout> | undefined;
+      let idle: ReturnType<typeof setTimeout> | undefined;
+      const stopClocks = () => {
+        clearTimeout(headersDeadline);
+        clearTimeout(idle);
+      };
+      const idleMs = options.bodyIdleTimeoutMs ?? BODY_IDLE_TIMEOUT_MS;
+      const armIdle = () => {
+        clearTimeout(idle);
+        idle = setTimeout(() => {
+          // Paused on the harness's backpressure is the harness being slow,
+          // not the phone.
+          timedOut = upstream.writableNeedDrain ? "harness" : "upload";
+          upstream.destroy(new Error("the upload made no progress"));
+        }, idleMs);
+        idle.unref?.();
+      };
+      upstream.on("finish", () => {
+        clearTimeout(idle);
+        headersDeadline = setTimeout(() => {
+          timedOut = "harness";
+          upstream.destroy(new Error("the harness sent no response headers"));
+        }, options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS);
+        headersDeadline.unref?.();
+      });
 
       upstream.on("error", () => {
-        clearTimeout(headersDeadline);
+        stopClocks();
         if (res.headersSent || res.writableEnded) {
           res.destroy();
           return;
+        }
+        if (timedOut === "upload") {
+          res.setHeader("connection", "close");
+          return sendJson(res, 408, { error: "the upload stopped arriving" });
         }
         sendJson(
           res,
@@ -1463,7 +1815,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       });
 
       if (body) upstream.end(body);
-      else req.pipe(upstream);
+      else {
+        armIdle();
+        req.on("data", armIdle);
+        req.pipe(upstream);
+      }
     };
 
     if (isRoutineWrite(method, path) && !device?.cloudDesktopAccess) {
@@ -1481,6 +1837,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       return;
     }
 
+    // The build's own compressed copy first, for the files it made one of.
+    const staticType = method === "GET" ? staticContentType(path) : null;
+    if (staticType && encoding && hasBuildSiblings(path)) {
+      return relayPrecompressed(req, res, path, staticType, encoding, options, () => forward(null));
+    }
     forward(null);
   };
 }
@@ -1500,6 +1861,7 @@ function relayStatic(
   res: ServerResponse,
   expected: string,
   path: string,
+  encoding: Encoding | null,
 ): void {
   const upstreamType = String(harness.headers["content-type"] ?? "");
   const status = harness.statusCode ?? 200;
@@ -1519,19 +1881,127 @@ function relayStatic(
     return sendJson(res, 404, { error: `no route: GET ${path}` });
   }
 
-  // Hashed assets are immutable by construction; the shell never is.
-  const cache = path.startsWith("/assets/")
-    ? "private, max-age=31536000, immutable"
-    : "private, no-store";
+  // The diagram frame is HTML and is not the shell. It is recognised by the
+  // one header only the real file carries: a stale name — a page still
+  // running last release's bundle — gets the SPA fallback, which is 200 and
+  // HTML and would otherwise be cached for a year under a frame's name.
+  const frame = MERMAID_FRAME_FILE.test(path);
+  if (frame && !/\bsandbox\b/.test(String(harness.headers["content-security-policy"] ?? ""))) {
+    harness.destroy();
+    return sendJson(res, 404, { error: `no route: GET ${path}` });
+  }
 
   // The shell is the one response this door rewrites, and this is the line
   // that makes renewal actually happen rather than merely exist. Every other
-  // static file goes through untouched.
-  if (expected.startsWith("text/html")) return relayShell(harness, res, expected, cache);
+  // static file goes through untouched — the frame included, whose own policy
+  // names its one script by hash.
+  if (expected.startsWith("text/html") && !frame) {
+    return relayShell(harness, res, expected, staticCacheControl(path), encoding);
+  }
 
-  res.writeHead(200, { ...BASE_HEADERS, "cache-control": cache, "content-type": expected });
   harness.on("error", () => res.destroy());
+  // Compressed as it passes, when the build left no copy of its own
+  // (`relayPrecompressed` asks for that first). Streamed rather than
+  // buffered: the main script is megabytes, and nothing here reads it.
+  if (encoding && isCompressible(expected)) {
+    res.writeHead(200, { ...staticHeaders(path, expected), "content-encoding": encoding });
+    const packer = compressStream(encoding);
+    packer.on("error", () => res.destroy());
+    harness.pipe(packer).pipe(res);
+    return;
+  }
+  res.writeHead(200, staticHeaders(path, expected));
   harness.pipe(res);
+}
+
+/** The extensions the build writes copies of: `COMPRESSIBLE_EXTENSIONS` in
+ * `scripts/compress-dist.mjs`, mirrored rather than imported so the companion
+ * never reaches into the build scripts. browser-mobile.test.ts pins the two
+ * together. An image, a font or a model is compressed already and never has a
+ * copy, so asking for one would only cost a round trip to the harness. */
+export const BUILD_COPY_EXTENSIONS: ReadonlySet<string> = new Set([".js", ".mjs", ".css", ".json", ".svg", ".wasm", ".html"]);
+
+/** Whether the build writes compressed copies of this path
+ * (`scripts/compress-dist.mjs`): the files whose names change when their
+ * content does, and nothing that keeps its name across releases — a copy of
+ * those would be stale the day after an update. */
+export function hasBuildSiblings(path: string): boolean {
+  const dot = path.lastIndexOf(".");
+  if (dot <= path.lastIndexOf("/") || !BUILD_COPY_EXTENSIONS.has(path.slice(dot))) return false;
+  return path.startsWith("/assets/") || MERMAID_FRAME_FILE.test(path);
+}
+
+/** Relay the build's own compressed copy of a hashed file, or hand back to
+ * the ordinary path when there is none.
+ *
+ * Brotli at its maximum quality is far too slow to run per request and costs
+ * nothing at build time, and the main script is the 5.5 MB that makes a cold
+ * launch on cellular slow. So the harness is asked for `<file>.br` first. It
+ * is asked the way this door asks it everything, rather than read off a disk
+ * this door does not own.
+ *
+ * A miss is anything but a 200 that is neither HTML nor JSON: the SPA
+ * fallback (index.html, 200) and the no-UI JSON 404 both mean "no copy", and
+ * neither may ever be relayed under a script's name. An error or a silent
+ * harness falls back too; the ordinary path then says what went wrong in its
+ * own words. */
+function relayPrecompressed(
+  req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+  expected: string,
+  encoding: Encoding,
+  options: BrowserDoorOptions,
+  fallback: () => void,
+): void {
+  let state: "asking" | "serving" | "fell-back" = "asking";
+  const miss = () => {
+    if (state !== "asking") return;
+    state = "fell-back";
+    fallback();
+  };
+  const upstream = httpRequest(
+    {
+      hostname: "127.0.0.1",
+      port: options.harnessPort,
+      path: `${path}${encoding === "br" ? ".br" : ".gz"}`,
+      method: "GET",
+      headers: forwardedHeaders(req),
+    },
+    (harness) => {
+      clearTimeout(deadline);
+      const type = String(harness.headers["content-type"] ?? "");
+      if ((harness.statusCode ?? 0) !== 200 || type.startsWith("text/html") || isJson(type)) {
+        harness.resume();
+        return miss();
+      }
+      state = "serving";
+      const length = harness.headers["content-length"];
+      res.writeHead(200, {
+        ...staticHeaders(path, expected),
+        "content-encoding": encoding,
+        ...(length ? { "content-length": length } : {}),
+      });
+      harness.on("error", () => res.destroy());
+      harness.pipe(res);
+    },
+  );
+  const deadline = setTimeout(
+    () => upstream.destroy(new Error("the harness sent no response headers")),
+    options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS,
+  );
+  deadline.unref?.();
+  upstream.on("error", () => {
+    clearTimeout(deadline);
+    if (state === "serving") res.destroy();
+    else miss();
+  });
+  res.on("close", () => {
+    if (state === "serving" && !res.writableEnded) upstream.destroy();
+  });
+  // The browser's own request is left unread here, so the fallback can still
+  // pipe it upstream exactly as it always has.
+  upstream.end();
 }
 
 /** The shell document, with the renewal script injected.
@@ -1545,7 +2015,22 @@ function relayStatic(
  * app that has to be re-paired in ninety days, which is today's behaviour;
  * a 502 would be a blank screen. Choosing the degraded-but-working side is
  * the same call the rest of this file makes about a failed renewal. */
-function relayShell(harness: IncomingMessage, res: ServerResponse, expected: string, cache: string): void {
+function relayShell(
+  harness: IncomingMessage,
+  res: ServerResponse,
+  expected: string,
+  cache: string,
+  encoding: Encoding | null,
+): void {
+  // One nonce per response, never reused: it is the whole of what lets the
+  // shell's own inline scripts run and an injected one not.
+  const nonce = randomBytes(16).toString("base64");
+  const headers: Record<string, string> = {
+    ...BASE_HEADERS,
+    "cache-control": cache,
+    "content-type": expected,
+    "content-security-policy": shellCsp(nonce),
+  };
   const chunks: Buffer[] = [];
   let size = 0;
   let overflowed = false;
@@ -1554,8 +2039,14 @@ function relayShell(harness: IncomingMessage, res: ServerResponse, expected: str
     size += chunk.length;
     if (size > MAX_SHELL_BYTES) {
       overflowed = true;
-      // No content-length: the rest of this body is still arriving.
-      res.writeHead(200, { ...BASE_HEADERS, "cache-control": cache, "content-type": expected });
+      // No content-length: the rest of this body is still arriving. The
+      // policy goes out anyway, with a nonce no script here carries: the
+      // inline skin stamp is refused and the entry bundle still loads from
+      // 'self', so the app runs in its default palette. A document this door
+      // could not read gets the stricter answer, not a looser one — and it
+      // goes out plain, because nothing about a guard path is worth a
+      // compressor in the middle of it.
+      res.writeHead(200, headers);
       for (const buffered of chunks) res.write(buffered);
       chunks.length = 0;
       res.write(chunk);
@@ -1567,14 +2058,10 @@ function relayShell(harness: IncomingMessage, res: ServerResponse, expected: str
   harness.on("error", () => res.destroy());
   harness.on("end", () => {
     if (overflowed) return;
-    const html = injectRenewal(Buffer.concat(chunks).toString("utf8"));
-    res.writeHead(200, {
-      ...BASE_HEADERS,
-      "cache-control": cache,
-      "content-type": expected,
-      "content-length": Buffer.byteLength(html),
-    });
-    res.end(html);
+    // Rewritten first, compressed last: the nonce and the renewal script are
+    // in the bytes that get compressed.
+    const html = injectRenewal(withScriptNonce(Buffer.concat(chunks).toString("utf8"), nonce), nonce);
+    sendBody(res, 200, headers, Buffer.from(html, "utf8"), encoding);
   });
 }
 

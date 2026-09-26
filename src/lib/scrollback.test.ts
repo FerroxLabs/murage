@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { initialState, reducer, type AppState, type Bot, type Message } from "@/state/store";
-import { createScrollback, MESSAGE_PAGE_MAX, MESSAGE_PAGE_SIZE, unheardMessages } from "./scrollback";
+import { createScrollback, DEEP_LINK_MAX_PAGES, hydratePageSize, MESSAGE_PAGE_MAX, MESSAGE_PAGE_SIZE, needsNewestPage, PHONE_HYDRATE_PAGE, unheardMessages } from "./scrollback";
 
 // A thread of `total` messages m0..m{total-1}; the client holds the newest
 // `held`. The fake server answers `before=` and `around=` like the harness.
@@ -110,6 +110,21 @@ describe("loadThrough", () => {
     expect(r.state.loadingOlder).toEqual({});
   });
 
+  it("gives up after the pages a deep link allows, and lands on the thread", async () => {
+    const r = rig(3000, 100);
+    await expect(r.scrollback.loadThrough("t", "m12", DEEP_LINK_MAX_PAGES)).resolves.toBe("missing");
+    // the one-row probe, then at most DEEP_LINK_MAX_PAGES pages
+    expect(r.requests.filter((path) => path.includes("before="))).toHaveLength(DEEP_LINK_MAX_PAGES);
+    expect(r.state.loadingOlder).toEqual({});
+  });
+
+  it("still finds a linked message inside that reach, stopping where the thread begins", async () => {
+    const r = rig(800, 100);
+    await expect(r.scrollback.loadThrough("t", "m12", DEEP_LINK_MAX_PAGES)).resolves.toBe("fetched");
+    // 700 older messages: four pages, the last of which says hasMore false
+    expect(r.requests.filter((path) => path.includes("before="))).toHaveLength(4);
+  });
+
   it("waits for the thread a jump switched to", async () => {
     const r = rig(300, 100);
     const pending = r.scrollback.loadThrough("t2", "m5");
@@ -128,5 +143,86 @@ describe("unheardMessages", () => {
   });
   it("reads everything when nothing was on screen", () => {
     expect(unheardMessages([m("a")], new Set())).toEqual([m("a")]);
+  });
+});
+
+describe("phone hydrate (spec §6)", () => {
+  it("asks for one row per thread on a phone and a full page elsewhere", () => {
+    expect(hydratePageSize(true)).toBe(PHONE_HYDRATE_PAGE);
+    expect(PHONE_HYDRATE_PAGE).toBe(1);
+    expect(hydratePageSize(false)).toBe(MESSAGE_PAGE_SIZE);
+  });
+
+  it("tops up a slim thread to a full page with one ordinary scrollback request", async () => {
+    const r = rig(300, 1);
+    expect(needsNewestPage(r.state.bots[0])).toBe(true);
+    await r.scrollback.loadOlder("t");
+    expect(r.requests).toEqual([`/api/threads/t/messages?limit=${MESSAGE_PAGE_SIZE}&before=m299`]);
+    expect(r.state.bots[0].messages).toHaveLength(MESSAGE_PAGE_SIZE + 1);
+    expect(needsNewestPage(r.state.bots[0])).toBe(false);
+  });
+
+  it("leaves a short thread alone once it holds all of it", async () => {
+    const r = rig(40, 1);
+    await r.scrollback.loadOlder("t");
+    expect(r.state.bots[0].messages).toHaveLength(40);
+    expect(r.state.bots[0].hasMore).toBe(false);
+    expect(needsNewestPage(r.state.bots[0])).toBe(false);
+  });
+
+  // The store asks once per (thread, transcript generation).
+  it("fetches the page on a re-attempt after a resync dropped the first as stale", async () => {
+    const r = rig(300, 1);
+    const pending = r.scrollback.loadOlder("t");
+    r.state = { ...r.state, transcriptGeneration: { t: 1 } };
+    await pending;
+    expect(r.state.bots[0].messages).toHaveLength(1);
+    expect(r.state.loadingOlder).toEqual({});
+    expect(needsNewestPage(r.state.bots[0])).toBe(true);
+    await r.scrollback.loadOlder("t");
+    expect(r.requests).toHaveLength(2);
+    expect(r.state.bots[0].messages).toHaveLength(MESSAGE_PAGE_SIZE + 1);
+    expect(needsNewestPage(r.state.bots[0])).toBe(false);
+  });
+
+  it("leaves the generation alone on a hard failure, so the store does not ask again", async () => {
+    const r = rig(300, 1);
+    r.request.mockRejectedValueOnce(new Error("offline"));
+    await r.scrollback.loadOlder("t");
+    expect(r.request).toHaveBeenCalledTimes(1);
+    expect(r.onError).toHaveBeenCalledTimes(1);
+    expect(r.state.loadingOlder).toEqual({});
+    expect(r.state.transcriptGeneration.t ?? 0).toBe(0);
+    expect(r.state.bots[0].messages).toHaveLength(1);
+  });
+
+  it("never tops up a desktop page, which is full whenever there is more", () => {
+    expect(needsNewestPage({ messages: Array.from({ length: MESSAGE_PAGE_SIZE }, (_, i) => ({ id: `m${i}` }) as Message), hasMore: true })).toBe(false);
+    expect(needsNewestPage({ messages: [{ id: "m0" } as Message], hasMore: false })).toBe(false);
+  });
+});
+
+describe("loadOlder while a jump holds the thread", () => {
+  it("clears the loading flag instead of leaving \"Load earlier\" disabled", async () => {
+    const r = rig(300, 100);
+    const jump = r.scrollback.loadThrough("t", "m50");
+    // until the jump's probe is on the wire and holds the thread
+    for (let tick = 0; tick < 20 && r.requests.length === 0; tick++) await Promise.resolve();
+    expect(r.requests).toEqual(["/api/threads/t/messages?around=m50&limit=1"]);
+    // the store's wrapped dispatch sets the flag before asking scrollback
+    r.state = reducer(r.state, { type: "loadOlderMessages", threadId: "t" });
+    expect(r.scrollback.loadOlder("t")).toBeUndefined();
+    expect(r.state.loadingOlder).toEqual({});
+    expect(r.state.bots[0].hasMore).toBe(true);
+    await jump;
+  });
+
+  it("leaves its own page's flag for that page to clear", async () => {
+    const r = rig(300, 100);
+    const pending = r.scrollback.loadOlder("t");
+    expect(r.scrollback.loadOlder("t")).toBeUndefined();
+    expect(r.state.loadingOlder).toEqual({ t: true });
+    await pending;
+    expect(r.state.loadingOlder).toEqual({});
   });
 });

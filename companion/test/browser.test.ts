@@ -80,15 +80,17 @@ const devices: BrowserDeviceStore = {
   renewSession: (value) => {
     const session = value ? sessions.get(value) : undefined;
     if (!session) return null;
-    // Rotate in place, exactly as the registry does: the old value stops
-    // working the moment the new one exists.
+    // Simpler than the registry, which keeps the old value valid until the
+    // new one is first presented: here it stops working at once. Nothing in
+    // this file depends on the difference.
     sessions.delete(value!);
     const next = `murage_browser_renewed_${sessions.size}_${Math.random().toString(36).slice(2)}`;
     // Same record identity, as the registry keeps it.
     const renewed = { id: session.id, expiresAt: Date.now() + 90 * 24 * 3600 * 1000 };
     sessions.set(next, renewed);
-    return { value: next, session: renewed };
+    return { value: next, expiresAt: renewed.expiresAt };
   },
+  signOutDevice: () => null,
 };
 
 const identity: BoundIdentity = {
@@ -521,6 +523,21 @@ describe("sessions", () => {
     expect(String(out.headers["set-cookie"]?.[0] ?? "")).toContain("Max-Age=0");
     expect((await knock("GET", "/session", cookie)).status).toBe(401);
     expect((await knock("GET", "/api/bots", cookie)).status).toBe(401);
+  });
+
+  it("answers the page's signed-out check: 401 on /session and on the stream, with where to go", async () => {
+    // The web UI asks GET /session after an API 401 or a stream error
+    // (src/lib/session-check.ts). EventSource cannot see a status, so this
+    // pair — a dead stream AND a 401 here — is how a phone learns it was
+    // signed out instead of retrying forever.
+    const cookie = await signedIn();
+    expect((await knock("DELETE", "/session", write(cookie))).status).toBe(200);
+    const who = await knock("GET", "/session", cookie);
+    expect(who.status).toBe(401);
+    expect(JSON.parse(who.body)).toEqual({ error: "sign in", signIn: "/enter" });
+    expect((await knock("GET", "/api/events", cookie)).status).toBe(401);
+    // A wiped cookie store reads the same, and a GET needs no Origin.
+    expect((await knock("GET", "/session")).status).toBe(401);
   });
 
   it("reads one cookie out of a header that holds several", () => {

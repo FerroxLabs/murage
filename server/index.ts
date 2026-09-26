@@ -64,10 +64,12 @@ import { requiresDesktopAuthority } from "./desktop-policy.ts";
 import { assertBrowserProfilePrecondition } from "./browser-profile-precondition.ts";
 import { database } from "./database.ts";
 import { inboxRequest, owedThreads } from "./inbox.ts";
+import { companionInboxRoute, inboxAccessFor, inboxDoor, inboxThreads } from "./inbox-access.ts";
 import { hasThreadSnooze, sweepThreadSnoozes, threadSnoozeRequest, unsnoozeThread, type ThreadSnoozeDeps } from "./thread-snooze.ts";
 import { TRAY_ITEM_LIMIT, traySummary } from "./tray-summary.ts";
 import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
 import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
+import { callAccess } from "./voice/call-access.ts";
 import { connectionFor, describeVoiceRoutes, voiceEndpoints, type VoicePart } from "./voice/voice-routes.ts";
 import type { InboxPage, InboxView } from "../shared/inbox.ts";
 import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIdentity, authorizedArtifactRoot, type ArtifactScope } from "./artifacts.ts";
@@ -154,6 +156,7 @@ import {
   type SavedAttachment,
   validateAttachmentUploadId,
 } from "./attachments.ts";
+import { createThumbnails, loadResize, THUMBNAIL_WIDTHS, thumbnailWidth } from "./image-thumbnail.ts";
 import {
   avatarGenerationRequestSchema,
   avatarGenerationStateMatches,
@@ -3085,10 +3088,7 @@ const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messa
 /** Every conversation the owner has, labelled the way the Inbox names it:
  *  the scope the Inbox, its counts and conversation snooze all work over. */
 function inboxAccessThreads() {
-  return [
-    ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [bot.name, bot.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }))),
-    ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [group.name, group.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ") }))),
-  ];
+  return inboxThreads(store);
 }
 // A SNOOZED CONVERSATION WAKES MARKED UNREAD, whether its time came or
 // something owed to the owner arrived in it (shared/thread-snooze.ts). A
@@ -10391,6 +10391,35 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.end(data);
 }
 
+/** Chat image thumbnails (spec §6): at most 32 MB of them, in memory, and at
+ * most two resizes at a time (a third first view gets its original). */
+const thumbnails = createThumbnails({ resize: loadResize, maxBytes: 32 * 1024 * 1024, maxConcurrent: 2 });
+
+/** One immutable image, or its `?w=` thumbnail when that is smaller. `key`
+ * names the stored image, never anything the client sent, and `version`
+ * names its bytes, also server-side: an attachment deleted with its message
+ * can be saved again under the same client-chosen uploadId with other
+ * pixels. The version is read off the file or the message rather than hashed
+ * from the pixels, which a gallery scroll would otherwise do per row. */
+async function sendImage(res: ServerResponse, url: URL, key: string, version: string, bytes: Buffer, mime: string, headers: Record<string, string> = {}) {
+  const width = thumbnailWidth(url.searchParams.get("w"));
+  if (width === null) return json(res, 400, { error: `w must be one of ${THUMBNAIL_WIDTHS.join(", ")}` });
+  const served = width === undefined
+    ? { image: null, final: true }
+    : await thumbnails.serve(`${key}:${version}`, bytes, mime, width);
+  const body = served.image ?? { bytes, mime };
+  res.writeHead(200, {
+    "content-type": body.mime,
+    "content-length": String(body.bytes.byteLength),
+    // An attachment and a settled message's image never change. An original
+    // sent for now in place of a thumbnail (every resize busy, or no
+    // resizer) must not be kept for a year under the thumbnail's URL.
+    "cache-control": served.final ? "private, max-age=31536000, immutable" : "private, no-cache",
+    ...headers,
+  });
+  res.end(body.bytes);
+}
+
 function readBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -10532,7 +10561,11 @@ const server = createServer(async (req, res) => {
     if (origin && !isAllowedOrigin(origin)) {
       return json(res, 403, { error: "forbidden: cross-origin request" });
     }
-    if (requiresDesktopAuthority(method, path) && requestSurface(req.headers, url.searchParams) !== "desktop") {
+    // The Inbox list and its state write also open to a request the companion
+    // proved it forwarded; the route then scopes it to what the phone's sidebar
+    // shows (inbox-access.ts). The marker alone still gets this 404.
+    if (requiresDesktopAuthority(method, path) && requestSurface(req.headers, url.searchParams) !== "desktop"
+      && !(companionInboxRoute(method, path) && inboxDoor(req.headers, url.searchParams) === "companion")) {
       return json(res, 404, { error: "no such route" });
     }
     const claudeAccountRoute = /^\/api\/claude-accounts(?:\/([\w-]+))?$/.exec(path);
@@ -10630,12 +10663,13 @@ const server = createServer(async (req, res) => {
       return sendDelegated(res, method, await (featurePrefix === MEDIA_ROUTE_PREFIX ? mediaAssetsRoute : workspaceFilesRoute)(delegated, featureRouteDeps));
     }
     if ((method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state")) {
-      const threads = inboxAccessThreads();
+      // A proven companion gets the Inbox of the conversations its sidebar
+      // shows, and can only mark items inside that list (inbox-access.ts).
       const result = inboxRequest(database(), { method, path,
         query: { view: (url.searchParams.get("view") ?? "decisions") as InboxView, query: url.searchParams.get("query") ?? "",
           page: Number(url.searchParams.get("page") ?? 0), pageSize: Number(url.searchParams.get("pageSize") ?? 25), includeSnoozed: url.searchParams.get("includeSnoozed") === "true" },
         body: method === "POST" ? await readBody(req) : undefined,
-      }, { owner: requestSurface(req.headers, url.searchParams) === "desktop", threads });
+      }, inboxAccessFor(store, inboxDoor(req.headers, url.searchParams)));
       return json(res, result.status, result.body);
     }
     // Conversation snooze (server/thread-snooze.ts). Desktop only, and the
@@ -10650,11 +10684,7 @@ const server = createServer(async (req, res) => {
     // ordinary approval through /api/threads/:id/respond like the app does.
     if (method === "GET" && path === "/api/desktop/tray") {
       if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "the tray menu is available on the desktop app" });
-      const threads = [
-        ...store.bots.flatMap(bot => [...new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [bot.name, bot.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }))),
-        ...store.groups.flatMap(group => [...new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])].map(threadId => ({ threadId, label: [group.name, group.tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ") }))),
-      ];
-      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads });
+      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads: inboxThreads(store) });
       if (result.status !== 200) return json(res, result.status, result.body);
       return json(res, 200, traySummary({
         page: result.body as InboxPage,
@@ -12296,14 +12326,9 @@ const server = createServer(async (req, res) => {
       }
       const message = store.messagesFor(m[1]).find((msg) => msg.id === m![2]);
       if (!message?.png) return json(res, 404, { error: "no image on that message" });
-      const bytes = Buffer.from(message.png, "base64");
-      res.writeHead(200, {
-        "content-type": message.mime ?? "image/png",
-        "content-length": String(bytes.byteLength),
-        // a settled message's image never changes
-        "cache-control": "private, max-age=31536000, immutable",
-      });
-      return res.end(bytes);
+      // A settled message's image is never rewritten; its length stands in
+      // for a digest should that ever change.
+      return sendImage(res, url, `screen:${m[1]}:${message.id}`, String(message.png.length), Buffer.from(message.png, "base64"), message.mime ?? "image/png");
     }
 
     // ── image attachments ────────────────────────────────────────────────
@@ -12434,13 +12459,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "GET") {
       const attachment = readAttachment(m[1]!);
       if (!attachment) return json(res, 404, { error: "no such attachment" });
-      res.writeHead(200, {
-        "content-type": attachment.mime,
-        "content-length": String(attachment.bytes.byteLength),
-        "cache-control": "private, max-age=31536000, immutable",
-        "x-content-type-options": "nosniff",
-      });
-      return res.end(attachment.bytes);
+      return sendImage(res, url, `attachment:${m[1]}`, attachment.version, attachment.bytes, attachment.mime, { "x-content-type-options": "nosniff" });
     }
 
     // ── search across every transcript ──────────────────────────────────
@@ -16962,10 +16981,14 @@ const server = createServer(async (req, res) => {
 
     // The fast half of a call (server/voice/voice-host.ts). Read only: it
     // streams what the host says; the call screen sends any hand-down
-    // through the ordinary message route. Owner's desktop only, because the
-    // snapshot includes the inbox.
+    // through the ordinary message route. The desktop, or a phone the
+    // companion proved it forwarded calling a bot its sidebar shows
+    // (voice/call-access.ts); the snapshot's inbox is scoped the same way.
     if (method === "POST" && VOICE_HOST_PATH.test(path)) {
-      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "calls are available on the desktop app" });
+      const door = inboxDoor(req.headers, url.searchParams);
+      const access = callAccess(store, door, VOICE_HOST_PATH.exec(path)![1]);
+      if (access === "forbidden") return json(res, 403, { error: "calls need a paired device" });
+      if (access === "not-found") return json(res, 404, { error: "no such bot" });
       await handleVoiceHostRoute(method, path, req, res, {
         endpoints: () => ({ host: voiceRouteFor("host"), lookup: voiceRoutesFor("lookup") }),
         bot: (id) => store.bot(id),
@@ -16976,7 +16999,9 @@ const server = createServer(async (req, res) => {
           if (!bot) return [];
           const threads = [...new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)])]
             .map((threadId) => ({ threadId, label: [bot.name, bot.tasks?.find((task) => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }));
-          const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: 10 } }, { owner: true, threads });
+          const scoped = inboxAccessFor(store, door);
+          const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: 10 } },
+            { ...scoped, threads: scoped.threads.filter((thread) => threads.some((own) => own.threadId === thread.threadId)) });
           const items = (result.body as { items?: Array<{ title: string; summary: string; at: number; botId?: string }> })?.items ?? [];
           return items.filter((item) => item.botId === botId).map(({ title, summary, at }) => ({ title, summary, at }));
         },
@@ -16988,7 +17013,9 @@ const server = createServer(async (req, res) => {
     // The record a call leaves in its conversation when it ends
     // (server/voice/call-note.ts). Built from the call's own log, no model.
     if (method === "POST" && CALL_NOTE_PATH.test(path)) {
-      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "calls are available on the desktop app" });
+      const access = callAccess(store, inboxDoor(req.headers, url.searchParams), CALL_NOTE_PATH.exec(path)![1]);
+      if (access === "forbidden") return json(res, 403, { error: "calls need a paired device" });
+      if (access === "not-found") return json(res, 404, { error: "no such bot" });
       await handleCallNoteRoute(method, path, req, res, {
         bot: (id) => store.bot(id),
         append: (threadId, text) => { store.appendMessage(threadId, { role: "bot", kind: "text", text }); },
@@ -17306,7 +17333,11 @@ const server = createServer(async (req, res) => {
         // loads it in <iframe sandbox="allow-scripts">; this header makes it
         // an opaque origin even when something opens it directly, so it can
         // never run with the app's origin. Its own meta CSP blocks all network.
-        if (safe === "/mermaid-frame.html") headers["content-security-policy"] = "sandbox allow-scripts";
+        // A build names the frame by its content hash (mermaid-frame-<16 hex>);
+        // the plain name is the dev server's. Only the real file gets this
+        // header, never the SPA fallback below, and the browser door relies on
+        // that to tell a stale frame name from the frame.
+        if (/^\/mermaid-frame(?:-[0-9a-f]{16})?\.html$/.test(safe)) headers["content-security-policy"] = "sandbox allow-scripts";
         res.writeHead(200, headers);
         return res.end(data);
       } catch {

@@ -938,11 +938,11 @@ import {
   enableServe,
   serveState,
 } from "./companion-remote-access.mjs";
+import { companionShouldStayAwake } from "./companion-keep-awake.mjs";
 
 let companionPowerBlocker = null;
 
-function syncCompanionKeepAwake(companionEnabled, keepAwake) {
-  const shouldBlock = companionEnabled && keepAwake;
+function syncCompanionKeepAwake(shouldBlock) {
   if (shouldBlock && companionPowerBlocker === null) {
     companionPowerBlocker = powerSaveBlocker.start("prevent-app-suspension");
   } else if (!shouldBlock && companionPowerBlocker !== null) {
@@ -1144,7 +1144,7 @@ function remoteAccessLaunch() {
 function decorateDesktopCompanionState(state) {
   // The panel polls this state, so a sidecar that exited on its own releases
   // the blocker within one poll instead of keeping the computer awake forever.
-  syncCompanionKeepAwake(state.enabled && !state.error, state.keepAwake === true);
+  syncCompanionKeepAwake(companionShouldStayAwake(state));
   return {
     ...state,
     managedConnection: publicManagedCompanionState(),
@@ -1329,7 +1329,7 @@ async function stopDesktopCompanion({ remember = true } = {}) {
   companionDesiredThisLaunch = false;
   companionLaunchGeneration += 1;
   if (remember) rememberCompanionEnabled(false);
-  syncCompanionKeepAwake(false, false);
+  syncCompanionKeepAwake(false);
   await managedCompanionConnector?.stop();
   await stopCompanion();
   return desktopCompanionState();
@@ -1340,7 +1340,7 @@ setCompanionLifecycleListener(({ expected, pid }) => {
   slog(`owned companion exited unexpectedly pid=${pid ?? "unknown"}`);
   companionDesiredThisLaunch = false;
   companionLaunchGeneration += 1;
-  syncCompanionKeepAwake(false, false);
+  syncCompanionKeepAwake(false);
   // stop() invalidates the guardian's owner pipe synchronously, before the
   // sidecar module removes this generation's private socket.
   void managedCompanionConnector?.stop().catch(() => {});
@@ -3809,7 +3809,7 @@ function cleanupDesktopForExit() {
   if (cuaCleanedUp) return Promise.resolve();
   if (desktopCleanup) return desktopCleanup;
   // Release the sleep blocker synchronously; child shutdown is awaited below.
-  syncCompanionKeepAwake(false, false);
+  syncCompanionKeepAwake(false);
   // The bundled adb daemon is not a child: it forks itself off the first adb
   // command and stays, holding its port. Stop the one this app started, and
   // start doing so now so it overlaps the rest of shutdown. It resolves

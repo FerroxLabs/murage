@@ -3,11 +3,19 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { murageRenderPlugins } from "./scripts/vite-render-plugin";
+import { precompressPlugin } from "./scripts/compress-dist.mjs";
 
 export default defineConfig({
   // murageRenderPlugins: the sandboxed diagram frame page, and the lazy
-  // katex/mermaid/dompurify imports that fall back to source when missing
-  plugins: [react(), tailwindcss(), murageRenderPlugins()],
+  // katex/mermaid/dompurify imports that fall back to source when missing.
+  // precompressPlugin: `.br`/`.gz` copies of hashed assets for the browser
+  // door, written after the bundle (build only; inert under vitest and dev).
+  plugins: [react(), tailwindcss(), murageRenderPlugins(), precompressPlugin()],
+  build: {
+    // dist/.vite/manifest.json: which files the first paint loads, read by
+    // scripts/check-bundle-budget.mjs after every CI build (spec §6)
+    manifest: true,
+  },
   test: {
     environment: "node",
     include: [

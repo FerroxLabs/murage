@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MAX_MOUNTED_ROWS,
   TRANSCRIPT_WINDOW_SIZE,
+  asLiveTail,
+  capRevealedWindow,
+  expandEarlier,
+  expandLater,
   expandWindowStart,
   focusWindowRange,
   resolveTranscriptWindow,
   tailWindowStart,
+  trimFollowedTail,
   windowAfterPrepend,
 } from "./transcript-window";
 
@@ -148,9 +154,101 @@ describe("windowAfterPrepend", () => {
     expect(windowAfterPrepend({ start: 0, end: null }, 100, true)).toEqual({ start: 0, end: null });
   });
 
+  it("mounts a phone's topped-up page from the top: one booted row becomes 101", () => {
+    // ChatView/GroupView capture for the store's top-up, so reveal is true
+    const window = windowAfterPrepend({ start: tailWindowStart(1), end: null }, 100, true);
+    expect(window).toEqual({ start: 0, end: null });
+    expect(resolveTranscriptWindow(thread(101), window.start, TRANSCRIPT_WINDOW_SIZE, window.end).visible).toHaveLength(101);
+  });
+
   it("leaves the window alone when the first row did not move back", () => {
     const window = { start: 5, end: null };
     expect(windowAfterPrepend(window, -1)).toBe(window);
     expect(windowAfterPrepend(window, 0)).toBe(window);
+  });
+});
+
+describe("a capped window (spec §6)", () => {
+  it("caps at three windows", () => {
+    expect(MAX_MOUNTED_ROWS).toBe(TRANSCRIPT_WINDOW_SIZE * 3);
+  });
+
+  it("reads back without a cap until three windows are mounted", () => {
+    // tail of 1000: 880..end; two clicks back mounts 360 rows, all of them
+    expect(expandEarlier({ start: 880, end: null }, 1000)).toEqual({ start: 760, end: null });
+    expect(expandEarlier({ start: 760, end: null }, 1000)).toEqual({ start: 640, end: null });
+  });
+
+  it("unmounts the newest rows once reading back passes the cap", () => {
+    // 640..1000 is 360 mounted; one more step back drops the newest 120
+    expect(expandEarlier({ start: 640, end: null }, 1000)).toEqual({ start: 520, end: 880 });
+    expect(expandEarlier({ start: 520, end: 880 }, 1000)).toEqual({ start: 400, end: 760 });
+  });
+
+  it("clamps at the top of the thread and still honours the cap", () => {
+    expect(expandEarlier({ start: 50, end: 400 }, 1000)).toEqual({ start: 0, end: 360 });
+  });
+
+  it("reads forward again, unmounting the oldest rows past the cap", () => {
+    expect(expandLater({ start: 400, end: 760 }, 1000)).toEqual({ start: 520, end: 880 });
+  });
+
+  it("becomes a live tail again when reading forward reaches the end", () => {
+    expect(expandLater({ start: 520, end: 880 }, 1000)).toEqual({ start: 640, end: null });
+  });
+
+  it("reads forward inside the cap without moving the start", () => {
+    expect(expandLater({ start: 100, end: 220 }, 1000)).toEqual({ start: 100, end: 340 });
+  });
+
+  it("cuts a followed live tail back to one window once it passes the cap", () => {
+    // a long live session appended 361 rows since the window was opened
+    expect(trimFollowedTail({ start: 0, end: null }, 361, true)).toEqual({ start: 241, end: null });
+  });
+
+  it("leaves a tail the reader is not following exactly where it is", () => {
+    const bounds = { start: 0, end: null };
+    expect(trimFollowedTail(bounds, 5000, false)).toBe(bounds);
+  });
+
+  it("leaves a finite window, and a tail inside the cap, alone", () => {
+    const finite = { start: 0, end: 400 };
+    expect(trimFollowedTail(finite, 5000, true)).toBe(finite);
+    const small = { start: 0, end: null };
+    expect(trimFollowedTail(small, MAX_MOUNTED_ROWS, true)).toBe(small);
+  });
+
+  it("does not grow past the cap on an empty or short thread", () => {
+    expect(expandEarlier({ start: 0, end: null }, 0)).toEqual({ start: 0, end: null });
+    expect(expandLater({ start: 0, end: 10 }, 10)).toEqual({ start: 0, end: null });
+  });
+
+  it("caps a revealed page like a step back: the newest rows unmount", () => {
+    // the reader at the top of a 300-row tail pulled in a page of 100
+    expect(capRevealedWindow({ start: 0, end: null }, 400)).toEqual({ start: 0, end: MAX_MOUNTED_ROWS });
+    // a window already cut short keeps its start and is cut back to the cap
+    expect(capRevealedWindow({ start: 0, end: 460 }, 1000)).toEqual({ start: 0, end: MAX_MOUNTED_ROWS });
+  });
+
+  it("leaves a revealed page inside the cap alone", () => {
+    // a phone's slim thread topped up with its newest page
+    const topUp = { start: 0, end: null };
+    expect(capRevealedWindow(topUp, 101)).toBe(topUp);
+    const finite = { start: 0, end: MAX_MOUNTED_ROWS };
+    expect(capRevealedWindow(finite, 1000)).toBe(finite);
+  });
+
+  it("treats a search window near the tail as the live tail", () => {
+    // a hit five rows from the end: the focus window reaches the newest row
+    const range = focusWindowRange(130, 125);
+    expect(range).toEqual({ start: 10, end: 130 });
+    expect(asLiveTail(range, 130)).toEqual({ start: 10, end: null });
+    const early = focusWindowRange(1000, 100);
+    expect(asLiveTail(early, 1000)).toBe(early);
+  });
+
+  it("never leaves a finite end at the newest row after a step", () => {
+    expect(expandEarlier({ start: 130, end: 250 }, 250)).toEqual({ start: 10, end: null });
+    expect(capRevealedWindow({ start: 0, end: 250 }, 250)).toEqual({ start: 0, end: null });
   });
 });

@@ -44,16 +44,20 @@ import {
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
-import { showNotification, type NotificationTarget } from "@/lib/notify";
+import { showNotification } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import { fullAccessRefusalMessage } from "@/lib/permission-mode";
-import { createScrollback, MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
+import { createScrollback, hydratePageSize, MESSAGE_PAGE_SIZE, needsNewestPage } from "@/lib/scrollback";
 import { ThreadSettingsWrites } from "./thread-settings-writes";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
+import { checkSession, onSignedOut, sessionSignedOut } from "@/lib/session-check";
+import { onSaveFailed } from "@/lib/save-file";
+import { callNative, nativeAvailable } from "@/lib/native-shell";
+import { isPhoneClient } from "@/lib/phone-client";
 
 const MAX_ROUTINE_RUNS = 2_000;
 const ACTIVE_ROUTINE_RUN_STATUSES = new Set<RoutineRun["status"]>(["queued", "running", "waiting", "needs-you"]);
@@ -670,6 +674,12 @@ export interface AppState {
    *  entered from the other end. `botId` is that pre-fill. */
   teamLibrary: { open: boolean; botId?: string; view?: TeamLibraryView; tab?: "import" };
   connected: boolean;
+  /** The door said this browser's session is gone (GET /session → 401).
+   * Final for this page: the only way back is pairing again. */
+  signedOut?: boolean;
+  /** The first REST snapshot has been applied. A deep link waits for it:
+   * before then no thread can be placed. */
+  hydrated?: boolean;
   error: string | null;
   mascotMotion: {
     botId: string;
@@ -931,6 +941,7 @@ export type Action =
   | { type: "updateTask"; botId: string; threadId: string; patch: Partial<Pick<Task,"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"cwd"|"unread"|"title">> & {acknowledgeLocalAuto?:boolean;acknowledgeFullAccess?:boolean;acknowledgeNoLimits?:boolean} }
   | { type: "interrupt"; botId: string; threadId?: string }
   | { type: "connected"; value: boolean }
+  | { type: "signedOut" }
   | { type: "error"; message: string | null }
   | { type: "toggleSettings"; open?: boolean; intent?: BotSettingsIntent }
   | { type: "clearBotSettingsIntent" }
@@ -938,7 +949,8 @@ export type Action =
   | { type: "toggleComputer"; open?: boolean }
   | { type: "toggleInspector"; open?: boolean }
   | { type: "workspacePane"; action: WorkspacePaneAction }
-  | { type: "focusMessage"; threadId: string; messageId: string }
+  // maxPages: how far back to walk for it (a deep link walks less far)
+  | { type: "focusMessage"; threadId: string; messageId: string; maxPages?: number }
   // scrollback: ask the server for the page before the oldest message held
   | { type: "loadOlderMessages"; threadId: string }
   | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean }
@@ -988,9 +1000,9 @@ export function visibleNotificationThread(
 
 export function openNotificationTarget(
   dispatch: (action: Action) => void,
-  target: NotificationTarget,
+  target: { botId?: string; threadId: string },
   state: NotificationRoutingState,
-) {
+): boolean {
   // A room's approval/question notification carries the asker bot with the
   // GROUP's thread id; asking the bot to switch to that thread would 404.
   // Open the room itself. A thread that is neither a room nor one of the
@@ -1005,15 +1017,27 @@ export function openNotificationTarget(
     if (group.threadId !== target.threadId) {
       dispatch({ type: "switchGroupTask", groupId: group.id, threadId: target.threadId });
     }
-    return;
+    return true;
   }
-  dispatch({ type: "select", id: target.botId });
-  const bot = state.bots.find((candidate) => candidate.id === target.botId);
-  if (!bot) return;
+  // A phone notification and a #open= link carry only the thread (spec
+  // §3.5 step 2). Its bot is whoever owns it in the snapshot just loaded;
+  // nobody owning it means this device cannot see it, and nothing opens.
+  const botId =
+    target.botId ??
+    state.bots.find(
+      (candidate) =>
+        candidate.threadId === target.threadId ||
+        (candidate.tasks ?? []).some((task) => task.threadId === target.threadId),
+    )?.id;
+  if (!botId) return false;
+  dispatch({ type: "select", id: botId });
+  const bot = state.bots.find((candidate) => candidate.id === botId);
+  if (!bot) return true;
   const known =
     bot.threadId === target.threadId ||
     (bot.tasks ?? []).some((task) => task.threadId === target.threadId);
-  if (known) dispatch({ type: "switchTask", botId: target.botId, threadId: target.threadId });
+  if (known) dispatch({ type: "switchTask", botId, threadId: target.threadId });
+  return true;
 }
 
 /** Retire the scrollback pages a thread has in flight: whatever they return
@@ -1164,6 +1188,7 @@ export function reducer(state: AppState, action: Action): AppState {
           groups: action.groups,
           computerControl: action.computerControl,
           selectedId,
+          hydrated: true,
         },
         [...action.bots, ...action.groups],
       );
@@ -1571,6 +1596,8 @@ export function reducer(state: AppState, action: Action): AppState {
     case "updateTask": return state;
     case "connected":
       return { ...state, connected: action.value };
+    case "signedOut":
+      return { ...state, signedOut: true, connected: false };
     case "error":
       return {
         ...(action.message && state.selectedId
@@ -1884,6 +1911,8 @@ export const initialState: AppState = {
   focusMessage: null,
   teamLibrary: { open: false },
   connected: false,
+  signedOut: false,
+  hydrated: false,
   error: null,
   mascotMotion: null,
   pendingQueued: {},
@@ -1921,6 +1950,9 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
     },
   });
   const body = await res.json().catch(() => ({}));
+  // Not proof on its own: a harness route answers 401 for a provider it
+  // could not sign in to. The door's /session decides (lib/session-check.ts).
+  if (res.status === 401) void checkSession();
   // The status rides along, the way `composer-attachments.ts` already does it.
   // Without it every failure looks alike to a caller, and the peripheral
   // retry loop cannot tell "the harness hiccuped" from "this surface is never
@@ -2090,6 +2122,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
   const stateRef = useRef(state);
   stateRef.current = state;
+  // A save the person asked for and did not get (lib/save-file.ts): the same
+  // six-second error toast every other failed action shows.
+  useEffect(() => onSaveFailed((message) => {
+    rawDispatch({ type: "error", message });
+    setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
+  }), []);
   // per-frame stream-delta batching (see the "runtime" SSE case); stream
   // state is intentionally OUTSIDE the reducer so token frames re-render
   // only StreamContext consumers
@@ -2698,8 +2736,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // held, then focus again, so the views that ignored a target they
         // could not find open a window around it now.
         case "focusMessage": {
-          const { threadId, messageId } = action;
-          void scrollback.loadThrough(threadId, messageId).then((outcome) => {
+          const { threadId, messageId, maxPages } = action;
+          void scrollback.loadThrough(threadId, messageId, maxPages).then((outcome) => {
             if (outcome === "fetched") rawDispatch({ type: "focusMessage", threadId, messageId });
           });
           break;
@@ -2711,9 +2749,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return wrapped;
   }, [botPatchQueue,threadWrites]);
 
+  // Phone mode boots every thread as a one-row page (hydratePageSize). The
+  // conversation on screen gets its newest page right away, through the same
+  // request "Load earlier" makes, whenever it is selected or switched to.
+  const onScreen =
+    state.bots.find((candidate) => candidate.id === state.selectedId) ??
+    state.groups.find((candidate) => candidate.id === state.selectedId);
+  const topUpThread = onScreen && needsNewestPage(onScreen) ? onScreen.threadId : null;
+  // Once per (thread, transcript generation). A resync (hydrate, a switch)
+  // bumps the generation and drops an in-flight top-up as stale, so it asks
+  // again; a failed one leaves the key as it was and does not retry, which
+  // keeps a dead link from looping ("Load earlier" is still there).
+  const topUpGeneration = topUpThread ? state.transcriptGeneration[topUpThread] ?? 0 : 0;
+  const topUpBusy = topUpThread ? Boolean(state.loadingOlder[topUpThread]) : false;
+  const toppedUp = useRef("");
+  useEffect(() => {
+    if (!topUpThread || topUpBusy) return;
+    const key = `${topUpThread}:${topUpGeneration}`;
+    if (toppedUp.current === key) return;
+    toppedUp.current = key;
+    dispatch({ type: "loadOlderMessages", threadId: topUpThread });
+  }, [topUpThread, topUpGeneration, topUpBusy, dispatch]);
+
   // ── initial load + SSE fold ──────────────────────────────────────────
   useEffect(() => {
     let alive = true;
+    // Asked once for the life of this effect: the stream and the hydrate
+    // below must agree about what kind of client this is.
+    const phone = isPhoneClient();
     type PeripheralKey = "instances" | "config" | "routines" | "webhooks";
     type PeripheralPart = {
       key: PeripheralKey;
@@ -2782,6 +2845,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         console.warn(`snapshot: ${part.key} is not available on this surface; not retrying`, error);
         return;
       }
+      if (sessionSignedOut()) return; // as permanent as a surface gate for this page
       if (error !== undefined) {
         console.warn(`snapshot: ${part.key} refresh failed; retrying`, error);
       }
@@ -2827,7 +2891,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // The newest page of each open thread (upstream #1527). Every
         // transcript at once made startup slow on long threads and was more
         // than a companion over a tunnel could buffer.
-        api(`/api/bots?messages=${MESSAGE_PAGE_SIZE}`).then(({ bots, groups, computerControl }) => {
+        // A phone asks for one row per thread and pages the one on screen in (spec §6).
+        api(`/api/bots?messages=${hydratePageSize(phone)}`).then(({ bots, groups, computerControl }) => {
           if (!alive) return;
           rawDispatch({
             type: "hydrate",
@@ -3069,7 +3134,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let liveClosed = false;
     void ensureDesktopSurfaceSecret().then(() => {
       if (!alive || liveClosed) return;
+      // A phone never receives live computer frames: a base64 capture every
+      // few seconds while a bot works is the heaviest thing on the stream.
+      // Its computer panel polls instead (ComputerPanel, sseFlowing).
       stopLive = openLiveEvents({
+        screens: phone ? false : undefined,
         onOpen: () => rawDispatch({ type: "connected", value: true }),
         onError: () => rawDispatch({ type: "connected", value: false }),
         onSnapshotRequired: () => {
@@ -3083,12 +3152,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (hydrated) handleFrame(frame, delivery?.replayed);
           else pendingFrames.push({ frame, replayed: delivery?.replayed === true });
         },
+        stillSignedIn: async () => (await checkSession()) !== "signed-out",
       });
     });
     const stopApprovalClicks = window.muragebox?.approvalNotifications?.onOpen(target => {
       openNotificationTarget(dispatch, target, stateRef.current);
       // land on the card itself, not just its conversation
       if (typeof target.messageId === "string" && target.messageId) dispatch({ type: "focusMessage", threadId: target.threadId, messageId: target.messageId });
+    });
+    // Signed out: stop every loop that would keep knocking, and let the phone
+    // app show its own re-pair screen. A browser gets SignedOutCard.
+    const stopSignedOut = onSignedOut(() => {
+      rawDispatch({ type: "signedOut" });
+      liveClosed = true;
+      stopLive?.();
+      for (const refresh of peripheralRefresh.values()) {
+        if (refresh.timer) clearTimeout(refresh.timer);
+        refresh.timer = null;
+      }
+      void nativeAvailable("rePair")
+        .then((available) => (available ? callNative("rePair") : undefined))
+        .catch(() => {});
     });
     return () => {
       alive = false;
@@ -3100,6 +3184,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       stopLive?.();
       stopApprovalClicks?.();
+      stopSignedOut();
     };
   }, []);
 

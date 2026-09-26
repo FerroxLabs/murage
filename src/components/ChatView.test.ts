@@ -158,6 +158,38 @@ describe("one image surface", () => {
     expect(chat).toContain("<ScreenFrame png={m.png} mime={m.mime} />");
   });
 
+  it("lets a phone's enlarged screen frame fetch the uncapped original, but only on a phone with an id to ask for", () => {
+    expect(chat).toContain('import { fetchOriginalScreenFrame, usePagedScreenFrame } from "@/lib/paged-screen-frame"');
+    expect(chat).toContain('import { isPhoneClient } from "@/lib/phone-client"');
+    expect(chat).toMatch(/if \(!threadId \|\| !messageId \|\| !isPhoneClient\(\)\) return undefined;\s*return \(\) => fetchOriginalScreenFrame\(threadId, messageId\);/);
+    expect(chat).toContain("fetchOriginal={fetchOriginal}");
+    expect(chat).toContain('<ScreenFrame png={frame.png} mime={frame.mime} threadId={threadId} messageId={messageId} />');
+  });
+
+  it("shows the capped screen frame until the fetched original resolves, then swaps it in", () => {
+    const media = read("./ImageMedia.tsx");
+    expect(media).toMatch(/fetchOriginal\(\)\s*\.then\(\(full\) => \{\s*if \(full\) setOriginal\(screenFrameItem\(full\.png, full\.mime\)\);/);
+    expect(media).toContain("const items = useMemo(() => [original ?? capped], [original, capped]);");
+  });
+
+  it("lets the browser pick a thumbnail width and keeps the original for the lightbox", () => {
+    const media = read("./ImageMedia.tsx");
+    // phones and browsers only: the desktop keeps drawing the original (M6)
+    expect(media).toContain("const srcSet = desktop === false && !smallOriginal ? thumbnailSrcSet(item.src) : undefined;");
+    expect(media).toMatch(/srcSet=\{srcSet\}\s*sizes=\{srcSet \? sizes : undefined\}/);
+  });
+
+  it("drops the srcset once the server is caught sending the original, and remembers it", () => {
+    const media = read("./ImageMedia.tsx");
+    expect(media).toContain("const [smallOriginal, setSmallOriginal] = useState(() => wasServedOriginal(item.src));");
+    // measured on the file's true pixels, never the srcset <img>'s
+    // density-corrected naturalWidth
+    expect(media).toMatch(/onLoad=\{\(event\) => \{[\s\S]{0,400}truePixelWidth\(current\)\.then\(\(pixels\) => \{\s*if \(!servedOriginal\(current, pixels\)\) return;\s*rememberServedOriginal\(item\.src\);\s*setSmallOriginal\(true\)/);
+    expect(media).not.toContain("img.naturalWidth");
+    // dropping the srcset remounts the <img> so it draws at natural density
+    expect(media).toMatch(/<img\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*key=\{srcSet \? "srcset" : "original"\}\s*src=\{item\.src\}\s*srcSet=\{srcSet\}/);
+  });
+
   it("routes Markdown images, attachment galleries and the Files preview the same way", () => {
     expect(markdown).toMatch(/img\(\{ src, alt \}[\s\S]{0,300}<MarkdownImage /);
     expect(markdown).not.toMatch(/<img\b/);

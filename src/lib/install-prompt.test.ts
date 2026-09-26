@@ -13,6 +13,7 @@ const facts = (over: Partial<InstallFacts> = {}): InstallFacts => ({
   captured: false,
   ios: false,
   dismissed: false,
+  nativeShell: false,
   ...over,
 });
 
@@ -47,6 +48,14 @@ describe("who gets invited to install", () => {
 
   it("takes no for an answer", () => {
     expect(installInvite(facts({ dismissed: true, captured: true }))).toBe("hidden");
+  });
+
+  it("never invites the phone app to install itself", () => {
+    // It IS the app. Android's WebView can still fire beforeinstallprompt on
+    // an installable origin, and the iOS hint would point at a Share button
+    // the app does not have.
+    expect(installInvite(facts({ nativeShell: true, captured: true }))).toBe("hidden");
+    expect(installInvite(facts({ nativeShell: true, ios: true }))).toBe("hidden");
   });
 });
 
@@ -90,5 +99,10 @@ describe("where the invitation is allowed to appear", () => {
     // a smaller failure than throwing during render.
     const hook = readFileSync(fileURLToPath(new URL("./use-install-prompt.ts", import.meta.url)), "utf8");
     expect(hook).toMatch(/try \{\s*return localStorage\.getItem/);
+  });
+
+  it("asks native-shell.ts, synchronously, so the first frame is already right", () => {
+    const hook = readFileSync(fileURLToPath(new URL("./use-install-prompt.ts", import.meta.url)), "utf8");
+    expect(hook).toContain("nativeShell: inNativeShell(),");
   });
 });

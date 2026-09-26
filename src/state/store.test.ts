@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { createElement } from "react";
@@ -331,6 +333,35 @@ describe("notification routing", () => {
     expect(dispatch.mock.calls.map(([action]) => action)).toEqual([{ type: "select", id: "bot-1" }]);
   });
 
+  it("finds the bot from a thread id alone (a phone notification or a deep link)", () => {
+    const dispatch = vi.fn();
+    expect(openNotificationTarget(dispatch, { threadId: "detached-thread" }, { bots, groups })).toBe(true);
+    expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
+      { type: "select", id: "bot-1" },
+      { type: "switchTask", botId: "bot-1", threadId: "detached-thread" },
+    ]);
+  });
+
+  it("finds the room from a thread id alone", () => {
+    const dispatch = vi.fn();
+    expect(openNotificationTarget(dispatch, { threadId: "older-room-thread" }, { bots, groups })).toBe(true);
+    expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
+      { type: "select", id: "room-1" },
+      { type: "switchGroupTask", groupId: "room-1", threadId: "older-room-thread" },
+    ]);
+  });
+
+  it("opens nothing for a thread nobody on this device owns, and says so", () => {
+    // Hidden from this phone by its visibility scope, or deleted since.
+    const dispatch = vi.fn();
+    expect(openNotificationTarget(dispatch, { threadId: "someone-elses-thread" }, { bots, groups })).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("still returns true on the existing botId path", () => {
+    expect(openNotificationTarget(vi.fn(), { botId: "bot-1", threadId: "deleted-task-thread" }, { bots, groups })).toBe(true);
+  });
+
   it("identifies only the exact chat thread currently on screen", () => {
     expect(visibleNotificationThread({
       activeView: "chat",
@@ -350,6 +381,13 @@ describe("notification routing", () => {
       bots,
       groups,
     })).toBeNull();
+  });
+});
+
+describe("hydration", () => {
+  it("is false until the first snapshot lands", () => {
+    expect(initialState.hydrated).toBe(false);
+    expect(reducer(initialState, { type: "hydrate", bots: [], groups: [], computerControl: {} }).hydrated).toBe(true);
   });
 });
 
@@ -1650,5 +1688,23 @@ describe("a bot added from an import response", () => {
     const added = next.bots.find((bot) => bot.id === "imported-1")!;
     expect(added.messages).toEqual([]);
     expect(visibleMessages(added).at(-1)).toBeUndefined();
+  });
+});
+
+describe("signed out", () => {
+  it("is off until the door says otherwise, and going offline is part of it", () => {
+    expect(initialState.signedOut).toBe(false);
+    const next = reducer({ ...initialState, connected: true }, { type: "signedOut" });
+    expect(next.signedOut).toBe(true);
+    expect(next.connected).toBe(false);
+  });
+
+  it("a 401 from any API call asks the door, never signs out on its own", () => {
+    const source = readFileSync(fileURLToPath(new URL("./store.tsx", import.meta.url)), "utf8");
+    expect(source).toContain("if (res.status === 401) void checkSession();");
+    // The panel retry loop gives up on a signed-out browser instead of
+    // spending the battery on a 401 every 30 seconds.
+    expect(source).toMatch(/if \(isPermanentlyRefused\(error\)\) \{[\s\S]*?\}\s*if \(sessionSignedOut\(\)\) return;/);
+    expect(source).toContain('stillSignedIn: async () => (await checkSession()) !== "signed-out"');
   });
 });

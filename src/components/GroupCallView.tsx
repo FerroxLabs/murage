@@ -6,10 +6,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, PhoneOff, X } from "lucide-react";
 
-import { currentCall, deferCallCleanup, endCall, useOnCall } from "@/lib/call";
+import { currentCall, deferCallCleanup, endCall } from "@/lib/call";
 import { routeSpokenGroupMessage } from "@/lib/group-call";
 import { unheardMessages } from "@/lib/scrollback";
-import { track } from "@/lib/analytics";
 import { normalizeState } from "@/lib/mascot";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
@@ -17,7 +16,6 @@ import { usePushToTalk } from "@/lib/push-to-talk";
 import { useStore, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { BotAvatar } from "./Avatar";
-import { CallTargetButton } from "./CallView";
 import { isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPrompt } from "./PendingApproval";
 
 const YES = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|allow|approve|approved|fine|please do)\b/i;
@@ -25,26 +23,6 @@ const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
 const CALL_ENDPOINT_MS = 850;
 
 type Phase = "listening" | "sending" | "working" | "speaking";
-
-export function GroupCallButton({ group, members }: { group: Group; members: Bot[] }) {
-  if (group.dm) return null;
-  return (
-    <CallTargetButton
-      targetId={group.id}
-      targetName={group.name}
-      voices={members.map((member) => member.voice)}
-      setupBotId={members.find((member) => !member.voice)?.id ?? members[0]?.id}
-      requireExplicitVoices
-      onStart={() => track("group_call_started", { memberCount: members.length })}
-    />
-  );
-}
-
-export function GroupCallOverlay({ group, members }: { group: Group; members: Bot[] }) {
-  const active = useOnCall() === group.id;
-  if (!active) return null;
-  return <GroupCall group={group} members={members} />;
-}
 
 function questionIn(messages: Message[]): Message | undefined {
   return messages.find(
@@ -57,7 +35,7 @@ function questionIn(messages: Message[]): Message | undefined {
   );
 }
 
-function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
+export function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
   const { dispatch } = useStore();
   const speech = useSpeech();
   const initialPhase: Phase = group.working || group.busyBotId ? "working" : "listening";

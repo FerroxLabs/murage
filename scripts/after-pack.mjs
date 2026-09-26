@@ -147,6 +147,72 @@ async function validateFuigo(resources, platform, required) {
   console.log(`packaged fuigo ${FUIGO_VERSION} verified for ${target}`);
 }
 
+/** Chat-image thumbnails (server/image-thumbnail.ts) load sharp from beside
+ * Transformers, where stage-memory-runtime.mjs copies it with the native
+ * @img/sharp-<platform>-<arch> addon and its libvips. The server serves
+ * originals without it, so a package that silently lost it would pass every
+ * smoke test and ship full-size photos to phones. It follows the memory
+ * runtime's per-arch policy: required wherever ONNX is, and only a warning
+ * where ONNX may be absent (darwin-x64), since a missing thumbnailer falls
+ * back to originals and must never be what blocks a release. A wrong-arch
+ * binary is refused everywhere, as with ONNX. */
+const MEMORY_NATIVE_OPTIONAL_TARGETS = new Set(["darwin-x64"]);
+function thumbnailMissing(message) {
+  return Object.assign(new Error(message), { code: "THUMBNAIL_RUNTIME_MISSING" });
+}
+const SHARP_LIBVIPS = {
+  darwin: arch => [`sharp-libvips-darwin-${arch}`, /^libvips-cpp\.[\d.]+\.dylib$/],
+  linux: arch => [`sharp-libvips-linux-${arch}`, /^libvips-cpp\.so\.[\d.]+$/],
+  win32: arch => [`sharp-win32-${arch}`, /^libvips-42\.dll$/],
+};
+async function requireTargetBinary(file, target, recordPath) {
+  await requireRegularFile(file);
+  const handle = await open(file, "r");
+  try {
+    const bytes = Buffer.alloc(65536), { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    const actual = executableTarget(bytes.subarray(0, bytesRead));
+    if (actual !== target) throw new Error(`Packaged thumbnail architecture mismatch: ${recordPath} is ${actual}, expected ${target}`);
+  } finally { await handle.close(); }
+}
+export async function validatePackagedThumbnailRuntime(server, manifest, platform, arch, required = !MEMORY_NATIVE_OPTIONAL_TARGETS.has(`${platform}-${arch}`)) {
+  try { return { available: true, ...(await checkPackagedSharp(server, manifest, platform, arch)) }; }
+  catch (error) {
+    if (required || error?.code !== "THUMBNAIL_RUNTIME_MISSING") throw error;
+    console.warn(`${error.message}; this package will serve full-size images instead of thumbnails`);
+    return { available: false, package: "sharp", missing: error.message };
+  }
+}
+async function checkPackagedSharp(server, manifest, platform, arch) {
+  const target = `${platform}-${arch}`;
+  const entries = manifest.packages?.filter(entry => entry.name === "sharp");
+  if (!Array.isArray(entries) || entries.length !== 1) throw thumbnailMissing(`Packaged thumbnail runtime is missing for ${target}: sharp is not in the memory runtime manifest`);
+  const entry = entries[0];
+  if (typeof entry.path !== "string" || path.isAbsolute(entry.path)) throw new Error("Invalid packaged sharp path");
+  const packageRoot = path.resolve(server, entry.path), relative = path.relative(server, packageRoot);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("Packaged sharp path escapes server resources");
+  const packageFile = path.join(packageRoot, "package.json");
+  try { await requireRealDirectory(packageRoot, platform === "win32" ? undefined : 0o755); await requireRegularFile(packageFile); }
+  catch (error) { if (error?.code === "ENOENT") throw thumbnailMissing(`Packaged thumbnail runtime is missing for ${target}: ${entry.path}`); throw error; }
+  const pkg = JSON.parse(await readFile(packageFile, "utf8"));
+  if (pkg.name !== "sharp" || pkg.version !== entry.version) throw new Error("Packaged sharp version differs from manifest");
+  const record = file => path.relative(server, file).split(path.sep).join("/");
+  const files = [];
+  const addon = path.join(packageRoot, "node_modules/@img", `sharp-${target}`, "lib", `sharp-${target}.node`);
+  try { await requireTargetBinary(addon, target, record(addon)); }
+  catch (error) { if (error?.code === "ENOENT") throw thumbnailMissing(`Packaged thumbnail runtime is missing for ${target}: ${record(addon)}`); throw error; }
+  files.push(record(addon));
+  const [libvipsPackage, pattern] = SHARP_LIBVIPS[platform](arch);
+  const libDirectory = path.join(packageRoot, "node_modules/@img", libvipsPackage, "lib");
+  let names;
+  try { names = (await readdir(libDirectory)).filter(name => pattern.test(name)); }
+  catch (error) { if (error?.code === "ENOENT") names = []; else throw error; }
+  if (names.length !== 1) throw thumbnailMissing(`Packaged thumbnail runtime is missing libvips for ${target}: ${record(libDirectory)}`);
+  const libvips = path.join(libDirectory, names[0]);
+  await requireTargetBinary(libvips, target, record(libvips));
+  files.push(record(libvips));
+  return { package: "sharp", version: pkg.version, files };
+}
+
 /** Target identity is established from packaged bytes, never the staging host.
  * Intel absence is explicit metadata only; this does not implement a fallback or
  * approve publishing an artifact without that native capability.
@@ -190,11 +256,12 @@ export async function validatePackagedMemoryRuntime(resources, platform, archVal
     files.push(recordPath);
   }
   const nativeBackendAvailable = missingFiles.length === 0;
-  if (!nativeBackendAvailable && target !== "darwin-x64") throw new Error(`Packaged memory native runtime is missing for ${target}: ${missingFiles.join(", ")}`);
+  if (!nativeBackendAvailable && !MEMORY_NATIVE_OPTIONAL_TARGETS.has(target)) throw new Error(`Packaged memory native runtime is missing for ${target}: ${missingFiles.join(", ")}`);
   const stagingHost = manifest.stagingHost ?? { platform: manifest.platform, arch: manifest.arch };
   if (typeof stagingHost.platform !== "string" || typeof stagingHost.arch !== "string") throw new Error("Packaged memory staging identity is missing");
+  const thumbnailBackend = await validatePackagedThumbnailRuntime(server, manifest, platform, arch, !MEMORY_NATIVE_OPTIONAL_TARGETS.has(target));
   const verified = { ...manifest, platform, arch, stagingHost, nativeBackendAvailable,
-    nativeBackend: { package: pkg.name, version: pkg.version, files, missingFiles } };
+    nativeBackend: { package: pkg.name, version: pkg.version, files, missingFiles }, thumbnailBackend };
   await writeFile(manifestFile, JSON.stringify(verified, null, 2) + "\n");
   return verified;
 }

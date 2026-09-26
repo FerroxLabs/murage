@@ -1,0 +1,105 @@
+// M7: a lazy panel whose chunk fails a second time inside chunk-reload's
+// minute used to reach RootErrorBoundary and take the whole app down. Each
+// lazy surface now has its own boundary with a retry that imports afresh.
+import { readFileSync } from "node:fs";
+import { createElement, isValidElement, type ReactElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+
+import { LAZY_RETRY_TEXT, LazyBoundary, retryableLazy } from "./LazyBoundary";
+
+const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
+
+describe("retryableLazy", () => {
+  it("keeps one component identity, and a retry imports the chunk again", () => {
+    const load = vi.fn(() => Promise.reject(new Error("Failed to fetch dynamically imported module")));
+    const panel = retryableLazy(load as unknown as () => Promise<{ default: (props: { a: number }) => null }>);
+    const first = panel.Component({ a: 1 }) as ReactElement;
+    expect(isValidElement(first)).toBe(true);
+    panel.retry();
+    const second = panel.Component({ a: 1 }) as ReactElement;
+    // a fresh React.lazy: the old one would replay its rejection forever
+    expect(second.type).not.toBe(first.type);
+    expect(second.props).toEqual({ a: 1 });
+  });
+});
+
+describe("LazyBoundary", () => {
+  const boundary = (props: Partial<ConstructorParameters<typeof LazyBoundary>[0]> = {}) => {
+    const onRetry = vi.fn();
+    const instance = new LazyBoundary({ children: createElement("span", null, "panel"), onRetry, ...props });
+    instance.setState = ((update: object) => { instance.state = { ...instance.state, ...update }; }) as never;
+    return { instance, onRetry };
+  };
+
+  it("shows the panel until a load fails, then only the retry, which reloads the app", () => {
+    const reload = vi.fn();
+    const { instance, onRetry } = boundary({ reload });
+    expect(renderToStaticMarkup(instance.render() as ReactElement)).toBe("<span>panel</span>");
+    instance.state = { ...instance.state, ...LazyBoundary.getDerivedStateFromError() };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    instance.componentDidCatch(new Error("chunk"));
+    expect(onRetry).toHaveBeenCalledOnce();
+    const html = renderToStaticMarkup(instance.render() as ReactElement);
+    expect(LAZY_RETRY_TEXT).toBe("Couldn't open this — tap to retry");
+    expect(html).toContain("Couldn&#x27;t open this — tap to retry");
+    expect(html).toContain('role="alert"');
+    expect(html).not.toContain("panel");
+    // Chromium caches a failed import() in the module map: only a new
+    // document fetches the chunk again (verification f5).
+    instance.retry();
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it("reloads directly, never through chunk-reload's once-a-minute guard", () => {
+    const source = read("./LazyBoundary.tsx");
+    expect(source).toContain("(this.props.reload ?? (() => window.location.reload()))();");
+    expect(source).not.toContain("chunk-reload\"");
+  });
+
+  it("offers Close when the panel can be dismissed, so a dead network is not a trap", () => {
+    const onDismiss = vi.fn();
+    const { instance } = boundary({ onDismiss });
+    instance.state = { failed: true };
+    const html = renderToStaticMarkup(instance.render() as ReactElement);
+    expect(html).toContain("Close");
+    const inline = boundary({ inline: true }).instance;
+    inline.state = { failed: true };
+    expect(renderToStaticMarkup(inline.render() as ReactElement)).not.toContain("fixed inset-0");
+  });
+});
+
+it("wraps every lazy surface: Settings, BotSettings, ComputerPanel, the calls and the editor", () => {
+  const app = read("../App.tsx");
+  for (const [chunk, close] of [["BotSettings", "toggleSettings"], ["Computer", "toggleComputer"], ["Settings", "toggleAppSettings"]]) {
+    expect(app).toContain(`<LazyBoundary onRetry={${chunk}.retry} onDismiss={() => dispatch({ type: "${close}", open: false })}>`);
+  }
+  expect(app).not.toMatch(/\blazy\(/);
+  const calls = read("./CallControls.tsx");
+  // Close on a call screen ends the call it belongs to (and only that one)
+  expect(calls).toContain("<LazyBoundary onRetry={CallChunk.retry} onDismiss={() => endCall(bot.id)}>");
+  expect(calls).toContain("<LazyBoundary onRetry={GroupCallChunk.retry} onDismiss={() => endCall(group.id)}>");
+  expect(calls).not.toMatch(/\blazy\(/);
+  const pane = read("./WorkspacePane.tsx");
+  expect(pane).toContain("<LazyBoundary inline onRetry={Editor.retry}>");
+  expect(pane).not.toMatch(/\blazy\(/);
+});
+
+it("a failed call screen's Close ends that call, and leaves a newer one alone", async () => {
+  vi.stubGlobal("window", { muragebox: { speechStop: vi.fn(async () => {}) } });
+  const call = await import("../lib/call");
+  const onDismiss = (id: string) => () => call.endCall(id);
+  call.startCall("bot-1");
+  const instance = new LazyBoundary({ children: null, onRetry: vi.fn(), onDismiss: onDismiss("bot-1") });
+  instance.state = { failed: true };
+  const overlay = instance.render() as ReactElement<{ children: ReactElement[] }>;
+  const close = (overlay.props.children as unknown as ReactElement<{ onClick: () => void; children: string }>[])
+    .find((child) => child && child.props?.children === "Close")!;
+  close.props.onClick();
+  expect(call.currentCall()).toBeNull();
+  call.startCall("bot-2");
+  onDismiss("bot-1")();
+  expect(call.currentCall()).toBe("bot-2");
+  call.endCall();
+  vi.unstubAllGlobals();
+});

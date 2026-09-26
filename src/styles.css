@@ -350,6 +350,33 @@ body {
   padding-bottom: 0;
 }
 
+/* Long transcripts (spec §6). A row the reader has seen skips layout and
+   paint while off screen, at its remembered size (`auto`). Rows opt in only
+   once seen (src/lib/transcript-rows.ts): a never-rendered row has just the
+   estimate, and the transcript scroller has scroll anchoring off, so its
+   first render would move the text under the reader. */
+.transcript-row {
+  contain-intrinsic-size: auto 120px;
+}
+.transcript-row[data-seen] {
+  content-visibility: auto;
+}
+/* content-visibility implies paint containment, which clips anything painted
+   past the row's edge: a menu opened inside it, the search flash's ring, a
+   bubble's drop shadow. Those rows render normally. Separate rules, because
+   a WebView without :has() drops the whole rule it appears in; an expanded
+   run's toggle is not a menu, so the run stays skippable. After the rule
+   above, so these win at equal specificity. */
+.transcript-row:focus-within {
+  content-visibility: visible;
+}
+.transcript-row[data-flash] {
+  content-visibility: visible;
+}
+.transcript-row:has(details[open], [aria-expanded="true"]:not([data-run-toggle]), [data-row-lift]) {
+  content-visibility: visible;
+}
+
 /* Keep focus visible after components clear the browser outline. These
    unlayered rules outrank Tailwind utilities without needing !important. */
 :focus-visible {

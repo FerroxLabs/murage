@@ -1,11 +1,12 @@
 // Vite support for math and diagrams in chat.
 //
-// 1. The diagram frame page (/mermaid-frame.html). The frame runs in
+// 1. The diagram frame page (/mermaid-frame-<hash>.html in a build, /mermaid-frame.html in dev). The frame runs in
 //    <iframe sandbox="allow-scripts">, an opaque origin, so a module script
 //    would be a CORS fetch the harness does not answer. The frame script is
 //    therefore bundled by esbuild into ONE classic script, inlined into the
 //    page, and allowed by its sha256 in the page's own CSP. Served by a dev
-//    middleware, emitted as dist/mermaid-frame.html in a build.
+//    middleware under its plain name; a build names it by its content and
+//    tells the app that name through a define, so it can be cached for good.
 //
 // 2. Optional packages. katex, mermaid and dompurify are loaded lazily; until
 //    they are installed an import of one resolves to a stub that throws, and
@@ -27,6 +28,17 @@ const OPTIONAL = new RegExp(`^(?:${OPTIONAL_RENDER_PACKAGES.join("|")})(?:/|$)`)
 const MISSING = "\0murage-missing-package:";
 const FRAME_FILE = "mermaid-frame.html";
 const FRAME_ENTRY = fileURLToPath(new URL("../src/mermaid-frame/frame.ts", import.meta.url));
+
+/** The global a build defines to the frame page's hashed address, read in
+ * src/mermaid-frame/protocol.ts. */
+export const FRAME_PATH_DEFINE = "__MURAGE_MERMAID_FRAME_PATH__";
+
+/** The frame page's name in a build: its content's hash, so the browser door
+ * can let a browser keep it for a year and a new release is a new name.
+ * Sixteen hex digits, which is what the door's allowlist accepts. */
+export function frameFileName(html: string): string {
+  return `mermaid-frame-${createHash("sha256").update(html, "utf8").digest("hex").slice(0, 16)}.html`;
+}
 
 /** The frame page's CSP, apart from the script hash. No network of any kind. */
 export function frameCsp(scriptHash: string): string {
@@ -96,6 +108,11 @@ export async function frameHtml(options: { depsDir?: string; minify: boolean }):
 /** Vite plugins for chat math and diagrams. */
 export function murageRenderPlugins(options: { depsDir?: string } = {}): Plugin[] {
   let devFrame: Promise<string> | undefined;
+  // One build of the frame per plugin instance: the name the app is told in
+  // `config` and the file `generateBundle` writes are the same bytes.
+  let builtFrame: Promise<{ fileName: string; html: string }> | undefined;
+  const buildFrame = () =>
+    (builtFrame ??= frameHtml({ depsDir: options.depsDir, minify: true }).then((html) => ({ html, fileName: frameFileName(html) })));
   return [
     {
       name: "murage-optional-render-packages",
@@ -121,6 +138,13 @@ export function murageRenderPlugins(options: { depsDir?: string } = {}): Plugin[
     },
     {
       name: "murage-mermaid-frame",
+      // Before any module is transformed: the app's frame URL is a define,
+      // and a define has to exist before the code that reads it is built.
+      async config(_config, env) {
+        if (env.command !== "build") return undefined;
+        const { fileName } = await buildFrame();
+        return { define: { [FRAME_PATH_DEFINE]: JSON.stringify(`/${fileName}`) } };
+      },
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
           if (req.method !== "GET" || req.url?.split("?")[0] !== `/${FRAME_FILE}`) return next();
@@ -137,7 +161,8 @@ export function murageRenderPlugins(options: { depsDir?: string } = {}): Plugin[
         });
       },
       async generateBundle() {
-        this.emitFile({ type: "asset", fileName: FRAME_FILE, source: await frameHtml({ depsDir: options.depsDir, minify: true }) });
+        const { fileName, html } = await buildFrame();
+        this.emitFile({ type: "asset", fileName, source: html });
       },
     },
   ];

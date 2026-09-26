@@ -10,7 +10,7 @@
 import { rmSync } from "node:fs";
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cookieName, createBrowserHandler, type BoundIdentity } from "../src/browser.ts";
 import { createConnectedDeviceTracker } from "../src/connected-devices.ts";
@@ -146,10 +146,17 @@ const doorWrite = (
 
 const signOut = (cookie: string) => doorWrite("DELETE", "/session", cookie);
 
+/** Renew as a browser does: a day after the value became current, when
+ * renewal is next due, taking the successor and then presenting it with
+ * `GET /session`, which commits it and retires the value it replaced. */
 const renew = async (cookie: string): Promise<string> => {
+  vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000 + 60_000);
   const answer = await doorWrite("POST", "/session/renew", cookie);
   expect(answer.status).toBe(200);
-  return answer.setCookie.slice(answer.setCookie.indexOf("=") + 1, answer.setCookie.indexOf(";"));
+  const next = answer.setCookie.slice(answer.setCookie.indexOf("=") + 1, answer.setCookie.indexOf(";"));
+  // Committed the way the page's renewal script does it: through the door.
+  expect((await doorWrite("GET", "/session", next)).status).toBe(200);
+  return next;
 };
 
 beforeAll(async () => {
@@ -185,6 +192,7 @@ beforeAll(async () => {
         sessionDeadline: (sessionId) => registry.sessionDeadline(sessionId),
         closeSession: (value) => registry.closeSession(value),
         renewSession: (value) => registry.renewSession(value),
+        signOutDevice: (value) => registry.signOutDevice(value),
       },
       connected: (deviceId, disconnect, sessionId) => tracker.open(deviceId, disconnect, sessionId),
       headersTimeoutMs: 4000,
@@ -212,6 +220,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   unsubscribe();
   for (const res of upstreams) res.destroy();
   upstreams.clear();
@@ -223,7 +232,7 @@ describe("the registry names and ends sessions", () => {
     const deviceId = pair();
     const { value } = signInBrowser(deviceId);
     const before = registry.resolveSession(value)!;
-    const renewed = registry.renewSession(value, Date.now() + 1000)!;
+    const renewed = registry.renewSession(value, Date.now() + 24 * 60 * 60 * 1000 + 1000)!;
     const after = registry.resolveSession(renewed.value)!;
 
     expect(after.sessionId).toBe(before.sessionId);

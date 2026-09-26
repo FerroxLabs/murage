@@ -1,5 +1,6 @@
 import { api } from "@/state/store";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
+import { saveBlob } from "@/lib/save-file";
 
 interface ExportedPlaybook {
   name: string;
@@ -7,22 +8,14 @@ interface ExportedPlaybook {
   markdown: string;
 }
 
-function downloadPlaybook(playbook: ExportedPlaybook): { name: string; members: number } {
+async function downloadPlaybook(playbook: ExportedPlaybook): Promise<{ name: string; members: number }> {
   const slug =
     playbook.name
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "") || "team";
-  const blob = new Blob([playbook.markdown], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${slug}.emberbot.md`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  await saveBlob(new Blob([playbook.markdown], { type: "text/markdown;charset=utf-8" }), `${slug}.emberbot.md`);
   return { name: playbook.name, members: playbook.members };
 }
 
@@ -48,11 +41,7 @@ export async function downloadSelectedBotPackageZip(
   if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/zip") throw new Error("The server did not return a ZIP package.");
   const blob = await response.blob();
   const slug = reviewed.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 100) || "murage-package";
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url; link.download = slug + ".zip";
-  document.body.appendChild(link); link.click(); link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  await saveBlob(blob, slug + ".zip");
   return reviewed;
 }
 
@@ -62,5 +51,5 @@ export async function downloadSelectedBotPackage(selection: TeamExportSelection,
     method: "POST",
     body: JSON.stringify({ format: "package", action: "download", selection, previewHash, acknowledgeWarnings }),
   })) as ExportedPlaybook;
-  return downloadPlaybook(playbook);
+  return await downloadPlaybook(playbook);
 }
