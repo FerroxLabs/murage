@@ -11,7 +11,8 @@ import { randomBytes } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { inspectEncryptedInstallationBackup, restoreEncryptedInstallationNew, writeEncryptedInstallationBackup } from "./installation-encrypted-backup.ts";
+import { inspectEncryptedInstallationBackup, restoreEncryptedInstallationNew, windowsStageCap, WINDOWS_BACKUP_BYTES, writeEncryptedInstallationBackup } from "./installation-encrypted-backup.ts";
+import { captureFailureSentence } from "../shared/backup-capture-failure.mjs";
 import { reviewInstallation } from "./installation-activation.ts";
 import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
 import { MAX_BACKUP_BYTES } from "../shared/backup-limits.ts";
@@ -59,3 +60,15 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("over its size limit, a backu
     expect({ code: error?.code, path: error?.path }).toEqual({ code: "SNAPSHOT_LIMIT_EXCEEDED", path: "workspaces/bot/video.bin" });
   } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
 }, 60_000);
+
+// Windows' helper holds 20 GiB whatever the owner's limit says, so there the
+// backup stops at that size with its own sentence, not "raise the limit".
+it("on Windows the stage stops at what the helper holds, with a sentence that fits", () => {
+  expect(windowsStageCap("win32", 50 * 1024 ** 3)).toBe(WINDOWS_BACKUP_BYTES);
+  expect(windowsStageCap("win32", 10 * 1024 ** 3)).toBeUndefined();
+  expect(windowsStageCap("darwin", 50 * 1024 ** 3)).toBeUndefined();
+  const sentence = captureFailureSentence({ stage: "capture", code: "BACKUP_WINDOWS_SIZE_LIMIT", path: "workspaces/mira/video.mov" });
+  expect(sentence).toMatch(/On Windows one backup can hold up to 20 GB/);
+  expect(sentence).not.toMatch(/Raise/);
+  expect(sentence).toContain("The item is workspaces/mira/video.mov");
+});

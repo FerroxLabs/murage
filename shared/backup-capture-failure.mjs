@@ -31,7 +31,7 @@ export const BACKUP_CAPTURE_CODES = Object.freeze([
   "RECOVERY_WORKER_TIMEOUT", "INVALID_RECOVERY_INPUT", "INVALID_RECOVERY_RESULT", "RECOVERY_INPUT_TIMEOUT",
   "RECOVERY_OPERATION_FAILED", "RECOVERY_OWNERSHIP_REQUIRED", "INVALID_BACKUP_BUDGET",
   // budgets
-  "BACKUP_LIMIT_EXCEEDED", "ARCHIVE_LIMIT_EXCEEDED", "INVALID_BACKUP_LIMITS", "INVALID_ARCHIVE_LIMITS", "SNAPSHOT_LIMIT_EXCEEDED",
+  "BACKUP_LIMIT_EXCEEDED", "ARCHIVE_LIMIT_EXCEEDED", "INVALID_BACKUP_LIMITS", "INVALID_ARCHIVE_LIMITS", "SNAPSHOT_LIMIT_EXCEEDED", "BACKUP_WINDOWS_SIZE_LIMIT",
   // encryption
   "SNAPSHOT_CANCELLED", "AGE_TOOL_TIMEOUT", "AGE_PROCESS_FAILED", "AGE_PROCESS_CLOSE_UNCONFIRMED", "AGE_TOOL_UNVERIFIED",
   "ENCRYPTED_BACKUP_FAILED", "BACKUP_DISK_FULL", "BACKUP_FOLDER_NOT_WRITABLE", "BACKUP_FILE_IN_USE", "BACKUP_FOLDER_UNUSABLE",
@@ -100,6 +100,8 @@ const REASONS = {
     "Your workspace is bigger than the size limit set for backups. Raise the size limit under Backups, Advanced, or clear out large files, then try again.",
   SNAPSHOT_LIMIT_EXCEEDED:
     "Your workspace is bigger than the size limit set for backups. Raise the size limit under Backups, Advanced, or clear out large files, then try again.",
+  BACKUP_WINDOWS_SIZE_LIMIT:
+    "On Windows one backup can hold up to 20 GB, and your workspace is bigger than that. Move large files out of your bots' folders, then back up again.",
   INVALID_INSTALLATION_RECORDS:
     "One of Murage's own records couldn't be read the way a backup needs, so the backup wasn't made. Open Murage normally once so it tidies the record, then back up again. If it happens again, open the diagnostics folder from Backups.",
   INVALID_CONFIG_COMPONENT:

@@ -51,6 +51,11 @@ function capturedFilesystemError(error:unknown):InstallationSnapshotError{
   return new InstallationSnapshotError(code,{cause:error});
 }
 const nativeBudget=(maxBytes:number)=>Math.min(maxBytes,20*1024**3);
+/** What one Windows backup can hold: the helper's 20 GiB, less the room the
+ * archive's contents list and zip framing take. */
+export const WINDOWS_BACKUP_BYTES=20*1024**3-64*1024**2;
+/** The stage's own size cap on Windows when the owner's limit is larger. */
+export function windowsStageCap(platform:string,maxBytes:number){return platform==="win32"&&maxBytes>WINDOWS_BACKUP_BYTES?WINDOWS_BACKUP_BYTES:undefined;}
 const combineSignal=(native:AbortSignal,caller?:AbortSignal)=>caller?AbortSignal.any([native,caller]):native;
 async function settleWindowsWork(pending:Promise<unknown>|undefined,options:EncryptedBackupOptions){
   if(!pending)return;
@@ -186,7 +191,15 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
     const manifest=await offline(async installation=>{
       if(parent===installation.dataDir||parent.startsWith(installation.dataDir+sep))fail("DESTINATION_INSIDE_INSTALLATION");
       step="stage";
-      const stage=await stageInstallationStateWhileOwned(installation,scratch,options);
+      // Windows' backup helper holds at most 20 GiB (native/backup-age,
+      // byteLimit). Past that the owner's own, larger limit can't help, so the
+      // stage stops at the helper's size with its own sentence and the file
+      // that crossed it, before anything is encrypted.
+      const windowsCap=windowsStageCap(process.platform,limits.maxBytes);
+      const stage=await stageInstallationStateWhileOwned(installation,scratch,windowsCap?{...options,maxBytes:windowsCap}:options).catch(error=>{
+        if(windowsCap&&error instanceof InstallationSnapshotError&&error.code==="SNAPSHOT_LIMIT_EXCEEDED")throw new InstallationSnapshotError("BACKUP_WINDOWS_SIZE_LIMIT",error.path?{path:error.path}:undefined);
+        throw error;
+      });
       if(stage.manifest.skippedCount)bots=botNames(join(stage.directory,"state","bots.json"));
       const streams=new Set<Readable>();let writer:ZipFile|undefined;
       try{
