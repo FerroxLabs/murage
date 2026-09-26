@@ -310,7 +310,6 @@
   "connectedApps.flux.notInBuild": "Les applications connectées ne sont pas disponibles à ce lancement. Ajoutez votre propre clé Composio dans les réglages, ou réessayez après un redémarrage.",
   "connectedApps.flux.legacyPlain": "Connecté via le service de Murage.",
   "connectedApps.flux.openSettings": "Ouvrir les réglages",
-  "connectedApps.flux.freeRuns": "{count} exécutions gratuites restantes aujourd'hui.",
   "connectedApps.flux.consentButton": "Transférer mes applications connectées",
   "connectedApps.flux.consentKeep": "Les garder ici jusqu'au {date}",
   "connectedApps.flux.consentKeepNoDate": "Les garder ici pour l'instant",

@@ -35,7 +35,7 @@ export const LOCAL_MODELS_INTRO =
 
 /** Under the section: which engines these models are for, and what it costs. */
 export const LOCAL_MODELS_FOOTER =
-  "A tested model can be picked for a bot on Fuigo, pi, OpenCode, Qwen, Hermes, Droid, Kimi or Grok; Codex and Claude when their test passes. Nothing here is sent to a cloud provider, and testing a model costs nothing.";
+  "A tested model can be picked for a bot on Fuigo, pi, OpenCode, Qwen, Hermes, Droid, Kimi or Grok; Codex and Claude when their test passes. Nothing here is sent to a cloud provider, and testing a model uses only this computer.";
 
 /**
  * Spec V1: the empty state names every address Murage checked, so "nothing

@@ -2,6 +2,16 @@ import {createHash,randomUUID} from "node:crypto";
 import {constants,openSync,closeSync,readSync,writeSync,fsyncSync,lstatSync,fstatSync,readFileSync,realpathSync,mkdirSync,writeFileSync,linkSync,unlinkSync} from "node:fs";
 import path from "node:path";
 const fail=()=>{throw Error("BACKUP_REMOTE_EXPORT_UNCONFIRMED");};
+const SHARED="BACKUP_REMOTE_DOWNLOAD_FOLDER_SHARED";
+/** Whether other accounts could change `folder`, so a backup written into it
+ * could be swapped while it is written: not ours, or writable by group or
+ * others. Ubuntu makes ~/Documents group-writable (umask 002), which is why a
+ * download there failed with only "could not be confirmed" (0.1.60 Linux D8).
+ * Windows has no uid or mode bits; the folder the owner picked is theirs. */
+export function downloadFolderShared(folder,{platform=process.platform,uid=process.getuid?.(),stat=lstatSync}={}){
+ if(platform==="win32")return false;
+ try{const s=stat(folder);return !s.isDirectory()||s.isSymbolicLink()||s.uid!==uid||Boolean(s.mode&0o022);}catch{return false;}
+}
 /** Only main supplies destination/source roots. Partial copies remain unadvertised. */
 export function exportRemoteBackup(copy,parent,{sourceRoot,excludedRoots,maxBytes=1024**3,createId=randomUUID}){
  let input,output;
@@ -9,7 +19,8 @@ export function exportRemoteBackup(copy,parent,{sourceRoot,excludedRoots,maxByte
   const receipt=copy?.receipt;if(copy?.state!=="downloaded-verified"||!/^[a-f0-9]{64}$/.test(copy.snapshotId)||!Number.isSafeInteger(receipt?.bytes)||receipt.bytes<1||receipt.bytes>maxBytes||!/^[a-f0-9]{64}$/.test(receipt.sha256))fail();
   const destination=realpathSync.native(parent),parentStat=lstatSync(parent),uid=process.getuid?.();
   // Windows has no uid or mode bits; the folder the owner picked is taken as theirs.
-  if(!parentStat.isDirectory()||parentStat.isSymbolicLink()||(process.platform!=="win32"&&(parentStat.uid!==uid||(parentStat.mode&0o022))))fail();
+  if(!parentStat.isDirectory()||parentStat.isSymbolicLink())fail();
+  if(process.platform!=="win32"&&(parentStat.uid!==uid||(parentStat.mode&0o022)))throw Error(SHARED);
   for(const root of excludedRoots){const canonical=realpathSync.native(root);if(destination===canonical||destination.startsWith(canonical+path.sep))fail();}
   const source=realpathSync.native(copy.archivePath),receiptPath=realpathSync.native(copy.receiptPath),allowed=realpathSync.native(sourceRoot);
   if(!source.startsWith(allowed+path.sep)||!receiptPath.startsWith(allowed+path.sep)||path.dirname(source)!==path.dirname(receiptPath)||path.basename(source)!=="backup.age"||path.basename(receiptPath)!=="receipt.json")fail();
@@ -27,5 +38,5 @@ export function exportRemoteBackup(copy,parent,{sourceRoot,excludedRoots,maxByte
   writeFileSync(path.join(directory,"receipt.json"),text,{flag:"wx",mode:0o600,flush:true});
   linkSync(partial,archivePath);unlinkSync(partial);
   return{saved:true,archivePath,directory};
- }catch{return fail();}finally{if(input!==undefined)closeSync(input);if(output!==undefined)closeSync(output);}
+ }catch(error){if(error?.message===SHARED)throw error;return fail();}finally{if(input!==undefined)closeSync(input);if(output!==undefined)closeSync(output);}
 }

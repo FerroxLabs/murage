@@ -17,6 +17,8 @@ export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.en
   if (base.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(base.hostname) || !env.MURAGE_CONTROL_TOKEN) throw new Error("Missing browser authority");
   const url = new URL("/api/internal/unified-browser", base);
   url.searchParams.set("botId", env.MURAGE_BOT_ID!); url.searchParams.set("threadId", env.MURAGE_THREAD_ID!);
+  // Longer for "Use my Chrome", whose first call waits on the owner's Allow.
+  const callTimeout = Math.min(600_000, Math.max(60_000, Number(env.MURAGE_BROWSER_CALL_TIMEOUT_MS) || 60_000));
   const lines: string[] = [];
   const splitter = createLineSplitter(line => lines.push(line), 64 * 1024);
   const drain = async () => {
@@ -30,7 +32,7 @@ export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.en
         if (rpc.method === "initialize") result = { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "murage-browser", version: "1" } };
         else if (rpc.method === "ping") result = {};
         else {
-          const response = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${env.MURAGE_CONTROL_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ method: rpc.method, params: rpc.params }), redirect: "error", signal: AbortSignal.timeout(60_000) });
+          const response = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${env.MURAGE_CONTROL_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ method: rpc.method, params: rpc.params }), redirect: "error", signal: AbortSignal.timeout(callTimeout) });
           if (!response.ok) { failure = await refusalReason(response); throw new Error(); }
           if (!response.body) throw new Error();
           const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;

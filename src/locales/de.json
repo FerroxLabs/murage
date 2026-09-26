@@ -310,7 +310,6 @@
   "connectedApps.flux.notInBuild": "Verbundene Apps sind bei diesem Start nicht verfügbar. Fügen Sie in den Einstellungen Ihren eigenen Composio-Schlüssel hinzu oder versuchen Sie es nach einem Neustart erneut.",
   "connectedApps.flux.legacyPlain": "Verbunden über den Dienst von Murage.",
   "connectedApps.flux.openSettings": "Einstellungen öffnen",
-  "connectedApps.flux.freeRuns": "Heute noch {count} kostenlose Durchläufe übrig.",
   "connectedApps.flux.consentButton": "Meine verbundenen Apps übertragen",
   "connectedApps.flux.consentKeep": "Bis {date} hier behalten",
   "connectedApps.flux.consentKeepNoDate": "Vorerst hier behalten",

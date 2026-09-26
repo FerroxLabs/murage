@@ -221,6 +221,15 @@ describe("optional recovery-key and back-up-now bridges", () => {
     const blocked = "Murage can't restart itself on this computer, so backups that reopen Murage can't run. Reinstalling Murage usually fixes this.";
     expect(runNowError(Error("Error invoking remote method 'backup-schedule:run-now': Error: BACKUP_RELAUNCH_BLOCKED"))).toBe(blocked);
     expect(backupSummary({ ...healthy, schedule: { ...healthy.schedule!, error: "BACKUP_RELAUNCH_BLOCKED" } }).attention).toContain(blocked);
+    // 0.1.60 Linux D9: said before setup, and in AppImage terms when the
+    // AppImage file itself is gone. Never "Reinstalling" for an AppImage.
+    const off = { ...healthy.schedule!, enabled: false, lastVerified: undefined, error: null };
+    const moved = backupSummary({ ...healthy, schedule: { ...off, relaunchBlocked: "BACKUP_RELAUNCH_APPIMAGE_MISSING" } }).attention;
+    expect(moved).toContain("Murage can't reopen itself because its AppImage file was moved or deleted while Murage was open, so backups can't run. Close Murage, then open it again from the AppImage file.");
+    expect(moved.join(" ")).not.toContain("Reinstalling");
+    expect(backupSummary({ ...healthy, schedule: { ...off, relaunchBlocked: "BACKUP_RELAUNCH_BLOCKED" } }).attention).toContain(blocked);
+    // not said twice when the status error is the same refusal
+    expect(backupSummary({ ...healthy, schedule: { ...off, error: "BACKUP_RELAUNCH_BLOCKED", relaunchBlocked: "BACKUP_RELAUNCH_BLOCKED" } }).attention.filter(line => line === blocked)).toHaveLength(1);
     expect(runNowError(Error("BACKUP_REFERENCE_CHANGED"))).toContain("backup folder or recovery key has moved or changed");
     expect(runNowError(Error("BACKUP_REVIEW_REQUIRED"))).toContain("daily backups are paused");
     expect(runNowError(Error("BACKUP_UNAVAILABLE"))).toContain("aren't available in this copy");
@@ -503,6 +512,29 @@ describe("setup ends with a verified backup, not a to-do", () => {
       expect(summaryFor(shown!).last).toBe("No verified backup on this computer yet");
       expect(summaryFor(shown!).attention).toContain("Daily backups are on, but no backup has been taken yet. Use Back up now to take the first one.");
     }
+  });
+
+  // 0.1.60 Linux D6: a routine card waiting on the owner stopped the first
+  // backup with only "Finish or stop current work first".
+  it("a first backup held up by a waiting bot names it, and the page keeps saying so until it is answered", async () => {
+    const host = hostBridge();
+    const ember = { botId: "ember", name: "Log writer", threadId: "t1", messageId: "m1" };
+    const bridge = host.bridge as unknown as { runNow: () => Promise<never>; status: () => Promise<BackupScheduleStatus> };
+    bridge.runNow = async () => { throw Error("Error invoking remote method 'backup-schedule:run-now': Error: BACKUP_WAITING_ON_YOU"); };
+    bridge.status = async () => ({ ...host.latest(), heldBy: { occasion: "manual", since: 1, bots: [ember] } });
+    const { outcome, shown } = await drive(host);
+    expect(outcome).toEqual({ state: "first-backup-failed",
+      message: "Daily backups are on, but nothing has been backed up yet. The backup can't start because Log writer is waiting for your answer. Answer it, or end that run, then back up again." });
+    expect(shown!.enabled).toBe(true);
+    // A due daily backup that waits says so, and says so again when it is skipped.
+    const daily = { ...shown!, heldBy: { occasion: "daily" as const, since: 1, bots: [ember] }, error: "BACKUP_WAITING_ON_YOU" };
+    expect(summaryFor(daily).attention).toContain("Today's backup is waiting because Log writer is waiting for your answer. Answer it, or end that run, and the backup starts by itself.");
+    expect(summaryFor(daily).attention.join(" ")).not.toContain("Murage was busy");
+    const skipped = summaryFor({ ...daily, phase: "skipped" }).attention;
+    expect(skipped).toContain("The last daily backup was skipped because Log writer was waiting for your answer. Answer it, or end that run, so the next backup can run.");
+    expect(skipped.join(" ")).not.toContain("Murage was busy");
+    // Without a name (an older desktop app), still never "Murage was busy".
+    expect(runNowError(Error("BACKUP_WAITING_ON_YOU"))).toBe("A bot is waiting for your answer. Answer it, or end that run, then back up again.");
   });
 
   it("an older desktop app with no Back up now is told to take one, not left thinking it is done", async () => {

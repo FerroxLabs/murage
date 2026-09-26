@@ -309,7 +309,7 @@ export function LocalComputerSection() {
         <div className="flex flex-col gap-4">
           <Step n={1} title="Install a container runtime" done={Boolean(status?.runtime)}>
             <div className="text-[13px] leading-relaxed text-ink-secondary">
-              Podman and Colima are free. Docker Desktop may require a paid licence for larger companies and government use.
+              Podman and Colima work as well. If you use Docker Desktop at a larger company or in government, check its licence terms.
             </div>
             {c?.install ? (
               <CommandLine command={c.install} />

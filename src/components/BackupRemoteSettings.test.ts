@@ -15,6 +15,10 @@ it("projects only safe status and rejects malformed binding states",()=>{
 it("unknown errors never echo provider text or recommend automatic retry",()=>{
  expect(remoteBackupError(Error("PRIVATE_CANARY https://secret.example"))).not.toMatch(/PRIVATE_CANARY|secret.example/);
  expect(remoteBackupError(Error("BACKUP_REMOTE_CHANGED"))).toContain("destination changed");
+ // 0.1.60 Linux D8: never the bare "could not be confirmed" for a shared folder
+ const shared=remoteBackupError(Error("Error invoking remote method 'backup-remote:downloadBackup': Error: BACKUP_REMOTE_DOWNLOAD_FOLDER_SHARED"));
+ expect(shared).toBe("Other accounts on this computer can change the folder you chose, so Murage didn't save the backup there. Download again and choose your home folder, or a folder only you can change.");
+ expect(shared).not.toContain("could not be confirmed");
  expect(remoteBackupError(Error("BACKUP_REMOTE_JOB_CHANGED"))).toContain("local backup changed");
 });
 it("recovery catalogue is bounded, unverified and strips private metadata",()=>{

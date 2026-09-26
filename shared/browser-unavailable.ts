@@ -13,6 +13,11 @@ export const USER_CHROME_UNREACHABLE_REASON = "your Chrome is not reachable";
 /** The reason a turn records when it went on without the browser because
  * another conversation of the same bot holds it while waiting for the
  * person's answer (D4, server/independent-thread-runs.ts ResourceYield). */
+/** The reason a "Use my Chrome" turn records while Chrome is asking the owner
+ * to Allow the connection (0.1.60 Linux D12). The turn is waiting, not
+ * failing: the call goes on once they click Allow. */
+export const USER_CHROME_ALLOW_REASON = "your Chrome is asking you to allow the connection";
+
 export const BROWSER_HELD_FOR_ANSWER_REASON = "another conversation is using the browser while it waits for your answer";
 
 /** The activity tool name for a turn that ran without its browser. */
@@ -30,9 +35,10 @@ export function browserUnavailableReason(name: string | undefined | null): strin
 
 /** Which plain-words sentence a reason gets: the owner's Chrome was not
  * reachable, the engine did not start in time, or it did not start at all. */
-export type BrowserUnavailableKind = "user-chrome" | "held" | "timed-out" | "failed";
+export type BrowserUnavailableKind = "user-chrome" | "user-chrome-allow" | "held" | "timed-out" | "failed";
 export function browserUnavailableKind(reason: string): BrowserUnavailableKind {
   if (reason === USER_CHROME_UNREACHABLE_REASON) return "user-chrome";
+  if (reason === USER_CHROME_ALLOW_REASON) return "user-chrome-allow";
   if (reason === BROWSER_HELD_FOR_ANSWER_REASON) return "held";
   return /timed out|timeout/i.test(reason) ? "timed-out" : "failed";
 }
@@ -41,6 +47,7 @@ export function browserUnavailableKind(reason: string): BrowserUnavailableKind {
  * (browserUnavailable.userChrome / .timedOut / .failed). */
 export const BROWSER_UNAVAILABLE_SUMMARY: Record<BrowserUnavailableKind, string> = {
   "user-chrome": "Your Chrome isn't reachable, so this turn ran without a browser. Open Chrome and turn on remote debugging at chrome://inspect/#remote-debugging.",
+  "user-chrome-allow": "Chrome is asking you to allow this bot to use it. Click Allow on \"Allow remote debugging?\" in Chrome, and the bot carries on.",
   held: "Another conversation with this bot is using the browser while it waits for your answer, so this turn ran without it. Answering that request lets the next turn use it.",
   "timed-out": "The browser didn't start in time, so this turn ran without it. It'll try again next turn.",
   failed: "The browser couldn't start, so this turn ran without it. It'll try again next turn.",

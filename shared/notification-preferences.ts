@@ -15,7 +15,7 @@ export function resolveNotificationPreferences(value?: unknown): NotificationPre
   return notificationPreferencesSchema.parse(value === undefined ? {} : value);
 }
 export interface PreferenceNotification {
-  kind: "approval" | "question" | "takeover" | "done" | "routine-failed" | "turn-failed";
+  kind: "approval" | "question" | "takeover" | "done" | "routine-failed" | "turn-failed" | "backup-waiting";
   botId: string;
   threadId: string;
   title: string;

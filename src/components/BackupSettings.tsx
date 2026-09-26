@@ -5,6 +5,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { OffsiteCleanup, OffsiteDetails, OffsiteRecover, OffsiteRefresh, OffsiteStatus, useBackupRemote, type RemoteController } from "./BackupRemoteSettings";
 import { enabledSchedule, scheduleCardNotice, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
+import { api, useStore } from "@/state/store";
+import { openInboxLink } from "@/lib/open-inbox-link";
+import { backupWaitingSentence, type BackupWaitingBot } from "../../shared/backup-waiting";
 import { backupSummary, closedJobBlockedReason, closedJobCanSetUp, closedJobNotice, completeBackupSetup, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupModeBridge, type BackupScheduleBridge, type BackupSummary } from "./backups-section-ui";
 
 const card = "min-w-0 space-y-3 rounded-xl border border-hairline/40 bg-card p-4";
@@ -94,7 +97,7 @@ export function useBackupSchedule() {
   };
   const unavailable=!bridge||!status?.supported;
   const locked=unavailable||busy||stale||Boolean(status?.pending);
-  const editingLocked=locked||Boolean(status?.enabled)||Boolean(status&&scheduleNeedsReview(status.phase))||Boolean(status?.schedule.preUpgrade&&status.preUpgradeSupported!==true);
+  const editingLocked=locked||Boolean(status?.relaunchBlocked)||Boolean(status?.enabled)||Boolean(status&&scheduleNeedsReview(status.phase))||Boolean(status?.schedule.preUpgrade&&status.preUpgradeSupported!==true);
   const closedRegistered=Boolean(closedBridge&&closed?.supported&&closed.state==="installed"&&!closedStale);
   const choices=status&&(!draft.closedApp||closedRegistered)?enabledSchedule(draft,status,consent):null;
   const lastClosed=closedResultLabel(status?.lastClosedResult??closed?.lastClosedResult);
@@ -173,7 +176,9 @@ export function useBackupSchedule() {
     setConfirmRun(false);if(!status||!bridge?.runNow)return;
     const next=await bridge.runNow(status.revision);apply(next,expected);
     if(mounted.current&&expected===version.current)setNotice("Backup requested. Murage will close and reopen this window to take it.");
-  },runNowError);
+  // Waiting on a person: the status (refreshed by run) names who, with the
+  // ways out, just above; saying it here again would be the same line twice.
+  },cause=>String(cause instanceof Error?cause.message:cause).includes("BACKUP_WAITING_ON_YOU")?"":runNowError(cause));
   const canClearReview=Boolean(bridge?.clearReview&&status?.phase==="needs-review"&&!status.pending);
   const clearReview=()=>void run("summary",async expected=>{
     if(!status||!bridge?.clearReview)return;
@@ -393,6 +398,7 @@ export function BackupStatusCard({summary,s,r,onRestore}:{summary:BackupSummary;
       <p className="font-medium">Needs attention</p>
       <ul className="list-disc pl-5">{summary.attention.map(item=><li key={item}>{item}</li>)}</ul>
     </div>}
+    <BackupWaitingActions status={s.status} onChanged={()=>s.refreshNow("summary")}/>
     {s.canClearReview&&<p className="text-[13px] text-ink">The last backup stopped before Murage could confirm it, so backups are paused. Your workspace was not changed. Clear this to back up again. If it happens again, check that the backup folder and recovery key are still available.</p>}
     {s.confirmRun&&<p className="text-[13px] text-ink">Murage will close and reopen this window to take the backup.</p>}
     <div className="flex flex-wrap gap-2">
@@ -406,6 +412,46 @@ export function BackupStatusCard({summary,s,r,onRestore}:{summary:BackupSummary;
     {s.bridge?.runNow&&!s.status?.refs&&<p className="text-[12px] text-ink-secondary">Back up now is available once a backup folder and recovery key are chosen.</p>}
     <ScheduleMessages s={s} area="summary"/>
   </section>;
+}
+
+/** A backup held up by a bot waiting for the person's answer: who, and the
+ * two ways out, answering it in its conversation or ending that run. A daily
+ * backup that waits starts by itself once nobody is waiting (0.1.60 Linux D6). */
+export function BackupWaitingActions({status,onChanged}:{status:BackupScheduleStatus|null;onChanged:()=>void}) {
+  const held=status?.heldBy;
+  if(!held?.bots.length||(held.occasion==="daily"&&!status?.enabled))return null;
+  return <WaitingActions held={held} onChanged={onChanged}/>;
+}
+function WaitingActions({held,onChanged}:{held:NonNullable<BackupScheduleStatus["heldBy"]>;onChanged:()=>void}) {
+  const {state,dispatch}=useStore();
+  const [error,setError]=useState<string|null>(null),[confirmEnd,setConfirmEnd]=useState<string|null>(null),[working,setWorking]=useState(false);
+  const bots=held.bots.filter((bot,index)=>held.bots.findIndex(other=>other.threadId===bot.threadId)===index);
+  const open=async(bot:BackupWaitingBot)=>{
+    setError(null);
+    try{await openInboxLink({threadId:bot.threadId,messageId:bot.messageId??""},state,dispatch);dispatch({type:"toggleAppSettings",open:false});}
+    catch{setError(`${bot.name}'s conversation couldn't be opened. Open it from the sidebar.`);}
+  };
+  const end=async(bot:BackupWaitingBot)=>{
+    setWorking(true);setError(null);
+    try{await api(`/api/bots/${encodeURIComponent(bot.botId)}/interrupt`,{method:"POST",body:JSON.stringify({threadId:bot.threadId})});setConfirmEnd(null);onChanged();}
+    catch{setError(`${bot.name}'s run couldn't be ended here. Open the conversation and choose Cancel turn on the card.`);}
+    finally{setWorking(false);}
+  };
+  return <div className="min-w-0 space-y-2 rounded-lg border border-warning/30 bg-warning/[0.06] p-3 text-[13px]">
+    {held.occasion==="manual"&&<p role="status" className="text-ink">{backupWaitingSentence(held.bots,"manual")}</p>}
+    <ul className="space-y-2" aria-label="Waiting for your answer">
+      {bots.map(bot=><li key={bot.threadId} className="flex flex-wrap items-center gap-2">
+        <span className="mr-auto min-w-0 break-words text-ink">{bot.name} is waiting for your answer.</span>
+        {confirmEnd===bot.threadId
+          ?<><span className="text-ink-secondary">End {bot.name}'s run? It stops what it was doing.</span>
+            <button type="button" className={scheduleButton} disabled={working} onClick={()=>setConfirmEnd(null)}>Keep it</button>
+            <button type="button" className={scheduleButton} disabled={working} onClick={()=>void end(bot)}>End the run</button></>
+          :<><button type="button" className={primaryButton} disabled={working} onClick={()=>void open(bot)}>Answer {bot.name}</button>
+            <button type="button" className={scheduleButton} disabled={working} onClick={()=>setConfirmEnd(bot.threadId)}>End that run</button></>}
+      </li>)}
+    </ul>
+    {error&&<p role="alert" className="text-danger">{error}</p>}
+  </div>;
 }
 
 function Disclosure({id,title,open,onToggle,above,children}:{id:string;title:string;open:boolean;onToggle:()=>void;above?:ReactNode;children:ReactNode}) {

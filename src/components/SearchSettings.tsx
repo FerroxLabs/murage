@@ -57,8 +57,8 @@ export function SearchSettings() {
     <select id="web-search-provider" value={search?.provider ?? "engine"} disabled={!search || Boolean(busy)}
       onChange={event => void choose(event.target.value as SearchProvider)}
       className={"mt-1 min-h-11 w-full rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50 " + focus}>
-      <option value="engine">Engine search first, free backup if needed</option>
-      <option value="auto">Free search: Parallel, then DuckDuckGo</option>
+      <option value="engine">Engine search first, then Parallel and DuckDuckGo if needed</option>
+      <option value="auto">No key needed: Parallel, then DuckDuckGo</option>
       <option value="flux">{t("searchSettings.fluxOption")}</option>
       <option value="tavily">Tavily</option>
       <option value="exa">Exa</option>
@@ -68,11 +68,11 @@ export function SearchSettings() {
     <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{search?.provider === "off"
       ? t("searchSettings.offHelp")
       : search?.provider === "auto"
-        ? "No API key required. Queries go to Parallel and, if it fails, DuckDuckGo. Free-service availability may change."
+        ? "No API key required. Queries go to Parallel and, if it fails, DuckDuckGo. Either service may change what it offers."
       : search?.provider === "flux"
         ? t(search.fluxConfigured ? "searchSettings.fluxHelp" : "searchSettings.fluxNoKey")
       : search?.provider === "engine"
-        ? "Use the engine's own search first. If unavailable, failed or limited, the bot can use Murage's backup: Parallel, then DuckDuckGo. Backup queries are sent to those services; paid keys are never used automatically."
+        ? "Use the engine's own search first. If unavailable, failed or limited, the bot can use Murage's backup: Parallel, then DuckDuckGo. Backup queries are sent to those services; your own search keys are never used automatically."
         : t("searchSettings.externalHelp")}</p>
     <div className="mt-4 space-y-4">
       {(["tavily", "exa", "firecrawl"] as const).map(provider => {

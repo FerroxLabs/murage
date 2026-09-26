@@ -132,6 +132,13 @@ type SkillRecordingPayload = {
     schedule:import("../../shared/backup-schedule").BackupSchedule;
     lastVerified?:import("../../shared/backup-schedule").BackupReceipt;
     closedAppSupported?:boolean;
+    /** Why Murage can't reopen itself here (a BACKUP_RELAUNCH_* code). Every
+     * backup reopens Murage, so setup is refused while this is set. */
+    relaunchBlocked?:string;
+    /** The last backup that couldn't start because these bots were waiting
+     * for the person's answer: a due daily one (retried every minute) or a
+     * Back up now. See shared/backup-waiting.ts. */
+    heldBy?:{occasion:"daily"|"manual";since:number;bots:import("../../shared/backup-waiting").BackupWaitingBot[]};
     lastClosedResult?:import("../../shared/backup-schedule").BackupClosedResult;
     refs?:{installationRef:string;destinationRef:string;recoveryRef:string;destinationLabel:string;recoveryLabel:string};
     error?:string|null;

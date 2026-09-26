@@ -10,11 +10,13 @@
 // HEADLESS ONLY. Nothing opens a window, captures a screen, or touches the
 // owner's ~/.murage; the fixture's port is pinned clear of the live app's 8799.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { browserSessionId } from "./browser-engine.ts";
-import { BROWSER_UNAVAILABLE_PREFIX, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
+import { BROWSER_UNAVAILABLE_PREFIX, USER_CHROME_ALLOW_REASON, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
+import { USER_CHROME_SETUP_MESSAGE } from "./user-chrome.ts";
 
 const instrumentation = `
 const fs = await import('node:fs');
@@ -45,6 +47,11 @@ registerHooks({ load(url, context, nextLoad) {
       return {
         request: async (method, call) => {
           record('request', session, { method });
+          // The owner's Chrome refusing, or waiting on its Allow (native-mode.json).
+          let mode = {};
+          try { mode = JSON.parse(require('node:fs').readFileSync(\${JSON.stringify(path.join(dataDir, 'native-mode.json'))}, 'utf8')); } catch {}
+          if (method === 'tools/call' && mode.delayMs) await new Promise(r => setTimeout(r, mode.delayMs));
+          if (method === 'tools/call' && mode.fail) throw new Error('Browser command failed or exceeded its bound');
           return method === 'tools/list'
             ? { tools: [{ name: 'agent_browser_snapshot', inputSchema: { type: 'object', properties: {} } }] }
             : { content: [{ type: 'text', text: 'fixture page' }] };
@@ -52,7 +59,12 @@ registerHooks({ load(url, context, nextLoad) {
         protected: async () => false,
         resetStream() {}, input() {},
         command: async () => '',
-        connect: async () => 'fixture-stream-' + session,
+        connect: async () => {
+          let mode = {};
+          try { mode = JSON.parse(require('node:fs').readFileSync(\${JSON.stringify(path.join(dataDir, 'native-mode.json'))}, 'utf8')); } catch {}
+          if (mode.fail) throw new Error('Browser stream unavailable');
+          return 'fixture-stream-' + session;
+        },
         close: async () => { record('close', session); },
       };
     }
@@ -286,6 +298,60 @@ it("runs a turn without the browser when the owner's Chrome is unreachable, and 
     expect(await notes()).toHaveLength(2);
   } finally { await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false }); }
 }, 60_000);
+
+// 0.1.60 Linux D11/D12: with remote debugging turned off the bot only said
+// "browser unavailable or control changed", and a slow Allow failed the same way.
+const nativeMode = (mode: Record<string, unknown>) => writeFileSync(join(fixture.info.dataDir, "native-mode.json"), JSON.stringify(mode));
+const browserCall = (token: string) => fetch(`${fixture.info.url}/api/internal/unified-browser`, {
+  method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+  body: JSON.stringify({ method: "tools/call", params: { name: "agent_browser_snapshot", arguments: {} } }),
+});
+it("tells the bot and the panel how to turn remote debugging back on, or to click Allow, instead of a vague failure", async () => {
+  enableRemoteDebugging(39223);
+  const bot = await makeBot("Chrome turned off", "verification", { useMyChrome: true });
+  const listener = createServer(); await new Promise<void>(resolve => listener.listen(0, "127.0.0.1", resolve));
+  try {
+    const mounted = mountedBrowser(await startTurn(bot, "chrome turned off", false));
+    expect(mounted).toBeTruthy();
+    nativeMode({ fail: true });
+    // remote debugging off: DevToolsActivePort left behind, nothing listening
+    const off = await browserCall(mounted.env.MURAGE_CONTROL_TOKEN);
+    expect(off.status).toBe(409);
+    const offBody = await off.json() as { code: string; error: string };
+    expect(offBody.code).toBe("browser_user_chrome_off");
+    expect(offBody.error).toContain(USER_CHROME_SETUP_MESSAGE);
+    expect(offBody.error).toContain("chrome://inspect/#remote-debugging");
+    const panel = await api("GET", `/api/bots/${bot.id}/browser`);
+    expect(panel).toMatchObject({ status: 409, body: { error: USER_CHROME_SETUP_MESSAGE } });
+    // Chrome listening but refusing or still waiting on Allow
+    enableRemoteDebugging((listener.address() as { port: number }).port);
+    const allow = await browserCall(mounted.env.MURAGE_CONTROL_TOKEN);
+    expect(allow.status).toBe(409);
+    const allowBody = await allow.json() as { code: string; error: string };
+    expect(allowBody.code).toBe("browser_user_chrome_allow");
+    expect(allowBody.error).toContain("click Allow");
+    for (const text of [offBody.error, allowBody.error]) expect(text).not.toMatch(/control changed|unavailable/i);
+  } finally { nativeMode({}); listener.close(); await stop(bot); await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false }); disableRemoteDebugging(); }
+}, 90_000);
+
+it("waits for a slow Allow, and says in the chat that Chrome is asking, once", async () => {
+  enableRemoteDebugging(39224);
+  const bot = await makeBot("Slow allow", "verification", { useMyChrome: true });
+  const allowNotes = async () => ((await api("GET", `/api/threads/${bot.threadId}/messages?limit=200`)).body.messages as any[])
+    .filter((m) => m.kind === "activity" && m.tool?.name === `${BROWSER_UNAVAILABLE_PREFIX} ${USER_CHROME_ALLOW_REASON}`);
+  try {
+    const mounted = mountedBrowser(await startTurn(bot, "slow allow", false));
+    // the proxy is given a longer bound for the owner's Chrome
+    expect(Number(mounted.env.MURAGE_BROWSER_CALL_TIMEOUT_MS)).toBeGreaterThanOrEqual(240_000);
+    nativeMode({ delayMs: 4_000 });
+    const slow = await browserCall(mounted.env.MURAGE_CONTROL_TOKEN);
+    expect(slow.status).toBe(200);
+    expect(await allowNotes()).toHaveLength(1);
+    // connected now: the next slow call is just slow, no second note
+    await browserCall(mounted.env.MURAGE_CONTROL_TOKEN);
+    expect(await allowNotes()).toHaveLength(1);
+  } finally { nativeMode({}); await stop(bot); await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false }); disableRemoteDebugging(); }
+}, 90_000);
 
 it("refuses a non-boolean opt-in", async () => {
   const bot = await makeBot("Bad opt-in", "verification");

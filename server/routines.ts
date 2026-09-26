@@ -1,4 +1,5 @@
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
+import { ROUTINE_INSTRUCTIONS_MAX, routineInstructionsTooLongMessage } from "../shared/routine-instructions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -597,7 +598,9 @@ function latestIntervalOccurrence(
 
 function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | "updatedAt" | "nextRunAt"> {
   const name = String(input.name ?? "").trim().slice(0, 80);
-  const prompt = String(input.prompt ?? "").trim().slice(0, 20_000);
+  // Never shortened: a cut brief loses its task, usually in its last lines.
+  const prompt = String(input.prompt ?? "").trim();
+  if (prompt.length > ROUTINE_INSTRUCTIONS_MAX) throw new Error(routineInstructionsTooLongMessage(prompt.length));
   const botId = String(input.botId ?? "").trim();
   if (!name) throw new Error("Give the routine a name");
   if (!prompt) throw new Error("Tell the bot what to do");
@@ -1114,7 +1117,7 @@ export class RoutineManager {
     const routine = this.routines.find(item => item.id === id);
     if (!routine) return null;
     if (routineInstructionRevision(routine) !== proposal.expectedRevision || routine.updatedAt !== proposal.expectedUpdatedAt) throw new Error("ROUTINE_INSTRUCTION_CONFLICT");
-    const prompt = z.string().trim().min(1).max(20_000).parse(proposal.prompt);
+    const prompt = z.string().trim().min(1).max(ROUTINE_INSTRUCTIONS_MAX).parse(proposal.prompt);
     if (!proposal.evaluationReceiptId || !proposal.evidence.length || !proposal.evidence.every(item => ["source", "record"].includes(item.kind) && typeof item.id === "string" && item.id.length > 0 && typeof item.scopeId === "string" && item.scopeId.length > 0 && Number.isSafeInteger(item.revision) && item.revision > 0)) throw new Error("ROUTINE_EVALUATION_REQUIRED");
     if (!this.options.validateInstructionPromotion?.(cloneRoutine(routine), structuredClone({ ...proposal, prompt }))) throw new Error("ROUTINE_EVALUATION_REQUIRED");
     if (routineInstructionRevision(routine) !== proposal.expectedRevision || routine.updatedAt !== proposal.expectedUpdatedAt) throw new Error("ROUTINE_INSTRUCTION_CONFLICT");
@@ -1139,7 +1142,7 @@ export class RoutineManager {
     const history = retainRoutineInstructions(routine), target = history.find(item => item.id === targetRevision);
     if (!target) throw new Error("ROUTINE_INSTRUCTION_UNAVAILABLE");
     if (target.evidence?.length && !this.options.validateInstructionEvidence?.(cloneRoutine(routine), structuredClone(target.evidence))) throw new Error("ROUTINE_INSTRUCTION_EVIDENCE_REVOKED");
-    const prompt = z.string().trim().min(1).max(20_000).parse(target.prompt);
+    const prompt = z.string().trim().min(1).max(ROUTINE_INSTRUCTIONS_MAX).parse(target.prompt);
     const at = this.now(), revision = randomUUID();
     history.push({ id: revision, parentId: expectedRevision, prompt, author: "rollback", createdAt: at, rollbackOf: target.id,
       ...(target.evidence ? { evidence: structuredClone(target.evidence), evaluationReceiptId: target.evaluationReceiptId } : {}) });
