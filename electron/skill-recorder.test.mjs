@@ -245,7 +245,7 @@ describe("skill recorder compiler", () => {
 
     const skill = readFileSync(path.join(result.path, "SKILL.md"), "utf8");
     const recording = JSON.parse(readFileSync(path.join(result.path, "references", "recording.json"), "utf8"));
-    expect(skill).toContain('Click "Order payoff" (button) in Chrome — Servicer Portal.');
+    expect(skill).toContain('Click "Order payoff" (button) in Chrome: Servicer Portal.');
     expect(recording.events[0].role).toBe("button");
     expect(recording.events[0].name).toBe("Order payoff");
     expect(recording.events[0].identifier).toBe("order-payoff-btn");
@@ -323,7 +323,7 @@ describe("skill recorder compiler", () => {
     const recording = JSON.parse(recordingRaw);
     expect(recording.events[0].op).toBe("copy");
     expect(recordingRaw).not.toContain("SUPER-SECRET-VALUE");
-    expect(skill).toContain("Copy the selected value in Chrome — Vault.");
+    expect(skill).toContain("Copy the selected value in Chrome: Vault.");
     expect(skill).toContain("the clipboard action, not its contents");
     expect(skill).not.toContain("SUPER-SECRET-VALUE");
   });

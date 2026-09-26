@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { packagedGepaManifestEnvironment } from "./harness-resources.mjs";
 
-it("the real main-process launch blocks share one fresh private token without mutating ambient env", () => {
+it("the real main-process launch blocks share one fresh private token without mutating ambient env", async () => {
   const source = readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
   const declaration = source.match(/^const companionToken = .*;$/m)?.[0];
   expect(declaration).toBeTruthy();
@@ -16,7 +16,11 @@ it("the real main-process launch blocks share one fresh private token without mu
   expect(Math.min(optionsStart,optionsEnd,serverStart,serverEnd)).toBeGreaterThan(0);
   // Execute the actual environment/option construction, replacing Electron
   // and credential storage. No GUI, utility process, or network is started.
-  const launch = new Function("randomBytes","process","path","app","packagedGepaManifestEnvironment",`
+  // startServerOn awaits the port check (electron/port-availability.mjs), so
+  // the extracted body runs in an async function with the port reported free.
+  const AsyncFunction = (async () => {}).constructor;
+  const launch = new AsyncFunction("randomBytes","process","path","app","packagedGepaManifestEnvironment",`
+    const portAvailable=async()=>true;
     const SERVER_PORT=8799;
     const remoteAccessLaunch=()=>null, slog=()=>{};
     const secureCredentials={}, credentialStoreUnavailable=false;
@@ -33,15 +37,15 @@ it("the real main-process launch blocks share one fresh private token without mu
     ${declaration}
     ${providerDeclaration}
     ${source.slice(optionsStart,optionsEnd)}
-    const env=((port)=>{${source.slice(source.indexOf("{",serverStart)+1,serverEnd)}return childEnv;})(8799);
+    const env=await (async (port)=>{${source.slice(source.indexOf("{",serverStart)+1,serverEnd)}return childEnv;})(8799);
     return {env,options:companionLaunchOptions()};
   `);
   const ambient = {MURAGE_COMPANION_TOKEN:"untrusted-ambient-value"};
   const process = {env:ambient,resourcesPath:"/fixture/resources"};
   // The real GEPA manifest pin helper: an unpackaged launch publishes an empty pin.
   const invoke = () => launch(randomBytes,process,{join:(...parts)=>parts.join("/")},{isPackaged:false,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/app"},packagedGepaManifestEnvironment);
-  const first = invoke();
-  const second = invoke();
+  const first = await invoke();
+  const second = await invoke();
   expect(first.env.MURAGE_COMPANION_TOKEN).toMatch(/^[a-f0-9]{64}$/);
   expect(first.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN).toMatch(/^[a-f0-9]{64}$/);
   expect(second.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN).not.toBe(first.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN);
