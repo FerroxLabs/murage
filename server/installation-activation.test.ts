@@ -112,3 +112,21 @@ it("refuses to review a root that contains the working directory reached through
     expect(readFileSync(join(working, "keep.txt"), "utf8")).toBe("untouched");
   } finally { cwd.mockRestore(); }
 });
+// The first "Review restored installation" after a real restore failed with
+// SOURCE_CHANGED and only a second click worked (packaged 0.1.60, 2026-09-26).
+// The restored messages.db is in WAL mode, and the review's own read-only
+// open of it creates messages.db-wal and messages.db-shm between the two
+// fingerprints it compares. Restored through the real archive and restore.
+it("the first review of a restored WAL-mode database succeeds", async () => {
+  const { backupFixture } = await import("./testing/backup-fixture.ts");
+  const f = backupFixture(); roots.push(f.parent);
+  f.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); f.db.close();
+  const target = join(f.parent, "target"); mkdirSync(target);
+  const archive = join(f.parent, "backup.zip"), saved = await writeInstallationArchive(f.data, archive);
+  await restoreInstallation(target, archive, saved.sha256);
+  expect(readFileSync(join(target, "messages.db")).subarray(18, 20)).toEqual(Buffer.from([2, 2]));
+  const review = reviewInstallation(target);
+  expect(review.status).toBe("ready-for-review");
+  // Approval binds to the reviewed state; the review's own sidecars are part of it.
+  expect(activateInstallation(target, review.reviewHash).status).toBe("reviewed-engines-disabled");
+});

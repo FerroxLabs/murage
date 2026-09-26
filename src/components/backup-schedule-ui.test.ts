@@ -28,7 +28,7 @@ it("locks active, review, unknown, enabled and unsupported routes",()=>{
 it("never reflects raw host exceptions or turns unknown phases into success",()=>{
   expect(scheduleError(Error("PRIVATE_KEY_CANARY"))).not.toContain("PRIVATE_KEY_CANARY");
   expect(scheduleError(Error("IPC BACKUP_SCHEDULE_CHANGED PRIVATE_PATH"))).toContain("Settings changed");
-  expect(scheduleError("BACKUP_IDENTITY_HEADER_REQUIRED")).toContain("independently saved age");
+  expect(scheduleError("BACKUP_IDENTITY_HEADER_REQUIRED")).toContain("choose the backup folder and your recovery key again");
   expect(schedulePhase("needs-review")).toContain("paused");expect(schedulePhase("unknown")).toContain("review");
 });
 it("pre-upgrade opt-in needs actual capability and retains saved selections without silent changes",()=>{

@@ -1,47 +1,27 @@
 const byId = id => document.getElementById(id);
 const buttons = [...document.querySelectorAll("button[data-action]")];
 let current = null, pending = false;
-const errors = {
-  RECOVERY_OWNERSHIP_REQUIRED: "Another process may still own this installation. Close it, then retry startup.",
-  RECOVERY_SELECTION_EXPIRED: "Choose and inspect the backup again before restoring.",
-  ARCHIVE_HASH_CHANGED: "The backup changed after inspection. Choose it again.",
-  INVALID_INSTALLATION_RECORDS: "A saved record needs repair. The original files have been preserved.",
-  DESTINATION_EXISTS: "Choose a new filename. Existing backups are never overwritten.",
-  RESTORE_REVIEW_REQUIRED: "The restored installation is paused for recovery review.",
-  NO_RESTORE_TO_ROLL_BACK: "No retained restore transaction was found for this installation.",
-  RECOVERY_BUSY: "A recovery operation is already in progress.",
-  BACKUP_UNAVAILABLE: "The verified encrypted-backup tool is unavailable in this app build.",
-  BACKUP_IDENTITY_HEADER_REQUIRED: "Choose the original age-keygen recovery file with its public-key header to create a backup.",
-  BACKUP_IDENTITY_MUST_BE_INDEPENDENT: "Keep and select the recovery key outside the installation being backed up.",
-  BACKUP_IDENTITY_INVALID: "Choose a valid native age recovery key file.",
-  AGE_PROCESS_FAILED: "The encrypted operation could not be verified. Check the selected recovery key and backup; original data was preserved.",
-  AGE_PROCESS_CLOSE_UNCONFIRMED: "The backup tool has not confirmed it stopped. Preserve the retained private files and check diagnostics before another attempt.",
-  RECOVERY_CAPTURE_CANCELLED: "Recovery was cancelled. The original installation and startup selection remain unchanged.",
-  RECOVERY_CAPTURE_UNAVAILABLE: "Windows recovery capture is unavailable in this installation. Keep the original and use an existing backup or contact support.",
-  RECOVERY_CAPTURE_FAILED: "The local recovery copy could not be completed safely. Keep the original and any retained recovery files, then check diagnostics.",
-  RECOVERY_CAPTURE_TIMEOUT: "Windows recovery did not finish in time. The startup selection was not changed. Keep retained files and check diagnostics.",
-  INSTALLATION_SELECTION_INVALID: "The saved installation or new destination could not be verified. Retained files were not deleted. Keep them and check diagnostics.",
-  REVIEW_STATE_CHANGED: "The installation changed after review. Review it again before opening.",
-  RESTORE_WORK_NOT_PAUSED: "Some work is still enabled. Keep the installation stopped and inspect recovery diagnostics.",
-};
+const recoveryMessage = code => globalThis.murageRecoveryMessages.sentence(code);
 function render(state) {
   current = state;
   document.documentElement.dataset.skin = state.context?.skin === "light" ? "light" : "dark";
-  byId("page-heading").textContent=state.context?.backupMode?"Backup mode":"Recover this installation";
+  byId("page-heading").textContent=state.context?.backupMode?"Backup mode":"Restore or recover Murage";
   byId("encrypted-backup").hidden=!state.encryptedAvailable;
-  byId("reason").textContent = state.context?.reason || "Startup needs attention. Your installation data remains preserved.";
-  byId("location").textContent = state.context?.dataDirectory || "Installation ownership is unavailable.";
+  byId("reason").textContent = state.context?.reason || "Murage needs your attention before it can start. Your data is kept as it is.";
+  byId("location").textContent = state.context?.dataDirectory || "Murage can't see its data folder right now.";
   const ownership = state.context?.ownership;
   byId("ownership").hidden = !ownership;
   if (ownership) {
-    const kinds = { primary: "App ownership", child: "Background server ownership", reaper: "Recovery ownership" };
-    byId("ownership-summary").textContent = (kinds[ownership.claimKind] || "Ownership inspection") +
-      ". Recorded computer: " + (ownership.recordedHost || "unavailable") +
-      ". Current computer: " + (ownership.currentHost || "unavailable") +
-      ". Status: " + (ownership.code || "No blocker observed; startup must still verify ownership") + ".";
+    const kinds = { primary: "The app", child: "The background server", reaper: "Recovery" };
+    byId("ownership-summary").textContent = (kinds[ownership.claimKind] || "Murage") +
+      " last used this folder on a computer named " + (ownership.recordedHost || "(unknown)") +
+      ". This computer is named " + (ownership.currentHost || "(unknown)") + ".";
   }
-  const error = state.error ? (errors[state.error] || "The operation could not complete. Keep retained files and check diagnostics.") + " (" + state.error + ")" : "";
+  // Only the sentence is shown; the code stays in diagnostics and in a
+  // data attribute for support tools.
+  const error = state.error ? recoveryMessage(state.error) : "";
   byId("error").textContent = error;
+  if (state.error) byId("error").dataset.code = state.error; else delete byId("error").dataset.code;
   byId("error").hidden = !error;
   byId("preview").hidden = !state.selection;
   byId("separate-recovery").hidden = !state.separateAvailable;
@@ -49,15 +29,15 @@ function render(state) {
   byId("retained-destination").hidden = !state.retainedDataDirectory;
   byId("retained-destination").textContent = state.retainedDataDirectory ? "Separate recovery files retained at: " + state.retainedDataDirectory : "";
   byId("separate-destination").hidden = !state.selection?.separate;
-  byId("separate-destination").textContent = state.selection?.separate ? "New installation: " + state.selection.destination + ". The original remains unchanged. Murage will restart here for paused review." : "";
+  byId("separate-destination").textContent = state.selection?.separate ? "The restored copy goes into a new folder: " + state.selection.destination + ". Your current data stays as it is. Murage restarts there so you can review it." : "";
   byId("restore").hidden = !!state.selection?.separate||!!state.selection?.encrypted;
   byId("restore-separate").hidden = !state.selection?.separate||!!state.selection?.encrypted;
   byId("restore-encrypted-new").hidden=!state.selection?.encrypted;
   byId("activation-review").hidden = !state.review;
-  if (state.review) byId("activation-summary").textContent = "Reviewed " + state.review.files + " files. Engines are disabled, schedules are paused, and connections use fresh storage.";
+  if (state.review) byId("activation-summary").textContent = "Checked " + state.review.files + " files. AI engines and schedules stay off until you turn them on, and messaging apps need connecting again.";
   if (state.selection) {
     byId("backup-name").textContent = state.selection.name;
-    byId("backup-summary").textContent = state.selection.encrypted?"Encrypted application-data snapshot. Included components: "+(state.selection.coverage?.includedCount??0)+". Excluded or absent: "+(state.selection.coverage?.excludedCount??0)+". This is not a full installation copy. Native sessions are excluded, and channels require re-pairing.":"Excluded entries: " + (state.selection.omittedCount ?? 0) + ". Components absent from this snapshot: " + (state.selection.missingCount ?? 0) + ". Connections will need review.";
+    byId("backup-summary").textContent = state.selection.encrypted?"Encrypted backup from Murage. It holds your settings, bots, conversations, files and channel history. Sign-ins to AI engines and messaging apps are not restored; you connect those again.":"Older unencrypted recovery file. Some items were left out of it (" + (state.selection.omittedCount ?? 0) + "), and connections need setting up again after the restore.";
     byId("snapshot").textContent = state.selection.snapshotId;
     byId("hash").textContent = state.selection.sha256;
   }
@@ -69,10 +49,10 @@ function render(state) {
       (action.includes("encrypted")&&!state.encryptedAvailable)||(action==="restore-encrypted-new"&&!state.selection?.encrypted)||
       (action === "restore" && (!state.selection || state.selection.separate)) || (action === "restore-separate" && !state.selection?.separate) || (action === "activate" && !state.review);
   }
-  if (pending || state.busy) byId("status").textContent = "Working on the selected operation. Large backups may take several minutes.";
+  if (pending || state.busy) byId("status").textContent = "Working on it. A large backup can take several minutes.";
   else if (error) byId("status").textContent = "";
-  else if (state.result?.ok) byId("status").textContent = state.result.operation==="backup-encrypted"?"Encrypted application-data backup saved and verified: "+state.result.path:state.result.operation==="restore-encrypted-new"?"Separate restore completed. Restarting for paused review; the original is retained.":state.result.status === "reviewed-engines-disabled" ? "Review approved. Restarting with engines and schedules disabled." : state.result.status === "restored-review-required" ? "Restore completed and remains paused. Previous data: " + state.result.previousDataDir : state.result.status === "rolled-back" ? "Previous installation restored. Candidate retained at: " + (state.result.retainedCandidate || "see receipt") : "Backup saved: " + state.result.path;
-  else byId("status").textContent = state.selection ? "Backup inspected. No installation data has been changed." : "";
+  else if (state.result?.ok) byId("status").textContent = state.result.operation==="backup-encrypted"?"Backup saved and checked: "+state.result.path:state.result.operation==="restore-encrypted-new"?"Restored. Murage is restarting so you can review the restored copy; your current data stays as it is.":state.result.status === "reviewed-engines-disabled" ? "Approved. Murage is restarting with AI engines and schedules off." : state.result.status === "restored-review-required" ? "Restored, and paused until you review it. Your previous data is kept at: " + state.result.previousDataDir : state.result.status === "rolled-back" ? "Your previous data is back. The restored copy is kept at: " + (state.result.retainedCandidate || "the recovery folder") : "Backup saved: " + state.result.path;
+  else byId("status").textContent = state.selection ? "Backup checked. Nothing has been changed yet." : "";
 }
 async function action(name) {
   if (pending) return;

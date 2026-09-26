@@ -144,10 +144,12 @@ const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8"),parsed=ts.
 function actualFunction(name){const found=parsed.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text===name);assert.ok(found);return found.getText(parsed);}
 test("actual closed finish waits for cleanup and exits once without recovery or relaunch",async()=>{
   const calls=[];let release;
-  const context=vm.createContext({closedBackupFinish:null,cleanupDesktopForExit:()=>new Promise(resolve=>{release=resolve;}),writeClosedBackupResult:status=>calls.push({type:"murage:closed-backup-result",status}),app:{exit:code=>calls.push(code)}});
+  const traces=[];const context=vm.createContext({closedTrace:stage=>traces.push(stage),desktopCleanupStage:"",closedBackupFinish:null,cleanupDesktopForExit:()=>new Promise(resolve=>{release=resolve;}),writeClosedBackupResult:status=>calls.push({type:"murage:closed-backup-result",status}),app:{exit:code=>calls.push(code)}});
   vm.runInContext(actualFunction("finishClosedBackup"),context);
   const first=context.finishClosedBackup({status:"verified"});assert.equal(context.finishClosedBackup({status:"unavailable"}),first);assert.deepEqual(calls,[]);release();await first;
   assert.deepEqual(calls,[{type:"murage:closed-backup-result",status:"verified"},0]);
+  // A closed run leaves how far it got in its own log (stage names only).
+  assert.deepEqual(traces,["finishing","cleaned up"]);
 });
 test("actual startup fences closed invocation before normal writers and selected protected path precedes refs",async()=>{
   const start=main.slice(main.indexOf("const desktopStartup ="));assert.ok(start.indexOf("if(closedBackupRequested)")<start.indexOf("createServerConnections"));assert.ok(start.indexOf("if(closedBackupRequested)")<start.indexOf("migrateLegacyDataDirectory"));
@@ -156,13 +158,15 @@ test("actual startup fences closed invocation before normal writers and selected
   assert.ok(main.indexOf("parseClosedBackupArguments(process.argv.slice(1))")<main.indexOf("app.requestSingleInstanceLock()"));
   const declaration=parsed.statements.find(node=>ts.isVariableStatement(node)&&node.declarationList.declarations.some(value=>value.name.getText(parsed)==="desktopStartup"));assert.ok(declaration);
   const calls=[];
-  const context=vm.createContext({app:{whenReady:()=>Promise.resolve()},assertDesktopStartupActive:()=>{},closedBackupRequested:true,desktopRecoveryMode:false,
+  const traced=[];
+  const context=vm.createContext({closedTrace:stage=>traced.push(stage),app:{whenReady:()=>Promise.resolve()},assertDesktopStartupActive:()=>{},closedBackupRequested:true,desktopRecoveryMode:false,
     acquireDesktopDataOwner:()=>calls.push("owner"),initializeBackupScheduleHost:async()=>calls.push("host"),
     backupScheduleHost:{runClosedDue:async()=>{calls.push("capture");return{status:"verified"};}},finishClosedBackup:result=>calls.push(result.status),
     createServerConnections:()=>assert.fail("normal startup must not run"),
   });
   vm.runInContext(declaration.getText(parsed),context);await vm.runInContext("desktopStartup",context);await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(calls,["owner","host","capture","verified"]);assert.equal(context.desktopRecoveryMode,true);
+  assert.deepEqual(traced,["ready","owner","host","run","result verified"]);
   let handler,focused=0;const secondStatement=parsed.statements.find(node=>node.getText(parsed).startsWith('app.on("second-instance"'));
   vm.runInNewContext(secondStatement.getText(parsed),{app:{on:(_event,callback)=>{handler=callback;}},CLOSED_DUE_FLAG:"--murage-backup-due",CLOSED_DESCRIPTOR_FLAG:"--murage-backup-descriptor",activateExistingWindow:()=>focused++});
   handler({},["fixture-exe","--murage-backup-due"]);assert.equal(focused,0);

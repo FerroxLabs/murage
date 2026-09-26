@@ -48,7 +48,7 @@ const CODES = new Set(BACKUP_CAPTURE_CODES);
 const STAGE_WORDS = {
   precondition: "before it started",
   references: "while checking your backup folder and recovery key",
-  claim: "while taking charge of the backup",
+  claim: "while starting the backup",
   capture: "while copying your workspace",
   "artifact-readback": "while checking the file it had just written",
   "receipt-commit": "while recording the finished backup",
@@ -65,13 +65,13 @@ const REASONS = {
   SOURCE_CHANGED:
     "Your workspace changed while the backup was being taken, so the copy wouldn't have matched. Try again once nothing else is running.",
   NONPORTABLE_SNAPSHOT_PATH:
-    "Something in Murage's data folder can't be copied safely, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
+    "Something in Murage's data folder can't be copied, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
   UNSAFE_ARCHIVE_PATH:
-    "Something in Murage's data folder can't be copied safely, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
+    "Something in Murage's data folder can't be copied, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
   UNSAFE_SNAPSHOT_ENTRY:
-    "Something in Murage's data folder can't be copied safely, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
+    "Something in Murage's data folder can't be copied, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
   UNSAFE_ARCHIVE_FILE:
-    "Something in Murage's data folder can't be copied safely, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
+    "Something in Murage's data folder can't be copied, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
   VM_WORKSPACE_BACKUP_UNSUPPORTED:
     "A bot's virtual-machine workspace can't be included in this backup. Turn that computer off for the bot, then back up again.",
   BACKUP_LIMIT_EXCEEDED:

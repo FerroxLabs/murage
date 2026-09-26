@@ -22,5 +22,5 @@ export async function prepareUpdaterRestart({ environment, isClosing, isCleanedU
     throw new Error("Finish or stop current work, then restart to update.");
   }
   try { await cleanup(); }
-  catch { throw new Error("Murage could not finish closing safely. The update was not started. Finish quitting and reopen Murage, then try again."); }
+  catch { throw new Error("Murage could not finish closing, so the update was not started. Quit Murage, reopen it, then try again."); }
 }
