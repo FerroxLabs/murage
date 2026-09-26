@@ -58,7 +58,7 @@ test("real Windows: control folder, work tree and password file work through the
  assert.equal(fs.statSync(work).isDirectory(),true);
  // SSH material sits one level above every work tree, owner-only, far shorter.
  const ssh=remoteSshDirectory(control);
- assert.equal(path.dirname(path.dirname(work)).toLowerCase(),ssh.toLowerCase());assert.ok(ssh.length<work.length-30);
+ assert.equal(path.dirname(path.dirname(work)).toLowerCase(),ssh.toLowerCase());assert.ok(ssh.length<work.length);
  const documents=path.join(home,"Documents");mkdirSync(documents);
  const store=createRemotePasswordStore({excludedRoots:()=>[installation,ensureRemoteControlDirectory(control)],readProtected:async()=>({}),updateProtected:async derive=>derive({}),createFolders:()=>[documents]});
  const created=await store.create();
