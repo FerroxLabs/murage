@@ -49,10 +49,13 @@ function shortWhen(at: number, clock: SnoozeClock): string {
 export interface SnoozePreset { id: "hour" | "tomorrow" | "next-week"; label: string; detail: string; until: number }
 
 /** 1 hour, tomorrow morning, next week (Monday morning; a week on if today
- *  is Monday). "Pick a time" is the field under these. */
+ *  is Monday, and the Monday after tomorrow's if today is Sunday). "Pick a time" is the field under these. */
 export function snoozePresets(now: number, clock: SnoozeClock = {}): SnoozePreset[] {
   const today = zoneParts(now, clock.timeZone);
-  const toMonday = ((8 - today.weekday) % 7) || 7;
+  // On a Sunday the coming Monday is already "Tomorrow morning", so "Next
+  // week" is the Monday after it.
+  const comingMonday = ((8 - today.weekday) % 7) || 7;
+  const toMonday = comingMonday === 1 ? 8 : comingMonday;
   const hour = now + HOUR, tomorrow = dayAtMorning(now, 1, clock.timeZone), nextWeek = dayAtMorning(now, toMonday, clock.timeZone);
   return [
     { id: "hour", label: "1 hour", detail: new Intl.DateTimeFormat(clock.locale, { timeZone: clock.timeZone, hour: "numeric", minute: "2-digit" }).format(hour), until: hour },

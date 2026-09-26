@@ -34,6 +34,13 @@ describe("snooze presets", () => {
     expect(snoozePresets(beforeChange, { timeZone: NY })[1]!.until).toBe(Date.UTC(2026, 10, 1, 14, 0)); // Sun 9:00 EST
   });
 
+  it("next week on a Sunday is not the same Monday as tomorrow morning", () => {
+    const sunday = Date.UTC(2026, 8, 27, 14, 0); // Sun 27 Sep 2026 10:00 EDT
+    const presets = snoozePresets(sunday, { timeZone: NY });
+    expect(presets[1]!.until).toBe(Date.UTC(2026, 8, 28, 13, 0)); // Mon 28 Sep 9:00
+    expect(presets[2]!.until).toBe(Date.UTC(2026, 9, 5, 13, 0)); // Mon 5 Oct 9:00
+  });
+
   it("turns a wall clock time in a zone into the moment", () => {
     expect(zonedTime(2026, 9, 24, 9, 0, NY)).toBe(Date.UTC(2026, 8, 24, 13, 0));
     expect(zonedTime(2026, 9, 31, 9, 0, NY)).toBe(Date.UTC(2026, 9, 1, 13, 0));

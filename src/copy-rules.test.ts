@@ -127,7 +127,6 @@ const OWN_KEY_COPY = new Set(["connectedApps.lock.ownKey", "connectedApps.flux.c
 // string it names is still caught the moment it changes, and each one goes
 // when that lane lands.
 const PENDING: Array<{ file: string; text: string; why: string }> = [
-  { file: "src/components/RoutineCalendarPage.tsx", text: "Routine safety limit", why: "routine editor, lane/0160-fixes" },
 ];
 
 // Server files whose strings are instructions to a bot or a model, never
