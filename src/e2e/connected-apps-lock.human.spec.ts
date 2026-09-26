@@ -189,7 +189,7 @@ for (const which of ["flux", "composio"] as const) test(`with a ${which} key the
   await expect(page.locator('[data-connector-action="slack"]')).toBeVisible();
   await expect.poll(() => connectorHits).toContain("GET /api/connectors/catalog");
   expect(connectorHits).toContain("GET /api/connectors/connected");
-  if (which === "composio") await expect(page.getByText("Connected with your own Composio key.", { exact: false })).toBeVisible();
+  if (which === "composio") await expect(page.getByText("Connected with your own key.", { exact: false })).toBeVisible();
   await page.screenshot({ path: info.outputPath(`unlocked-${which}.png`) });
 });
 
