@@ -143,3 +143,35 @@ describe("ssh tool lookup never uses PATH",()=>{
     expect(asked.length).toBeGreaterThan(0);expect(asked.every(file=>file.startsWith("/usr/bin/")||file.startsWith("/bin/"))).toBe(true);
   });
 });
+
+// OpenSSH for Windows 9.5 (Windows Server 2025 / Windows 11) builds
+// ssh-keyscan with a key exchange its own library lacks, so against a current
+// OpenSSH server it prints only "choose_kex: unsupported KEX method" and no key.
+// Found on the 0.1.60 Windows VM; Test connection could never get a fingerprint.
+describe.skipIf(process.platform==="win32")("host key read when ssh-keyscan can't negotiate",()=>{
+  const fakeTools=(root:string,{keyscanFails}:{keyscanFails:boolean})=>{
+    const keyscan=join(root,"fake-keyscan"),ssh=join(root,"fake-ssh"),calls=join(root,"ssh-calls.txt");
+    writeFileSync(keyscan,keyscanFails?`#!/bin/sh\necho "choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com" >&2\nexit 1\n`:`#!/bin/sh\necho "nas.example.com ssh-ed25519 ${hostKey.key}"\n`,{mode:0o755});
+    // Writes the host key into the known_hosts file named by UserKnownHostsFile='...', as accept-new does, then fails authentication.
+    writeFileSync(ssh,`#!/bin/sh\necho "$@" >> '${calls}'\nfor a in "$@"; do case "$a" in UserKnownHostsFile=*) f="\${a#UserKnownHostsFile=}"; f="\${f#\\'}"; f="\${f%\\'}"; echo "[nas.example.com]:2222 ssh-ed25519 ${hostKey.key}" > "$f";; esac; done\necho "Permission denied (publickey,password)." >&2\nexit 255\n`,{mode:0o755});
+    return {tools:{keyscan,ssh},calls};
+  };
+  it("reads the key through ssh into a throw-away file, offering no credentials",async()=>{
+    const root=scratch(),{tools,calls}=fakeTools(root,{keyscanFails:true});
+    const {scanHostKey}=await import("./backup-sftp.ts");
+    const scanned=await scanHostKey(tools,target,root);
+    expect(scanned).toMatchObject({type:"ssh-ed25519",key:hostKey.key,fingerprint:sshFingerprint(hostKey.key)});
+    const args=readFileSync(calls,"utf8");
+    for(const option of ["StrictHostKeyChecking=accept-new","PreferredAuthentications=none","PasswordAuthentication=no","IdentityFile=none","IdentityAgent=none","ProxyCommand=none"])expect(args).toContain(option);
+    expect(args).toContain("-l backup");expect(args).toContain("-p 2222");
+    // Nothing left behind in the private work folder.
+    expect(readdirSync(root).filter(name=>name.startsWith("host-scan-"))).toEqual([]);
+  });
+  it("does not fall back when keyscan simply finds no server",async()=>{
+    const root=scratch(),{tools,calls}=fakeTools(root,{keyscanFails:true});
+    writeFileSync(tools.keyscan,`#!/bin/sh\nexit 1\n`,{mode:0o755});
+    const {scanHostKey}=await import("./backup-sftp.ts");
+    await expect(scanHostKey(tools,target,root)).rejects.toThrow("RESTIC_SFTP_UNREACHABLE");
+    expect(existsSync(calls)).toBe(false);
+  });
+});

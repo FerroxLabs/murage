@@ -6,7 +6,7 @@
 // a minimal SFTP v3 client for "Test connection". Main-process only.
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmdirSync, statSync, unlinkSync, writeFileSync, readdirSync, lstatSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmdirSync, statSync, unlinkSync, writeFileSync, readdirSync, lstatSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { resticSftpCredentialsSchema, resticSftpTargetSchema, sftpHostKeySchema, SFTP_HOST_KEY_TYPES, type ResticSftpCredentials, type ResticSftpTarget } from "./backup-restic-target.ts";
 
@@ -149,12 +149,43 @@ function runTool(executable:string,args:string[],cwd:string,timeoutMs:number):Pr
     child.once("close",code=>{clearTimeout(timer);resolve({code,stdout,stderr,timedOut});});
   });
 }
+/** The ssh argument vector that only reads a server's host key: it trusts
+ * whatever key the server shows into a private, throw-away known_hosts file,
+ * offers no identity and no password, and stops at authentication. */
+export function hostKeyReadArguments(rawTarget:ResticSftpTarget,knownHosts:string){
+  const target=resticSftpTargetSchema.parse(rawTarget);if(!plainPath(knownHosts))throw Error("RESTIC_SFTP_MATERIAL_INVALID");
+  const options=["BatchMode=yes","ConnectTimeout=15","StrictHostKeyChecking=accept-new",`UserKnownHostsFile=${pathValue(knownHosts)}`,`GlobalKnownHostsFile=${pathValue(knownHosts)}`,
+    `HostKeyAlgorithms=${SFTP_HOST_KEY_TYPES.map(type=>hostKeyAlgorithms(type)).join(",")}`,"CheckHostIP=no","UpdateHostKeys=no","VerifyHostKeyDNS=no",
+    "PreferredAuthentications=none","PubkeyAuthentication=no","PasswordAuthentication=no","KbdInteractiveAuthentication=no","IdentitiesOnly=yes","IdentityAgent=none","IdentityFile=none",
+    "ForwardAgent=no","ForwardX11=no","ClearAllForwardings=yes","PermitLocalCommand=no","ProxyCommand=none","ControlMaster=no","ControlPath=none","LogLevel=ERROR"];
+  return ["-F","none",...options.flatMap(option=>["-o",option]),"-p",String(target.port),"-l",target.user,"-T","--",target.host,"exit"];
+}
+/** The host key through ssh itself, for when ssh-keyscan can't negotiate.
+ * OpenSSH for Windows 9.5 (Windows Server 2025, Windows 11) builds ssh-keyscan
+ * with a key-exchange list its own library lacks, so against any current
+ * OpenSSH server it fails with "unsupported KEX method" and prints no key
+ * (W-D2 follow-up, 0.1.60 Windows VM). ssh filters that list; keyscan does not. */
+async function readHostKeyWithSsh(tools:SshTools,target:ResticSftpTarget,cwd:string,timeoutMs:number){
+  const knownHosts=join(cwd,`host-scan-${randomBytes(8).toString("hex")}.known_hosts`);
+  try{
+    const result=await runTool(tools.ssh,hostKeyReadArguments(target,knownHosts),cwd,timeoutMs);
+    if(result.timedOut)throw Error("RESTIC_SFTP_UNREACHABLE");
+    let text="";try{text=readFileSync(knownHosts,"utf8");}catch{throw Error("RESTIC_SFTP_UNREACHABLE");}
+    return chooseScannedHostKey(text);
+  }finally{try{unlinkSync(knownHosts);}catch{/* never written */}}
+}
 /** Reads the server's host key for the owner to compare. Nothing is trusted here. */
 export async function scanHostKey(tools:SshTools,rawTarget:ResticSftpTarget,cwd:string,timeoutMs=30000){
   const target=resticSftpTargetSchema.parse(rawTarget);
   const result=await runTool(tools.keyscan,["-T","15","-p",String(target.port),"-t","ed25519,ecdsa,rsa","--",target.host],cwd,timeoutMs);
   if(result.timedOut)throw Error("RESTIC_SFTP_UNREACHABLE");
-  const key=chooseScannedHostKey(result.stdout);return{...key,fingerprint:sshFingerprint(key.key)};
+  let key:SftpHostKey;
+  try{key=chooseScannedHostKey(result.stdout);}
+  catch(error){
+    if(!(error instanceof Error&&error.message==="RESTIC_SFTP_UNREACHABLE")||!/unsupported KEX method|no matching key exchange/i.test(result.stderr))throw error;
+    key=await readHostKeyWithSsh(tools,target,cwd,timeoutMs);
+  }
+  return{...key,fingerprint:sshFingerprint(key.key)};
 }
 
 // Minimal SFTP v3 (draft-ietf-secsh-filexfer-02) over ssh's -s sftp channel.
