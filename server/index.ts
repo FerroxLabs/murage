@@ -1,4 +1,5 @@
 import type { SkillProcedureContext } from "./skills.ts";
+import { sweepBackupWork } from "./backup-local-work.ts";
 import { routineRunMarkerName, routineRunPromptNote } from "../shared/routine-run-marker.ts";
 import { createProcedurePin, preparePinnedProcedures } from "./procedure-bundles.ts";
 import { createProcedureReviewHost } from "./procedure-review-host.ts";
@@ -17868,6 +17869,8 @@ try {
 // Notices from the Murage team (server/announcements.ts). With the key slots
 // still placeholders the source is null and nothing is ever fetched.
 const announcements = new Announcements({ source: announcementSource() });
+// A backup's plaintext working folder left by a crash (backup-local-work.ts).
+sweepBackupWork(DATA_DIR);
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`murage server on http://127.0.0.1:${PORT}`);
   // Announcements: once now, then every six hours. Never on the path to the

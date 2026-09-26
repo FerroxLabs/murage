@@ -138,6 +138,7 @@
     special: "not a regular file",
     "too-deep": "too many folders deep",
     "linked-folder": "a shortcut to a folder outside Murage's data folder, so its contents aren't in the backup",
+    "path-too-long": "its path is too long for another computer to hold",
   };
   const skippedLines = skipped => {
     if (!skipped || typeof skipped !== "object" || !Number.isSafeInteger(skipped.count) || skipped.count < 1 || !Array.isArray(skipped.items)) return [];

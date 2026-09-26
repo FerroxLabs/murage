@@ -3,7 +3,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, createReadStream, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync, statSync, writeFileSync, writeSync, type ReadStream, type Stats } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, type BackupSkipReason } from "../shared/backup-limits.ts";
+import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, MAX_RESTORABLE_PATH_BYTES, type BackupSkipReason } from "../shared/backup-limits.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
@@ -323,6 +323,9 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       const absolute = join(root, source);
       const before = lstatSync(absolute);
       const bot = source.split(sep)[0] === "workspaces";
+      // A path another computer can't hold is left out and listed, so a
+      // restore never meets one (second audit #2; MAX_RESTORABLE_PATH_BYTES).
+      if (Buffer.byteLength(stored) > MAX_RESTORABLE_PATH_BYTES) { skip(source, "path-too-long"); return; }
       if (before.isSymbolicLink()) {
         if (depth === 0) { skip(source, "linked-folder"); observed.set(absolute, before); return; }
         if (nativeSkillLink(root, source)) { omission(portable(source), NATIVE_SKILL_LINK_OMITTED); return; }

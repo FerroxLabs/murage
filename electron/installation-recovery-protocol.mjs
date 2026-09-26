@@ -1,5 +1,5 @@
 import { captureFailurePath } from "../shared/backup-capture-failure.mjs";
-const skipReasons = new Set(["rebuildable", "file-limit", "unreadable", "special", "too-deep", "linked-folder"]);
+const skipReasons = new Set(["rebuildable", "file-limit", "unreadable", "special", "too-deep", "linked-folder", "path-too-long"]);
 /** A backup's list of left-out items, or null when malformed. */
 export function backupSkippedSummary(value) {
   if (!value || typeof value !== "object" || !Number.isSafeInteger(value.count) || value.count < 1 || !Array.isArray(value.items) || value.items.length > 50) return null;

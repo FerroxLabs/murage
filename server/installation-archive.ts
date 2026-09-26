@@ -50,7 +50,7 @@ export interface ArchiveLimits { maxBytes?: number; maxFiles?: number; signal?: 
 function fail(code: string, path?: string): never { throw new InstallationSnapshotError(code, path ? { path } : undefined); }
 
 export function portableArchivePath(path: string): boolean {
-  return path.length > 0 && path.length <= 4096 && path === path.normalize("NFC") &&
+  return path.length > 0 && Buffer.byteLength(path) <= 4096 && path === path.normalize("NFC") &&
     !/[\\:\x00-\x1f]/.test(path) && path.split("/").every(part =>
       !!part && part !== "." && part !== ".." && Buffer.byteLength(part) <= 255 && !/[ .]$/.test(part) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part));
 }

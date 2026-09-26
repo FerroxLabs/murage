@@ -53,7 +53,12 @@ export function exportRemoteBackup(copy,parent,{sourceRoot,excludedRoots,maxByte
   // has none (exFAT, FAT32: audit W-A3) the finished, flushed copy is renamed
   // into place inside the folder made for it just above.
   try{linkSync(partial,archivePath);unlinkSync(partial);}
-  catch(error){if(!NO_HARD_LINKS.has(error?.code))throw error;try{lstatSync(archivePath);fail();}catch(missing){if(missing?.code!=="ENOENT")throw missing;}renameSync(partial,archivePath);}
+  catch(error){if(!NO_HARD_LINKS.has(error?.code))throw error;
+   // Reserve the name exclusively, then rename over our own reservation only
+   // while it is still ours; never over another writer's file.
+   const r=openSync(archivePath,"wx",0o600),mine=fstatSync(r);closeSync(r);
+   const ours=()=>{try{const now=lstatSync(archivePath);return now.dev===mine.dev&&now.ino===mine.ino&&now.size===0;}catch{return false;}};
+   if(!ours())fail();renameSync(partial,archivePath);}
   published=true;
   return{saved:true,archivePath,directory};
  }catch(error){if(error?.message===SHARED)throw error;return fail();}

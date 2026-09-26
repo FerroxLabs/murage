@@ -4,6 +4,7 @@ import { basename, dirname, join, sep } from "node:path";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES } from "../shared/backup-limits.ts";
 import { classifyDataDirEntry } from "./data-dir-inventory.ts";
 import { publishNoReplace } from "./publish-file.ts";
+import { createBackupWork, removeBackupWork } from "./backup-local-work.ts";
 import { botNames, skippedSummary } from "./backup-skipped-summary.ts";
 export { skippedSummary } from "./backup-skipped-summary.ts";
 import { Readable } from "node:stream";
@@ -169,6 +170,11 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
   try{lstatSync(target);fail("DESTINATION_EXISTS");}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
   const execute=async(scratch:string,options:EncryptedBackupOptions&{recipient:string;selection:BackupSelection},held?:OfflineInstallation)=>{
   const ciphertext=join(scratch,"backup.age");
+  // Plaintext (the stage, the database snapshot, the readback's decrypted
+  // archive) never goes into the backup folder, which may be a USB stick
+  // with no permissions: only `ciphertext` is written there. On Windows the
+  // helper's private folder is owner-only by ACL on a fixed NTFS drive.
+  const work=process.platform==="win32"?scratch:createBackupWork(sourceRoot);
   let retain=false,step:CaptureStep="offline-open";
   let bots:Record<string,string>={};
   try{
@@ -181,7 +187,7 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
       // stage stops at the helper's size with its own sentence and the file
       // that crossed it, before anything is encrypted.
       const windowsCap=windowsStageCap(process.platform,limits.maxBytes);
-      const stage=await stageInstallationStateWhileOwned(installation,scratch,windowsCap?{...options,maxBytes:windowsCap}:options).catch(error=>{
+      const stage=await stageInstallationStateWhileOwned(installation,work,windowsCap?{...options,maxBytes:windowsCap}:options).catch(error=>{
         if(windowsCap&&error instanceof InstallationSnapshotError&&error.code==="SNAPSHOT_LIMIT_EXCEEDED")throw new InstallationSnapshotError("BACKUP_WINDOWS_SIZE_LIMIT",error.path?{path:error.path}:undefined);
         throw error;
       });
@@ -218,7 +224,7 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
       finally{for(const stream of streams)stream.destroy();(writer?.outputStream as Readable|undefined)?.destroy();if(!retain)rmSync(stage.directory,{recursive:true,force:true});}
     });
     step="readback";
-    const inspection=await inspectEncryptedInstallationBackup(ciphertext,scratch,{...options,durable:false,extract:false});
+    const inspection=await inspectEncryptedInstallationBackup(ciphertext,work,{...options,durable:false,extract:false});
     if(inspection.manifest.snapshotId!==manifest.snapshotId)fail("FIDELITY_READBACK_MISMATCH");
     const sha256=inspection.sha256;rmSync(inspection.directory,{recursive:true,force:true});
     step="flush";
@@ -227,7 +233,10 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
     if(process.platform!=="win32")publishNoReplace(ciphertext,target);
     return{path:target,sha256,snapshotId:manifest.snapshotId,coverage:manifest.coverage,restorePolicy:manifest.restorePolicy,...skippedSummary(manifest.recovery as StateSnapshotManifest,bots)};
   }catch(error){retain=retainFailure(error);const reported=error instanceof InstallationSnapshotError?error:capturedFilesystemError(error);withCaptureStep(reported,step);if(retain)Object.assign(reported,{retainedDirectory:scratch});throw reported;}
-  finally{if(process.platform!=="win32"){if(!retain)rmSync(scratch,{recursive:true,force:true});else discardFailedStage(scratch,true);}}
+  finally{if(process.platform!=="win32"){if(!retain)rmSync(scratch,{recursive:true,force:true});else discardFailedStage(scratch,true);
+    // An unconfirmed age exit may still hold a file in `work`; its run folder
+    // is then swept once this process has gone.
+    if(!retain)removeBackupWork(work);}}
   };
   if(process.platform!=="win32")return execute(mkdtempSync(join(parent,".murage-encrypted-write-")),options);
   let scratch:string|undefined,success=false;

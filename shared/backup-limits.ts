@@ -30,7 +30,19 @@ export const RESTORE_ADDED_FILES = 1_000;
 
 /** Why an item in a folder of owner work was left out of a backup. Listed to
  * the person after the backup; never a reason for the backup to fail. */
-export const BACKUP_SKIP_REASONS = ["rebuildable", "file-limit", "unreadable", "special", "too-deep", "linked-folder"] as const;
+export const BACKUP_SKIP_REASONS = ["rebuildable", "file-limit", "unreadable", "special", "too-deep", "linked-folder", "path-too-long"] as const;
 export type BackupSkipReason = typeof BACKUP_SKIP_REASONS[number];
 /** At most this many skipped items are named one by one; the total is kept. */
 export const MAX_LISTED_SKIPS = 1_000;
+
+/** Longest path, in UTF-8 bytes, an item may have inside a backup (second
+ * audit #2). A restore writes each item under its stored (percent-encoded)
+ * spelling first, below a restore folder such as
+ *   ~/Library/Application Support/Murage/recovered-installations/<uuid>/
+ *     .murage-encrypted-inspection-XXXXXX/state/recovery/
+ * macOS refuses any path over 1,024 bytes (PATH_MAX), the tightest of the
+ * systems Murage runs on (Linux 4,096; Windows long paths via \\?\). 768
+ * bytes leaves 256 for that restore folder, so every item of a backup can
+ * be restored on any of them. Longer items are left out and listed, which in
+ * practice means only machine-made trees nested hundreds of bytes deep. */
+export const MAX_RESTORABLE_PATH_BYTES = 768;

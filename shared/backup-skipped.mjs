@@ -16,6 +16,7 @@ const REASONS = Object.freeze({
   special: "not a regular file",
   "too-deep": "too many folders deep",
   "linked-folder": "a shortcut to a folder outside Murage's data folder, so its contents aren't in the backup",
+  "path-too-long": "its path is too long for another computer to hold",
 });
 
 /** One sentence per folder, or [] when nothing was left out. `skipped` is
