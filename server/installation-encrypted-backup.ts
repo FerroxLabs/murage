@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { closeSync, createReadStream, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { closeSync, createReadStream, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES } from "../shared/backup-limits.ts";
 import { classifyDataDirEntry } from "./data-dir-inventory.ts";
 import { publishNoReplace } from "./publish-file.ts";
+import { botNames, skippedSummary } from "./backup-skipped-summary.ts";
+export { skippedSummary } from "./backup-skipped-summary.ts";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 import { ZipFile } from "yazl";
@@ -110,23 +112,6 @@ function parseFidelity(value:unknown,options:ArchiveLimits):FidelityManifest{
   const byPath=new Map(manifest.files.map(file=>[file.path,file]));
   for(const file of recovery.files){const copy=byPath.get(`recovery/${file.path}`);if(copy?.bytes!==file.bytes||copy.sha256!==file.sha256)fail("FIDELITY_RECOVERY_MISMATCH");}
   return manifest;
-}
-
-/** Bot names by id from a staged roster, to say whose folder an item was in. */
-function botNames(file:string):Record<string,string>{
-  try{
-    const roster=JSON.parse(readFileSync(file,"utf8"));if(!Array.isArray(roster))return{};
-    return Object.fromEntries(roster.filter(bot=>bot&&typeof bot.id==="string"&&typeof bot.name==="string"&&bot.name.trim()).map(bot=>[bot.id,bot.name.trim().slice(0,80)]));
-  }catch{return{};}
-}
-/** What a backup left out, for the page that reports it: at most 50 items,
- * each a path inside the data folder with its reason, and the names of the
- * bots whose folders they were in. */
-export function skippedSummary(recovery:Pick<StateSnapshotManifest,"skipped"|"skippedCount">,bots:Record<string,string>={}){
-  const count=recovery.skippedCount??0;if(!count)return{};
-  const items=(recovery.skipped??[]).slice(0,50);
-  const ids=new Set(items.map(item=>/^workspaces\/([^/]+)\//.exec(item.path)?.[1]).filter((id):id is string=>!!id&&Object.hasOwn(bots,id)));
-  return{skipped:{count,items,bots:Object.fromEntries([...ids].map(id=>[id,bots[id]]))}};
 }
 
 /** Authenticated decryption finishes before any archive entry is inspected. */

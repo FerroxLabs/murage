@@ -49,3 +49,14 @@ it("the .zip recovery file keeps a bot's shortcuts and real names, and restores 
     expect(existsSync(join(target, "workspaces", "bot", "node_modules"))).toBe(false);
   } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
 });
+
+it("the .zip recovery file's list of left-out items names whose folder they were in", async () => {
+  const { installationRecoveryCommand } = await import("./installation-recovery-command.ts");
+  const f = backupFixture();
+  mkdirSync(join(f.data, "workspaces", "bot", "node_modules", "dep"), { recursive: true });
+  writeFileSync(join(f.data, "workspaces", "bot", "node_modules", "dep", "a.js"), "x");
+  try {
+    const result = await installationRecoveryCommand(["backup", "--data-dir", f.data, "--output", join(f.parent, "recovery.zip")]);
+    expect(result.skipped).toEqual({ count: 1, items: [{ path: "workspaces/bot/node_modules", reason: "rebuildable" }], bots: { bot: "Fixture" } });
+  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+});

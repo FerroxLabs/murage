@@ -12,6 +12,7 @@ import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation } from "./installation-database-snapshot.ts";
 import { BACKUP_SKIP_REASONS, MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_BACKUP_MANIFEST_BYTES, MAX_LISTED_SKIPS } from "../shared/backup-limits.ts";
 import { publishNoReplace } from "./publish-file.ts";
+import { botNames } from "./backup-skipped-summary.ts";
 
 const MAX_MANIFEST_BYTES = MAX_BACKUP_MANIFEST_BYTES;
 const archivedPath = z.string().min(1).max(4096);
@@ -253,7 +254,9 @@ export async function writeInstallationArchive(dataDir: string, destination: str
   // in place, so the installation must stay closed until the archive is done.
   return withOfflineInstallation(dataDir, async installation => {
     const stage = await stageInstallationStateWhileOwned(installation, dirname(destination), options);
-    try { return await writeInstallationStageArchive(stage, destination, { ...options, beforePublish: stage.assertSourceUnchanged }); }
+    // Whose folders the left-out items were in, read from the staged roster.
+    const bots = stage.manifest.skippedCount ? botNames(join(stage.directory, "state", "bots.json")) : {};
+    try { return { ...await writeInstallationStageArchive(stage, destination, { ...options, beforePublish: stage.assertSourceUnchanged }), bots }; }
     finally { rmSync(stage.directory, { recursive: true, force: true }); }
   });
 }

@@ -52,7 +52,7 @@ export async function installationRecoveryCommand(args: string[], input: { readI
   }
   if (command === "backup" && options.size === 2 && options.has("--data-dir") && options.has("--output")) {
     const result = await writeInstallationArchive(options.get("--data-dir")!, options.get("--output")!);
-    return { ok: true, operation: "backup", path: result.path, sha256: result.sha256, snapshotId: result.manifest.snapshotId, files: result.manifest.files.length, omitted: result.manifest.omitted, missing: result.manifest.missing, restorePolicy: result.manifest.restorePolicy, ...skippedSummary(result.manifest) };
+    return { ok: true, operation: "backup", path: result.path, sha256: result.sha256, snapshotId: result.manifest.snapshotId, files: result.manifest.files.length, omitted: result.manifest.omitted, missing: result.manifest.missing, restorePolicy: result.manifest.restorePolicy, ...skippedSummary(result.manifest, result.bots) };
   }
   if (command === "export-damaged" && options.size === 2 && options.has("--data-dir") && options.has("--output")) {
     const result = await writeInstallationDamagedExport(options.get("--data-dir")!, options.get("--output")!);
