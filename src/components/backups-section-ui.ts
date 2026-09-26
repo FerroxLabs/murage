@@ -4,6 +4,7 @@ import type { BackupRemoteStatus } from "../../server/backup-remote-host";
 import { CLOSED_VOLUME_SENTENCES, closedVolumeSentence } from "../../shared/closed-volume-sentences.mjs";
 import { DEFAULT_BACKUP_TIME, enabledSchedule, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase } from "./backup-schedule-ui";
 import { captureFailureSentence } from "../../shared/backup-capture-failure.mjs";
+import { backupSkippedLines } from "../../shared/backup-skipped.mjs";
 import { backupWaitingSentence, type BackupWaitingBot } from "../../shared/backup-waiting";
 
 /** Display-only size: decimal units, one decimal below ten ("1.2 GB"). */
@@ -102,7 +103,7 @@ export interface BackupSummaryInput {
 /** Murage attests its backup tool after it starts; on the first launch after
  * an install or update macOS can make that take a while. Not a failure. */
 export const SCHEDULE_CHECKING = "Getting ready…";
-export interface BackupSummary { last: string; schedule: string; offsite: string; attention: string[] }
+export interface BackupSummary { last: string; schedule: string; offsite: string; attention: string[]; skipped?: string[] }
 
 /** One plain summary for the "Your backups" card. `formatTime` is injected so
  * the helper stays deterministic under test. */
@@ -166,7 +167,9 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   if (r?.lastUpload?.lockRelease === "unconfirmed") attention.push("Your storage provider didn't confirm the off-site lock was released.");
   if (r?.automaticUpload?.state === "needs-review") attention.push("Automatic off-site uploads are paused for review.");
   if (r?.retention && r.retention.state !== "complete") attention.push("Cleaning up old off-site copies needs review.");
-  return { last, schedule, offsite, attention: [...new Set(attention)] };
+  // What the last verified backup left out: listed, never a failure.
+  const skipped = s?.lastVerified ? backupSkippedLines(s.lastSkipped) : [];
+  return { last, schedule, offsite, attention: [...new Set(attention)], ...(skipped.length ? { skipped } : {}) };
 }
 
 /** Optional bridge methods a newer desktop app may offer. Feature-detected:

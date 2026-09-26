@@ -1,7 +1,7 @@
 const byId = id => document.getElementById(id);
 const buttons = [...document.querySelectorAll("button[data-action]")];
 let current = null, pending = false;
-const recoveryMessage = code => globalThis.murageRecoveryMessages.sentence(code);
+const recoveryMessage = state => globalThis.murageRecoveryMessages.sentence(state.error, { action: state.errorAction, backupMode: state.context?.backupMode === true, path: state.errorPath });
 function render(state) {
   current = state;
   document.documentElement.dataset.skin = state.context?.skin === "light" ? "light" : "dark";
@@ -19,7 +19,7 @@ function render(state) {
   }
   // Only the sentence is shown; the code stays in diagnostics and in a
   // data attribute for support tools.
-  const error = state.error ? recoveryMessage(state.error) : "";
+  const error = state.error ? recoveryMessage(state) : "";
   byId("error").textContent = error;
   if (state.error) byId("error").dataset.code = state.error; else delete byId("error").dataset.code;
   byId("error").hidden = !error;
@@ -51,7 +51,7 @@ function render(state) {
   }
   if (pending || state.busy) byId("status").textContent = "Working on it. A large backup can take several minutes.";
   else if (error) byId("status").textContent = "";
-  else if (state.result?.ok) byId("status").textContent = state.result.operation==="backup-encrypted"?"Backup saved and checked: "+state.result.path:state.result.operation==="restore-encrypted-new"?"Restored. Murage is restarting so you can review the restored copy; your current data stays as it is.":state.result.status === "reviewed-engines-disabled" ? "Approved. Murage is restarting with AI engines and schedules off." : state.result.status === "restored-review-required" ? "Restored, and paused until you review it. Your previous data is kept at: " + state.result.previousDataDir : state.result.status === "rolled-back" ? "Your previous data is back. The restored copy is kept at: " + (state.result.retainedCandidate || "the recovery folder") : "Backup saved: " + state.result.path;
+  else if (state.result?.ok) byId("status").textContent = [state.result.operation==="backup-encrypted"?"Backup saved and checked: "+state.result.path:state.result.operation==="restore-encrypted-new"?"Restored. Murage is restarting so you can review the restored copy; your current data stays as it is.":state.result.status === "reviewed-engines-disabled" ? "Approved. Murage is restarting with AI engines and schedules off." : state.result.status === "restored-review-required" ? "Restored, and paused until you review it. Your previous data is kept at: " + state.result.previousDataDir : state.result.status === "rolled-back" ? "Your previous data is back. The restored copy is kept at: " + (state.result.retainedCandidate || "the recovery folder") : "Backup saved: " + state.result.path, ...globalThis.murageRecoveryMessages.skippedLines(state.result.skipped)].join(" ");
   else byId("status").textContent = state.selection ? "Backup checked. Nothing has been changed yet." : "";
 }
 async function action(name) {

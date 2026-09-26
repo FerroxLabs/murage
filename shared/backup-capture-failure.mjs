@@ -8,7 +8,12 @@
  *
  * Shared because the same sentence has to appear in three places that cannot
  * import each other: the desktop main process (the Backup mode page), the
- * recovery window's renderer, and the workspace's Backups page. */
+ * recovery window's renderer, and the workspace's Backups page.
+ *
+ * 0.1.60 (audit A-01): when a refusal is about one item in the data folder,
+ * the sentence also names that item, as a path inside the data folder
+ * (captureFailurePath). The person can't fix a file they can't find. Nothing
+ * outside the data folder is ever named. */
 
 /** The step the backup was on. Anything else reads as "unknown". */
 export const BACKUP_CAPTURE_STAGES = Object.freeze([
@@ -38,6 +43,19 @@ export const BACKUP_CAPTURE_CODES = Object.freeze([
   // "UNKNOWN_CAPTURE_FAILURE" and told them nothing.
   "BACKUP_UNCLASSIFIED_COMPONENT", "BACKUP_REQUIRED_COMPONENT_MISSING", "BACKUP_SELECTED_COMPONENT_UNAVAILABLE",
   "NONPORTABLE_SNAPSHOT_PATH", "SOURCE_CHANGED", "UNSAFE_ARCHIVE_PATH", "UNSAFE_SNAPSHOT_ENTRY", "VM_WORKSPACE_BACKUP_UNSUPPORTED",
+  // Murage's own records refused while they were copied (audit A-04: these
+  // reached the page as "Murage couldn't say why").
+  "INVALID_INSTALLATION_RECORDS", "INVALID_CONFIG_COMPONENT", "INVALID_JSON_COMPONENT", "INVALID_ROSTER_COMPONENT",
+  "INVALID_WEBHOOK_COMPONENT", "JSON_COMPONENT_TOO_LARGE", "STATE_SNAPSHOT_FAILED", "INSTALLATION_MISSING", "INVALID_SNAPSHOT_LIMITS",
+  // the conversation database's consistent copy
+  "DATABASE_SNAPSHOT_FAILED", "DATABASE_INTEGRITY_FAILED", "DATABASE_SCHEMA_UNSUPPORTED", "DATABASE_UNREADABLE",
+  "UNSAFE_DATABASE_FILE", "UNSUPPORTED_DATABASE_SIZE", "INVALID_MESSAGE_IDENTITY", "INVALID_MESSAGE_JSON", "INVALID_ACTIVE_BRANCH",
+  // reading the finished file back
+  "ARCHIVE_WRITE_FAILED", "INVALID_ARCHIVE_MANIFEST", "ARCHIVE_HASH_MISMATCH", "ARCHIVE_SIZE_MISMATCH", "ARCHIVE_ENTRY_COUNT_MISMATCH",
+  "MISSING_ARCHIVE_ENTRY", "UNDECLARED_ARCHIVE_ENTRY", "UNSAFE_ARCHIVE_ENTRY", "MANIFEST_MUST_BE_FIRST", "ARCHIVE_INSPECTION_FAILED",
+  "INVALID_DATABASE_MANIFEST", "SNAPSHOT_EPOCH_CLOSED",
+  // the encryption tool on this computer
+  "AGE_TOOL_PLATFORM_UNQUALIFIED", "INVALID_AGE_PROCESS_LIMITS", "AGE_NATIVE_IDENTITY_REQUIRED", "AGE_NATIVE_RECIPIENT_REQUIRED",
   // the destination
   "INVALID_DESTINATION", "DESTINATION_EXISTS", "DESTINATION_INSIDE_INSTALLATION",
 ]);
@@ -61,25 +79,95 @@ const REASONS = {
   BACKUP_REQUIRED_COMPONENT_MISSING:
     "Part of your workspace was missing, so the backup would not have been complete. Open Murage normally once, then back up again.",
   BACKUP_SELECTED_COMPONENT_UNAVAILABLE:
-    "Part of your workspace couldn't be read. Close anything else that might be using Murage's data folder, then back up again.",
+    "Murage keeps its own files in part of its data folder, and there is a shortcut there instead of a file, so the backup couldn't copy it. Move the shortcut out of Murage's data folder, then back up again.",
   SOURCE_CHANGED:
     "Your workspace changed while the backup was being taken, so the copy wouldn't have matched. Try again once nothing else is running.",
   NONPORTABLE_SNAPSHOT_PATH:
-    "Something in Murage's data folder can't be copied, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
+    "One of Murage's own files has a name a backup can't hold. Move it out of Murage's data folder, then back up again.",
   UNSAFE_ARCHIVE_PATH:
-    "Something in Murage's data folder can't be copied, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
+    "One of Murage's own files has a name a backup can't hold. Move it out of Murage's data folder, then back up again.",
   UNSAFE_SNAPSHOT_ENTRY:
-    "Something in Murage's data folder can't be copied, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
+    "Something where Murage keeps its own files isn't a plain file, so the backup couldn't copy it. Move it out of Murage's data folder, then back up again.",
   UNSAFE_ARCHIVE_FILE:
-    "Something in Murage's data folder can't be copied, such as a shortcut pointing outside it. Move it out of that folder, then back up again.",
+    "Murage couldn't check the backup file it had just written, so it won't call it a backup. Check that nothing else writes to your backup folder, then try again.",
   VM_WORKSPACE_BACKUP_UNSUPPORTED:
     "A bot's virtual-machine workspace can't be included in this backup. Turn that computer off for the bot, then back up again.",
+  // Only the size can pass its limit now: items past the file limit in a
+  // folder of owner work are left out and listed, never a failure.
   BACKUP_LIMIT_EXCEEDED:
-    "Your workspace is bigger than the size limit set for backups. Raise the limit in Backups, or clear out large files, then try again.",
+    "Your workspace is bigger than the size limit set for backups. Raise the size limit under Backups, Advanced, or clear out large files, then try again.",
   ARCHIVE_LIMIT_EXCEEDED:
-    "Your workspace is bigger than the size limit set for backups. Raise the limit in Backups, or clear out large files, then try again.",
+    "Your workspace is bigger than the size limit set for backups. Raise the size limit under Backups, Advanced, or clear out large files, then try again.",
   SNAPSHOT_LIMIT_EXCEEDED:
-    "Your workspace is bigger than the size limit set for backups. Raise the limit in Backups, or clear out large files, then try again.",
+    "Your workspace is bigger than the size limit set for backups. Raise the size limit under Backups, Advanced, or clear out large files, then try again.",
+  INVALID_INSTALLATION_RECORDS:
+    "One of Murage's own records couldn't be read the way a backup needs, so the backup wasn't made. Open Murage normally once so it tidies the record, then back up again. If it happens again, open the diagnostics folder from Backups.",
+  INVALID_CONFIG_COMPONENT:
+    "Murage's settings file couldn't be read the way a backup needs, so the backup wasn't made. Open Murage normally once, then back up again. If it happens again, open the diagnostics folder from Backups.",
+  INVALID_JSON_COMPONENT:
+    "One of Murage's own records is damaged, so the backup wasn't made. Open Murage normally once, then back up again. If it happens again, open the diagnostics folder from Backups.",
+  INVALID_ROSTER_COMPONENT:
+    "Murage's list of bots couldn't be read the way a backup needs, so the backup wasn't made. Open Murage normally once, then back up again. If it happens again, open the diagnostics folder from Backups.",
+  INVALID_WEBHOOK_COMPONENT:
+    "Murage's list of webhooks couldn't be read the way a backup needs, so the backup wasn't made. Open Murage normally once, then back up again. If it happens again, open the diagnostics folder from Backups.",
+  JSON_COMPONENT_TOO_LARGE:
+    "One of Murage's own records has grown too large to back up. Open the diagnostics folder from Backups and send the newest log to support.",
+  STATE_SNAPSHOT_FAILED:
+    "Murage couldn't copy part of your workspace. Close anything else that might be using Murage's data folder, then back up again.",
+  INSTALLATION_MISSING:
+    "Murage couldn't find its data folder when the backup started. Open Murage normally once, then back up again.",
+  INVALID_SNAPSHOT_LIMITS:
+    "The size or time limit set for backups isn't usable. Check both in Backups, then try again.",
+  DATABASE_SNAPSHOT_FAILED:
+    "Murage couldn't make a consistent copy of your conversations. Close anything else that might be using Murage's data folder, then back up again.",
+  DATABASE_INTEGRITY_FAILED:
+    "Murage's conversation database failed its own check, so it wasn't copied into a backup. Open the diagnostics folder from Backups and contact support; your data was not changed.",
+  DATABASE_SCHEMA_UNSUPPORTED:
+    "Murage's conversation database is from a different version of Murage. Open this version of Murage normally once, then back up again.",
+  DATABASE_UNREADABLE:
+    "Murage couldn't read its conversation database. Close anything else that might be using Murage's data folder, then back up again.",
+  UNSAFE_DATABASE_FILE:
+    "Murage's conversation database isn't a plain file, so it wasn't copied. Open the diagnostics folder from Backups and contact support.",
+  UNSUPPORTED_DATABASE_SIZE:
+    "Murage's conversation database is too large to back up. Open the diagnostics folder from Backups and contact support.",
+  INVALID_MESSAGE_IDENTITY:
+    "A conversation in Murage's database couldn't be read the way a backup needs, so the backup wasn't made. Open the diagnostics folder from Backups and contact support.",
+  INVALID_MESSAGE_JSON:
+    "A conversation in Murage's database couldn't be read the way a backup needs, so the backup wasn't made. Open the diagnostics folder from Backups and contact support.",
+  INVALID_ACTIVE_BRANCH:
+    "A conversation in Murage's database couldn't be read the way a backup needs, so the backup wasn't made. Open the diagnostics folder from Backups and contact support.",
+  ARCHIVE_WRITE_FAILED:
+    "Murage couldn't finish writing the backup file. Nothing in your workspace was changed. Back up again, and if it happens again, open the diagnostics folder from Backups.",
+  INVALID_ARCHIVE_MANIFEST:
+    "The backup's own contents list couldn't be read back, so the backup wasn't accepted. Try again.",
+  ARCHIVE_HASH_MISMATCH:
+    "Murage read the finished backup back and it didn't match what it had written. Check that nothing else writes to your backup folder, then try again.",
+  ARCHIVE_SIZE_MISMATCH:
+    "Murage read the finished backup back and it didn't match what it had written. Check that nothing else writes to your backup folder, then try again.",
+  ARCHIVE_ENTRY_COUNT_MISMATCH:
+    "Murage read the finished backup back and it didn't match what it had written. Check that nothing else writes to your backup folder, then try again.",
+  MISSING_ARCHIVE_ENTRY:
+    "Murage read the finished backup back and it didn't match what it had written. Check that nothing else writes to your backup folder, then try again.",
+  UNDECLARED_ARCHIVE_ENTRY:
+    "Murage read the finished backup back and it didn't match what it had written. Check that nothing else writes to your backup folder, then try again.",
+  UNSAFE_ARCHIVE_ENTRY:
+    "Murage read the finished backup back and it didn't match what it had written. Check that nothing else writes to your backup folder, then try again.",
+  MANIFEST_MUST_BE_FIRST:
+    "Murage read the finished backup back and it didn't match what it had written. Check that nothing else writes to your backup folder, then try again.",
+  ARCHIVE_INSPECTION_FAILED:
+    "Murage couldn't read the finished backup back to check it, so it won't call it a backup. Check that nothing else writes to your backup folder, then try again.",
+  INVALID_DATABASE_MANIFEST:
+    "Murage read the finished backup back and it didn't match what it had written. Check that nothing else writes to your backup folder, then try again.",
+  SNAPSHOT_EPOCH_CLOSED:
+    "Murage was still finishing something else when the backup started. Try again in a moment.",
+  AGE_TOOL_PLATFORM_UNQUALIFIED:
+    "Murage's backup encryption tool isn't available for this kind of computer. Reinstalling Murage usually fixes this.",
+  INVALID_AGE_PROCESS_LIMITS:
+    "The size or time limit set for backups isn't usable. Check both in Backups, then try again.",
+  AGE_NATIVE_IDENTITY_REQUIRED:
+    "That file isn't a Murage recovery key. Choose your backup folder and key again in Backups.",
+  AGE_NATIVE_RECIPIENT_REQUIRED:
+    "That file isn't a Murage recovery key. Choose your backup folder and key again in Backups.",
   SNAPSHOT_CANCELLED:
     "The backup ran out of the time it was given. Raise the time limit in Backups, or try again when the computer is less busy.",
   AGE_TOOL_TIMEOUT:
@@ -150,21 +238,43 @@ const REASONS = {
     "Murage couldn't say why. Nothing in your workspace was changed. Open the diagnostics folder from Backups if it happens again.",
 };
 
-/** Normalize whatever the failure path produced into the two closed sets. */
+/** A path INSIDE Murage's data folder a refusal is about, or undefined.
+ * Relative, "/"-separated, no "..", no control characters, bounded. Anything
+ * else (an absolute path, a drive letter, a home folder) is dropped. */
+export function captureFailurePath(value) {
+  if (typeof value !== "string") return undefined;
+  const path = value.replaceAll("\\", "/");
+  if (!path || path.length > 1024 || /[\x00-\x1f\x7f]/.test(path) || path.startsWith("/") || /^[A-Za-z]:/.test(path) || path.startsWith("~")) return undefined;
+  if (path.split("/").some(part => !part || part === "." || part === "..")) return undefined;
+  return path;
+}
+
+/** Normalize whatever the failure path produced into the two closed sets,
+ * plus the item inside the data folder when the refusal names one. */
 export function normalizeCaptureFailure(input) {
   if (!input || typeof input !== "object") return null;
   const code = typeof input.code === "string" && (CODES.has(input.code) || input.code === "UNKNOWN_CAPTURE_FAILURE")
     ? input.code : "UNKNOWN_CAPTURE_FAILURE";
   const stage = typeof input.stage === "string" && STAGES.has(input.stage) ? input.stage : "unknown";
-  return { stage, code };
+  const path = captureFailurePath(input.path);
+  return path ? { stage, code, path } : { stage, code };
 }
 
-/** One or two sentences naming the step and the reason. Never a path. */
+/** One or two sentences naming the step and the reason, and the item in the
+ * data folder when there is one. */
 export function captureFailureSentence(input) {
   const failure = normalizeCaptureFailure(input);
   if (!failure) return "";
   const where = STAGE_WORDS[failure.stage];
-  return `The last backup stopped ${where ?? "before it could finish"}. ${REASONS[failure.code] ?? REASONS.UNKNOWN_CAPTURE_FAILURE}`;
+  const item = failure.path ? ` The item is ${failure.path} in Murage's data folder.` : "";
+  return `The last backup stopped ${where ?? "before it could finish"}. ${REASONS[failure.code] ?? REASONS.UNKNOWN_CAPTURE_FAILURE}${item}`;
+}
+
+/** The reason alone, for a page that says the step itself (Backup mode). */
+export function captureFailureReason(code, path) {
+  const reason = REASONS[typeof code === "string" && CODES.has(code) ? code : "UNKNOWN_CAPTURE_FAILURE"] ?? REASONS.UNKNOWN_CAPTURE_FAILURE;
+  const item = captureFailurePath(path);
+  return item ? `${reason} The item is ${item} in Murage's data folder.` : reason;
 }
 
 /* ------------------------------------------------------------------------

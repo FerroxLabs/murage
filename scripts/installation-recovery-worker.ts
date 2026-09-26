@@ -2,7 +2,7 @@ import { normalizeBackupAgeDiagnostic } from "../electron/backup-age-attestation
 import { installationRecoveryCommand } from "../server/installation-recovery-command.ts";
 import { recoveryDesktopSummary } from "../electron/installation-recovery-protocol.mjs";
 import { randomUUID } from "node:crypto";
-import { describeCaptureError } from "../shared/backup-capture-failure.mjs";
+import { captureFailurePath, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 
 const parentPort = (process as typeof process & { parentPort?: { on(event: string, listener: (event: { data?: unknown }) => void): void; removeListener(event: string, listener: (event: { data?: unknown }) => void): void; postMessage(value: unknown): void } }).parentPort;
 let inputUsed=false;
@@ -33,7 +33,9 @@ try {
   let backupAgeAttestation;try{if(code==="AGE_TOOL_UNVERIFIED"&&error&&typeof error==="object"&&"backupAgeAttestation" in error)backupAgeAttestation=normalizeBackupAgeDiagnostic(error.backupAgeAttestation);}catch{/* Keep the original failure. */}
   // Log-only, redacted: the step, errno and tool exit behind the code.
   let cause;try{cause=describeCaptureError(error)??undefined;}catch{/* Keep the original failure. */}
-  reply = { ok: false, error: code, ...(retainedDirectory?{retainedDirectory}:{}),...(backupAgeAttestation?{backupAgeAttestation}:{}),...(cause?{cause}:{}) };
+  // The item inside the data folder the refusal is about, so the page can name it.
+  const path=captureFailurePath(error&&typeof error==="object"&&"path" in error?error.path:undefined);
+  reply = { ok: false, error: code, ...(path?{path}:{}), ...(retainedDirectory?{retainedDirectory}:{}),...(backupAgeAttestation?{backupAgeAttestation}:{}),...(cause?{cause}:{}) };
   exitCode = 1;
 }
 if (parentPort) {

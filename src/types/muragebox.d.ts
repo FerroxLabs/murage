@@ -145,8 +145,11 @@ type SkillRecordingPayload = {
     /** Why the last backup stopped, while it waits to be cleared. */
     reviewReason?:string;
     /** The step it stopped on and the refusal that stopped it, both from
-     * closed sets. Never a path, a filename or a secret. */
-    captureFailure?:{stage:string;code:string};
+     * closed sets, and the item inside the data folder it was about. */
+    captureFailure?:{stage:string;code:string;path?:string};
+    /** What the last verified backup left out of the data folder, listed
+     * after it (0.1.60 audit A-01). */
+    lastSkipped?:import("../../shared/backup-skipped.mjs").BackupSkipped;
   }
   interface BackupClosedStatus {
     supported:boolean;

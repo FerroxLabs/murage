@@ -12,12 +12,15 @@ export function createInstallationRecoveryController(host) {
   let activationReview = null;
   let result = null;
   let error = null;
+  /** Which button failed, and the item in the data folder it was about, so
+   * the page can word a failed backup as a backup, not a restore. */
+  let errorAction = null, errorPath = null;
   const authorize = event => {
     if (!host.isTrustedSender(event)) throw new Error("UNTRUSTED_RECOVERY_SENDER");
   };
   const canSeparate = () => host.canRestoreSeparate?.() === true;
   const canCapture = () => canSeparate() && host.canCaptureSeparate?.() === true;
-  const state = () => ({ busy, available: host.isAvailable(), encryptedAvailable:host.encryptedAvailable?.()===true, separateAvailable: canSeparate(), captureAvailable: canCapture(), retainedDataDirectory: host.retainedDestination?.() ?? null, selection: selection ? { id: selection.id, name: selection.name, encrypted:!!selection.encrypted, coverage:selection.preview.coverage, separate: !!selection.plan, destination: selection.plan?.dataDirectory, snapshotId: selection.preview.snapshotId, sha256: selection.preview.sha256, omittedCount: selection.preview.omittedCount, missingCount: selection.preview.missingCount } : null, review: activationReview ? { id: activationReview.id, snapshotId: activationReview.report.snapshotId, files: activationReview.report.files, bytes: activationReview.report.bytes } : null, result, error, activationAvailable: !!activationReview });
+  const state = () => ({ busy, available: host.isAvailable(), encryptedAvailable:host.encryptedAvailable?.()===true, separateAvailable: canSeparate(), captureAvailable: canCapture(), retainedDataDirectory: host.retainedDestination?.() ?? null, selection: selection ? { id: selection.id, name: selection.name, encrypted:!!selection.encrypted, coverage:selection.preview.coverage, separate: !!selection.plan, destination: selection.plan?.dataDirectory, snapshotId: selection.preview.snapshotId, sha256: selection.preview.sha256, omittedCount: selection.preview.omittedCount, missingCount: selection.preview.missingCount } : null, review: activationReview ? { id: activationReview.id, snapshotId: activationReview.report.snapshotId, files: activationReview.report.files, bytes: activationReview.report.bytes } : null, result, error, errorAction: error ? errorAction : null, errorPath: error ? errorPath : null, activationAvailable: !!activationReview });
 
   return {
     async handle(event, input) {
@@ -27,7 +30,7 @@ export function createInstallationRecoveryController(host) {
       if (busy) return { ...state(), error: "RECOVERY_BUSY" };
       if(input.action.includes("encrypted")&&host.encryptedAvailable?.()!==true)return{...state(),error:"BACKUP_UNAVAILABLE"};
       if (input.action === "capture-separate" ? !canCapture() : ["choose-separate-backup", "restore-separate"].includes(input.action) ? !canSeparate() : !host.isAvailable() && !["diagnostics", "retry"].includes(input.action)) return { ...state(), error: "RECOVERY_OWNERSHIP_REQUIRED" };
-      busy = true; error = null; result = null;
+      busy = true; error = null; result = null; errorAction = input.action; errorPath = null;
       if (input.action !== "activate") activationReview = null;
       try {
         if(input.action === "backup-encrypted"){
@@ -134,6 +137,7 @@ export function createInstallationRecoveryController(host) {
         }
       } catch (failure) {
         error = failure?.code ? code(failure.code) : controllerErrors.has(failure?.message) ? failure.message : "RECOVERY_OPERATION_FAILED";
+        errorPath = typeof failure?.path === "string" && failure.path.length <= 1024 && !/[\x00-\x1f\x7f]/.test(failure.path) ? failure.path : null;
       } finally { busy = false; }
       return state();
     },

@@ -81,3 +81,24 @@ test("Windows worker errors retain bounded private paths without changing POSIX 
     await assert.rejects(posix.result,error=>error.retainedDirectory===undefined);
   }finally{Object.defineProperty(process,"platform",descriptor);}
 });
+
+// 0.1.60 audit A-01: a refusal about one item in the data folder names it, so
+// the page can tell the person which file to look at; nothing outside the
+// data folder is ever carried.
+test("a refusal carries the item inside the data folder it was about, and only such an item", async () => {
+  for (const [path, expected] of [["workspaces/mira/report 10:30.md", "workspaces/mira/report 10:30.md"], ["/Users/sam/.ssh/id_rsa", undefined], ["../outside", undefined], ["C:\\Users\\sam", undefined]]) {
+    const f = fixture(); f.finish({ ok: false, error: "UNSAFE_SNAPSHOT_ENTRY", path }, 1);
+    const error = await f.result.then(() => null, caught => caught);
+    assert.equal(error.code, "UNSAFE_SNAPSHOT_ENTRY");
+    assert.equal(error.path, expected, path);
+  }
+});
+test("a backup's list of skipped items crosses bounded, and a malformed one is refused", async () => {
+  const skipped = { count: 2, items: [{ path: "workspaces/mira/site/node_modules", reason: "rebuildable" }, { path: "workspaces/mira/a.txt", reason: "unreadable" }], bots: { mira: "Mira" } };
+  const f = fixture(); f.finish({ ...valid, skipped });
+  assert.deepEqual((await f.result).skipped, skipped);
+  for (const bad of [{ ...skipped, items: [{ path: "/etc/passwd", reason: "rebuildable" }] }, { ...skipped, items: [{ path: "a", reason: "because" }] }, { count: 0, items: [] }]) {
+    const g = fixture(); g.finish({ ...valid, skipped: bad });
+    await assert.rejects(g.result, /INVALID_RECOVERY_RESULT/);
+  }
+});

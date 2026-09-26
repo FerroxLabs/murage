@@ -98,6 +98,17 @@ describe("backup summary", () => {
     expect(summary).toEqual({ last: "WHEN · 1.2 GB", schedule: "On · daily at 22:15 (Asia/Bangkok)", offsite: "Connected · last copy verified · automatic uploads on", attention: [] });
     expect(backupSummary({ ...healthy, schedule: { ...healthy.schedule!, schedule: { ...enabledSchedule, closedApp: true } } }).schedule).toContain("also while Murage is closed");
   });
+  // 0.1.60 audit A-01: what the last verified backup left out is listed, not
+  // raised as something wrong.
+  it("lists what the last verified backup left out, without raising attention", () => {
+    const lastSkipped = { count: 2, items: [{ path: "workspaces/mira/site/node_modules", reason: "rebuildable" }, { path: "workspaces/mira/secret.txt", reason: "unreadable" }], bots: { mira: "Mira" } };
+    const summary = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, lastSkipped } }, () => "WHEN");
+    expect(summary.attention).toEqual([]);
+    expect(summary.skipped).toEqual([
+      "Skipped 2 items in Mira's folder: site/node_modules (installed packages or a cache, reinstall them after a restore), secret.txt (couldn't be read).",
+      "Everything else was backed up.",
+    ]);
+  });
   it("raises an attention line for every stale, pending, review and error state", () => {
     const s = healthy.schedule!, r = healthy.remote!;
     const cases: [Partial<BackupSummaryInput>, RegExp][] = [

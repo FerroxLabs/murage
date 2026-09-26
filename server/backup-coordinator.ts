@@ -5,7 +5,8 @@ import { z } from "zod";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { canonicalUpdateDescriptor, parseUpdateCandidate, type UpdateCandidate } from "../shared/update-candidate.mjs";
-import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES } from "../shared/backup-capture-failure.mjs";
+import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, captureFailurePath } from "../shared/backup-capture-failure.mjs";
+import { BACKUP_SKIP_REASONS } from "../shared/backup-limits.ts";
 import { backupScheduleSchema, backupReceiptSchema, backupReferenceSchema, backupHandoffSchema, backupClosedResultSchema, latestBackupOccurrence, type BackupClosedResult, type BackupHandoff, type BackupSchedule, type BackupReceipt } from "../shared/backup-schedule.ts";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -15,8 +16,19 @@ const captureCodes = new Set<string>([...BACKUP_CAPTURE_CODES, "UNKNOWN_CAPTURE_
 const captureFailureSchema = z.object({
   stage: z.string().refine(value => captureStages.has(value)),
   code: z.string().refine(value => captureCodes.has(value)),
+  /** The item inside the data folder the refusal is about (audit A-01). */
+  path: z.string().max(1024).refine(value => captureFailurePath(value) === value).optional(),
   at: z.number().int().nonnegative().optional(),
 }).strict();
+/** What the last verified backup left out (audit A-01), in its own file for
+ * the same reason as the failure note: an older build never opens it. */
+const skippedSchema = z.object({
+  jobId: z.string().regex(/^[a-f0-9]{64}$/),
+  count: z.number().int().positive(),
+  items: z.array(z.object({ path: z.string().max(1024).refine(value => captureFailurePath(value) === value), reason: z.enum(BACKUP_SKIP_REASONS) }).strict()).max(50),
+  bots: z.record(z.string().max(160), z.string().max(80)),
+}).strict();
+export type BackupSkipped = z.infer<typeof skippedSchema>;
 const jobSchema = z.object({ id:z.string().regex(/^[a-f0-9]{64}$/), occurrence:z.string().max(200), revision:z.number().int().nonnegative(), scheduledAt:z.number().int().nonnegative(),
   phase:z.enum(["due","waiting-idle","waiting-backup-mode","claiming","capturing","local-verified","skipped","needs-review","handoff-prepared","handoff-armed","offline-claimed","return-pending","returned","install-requested","upgrade-complete","upgrade-cancelled"]),
   handoff:backupHandoffSchema.optional(),
@@ -70,6 +82,25 @@ export class BackupCoordinator {
    * a separate file is simply not opened by one. Stage and code only —
    * never a path, a filename or anything the failure said. */
   private failureFile(){return join(this.options.stateDirectory,"backup-capture-failure.json");}
+  private skippedFile(){return join(this.options.stateDirectory,"backup-last-skipped.json");}
+  /** What the backup just verified left out, or nothing when it left nothing out. */
+  recordSkipped(jobId:string,input:unknown){
+    try{
+      const value=input&&typeof input==="object"?{jobId,...input as object}:null;
+      const parsed=value?skippedSchema.safeParse(value):null;
+      if(!parsed?.success){rmSync(this.skippedFile(),{force:true});return;}
+      mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});
+      writeFileAtomic(this.skippedFile(),JSON.stringify(parsed.data),{mode:0o600});
+    }catch{/* A note is never worth failing a verified backup over. */}
+  }
+  private lastSkipped(jobId:string|undefined){
+    if(!jobId)return undefined;
+    try{
+      const stat=lstatSync(this.skippedFile());if(!stat.isFile()||stat.isSymbolicLink()||stat.size>256*1024)return undefined;
+      const parsed=skippedSchema.safeParse(JSON.parse(readFileSync(this.skippedFile(),"utf8")));
+      return parsed.success&&parsed.data.jobId===jobId?parsed.data:undefined;
+    }catch{return undefined;}
+  }
   recordCaptureFailure(input:unknown){
     const parsed=captureFailureSchema.safeParse(input);if(!parsed.success)return;
     mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});
@@ -80,11 +111,12 @@ export class BackupCoordinator {
     try{
       const stat=lstatSync(this.failureFile());if(!stat.isFile()||stat.isSymbolicLink()||stat.size>4*1024)return undefined;
       const parsed=captureFailureSchema.safeParse(JSON.parse(readFileSync(this.failureFile(),"utf8")));
-      return parsed.success?{stage:parsed.data.stage,code:parsed.data.code}:undefined;
+      return parsed.success?{stage:parsed.data.stage,code:parsed.data.code,...(parsed.data.path?{path:parsed.data.path}:{})}:undefined;
     }catch{return undefined;}
   }
   status(){const s=this.read();return {enabled:s.schedule.enabled,revision:s.revision,schedule:s.schedule,phase:s.job?.phase??"idle",job:s.job,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,reviewReason:s.job?.phase==="needs-review"?s.job.error:undefined,
     captureFailure:s.job?.phase==="needs-review"?this.captureFailure():undefined,
+    lastSkipped:this.lastSkipped(s.lastVerified?.jobId),
     message:s.job?.phase==="waiting-backup-mode"?"Due, waiting for Backup mode":s.job?.phase==="waiting-idle"?"Due, waiting for idle":s.job?.phase==="needs-review"?"Interrupted backup needs review; it will not run again automatically":undefined};}
   configure(expectedRevision:number,input:unknown){
     const lease=this.lease();try{const s=this.read();if(s.revision!==expectedRevision)throw new Error("BACKUP_SCHEDULE_CHANGED");
