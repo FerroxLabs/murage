@@ -1872,7 +1872,7 @@ function buildErrorPage({ allPortsOccupied }) {
 const SERVER_BOOT_TIMEOUT_MS = 60_000;
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
-const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath });
+const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath, ownershipFile: path.join(app.getPath("userData"), "adb-daemon-owned.json") });
 const displayMediaGuard = createDisplayMediaGuard();
 let displayMediaRequestCount = 0;
 
@@ -3725,6 +3725,9 @@ const desktopStartup = app.whenReady().then(async () => {
   // The owned-main gate above, not Electron's raw ipcMain (B6).
   registerCuaIpc(ipcMain);
   androidDevice.registerIpc(ipcMain);
+// W-D5: an adb daemon a crashed or force-closed run left behind still holds
+// that run's sockets (the old debugging port on Windows). Stop it now.
+void androidDevice.reclaimOrphan().catch(() => {});
   registerUpdaterIpc(ipcMain);
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on

@@ -81,9 +81,12 @@ export const CLOSE_INHERITED_DESCRIPTORS = [
 
 /** How to start the adb daemon so it inherits nothing from this app.
  *
- * Windows hands a child only the handles the launcher marks inheritable, and
- * Node marks the child's own standard streams and nothing else, so there the
- * binary is run directly. */
+ * On Windows the binary is run directly. Node starts children with handle
+ * inheritance on, so the daemon can still pick up any handle the app holds
+ * as inheritable: the 0.1.60 Windows pass saw it keep the Chromium debugging
+ * port bound after the app was ended. That is why the daemon's ownership is
+ * recorded (createAndroidDeviceController ownershipFile) and a leftover one
+ * is stopped at the next start (reclaimOrphan), as well as on every quit. */
 export function adbServerLaunch(binary, { platform = process.platform } = {}) {
   if (platform === "win32") return { command: binary, args: ["start-server"] };
   return { command: "/bin/sh", args: ["-c", CLOSE_INHERITED_DESCRIPTORS, "murage-adb-start", binary, "start-server"] };
@@ -173,6 +176,27 @@ export function createAndroidDeviceController(options = {}) {
   // a daemon the person was already using for their own work.
   let ownsServer = false;
   let startingServer = null;
+  // W-D5: remembered on disk too. A daemon this app started outlives a crash
+  // or a forced quit, and on Windows it inherits the app's inheritable
+  // handles, the Chromium debugging socket among them. The next start then
+  // saw a daemon on the port, took it for somebody else's and never stopped
+  // it, so the old port stayed bound. The record lets the next start (or
+  // this quit) stop the one that is ours.
+  const ownershipFile = typeof options.ownershipFile === "string" ? options.ownershipFile : null;
+  const env = options.env ?? process.env;
+  const remember = () => {
+    if (!ownershipFile) return;
+    try { fs.writeFileSync(ownershipFile, JSON.stringify({ version: 1, port: adbServerPort(env), appPid: process.pid, startedAt: Date.now() }), { mode: 0o600 }); } catch { /* the in-memory flag still stops it on quit */ }
+  };
+  const forget = () => { if (ownershipFile) try { fs.rmSync(ownershipFile, { force: true }); } catch { /* retried next start */ } };
+  const recorded = () => {
+    if (!ownershipFile) return null;
+    try {
+      const value = JSON.parse(fs.readFileSync(ownershipFile, "utf8"));
+      return value?.version === 1 && Number.isInteger(value.port) && value.port > 0 && value.port < 65_536 && Number.isInteger(value.appPid) ? value : null;
+    } catch { return null; }
+  };
+  const alive = options.processAlive ?? ((pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error?.code === "EPERM"; } });
 
   /** Start the daemon deliberately, once, instead of letting the first
    * ordinary adb command fork one out of the middle of the app. */
@@ -189,6 +213,7 @@ export function createAndroidDeviceController(options = {}) {
         env: { ...process.env, ADB_TRACE: "" },
       });
       ownsServer = true;
+      remember();
       child.unref?.();
       await new Promise((resolve) => {
         const done = setTimeout(resolve, SERVER_START_TIMEOUT_MS);
@@ -212,8 +237,28 @@ export function createAndroidDeviceController(options = {}) {
     if (!binary) return { stopped: false };
     try {
       await run(binary, ["kill-server"], { timeout: 4_000, env: { ...process.env, ADB_TRACE: "" } });
+      forget();
       return { stopped: true };
     } catch { return { stopped: false }; }
+  };
+
+  /** At start: a daemon the last run of this app started and never stopped
+   * (it crashed or was ended) is stopped now, before anything uses adb.
+   * A daemon somebody else started is never touched: there is no record of
+   * it, and a record whose app is still running belongs to that app. */
+  const reclaimOrphan = async () => {
+    const record = recorded();
+    if (!record) return { reclaimed: false };
+    if (record.appPid !== process.pid && alive(record.appPid)) return { reclaimed: false };
+    if (record.port !== adbServerPort(env) || !(await probeServer(record.port))) { forget(); return { reclaimed: false }; }
+    const binary = resolveBinary();
+    if (!binary) return { reclaimed: false };
+    try {
+      await run(binary, ["kill-server"], { timeout: 4_000, env: { ...process.env, ADB_TRACE: "" } });
+      forget();
+      cachedStatus = null;
+      return { reclaimed: true };
+    } catch { return { reclaimed: false }; }
   };
 
   const invoke = async (binary, args, extra = {}) => {
@@ -348,5 +393,5 @@ export function createAndroidDeviceController(options = {}) {
     ipcMain.handle("android-device:input", protect(input));
   };
 
-  return { frame, input, registerIpc, status, stop };
+  return { frame, input, reclaimOrphan, registerIpc, status, stop };
 }
