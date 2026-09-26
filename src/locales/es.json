@@ -335,7 +335,7 @@
   "searchSettings.removing": "Eliminando…",
   "searchSettings.clear": "Eliminar",
   "searchSettings.keyPrivacy": "Las claves guardadas nunca se muestran aquí. «Clave guardada» no confirma el acceso al servicio.",
-  "searchSettings.charges": "Tavily y Exa reciben consultas de búsqueda cuando se seleccionan y pueden cobrar por separado. Añadir o eliminar una clave no cambia el proveedor elegido.",
+  "searchSettings.charges": "Tavily y Exa reciben consultas de búsqueda cuando se seleccionan. Añadir o eliminar una clave no cambia el proveedor elegido.",
   "searchSettings.savingProvider": "Guardando el proveedor de búsqueda…",
   "searchSettings.providerSaved": "Proveedor de búsqueda guardado.",
   "searchSettings.providerSaveError": "No se ha podido guardar el proveedor de búsqueda. Comprueba tu conexión y vuelve a intentarlo.",

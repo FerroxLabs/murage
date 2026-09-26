@@ -335,7 +335,7 @@
   "searchSettings.removing": "Wird entfernt…",
   "searchSettings.clear": "Entfernen",
   "searchSettings.keyPrivacy": "Gespeicherte Schlüssel werden hier nie angezeigt. Der Hinweis „Schlüssel gespeichert“ bestätigt keinen Zugriff auf den Dienst.",
-  "searchSettings.charges": "Tavily und Exa erhalten Suchanfragen, wenn sie ausgewählt sind, und können zusätzliche Gebühren berechnen. Das Hinzufügen oder Entfernen eines Schlüssels ändert deine Anbieterwahl nicht.",
+  "searchSettings.charges": "Tavily und Exa erhalten Suchanfragen, wenn sie ausgewählt sind. Das Hinzufügen oder Entfernen eines Schlüssels ändert deine Anbieterwahl nicht.",
   "searchSettings.savingProvider": "Suchanbieter wird gespeichert…",
   "searchSettings.providerSaved": "Suchanbieter gespeichert.",
   "searchSettings.providerSaveError": "Der Suchanbieter konnte nicht gespeichert werden. Prüfe deine Verbindung und versuche es erneut.",

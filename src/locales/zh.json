@@ -335,7 +335,7 @@
   "searchSettings.removing": "删除中…",
   "searchSettings.clear": "删除",
   "searchSettings.keyPrivacy": "已保存的密钥不会在此显示。密钥已保存并不代表已确认能够访问服务。",
-  "searchSettings.charges": "选择 Tavily 或 Exa 后，搜索查询会发送给相应服务商，并可能单独计费。添加或删除密钥不会改变你选择的服务商。",
+  "searchSettings.charges": "选择 Tavily 或 Exa 后，搜索查询会发送给相应服务商。添加或删除密钥不会改变你选择的服务商。",
   "searchSettings.savingProvider": "正在保存搜索服务商…",
   "searchSettings.providerSaved": "搜索服务商已保存。",
   "searchSettings.providerSaveError": "无法保存搜索服务商。请检查连接后重试。",

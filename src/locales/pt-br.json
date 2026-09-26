@@ -335,7 +335,7 @@
   "searchSettings.removing": "Removendo…",
   "searchSettings.clear": "Remover",
   "searchSettings.keyPrivacy": "As chaves salvas nunca são exibidas aqui. Uma chave salva não confirma o acesso ao serviço.",
-  "searchSettings.charges": "Tavily e Exa recebem as consultas de pesquisa quando selecionados e podem cobrar separadamente. Adicionar ou remover uma chave não altera sua escolha de provedor.",
+  "searchSettings.charges": "Tavily e Exa recebem as consultas de pesquisa quando selecionados. Adicionar ou remover uma chave não altera sua escolha de provedor.",
   "searchSettings.savingProvider": "Salvando provedor de pesquisa…",
   "searchSettings.providerSaved": "Provedor de pesquisa salvo.",
   "searchSettings.providerSaveError": "Não foi possível salvar o provedor de pesquisa. Verifique sua conexão e tente novamente.",

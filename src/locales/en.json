@@ -389,7 +389,7 @@
   "searchSettings.removing": "Removing…",
   "searchSettings.clear": "Clear",
   "searchSettings.keyPrivacy": "Saved keys are never shown here. Key saved does not confirm service access.",
-  "searchSettings.charges": "Tavily and Exa receive search queries when selected and may charge separately. Adding or removing a key does not change your provider choice.",
+  "searchSettings.charges": "Tavily and Exa receive search queries when selected. Adding or removing a key does not change your provider choice.",
   "searchSettings.savingProvider": "Saving search provider…",
   "searchSettings.providerSaved": "Search provider saved.",
   "searchSettings.providerSaveError": "Could not save the search provider. Check your connection and try again.",

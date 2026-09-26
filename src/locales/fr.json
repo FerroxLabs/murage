@@ -335,7 +335,7 @@
   "searchSettings.removing": "Suppression…",
   "searchSettings.clear": "Supprimer",
   "searchSettings.keyPrivacy": "Les clés enregistrées ne sont jamais affichées ici. « Clé enregistrée » ne confirme pas l’accès au service.",
-  "searchSettings.charges": "Tavily et Exa reçoivent les requêtes de recherche lorsqu’ils sont sélectionnés et peuvent les facturer séparément. L’ajout ou la suppression d’une clé ne change pas le fournisseur choisi.",
+  "searchSettings.charges": "Tavily et Exa reçoivent les requêtes de recherche lorsqu’ils sont sélectionnés. L’ajout ou la suppression d’une clé ne change pas le fournisseur choisi.",
   "searchSettings.savingProvider": "Enregistrement du fournisseur de recherche…",
   "searchSettings.providerSaved": "Fournisseur de recherche enregistré.",
   "searchSettings.providerSaveError": "Impossible d’enregistrer le fournisseur de recherche. Vérifiez votre connexion et réessayez.",

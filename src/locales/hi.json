@@ -335,7 +335,7 @@
   "searchSettings.removing": "हटाया जा रहा है…",
   "searchSettings.clear": "हटाएँ",
   "searchSettings.keyPrivacy": "सहेजी गई कुंजियाँ यहाँ कभी दिखाई नहीं जातीं। कुंजी सहेजे जाने से सेवा का एक्सेस होने की पुष्टि नहीं होती।",
-  "searchSettings.charges": "चुने जाने पर Tavily और Exa को खोज अनुरोध भेजे जाते हैं और वे अलग शुल्क ले सकते हैं। कुंजी जोड़ने या हटाने से आपका चुना हुआ प्रदाता नहीं बदलता।",
+  "searchSettings.charges": "चुने जाने पर Tavily और Exa को खोज अनुरोध भेजे जाते हैं। कुंजी जोड़ने या हटाने से आपका चुना हुआ प्रदाता नहीं बदलता।",
   "searchSettings.savingProvider": "खोज प्रदाता सहेजा जा रहा है…",
   "searchSettings.providerSaved": "खोज प्रदाता सहेजा गया।",
   "searchSettings.providerSaveError": "खोज प्रदाता सहेजा नहीं जा सका। अपना कनेक्शन जाँचें और फिर कोशिश करें।",

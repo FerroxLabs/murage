@@ -335,7 +335,7 @@
   "searchSettings.removing": "削除中…",
   "searchSettings.clear": "削除",
   "searchSettings.keyPrivacy": "保存済みのキーはここには表示されません。キーが保存されていても、サービスを利用できることが確認されたわけではありません。",
-  "searchSettings.charges": "Tavily または Exa を選ぶと、検索クエリがそのサービスに送信され、別途料金がかかる場合があります。キーを追加・削除しても、選択した検索サービスは変わりません。",
+  "searchSettings.charges": "Tavily または Exa を選ぶと、検索クエリがそのサービスに送信されます。キーを追加・削除しても、選択した検索サービスは変わりません。",
   "searchSettings.savingProvider": "検索サービスを保存中…",
   "searchSettings.providerSaved": "検索サービスを保存しました。",
   "searchSettings.providerSaveError": "検索サービスを保存できませんでした。接続を確認してから再試行してください。",
