@@ -503,6 +503,8 @@ contains a recursive delete fails). In short:
 - **Production runtime**, deleting paths the app itself created — mkdtemp
   scratch, staging, unpublished candidates, or per-bot/per-skill
   subdirectories under `DATA_DIR` — each covered by its own unit tests:
+  `electron/backup-remote-runtime.mjs` (forgets one off-site destination's
+  `<control>/remote/<ref>` folder, outside the data folder),
   `electron/cua-linux-bundle.cjs`, `electron/skill-recorder.mjs`,
   `electron/skill-recording-store.mjs`, `electron/speech.mjs`,
   `installer/lib/tailscale.mjs`, `server/bot-package-archive.ts`,

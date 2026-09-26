@@ -6,7 +6,7 @@
 // a minimal SFTP v3 client for "Test connection". Main-process only.
 import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, statSync, writeFileSync, readdirSync, lstatSync } from "node:fs";
+import { mkdtempSync, rmdirSync, statSync, unlinkSync, writeFileSync, readdirSync, lstatSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { resticSftpCredentialsSchema, resticSftpTargetSchema, sftpHostKeySchema, SFTP_HOST_KEY_TYPES, type ResticSftpCredentials, type ResticSftpTarget } from "./backup-restic-target.ts";
 
@@ -109,17 +109,23 @@ export function classifySshFailure(stderr:string):string{
 export function writeSshMaterial(workDirectory:string,target:ResticSftpTarget,credentials:ResticSftpCredentials){
   const parsed=resticSftpTargetSchema.parse(target),secret=resticSftpCredentialsSchema.parse(credentials);if(!parsed.hostKey)throw Error("RESTIC_SFTP_HOST_KEY_REQUIRED");
   const directory=mkdtempSync(join(workDirectory,"ssh-"));
-  const cleanup=()=>{try{rmSync(directory,{recursive:true,force:true});}catch{/* sweepSshMaterial removes it next time */}};
+  const cleanup=()=>removeMaterialFolder(directory);
   try{
     const identityFile=join(directory,"key"),knownHostsFile=join(directory,"known_hosts");
     writeFileSync(identityFile,secret.privateKey,{flag:"wx",mode:0o600});writeFileSync(knownHostsFile,knownHostsLine(parsed.hostKey),{flag:"wx",mode:0o600});
     return{identityFile,knownHostsFile,cleanup};
   }catch(error){cleanup();throw error;}
 }
+/** A run folder only ever holds the two files Murage wrote: remove those by
+ * name, then the empty folder. No recursive delete; anything else stays. */
+function removeMaterialFolder(directory:string){
+  for(const name of ["key","known_hosts"]){try{unlinkSync(join(directory,name));}catch{/* already gone */}}
+  try{rmdirSync(directory);}catch{/* not empty or gone: sweepSshMaterial retries */}
+}
 /** Leftovers from a run that was killed. Called only while holding the work lease. */
 export function sweepSshMaterial(workDirectory:string){
   let names:string[]=[];try{names=readdirSync(workDirectory);}catch{return;}
-  for(const name of names){if(!/^ssh-[A-Za-z0-9]{6}$/.test(name))continue;const path=join(workDirectory,name);try{const stat=lstatSync(path);if(stat.isDirectory()&&!stat.isSymbolicLink())rmSync(path,{recursive:true,force:true});}catch{/* reported by the next run */}}
+  for(const name of names){if(!/^ssh-[A-Za-z0-9]{6}$/.test(name))continue;const path=join(workDirectory,name);try{const stat=lstatSync(path);if(stat.isDirectory()&&!stat.isSymbolicLink())removeMaterialFolder(path);}catch{/* reported by the next run */}}
 }
 
 function runTool(executable:string,args:string[],cwd:string,timeoutMs:number):Promise<{code:number|null;stdout:string;stderr:string;timedOut:boolean}>{
