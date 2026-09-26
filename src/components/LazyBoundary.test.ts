@@ -41,8 +41,8 @@ describe("LazyBoundary", () => {
     instance.componentDidCatch(new Error("chunk"));
     expect(onRetry).toHaveBeenCalledOnce();
     const html = renderToStaticMarkup(instance.render() as ReactElement);
-    expect(LAZY_RETRY_TEXT).toBe("Couldn't open this — tap to retry");
-    expect(html).toContain("Couldn&#x27;t open this — tap to retry");
+    expect(LAZY_RETRY_TEXT).toBe("Couldn't open this. Tap to retry.");
+    expect(html).toContain("Couldn&#x27;t open this. Tap to retry.");
     expect(html).toContain('role="alert"');
     expect(html).not.toContain("panel");
     // Chromium caches a failed import() in the module map: only a new

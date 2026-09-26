@@ -39,7 +39,7 @@ export function SignedOutCard() {
           Signed out. Pair again
         </h2>
         <p id="signed-out-body" className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
-          This device is no longer signed in to your Murage. Your conversations are safe on your computer.
+          This device is no longer signed in to your Murage. Your conversations are still on your computer.
           Pair again with the code Murage shows on your computer.
         </p>
         <button

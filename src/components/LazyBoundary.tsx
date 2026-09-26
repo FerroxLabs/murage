@@ -6,7 +6,7 @@
 // second one inside that minute is left to throw, and with no boundary nearer
 // than RootErrorBoundary it took the whole app down (final review M7): on a
 // phone, a flaky network while opening Settings twice. This keeps it to the
-// panel: "Couldn't open this — tap to retry".
+// panel: "Couldn't open this. Tap to retry.".
 //
 // "Tap to retry" reloads the whole page. A fresh React.lazy is not enough:
 // Chromium caches a failed dynamic import() in the module map, so the same
@@ -39,7 +39,7 @@ export function retryableLazy<T extends ComponentType<any>>(load: () => Promise<
   };
 }
 
-export const LAZY_RETRY_TEXT = "Couldn't open this — tap to retry";
+export const LAZY_RETRY_TEXT = "Couldn't open this. Tap to retry.";
 
 export class LazyBoundary extends Component<
   {
