@@ -143,6 +143,8 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   if (input.remoteFailure) attention.push(input.remoteFailure);
   if (r?.pending) attention.push("Off-site work is in progress.");
   if (r?.supported && (r.state === "needs-review" || r.state === "initializing")) attention.push("The off-site copy needs review.");
+  if (r?.serverCheck === "host-key-changed") attention.push("The SFTP server's identity changed since you trusted it. Off-site copies are refused until you check it.");
+  if (r?.serverCheck === "key-refused") attention.push("The SFTP server did not accept Murage's key. Add the key to the server again.");
   if (r?.lastUpload?.state === "needs-review") attention.push("The last off-site upload needs review.");
   if (r?.lastUpload?.lockRelease === "unconfirmed") attention.push("Your storage provider didn't confirm the off-site lock was released.");
   if (r?.automaticUpload?.state === "needs-review") attention.push("Automatic off-site uploads are paused for review.");

@@ -58,7 +58,7 @@ const hostKeyAlgorithms=(type:SftpHostKey["type"])=>type==="ssh-rsa"?"rsa-sha2-5
 export const SFTP_HOST_KEY_ALIAS="murage-backup-server";
 export function knownHostsLine(hostKey:SftpHostKey){const key=checkedHostKey(hostKey);return `${SFTP_HOST_KEY_ALIAS} ${key.type} ${key.key}\n`;}
 
-const plainPath=(value:string)=>typeof value==="string"&&isAbsolute(value)&&value.length<=4096&&!/["\x00-\x1f\x7f]/.test(value);
+const plainPath=(value:string)=>typeof value==="string"&&(isAbsolute(value)||/^[A-Za-z]:\\/.test(value))&&value.length<=4096&&!/["\x00-\x1f\x7f]/.test(value);
 /** The complete ssh argument vector (after the executable). Only Murage's key
  * and pinned identity are used: no config files, agent, forwarding, proxies,
  * password prompts or the person's own known_hosts. */
