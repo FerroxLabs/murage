@@ -91,7 +91,7 @@ export function resolveSshTools(platform:NodeJS.Platform=process.platform,exists
 /** Child processes get a dedicated environment, never a copy of Murage's. */
 export function sshChildEnvironment(cwd:string):Record<string,string>{
   const env:Record<string,string>={HOME:cwd,PATH:"",TMPDIR:cwd};
-  if(process.platform==="win32"&&process.env.SystemRoot&&/^[A-Za-z]:\\[^"]*$/.test(process.env.SystemRoot))env.SystemRoot=process.env.SystemRoot;
+  if(process.platform==="win32"){Object.assign(env,{TMP:cwd,TEMP:cwd,USERPROFILE:cwd});if(process.env.SystemRoot&&/^[A-Za-z]:\\[^"]*$/.test(process.env.SystemRoot))env.SystemRoot=process.env.SystemRoot;}
   return env;
 }
 

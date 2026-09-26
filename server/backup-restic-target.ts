@@ -10,7 +10,11 @@ export interface ResticS3Run {repository:string;region:string;bucketLookup:Resti
 export function resticS3Repository(target:ResticS3Target){return `s3:${target.endpoint}/${target.bucket}/${target.prefix}`;}
 /** A dedicated child environment, never a merge with process.env. */
 export function resticChildEnvironment(cwd:string,s3?:ResticS3Run):Record<string,string>{
-  const env:Record<string,string>={HOME:cwd,PATH:"",TMPDIR:cwd};if(!s3)return env;
+  const env:Record<string,string>={HOME:cwd,PATH:"",TMPDIR:cwd};
+  // Windows: Go resolves its temp folder from TMP/TEMP (otherwise it falls back
+  // to the Windows folder) and needs SystemRoot for networking and crypto.
+  if(process.platform==="win32"){Object.assign(env,{TMP:cwd,TEMP:cwd,USERPROFILE:cwd});const root=process.env.SystemRoot;if(root&&/^[A-Za-z]:\\[^"\x00-\x1f]*$/.test(root))env.SystemRoot=root;}
+  if(!s3)return env;
   try{
     if(!s3.repository.startsWith("s3:https://"))throw Error();const url=new URL(s3.repository.slice(3)),parts=url.pathname.slice(1).split("/");
     const target=resticS3TargetSchema.parse({kind:"s3",remoteRef:"runner",revision:0,credentialRef:"runner",endpoint:url.origin,bucket:parts.shift(),prefix:parts.join("/"),region:s3.region,bucketLookup:s3.bucketLookup});

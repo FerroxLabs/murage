@@ -13,7 +13,7 @@ const safeNumber=value=>value<=BigInt(Number.MAX_SAFE_INTEGER)?Number(value):NaN
  * Every other byte before the single terminal signature is hashed. */
 export function normalizedAgePayloadHash(bytes){
   try{
-    if(bytes.length<32||bytes.length>64*1024**2||bytes.readUInt32LE(0)!==0xfeedfacf||bytes.readUInt32LE(4)!==0x0100000c||bytes.readUInt32LE(12)!==2)return null;
+    if(bytes.length<32||bytes.length>64*1024**2||bytes.readUInt32LE(0)!==0xfeedfacf||![0x0100000c,0x01000007].includes(bytes.readUInt32LE(4))||bytes.readUInt32LE(12)!==2)return null;
     const count=bytes.readUInt32LE(16),end=32+bytes.readUInt32LE(20);
     if(!count||count>256||end>bytes.length||end>1024*1024)return null;
     let cursor=32,signature=null,linkedit=null;const segments=[];
@@ -92,13 +92,14 @@ function ageFailure(report,predicate,result){
 const nativeCodesign=args=>{const started=Date.now(),result=spawnSync("/usr/bin/codesign",args,{stdio:["ignore","pipe","pipe"],encoding:"utf8",timeout:10000,maxBuffer:65536});result.attestationElapsedMs=Date.now()-started;return result;};
 /** Injectable command runner is a test seam; production always uses codesign. */
 export function signedAgeOwnedByCurrentApp(file,bytes,{currentExecutable=process.execPath,run=nativeCodesign,report}={}){
-  if(normalizedAgePayloadHash(bytes)!==AGE_PAYLOAD_SHA256)return ageFailure(report,"payload");
+  const payload=backupAgePinForTarget("darwin",process.arch)?.payloadSha256;
+  if(!payload||normalizedAgePayloadHash(bytes)!==payload)return ageFailure(report,"payload");
   let predicate="bundle-path";
   try{
     const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents);
     const executable=realpathSync(currentExecutable);
     if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app"))return ageFailure(report,"bundle-path");
-    if(resolved!==path.join(resources,"backup-tools","arm64","age"))return ageFailure(report,"tool-location");
+    if(resolved!==path.join(resources,"backup-tools",process.arch,"age"))return ageFailure(report,"tool-location");
     if(!executable.startsWith(app+path.sep))return ageFailure(report,"executable-binding");
     predicate="app-verify";const verified=run(["--verify","--strict","-R","=anchor apple generic",app]);if(verified.status!==0||verified.error)return ageFailure(report,predicate,verified);
     predicate="app-info";const info=run(["--display","--verbose=4",app]);if(info.status!==0||info.error)return ageFailure(report,predicate,info);
@@ -118,7 +119,7 @@ export function trustedBackupAgeExecutable(file,{report}={}){
     predicate="file-open";const fd=openSync(file,constants.O_RDONLY|(process.platform==="win32"?0:constants.O_NOFOLLOW));let bytes;
     try{predicate="file-identity";const opened=fstatSync(fd);if(opened.dev!==before.dev||opened.ino!==before.ino)return ageFailure(report,predicate);predicate="file-read";bytes=readFileSync(fd);}finally{try{closeSync(fd);}catch(error){predicate="file-close";throw error;}}
     if(digest(bytes)===pin.executableSha256)return true;
-    if(process.platform!=="darwin"||process.arch!=="arm64")return ageFailure(report,"raw-pin");
+    if(process.platform!=="darwin"||!pin.payloadSha256)return ageFailure(report,"raw-pin");
     return signedAgeOwnedByCurrentApp(file,bytes,{report});
   }catch(error){return ageFailure(report,predicate,{error});}
 }
@@ -163,12 +164,13 @@ export async function readBackupToolBytes(file,{strictMode=false}={}){
   }catch{return null;}finally{await handle?.close();}
 }
 export async function signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal}={}){
-  if(normalizedAgePayloadHash(bytes)!==AGE_PAYLOAD_SHA256)return false;
+  const payload=backupAgePinForTarget("darwin",process.arch)?.payloadSha256;
+  if(!payload||normalizedAgePayloadHash(bytes)!==payload)return false;
   try{
     const identity=backupToolIdentity(file,currentExecutable),unchanged=()=>identity!==null&&!signal?.aborted&&backupToolIdentity(file,currentExecutable)===identity;
     if(!unchanged())return false;
     const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents),executable=realpathSync(currentExecutable);
-    if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app")||resolved!==path.join(resources,"backup-tools","arm64","age")||!executable.startsWith(app+path.sep))return false;
+    if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app")||resolved!==path.join(resources,"backup-tools",process.arch,"age")||!executable.startsWith(app+path.sep))return false;
     const checked=async args=>{if(!unchanged())throw Error();const result=await run(args,{signal});if(!unchanged()||result.status!==0||result.error)throw Error();return result;};
     await checked(["--verify","--strict","-R","=anchor apple generic",app]);
     const info=await checked(["--display","--verbose=4",app]),team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;
@@ -181,7 +183,7 @@ export async function trustedBackupAgeExecutableAsync(file,{currentExecutable=pr
   try{
     const pin=backupAgePinForTarget(process.platform,process.arch),identity=backupToolIdentity(file,currentExecutable);if(!pin||!identity||signal?.aborted)return false;
     const bytes=await readBackupToolBytes(file);if(!bytes||signal?.aborted||backupToolIdentity(file,currentExecutable)!==identity)return false;
-    const trusted=digest(bytes)===pin.executableSha256||process.arch==="arm64"&&await signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecutable,run,signal});
+    const trusted=digest(bytes)===pin.executableSha256||Boolean(pin.payloadSha256)&&await signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecutable,run,signal});
     return Boolean(trusted&&!signal?.aborted&&backupToolIdentity(file,currentExecutable)===identity);
   }catch{return false;}
 }
