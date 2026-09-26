@@ -12,11 +12,12 @@ import { t } from "@/lib/i18n";
 import { engineErrorCategory, type ProviderErrorInfo } from "../../shared/provider-error";
 import { isProviderSafetyBlock } from "../../shared/provider-safety";
 
-const PROVIDER_CATEGORIES = new Set(["credits", "spend-cap", "payment", "authentication", "permission", "rate-limit", "unavailable"]);
+const PROVIDER_CATEGORIES = ["credits", "spend-cap", "payment", "authentication", "permission", "rate-limit", "unavailable"] as const;
+export type ProviderErrorCategory = typeof PROVIDER_CATEGORIES[number] | "unknown";
 
 /** The card's category for a structured provider error (ProviderErrorCard). */
-export function providerErrorCategory(info: ProviderErrorInfo): string {
-  return PROVIDER_CATEGORIES.has(info.kind) ? info.kind : "unknown";
+export function providerErrorCategory(info: ProviderErrorInfo): ProviderErrorCategory {
+  return (PROVIDER_CATEGORIES as readonly string[]).includes(info.kind) ? info.kind as ProviderErrorCategory : "unknown";
 }
 
 /** The card's heading for a structured provider error. */

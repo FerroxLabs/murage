@@ -57,7 +57,7 @@ describe("bot member rows toggle from anywhere on the row", () => {
     }
     expect(toggled).toEqual(["miso", "poppy"]);
     // No inner control could swallow a click on the name.
-    const html = renderToStaticMarkup(createElement(BotPickerList, { bots: [bot("miso", "Miso")], picked: new Set(), onToggle: () => {}, emptyHint: "none" }));
+    const html = renderToStaticMarkup(createElement(BotPickerList, { bots: [bot("miso", "Miso")], picked: new Set<string>(), onToggle: () => {}, emptyHint: "none" }));
     expect(html.match(/<button/g)).toHaveLength(1);
     expect(html).not.toMatch(/<input|<label/);
   });
