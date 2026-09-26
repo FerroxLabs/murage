@@ -37,7 +37,7 @@ describe("what's new cards", () => {
     expect(WHATS_NEW_CARD_COUNT).toBe(3);
     const hero = text(render(0));
     expect(hero).toContain("Your work, kept.");
-    expect(hero).toContain("Backups that run themselves, a copy somewhere else, and routines that don't stop to ask.");
+    expect(hero).toContain("Backups that run themselves, a copy somewhere else, and routines that get on with it.");
     expect(text(render(1))).toContain("Built to be relied on");
     expect(text(render(2))).toContain("Plus a long list of small wins");
   });
@@ -48,7 +48,7 @@ describe("what's new cards", () => {
       ["offsite", "Off-site, your way"],
       ["routines", "Routines that keep going"],
       ["delete", "Delete means gone"],
-      ["phone", "Murage on your phone"],
+      ["help", "Help, built in"],
       ["aboutMe", "About me"],
     ]);
     const html = text(render(1));
@@ -63,7 +63,7 @@ describe("what's new cards", () => {
       "Every voice has a play button",
       "Plain names for connected-app tools",
       "Connected apps stay connected",
-      "Ask any bot how Murage works",
+      "Photo uploads from the web app in your phone's browser work again",
     ]);
     const html = text(render(2));
     for (const line of WHATS_NEW_MORE) expect(html).toContain(line);
@@ -110,7 +110,7 @@ describe("what's new cards", () => {
 
   it("shows the six highlights as buttons", () => {
     const html = render(1);
-    for (const action of ["backups", "offsite", "routines", "delete", "phone", "aboutMe"]) expect(html).toContain(`data-whats-new-tile="${action}"`);
+    for (const action of ["backups", "offsite", "routines", "delete", "help", "aboutMe"]) expect(html).toContain(`data-whats-new-tile="${action}"`);
     expect(text(html)).toContain("Click any card to try it");
   });
 
@@ -132,15 +132,14 @@ describe("what's new cards", () => {
 });
 
 describe("where the shortcuts go", () => {
-  const run = (action: Parameters<typeof runWhatsNewAction>[0]) => {
+  const run = (action: Parameters<typeof runWhatsNewAction>[0], bots: Parameters<typeof runWhatsNewAction>[2] = []) => {
     const dispatch = vi.fn();
-    const went = runWhatsNewAction(action, dispatch);
+    const went = runWhatsNewAction(action, dispatch, bots);
     return { dispatch, went };
   };
 
-  it("opens Settings at Backups, Phone and About me", () => {
+  it("opens Settings at Backups and About me", () => {
     expect(run("backups").dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "backups" }]]);
-    expect(run("phone").dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "companion" }]]);
     expect(run("aboutMe").dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "aboutMe" }]]);
   });
 
@@ -168,6 +167,35 @@ describe("where the shortcuts go", () => {
 
   it("opens Routines", () => {
     expect(run("routines").dispatch.mock.calls).toEqual([[{ type: "showRoutines" }]]);
+  });
+
+  it("opens the Chief of Staff's conversation for Help, built in, and focuses its composer", () => {
+    const bots = [{ id: "hid", name: "Hid", hidden: true }, { id: "ada", name: "Ada" }, { id: "chief", name: "Chief", chiefOfStaff: true, chiefScope: "workspace" }] as never;
+    frames.length = 0;
+    const { dispatch, went } = run("help", bots);
+    expect(went).toBe(true);
+    expect(dispatch.mock.calls).toEqual([[{ type: "select", id: "chief" }]]);
+    while (frames.length) frames.shift()!(0);
+    const event = (window.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as CustomEvent;
+    expect(event.type).toBe("murage:focus-composer");
+    expect(event.detail).toEqual({ botId: "chief" });
+  });
+
+  it("falls back to the first bot without a Chief, and only closes with no bots", () => {
+    const noChief = [{ id: "hid", name: "Hid", hidden: true }, { id: "ada", name: "Ada" }, { id: "lead", name: "Lead", chiefOfStaff: true }] as never;
+    expect(run("help", noChief).dispatch.mock.calls).toEqual([[{ type: "select", id: "ada" }]]);
+    const none = run("help", []);
+    expect(none.went).toBe(false);
+    expect(none.dispatch).not.toHaveBeenCalled();
+  });
+
+  // murage_help is mounted only on engines with the agents tools (Claude
+  // Code, Codex, Pi, the ACP engines, Antigravity on full auto), so the tile
+  // may not promise that every bot answers from the help pages.
+  it("does not promise every bot reads the help pages", () => {
+    const help = WHATS_NEW_TILES.find((tile) => tile.action === "help")!;
+    expect(help.body).not.toMatch(/\b(any|every) bot\b/i);
+    expect(WHATS_NEW_MORE.join(" ")).not.toMatch(/\b(any|every) bot\b/i);
   });
 
   it("only closes the page for Delete means gone", () => {

@@ -54,8 +54,8 @@ test.beforeAll(async () => {
       name: "whats-new-fixture",
       resolveId(id) { if (id === "/whats-new-fixture-store") return "\0whats-new-store"; },
       load(id) {
-        // Dispatch only records.
-        if (id === "\0whats-new-store") return "window.__dispatched=[];export function useStore(){return {state:{bots:[],groups:[],selectedId:null},dispatch(action){window.__dispatched.push(action);}};}";
+        // Ada and the Chief; dispatch only records.
+        if (id === "\0whats-new-store") return "window.__dispatched=[];export function useStore(){return {state:{bots:[{id:'ada',name:'Ada'},{id:'chief',name:'Chief',chiefOfStaff:true,chiefScope:'workspace'}],groups:[],selectedId:null},dispatch(action){window.__dispatched.push(action);}};}";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!(req.url === "/__whats-new" || req.url?.startsWith("/__whats-new?"))) return next();
@@ -173,7 +173,7 @@ test("reopens from Tools in the light skin, closes on Escape, and each highlight
     offsite: [{ type: "toggleAppSettings", open: true, section: "backups" }],
     routines: [{ type: "showRoutines" }],
     delete: [],
-    phone: [{ type: "toggleAppSettings", open: true, section: "companion" }],
+    help: [{ type: "select", id: "chief" }],
     aboutMe: [{ type: "toggleAppSettings", open: true, section: "aboutMe" }],
   };
   for (const [tile, dispatched] of Object.entries(expected)) {

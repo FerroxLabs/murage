@@ -17,10 +17,10 @@ import tileBackups from "@/assets/whats-new/tile-backups.webp";
 import tileOffsite from "@/assets/whats-new/tile-offsite.webp";
 import tileRoutines from "@/assets/whats-new/tile-routines.webp";
 import tileDelete from "@/assets/whats-new/tile-delete.webp";
-import tilePhone from "@/assets/whats-new/tile-phone.webp";
+import tileHelp from "@/assets/whats-new/tile-help.webp";
 import tileAboutMe from "@/assets/whats-new/tile-aboutme.webp";
 
-export type WhatsNewAction = "backups" | "offsite" | "routines" | "delete" | "phone" | "aboutMe";
+export type WhatsNewAction = "backups" | "offsite" | "routines" | "delete" | "help" | "aboutMe";
 
 export const WHATS_NEW_CARD_COUNT = 3;
 
@@ -30,7 +30,7 @@ export const WHATS_NEW_TILES: Array<{ action: WhatsNewAction; img: string; alt: 
   { action: "offsite", img: tileOffsite, alt: "Two glowing forms, near and far, joined by a thread of light", dot: "bg-[var(--wn-accent)]", title: "Off-site, your way", body: "A second encrypted copy on your own NAS or server over SFTP, or in S3-compatible storage. Murage sets it up for you.", crop: "object-[center_30%]" },
   { action: "routines", img: tileRoutines, alt: "A ribbon of light looping through a glowing ring", dot: "bg-[var(--wn-dot-gold)]", title: "Routines that keep going", body: "Each routine has its own approval level, so a routine on No limits gets on with it. If it needs you, it says so straight away." },
   { action: "delete", img: tileDelete, alt: "A glass shard dissolving into fine particles of light", dot: "bg-[var(--wn-dot-violet)]", title: "Delete means gone", body: "Deleting a conversation removes it everywhere, including the history your engines kept." },
-  { action: "phone", img: tilePhone, alt: "A slim glowing slab with light rising from it", dot: "bg-[var(--wn-dot-mint)]", title: "Murage on your phone", body: "Photo uploads that work, a faster app, and Sign out this device." },
+  { action: "help", img: tileHelp, alt: "An open book of light with a glow rising from its pages", dot: "bg-[var(--wn-dot-mint)]", title: "Help, built in", body: "Ask a bot how Murage works. On most engines it answers from Murage's own help pages." },
   { action: "aboutMe", img: tileAboutMe, alt: "A single soft, warm form of light", dot: "bg-[var(--wn-ink)]", title: "About me", body: "A short profile of you that your bots read on your own turns." },
 ];
 
@@ -41,7 +41,7 @@ export const WHATS_NEW_MORE: string[] = [
   "Every voice has a play button",
   "Plain names for connected-app tools",
   "Connected apps stay connected",
-  "Ask any bot how Murage works",
+  "Photo uploads from the web app in your phone's browser work again",
 ];
 
 // Shared control styles. 44px targets everywhere; a visible focus ring that
@@ -97,7 +97,7 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onClose, onAction
           <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display absolute bottom-[30px] left-[34px] right-[34px] m-0 text-[58px] leading-none tracking-[-0.01em] text-[var(--wn-ink-strong)] max-sm:text-[44px]", headingFocus)}>Your work, kept.</h2>
         </div>
         <div className="flex flex-col gap-3.5 px-[34px] pb-[26px] pt-6 max-sm:px-5">
-          <p className="m-0 text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)]">Backups that run themselves, a copy somewhere else, and routines that don't stop to ask.</p>
+          <p className="m-0 text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)]">Backups that run themselves, a copy somewhere else, and routines that get on with it.</p>
           <div className="mt-1.5 flex items-center gap-2.5">
             <button type="button" className={primaryDark} onClick={() => onAction("backups")}>Open Backups</button>
             <button type="button" className={ghostDark} onClick={onNext}>Next</button>
