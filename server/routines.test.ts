@@ -2009,7 +2009,7 @@ describe("long routine instructions reach the bot whole", () => {
       const routine = h.manager.create({ name: "Long brief", prompt, botId: "bot-a", target: "bot", runOn: "ember", enabled: false,
         schedule: { type: "interval", everyMinutes: 30, anchorAt: h.nowValue() }, durationMinutes: 15 });
       expect(routine.prompt).toBe(prompt);
-      const stored = JSON.parse(readFileSync(h.options.file, "utf8"));
+      const stored = JSON.parse(readFileSync(h.options.file!, "utf8"));
       expect((stored.routines ?? stored).find((item: { id: string }) => item.id === routine.id).prompt).toBe(prompt);
       const reloaded = new RoutineManager({ ...h.options });
       expect(reloaded.listRoutines().find(item => item.id === routine.id)?.prompt).toBe(prompt);
