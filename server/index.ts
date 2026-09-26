@@ -7693,19 +7693,20 @@ function rememberHostComputerConsent(botId: string, consent: "allowed" | "declin
 
 // The same for approvals: the ask behind each open card died with the
 // previous process, so its run is gone and Allow once can never reach it.
-// Settled the way a turn's own end settles them (closeOpenApprovals), so the
-// card closes and it leaves the Inbox (D7).
+// The card stays answerable in its conversation (answerRequest then says the
+// run ended, and offers Run again for a routine), but it is marked so the
+// Inbox and tray stop counting it as waiting (D7).
 {
   let retired = 0;
   for (const { threadId, message } of openApprovalCardMessages()) {
     const current = store.messagesFor(threadId).find((candidate) => candidate.id === message.id);
     if (!current?.card) continue;
     const card = current.card;
-    if (!card.requestId || card.answered || card.dismissed || card.routineRequest || card.skillRequest || isQuestionCard(card)) continue;
-    store.patchMessage(threadId, current.id, { card: { ...card, answered: "unavailable", dismissed: true } });
+    if (!card.requestId || card.answered || card.dismissed || card.orphaned || card.routineRequest || card.skillRequest || isQuestionCard(card)) continue;
+    store.patchMessage(threadId, current.id, { card: { ...card, orphaned: true } });
     retired += 1;
   }
-  if (retired) console.log(`approvals: closed ${retired} approval(s) left open by a previous run`);
+  if (retired) console.log(`approvals: ${retired} approval(s) left open by a previous run no longer count as waiting`);
 }
 
 // Handoffs a previous process queued but never ran: the source turn is
@@ -16848,8 +16849,12 @@ const server = createServer(async (req, res) => {
         Object.assign(cfg, loadConfig());
         // Only the engines this change touched are rebuilt: "I don't use
         // Droid" must not end a routine on Fuigo that is waiting for an
-        // answer (D3).
-        await reloadProviders(changedInstanceIds(previousInstances, instanceConfigs(cfg)));
+        // answer (D3). The named engine is always among them, even when the
+        // write repeats its current value: a write to an engine retires the
+        // turns on it and their authority, as it always has.
+        const scope = changedInstanceIds(previousInstances, instanceConfigs(cfg));
+        scope.add(instancePatch[1]);
+        await reloadProviders(scope);
         // rescan BEFORE describe(): the response's cliCandidates are computed
         // from the memoized PATH, so resetting after would answer this request
         // with the pre-reset cache

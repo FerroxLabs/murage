@@ -306,6 +306,7 @@ export function openApprovalCardMessages(): Array<{ threadId: string; message: M
         "AND json_type(json, '$.card.tool') = 'text' " +
         "AND json_type(json, '$.card.answered') IS NULL " +
         "AND COALESCE(json_extract(json, '$.card.dismissed'), 0) = 0 " +
+        "AND COALESCE(json_extract(json, '$.card.orphaned'), 0) = 0 " +
         "AND json_type(json, '$.card.routineRequest') IS NULL " +
         "AND json_type(json, '$.card.skillRequest') IS NULL " +
         "AND json_type(json, '$.card.intake') IS NULL",

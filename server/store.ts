@@ -100,6 +100,11 @@ export interface OptionCardData {
   expired?: boolean;
   /** An expired question's answer went to the bot as an ordinary message. */
   sentAsMessage?: boolean;
+  /** D7: an approval left open by a previous process, found at startup. The
+   * request behind it died with that process, so it no longer counts as
+   * waiting in the Inbox; the card itself stays and answering it says the
+   * run ended (and offers Run again for a routine). */
+  orphaned?: boolean;
   /** Raised during a run nobody was watching (routine, webhook, Telegram);
    * an expired one of these stays in the Inbox as needing the owner. */
   unattended?: boolean;

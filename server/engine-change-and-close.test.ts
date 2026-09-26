@@ -201,8 +201,14 @@ describe("an engine change or an app close around a run waiting for the person",
     await waitForExit(child!, { signal: "SIGKILL" });
     await start();
 
-    expect((await messagesOf(bot.threadId)).find((message) => message.id === card.id)?.card).toMatchObject({ answered: "unavailable", dismissed: true });
+    // Still answerable where it stands (the answer then says the run ended),
+    // but no longer waiting in the Inbox.
+    const left = (await messagesOf(bot.threadId)).find((message) => message.id === card.id)?.card as Record<string, unknown> | undefined;
+    expect(left).toMatchObject({ orphaned: true });
+    expect(left?.answered).toBeUndefined();
     expect(await pendingApprovals()).toBe(0);
+    expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card!.requestId, behavior: "allow" })).status).toBe(200);
+    await expect.poll(async () => (await messagesOf(bot.threadId)).some((message) => message.tool?.name === "Couldn't deliver that answer. The request is no longer open, so the action was not run."), { timeout: 10_000 }).toBe(true);
     await desktopApi("DELETE", `/api/bots/${bot.id}`);
   }, 90_000);
 });
