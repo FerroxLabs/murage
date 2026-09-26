@@ -24,7 +24,7 @@ describe("browser-unavailable notice", () => {
 
   it("says plainly that another conversation waiting for an answer has the browser", () => {
     expect(browserUnavailableDisplayName(browserUnavailableActivityName(BROWSER_HELD_FOR_ANSWER_REASON))).toBe(
-      "Another conversation with this bot is using the browser while it waits for your answer, so this turn ran without it. Answer that request to free the browser.");
+      "Another conversation with this bot is using the browser while it waits for your answer, so this turn ran without it. Answering that request lets the next turn use it.");
   });
 
   it("still says something when the reason is empty", () => {

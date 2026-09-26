@@ -41,7 +41,7 @@ export function browserUnavailableKind(reason: string): BrowserUnavailableKind {
  * (browserUnavailable.userChrome / .timedOut / .failed). */
 export const BROWSER_UNAVAILABLE_SUMMARY: Record<BrowserUnavailableKind, string> = {
   "user-chrome": "Your Chrome isn't reachable, so this turn ran without a browser. Open Chrome and turn on remote debugging at chrome://inspect/#remote-debugging.",
-  held: "Another conversation with this bot is using the browser while it waits for your answer, so this turn ran without it. Answer that request to free the browser.",
+  held: "Another conversation with this bot is using the browser while it waits for your answer, so this turn ran without it. Answering that request lets the next turn use it.",
   "timed-out": "The browser didn't start in time, so this turn ran without it. It'll try again next turn.",
   failed: "The browser couldn't start, so this turn ran without it. It'll try again next turn.",
 };
