@@ -64,7 +64,8 @@ describe.skipIf(process.platform === "win32")("a backup that stopped is announce
     const reported = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "capture", code: "BACKUP_FILE_IN_USE", notify: true });
     expect(reported.status).toBe(200);
     expect(reported.body.reported).toBe(true);
-    expect(typeof reported.body.notified).toBe("boolean");
+    // The desktop shows the notification itself, with these words.
+    expect(reported.body.sentence).toMatch(/Another program was holding a file/);
     for (const view of ["decisions", "to-read", "all"]) {
       const inbox = (await request("GET", `/api/inbox?view=${view}`)).body;
       expect(inbox.backupFailed.sentence).toMatch(/while copying your workspace/);

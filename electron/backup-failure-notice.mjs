@@ -34,11 +34,14 @@ export function writeAnnouncedFailure(userData,key){
 
 /** Tell the server once it is up. Never throws: an announcement is never
  * worth a failed start. */
-export async function announceBackupFailure({status,userData,post}){
+export async function announceBackupFailure({status,userData,post,showNotice=()=>{}}){
  try{
   const {body,key}=backupFailureNotice(status,readAnnouncedFailure(userData));
   const answer=await post(body);
-  if(body.action==="report"&&body.notify&&answer?.reported===true)writeAnnouncedFailure(userData,key);
+  if(body.action==="report"&&body.notify&&answer?.reported===true&&typeof answer.sentence==="string"&&answer.sentence.length<=1000){
+   writeAnnouncedFailure(userData,key);
+   try{showNotice(answer.sentence);}catch{/* the Inbox row still says it */}
+  }
   return body;
  }catch{return null;}
 }

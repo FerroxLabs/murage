@@ -15,7 +15,7 @@
 // listening decides what to do with it — desktop and paired-phone local
 // notifications today, and closed-app APNs delivery once a relay exists.
 
-export type NotifyKind = "approval" | "question" | "done" | "routine-failed" | "turn-failed" | "takeover" | "backup-waiting" | "backup-failed";
+export type NotifyKind = "approval" | "question" | "done" | "routine-failed" | "turn-failed" | "takeover" | "backup-waiting";
 
 export interface Notification {
   kind: NotifyKind;
@@ -102,8 +102,6 @@ export function buildNotification(
           ? `${bot.name} needs your hands`
           : kind === "backup-waiting"
             ? "Today's backup is waiting"
-          : kind === "backup-failed"
-            ? "The last backup didn't finish"
           : kind === "routine-failed"
             ? `${bot.name}'s routine failed`
             : kind === "turn-failed"

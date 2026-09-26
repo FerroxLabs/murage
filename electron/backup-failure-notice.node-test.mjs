@@ -20,14 +20,16 @@ test("only a backup that needs review is reported, with the finite stage and cod
 
 test("one notification per failure, however many times Murage starts",async t=>{
  const userData=mkdtempSync(path.join(tmpdir(),"murage-failure-notice-"));t.after(()=>safeWipeSync(userData));
- const posted=[];const post=async body=>{posted.push(body);return body.action==="report"?{reported:true,notified:body.notify}:{cleared:true};};
- await announceBackupFailure({status:failed,userData,post});
- await announceBackupFailure({status:failed,userData,post});
+ const posted=[],shown=[];const post=async body=>{posted.push(body);return body.action==="report"?{reported:true,sentence:"The last backup stopped while copying your workspace."}:{cleared:true};};
+ const showNotice=sentence=>shown.push(sentence);
+ await announceBackupFailure({status:failed,userData,post,showNotice});
+ await announceBackupFailure({status:failed,userData,post,showNotice});
  assert.deepEqual(posted.map(body=>body.notify),[true,false]);
+ assert.deepEqual(shown,["The last backup stopped while copying your workspace."]);
  assert.match(readFileSync(path.join(userData,"backup-failure-announced.json"),"utf8"),/job-1:capture:ENCRYPTED_BACKUP_FAILED/);
  // A new failure is news again.
- await announceBackupFailure({status:{...failed,job:{id:"job-2"}},userData,post});
- assert.equal(posted.at(-1).notify,true);
+ await announceBackupFailure({status:{...failed,job:{id:"job-2"}},userData,post,showNotice});
+ assert.equal(posted.at(-1).notify,true);assert.equal(shown.length,2);
  // Once it is cleared, the Inbox row goes too.
  await announceBackupFailure({status:{phase:"returned"},userData,post});
  assert.deepEqual(posted.at(-1),{action:"clear"});

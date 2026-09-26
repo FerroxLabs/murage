@@ -3390,7 +3390,14 @@ const remoteBackupAttestation = new AbortController();
 async function announceLastBackupFailure(){
   for(let tries=0;tries<120&&!(serverReady&&desktopSurfaceSecret)&&!desktopShutdownStarted;tries++)await new Promise(resolve=>setTimeout(resolve,1000));
   if(!backupScheduleHost||desktopShutdownStarted||desktopRecoveryMode||!serverReady||!desktopSurfaceSecret)return;
-  await announceBackupFailure({status:backupScheduleHost.internalStatus(),userData:app.getPath("userData"),post:body=>harnessJson("/api/backup-failure-notice",body)});
+  await announceBackupFailure({status:backupScheduleHost.internalStatus(),userData:app.getPath("userData"),post:body=>harnessJson("/api/backup-failure-notice",body),
+    showNotice:sentence=>{
+      if(!Notification.isSupported())return;
+      const notice=new Notification({title:"The last backup didn't finish",body:sentence});
+      // Opens the Inbox, whose row carries the same words and Open Backups.
+      notice.on("click",()=>{const win=mainWindow;if(win&&!win.isDestroyed()){if(win.isMinimized())win.restore();win.show();win.focus();}sendWhenLoaded("startup-background:open-inbox");});
+      notice.show();
+    }});
 }
 async function initializeBackupRemoteHost(){
   if(!app.isPackaged||!desktopDataOwner||desktopRecoveryMode||closedBackupRequested||!backupScheduleHost)return;

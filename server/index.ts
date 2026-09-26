@@ -11021,12 +11021,11 @@ const server = createServer(async (req, res) => {
       if(!failure)return json(res,400,{error:"INVALID_BACKUP_FAILURE_NOTICE"});
       const sentence=`${captureFailureSentence(failure)} Open Settings, then Backups, to clear it and back up again.`;
       backupFailedNotice={sentence,at:Date.now()};
-      let notified=false;
-      if(input.data.notify){
-        const chief=store.workspaceChief();
-        if(chief){const notice=buildNotification("backup-failed",chief,chief.threadId,sentence,{avatarUrl:chief.avatarUrl});if(notice){notify(notice);notified=true;}}
-      }
-      return json(res,200,{reported:true,notified});
+      // The desktop shows the one notification itself (it owns the window
+      // and knows it is the first report of this failure); a banner routed
+      // through the window was dropped while the Chief's conversation was
+      // on screen, and could arrive before the window was listening.
+      return json(res,200,{reported:true,sentence});
     }
     if(path==="/api/backup-restart"&&method==="POST"){
       if(requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"no such route"});
