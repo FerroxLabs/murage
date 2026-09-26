@@ -64,3 +64,18 @@ test("real Windows: control folder, work tree and password file work through the
  const created=await store.create();
  assert.equal(path.dirname(created.path).toLowerCase(),documents.toLowerCase());
 });
+
+test("Windows off-site state lives in a short folder under the app's settings, POSIX beside the data folder (W-D2)",async()=>{
+ const {remoteControlDirectory}=await import("./backup-remote-runtime.mjs");
+ const digest="c9a82ed042c951deeb69a7b63e9ec69aed1bfc533b8ac2666f8c70dcb68da2b5";
+ // A restored install's control folder, as it was on the VM.
+ const restored=`c:\\users\\sam lee\\appdata\\roaming\\murage\\recovered-installations\\790e917b-f351-445f-8995-948856a70103\\.murage-backup-control\\${digest}`;
+ const posix=`/home/sam/.murage-backup-control/${digest}`;
+ assert.equal(remoteControlDirectory({control:posix,userData:"/home/sam/.config/murage",platform:"linux"}),posix);
+ const windows=remoteControlDirectory({control:restored,userData:"C:\\Users\\Sam Lee\\AppData\\Roaming\\murage",platform:"win32"});
+ assert.equal(windows,`C:\\Users\\Sam Lee\\AppData\\Roaming\\murage\\offsite\\${digest.slice(0,16)}`);
+ // remote\<uuid>\<revision>\ssh-XXXXXX\known_hosts, plus a mkdtemp name, stays well inside 248.
+ const deepest=[windows,"remote","1932102c-386c-4e31-923b-bc7f5eabe20c","12345","restic-restore-XXXXXX","known_hosts"].join("\\");
+ assert.ok(deepest.length<180,`${deepest.length}`);
+ assert.throws(()=>remoteControlDirectory({control:"c:\\x\\not-a-digest",userData:"C:\\u",platform:"win32"}),/BACKUP_REMOTE_REVIEW_REQUIRED/);
+});

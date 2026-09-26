@@ -19,6 +19,20 @@ function makeDirectory(directory,{restrict=false,platform}={}){
  let created=false;try{mkdirSync(directory,{mode:0o700});created=true;}catch(error){if(error.code!=="EEXIST")throw error;}
  if(created&&restrict&&!posix())(platform?.restrictToOwner??restrictToOwner)(directory,{directory:true});
 }
+/** The folder off-site work state lives in. POSIX: the private control folder
+ * beside the data folder, as before. Windows: a short per-installation folder
+ * in the app's own settings folder, owner-only like the rest. Windows can't
+ * create a folder past 248 characters (or open a file past 260 with ssh), and
+ * beside a restored install's data folder
+ * (AppData\Roaming\murage\recovered-installations\<id>) the work tree was
+ * already about 235: every upload failed with ENAMETOOLONG from mkdtemp.
+ * Off-site copies never worked on Windows before this, so nothing moves. */
+export function remoteControlDirectory({control,userData,platform=process.platform}){
+ if(platform!=="win32")return control;
+ const digest=path.win32.basename(control);
+ if(!/^[0-9a-f]{64}$/.test(digest)||typeof userData!=="string"||!path.win32.isAbsolute(userData))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
+ return path.win32.join(userData,"offsite",digest.slice(0,16));
+}
 /** Every ancestor below a main-owned private control root is checked in place. */
 export function ensureRemoteControlDirectory(control){
  const parent=path.dirname(control),anchor=path.dirname(parent);
