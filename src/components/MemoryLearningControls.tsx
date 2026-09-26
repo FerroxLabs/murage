@@ -69,6 +69,6 @@ export function MemoryLearningControls({ learning, disabled, onSave, onRefresh }
       {feedback && <p role={failed ? "alert" : "status"} className={`break-words text-[13px] ${failed ? "text-danger" : "text-ink-secondary"}`}>{feedback}</p>}
       {conflict && <button type="button" className={memoryButtonClass} disabled={disabled || busy} onClick={() => { setBusy(true); void onRefresh().catch(() => setFeedback("Could not refresh settings. Try again before saving.")).finally(() => setBusy(false)); }}>Refresh learning settings</button>}
     </form>
-    <p className="mt-3 text-[12px] text-ink-secondary">Daily limits: {learning.inputLimit.toLocaleString()} input tokens, {learning.outputLimit.toLocaleString()} output tokens; {learning.callsPerMinute} calls per minute. {learning.dailyCostUsd === null ? "No separate currency limit is configured." : `Currency limit: $${learning.dailyCostUsd} per day.`} Existing connection charges may apply. No model is downloaded by saving these choices.</p>
+    <p className="mt-3 text-[12px] text-ink-secondary">Daily limits: {learning.inputLimit.toLocaleString()} input tokens, {learning.outputLimit.toLocaleString()} output tokens; {learning.callsPerMinute} calls per minute. {learning.dailyCostUsd === null ? "No separate currency limit is configured." : `Currency limit: $${learning.dailyCostUsd} per day.`} No model is downloaded by saving these choices.</p>
   </section>;
 }

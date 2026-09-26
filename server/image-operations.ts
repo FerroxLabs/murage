@@ -257,7 +257,7 @@ export class ImageOperations {
       title: details.operation === "edit" ? "Approve image edit" : "Approve image generation",
       // F1-T4: the owner approves the exact upstream that will bill them. An
       // OpenRouter edit names its pinned endpoint; nothing else is routed.
-      subtitle: `One image${details.referenceCount ? ` from ${details.referenceCount === 1 ? "1 reference image" : `${details.referenceCount} reference images`}` : ""} · ${details.connectionId} · ${details.model}${details.endpointTag ? ` (pinned to ${details.endpointTag}, no fallback)` : ""}${details.quality ? ` · ${details.quality}` : ""}${details.size ? ` · ${details.size}` : ""}. Provider charges apply; exact cost is not available.`,
+      subtitle: `One image${details.referenceCount ? ` from ${details.referenceCount === 1 ? "1 reference image" : `${details.referenceCount} reference images`}` : ""} · ${details.connectionId} · ${details.model}${details.endpointTag ? ` (pinned to ${details.endpointTag}, no fallback)` : ""}${details.quality ? ` · ${details.quality}` : ""}${details.size ? ` · ${details.size}` : ""}.`,
       held: prompt, options: ["Allow", "Deny"], requestId, tool: "generate_image",
     } });
     this.waiting(actor.threadId, true, requestId, card.id, actor.botId);
