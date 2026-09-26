@@ -57,6 +57,7 @@ export const CLOSED_JOB_REFUSED_REASON = "Your system didn't let Murage register
 export const CLOSED_JOB_SHARED_FOLDER_REASON = "Other accounts on this computer can change Murage's data folder, so backups run only while Murage is open.";
 export const CLOSED_JOB_WONT_RUN_REASON = "Murage set up its background job, but your system couldn't start it, so backups run only while Murage is open. Tick \"Also back up when Murage is closed\" again to retry.";
 export const CLOSED_JOB_MOVED_REASON = "You opened Murage from a different app file, and its background job couldn't be moved to it, so backups run only while Murage is open. Tick \"Also back up when Murage is closed\" again to set it up for this copy.";
+export const CLOSED_JOB_OUTDATED_REASON = "Murage's background job was set up by an earlier version and couldn't be updated, so backups run only while Murage is open. Tick \"Also back up when Murage is closed\" again to set it up for this version.";
 /** A single-quoted shell word, so the command can be pasted as shown. */
 const shellWord = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 /** The app file (an AppImage made executable under umask 002) can be changed
@@ -80,6 +81,7 @@ export function closedJobBlockedReason(input: { bridge: boolean; closed: BackupC
   if (closed.blocked === "app-file-shared") return closedAppFileSharedReason(closed.appFile);
   if (closed.blocked === "job-wont-run") return CLOSED_JOB_WONT_RUN_REASON;
   if (closed.blocked === "app-moved") return CLOSED_JOB_MOVED_REASON;
+  if (closed.blocked === "job-outdated") return CLOSED_JOB_OUTDATED_REASON;
   const volume = closedVolumeSentence(closed.blocked);
   if (volume) return volume;
   return closed.state === "unavailable" || setupFailed ? CLOSED_JOB_REFUSED_REASON : null;
@@ -174,6 +176,7 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   else if (s?.schedule.closedApp === true && input.closed?.blocked === "app-file-shared") attention.push(closedAppFileSharedReason(input.closed.appFile));
   else if (s?.schedule.closedApp === true && input.closed?.blocked === "job-wont-run") attention.push(CLOSED_JOB_WONT_RUN_REASON);
   else if (s?.schedule.closedApp === true && input.closed?.blocked === "app-moved") attention.push(CLOSED_JOB_MOVED_REASON);
+  else if (s?.schedule.closedApp === true && input.closed?.blocked === "job-outdated") attention.push(CLOSED_JOB_OUTDATED_REASON);
   else if (s?.schedule.closedApp === true && input.closed?.state !== "installed") attention.push("Backing up while Murage is closed isn't set up yet.");
   if (input.remoteStale) attention.push("Off-site status needs a refresh.");
   if (input.remoteFailure) attention.push(input.remoteFailure);

@@ -81,3 +81,44 @@ test("a move that can't finish takes the old job down and says why, never a sile
   assert.equal(f.registeredFor(),"Murage-0.1.61-x86_64.AppImage");
   assert.equal((await f.controller.status()).blocked,undefined);
 });
+
+// A job staged by an older Murage whose unit text this version writes
+// differently (the 0.1.60 drafts' job had no trailing --no-sandbox and no
+// KillMode). It used to read as "unavailable" forever and could not be
+// removed. Now it is checked against its own record, taken down and rebuilt.
+import {closedDigest} from "./backup-closed-profile.mjs";
+function makeLegacy(f){
+  const stage=f.staged(),service=stage.files[0].name;
+  // Linux: the draft's unit; macOS (where these tests also run): any other text.
+  const older=text=>text.includes("KillMode=process\n")?text.replace(" --no-sandbox\n","\n").replace("KillMode=process\n",""):text.replace("<integer>60</integer>","<integer>120</integer>");
+  const old=stage.files.map(file=>file.name===service?{...file,text:older(file.text)}:file);
+  assert.notDeepEqual(old,stage.files);
+  for(const file of old)writeFileSync(path.join(stage.directory,file.name),file.text,{mode:0o600});
+  const markerPath=path.join(stage.directory,"stage.json"),marker=JSON.parse(readFileSync(markerPath,"utf8"));
+  rmSync(markerPath);writeFileSync(markerPath,JSON.stringify({...marker,definitionDigest:closedDigest(JSON.stringify(old))}),{mode:0o600});
+  return{stage,old};
+}
+test("a job written by an older Murage is rebuilt at the next start, and can always be removed",{skip:POSIX_ONLY},async t=>{
+  const f=fixture(t);
+  await f.controller.stage();await f.controller.install();
+  const {old}=makeLegacy(f);
+  // What the older Murage registered.
+  f.getCurrent().files=old;
+  assert.deepEqual({state:(await f.controller.status()).state,blocked:(await f.controller.status()).blocked},{state:"unconfigured",blocked:"job-outdated"});
+  const after=await f.controller.restageForUpgrade();
+  assert.equal(after.state,"installed");assert.equal(after.blocked,undefined);
+  assert.deepEqual(f.counts,{installs:2,removes:1});
+  assert.notDeepEqual(f.getCurrent().files,old);
+  // And from the Backups page, an outdated job is taken down too.
+  f.getCurrent().files=makeLegacy(f).old;
+  assert.equal((await f.controller.disable()).state,"unconfigured");
+  assert.equal(f.counts.removes,2);assert.equal(f.getCurrent(),null);
+});
+test("an older job whose files no longer match their own record is left alone",{skip:POSIX_ONLY},async t=>{
+  const f=fixture(t);
+  await f.controller.stage();await f.controller.install();
+  const {stage}=makeLegacy(f);
+  writeFileSync(path.join(stage.directory,stage.files[0].name),"tampered",{mode:0o600});
+  assert.equal((await f.controller.restageForUpgrade()).state,"unavailable");
+  assert.equal(f.counts.removes,0,"nothing unverifiable is taken down or replaced");
+});

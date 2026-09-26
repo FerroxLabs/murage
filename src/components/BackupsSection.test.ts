@@ -353,6 +353,7 @@ describe("customer findings: plain words and reasons where the control is", () =
   it.each([
     ["job-wont-run", "staged", "Murage set up its background job, but your system couldn&#x27;t start it, so backups run only while Murage is open."],
     ["app-moved", "unconfigured", "You opened Murage from a different app file, and its background job couldn&#x27;t be moved to it"],
+    ["job-outdated", "unconfigured", "Murage&#x27;s background job was set up by an earlier version and couldn&#x27;t be updated"],
   ] as const)("says why when %s, and leaves the box tickable", (blocked, state, text) => {
     const html = setup({ closed: { supported: true, state, closedApp: false, blocked }, closedAllowed: true });
     expect(html).toContain(text);

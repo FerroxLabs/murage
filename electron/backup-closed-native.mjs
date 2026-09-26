@@ -3,7 +3,7 @@ import {userInfo} from "node:os";
 import {lstatSync,mkdirSync,realpathSync,unlinkSync,writeFileSync} from "node:fs";
 import path from "node:path";
 import {buildClosedBackupJob} from "./backup-closed-jobs.mjs";
-import {closedInvocation,readClosedPrivateFile} from "./backup-closed-profile.mjs";
+import {closedInvocation,closedProfileId,readClosedPrivateFile} from "./backup-closed-profile.mjs";
 
 const fail=(code="CLOSED_NATIVE_REVIEW_REQUIRED")=>{throw Object.assign(new Error("Closed backup registration requires review."),{code});};
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
@@ -73,6 +73,14 @@ export function createNativeClosedBackupProvider({platform=process.platform,owne
   }
   function validate(job){
     if(!supported||job?.owner?.uid!==owner.uid||Object.keys(job.owner).length!==1||job?.descriptor?.platform!==platform)fail("CLOSED_NATIVE_UNAVAILABLE");
+    // An older Murage's Linux job (readLegacyClosedBackupStage): its unit text
+    // is checked against its own record, not rebuilt; only read and remove
+    // ever see it, never install.
+    if(job.legacy===true){
+      const jobId=`com.murage.backup.${closedProfileId(job.descriptor)}`;
+      if(platform!=="linux"||job.jobId!==jobId||!same(job.files.map(file=>file.name),[`${jobId}.service`,`${jobId}.timer`])||job.files.some(file=>typeof file.text!=="string"||Buffer.byteLength(file.text)>LIMIT))fail();
+      return job;
+    }
     const expected=buildClosedBackupJob(job.descriptor,job.descriptorPath,{backupSupported:true});
     if(!expected.supported||!same(expected.owner,owner)||expected.jobId!==job.jobId||!same(expected.files,job.files)||!/^com\.murage\.backup\.[a-f0-9]{64}$/.test(job.jobId))fail();return expected;
   }
@@ -123,7 +131,7 @@ export function createNativeClosedBackupProvider({platform=process.platform,owne
   async function compare(job,expected){const current=await read(job);if(!same(current,expected)||current?.running)fail();return current;}
   async function exclusive(fn){if(operation)fail();operation=true;try{return await fn();}finally{operation=false;}}
   async function install(job,{expected}={}){return exclusive(async()=>{
-    validate(job);const prior=await read(job);if(!same(prior,expected))fail();if(prior?.registered&&!prior.failing)return;if(prior?.running)fail();
+    if(job?.legacy)fail();validate(job);const prior=await read(job);if(!same(prior,expected))fail();if(prior?.registered&&!prior.failing)return;if(prior?.running)fail();
     // Registered but its command failed: take it down, then register it anew
     // below, so it is proven by a fresh run.
     if(prior?.failing){await rollback(job);if(await read(job))fail();}

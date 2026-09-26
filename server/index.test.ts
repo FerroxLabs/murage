@@ -2083,7 +2083,7 @@ describe("harness HTTP API", () => {
       expect(references.map(ref => ref.sha256)).toEqual([sha256(uploadBytes), sha256(readFileSync(generated.path)), sha256(workspaceBytes)]);
       expect(references.slice(0, 2).map(ref => ref.id)).toEqual([uploadId, generated.referenceId]);
       const disclosure = (await messages()).at(-1);
-      expect(disclosure.text).toContain("refs/layout.png"); expect(disclosure.text).toContain("Nothing is generated or billed");
+      expect(disclosure.text).toContain("refs/layout.png"); expect(disclosure.text).toContain("Nothing is generated until you approve");
       expect(JSON.stringify(references)).not.toContain(workspace);
       expect(calls()).toBe(before.calls);
 

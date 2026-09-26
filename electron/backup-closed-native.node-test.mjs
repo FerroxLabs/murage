@@ -122,3 +122,17 @@ test("Linux: a registered job whose last run failed reads as failing, and instal
     const again=await f.provider.read(f.job);assert.equal(again.registered,true);assert.equal(again.failing,undefined);
   }finally{f.cleanup();}
 });
+test("Linux: an older Murage's job (legacy) can be read and removed, never installed",{skip:POSIX_ONLY},async()=>{
+  const f=fixture("linux");try{
+    const legacy={...f.job,legacy:true,files:f.job.files.map((file,i)=>i===0?{...file,text:file.text.replace("KillMode=process\n","")}:file)};
+    assert.notDeepEqual(legacy.files,f.job.files);
+    mkdirSync(f.root,{recursive:true,mode:0o700});for(const file of legacy.files)writeFileSync(path.join(f.root,file.name),file.text,{mode:0o600});
+    Object.assign(f.state,{loaded:true,enabled:true,timerActive:true});
+    const current=await f.provider.read(legacy);assert.equal(current.registered,true);
+    // The current code refuses it as a normal job, as before.
+    await assert.rejects(f.provider.read(f.job));
+    await assert.rejects(f.provider.install(legacy,{expected:current}));
+    await f.provider.remove(legacy,{expected:current});assert.equal(await f.provider.read(legacy),null);
+    await assert.rejects(f.provider.read({...legacy,files:[{name:"../../foreign",text:"x"},legacy.files[1]]}));
+  }finally{f.cleanup();}
+});

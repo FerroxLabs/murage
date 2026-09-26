@@ -61,6 +61,9 @@ test("the closed-app trigger runs through the shipped AppRun whether or not unsh
   const job = buildClosedBackupJob(descriptor, descriptorPath, { backupSupported: true });
   assert.match(job.files[0].text, /ExecStart=\S*Murage-0\.1\.60-x86_64\.AppImage \S+ --murage-backup-descriptor \S+ --no-sandbox\n/);
   assert.match(job.files[0].text, /Environment=ELECTRON_RUN_AS_NODE=1/);
+  // The AppImage runtime's FUSE process is left to unmount and remove its
+  // /tmp/.mount_* folder after the trigger exits (seen on the 24.04 VM).
+  assert.match(job.files[0].text, /\nKillMode=process\n/);
   const trigger = closedInvocation(descriptor, descriptorPath, { mode: "trigger" });
   assert.deepEqual(trigger.args, [triggerEntry, CLOSED_DESCRIPTOR_FLAG, descriptorPath, "--no-sandbox"]);
   for (const [name, unshareExit] of [["userns allowed", 0], ["Ubuntu 24.04", 1]]) {
