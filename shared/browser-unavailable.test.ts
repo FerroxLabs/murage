@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BROWSER_UNAVAILABLE_PREFIX, browserUnavailableActivityName, browserUnavailableDisplayName, browserUnavailableReason, USER_CHROME_UNREACHABLE_REASON } from "./browser-unavailable.ts";
+import { BROWSER_HELD_FOR_ANSWER_REASON, BROWSER_UNAVAILABLE_PREFIX, browserUnavailableActivityName, browserUnavailableDisplayName, browserUnavailableReason, USER_CHROME_UNREACHABLE_REASON } from "./browser-unavailable.ts";
 
 describe("browser-unavailable notice", () => {
   it("round-trips the reason through the activity name", () => {
@@ -20,6 +20,11 @@ describe("browser-unavailable notice", () => {
     expect(browserUnavailableDisplayName(browserUnavailableActivityName("spawn ENOENT"))).toBe("The browser couldn't start, so this turn ran without it. It'll try again next turn.");
     expect(browserUnavailableDisplayName(browserUnavailableActivityName(USER_CHROME_UNREACHABLE_REASON))).toBe(
       "Your Chrome isn't reachable, so this turn ran without a browser. Open Chrome and turn on remote debugging at chrome://inspect/#remote-debugging.");
+  });
+
+  it("says plainly that another conversation waiting for an answer has the browser", () => {
+    expect(browserUnavailableDisplayName(browserUnavailableActivityName(BROWSER_HELD_FOR_ANSWER_REASON))).toBe(
+      "Another conversation with this bot is using the browser while it waits for your answer, so this turn ran without it. Answer that request to free the browser.");
   });
 
   it("still says something when the reason is empty", () => {

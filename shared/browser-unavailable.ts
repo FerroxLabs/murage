@@ -10,6 +10,11 @@ export const BROWSER_UNAVAILABLE_PREFIX = "browser unavailable:";
  * is closed or its remote debugging is off (server/user-chrome.ts). */
 export const USER_CHROME_UNREACHABLE_REASON = "your Chrome is not reachable";
 
+/** The reason a turn records when it went on without the browser because
+ * another conversation of the same bot holds it while waiting for the
+ * person's answer (D4, server/independent-thread-runs.ts ResourceYield). */
+export const BROWSER_HELD_FOR_ANSWER_REASON = "another conversation is using the browser while it waits for your answer";
+
 /** The activity tool name for a turn that ran without its browser. */
 export function browserUnavailableActivityName(reason: string): string {
   return `${BROWSER_UNAVAILABLE_PREFIX} ${reason.trim() || "the browser engine did not start"}`;
@@ -25,9 +30,10 @@ export function browserUnavailableReason(name: string | undefined | null): strin
 
 /** Which plain-words sentence a reason gets: the owner's Chrome was not
  * reachable, the engine did not start in time, or it did not start at all. */
-export type BrowserUnavailableKind = "user-chrome" | "timed-out" | "failed";
+export type BrowserUnavailableKind = "user-chrome" | "held" | "timed-out" | "failed";
 export function browserUnavailableKind(reason: string): BrowserUnavailableKind {
   if (reason === USER_CHROME_UNREACHABLE_REASON) return "user-chrome";
+  if (reason === BROWSER_HELD_FOR_ANSWER_REASON) return "held";
   return /timed out|timeout/i.test(reason) ? "timed-out" : "failed";
 }
 
@@ -35,6 +41,7 @@ export function browserUnavailableKind(reason: string): BrowserUnavailableKind {
  * (browserUnavailable.userChrome / .timedOut / .failed). */
 export const BROWSER_UNAVAILABLE_SUMMARY: Record<BrowserUnavailableKind, string> = {
   "user-chrome": "Your Chrome isn't reachable, so this turn ran without a browser. Open Chrome and turn on remote debugging at chrome://inspect/#remote-debugging.",
+  held: "Another conversation with this bot is using the browser while it waits for your answer, so this turn ran without it. Answer that request to free the browser.",
   "timed-out": "The browser didn't start in time, so this turn ran without it. It'll try again next turn.",
   failed: "The browser couldn't start, so this turn ran without it. It'll try again next turn.",
 };
