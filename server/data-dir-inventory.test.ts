@@ -112,6 +112,29 @@ describe("every top-level name Murage writes is classified for backup", () => {
     }
   });
 
+  // 0.1.60 audit A-07: the desktop writes `${file}.${process.pid}.tmp` and
+  // renames it; the static scan above cannot see a name built from a
+  // variable. Every such temp name in electron/ is listed here with the file
+  // it stands for, so a new one fails this test until it is classified.
+  it("every desktop temp-and-rename leftover in the data folder is classified", () => {
+    const DESKTOP_TEMP_FILES: Record<string, string | null> = {
+      configPath: "config.json", preferenceFile: "startup-background.json",
+      // In Electron's userData, not the data folder.
+      file: null, CREDENTIALS_FILE: null,
+    };
+    const found = new Set<string>();
+    for (const name of readdirSync(join(ROOT, "electron"))) {
+      if (!/\.(?:mjs|cjs|js)$/.test(name) || /node-test|\.test\./.test(name)) continue;
+      const source = readFileSync(join(ROOT, "electron", name), "utf8");
+      for (const match of source.matchAll(/`\$\{([\w$.]+)\}\.\$\{process\.pid\}\.tmp`/g)) found.add(match[1]);
+    }
+    expect([...found].filter(variable => !Object.hasOwn(DESKTOP_TEMP_FILES, variable))).toEqual([]);
+    for (const [variable, file] of Object.entries(DESKTOP_TEMP_FILES)) {
+      expect(found.has(variable), `${variable} is no longer written; remove it here`).toBe(true);
+      if (file) expect(classifyDataDirEntry(`${file}.48213.tmp`), `${file}.<pid>.tmp`).toMatchObject({ backup: "excluded" });
+    }
+  });
+
   it("the scan sees a name held in a constant under a DATA_DIR default parameter", () => {
     const hits = scanDataDirWrites([join(ROOT, "server", "about-me.ts")]);
     expect(hits).toContainEqual({ file: "server/about-me.ts", name: "about-me.md" });
