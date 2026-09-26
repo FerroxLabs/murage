@@ -81,10 +81,12 @@ it("a shared data folder is shown with its path and fix, never a bare code",()=>
 });
 it("names why an off-site password step was refused instead of a bare 'could not be confirmed' (W-D2)",()=>{
  const sentences=new Set<string>();
- for(const code of ["BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_PASSWORD_NOT_CREATED"]){
+ for(const code of ["BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_PASSWORD_NOT_CREATED"]){
   const sentence=remoteBackupError(Error(code));sentences.add(sentence);
   expect(sentence,code).not.toMatch(/could not be confirmed|BACKUP_|—/);
  }
- expect(sentences.size).toBe(7);
+ expect(sentences.size).toBe(8);
+ // Windows has no chmod: its sentence says what to do there (W-A5).
+ expect(remoteBackupError(Error("Error invoking remote method 'backupRemote:selectPassword': Error: BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS"))).toMatch(/Documents folder/);
  expect(remoteBackupError(Error("SOMETHING_ELSE"))).not.toMatch(/could not be confirmed/);
 });

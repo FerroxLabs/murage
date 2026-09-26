@@ -104,6 +104,7 @@ export function remoteBackupError(cause:unknown){
  if(code.includes("CONTROL_UNAVAILABLE"))return "Murage couldn't prepare its private off-site folder beside its data folder, so it didn't create or choose a password file. Check that you can create folders in the folder that holds Murage's data, then try again.";
  if(code.includes("PASSWORD_FILE_PLACE"))return "That file is inside Murage's own folders or your backup folder. Keep the off-site password somewhere else, such as Documents, then choose it again.";
  if(code.includes("PASSWORD_FILE_KIND"))return "That isn't a plain password file. Choose a small text file (under 4 KB) that is not a shortcut or link.";
+ if(code.includes("PASSWORD_FILE_SHARED_WINDOWS"))return "Other accounts on this computer can open that file. Copy it into your Documents folder, which only you can open, then choose the copy and delete the original.";
  if(code.includes("PASSWORD_FILE_SHARED"))return "Other accounts on this computer can read that file. Make it readable only by you, then choose it again.";
  if(code.includes("PASSWORD_FILE_FORMAT"))return "That file doesn't hold a single-line password. Choose a file with the password on one line and nothing else.";
  if(code.includes("PASSWORD_NOT_CREATED"))return "Murage could not create the off-site password file. Check that your Documents or home folder can be written to, then try again.";
