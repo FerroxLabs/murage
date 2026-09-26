@@ -627,15 +627,15 @@ export function versionFromProbe(stdout: string | undefined, stderr: string | un
   return (stderr ?? "").trim().split(/\r\n|\n|\r/, 1)[0]?.trim() ?? "";
 }
 
+/** Plain words for Settings > Engines: never a raw code such as "(ENOENT)"
+ * or "(exit 7)" (0.1.60 Linux D13). Read after the program's name. */
 export function acpVersionFailureDetail(error: Error | null): string {
-  if (!error) return "returned no version from --version";
+  if (!error) return "gave no version when Murage checked it; check the engine installation";
   const { code, killed, signal } = error as Error & { code?: string | number; killed?: boolean; signal?: string };
-  if (killed && signal === "SIGTERM") return "--version timed out after 8 seconds";
-  if (code === "ENOENT") return "CLI not found (ENOENT)";
-  if (code === "EACCES" || code === "EPERM") return `is not executable (${code}); check its file permissions`;
-  if (typeof code === "number") return `--version failed (exit ${code})`;
-  if (typeof code === "string" && /^E[A-Z0-9_]+$/.test(code)) return `--version failed (${code})`;
-  return "--version failed; check the engine installation";
+  if (killed && signal === "SIGTERM") return "did not answer within 8 seconds when Murage checked its version";
+  if (code === "ENOENT") return "is not installed, or Murage cannot find it on this computer";
+  if (code === "EACCES" || code === "EPERM") return "is not executable; check its file permissions";
+  return "did not start when Murage checked its version; check the engine installation";
 }
 
 import type {

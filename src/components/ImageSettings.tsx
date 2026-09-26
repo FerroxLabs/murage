@@ -134,7 +134,7 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
       {model && capability && <p data-image-capability={capability.kind} className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{capability.sentences.join(" ")}</p>}
       {model && usable && <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{model.availability === "catalog-listed" ? "Listed by the provider. Account access is checked when a request runs." : "Account access has not been verified for this model."}</p>}
       {catalog && !usable && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">Choose an available model before enabling image requests.</p>}
-      {connection && <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">Images use {connection.label}. Charges go to that connection’s account. Murage will not switch providers if a request fails.</p>}
+      {connection && <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">Images use {connection.label}, with that connection’s account. Murage will not switch providers if a request fails.</p>}
     </>}
     <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">One image per bot turn. You review and approve each image request before it runs. Editing is offered only when the selected model supports it.</p>
     <button type="button" onClick={onRefresh} disabled={Boolean(busy)} className={`mt-3 min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`}>{busy === "load" ? "Loading connections…" : "Refresh connections"}</button>

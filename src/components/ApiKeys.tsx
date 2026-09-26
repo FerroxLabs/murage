@@ -119,7 +119,7 @@ const CREDENTIALS: Record<
     href: "https://docs.ascii.dev/box/api-keys",
     linkLabel: "Open Box API key guide",
     optional: true,
-    warning: "Box is a paid service after its trial. Usage may incur charges.",
+    warning: "Box is a separate service with its own account and terms. Check them before you connect it.",
   },
   opencodeGo: {
     label: "OpenCode API key",

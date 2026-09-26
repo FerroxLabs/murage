@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { spawn } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
@@ -13,6 +14,7 @@ import {
   fuigoMemoryKey,
   fuigoSessionKey,
   insideGitRepository,
+  scrubFuigoSearchIndex,
   scrubJsonlInPlace,
   isStrictlyInside,
   removeConfined,
@@ -34,6 +36,29 @@ const touch = (file: string, text = "x") => {
 };
 
 const MARKER_TEXT = "private-words-8841";
+
+/** Fuigo's session search index, with its exact schema (fuigo-session-search
+ * fts.rs, schema generation current in 1.0.x) and journal mode (WAL). */
+function fuigoSearchIndex(file: string, rows: Array<{ id: string; cwd: string; title: string; content: string }>): DatabaseSync {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  db.exec(`PRAGMA journal_mode=WAL;
+    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS session_docs (session_id TEXT PRIMARY KEY, cwd TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, content_hash TEXT NOT NULL);
+    CREATE VIRTUAL TABLE IF NOT EXISTS session_docs_fts USING fts5(title, content, content='session_docs', content_rowid='rowid');
+    CREATE TRIGGER IF NOT EXISTS session_docs_ai AFTER INSERT ON session_docs BEGIN
+      INSERT INTO session_docs_fts(rowid, title, content) VALUES (new.rowid, new.title, new.content); END;
+    CREATE TRIGGER IF NOT EXISTS session_docs_ad AFTER DELETE ON session_docs BEGIN
+      INSERT INTO session_docs_fts(session_docs_fts, rowid, title, content) VALUES ('delete', old.rowid, old.title, old.content); END;
+    CREATE TRIGGER IF NOT EXISTS session_docs_au AFTER UPDATE ON session_docs BEGIN
+      INSERT INTO session_docs_fts(session_docs_fts, rowid, title, content) VALUES ('delete', old.rowid, old.title, old.content);
+      INSERT INTO session_docs_fts(rowid, title, content) VALUES (new.rowid, new.title, new.content); END;`);
+  const insert = db.prepare("INSERT INTO session_docs(session_id, cwd, updated_at, title, content, content_hash) VALUES (?,?,?,?,?,?)");
+  // one row per statement, as Fuigo writes them, so each lands in its own FTS segment
+  for (const row of rows) insert.run(row.id, row.cwd, 1, row.title, row.content, "h");
+  return db;
+}
+const fileHas = (file: string, text: string) => [file, `${file}-wal`].some((name) => existsSync(name) && readFileSync(name).includes(text));
 const BOT = "f25024c1-a18e-4251-acf1-0c1713d9b6d9";
 const THREAD = "2e9018ee-1f45-46be-8ed1-7a02fc022807";
 const OTHER = "9b0e3c1a-0000-4000-8000-000000000001";
@@ -316,8 +341,22 @@ describe("ConversationDeletions", () => {
     const otherMemory = join(fuigoHome, "memory", "project-0123abcd");
     touch(join(memory, "notes.md"), MARKER_TEXT);
     touch(join(otherMemory, "notes.md"), "kept");
+    // 0.1.60 Linux D5: the search index kept the conversation's words
+    const index = join(fuigoHome, "sessions", "session_search.sqlite");
+    fuigoSearchIndex(index, [
+      { id: "01a0d905", cwd: desk, title: "Copy bot setup", content: `${MARKER_TEXT} xylophonequartz` },
+      { id: "01a0ffff", cwd: realpathSync(desk), title: "Earlier session of this conversation", content: MARKER_TEXT },
+      { id: "01a0aaaa", cwd: `${desk}-other`, title: "Another conversation", content: "kept words" },
+    ]).close();
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
     await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "fuigo", home: fuigoHome }] }, () => true);
+    const after = new DatabaseSync(index);
+    expect(after.prepare("SELECT session_id FROM session_docs").all().map((row) => row.session_id)).toEqual(["01a0aaaa"]);
+    expect(after.prepare("SELECT rowid FROM session_docs_fts WHERE session_docs_fts MATCH 'xylophonequartz'").all()).toEqual([]);
+    expect(after.prepare("SELECT count(*) AS n FROM session_docs_fts WHERE session_docs_fts MATCH 'kept'").get()).toEqual({ n: 1 });
+    after.close();
+    expect(fileHas(index, MARKER_TEXT)).toBe(false);
+    expect(fileHas(index, "xylophonequartz")).toBe(false);
     expect(existsSync(ours)).toBe(false);
     expect(existsSync(theirs)).toBe(true);
     expect(existsSync(memory)).toBe(false);
@@ -325,6 +364,35 @@ describe("ConversationDeletions", () => {
     const log = readFileSync(join(fuigoHome, "logs", "unified.jsonl"), "utf8");
     expect(log).not.toContain(MARKER_TEXT);
     expect(log).toContain("kept");
+  });
+
+  it("scrubs Fuigo's search index while Fuigo has it open, and waits out a writer holding it", async () => {
+    const dir = fresh("fuigo-index");
+    const index = join(dir, "session_search.sqlite");
+    // Fuigo holds the database open (WAL, idle between writes)
+    const open = fuigoSearchIndex(index, [
+      { id: "gone-1", cwd: "/w/threads/t", title: "zzqqgone", content: `${MARKER_TEXT} xylophonequartz` },
+      { id: "kept-1", cwd: "/w/threads/u", title: "zzqqkept", content: "kept words" },
+    ]);
+    // and another Fuigo process is in the middle of a write for 800 ms
+    const writer = spawn(process.execPath, ["-e", `
+      const { DatabaseSync } = require("node:sqlite");
+      const db = new DatabaseSync(${JSON.stringify(index)});
+      db.exec("BEGIN IMMEDIATE"); console.log("locked");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 800);
+      db.exec("COMMIT"); db.close();`], { stdio: ["ignore", "pipe", "inherit"] });
+    await new Promise<void>((resolve) => writer.stdout!.once("data", () => resolve()));
+    const started = Date.now();
+    expect(scrubFuigoSearchIndex(index, ["gone-1"], [])).toBe(true);
+    expect(Date.now() - started).toBeGreaterThan(300);
+    await new Promise((resolve) => writer.once("exit", resolve));
+    expect(open.prepare("SELECT session_id FROM session_docs").all().map((row) => row.session_id)).toEqual(["kept-1"]);
+    open.close();
+    expect(fileHas(index, MARKER_TEXT)).toBe(false);
+    expect(fileHas(index, "xylophonequartz")).toBe(false);
+    // nothing of ours: nothing changed
+    expect(scrubFuigoSearchIndex(index, ["absent"], ["/nowhere"])).toBe(false);
+    expect(scrubFuigoSearchIndex(index, [], [])).toBe(false);
   });
 
   it("reports a folder shared with other conversations instead of removing it", async () => {

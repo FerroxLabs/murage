@@ -144,7 +144,7 @@ describe("refusals", () => {
     // the key is FINE; retrying it forever is the failure this guards
     expect(paid.reason).toBe("premium");
     expect(paid.retryable).toBe(false);
-    expect(paid.message).toMatch(/paid Flux plan/);
+    expect(paid.message).toMatch(/not included in your Flux Router plan/);
 
     const badKey = await reasonFor(401, { error: { message: "invalid key" } });
     expect(badKey.reason).toBe("auth");

@@ -85,6 +85,7 @@ export function remoteBackupStatus(value:unknown):BackupRemoteStatus{
 const DATA_FOLDER_SHARED_TEXT="Other accounts on this computer can change the folder that holds Murage's data folder, so Murage does not keep off-site keys there. Remove their write access to that folder, then refresh.";
 export function remoteBackupError(cause:unknown){
  const code=cause instanceof Error?cause.message:"";
+ if(code.includes("DOWNLOAD_FOLDER_SHARED"))return "Other accounts on this computer can change the folder you chose, so Murage didn't save the backup there. Download again and choose your home folder, or a folder only you can change.";
  if(code.includes("DATA_FOLDER_SHARED"))return DATA_FOLDER_SHARED_TEXT;
  if(code.includes("HOST_KEY_CHANGED"))return "The server's identity is not the one you trusted, so Murage did not connect. If the server was not reinstalled or replaced, ask whoever runs it before going further. If it was, choose Change destination and save it again to check the new fingerprint.";
  if(code.includes("TRUST_CHANGED"))return "The server showed a different fingerprint when Murage checked again, so nothing was trusted. Test the connection again and compare the new fingerprint.";

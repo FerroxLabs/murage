@@ -13,11 +13,12 @@ import { createRecoveryKeyFlow, recoveryKeyFolderStore, settleRecoveryKeyRequest
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
-import { linuxRelaunchBlocked } from "./linux-relaunch.mjs";
+import { relaunchBlockedCode, relaunchDesktop } from "./desktop-relaunch.mjs";
+import { backupRefusal } from "./backup-waiting.mjs";
 import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
-import { exportRemoteBackup } from "./backup-remote-export.mjs";
+import { downloadFolderShared, exportRemoteBackup } from "./backup-remote-export.mjs";
 import { remoteWorkDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
@@ -306,10 +307,17 @@ async function readBackupActivity(){
   const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`,{headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000)});
   if(!response.ok)throw new Error("BACKUP_ACTIVITY_UNAVAILABLE");return response.json();
 }
-async function prepareDesktopBackup(){
+// `occasion` tells the server whether a scheduled backup is being held up
+// (it then says so in the Inbox and a notification) or one the person asked for.
+async function prepareDesktopBackup(occasion="manual"){
   return prepareBackupRestart(async(action,token)=>{
-    const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/backup-restart`,{method:"POST",headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},body:JSON.stringify({action,token}),signal:AbortSignal.timeout(5000)});
-    if(!response.ok)throw new Error(action==="prepare"?"BACKUP_WORK_ACTIVE":"BACKUP_RELEASE_UNCONFIRMED");return response.json();
+    const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/backup-restart`,{method:"POST",headers:{"content-type":"application/json","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},body:JSON.stringify(action==="prepare"?{action,token,occasion}:{action,token}),signal:AbortSignal.timeout(5000)});
+    if(!response.ok){
+      if(action!=="prepare")throw new Error("BACKUP_RELEASE_UNCONFIRMED");
+      let body=null;try{body=await response.json();}catch{/* An unreadable refusal is still a refusal. */}
+      throw backupRefusal(body);
+    }
+    return response.json();
   },()=>cuaCleanedUp);
 }
 const desktopBackupTool = createBackupToolCapability({
@@ -324,7 +332,7 @@ async function requireDesktopBackupTool() {
 }
 const backupMode = createBackupModeController({
   // Backup mode is a restart; where a restart would crash, it is not offered.
-  supported: () => Boolean(app.isPackaged && !desktopShutdownStarted && !desktopRecoveryMode && !backupScheduleHost?.isPreparing() && desktopDataOwner && desktopBackupTool.currentTool() && !linuxRelaunchBlocked()),
+  supported: () => Boolean(app.isPackaged && !desktopShutdownStarted && !desktopRecoveryMode && !backupScheduleHost?.isPreparing() && desktopDataOwner && desktopBackupTool.currentTool() && !relaunchBlockedCode()),
   readActivity: readBackupActivity,
   confirm: async () => {
     const answer = await dialog.showMessageBox(mainWindow, { type:"question", buttons:["Cancel","Restart into Backup mode"], defaultId:0, cancelId:0, noLink:true,
@@ -334,7 +342,7 @@ const backupMode = createBackupModeController({
   prepare:async()=>{await requireDesktopBackupTool();return prepareDesktopBackup();},
   restart: async () => {
     await cleanupDesktopForExit();
-    app.relaunch({ args:[...process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
+    relaunchDesktop({ app, args:[...process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
     app.quit();
   },
 });
@@ -2293,7 +2301,7 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
     verifyEncrypted: requireDesktopBackupTool,
     retry: async () => {
       if(backupScheduleHost?.pendingUpgrade())await backupScheduleHost.returnUpgradeToWorkspace();
-      app.relaunch({args:process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}); app.quit();
+      relaunchDesktop({app,args:process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}); app.quit();
     },
     openDiagnostics: async () => { const error = await shell.openPath(LOG_DIR); if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE"); },
     onClosed: () => { recoveryWindow = null; },
@@ -3415,7 +3423,21 @@ async function initializeBackupRemoteHost(){
     readProtected,updateProtected:updateSecureCredentialDocument,selectPassword:()=>passwords.select(),createPassword:()=>passwords.create(),copyPassword:passwordRef=>passwords.saveCopy(passwordRef),
     latestVerified:()=>backupScheduleHost.latestVerifiedArtifact(),
     latestReceipt:()=>backupScheduleHost.internalStatus().lastVerified,
-    chooseDownloadFolder:async()=>{const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",properties:["openDirectory","createDirectory"]});return result.canceled?null:result.filePaths[0]??null;},
+    // Starts in the home folder, which only its owner can change on every
+    // desktop Murage runs on. A folder others can change (Ubuntu's ~/Documents
+    // is group-writable) is refused right here, by name, with what to pick,
+    // instead of after the download as "could not be confirmed" (Linux D8).
+    chooseDownloadFolder:async()=>{
+      for(;;){
+        const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",defaultPath:app.getPath("home"),properties:["openDirectory","createDirectory"]});
+        const folder=result.canceled?null:result.filePaths[0]??null;
+        if(!folder||!downloadFolderShared(folder))return folder;
+        const answer=await dialog.showMessageBox(mainWindow,{type:"warning",buttons:["Cancel","Choose another folder"],defaultId:1,cancelId:0,noLink:true,
+          message:`Other accounts on this computer can change the folder "${path.basename(folder)||folder}", so Murage won't save a backup there.`,
+          detail:`A backup is only saved where nobody else can swap the file while it is written. Folder: ${folder}\n\nChoose your home folder, or a folder only you can change. To keep using this one, remove the others' write access first, for example: chmod go-w "${folder}"`});
+        if(answer.response!==1)return null;
+      }
+    },
     exportDownloaded:async(copy,folder)=>exportRemoteBackup(copy,folder,{sourceRoot:control,excludedRoots:[installation,app.getPath("userData"),control]}),
     // SFTP uses the system's own OpenSSH client at a fixed absolute path; a
     // missing one reaches the window as "how to add it". The owner pressing
@@ -3482,7 +3504,8 @@ async function initializeBackupScheduleHost(){
     },
     supported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),
     checking:()=>Boolean(desktopDataOwner&&desktopBackupTool.status().checking),
-    relaunchBlocked:()=>linuxRelaunchBlocked(),
+    // A code, not a flag: an AppImage whose file was moved needs its own words.
+    relaunchBlocked:()=>relaunchBlockedCode(),
     elevated:()=>windowsElevated(),
     verifyEncrypted:requireDesktopBackupTool,
     readProtected:async key=>{
@@ -3514,7 +3537,7 @@ async function initializeBackupScheduleHost(){
         message:`Back up to ${summary?.destination} every day?`,detail});
       return answer.response===1;
     },
-    prepare:async()=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await requireDesktopBackupTool();await readBackupActivity();return prepareDesktopBackup();},
+    prepare:async occasion=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await requireDesktopBackupTool();await readBackupActivity();return prepareDesktopBackup(occasion==="daily"?"daily":"manual");},
     cleanupIdle:cleanupDesktopForExit,
     // Closed main has no harness logger and exits immediately after cleanup.
     // The host supplies only its finite stage/code record; synchronously retain
@@ -3527,7 +3550,7 @@ async function initializeBackupScheduleHost(){
     relaunch:async mode=>{
       if(mode==="normal")await cleanupDesktopForExit();
       const args=process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT);
-      if(mode==="backup")args.push(BACKUP_MODE_ARGUMENT);app.relaunch({args});app.quit();
+      if(mode==="backup")args.push(BACKUP_MODE_ARGUMENT);relaunchDesktop({app,args});app.quit();
     },
   });
 }

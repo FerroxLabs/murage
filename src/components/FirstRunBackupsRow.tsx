@@ -71,8 +71,11 @@ function bridge(): BackupScheduleBridge | null {
  */
 function standingFrom(status: unknown): Standing {
   if (!status || typeof status !== "object") return "unknown";
-  const value = status as { supported?: unknown; enabled?: unknown; refs?: unknown };
+  const value = status as { supported?: unknown; enabled?: unknown; refs?: unknown; relaunchBlocked?: unknown };
   if (value.supported === false) return "unknown";
+  // Where Murage can't reopen itself no backup can run, so first run doesn't
+  // offer to turn them on; Settings > Backups says why.
+  if (value.relaunchBlocked && value.enabled !== true) return "unknown";
   return value.enabled === true && value.refs ? "on" : "off";
 }
 

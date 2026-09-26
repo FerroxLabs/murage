@@ -310,7 +310,6 @@
   "connectedApps.flux.notInBuild": "इस लॉन्च में कनेक्टेड ऐप्स उपलब्ध नहीं हैं। सेटिंग्स में अपनी Composio कुंजी जोड़ें, या पुनः आरंभ करने के बाद फिर से प्रयास करें।",
   "connectedApps.flux.legacyPlain": "Murage की सेवा के माध्यम से कनेक्टेड।",
   "connectedApps.flux.openSettings": "सेटिंग्स खोलें",
-  "connectedApps.flux.freeRuns": "आज {count} निःशुल्क रन शेष हैं।",
   "connectedApps.flux.consentButton": "मेरे कनेक्टेड ऐप्स ले जाएँ",
   "connectedApps.flux.consentKeep": "{date} तक इन्हें यहीं रखें",
   "connectedApps.flux.consentKeepNoDate": "फ़िलहाल इन्हें यहीं रखें",

@@ -310,7 +310,6 @@
   "connectedApps.flux.notInBuild": "この起動では接続済みアプリを利用できません。設定で自分の Composio キーを追加するか、再起動後にもう一度お試しください。",
   "connectedApps.flux.legacyPlain": "Murage のサービス経由で接続されています。",
   "connectedApps.flux.openSettings": "設定を開く",
-  "connectedApps.flux.freeRuns": "本日の無料実行は残り {count} 回です。",
   "connectedApps.flux.consentButton": "接続済みアプリを移行する",
   "connectedApps.flux.consentKeep": "{date} まではここに残す",
   "connectedApps.flux.consentKeepNoDate": "当面はここに残す",

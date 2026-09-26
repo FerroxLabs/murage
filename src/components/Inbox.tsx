@@ -7,6 +7,7 @@ import { InboxRequestAnswer, inlineAnswerKind, requestHeadline } from "./InboxRe
 import { useSetupView } from "./FirstRunChrome";
 import { inboxTabCounts, signedOutEngineRows } from "@/lib/signed-out-engines";
 import { usePageVisible } from "@/lib/page-visible";
+import { backupWaitingSentence } from "../../shared/backup-waiting";
 
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 // The selected view is a filled chip, not a grey one with a slightly
@@ -324,7 +325,10 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
   // Every tab counts every signed-out engine, not only the tabs that list
   // them (inboxTabCounts), so the numbers stay put when the tab changes.
   const shown = inboxTabCounts(result, setupView, gone);
-  const ownRows = [...restoreRows, ...signedOut];
+  // A daily backup held up by a waiting card (0.1.60 Linux D6). Shown where
+  // decisions are, beside the card it waits for; never counted.
+  const backupWaiting = view === "decisions" || view === "approvals" || view === "questions" ? result?.backupWaiting ?? null : null;
+  const ownRows = [...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : [])];
   const dismissible = list.filter(item => item.dismissible);
   const clearable = list.filter(item => item.clearable);
   // The live card for each waiting request on this page, keyed by message id.
@@ -352,7 +356,7 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
   }, [waitingKey]);
   const owed = INBOX_OWED_VIEWS.includes(view);
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
-  const sections = signedOut.length + restoreRows.length + (view === "routines" ? routineRows.length : 0) > 0;
+  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (view === "routines" ? routineRows.length : 0) > 0;
   return <section aria-labelledby="inbox-title" aria-busy={loading} className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2">
@@ -389,6 +393,23 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
         the card list's. Reading `list` here would print "your routines have
         not run yet" underneath four routines that plainly had. */}
     {result && inboxShowsEmpty(view, list, routineRows, ownRows) && <p className="rounded-xl border border-dashed border-hairline/60 p-8 text-center text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
+    {/* A BACKUP THAT WAITS ON A CARD.
+        Every backup closes and reopens Murage, and a run waiting on the
+        owner cannot survive that, so the backup waits. Ask cards wait
+        indefinitely, so this says so here instead of backups quietly
+        stopping. It clears itself the moment the card is answered. */}
+    {backupWaiting && (
+      <InboxSection label="Backups">
+        <div className="rounded-xl border border-warning/30 bg-warning/[0.06] p-4 text-[13px]">
+          <p className="font-medium text-ink">{backupWaitingSentence(backupWaiting.bots, "daily")}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {backupWaiting.bots.filter((bot, index) => backupWaiting.bots.findIndex(other => other.threadId === bot.threadId) === index).map(bot => (
+              <button key={bot.threadId} className={button} onClick={() => onOpen({ threadId: bot.threadId, messageId: bot.messageId ?? "" })}>Answer {bot.name}</button>
+            ))}
+          </div>
+        </div>
+      </InboxSection>
+    )}
     {/* AN ENGINE THAT IS HERE AND SIGNED OUT OF.
         The driver was asked and said nobody is signed in. It is a live
         reading re-read on a poll, so it empties itself the moment they sign

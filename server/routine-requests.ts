@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { ROUTINE_INSTRUCTIONS_LIMIT_SENTENCE, ROUTINE_INSTRUCTIONS_MAX } from "../shared/routine-instructions.ts";
 import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
@@ -69,7 +70,7 @@ const routineToolScheduleSchema = z.discriminatedUnion("type", [
 const routineToolDefinitionSchema = z.object({
   watch: routineFileWatchProposalSchema.optional(),
   name: z.string().max(80),
-  instructions: z.string().max(20_000),
+  instructions: z.string().max(ROUTINE_INSTRUCTIONS_MAX, ROUTINE_INSTRUCTIONS_LIMIT_SENTENCE),
   schedule: routineToolScheduleSchema,
   runOn: z.enum(["ember", "cloud"]).optional(),
   durationMinutes: z.number().optional(),
@@ -121,7 +122,7 @@ const storedScheduleSchema = z.discriminatedUnion("type", [
 const storedDefinitionSchema = z.object({
   watch: routineWatchInputSchema.optional(),
   name: z.string().trim().min(1).max(80),
-  instructions: z.string().trim().min(1).max(20_000),
+  instructions: z.string().trim().min(1).max(ROUTINE_INSTRUCTIONS_MAX),
   schedule: storedScheduleSchema,
   runOn: z.enum(["ember", "cloud"]),
   durationMinutes: z.number().int().min(5).max(240),

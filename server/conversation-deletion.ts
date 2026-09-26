@@ -311,6 +311,16 @@ function removeFuigoSessions(home: string, folders: string[], memoryFolders: str
     for (const name of listDir(dir)) if (lstatOrNull(api.join(dir, name))?.isDirectory()) sessionIds.add(name);
     record(removeConfined(sessions, dir), dir, removed, failed);
   }
+  // Fuigo's session search index keeps each session's title and text
+  // (0.1.60 Linux D5: the conversation's words were still in it after delete).
+  const index = api.join(sessions, "session_search.sqlite");
+  if (lstatOrNull(index)?.isFile()) {
+    try {
+      if (scrubFuigoSearchIndex(index, [...sessionIds], folders)) removed.push(index);
+    } catch {
+      failed.push(index);
+    }
+  }
   if (sessionIds.size) {
     const log = api.join(home, "logs", "unified.jsonl");
     try {
@@ -323,6 +333,46 @@ function removeFuigoSessions(home: string, folders: string[], memoryFolders: str
   for (const folder of new Set(memoryFolders)) {
     const dir = api.join(memory, fuigoMemoryKey(folder));
     record(removeConfined(memory, dir), dir, removed, failed);
+  }
+}
+
+/** Removes the rows of Fuigo's session search index
+ * (`<home>/sessions/session_search.sqlite`, fuigo-session-search fts.rs) that
+ * belong to these sessions: by session id, and by the conversation's own
+ * folder in case a session directory was already gone. Other sessions' rows
+ * stay. `session_docs` holds the text; `session_docs_fts` is an FTS5 index
+ * over it kept by triggers, whose deletes only add markers, so the index is
+ * merged (`optimize`) to drop the old terms, with secure_delete zeroing the
+ * freed pages. Fuigo may have the database open: WAL, a busy timeout, one
+ * write transaction, then a checkpoint so the text leaves the -wal file too.
+ * Returns whether anything was removed. */
+export function scrubFuigoSearchIndex(path: string, sessionIds: readonly string[], folders: readonly string[]): boolean {
+  const ids = [...new Set(sessionIds)], cwds = [...new Set(folders)];
+  if (!ids.length && !cwds.length) return false;
+  const db = new DatabaseSync(path);
+  try {
+    db.exec("PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;");
+    const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view')").all() as Array<{ name: string }>).map((row) => row.name));
+    if (!tables.has("session_docs")) return false;
+    const where = [ids.length ? `session_id IN (${ids.map(() => "?").join(",")})` : "", cwds.length ? `cwd IN (${cwds.map(() => "?").join(",")})` : ""].filter(Boolean).join(" OR ");
+    db.exec("BEGIN IMMEDIATE");
+    let changes = 0;
+    try {
+      changes = Number(db.prepare(`DELETE FROM session_docs WHERE ${where}`).run(...ids, ...cwds).changes);
+      if (changes && tables.has("session_docs_fts")) db.exec("INSERT INTO session_docs_fts(session_docs_fts) VALUES('optimize')");
+      db.exec("COMMIT");
+    } catch (error) {
+      try { db.exec("ROLLBACK"); } catch { /* already rolled back */ }
+      throw error;
+    }
+    if (changes) {
+      // A reader Fuigo holds open can keep a TRUNCATE from finishing; the
+      // rows are already gone and zeroed, and its next checkpoint takes them.
+      try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* see above */ }
+    }
+    return changes > 0;
+  } finally {
+    db.close();
   }
 }
 

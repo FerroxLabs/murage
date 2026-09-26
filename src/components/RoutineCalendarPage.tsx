@@ -47,6 +47,7 @@ import { WebhooksPanel } from "@/components/WebhooksPanel";
 import { RoutineWatchPicker } from "@/components/RoutineWatchPicker";
 import { RoutineProblemsList, unseenRoutineProblems } from "@/components/routines/RoutineProblemsList";
 import { routineHealthNotes, routineOverlapHelp } from "@/lib/routine-health";
+import { routineInstructionsLimit } from "@/lib/routine-instructions-limit";
 import { isUnseenRoutineProblem } from "../../shared/routine-problems";
 import type { CalendarCall, CalendarCallAttachment, CalendarCallInput } from "@/lib/calendar-calls";
 import { botRole } from "@/lib/bot-role";
@@ -546,8 +547,11 @@ function EventEditor({
     }
   };
 
+  // Routine instructions are refused over the limit, never cut (D4).
+  const instructionsLimit = kind === "call" ? null : routineInstructionsLimit(description);
   const valid = Boolean(
     name.trim()
+    && !instructionsLimit?.over
     && (kind === "call" || description.trim())
     && (kind === "call"
       ? botIds.length > 0
@@ -764,7 +768,10 @@ function EventEditor({
 
           <div className="flex items-start gap-4">
             <FileText size={18} className="mt-2.5 shrink-0 text-ink-secondary" />
-            <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} placeholder={isRoomGoal ? "What should the team accomplish?" : kind === "routine" ? "Add instructions for the bot" : "Add description or agenda"} className="min-w-0 flex-1 resize-y rounded-xl border border-hairline/50 bg-inset px-3.5 py-3 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+            <div className="min-w-0 flex-1">
+              <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} aria-invalid={instructionsLimit?.over || undefined} aria-describedby={instructionsLimit ? "routine-instructions-limit" : undefined} placeholder={isRoomGoal ? "What should the team accomplish?" : kind === "routine" ? "Add instructions for the bot" : "Add description or agenda"} className="block w-full min-w-0 resize-y rounded-xl border border-hairline/50 bg-inset px-3.5 py-3 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+              {instructionsLimit && <p id="routine-instructions-limit" role={instructionsLimit.over ? "alert" : undefined} className={cn("mt-1.5 text-[12px]", instructionsLimit.over ? "text-danger" : "text-ink-secondary")}>{instructionsLimit.line}</p>}
+            </div>
           </div>
 
           <div className="flex items-start gap-4">
@@ -920,7 +927,8 @@ function QuickComposer({
     }
   };
 
-  const valid = Boolean(name.trim() && botIds.length && (kind === "call" || description.trim()));
+  const instructionsLimit = kind === "call" ? null : routineInstructionsLimit(description);
+  const valid = Boolean(name.trim() && botIds.length && !instructionsLimit?.over && (kind === "call" || description.trim()));
   // C5: the title field below is autoFocus, so the keyboard is up the whole
   // time this is open. `fixed` + `top-1/2` centres against the layout viewport,
   // which iOS does not shrink — hence --vvh for both the cap and the centre.
@@ -967,7 +975,10 @@ function QuickComposer({
         </div>
         <div className="flex items-start gap-3">
           <FileText size={16} className="mt-2.5 shrink-0 text-ink-secondary" />
-          <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder={kind === "routine" ? "What should the bot do?" : "Add a description (optional)"} className="min-w-0 flex-1 resize-none rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+          <div className="min-w-0 flex-1">
+            <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} aria-invalid={instructionsLimit?.over || undefined} aria-describedby={instructionsLimit ? "quick-routine-instructions-limit" : undefined} placeholder={kind === "routine" ? "What should the bot do?" : "Add a description (optional)"} className="block w-full min-w-0 resize-none rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+            {instructionsLimit && <p id="quick-routine-instructions-limit" role={instructionsLimit.over ? "alert" : undefined} className={cn("mt-1 text-[11.5px]", instructionsLimit.over ? "text-danger" : "text-ink-secondary")}>{instructionsLimit.line}</p>}
+          </div>
         </div>
         {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</div>}
       </div>

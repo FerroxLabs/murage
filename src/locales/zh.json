@@ -310,7 +310,6 @@
   "connectedApps.flux.notInBuild": "本次启动无法使用已连接的应用。请在设置中添加你自己的 Composio 密钥，或重启后重试。",
   "connectedApps.flux.legacyPlain": "通过 Murage 的服务连接。",
   "connectedApps.flux.openSettings": "打开设置",
-  "connectedApps.flux.freeRuns": "今天还剩 {count} 次免费运行。",
   "connectedApps.flux.consentButton": "迁移我已连接的应用",
   "connectedApps.flux.consentKeep": "在 {date} 之前保留在此处",
   "connectedApps.flux.consentKeepNoDate": "暂时保留在此处",

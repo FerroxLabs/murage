@@ -56,6 +56,9 @@ it("changing protected destination invalidates old connection and preserves othe
 it("recovery picker cancellation performs no download and successful export never needs latest local file",async()=>{
  const f=fixture(),ref=await configured(f);const listing=await f.host.listBackups(ref,2);expect(listing.backups[0].verified).toBe(false);
  f.chooseDownload.mockResolvedValueOnce(null);expect(await f.host.downloadBackup(ref,2,"e".repeat(64))).toEqual({cancelled:true});expect(f.download).not.toHaveBeenCalled();expect(f.exportDownloaded).not.toHaveBeenCalled();
+ // 0.1.60 Linux D8: a folder others can change keeps its own code, not "needs review"
+ f.exportDownloaded.mockRejectedValueOnce(Error("BACKUP_REMOTE_DOWNLOAD_FOLDER_SHARED"));
+ await expect(f.host.downloadBackup(ref,2,"e".repeat(64))).rejects.toThrow("BACKUP_REMOTE_DOWNLOAD_FOLDER_SHARED");
  expect(await f.host.downloadBackup(ref,2,"e".repeat(64))).toMatchObject({saved:true,archivePath:"/chosen-download-folder/new/backup.age"});expect(f.download).toHaveBeenCalledWith("e".repeat(64));expect(f.exportDownloaded.mock.calls[0][1]).toBe("/chosen-download-folder");expect(f.latest).not.toHaveBeenCalled();
 });
 it("stale recovery requests and mismatched downloads are never exported",async()=>{

@@ -933,7 +933,7 @@ describe("ensureOpenCodeInjectModel", () => {
   it("refuses an unreadable opencode.json instead of treating it as missing", () => {
     const { home, path } = openCodeHome("murage-opencode-unreadable-");
     mkdirSync(path);
-    expect(() => ensureOpenCodeInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toThrow(`(EISDIR)`);
+    expect(() => ensureOpenCodeInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toThrow("and left it unchanged. Check that it is a file you can read");
     expect(statSync(path).isDirectory()).toBe(true);
   });
 
@@ -1084,7 +1084,7 @@ describe("ensureQwenInjectModel", () => {
     const home = mkdtempSync(join(tmpdir(), "murage-qwen-unreadable-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".qwen", "settings.json"), { recursive: true });
-    expect(() => ensureQwenInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toThrow("(EISDIR)");
+    expect(() => ensureQwenInjectModel("omlx::GLM-5.2-fp8", { HOME: home })).toThrow("and left it unchanged. Check that it is a file you can read");
     expect(statSync(join(home, ".qwen", "settings.json")).isDirectory()).toBe(true);
   });
 

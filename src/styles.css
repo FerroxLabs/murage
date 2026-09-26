@@ -373,6 +373,16 @@ body {
 .transcript-row[data-flash] {
   content-visibility: visible;
 }
+/* The search-hit ring (src/lib/focus-message.ts). An attribute, not Tailwind
+   classes on the bubble: React rewrites the bubble's className when the
+   transcript window opens around the hit, which removed the ring before it
+   was painted. */
+[data-flash-target] {
+  border-radius: 1rem;
+  box-shadow: 0 0 0 2px var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 70%, transparent);
+  transition: box-shadow 150ms ease;
+}
 .transcript-row:has(details[open], [aria-expanded="true"]:not([data-run-toggle]), [data-row-lift]) {
   content-visibility: visible;
 }

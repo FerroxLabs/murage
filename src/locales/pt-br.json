@@ -310,7 +310,6 @@
   "connectedApps.flux.notInBuild": "Os apps conectados não estão disponíveis nesta inicialização. Adicione sua própria chave Composio nas configurações ou tente novamente após reiniciar.",
   "connectedApps.flux.legacyPlain": "Conectado pelo serviço do Murage.",
   "connectedApps.flux.openSettings": "Abrir configurações",
-  "connectedApps.flux.freeRuns": "{count} execuções gratuitas restantes hoje.",
   "connectedApps.flux.consentButton": "Mover meus apps conectados",
   "connectedApps.flux.consentKeep": "Mantê-los aqui até {date}",
   "connectedApps.flux.consentKeepNoDate": "Mantê-los aqui por enquanto",

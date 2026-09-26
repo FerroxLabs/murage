@@ -1,6 +1,7 @@
 // Harness-owned transport for pinned agent-browser 0.36.0. Its raw localhost
 // stream has NO authentication: this relay protects network clients, not other
 // processes running with the same OS identity. Never disclose its port in APIs.
+import { USER_CHROME_ALLOW_WAIT_MS } from "./user-chrome.ts";
 import { readFileSync } from "node:fs";
 import { connect as connectSocket } from "node:net";
 import { join } from "node:path";
@@ -36,11 +37,13 @@ export function createNativeBrowser(spec: AgentBrowserSpec): NativeBrowser {
   let streamId = "";
   let daemonPid: number | undefined;
   const pidFile = join(spec.env.AGENT_BROWSER_SOCKET_DIR!, `${spec.env.AGENT_BROWSER_SESSION}.pid`);
+  // The owner's own Chrome: its first connections wait on the owner's Allow.
+  const attached = Boolean(spec.env.AGENT_BROWSER_CDP);
   const command = async (args: string[]): Promise<unknown> => { await ensureBrowserSandboxAccess(spec); return new Promise((resolve, reject) => {
     const child = spawn(spec.command, ["--json", ...args], { env: spec.env, cwd: spec.env.HOME, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     let overflow = false;
-    const timer = setTimeout(() => { overflow = true; child.kill("SIGKILL"); }, 20_000);
+    const timer = setTimeout(() => { overflow = true; child.kill("SIGKILL"); }, attached ? USER_CHROME_ALLOW_WAIT_MS : 20_000);
     child.stderr.resume();
     child.stdout.on("data", (chunk: Buffer) => {
       if (output.length + chunk.length > 2_000_000) { overflow = true; child.kill("SIGKILL"); }
@@ -55,7 +58,7 @@ export function createNativeBrowser(spec: AgentBrowserSpec): NativeBrowser {
     });
   });
   };
-  const guard = new BrowserDocumentGuard(command);
+  const guard = new BrowserDocumentGuard(command, attached ? { connectTimeoutMs: USER_CHROME_ALLOW_WAIT_MS } : {});
   return {
     command,
     protected: (armed = true) => guard.protected(armed),
