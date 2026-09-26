@@ -68,8 +68,8 @@ describe("the link the QR carries", () => {
   });
 
   it("takes the tailnet address as readily as the name", () => {
-    expect(companionBrowserLink({ scheme: "http", host: "100.79.121.109", port: 8813 }, TOKEN))
-      .toBe(`http://100.79.121.109:8813/enter#${TOKEN}`);
+    expect(companionBrowserLink({ scheme: "http", host: "100.64.0.10", port: 8813 }, TOKEN))
+      .toBe(`http://100.64.0.10:8813/enter#${TOKEN}`);
   });
 
   it("answers null rather than building a link nothing can open", () => {

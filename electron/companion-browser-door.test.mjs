@@ -156,7 +156,7 @@ describe("the desktop names the browser door", () => {
     // shipped `auto` preference binds the TAILNET address when there is one,
     // so serve reached nothing and answered 443 with a 502 while every local
     // probe called the door healthy.
-    const front = { origin: "https://seans-macbook-pro.tail0a48a4.ts.net" };
+    const front = { origin: "https://my-mac.tailexample.ts.net" };
     const env = browserDoorEnvironment({}, front);
     expect(env.MURAGE_BROWSER_BIND).toBe("loopback");
     // True the moment serve is in front, and only then: the value decides the
@@ -172,7 +172,7 @@ describe("the desktop names the browser door", () => {
     // preference — it is a configuration that cannot work.
     const env = browserDoorEnvironment(
       { MURAGE_BROWSER_BIND: "tailnet", MURAGE_BROWSER_SCHEME: "http" },
-      { origin: "https://box.tail0a48a4.ts.net" },
+      { origin: "https://box.tailexample.ts.net" },
     );
     expect(env.MURAGE_BROWSER_BIND).toBe("loopback");
     expect(env.MURAGE_BROWSER_SCHEME).toBe("https");
@@ -182,7 +182,7 @@ describe("the desktop names the browser door", () => {
     // An inherited public origin would survive turning remote access off, and
     // the QR would keep advertising an address that stopped answering.
     const env = browserDoorEnvironment(
-      { MURAGE_BROWSER_PUBLIC_ORIGIN: "https://stale.tail0a48a4.ts.net" },
+      { MURAGE_BROWSER_PUBLIC_ORIGIN: "https://stale.tailexample.ts.net" },
       null,
     );
     expect(env.MURAGE_BROWSER_PUBLIC_ORIGIN).toBe("");
@@ -195,27 +195,27 @@ describe("the desktop names the browser door", () => {
     await startCompanion({
       resourcesPath: "/fake/resources",
       harnessPort: 8799,
-      remoteAccess: { origin: "https://seans-macbook-pro.tail0a48a4.ts.net" },
+      remoteAccess: { origin: "https://my-mac.tailexample.ts.net" },
     });
     const env = forkEnvironments.at(-1);
     expect(env.MURAGE_BROWSER_BIND).toBe("loopback");
     expect(env.MURAGE_BROWSER_SCHEME).toBe("https");
-    expect(env.MURAGE_BROWSER_PUBLIC_ORIGIN).toBe("https://seans-macbook-pro.tail0a48a4.ts.net");
+    expect(env.MURAGE_BROWSER_PUBLIC_ORIGIN).toBe("https://my-mac.tailexample.ts.net");
   });
 
   it("advertises the front's portless address, not the door's own socket", async () => {
     // The shape `/state` must produce for the link to be the one that works.
-    door = { scheme: "https", host: "seans-macbook-pro.tail0a48a4.ts.net", port: 443 };
+    door = { scheme: "https", host: "my-mac.tailexample.ts.net", port: 443 };
     await stopCompanion();
     await startCompanion({
       resourcesPath: "/fake/resources",
       harnessPort: 8799,
-      remoteAccess: { origin: "https://seans-macbook-pro.tail0a48a4.ts.net" },
+      remoteAccess: { origin: "https://my-mac.tailexample.ts.net" },
     });
     const state = await companionState();
     expect(state.browser).toEqual({
       scheme: "https",
-      host: "seans-macbook-pro.tail0a48a4.ts.net",
+      host: "my-mac.tailexample.ts.net",
       port: 443,
     });
     expect(state.browser.port).not.toBe(8813);

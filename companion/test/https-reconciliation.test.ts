@@ -58,11 +58,11 @@ describe("the sidecar's actual bind decision", () => {
     const declaration = source.slice(start,end).replace("(): string =>","() =>");
     const desired = new Function("browserBindHost","BROWSER_BIND","BROWSER_FRONT","tailscaleAddress","tailnetSelfAddress","console",
       `${declaration}; return desiredBrowserBindHost;`)(browserBindHost,"auto",{scheme:"https",host:"box.tail1234.ts.net",port:443},
-      ()=>"100.79.121.109",()=>"100.79.121.109",{log:()=>{}});
+      ()=>"100.64.0.10",()=>"100.64.0.10",{log:()=>{}});
     const listened: string[] = [];
     const fakeServer = {closeAllConnections:()=>{},close:(done:()=>void)=>done()};
     const result = await rebindBrowserDoor({
-      server:fakeServer as import("node:http").Server,port:8813,boundHost:"100.79.121.109",desiredHost:desired,
+      server:fakeServer as import("node:http").Server,port:8813,boundHost:"100.64.0.10",desiredHost:desired,
       listen:async (_server,_port,host)=>{listened.push(host);},
     });
     expect(result.host).toBe("127.0.0.1");

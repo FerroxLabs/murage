@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import { browserDoorLocation, browserFront } from "../src/browser.ts";
 
-const NAME = "seans-macbook-pro.tail0a48a4.ts.net";
+const NAME = "my-mac.tailexample.ts.net";
 
 describe("the proxy in front of the door", () => {
   it("reads a plain HTTPS origin and fills in the default port", () => {

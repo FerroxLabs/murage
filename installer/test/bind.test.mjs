@@ -16,7 +16,7 @@ const v6 = (address) => ({ address, family: "IPv6", internal: false });
 const WITH_TAILNET = {
   interfaces: () => ({
     eth0: [v4("134.199.200.10")],
-    tailscale0: [v4("100.81.158.63"), v6("fd7a:115c:a1e0::1234:5678")],
+    tailscale0: [v4("100.64.0.11"), v6("fd7a:115c:a1e0::1234:5678")],
   }),
 };
 const NO_TAILNET = { interfaces: () => ({ eth0: [v4("134.199.200.10")] }) };
@@ -61,7 +61,7 @@ test("a LAN or public address is refused even though it is not the wildcard", ()
 
 test("tailnet mode resolves to this host's own tailnet address", () => {
   const r = resolveBindAddress({ mode: "tailnet", probe: WITH_TAILNET });
-  assert.equal(r.address, "100.81.158.63");
+  assert.equal(r.address, "100.64.0.11");
   assert.equal(r.mode, "tailnet");
 });
 
@@ -75,9 +75,9 @@ test("tailnet mode REFUSES TO START when there is no tailnet address", () => {
 });
 
 test("an explicit tailnet address is accepted; a stale one from another host is not", () => {
-  assert.equal(resolveBindAddress({ address: "100.81.158.63", probe: WITH_TAILNET }).mode, "tailnet");
+  assert.equal(resolveBindAddress({ address: "100.64.0.11", probe: WITH_TAILNET }).mode, "tailnet");
   assert.throws(
-    () => resolveBindAddress({ address: "100.81.158.63", probe: NO_TAILNET }),
+    () => resolveBindAddress({ address: "100.64.0.11", probe: NO_TAILNET }),
     (e) => e.code === "NOT_LOOPBACK_OR_TAILNET"
   );
 });
@@ -96,7 +96,7 @@ test("an unknown mode is refused rather than defaulted", () => {
 test("there is no input that yields a wildcard bind", () => {
   const attempts = [
     {}, { mode: "loopback" }, { mode: "tailnet" }, { mode: "LOOPBACK" }, { mode: " tailnet " },
-    { address: "127.0.0.1" }, { address: "::1" }, { address: "100.81.158.63" },
+    { address: "127.0.0.1" }, { address: "::1" }, { address: "100.64.0.11" },
   ];
   for (const attempt of attempts) {
     let out = null;

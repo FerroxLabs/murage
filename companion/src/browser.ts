@@ -432,7 +432,7 @@ export function cookieName(scheme: BoundIdentity["scheme"]): string {
 /** The `Set-Cookie` line for a new session.
  *
  * Never a `Domain` attribute. `ts.net` is a public suffix, so
- * `tail0a48a4.ts.net` is the registrable domain and a `Domain` cookie would
+ * `tailexample.ts.net` is the registrable domain and a `Domain` cookie would
  * be scoped to every node in the tailnet. Host-only is what keeps it on this
  * machine's name.
  *

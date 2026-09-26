@@ -457,7 +457,7 @@ let pairingCredential = "";
 
 const identity: BoundIdentity = {
   scheme: "http",
-  hosts: new Set(["macbook.tail0a48a4.ts.net", "127.0.0.1"]),
+  hosts: new Set(["macbook.tailexample.ts.net", "127.0.0.1"]),
 };
 
 interface Answer {
@@ -473,7 +473,7 @@ const knock = (
 ): Promise<Answer> =>
   new Promise((resolve, reject) => {
     const headers: Record<string, string> = {
-      host: `macbook.tail0a48a4.ts.net:${doorPort}`,
+      host: `macbook.tailexample.ts.net:${doorPort}`,
       "sec-fetch-site": "same-origin",
       ...extra,
     };
@@ -489,7 +489,7 @@ const knock = (
   });
 
 /** What a same-origin browser sends on a write. */
-const write = () => ({ origin: `http://macbook.tail0a48a4.ts.net:${doorPort}` });
+const write = () => ({ origin: `http://macbook.tailexample.ts.net:${doorPort}` });
 
 const cookieOf = (answer: Answer): string => {
   const set = String(answer.headers["set-cookie"]?.[0] ?? "");
@@ -554,7 +554,7 @@ const signIn = async (): Promise<string> => {
         path: "/session",
         method: "POST",
         headers: {
-          host: `macbook.tail0a48a4.ts.net:${doorPort}`,
+          host: `macbook.tailexample.ts.net:${doorPort}`,
           "sec-fetch-site": "same-origin",
           "content-type": "application/json",
           "content-length": Buffer.byteLength(body),

@@ -41,7 +41,7 @@ writeFileSync(${JSON.stringify(join(dir, role + ".env.json"))},JSON.stringify({d
   writeFileSync(tailscale, slowProbe
     ? `#!/bin/sh\nprintf '%s' "$$" > ${quotedMarker}\nexec /bin/sleep 30\n`
     : `#!${process.execPath}\n` + record("probe") + (setup
-      ? `console.log(process.argv[2] === 'status' ? JSON.stringify({BackendState:'Running',Self:{Online:true,TailscaleIPs:['100.81.158.63'],DNSName:'fixture.tail.test.',Tags:['tag:murage']}}) : '{}');`
+      ? `console.log(process.argv[2] === 'status' ? JSON.stringify({BackendState:'Running',Self:{Online:true,TailscaleIPs:['100.64.0.11'],DNSName:'fixture.tail.test.',Tags:['tag:murage']}}) : '{}');`
       : "console.log('{}');"), { mode: 0o755 });
   const launcher = spawn(process.execPath, [join(installed,"bin","murage.mjs"), setup ? "setup" : "start"], {
     detached: process.platform !== "win32", stdio: ["ignore","pipe","pipe"],

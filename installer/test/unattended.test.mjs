@@ -63,7 +63,7 @@ const LOOPBACK_ONLY_SERVER = `server.listen(PORT, "127.0.0.1", () => {});`;
 
 const RUNNING = JSON.stringify({
   BackendState: "Running",
-  Self: { Online: true, TailscaleIPs: ["100.81.158.63"], DNSName: "box.tail0a48a4.ts.net.", Tags: ["tag:murage"] },
+  Self: { Online: true, TailscaleIPs: ["100.64.0.11"], DNSName: "box.tailexample.ts.net.", Tags: ["tag:murage"] },
 });
 const NEEDS_LOGIN = JSON.stringify({ BackendState: "NeedsLogin" });
 
@@ -366,7 +366,7 @@ function tailscaleStub(dir, { logFile, doorPort }) {
   const path = join(dir, "tailscale-stub");
   const upDone = join(dir, "up-done");
   const served = join(dir, "serve-configured");
-  const web = `{"Web":{"box.tail0a48a4.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:${doorPort}"}}}}}`;
+  const web = `{"Web":{"box.tailexample.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:${doorPort}"}}}}}`;
   writeFileSync(
     path,
     [

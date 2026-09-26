@@ -106,13 +106,13 @@ describe("the address Tailscale reports for this node", () => {
         Self: {
           DNSName: "macbook.tail1234.ts.net.",
           // Both families, IPv6 included, exactly as the real CLI emits.
-          TailscaleIPs: ["100.79.121.109", "fd7a:115c:a1e0::4d3b:796d"],
+          TailscaleIPs: ["100.64.0.10", "fd7a:115c:a1e0::4d3b:796d"],
         },
       }),
     });
     await refreshTailnetName();
     expect(tailnetName()).toBe("macbook.tail1234.ts.net");
-    expect(tailnetSelfAddress()).toBe("100.79.121.109");
+    expect(tailnetSelfAddress()).toBe("100.64.0.10");
     // One subprocess for both answers.
     expect(attempted).toHaveLength(1);
   });
@@ -130,11 +130,11 @@ describe("the address Tailscale reports for this node", () => {
   it("forgets the address when Tailscale stops answering", async () => {
     respond = async () => ({
       stdout: JSON.stringify({
-        Self: { DNSName: "macbook.tail1234.ts.net.", TailscaleIPs: ["100.79.121.109"] },
+        Self: { DNSName: "macbook.tail1234.ts.net.", TailscaleIPs: ["100.64.0.10"] },
       }),
     });
     await refreshTailnetName();
-    expect(tailnetSelfAddress()).toBe("100.79.121.109");
+    expect(tailnetSelfAddress()).toBe("100.64.0.10");
 
     // Signed out, or uninstalled, between one probe and the next. A cached
     // address that outlived Tailscale would keep the door bound to an

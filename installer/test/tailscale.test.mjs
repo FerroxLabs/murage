@@ -152,8 +152,8 @@ test("a share config with the public-exposure flag set is detected", () => {
   // library does, so neither file carries the literal string.
   const key = ["Allow", "Fun", "nel"].join("");
   const doc = {
-    [key]: { "box.tail0a48a4.ts.net:443": true },
-    Web: { "box.tail0a48a4.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:8799" } } } },
+    [key]: { "box.tailexample.ts.net:443": true },
+    Web: { "box.tailexample.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:8799" } } } },
   };
   const seen = inspectShareConfig(doc, 8799);
   assert.equal(seen.publicExposure, true, "a public share MUST be caught");
@@ -162,12 +162,12 @@ test("a share config with the public-exposure flag set is detected", () => {
 
 test("a tailnet-only share is recognised as configured and not public", () => {
   const doc = {
-    Web: { "box.tail0a48a4.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:8799" } } } },
+    Web: { "box.tailexample.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:8799" } } } },
   };
   const seen = inspectShareConfig(doc, 8799);
   assert.equal(seen.publicExposure, false);
   assert.equal(seen.configured, true);
-  assert.deepEqual(seen.urls, ["https://box.tail0a48a4.ts.net"]);
+  assert.deepEqual(seen.urls, ["https://box.tailexample.ts.net"]);
 });
 
 test("a share pointed at a DIFFERENT port is not counted as ours", () => {
@@ -187,11 +187,11 @@ test("an empty or malformed share config is not mistaken for success", () => {
 
 const RUNNING = {
   BackendState: "Running",
-  MagicDNSSuffix: "tail0a48a4.ts.net",
+  MagicDNSSuffix: "tailexample.ts.net",
   Self: {
     Online: true,
-    TailscaleIPs: ["100.81.158.63", "fd7a:115c:a1e0::1"],
-    DNSName: "box.tail0a48a4.ts.net.",
+    TailscaleIPs: ["100.64.0.11", "fd7a:115c:a1e0::1"],
+    DNSName: "box.tailexample.ts.net.",
     Tags: ["tag:murage"],
   },
 };
@@ -200,7 +200,7 @@ test("verdictFromStatus accepts a fully-enrolled node", () => {
   const v = verdictFromStatus(RUNNING, { expectTags: ["tag:murage"] });
   assert.equal(v.ok, true);
   assert.deepEqual(v.reasons, []);
-  assert.equal(v.dnsName, "box.tail0a48a4.ts.net", "the trailing dot is stripped for URL building");
+  assert.equal(v.dnsName, "box.tailexample.ts.net", "the trailing dot is stripped for URL building");
 });
 
 test("verdictFromStatus rejects every partial state, with a reason", () => {
@@ -256,7 +256,7 @@ test("verifyEnrolment succeeds once the daemon settles", async () => {
   };
   const v = await verifyEnrolment({ run, bin: "tailscale", attempts: 5, wait: async () => {} });
   assert.equal(v.ok, true);
-  assert.equal(v.ips[0], "100.81.158.63");
+  assert.equal(v.ips[0], "100.64.0.11");
 });
 
 test("enroll reports failure when `up` fails, and never reaches the share step", async () => {
@@ -308,7 +308,7 @@ test("enroll succeeds end to end, and the key never appears in any command line"
     ["serve --bg", { status: 0 }],
     [
       "serve status --json",
-      { stdout: JSON.stringify({ Web: { "box.tail0a48a4.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:8799" } } } } }) },
+      { stdout: JSON.stringify({ Web: { "box.tailexample.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:8799" } } } } }) },
     ],
   ]);
   const r = await enroll({

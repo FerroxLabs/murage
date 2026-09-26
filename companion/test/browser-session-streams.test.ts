@@ -17,7 +17,7 @@ import { createConnectedDeviceTracker } from "../src/connected-devices.ts";
 import { DeviceRegistry, SESSION_IDLE_MS } from "../src/devices.ts";
 import { DATA_DIR } from "../src/state.ts";
 
-const HOST = "macbook.tail0a48a4.ts.net";
+const HOST = "macbook.tailexample.ts.net";
 const identity: BoundIdentity = { scheme: "http", hosts: new Set([HOST, "127.0.0.1"]) };
 
 let registry: DeviceRegistry;

@@ -29,6 +29,7 @@ const PRIVATE_CONTENT = [
   ["murage-", "qualification-private"],
   ["/Volumes/", "Mando"],
   ["sean\\.", "imsc"],
+  ["tail0a", "48a4"],
 ].map(parts => parts.join(""));
 export const privateContentPattern = new RegExp(PRIVATE_CONTENT.join("|"), "i");
 

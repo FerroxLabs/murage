@@ -480,9 +480,9 @@ describe("the sign-in limiter's arithmetic", () => {
   it("charges the socket's peer, never a header a client can write", () => {
     const spoofed = {
       headers: { "x-forwarded-for": "203.0.113.9", "x-real-ip": "203.0.113.9" },
-      socket: { remoteAddress: "100.79.121.109" },
+      socket: { remoteAddress: "100.64.0.10" },
     } as unknown as Parameters<typeof signInClientKey>[0];
-    expect(signInClientKey(spoofed)).toBe("100.79.121.109");
+    expect(signInClientKey(spoofed)).toBe("100.64.0.10");
   });
 });
 

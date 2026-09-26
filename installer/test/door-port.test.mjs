@@ -63,7 +63,7 @@ const LOOPBACK_ONLY_SERVER = `server.listen(PORT, "127.0.0.1", () => {});`;
 
 const RUNNING = {
   BackendState: "Running",
-  Self: { Online: true, TailscaleIPs: ["100.81.158.63"], DNSName: "box.tail0a48a4.ts.net.", Tags: [] },
+  Self: { Online: true, TailscaleIPs: ["100.64.0.11"], DNSName: "box.tailexample.ts.net.", Tags: [] },
 };
 
 /** @param {[string, object][]} script */
@@ -83,7 +83,7 @@ function fakeRunner(script) {
 function tailscaleStub(dir, { logFile, proxyTarget, firstStatusNeedsLogin = false }) {
   const path = join(dir, "tailscale-stub");
   const web = proxyTarget
-    ? `{"Web":{"box.tail0a48a4.ts.net:443":{"Handlers":{"/":{"Proxy":"${proxyTarget}"}}}}}`
+    ? `{"Web":{"box.tailexample.ts.net:443":{"Handlers":{"/":{"Proxy":"${proxyTarget}"}}}}}`
     : "{}";
   // The stub is driven through the real `murage setup`, which advertises the
   // default ACL tag — so the control plane it fakes has to have granted it.

@@ -23,7 +23,7 @@ import {
   TAILSCALE_DNS_ADMIN_URL,
 } from "./companion-remote-access.mjs";
 
-const NAME = "seans-macbook-pro.tail0a48a4.ts.net";
+const NAME = "my-mac.tailexample.ts.net";
 const TARGET = "http://127.0.0.1:8813";
 
 /** The exact shape `tailscale serve status --json` printed on 1.98 with our

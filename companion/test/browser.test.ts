@@ -95,7 +95,7 @@ const devices: BrowserDeviceStore = {
 
 const identity: BoundIdentity = {
   scheme: "http",
-  hosts: new Set(["macbook.tail0a48a4.ts.net", "100.79.121.109", "127.0.0.1"]),
+  hosts: new Set(["macbook.tailexample.ts.net", "100.64.0.10", "127.0.0.1"]),
 };
 let currentIdentity = identity;
 
@@ -172,7 +172,7 @@ const knock = (
 ): Promise<Answer> =>
   new Promise((resolve, reject) => {
     const headers: Record<string, string> = {
-      host: `macbook.tail0a48a4.ts.net:${doorPort}`,
+      host: `macbook.tailexample.ts.net:${doorPort}`,
       "sec-fetch-site": "same-origin",
       ...extra,
     };
@@ -194,7 +194,7 @@ const signedIn = async (): Promise<Record<string, string>> => {
   const answer = await knock(
     "POST",
     "/session",
-    { origin: `http://macbook.tail0a48a4.ts.net:${doorPort}` },
+    { origin: `http://macbook.tailexample.ts.net:${doorPort}` },
     JSON.stringify({ credential: redeemable }),
   );
   expect(answer.status).toBe(201);
@@ -205,7 +205,7 @@ const signedIn = async (): Promise<Record<string, string>> => {
 
 /** Writes carry an Origin; that is the whole reason the gate can require it. */
 const write = (extra: Record<string, string> = {}) => ({
-  origin: `http://macbook.tail0a48a4.ts.net:${doorPort}`,
+  origin: `http://macbook.tailexample.ts.net:${doorPort}`,
   ...extra,
 });
 
@@ -276,7 +276,7 @@ describe("the surface marker cannot be forged or cleared", () => {
           port: doorPort,
           path: "/api/events?surface=desktop",
           method: "GET",
-          headers: { host: `macbook.tail0a48a4.ts.net:${doorPort}`, "sec-fetch-site": "same-origin", ...cookie },
+          headers: { host: `macbook.tailexample.ts.net:${doorPort}`, "sec-fetch-site": "same-origin", ...cookie },
         },
         (res) => {
           res.on("data", () => {
@@ -366,7 +366,7 @@ describe("the front gate", () => {
           port: doorPort,
           path: "/",
           method: "GET",
-          headers: { host: `macbook.tail0a48a4.ts.net:${doorPort}` },
+          headers: { host: `macbook.tailexample.ts.net:${doorPort}` },
         },
         (res) => {
           const chunks: Buffer[] = [];
@@ -428,13 +428,13 @@ describe("the front gate", () => {
   it("parses a bracketed IPv6 authority rather than mangling it", () => {
     expect(hostOf("[::1]:8813")).toBe("::1");
     expect(hostOf("[::1].evil.example")).toBe("[::1].evil.example");
-    expect(hostOf("macbook.tail0a48a4.ts.net:8813")).toBe("macbook.tail0a48a4.ts.net");
+    expect(hostOf("macbook.tailexample.ts.net:8813")).toBe("macbook.tailexample.ts.net");
   });
 
   it("says no to every rule in turn, as a function", () => {
     const ask = (headers: Record<string, string>, method = "GET", url = "/api/bots") =>
       originGate({ headers, method, url } as unknown as IncomingMessage, identity);
-    const host = "macbook.tail0a48a4.ts.net:8813";
+    const host = "macbook.tailexample.ts.net:8813";
     expect(ask({ host, "sec-fetch-site": "same-origin" })).toBeNull();
     expect(ask({ host: "evil.example", "sec-fetch-site": "same-origin" })?.error).toBe("forbidden: unexpected host");
     // No Sec-Fetch at all now passes the ORIGIN gate, because plain HTTP
@@ -450,7 +450,7 @@ describe("the front gate", () => {
     expect(ask({ host, "sec-fetch-site": "none" })).not.toBeNull();
     expect(ask({ host, "sec-fetch-site": "none" }, "GET", "/")).toBeNull();
     expect(
-      ask({ host, "sec-fetch-site": "same-origin", origin: "http://macbook.tail0a48a4.ts.net:8813" }),
+      ask({ host, "sec-fetch-site": "same-origin", origin: "http://macbook.tailexample.ts.net:8813" }),
     ).toBeNull();
     expect(ask({ host, "sec-fetch-site": "same-origin", origin: "http://evil.example" })).not.toBeNull();
     expect(ask({ host, "sec-fetch-site": "same-origin" }, "POST")).not.toBeNull();
@@ -698,7 +698,7 @@ describe("the live stream", () => {
           port: doorPort,
           path: "/api/events",
           method: "GET",
-          headers: { host: `macbook.tail0a48a4.ts.net:${doorPort}`, "sec-fetch-site": "same-origin", ...cookie },
+          headers: { host: `macbook.tailexample.ts.net:${doorPort}`, "sec-fetch-site": "same-origin", ...cookie },
         },
         (res) => res.once("data", () => resolve(res)),
       );
@@ -722,10 +722,10 @@ describe("the live stream", () => {
 describe("where this door may bind", () => {
   it("never offers 0.0.0.0, and refuses to start rather than fall back", () => {
     expect(browserBindHost("loopback", null)).toBe("127.0.0.1");
-    expect(browserBindHost("loopback", "100.79.121.109")).toBe("127.0.0.1");
+    expect(browserBindHost("loopback", "100.64.0.10")).toBe("127.0.0.1");
     // CP5 (adopted U-12): explicit tailnet binds only an address Tailscale
     // itself confirmed, so the confirmation is part of this expectation now.
-    expect(browserBindHost("tailnet", "100.79.121.109", "100.79.121.109")).toBe("100.79.121.109");
+    expect(browserBindHost("tailnet", "100.64.0.10", "100.64.0.10")).toBe("100.64.0.10");
     // Falling back to 0.0.0.0 "so it works" is how a tailnet-only door
     // becomes a LAN door, and nobody would see it happen.
     expect(() => browserBindHost("tailnet", null)).toThrow(/no Tailscale address/i);
@@ -735,10 +735,10 @@ describe("where this door may bind", () => {
     // The shipped setting, and the only one that is right on a laptop: a
     // demand for the tailnet refuses to start before Tailscale is signed in,
     // and a demand for loopback leaves a signed-in tailnet with no door on it.
-    expect(browserBindHost("auto", "100.79.121.109", "100.79.121.109")).toBe("100.79.121.109");
+    expect(browserBindHost("auto", "100.64.0.10", "100.64.0.10")).toBe("100.64.0.10");
     // CP5 (adopted U-12): an interface address Tailscale has not confirmed is
     // not a tailnet, so auto stays on loopback for it.
-    expect(browserBindHost("auto", "100.79.121.109")).toBe("127.0.0.1");
+    expect(browserBindHost("auto", "100.64.0.10")).toBe("127.0.0.1");
     expect(browserBindHost("auto", null)).toBe("127.0.0.1");
     // and it says why, rather than silently being loopback
     const declined: string[] = [];
@@ -751,18 +751,18 @@ describe("where this door may bind", () => {
     // -NAT uplink or a second mesh VPN puts a real address in that range in
     // front of the one Tailscale issued, and the interface picker takes the
     // first one it finds — so the door would open on a network nobody chose.
-    const disagreement = tailnetBindAddress("100.64.0.7", "100.79.121.109");
+    const disagreement = tailnetBindAddress("100.64.0.7", "100.64.0.10");
     expect(disagreement).toEqual({
       refused: expect.stringContaining("Something else is using Tailscale's address range"),
     });
     // auto declines the address rather than the process
     const declined: string[] = [];
-    expect(browserBindHost("auto", "100.64.0.7", "100.79.121.109", (r) => declined.push(r))).toBe(
+    expect(browserBindHost("auto", "100.64.0.7", "100.64.0.10", (r) => declined.push(r))).toBe(
       "127.0.0.1",
     );
     expect(declined[0]).toMatch(/will not pick between them/);
     // an operator who wrote `tailnet` down meant it, and gets a refusal
-    expect(() => browserBindHost("tailnet", "100.64.0.7", "100.79.121.109")).toThrow(
+    expect(() => browserBindHost("tailnet", "100.64.0.7", "100.64.0.10")).toThrow(
       /Something else is using Tailscale's address range/,
     );
   });
@@ -770,10 +770,10 @@ describe("where this door may bind", () => {
   it("refuses an address no interface actually carries", () => {
     // Nothing can bind an address the kernel does not have. Saying so beats
     // an EADDRNOTAVAIL from three frames away.
-    expect(tailnetBindAddress(null, "100.79.121.109")).toEqual({
+    expect(tailnetBindAddress(null, "100.64.0.10")).toEqual({
       refused: expect.stringContaining("no interface on this machine carries that address"),
     });
-    expect(browserBindHost("auto", null, "100.79.121.109")).toBe("127.0.0.1");
+    expect(browserBindHost("auto", null, "100.64.0.10")).toBe("127.0.0.1");
   });
 
   // CP5 (adopted U-12). This used to accept the interface address when the CLI
@@ -799,9 +799,9 @@ describe("where this door may bind", () => {
   });
 
   it("binds the tailnet address when Tailscale confirms the one the interface carries", () => {
-    expect(tailnetBindAddress("100.79.121.109", "100.79.121.109")).toEqual({ address: "100.79.121.109" });
-    expect(browserBindHost("tailnet", "100.79.121.109", "100.79.121.109")).toBe("100.79.121.109");
-    expect(browserBindHost("auto", "100.79.121.109", "100.79.121.109")).toBe("100.79.121.109");
+    expect(tailnetBindAddress("100.64.0.10", "100.64.0.10")).toEqual({ address: "100.64.0.10" });
+    expect(browserBindHost("tailnet", "100.64.0.10", "100.64.0.10")).toBe("100.64.0.10");
+    expect(browserBindHost("auto", "100.64.0.10", "100.64.0.10")).toBe("100.64.0.10");
   });
 
   it("keeps an explicit-tailnet refusal from moving a running door", async () => {
@@ -975,9 +975,9 @@ describe("the word that must never appear", () => {
 });
 
 describe("the door a person actually taps", () => {
-  const identity = { scheme: "http" as const, host: "phone.tail0a48a4.ts.net", port: 8813, hosts: new Set(["phone.tail0a48a4.ts.net"]) };
+  const identity = { scheme: "http" as const, host: "phone.tailexample.ts.net", port: 8813, hosts: new Set(["phone.tailexample.ts.net"]) };
   const ask = (headers: Record<string, string>, url = "/enter", method = "GET") =>
-    originGate({ method, url, headers: { host: "phone.tail0a48a4.ts.net:8813", ...headers } } as never, identity as never);
+    originGate({ method, url, headers: { host: "phone.tailexample.ts.net:8813", ...headers } } as never, identity as never);
 
   // Sean pasted the pairing link to his phone, tapped it, and got
   // "forbidden: cross-origin request". `none` is only ever sent for a URL

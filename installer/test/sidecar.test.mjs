@@ -63,8 +63,8 @@ const RUNNING = JSON.stringify({
   BackendState: "Running",
   Self: {
     Online: true,
-    TailscaleIPs: ["100.81.158.63"],
-    DNSName: "box.tail0a48a4.ts.net.",
+    TailscaleIPs: ["100.64.0.11"],
+    DNSName: "box.tailexample.ts.net.",
     Tags: ["tag:murage"],
   },
 });
@@ -123,7 +123,7 @@ function fakeSidecar(dir, { envDump }) {
 function tailscaleStub(dir, { logFile, proxyTarget, warmingUpCalls = 0 }) {
   const path = join(dir, "tailscale-stub");
   const web = proxyTarget
-    ? `{"Web":{"box.tail0a48a4.ts.net:443":{"Handlers":{"/":{"Proxy":"${proxyTarget}"}}}}}`
+    ? `{"Web":{"box.tailexample.ts.net:443":{"Handlers":{"/":{"Proxy":"${proxyTarget}"}}}}}`
     : "{}";
   const served = join(dir, "serve-configured");
   // A daemon that is still starting answers `serve status` with an error for
@@ -371,10 +371,10 @@ test("the scheme follows the VERIFIED front, and is http when there is none", ()
     harnessPort: 8799,
     doorPort: 8813,
     dataDir: "/d",
-    publicOrigin: "https://box.tail0a48a4.ts.net",
+    publicOrigin: "https://box.tailexample.ts.net",
   });
   assert.equal(https.MURAGE_BROWSER_SCHEME, "https");
-  assert.equal(https.MURAGE_BROWSER_PUBLIC_ORIGIN, "https://box.tail0a48a4.ts.net");
+  assert.equal(https.MURAGE_BROWSER_PUBLIC_ORIGIN, "https://box.tailexample.ts.net");
 
   // A stale inherited origin must not survive into a run with no proxy: it
   // would tell the door to advertise an address that stopped answering.
@@ -400,15 +400,15 @@ test("the sidecar's data dir is inside the data dir the systemd unit grants", ()
 
 test("serveOrigin answers only for a :443 listener that fronts this door", () => {
   const doc = {
-    Web: { "box.tail0a48a4.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:8813" } } } },
+    Web: { "box.tailexample.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:8813" } } } },
   };
-  assert.equal(serveOrigin(doc, 8813), "https://box.tail0a48a4.ts.net");
+  assert.equal(serveOrigin(doc, 8813), "https://box.tailexample.ts.net");
   assert.equal(serveOrigin(doc, 8799), null, "a proxy to the harness is not this door's front");
   assert.equal(serveOrigin({ Web: {} }, 8813), null);
   assert.equal(serveOrigin(null, 8813), null);
   // A plain-HTTP listener is not claimed as https, because the scheme decides
   // whether the session cookie may carry `Secure`.
-  const plain = { Web: { "box.tail0a48a4.ts.net:80": { Handlers: { "/": { Proxy: "http://127.0.0.1:8813" } } } } };
+  const plain = { Web: { "box.tailexample.ts.net:80": { Handlers: { "/": { Proxy: "http://127.0.0.1:8813" } } } } };
   assert.equal(serveOrigin(plain, 8813), null);
 });
 
@@ -669,7 +669,7 @@ test("`murage start` runs the browser door alongside the harness", async () => {
   assert.equal(child.MURAGE_BROWSER_BIND, "loopback");
   assert.equal(
     child.MURAGE_BROWSER_PUBLIC_ORIGIN,
-    "https://box.tail0a48a4.ts.net",
+    "https://box.tailexample.ts.net",
     "the daemon reports a :443 proxy at this door, so the door may advertise it"
   );
   assert.equal(child.MURAGE_BROWSER_SCHEME, "https");
@@ -711,7 +711,7 @@ test("`murage start` waits for a daemon that is still starting to report the pro
   const { out } = await runCli(["start"], env, { killAfterMs: 8_000 });
   assert.match(out, /waiting for tailscaled to report the proxy/, out);
   const child = JSON.parse(readFileSync(envDump, "utf8"));
-  assert.equal(child.MURAGE_BROWSER_PUBLIC_ORIGIN, "https://box.tail0a48a4.ts.net", `the door must get the origin once the daemon is up:\n${out}`);
+  assert.equal(child.MURAGE_BROWSER_PUBLIC_ORIGIN, "https://box.tailexample.ts.net", `the door must get the origin once the daemon is up:\n${out}`);
   assert.equal(child.MURAGE_BROWSER_SCHEME, "https");
   const calls = readFileSync(join(home, "argv.log"), "utf8").split("\n").filter((l) => l.startsWith("serve status")).length;
   assert.ok(calls >= 3, `expected the daemon to be polled past its warm-up, saw ${calls} serve status calls`);

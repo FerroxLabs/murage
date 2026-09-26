@@ -495,11 +495,11 @@ describe("originIsLoopback", () => {
 // those is wrong the first time it changes.
 describe("the browser door on /state", () => {
   it("reports scheme, host and port as the sidecar knows them", async () => {
-    browserDoor = { scheme: "http", host: "seans-macbook-pro.tail0a48a4.ts.net", port: 8813 };
+    browserDoor = { scheme: "http", host: "my-mac.tailexample.ts.net", port: 8813 };
     const state = await ask("GET", "/state");
     expect(state.body.browser).toEqual({
       scheme: "http",
-      host: "seans-macbook-pro.tail0a48a4.ts.net",
+      host: "my-mac.tailexample.ts.net",
       port: 8813,
     });
   });
@@ -515,10 +515,10 @@ describe("the browser door on /state", () => {
     // The renderer builds the QR from whatever the pairing write returned. A
     // door reported on GET and dropped on POST would mean the one call that
     // has a token in hand is the one call that cannot say where to send it.
-    browserDoor = { scheme: "http", host: "100.79.121.109", port: 8813 };
+    browserDoor = { scheme: "http", host: "100.64.0.10", port: 8813 };
     const opened = await ask("POST", "/pairing");
     expect(opened.status).toBe(201);
-    expect(opened.body.browser).toEqual({ scheme: "http", host: "100.79.121.109", port: 8813 });
+    expect(opened.body.browser).toEqual({ scheme: "http", host: "100.64.0.10", port: 8813 });
     await ask("DELETE", `/pairing?expectedToken=${encodeURIComponent(opened.body.pairing.token)}`);
   });
 });
