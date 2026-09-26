@@ -42,7 +42,7 @@ import * as encryption from "./installation-backup-encryption.ts";
 import { writeEncryptedInstallationBackup } from "./installation-encrypted-backup.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import type { WindowsBackupContext, WindowsBackupDependencies, WindowsBackupRequest } from "./installation-windows-backup-transport.ts";
-import { describeCaptureError } from "../shared/backup-capture-failure.mjs";
+import { captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 
 const descriptors = Object.fromEntries(["platform", "arch", "execPath"].map(key => [key, Object.getOwnPropertyDescriptor(process, key)!]));
 const helper = "C:\\Installed\\resources\\backup-tools\\x64\\murage-backup-age.exe", age = "C:\\Installed\\resources\\backup-tools\\x64\\age.exe";
@@ -129,9 +129,11 @@ staged("a link refused inside the capture is logged with its step and errno, nev
   // itself now cannot be published, which is the shape the customer saw.
   for (const pin of ancestors(f.home)) mocks.pinned.add(pin.toLowerCase());
   const caught = await writeEncryptedInstallationBackup(f.data, f.archive, options).catch(error => error);
-  expect(caught.code).toBe("ENCRYPTED_BACKUP_FAILED");
+  // Named for what the person can do, not the old "check your recovery key".
+  expect(caught.code).toBe("BACKUP_FILE_IN_USE");
+  expect(captureFailureSentence({ stage: "capture", code: caught.code })).not.toMatch(/recovery key/i);
   const cause = describeCaptureError(caught);
-  expect(cause).toMatchObject({ step: "offline-open", errno: "EBUSY", syscall: "link", innerCode: "LEASE_IO", code: "ENCRYPTED_BACKUP_FAILED" });
+  expect(cause).toMatchObject({ step: "offline-open", errno: "EBUSY", syscall: "link", innerCode: "LEASE_IO", code: "BACKUP_FILE_IN_USE" });
   expect(JSON.stringify(cause).toLowerCase()).not.toContain(f.home.toLowerCase());
   expect(JSON.stringify(cause)).not.toMatch(/murage-data-owner|\.lease/);
   expect(existsSync(f.archive)).toBe(false);

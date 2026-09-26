@@ -29,7 +29,7 @@ export const BACKUP_CAPTURE_CODES = Object.freeze([
   "BACKUP_LIMIT_EXCEEDED", "ARCHIVE_LIMIT_EXCEEDED", "INVALID_BACKUP_LIMITS", "INVALID_ARCHIVE_LIMITS", "SNAPSHOT_LIMIT_EXCEEDED",
   // encryption
   "SNAPSHOT_CANCELLED", "AGE_TOOL_TIMEOUT", "AGE_PROCESS_FAILED", "AGE_PROCESS_CLOSE_UNCONFIRMED", "AGE_TOOL_UNVERIFIED",
-  "ENCRYPTED_BACKUP_FAILED",
+  "ENCRYPTED_BACKUP_FAILED", "BACKUP_DISK_FULL", "BACKUP_FOLDER_NOT_WRITABLE", "BACKUP_FILE_IN_USE",
   // what was captured
   "FIDELITY_READBACK_MISMATCH", "FIDELITY_RECOVERY_MISMATCH", "INVALID_FIDELITY_MANIFEST", "ARCHIVE_CHANGED", "UNSAFE_ARCHIVE_FILE",
   // the snapshot's own refusals (server/installation-fidelity-snapshot.ts).
@@ -90,8 +90,16 @@ const REASONS = {
     "The tool that encrypts your backup didn't confirm it had stopped. Nothing was changed; check the diagnostics folder before trying again.",
   AGE_TOOL_UNVERIFIED:
     "Murage couldn't verify its own backup encryption tool, so it refused to use it. Reinstalling Murage usually fixes this.",
+  // The catch-all for a plain file error while writing the backup. It never
+  // involves the recovery key, which is only read afterwards to check the file.
   ENCRYPTED_BACKUP_FAILED:
-    "The backup couldn't be encrypted. Check that your recovery key file is still where you chose it, then try again.",
+    "Murage couldn't finish writing the backup file. Nothing in your workspace was changed. Back up again, and if it happens again, open the diagnostics folder from Backups.",
+  BACKUP_DISK_FULL:
+    "The drive ran out of space while the backup was being written. Free up space on the drive that holds your backup folder, then back up again.",
+  BACKUP_FOLDER_NOT_WRITABLE:
+    "This computer didn't let Murage write a file the backup needed. Check that you can create files in your backup folder and in the folder that holds Murage's data, then back up again.",
+  BACKUP_FILE_IN_USE:
+    "Another program was holding a file the backup needed, often antivirus or a sync app. Wait a few minutes, then back up again.",
   BACKUP_REFERENCE_CHANGED:
     "Your backup folder or your recovery key file has moved, changed or is no longer readable. Choose the folder and key again in Backups.",
   BACKUP_BINDINGS_INVALID:

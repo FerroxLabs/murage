@@ -32,6 +32,21 @@ function discardFailedStage(scratch:string,keepCiphertext:boolean):boolean{
   }catch{/* Whatever could not be removed is reported as retained. */}
   return !existsSync(scratch);
 }
+/** A plain filesystem failure inside the capture, named by what the person can
+ * do about it. Anything unrecognised stays ENCRYPTED_BACKUP_FAILED; the
+ * redacted log record (describeCaptureError) keeps the errno either way. */
+function capturedFilesystemError(error:unknown):InstallationSnapshotError{
+  const raw=error as {code?:unknown;name?:unknown;ioCause?:{errno?:string}}|undefined;
+  const leaseCode=raw?.name==="DataDirLeaseError"&&typeof raw.code==="string"?raw.code:undefined;
+  const errno=typeof raw?.ioCause?.errno==="string"?raw.ioCause.errno:!leaseCode&&typeof raw?.code==="string"?raw.code:undefined;
+  const code=errno==="EEXIST"&&!leaseCode?"DESTINATION_EXISTS"
+    :errno==="ENOSPC"?"BACKUP_DISK_FULL"
+    :errno==="EACCES"||errno==="EPERM"?"BACKUP_FOLDER_NOT_WRITABLE"
+    :errno==="EBUSY"?"BACKUP_FILE_IN_USE"
+    :leaseCode==="LEASE_BUSY"||leaseCode==="LEASE_CHILD_BUSY"?"RECOVERY_OWNERSHIP_REQUIRED"
+    :"ENCRYPTED_BACKUP_FAILED";
+  return new InstallationSnapshotError(code,{cause:error});
+}
 const nativeBudget=(maxBytes:number)=>Math.min(maxBytes,20*1024**3);
 const combineSignal=(native:AbortSignal,caller?:AbortSignal)=>caller?AbortSignal.any([native,caller]):native;
 async function settleWindowsWork(pending:Promise<unknown>|undefined,options:EncryptedBackupOptions){
@@ -176,7 +191,7 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
     step="publish";
     if(process.platform!=="win32")linkSync(ciphertext,target);
     return{path:target,sha256,snapshotId:manifest.snapshotId,coverage:manifest.coverage,restorePolicy:manifest.restorePolicy};
-  }catch(error){retain=retainFailure(error);const reported=error instanceof InstallationSnapshotError?error:new InstallationSnapshotError((error as NodeJS.ErrnoException).code==="EEXIST"?"DESTINATION_EXISTS":"ENCRYPTED_BACKUP_FAILED",{cause:error});withCaptureStep(reported,step);if(retain)Object.assign(reported,{retainedDirectory:scratch});throw reported;}
+  }catch(error){retain=retainFailure(error);const reported=error instanceof InstallationSnapshotError?error:capturedFilesystemError(error);withCaptureStep(reported,step);if(retain)Object.assign(reported,{retainedDirectory:scratch});throw reported;}
   finally{if(process.platform!=="win32"){if(!retain)rmSync(scratch,{recursive:true,force:true});else discardFailedStage(scratch,true);}}
   };
   if(process.platform!=="win32")return execute(mkdtempSync(join(parent,".murage-encrypted-write-")),options);
@@ -194,11 +209,11 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
       result=await withOfflineInstallation(dataDir,installation=>withWindowsPrivateStage(parent,options,async(directory,signal)=>{scratch=directory;return execute(directory,{...options,signal},installation);}));
     }catch(error){
       if(error instanceof InstallationSnapshotError)throw error;
-      throw withCaptureStep(new InstallationSnapshotError("ENCRYPTED_BACKUP_FAILED",{cause:error}),(error as {name?:string}|undefined)?.name==="DataDirLeaseError"?"offline-open":"private-stage");
+      throw withCaptureStep(capturedFilesystemError(error),(error as {name?:string}|undefined)?.name==="DataDirLeaseError"?"offline-open":"private-stage");
     }
     // Publish only after the native private-stage lease and all age writers close.
     try{linkSync(join(result.directory,"backup.age"),target);}
-    catch(error){throw withCaptureStep(new InstallationSnapshotError((error as NodeJS.ErrnoException).code==="EEXIST"?"DESTINATION_EXISTS":"ENCRYPTED_BACKUP_FAILED",{cause:error}),"publish");}
+    catch(error){throw withCaptureStep(capturedFilesystemError(error),"publish");}
     success=true;return result.value;
   }catch(error){
     if(error&&typeof error==="object"&&!(error as {captureStep?:string}).captureStep)withCaptureStep(error,"private-stage");

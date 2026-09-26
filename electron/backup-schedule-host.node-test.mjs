@@ -442,6 +442,22 @@ test("back up now while a daily backup waits hands off that same job instead of 
   }finally{f.cleanup();}
 });
 
+test("the log alone gets the redacted cause behind a failed capture (W-D1)",async()=>{
+  const reported=[];
+  const cause={step:"offline-open",errno:"EBUSY",syscall:"link",innerCode:"LEASE_IO",message:"EBUSY: resource busy or locked, link 'C:\\Users\\Sam Lee\\a' -> 'C:\\Users\\Sam Lee\\b'",path:"C:\\Users\\Sam Lee"};
+  const f=fixture(()=>({capture:async()=>{throw Object.assign(Error("BACKUP_FILE_IN_USE"),{code:"BACKUP_FILE_IN_USE",captureCause:cause});}}));
+  try{
+    await f.arm();
+    const next=f.create({reportCaptureFailure:failure=>reported.push(failure)});
+    await assert.rejects(next.resumeOffline(),/BACKUP_SCHEDULE_REVIEW_REQUIRED/);
+    assert.equal(reported.length,1);
+    assert.deepEqual(reported[0],{stage:"capture",code:"BACKUP_FILE_IN_USE",cause:{step:"offline-open",errno:"EBUSY",syscall:"link",innerCode:"LEASE_IO",message:"EBUSY: resource busy or locked, link '<path>' -> '<path>'"}});
+    assert.equal(JSON.stringify(reported).includes("Sam Lee"),false);
+    // The durable record, which the window reads, never carries the cause.
+    assert.deepEqual(f.coordinator().status().captureFailure,{stage:"capture",code:"BACKUP_FILE_IN_USE"});
+  }finally{f.cleanup();}
+});
+
 test("a failed capture names its stage and reason, keeps it, and reopens the workspace",async()=>{
   const reported=[];
   const f=fixture(()=>({
