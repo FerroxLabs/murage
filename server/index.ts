@@ -1694,7 +1694,7 @@ function deletionEngineHomes(): DeletionEngineHome[] {
       const configDir = entry?.config && typeof entry.config === "object" && !Array.isArray(entry.config) ? (entry.config as { configDir?: unknown }).configDir : undefined;
       try { claudeDir = resolveClaudeConfigDir(typeof configDir === "string" ? configDir : undefined, env); } catch { claudeDir = undefined; }
     }
-    for (const home of engineHomeFor(engine, env, claudeDir)) homes.push({ engine, home, ...(engine === "codex" && env.CODEX_SQLITE_HOME ? { sqliteHome: env.CODEX_SQLITE_HOME } : {}) });
+    homes.push(...engineHomeFor(engine, env, claudeDir));
   }
   return homes;
 }
@@ -1709,10 +1709,23 @@ function sharedDeletionFolder(folder: string | null | undefined): string[] {
   const rel = relative(own, folder);
   return /^[\w-]+[\\/]threads[\\/][\w-]+$/.test(rel) ? [] : [folder];
 }
+/** Resume cursors are the engines' own session ids, by driver kind. */
+function cursorSessionIds(cursors: Array<Record<string, unknown> | undefined>): Record<string, string[]> {
+  const ids: Record<string, string[]> = {};
+  for (const set of cursors) {
+    for (const [instanceId, cursor] of Object.entries(set ?? {})) {
+      const kind = engineKindOf(instanceId);
+      if (kind && typeof cursor === "string") (ids[kind] ??= []).push(cursor);
+    }
+  }
+  return ids;
+}
 function botDeletionInput(bot: BotRecord, threadIds: string[]): DeletionInput {
   const tasks = (bot.tasks ?? []).filter((task) => threadIds.includes(task.threadId));
   return {
     threadIds,
+    sessionIds: cursorSessionIds(tasks.map((task) => task.resumeCursors)),
+    instanceKind: engineKindOf,
     engineHomes: deletionEngineHomes(),
     engineKinds: [bot.modelSelection.instanceId, ...tasks.flatMap((task) => [task.modelSelection?.instanceId, ...Object.keys(task.resumeCursors ?? {})])].map(engineKindOf).filter((kind): kind is string => Boolean(kind)),
     sharedFolders: tasks.flatMap((task) => task.cwd === null && Object.keys(task.resumeCursors ?? {}).length ? [homedir()] : sharedDeletionFolder(task.cwd)),
@@ -1722,6 +1735,7 @@ function groupDeletionInput(group: GroupRecord, threadIds: string[]): DeletionIn
   const tasks = (group.tasks ?? []).filter((task) => threadIds.includes(task.threadId));
   return {
     threadIds,
+    instanceKind: engineKindOf,
     engineHomes: deletionEngineHomes(),
     engineKinds: group.memberIds.map((id) => engineKindOf(store.bot(id)?.modelSelection.instanceId)).filter((kind): kind is string => Boolean(kind)),
     sharedFolders: [...tasks.flatMap((task) => sharedDeletionFolder(task.pinnedCwd)), ...(threadIds.includes(group.threadId) ? sharedDeletionFolder(group.pinnedCwd) : [])],

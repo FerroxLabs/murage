@@ -33,6 +33,7 @@ import zlib from "node:zlib";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { blake3Hex } from "./blake3.ts";
+import { removeAcpEngineHistory, type AcpHistoryEngine } from "./engine-history-deletion.ts";
 
 const ID = /^[\w-]+$/;
 const ATTACHMENT_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}$/i;
@@ -40,8 +41,17 @@ const ATTACHMENT_IN_TEXT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 const ARTIFACT_BLOB = /^[a-f0-9]{64}\.[a-z0-9]{1,12}$/;
 const FIRST_LINE_BYTES = 1024 * 1024;
 
-export type DeletionEngine = "fuigo" | "grok" | "claude" | "codex";
-export interface DeletionEngineHome { engine: DeletionEngine; home: string; /** Codex: CODEX_SQLITE_HOME when set */ sqliteHome?: string }
+export type DeletionEngine = "fuigo" | "grok" | "claude" | "codex" | AcpHistoryEngine;
+export interface DeletionEngineHome {
+  engine: DeletionEngine;
+  home: string;
+  /** Codex: CODEX_SQLITE_HOME when set */
+  sqliteHome?: string;
+  /** Qwen: ~/.qwen beside the runtime dir; Cursor: the config dir */
+  secondary?: string;
+  /** OpenCode: OPENCODE_DB when set */
+  db?: string;
+}
 /** Something this deletion could not remove, in words the owner can act on. */
 /** Something this deletion could not remove, in plain words the app shows
  * as "<what>, in <where>." Never a path to another conversation. */
@@ -66,6 +76,8 @@ export interface PendingConversationDeletion {
   engineHomes: DeletionEngineHome[];
   /** bots deleted with these conversations: their own folder was theirs alone */
   botIds?: string[];
+  /** engine session ids the conversations used, by engine */
+  engineSessions?: Partial<Record<DeletionEngine, string[]>>;
   attachments: string[];
   artifactBlobs: string[];
   leftovers: DeletionLeftover[];
@@ -81,6 +93,10 @@ export interface DeletionInput {
   /** the bot is being deleted too: its own folder, and the engine history
    * kept for it, belonged to it alone */
   botIds?: string[];
+  /** engine session ids Murage holds for these conversations (resume cursors), by driver kind */
+  sessionIds?: Record<string, string[]>;
+  /** the driver kind of a provider instance, to read session ids from the event log */
+  instanceKind?: (instanceId: string) => string | undefined;
 }
 
 // ── pure path helpers ───────────────────────────────────────────────────
@@ -536,8 +552,8 @@ function record(outcome: RemoveOutcome, path: string, removed: string[], failed:
 }
 
 /** Where each supported engine keeps its own history, from the environment
- * it is started with (the same resolution as each driver). */
-export function engineHomeFor(engine: DeletionEngine, env: Record<string, string | undefined>, claudeConfigDir?: string): string[] {
+ * it is started with (the same resolution as each engine). */
+export function engineHomeFor(engine: DeletionEngine, env: Record<string, string | undefined>, claudeConfigDir?: string): DeletionEngineHome[] {
   const home = env.HOME || env.USERPROFILE || homedir();
   const withReal = (path: string) => {
     try {
@@ -547,11 +563,17 @@ export function engineHomeFor(engine: DeletionEngine, env: Record<string, string
       return [path];
     }
   };
+  const one = (path: string, extra: Partial<DeletionEngineHome> = {}): DeletionEngineHome[] => [{ engine, home: path, ...extra }];
   switch (engine) {
-    case "fuigo": return env.FUIGO_HOME ? [env.FUIGO_HOME] : withReal(home).map((dir) => nodePath.join(dir, ".fuigo"));
-    case "grok": return env.GROK_HOME ? [env.GROK_HOME] : withReal(home).map((dir) => nodePath.join(dir, ".grok"));
-    case "claude": return [claudeConfigDir || env.CLAUDE_CONFIG_DIR || nodePath.join(home, ".claude")];
-    case "codex": return [env.CODEX_HOME || nodePath.join(home, ".codex")];
+    case "fuigo": return (env.FUIGO_HOME ? [env.FUIGO_HOME] : withReal(home).map((dir) => nodePath.join(dir, ".fuigo"))).map((dir) => ({ engine, home: dir }));
+    case "grok": return (env.GROK_HOME ? [env.GROK_HOME] : withReal(home).map((dir) => nodePath.join(dir, ".grok"))).map((dir) => ({ engine, home: dir }));
+    case "claude": return one(claudeConfigDir || env.CLAUDE_CONFIG_DIR || nodePath.join(home, ".claude"));
+    case "codex": return one(env.CODEX_HOME || nodePath.join(home, ".codex"), env.CODEX_SQLITE_HOME ? { sqliteHome: env.CODEX_SQLITE_HOME } : {});
+    case "gemini": return one(nodePath.join(env.GEMINI_CLI_HOME || home, ".gemini"));
+    case "qwen": return one(env.QWEN_RUNTIME_DIR || nodePath.join(home, ".qwen"), { secondary: nodePath.join(home, ".qwen") });
+    case "opencode": return one(nodePath.join(env.XDG_DATA_HOME || nodePath.join(home, ".local", "share"), "opencode"), env.OPENCODE_DB ? { db: env.OPENCODE_DB } : {});
+    case "kimi": return one(env.KIMI_CODE_HOME || nodePath.join(home, ".kimi-code"));
+    case "cursor": return one(env.CURSOR_DATA_DIR || nodePath.join(home, ".cursor"), { secondary: env.CURSOR_CONFIG_DIR || (env.XDG_CONFIG_HOME ? nodePath.join(env.XDG_CONFIG_HOME, "cursor") : nodePath.join(home, ".cursor")) });
   }
 }
 
@@ -560,9 +582,17 @@ export const ENGINE_FOR_DRIVER: Readonly<Record<string, DeletionEngine>> = {
   grokAgent: "grok",
   claudeAgent: "claude",
   codex: "codex",
+  geminiAgent: "gemini",
+  qwenAgent: "qwen",
+  opencodeGo: "opencode",
+  kimiAgent: "kimi",
+  cursorAgent: "cursor",
 };
 /** Engines that run remotely and keep nothing on this computer. */
-const NO_LOCAL_HISTORY = new Set(["grok", "minimax", "openai-compat", "boxAgent"]);
+const NO_LOCAL_HISTORY = new Set(["grok", "minimax", "openai-compat", "boxAgent",
+  // Murage runs Pi with --no-session: its sessions live in memory only
+  // (pi main.ts createSessionManager -> SessionManager.inMemory).
+  "piAgent"]);
 
 // ── the deletion service ────────────────────────────────────────────────
 
@@ -645,6 +675,7 @@ export class ConversationDeletions {
       threadIds,
       desks,
       botIds: [...new Set(input.botIds ?? [])].filter((id) => ID.test(id)),
+      engineSessions: this.engineSessionsOf(threadIds, input),
       engineHomes: (input.engineHomes ?? []).filter((home) => Object.values(ENGINE_FOR_DRIVER).includes(home.engine) && typeof home.home === "string" && pathApiFor(home.home).isAbsolute(home.home)),
       attachments: this.attachmentsOnlyIn(threadIds),
       artifactBlobs: this.artifactBlobsOf(threadIds),
@@ -715,7 +746,7 @@ export class ConversationDeletions {
       record(removeConfined(dirs.artifacts, path), path, removed, failed);
     }
     const memoryFolders = entry.desks.filter((desk) => threadIds.includes(desk.threadId) && typeof desk.memoryFolder === "string" && desk.memoryFolder.endsWith(desk.threadId)).map((desk) => desk.memoryFolder!);
-    if (folders.length) this.removeEngineHistory(entry.engineHomes, [...new Set(folders)], memoryFolders, removed, failed, leftovers);
+    if (folders.length) this.removeEngineHistory(entry.engineHomes, [...new Set(folders)], memoryFolders, entry.engineSessions ?? {}, removed, failed, leftovers);
     // The rows are gone and overwritten (secure_delete); the write-ahead log
     // still holds the old pages until it is checkpointed and truncated.
     try { this.options.database().exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* the next checkpoint takes it */ }
@@ -725,6 +756,36 @@ export class ConversationDeletions {
 
   /** Finish every deletion a crash interrupted. A record whose thread is
    * still live never committed and is dropped; the owner can delete again. */
+  /** Every engine session a conversation started, by engine: the resume
+   * cursors Murage holds plus each `session.started` in its event log (a
+   * rewind starts a new session and forgets the old cursor). */
+  private engineSessionsOf(threadIds: string[], input: DeletionInput): Partial<Record<DeletionEngine, string[]>> {
+    const found = new Map<DeletionEngine, Set<string>>();
+    const add = (kind: string | undefined, id: unknown) => {
+      const engine = kind ? ENGINE_FOR_DRIVER[kind] : undefined;
+      if (!engine || typeof id !== "string" || !/^[\w.-]{1,200}$/.test(id)) return;
+      if (!found.has(engine)) found.set(engine, new Set());
+      found.get(engine)!.add(id);
+    };
+    for (const [kind, ids] of Object.entries(input.sessionIds ?? {})) for (const id of ids) add(kind, id);
+    if (input.instanceKind) {
+      for (const threadId of threadIds) {
+        for (const name of [`${threadId}.previous.ndjson`, `${threadId}.ndjson`]) {
+          let text = "";
+          try { text = readFileSync(nodePath.join(this.dir.events, name), "utf8"); } catch { continue; }
+          for (const line of text.split("\n")) {
+            if (!line.includes("session.started")) continue;
+            try {
+              const event = JSON.parse(line) as { type?: unknown; sessionId?: unknown; providerInstanceId?: unknown };
+              if (event.type === "session.started" && typeof event.providerInstanceId === "string") add(input.instanceKind(event.providerInstanceId), event.sessionId);
+            } catch { /* a torn line */ }
+          }
+        }
+      }
+    }
+    return Object.fromEntries([...found].map(([engine, ids]) => [engine, [...ids]]));
+  }
+
   /** How many saved files (the Files library) Delete will remove with these conversations. */
   savedFiles(threadIds: string[]): number {
     const ids = threadIds.filter((id) => ID.test(id));
@@ -757,14 +818,23 @@ export class ConversationDeletions {
     return finished;
   }
 
-  private removeEngineHistory(homes: DeletionEngineHome[], folders: string[], memoryFolders: string[], removed: string[], failed: string[], leftovers: DeletionLeftover[]): void {
+  private removeEngineHistory(homes: DeletionEngineHome[], folders: string[], memoryFolders: string[], sessions: Partial<Record<DeletionEngine, string[]>>, removed: string[], failed: string[], leftovers: DeletionLeftover[]): void {
     const seen = new Set<string>();
-    for (const { engine, home, sqliteHome } of homes) {
+    const out = {
+      remove: (root: string, target: string) => record(removeConfined(root, target), target, removed, failed),
+      rewriteJsonl: (path: string, drop: (row: Record<string, unknown>) => boolean) => {
+        try { if (rewriteJsonlAtomic(path, drop)) removed.push(path); } catch { failed.push(path); }
+      },
+      failed: (path: string) => failed.push(path),
+      removed: (path: string) => removed.push(path),
+    };
+    for (const { engine, home, sqliteHome, secondary, db } of homes) {
       if (seen.has(`${engine}\0${home}`)) continue;
       seen.add(`${engine}\0${home}`);
       if (engine === "fuigo" || engine === "grok") removeFuigoSessions(home, folders, memoryFolders, removed, failed);
       else if (engine === "claude") removeClaudeProjects(home, folders, removed, failed, leftovers);
       else if (engine === "codex") removeCodexRollouts(home, folders, removed, failed, sqliteHome);
+      else removeAcpEngineHistory({ engine, home, ...(secondary ? { secondary } : {}), ...(db ? { db } : {}) }, folders, (sessions[engine] ?? []).filter((id) => typeof id === "string"), out);
     }
   }
 

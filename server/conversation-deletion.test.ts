@@ -154,7 +154,7 @@ describe("ConversationDeletions", () => {
     const order: string[] = [];
     const { report } = await runConversationDeletion(deletions, {
       threadIds: [THREAD],
-      engineKinds: ["fuigoAgent", "geminiAgent", "grok"],
+      engineKinds: ["fuigoAgent", "customAcp", "grok", "piAgent"],
       engineHomes: [{ engine: "fuigo", home: fuigoHome }, { engine: "claude", home: claudeHome }, { engine: "codex", home: codexHome }],
     }, () => {
       db.prepare("DELETE FROM messages WHERE thread_id=?").run(THREAD);
@@ -185,7 +185,7 @@ describe("ConversationDeletions", () => {
     expect(existsSync(join(codexHome, "sessions", "2026", "09", "25", "rollout-2026-09-25T11-00-00-def.jsonl"))).toBe(true);
 
     expect(report.failed).toEqual([]);
-    expect(report.leftovers.map((item) => item.what)).toContain("Gemini CLI's own copy of this conversation");
+    expect(report.leftovers.map((item) => item.what)).toContain("your custom engine's own copy of this conversation");
     expect(report.leftovers.some((item) => item.what.includes("Grok"))).toBe(false);
     expect(deletions.pending()).toEqual([]);
     for (const item of report.leftovers) expect(`${item.what} ${item.where}`).not.toMatch(/\u2014|\bsafe(ly)?\b|\//i);
