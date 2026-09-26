@@ -248,6 +248,14 @@ describe("setup collapses into a schedule card", () => {
     expect(html).toMatch(/<button[^>]*>Choose backup folder and recovery key</);
     expect(html).not.toContain("Turn on backups");
   });
+  // Setup takes the first backup at once and the window reopens, so the key
+  // note from setup is gone. The copy must still be offered (found on the
+  // packaged 0.1.60 app, 2026-09-26: no way to save a copy after setup).
+  it("while on, after the window reopened: still offers a copy of the recovery key", () => {
+    const html = renderToStaticMarkup(createElement(ScheduleCard, { s: controller({ status: on, createdKey: null }) }));
+    expect(html).toContain(`Your recovery key is ${refs.recoveryLabel}.`);
+    expect(html).toMatch(/<button[^>]*>Save a copy…</);
+  });
   it("while on: settings summary and Turn off, no setup controls", () => {
     const html = renderToStaticMarkup(createElement(ScheduleCard, { s: controller({ status: on }) }));
     expect(html).toContain(">Turn off<"); expect(html).toContain("Daily at 22:15 (Asia/Bangkok)"); expect(html).toContain("Turn off daily backups before changing");

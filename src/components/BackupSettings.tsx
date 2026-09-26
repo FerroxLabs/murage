@@ -208,7 +208,22 @@ function PreUpgradeWarning({s}:{s:ScheduleController}) {
  * far more than the schedule does. */
 export function RecoveryKeyKeepsafe({s}:{s:ScheduleController}) {
   const {createdKey,keyCopy}=s;
-  if(!createdKey)return null;
+  // Setup now takes the first backup at once, and that backup closes and
+  // reopens the window, so the key note made during setup is gone before the
+  // person can act on it. The saved key's name survives in the status, and
+  // the desktop app still knows where the key is, so the copy stays offered.
+  const saved=s.status?.refs?.recoveryLabel;
+  if(!createdKey){
+    if(!saved||!s.saveKeyCopy)return null;
+    return <div role="status" className="min-w-0 space-y-2 rounded-lg border border-hairline/40 p-3 text-[13px] text-ink">
+      <p className="break-words font-medium">Your recovery key is {saved}.</p>
+      <p className="text-ink-secondary">It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else: a USB drive, another computer, or your password manager.</p>
+      {keyCopy&&<p className="break-words text-ink-secondary">A copy was saved as {keyCopy}.</p>}
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className={primaryButton} disabled={s.busy} onClick={s.saveKeyCopy}>Save a copy…</button>
+      </div>
+    </div>;
+  }
   return <div role="status" className="min-w-0 space-y-2 rounded-lg border border-hairline/40 p-3 text-[13px] text-ink">
     <p className="break-words font-medium">Your recovery key is {createdKey.label}, saved in {createdKey.folder}.</p>
     <p className="text-ink-secondary">It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else: a USB drive, another computer, or your password manager.</p>
