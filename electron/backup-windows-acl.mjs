@@ -7,10 +7,19 @@
 // signed-in user's SID, with inheritance removed. OpenSSH for Windows accepts
 // a private key only when no other principal can read it, and this is the
 // ACL it expects. Tools run by absolute System32 path, never PATH.
-import {spawnSync} from "node:child_process";
+import {spawnSync,execFile} from "node:child_process";
 
 const system32=()=>{const root=process.env.SystemRoot;if(typeof root!=="string"||!/^[A-Za-z]:\\[^"\x00-\x1f]*$/.test(root))throw Error("BACKUP_WINDOWS_ACL_UNAVAILABLE");return `${root.replace(/\\+$/,"")}\\System32`;};
 const run=(file,args,options={})=>spawnSync(file,args,{encoding:"utf8",windowsHide:true,timeout:20000,maxBuffer:1024*1024,...options});
+// The same tools, without blocking: the password store runs in Electron's
+// main process, where spawnSync froze the window for each PowerShell start
+// (about 3.5 s) and, called right after the native file dialog and message
+// box, never returned at all on Windows Server 2025 (the dialog's shell work
+// waits for the main thread that spawnSync holds). Resolves, never rejects.
+const runAsync=(file,args,options={})=>new Promise(resolve=>{
+ try{execFile(file,args,{encoding:"utf8",windowsHide:true,timeout:20000,maxBuffer:1024*1024,...options},(error,stdout)=>resolve({status:error?(Number.isInteger(error.code)?error.code:1):0,stdout:String(stdout??"")}));}
+ catch{resolve({status:1,stdout:""});}
+});
 const powershell=()=>`${system32()}\\WindowsPowerShell\\v1.0\\powershell.exe`;
 
 // The account SIDs a signed-in person can have (W-A1). Both shapes are an
@@ -127,6 +136,46 @@ export function volumeKeepsAcls(target,{runTool=run}={}){
  const script="([IO.DriveInfo]::new([IO.Path]::GetPathRoot($env:MURAGE_ACL_TARGET))).DriveFormat";
  try{
   const result=runTool(powershell(),["-NoProfile","-NonInteractive","-Command",script],{env:{SystemRoot:process.env.SystemRoot,MURAGE_ACL_TARGET:target}});
+  return !(result?.status===0&&/^(?:FAT|FAT12|FAT16|FAT32|exFAT)$/i.test(String(result.stdout).trim()));
+ }catch{return true;}
+}
+
+// Asynchronous forms for Electron's main process (see runAsync). Same rules,
+// same results; runTool may be synchronous or return a promise.
+export async function currentUserSidAsync({runTool=runAsync}={}){
+ if(cachedSid)return cachedSid;
+ const result=await runTool(`${system32()}\\whoami.exe`,["/user","/fo","csv","/nh"]);
+ const line=String(result?.stdout??"").split(/\r?\n/).map(text=>text.trim()).filter(Boolean).at(-1)??"";
+ let sid=/,"(S-1-[0-9-]+)"$/.exec(line)?.[1];
+ if(result?.status!==0||!isUserSid(sid)){
+  const fallback=await runTool(powershell(),["-NoProfile","-NonInteractive","-Command","[Security.Principal.WindowsIdentity]::GetCurrent().User.Value"]);
+  sid=String(fallback?.stdout??"").trim();
+  if(fallback?.status!==0||!isUserSid(sid))throw Error("BACKUP_WINDOWS_ACL_UNAVAILABLE");
+ }
+ return cachedSid=sid;
+}
+export async function readAclAsync(target,{runTool=runAsync}={}){
+ if(typeof target!=="string"||/[\x00-\x1f]/.test(target))throw Error("BACKUP_WINDOWS_ACL_PATH_INVALID");
+ const result=await runTool(powershell(),["-NoProfile","-NonInteractive","-Command",ACL_SCRIPT],{env:{SystemRoot:process.env.SystemRoot,MURAGE_ACL_TARGET:target}});
+ if(result?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");
+ return parseAclListing(result.stdout);
+}
+export async function restrictToOwnerAsync(target,{directory=false,runTool=runAsync,readAcl:readListing}={}){
+ if(process.platform!=="win32"&&!readListing)return;
+ const sid=await currentUserSidAsync({runTool});
+ const set=await runTool(`${system32()}\\icacls.exe`,ownerOnlyIcaclsArguments(target,sid,{directory}));if(set?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");
+ if(!aclIsOwnerOnly(await (readListing??(file=>readAclAsync(file,{runTool})))(target),sid))throw Error("BACKUP_WINDOWS_ACL_FAILED");
+}
+export async function assertPrivateToOwnerAsync(target,{runTool=runAsync,readAcl:readListing}={}){
+ if(process.platform!=="win32"&&!readListing)return;
+ const sid=await currentUserSidAsync({runTool});
+ if(!aclIsPrivateToOwner(await (readListing??(file=>readAclAsync(file,{runTool})))(target),sid))throw Error("BACKUP_WINDOWS_ACL_SHARED");
+}
+export async function volumeKeepsAclsAsync(target,{runTool=runAsync}={}){
+ if(typeof target!=="string"||!/^[A-Za-z]:\\/.test(target)||/[\x00-\x1f]/.test(target))return true;
+ const script="([IO.DriveInfo]::new([IO.Path]::GetPathRoot($env:MURAGE_ACL_TARGET))).DriveFormat";
+ try{
+  const result=await runTool(powershell(),["-NoProfile","-NonInteractive","-Command",script],{env:{SystemRoot:process.env.SystemRoot,MURAGE_ACL_TARGET:target}});
   return !(result?.status===0&&/^(?:FAT|FAT12|FAT16|FAT32|exFAT)$/i.test(String(result.stdout).trim()));
  }catch{return true;}
 }

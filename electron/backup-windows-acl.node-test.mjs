@@ -124,3 +124,22 @@ test("a FAT32 or exFAT drive is known to hold no ACLs; anything unclear counts a
   assert.equal(volumeKeepsAcls("\\\\server\\share",{runTool:answer("FAT32")}),true);
  });
 });
+test("the asynchronous forms (for Electron's main process) follow the same rules",async()=>{
+ const {currentUserSidAsync,restrictToOwnerAsync,assertPrivateToOwnerAsync,volumeKeepsAclsAsync,resetCurrentUserSid}=await import("./backup-windows-acl.mjs");
+ const saved=process.env.SystemRoot;process.env.SystemRoot="D:\\WINNT";
+ try{
+  resetCurrentUserSid();
+  const calls=[];const runTool=async(file,args)=>{calls.push(file);await new Promise(r=>setImmediate(r));return /whoami/.test(file)?{status:0,stdout:`"AzureAD\\SamLee","${SIDS.entra}"\r\n`}:{status:0,stdout:""};};
+  assert.equal(await currentUserSidAsync({runTool}),SIDS.entra);
+  await restrictToOwnerAsync("C:\\Users\\SamLee\\x",{directory:true,runTool,readAcl:async()=>({owner:SIDS.entra,protected:true,rules:[{allow:true,sid:SIDS.entra,mask:0x1f01ff,inherited:false}]})});
+  assert.deepEqual(calls,["D:\\WINNT\\System32\\whoami.exe","D:\\WINNT\\System32\\icacls.exe"]);
+  await assert.rejects(restrictToOwnerAsync("C:\\Users\\SamLee\\y",{runTool:async file=>/icacls/.test(file)?{status:5}:{status:0,stdout:""},readAcl:async()=>null}),/ACL_FAILED/);
+  await assert.rejects(assertPrivateToOwnerAsync("C:\\Users\\Public\\p.txt",{runTool,readAcl:async()=>({owner:SIDS.entra,protected:false,rules:[{allow:true,sid:SIDS.entra,mask:0x1f01ff,inherited:true},{allow:true,sid:"S-1-5-32-545",mask:0x1200a9,inherited:true}]})}),/BACKUP_WINDOWS_ACL_SHARED/);
+  await assertPrivateToOwnerAsync("C:\\Users\\SamLee\\Documents\\p.txt",{runTool,readAcl:async()=>({owner:SIDS.entra,protected:false,rules:[{allow:true,sid:"S-1-5-18",mask:0x1f01ff,inherited:true},{allow:true,sid:SIDS.entra,mask:0x1f01ff,inherited:true}]})});
+  assert.equal(await volumeKeepsAclsAsync("E:\\x",{runTool:async()=>({status:0,stdout:"exFAT\r\n"})}),false);
+  assert.equal(await volumeKeepsAclsAsync("C:\\x",{runTool:async()=>({status:0,stdout:"NTFS\r\n"})}),true);
+  // A whoami that fails falls back to .NET's reading of the same token.
+  resetCurrentUserSid();
+  assert.equal(await currentUserSidAsync({runTool:async file=>/whoami/.test(file)?{status:1,stdout:""}:{status:0,stdout:`${SIDS.local}\r\n`}}),SIDS.local);
+ }finally{resetCurrentUserSid();if(saved===undefined)delete process.env.SystemRoot;else process.env.SystemRoot=saved;}
+});

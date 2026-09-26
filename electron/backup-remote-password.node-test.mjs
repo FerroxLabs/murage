@@ -139,3 +139,14 @@ test("Windows: a saved copy is born owner-only the same way and refuses an exist
  assert.deepEqual(await store.saveCopy("ref1"),{saved:true,path:target});assert.deepEqual(events,[]);assert.equal(readFileSync(target,"utf8"),"FAKE_COPY_CANARY\n");
  await assert.rejects(store.saveCopy("ref1"),/^Error: BACKUP_REMOTE_PASSWORD_UNAVAILABLE$/);
 });
+test("Windows: the ACL steps are awaited, so a slow check never runs the read ahead of it (main process stays free)",async t=>{
+ const {aclIsPrivateToOwner}=await import("./backup-windows-acl.mjs");
+ const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-remote-password-async-")));t.after(()=>safeWipeSync(root));
+ const file=path.join(root,"p.txt");writeFileSync(file,"FAKE_ASYNC_CANARY\n");
+ asWindows(t);let document={};const order=[];
+ const store=createRemotePasswordStore({chooseFile:async()=>file,excludedRoots:()=>[],readProtected:async()=>document,updateProtected:async derive=>{document=derive(document);},createId:()=>"ref1",
+  checkPrivate:async target=>{order.push("check-start");await new Promise(r=>setTimeout(r,30));order.push("check-end");if(!aclIsPrivateToOwner(PUBLIC_ACL,ME))throw Error("BACKUP_WINDOWS_ACL_SHARED");}});
+ const pending=store.select();order.push("returned");
+ await assert.rejects(pending,/^Error: BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS$/);
+ assert.deepEqual(order,["returned","check-start","check-end"]);assert.deepEqual(document,{});
+});
