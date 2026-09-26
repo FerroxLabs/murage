@@ -574,6 +574,11 @@ export function engineHomeFor(engine: DeletionEngine, env: Record<string, string
     case "opencode": return one(nodePath.join(env.XDG_DATA_HOME || nodePath.join(home, ".local", "share"), "opencode"), env.OPENCODE_DB ? { db: env.OPENCODE_DB } : {});
     case "kimi": return one(env.KIMI_CODE_HOME || nodePath.join(home, ".kimi-code"));
     case "droid": return one(nodePath.join(env.FACTORY_HOME_OVERRIDE || home, ".factory"));
+    case "hermes": {
+      const native = env.HERMES_HOME || nodePath.join(home, ".hermes");
+      return [native, ...(env.HERMES_PROFILE && /^[\w.-]+$/.test(env.HERMES_PROFILE) ? [nodePath.join(native, "profiles", env.HERMES_PROFILE)] : [])].map((dir) => ({ engine, home: dir }));
+    }
+    case "antigravity": return one(nodePath.join(home, ".gemini", "antigravity-cli"));
     case "cursor": return one(env.CURSOR_DATA_DIR || nodePath.join(home, ".cursor"), { secondary: env.CURSOR_CONFIG_DIR || (env.XDG_CONFIG_HOME ? nodePath.join(env.XDG_CONFIG_HOME, "cursor") : nodePath.join(home, ".cursor")) });
   }
 }
@@ -589,6 +594,8 @@ export const ENGINE_FOR_DRIVER: Readonly<Record<string, DeletionEngine>> = {
   kimiAgent: "kimi",
   cursorAgent: "cursor",
   droidAgent: "droid",
+  hermesAgent: "hermes",
+  antigravityAgent: "antigravity",
 };
 /** Engines that run remotely and keep nothing on this computer. */
 const NO_LOCAL_HISTORY = new Set(["grok", "minimax", "openai-compat", "boxAgent",

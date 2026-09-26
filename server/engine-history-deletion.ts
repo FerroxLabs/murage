@@ -24,7 +24,7 @@ import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import nodePath from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export type AcpHistoryEngine = "gemini" | "qwen" | "opencode" | "kimi" | "cursor" | "droid";
+export type AcpHistoryEngine = "gemini" | "qwen" | "opencode" | "kimi" | "cursor" | "droid" | "hermes" | "antigravity";
 
 export interface EngineRemoval {
   remove: (root: string, target: string) => void;
@@ -115,6 +115,8 @@ export function removeAcpEngineHistory(target: AcpEngineHome, folders: string[],
     case "kimi": return removeKimi(target.home, folders, out);
     case "cursor": return removeCursor(target.home, target.secondary, folders, ids, out);
     case "droid": return removeDroid(target.home, folders, ids, out);
+    case "hermes": return removeHermes(target.home, ids, out);
+    case "antigravity": return removeAntigravity(target.home, ids, out);
   }
 }
 
@@ -282,6 +284,91 @@ function removeDroid(root: string, folders: string[], ids: string[], out: Engine
     if (changed) { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); out.removed(index); }
   } catch {
     out.failed(index);
+  } finally {
+    db?.close();
+  }
+}
+
+/** Hermes 0.14 (hermes_state.py, acp_adapter/session.py): one state.db per
+ * home (sessions, messages; the full-text index follows by trigger) and
+ * sessions/<id>.json|.jsonl plus request dumps. Child sessions of a deleted
+ * one go too: Hermes's own delete only orphans them. */
+function removeHermes(home: string, ids: string[], out: EngineRemoval): void {
+  const p = api(home);
+  if (!ids.length) return;
+  const all = new Set(ids);
+  const path = p.join(home, "state.db");
+  let exists = false;
+  try { exists = lstatSync(path).isFile(); } catch { exists = false; }
+  if (exists) {
+    let db: DatabaseSync | undefined;
+    try {
+      db = new DatabaseSync(path);
+      db.exec("PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;");
+      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map((row) => row.name).filter((name) => /^\w+$/.test(name));
+      const cols = (table: string) => new Set((db!.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>).map((row) => row.name));
+      if (tables.includes("sessions") && cols("sessions").has("parent_session_id")) {
+        for (let grew = true; grew;) {
+          grew = false;
+          const known = [...all];
+          for (const row of db.prepare(`SELECT id FROM sessions WHERE parent_session_id IN (${known.map(() => "?").join(",")})`).all(...known) as Array<{ id: string }>) {
+            if (!all.has(String(row.id))) { all.add(String(row.id)); grew = true; }
+          }
+        }
+      }
+      const known = [...all];
+      const marks = known.map(() => "?").join(",");
+      let changed = 0;
+      for (const table of tables) {
+        if (table.endsWith("_fts") || table.includes("_fts_")) continue;
+        if (table !== "sessions" && cols(table).has("session_id")) changed += Number(db.prepare(`DELETE FROM "${table}" WHERE session_id IN (${marks})`).run(...known).changes);
+      }
+      if (tables.includes("sessions")) changed += Number(db.prepare(`DELETE FROM sessions WHERE id IN (${marks})`).run(...known).changes);
+      if (changed) { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); out.removed(path); }
+    } catch {
+      out.failed(path);
+    } finally {
+      db?.close();
+    }
+  }
+  const sessions = p.join(home, "sessions");
+  const names = list(sessions);
+  for (const id of all) {
+    if (!/^[\w-]{8,200}$/.test(id)) continue;
+    for (const name of names) {
+      if (name === `${id}.json` || name === `${id}.jsonl` || (name.startsWith(`request_dump_${id}_`) && name.endsWith(".json"))) out.remove(sessions, p.join(sessions, name));
+    }
+  }
+}
+
+/** Antigravity (agy, shipped binary): brain/<conversation id>/ holds the
+ * full transcript; conversation_summaries.db keeps a summary row per
+ * conversation. Conversation and annotation files named by the id go too. */
+function removeAntigravity(appData: string, ids: string[], out: EngineRemoval): void {
+  const p = api(appData);
+  const known = ids.filter((id) => /^[\w-]{8,200}$/.test(id));
+  if (!known.length) return;
+  for (const id of known) {
+    out.remove(p.join(appData, "brain"), p.join(appData, "brain", id));
+    for (const dir of ["conversations", "annotations"]) {
+      for (const name of list(p.join(appData, dir))) if (name === id || name.startsWith(`${id}.`)) out.remove(p.join(appData, dir), p.join(appData, dir, name));
+    }
+  }
+  const path = p.join(appData, "conversation_summaries.db");
+  try { if (!lstatSync(path).isFile()) return; } catch { return; }
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(path);
+    db.exec("PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;");
+    let changed = 0;
+    for (const { name: table } of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>) {
+      if (!/^\w+$/.test(table)) continue;
+      const columns = (db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>).map((row) => row.name);
+      if (columns.includes("conversation_id")) changed += Number(db.prepare(`DELETE FROM "${table}" WHERE conversation_id IN (${known.map(() => "?").join(",")})`).run(...known).changes);
+    }
+    if (changed) { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); out.removed(path); }
+  } catch {
+    out.failed(path);
   } finally {
     db?.close();
   }

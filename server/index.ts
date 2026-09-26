@@ -74,6 +74,7 @@ import type { InboxPage, InboxView } from "../shared/inbox.ts";
 import { artifactsRequest, registerArtifact, readArtifact, artifactWorkspaceIdentity, authorizedArtifactRoot, type ArtifactScope } from "./artifacts.ts";
 import type { ArtifactKind } from "../shared/artifacts.ts";
 import { newClaudeAccount, claudeAccountInfo, assertSeparateClaudeAccount, createClaudeAccountSchema, claudeAccountSettingsSchema, resolveClaudeConfigDir } from "./claude-accounts.ts";
+import { fluxHermesHome } from "./drivers/acp/hermes.ts";
 import { ConversationDeletions, ENGINE_FOR_DRIVER, engineHomeFor, runConversationDeletion, type DeletionEngineHome, type DeletionInput, type DeletionReport } from "./conversation-deletion.ts";
 import { persistableClaudeInstances, replaceClaudeAccountInstances, restoreClaudeAccountInstances } from "./claude-account-config.ts";
 import { listClaudeAccounts } from "./claude-account-list.ts";
@@ -1695,6 +1696,8 @@ function deletionEngineHomes(): DeletionEngineHome[] {
       try { claudeDir = resolveClaudeConfigDir(typeof configDir === "string" ? configDir : undefined, env); } catch { claudeDir = undefined; }
     }
     homes.push(...engineHomeFor(engine, env, claudeDir));
+    // Flux-routed Hermes turns share one app-private home (drivers/acp/hermes.ts).
+    if (engine === "hermes") homes.push({ engine, home: fluxHermesHome({ MURAGE_DATA_DIR: DATA_DIR }) });
   }
   return homes;
 }

@@ -184,4 +184,52 @@ describe("removing one conversation's engine history", () => {
     expect(after.prepare("SELECT count(*) AS n FROM files").get()?.n).toBe(0);
     after.close();
   });
+
+  it("Hermes: the conversation's sessions and their child sessions in state.db, and its session files", async () => {
+    const { home, deletions } = setup();
+    const hermes = join(home, ".hermes");
+    mkdirSync(hermes, { recursive: true });
+    const sid = "a1b2c3d4-1111-4222-8333-444455556666";
+    const store = new DatabaseSync(join(hermes, "state.db"));
+    store.exec(`CREATE TABLE sessions(id TEXT PRIMARY KEY, parent_session_id TEXT, meta TEXT);
+      CREATE TABLE messages(id INTEGER PRIMARY KEY, session_id TEXT, content TEXT);`);
+    store.prepare("INSERT INTO sessions VALUES(?,?,?)").run(sid, null, "{}");
+    store.prepare("INSERT INTO sessions VALUES(?,?,?)").run("child-0000000001", sid, "{}");
+    store.prepare("INSERT INTO sessions VALUES(?,?,?)").run("other-0000000001", null, "{}");
+    store.prepare("INSERT INTO messages(session_id,content) VALUES(?,?)").run(sid, SECRET);
+    store.prepare("INSERT INTO messages(session_id,content) VALUES(?,?)").run("child-0000000001", SECRET);
+    store.prepare("INSERT INTO messages(session_id,content) VALUES(?,?)").run("other-0000000001", "kept");
+    store.close();
+    touch(join(hermes, "sessions", `${sid}.jsonl`), SECRET);
+    touch(join(hermes, "sessions", `request_dump_${sid}_1.json`), SECRET);
+    touch(join(hermes, "sessions", "other-0000000001.json"), "kept");
+    await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "hermes", home: hermes }], sessionIds: { hermesAgent: [sid] } }, () => true);
+    const after = new DatabaseSync(join(hermes, "state.db"));
+    expect(after.prepare("SELECT id FROM sessions").all().map((row) => row.id)).toEqual(["other-0000000001"]);
+    expect(after.prepare("SELECT content FROM messages").all().map((row) => row.content)).toEqual(["kept"]);
+    after.close();
+    expect(readFileSync(join(hermes, "state.db")).includes(SECRET)).toBe(false);
+    expect(existsSync(join(hermes, "sessions", `${sid}.jsonl`))).toBe(false);
+    expect(existsSync(join(hermes, "sessions", `request_dump_${sid}_1.json`))).toBe(false);
+    expect(existsSync(join(hermes, "sessions", "other-0000000001.json"))).toBe(true);
+  });
+
+  it("Antigravity: the conversation's brain folder and summary row", async () => {
+    const { home, deletions } = setup();
+    const agy = join(home, ".gemini", "antigravity-cli");
+    const cid = "c0ffee00-1111-4222-8333-444455556666";
+    touch(join(agy, "brain", cid, ".system_generated", "logs", "transcript.jsonl"), SECRET);
+    touch(join(agy, "brain", "other-conversation", "x"), "kept");
+    const summaries = new DatabaseSync(join(agy, "conversation_summaries.db"));
+    summaries.exec("CREATE TABLE summaries(app_data_dir TEXT, conversation_id TEXT, summary TEXT)");
+    summaries.prepare("INSERT INTO summaries VALUES(?,?,?)").run(agy, cid, SECRET);
+    summaries.prepare("INSERT INTO summaries VALUES(?,?,?)").run(agy, "other-conversation", "kept");
+    summaries.close();
+    await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "antigravity", home: agy }], sessionIds: { antigravityAgent: [cid] } }, () => true);
+    expect(existsSync(join(agy, "brain", cid))).toBe(false);
+    expect(existsSync(join(agy, "brain", "other-conversation"))).toBe(true);
+    const after = new DatabaseSync(join(agy, "conversation_summaries.db"));
+    expect(after.prepare("SELECT conversation_id FROM summaries").all().map((row) => row.conversation_id)).toEqual(["other-conversation"]);
+    after.close();
+  });
 });
