@@ -261,11 +261,19 @@ function startAutomaticRemoteBackups(){
 }
 let closedBackupController=null;
 let closedBackupFinish=null;
+// A closed-app run has no window and no harness log, so until now a run that
+// stalled left no trace at all. Record where it got to, stage names only.
+function closedTrace(stage){
+  if(!closedBackupRequested)return;
+  try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] closed backup ${stage}\n`,{mode:0o600});}catch{/* Tracing never changes the run. */}
+}
 function finishClosedBackup(result){
   if(closedBackupFinish)return closedBackupFinish;
   closedBackupFinish=(async()=>{
-    try{await cleanupDesktopForExit();}
+    closedTrace("finishing");
+    try{await cleanupDesktopForExit();closedTrace("cleaned up");}
     catch{
+      closedTrace(`cleanup unconfirmed at ${String(desktopCleanupStage??"").replace(/[^\w -]/g,"").slice(0,60)}`);
       // Retain ownership if child shutdown is unconfirmed. Never claim a clean
       // closed-job exit or surface the normal workspace/recovery UI here.
       writeClosedBackupResult("needs-review");return;
@@ -3402,7 +3410,9 @@ async function initializeBackupRemoteHost(){
 }
 async function initializeBackupScheduleHost(){
   if(!app.isPackaged||!desktopDataOwner)return;
+  closedTrace("tool");
   try { await requireDesktopBackupTool(); } catch { /* Keep backup unavailable without blocking ordinary startup. */ }
+  closedTrace("tool-checked");
   assertDesktopStartupActive();
   const installation=ownedDesktopDataDir();
   // The closed-app profile refuses a data folder other accounts can write to;
@@ -3410,11 +3420,15 @@ async function initializeBackupScheduleHost(){
   for(const directory of new Set([desktopRequestedDataDir,installation]))try{tightenOwnedDirectory(directory);}catch{/* The closed-app status names a folder that stays shared. */}
   // Read-only selected-profile routing must precede the first protected backup
   // reference read, including closed startup and existing offline returns.
+  closedTrace("folders");
   const selectedProfile=restoredConnectionProfile(installation);
   if(selectedProfile)CREDENTIALS_FILE=selectedProfile.credentialsFile;
+  closedTrace("importing coordinator");
   const {BackupCoordinator}=await import(pathToFileURL(path.join(process.resourcesPath,"server","backup-coordinator.js")).href);
+  closedTrace("coordinator imported");
   const stateDirectory=closedControlDirectory(installation);
   const coordinator=new BackupCoordinator({stateDirectory});
+  closedTrace("coordinator ready");
   const provider=createNativeClosedBackupProvider({home:app.getPath("home")});
   closedBackupController=createClosedBackupController({
     profile:()=>({version:1,platform:process.platform,owner:{uid:process.getuid?.()},requestedRoot:desktopRequestedDataDir,userData:fs.realpathSync.native(app.getPath("userData")),installation,installationIdentity:closedInstallationIdentity(installation),executable:fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe"))}),
@@ -3481,6 +3495,7 @@ async function initializeBackupScheduleHost(){
     // Closed main has no harness logger and exits immediately after cleanup.
     // The host supplies only its finite stage/code record; synchronously retain
     // that tiny line in this profile's existing log before generic refusal.
+    traceClosed:stage=>closedTrace(`stage ${stage}`),
     reportCaptureFailure:failure=>{
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify(failure)}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },
@@ -3495,9 +3510,9 @@ async function initializeBackupScheduleHost(){
 const desktopStartup = app.whenReady().then(async () => {
   assertDesktopStartupActive();
   if(closedBackupRequested){
-    acquireDesktopDataOwner();await initializeBackupScheduleHost();desktopRecoveryMode=true;
+    closedTrace("ready");acquireDesktopDataOwner();closedTrace("owner");await initializeBackupScheduleHost();closedTrace("host");desktopRecoveryMode=true;
     // The worker waits for desktopStartup; never await it from this callback.
-    void desktopStartup.then(()=>backupScheduleHost.runClosedDue()).then(finishClosedBackup).catch(()=>finishClosedBackup({status:"unavailable"}));
+    void desktopStartup.then(()=>{closedTrace("run");return backupScheduleHost.runClosedDue();}).then(result=>{closedTrace(`result ${result?.status}${result?.reason?" "+result.reason:""}`);return finishClosedBackup(result);}).catch(()=>{closedTrace("failed");return finishClosedBackup({status:"unavailable"});});
     return;
   }
   const connectionError = error => dialog.showErrorBox("Murage server connection", error.message);
@@ -3752,7 +3767,7 @@ const desktopStartup = app.whenReady().then(async () => {
 });
 void desktopStartup.then(()=>{if(!desktopRecoveryMode&&!desktopShutdownStarted){backupScheduleHost?.start();startAutomaticRemoteBackups();}}).catch(()=>{});
 void desktopStartup.catch((error) => {
-  if(closedBackupRequested){void finishClosedBackup({status:error?.name==="DataDirLeaseError"?"busy":"unavailable"});return;}
+  if(closedBackupRequested){closedTrace(`startup failed ${String(error?.name??"Error").replace(/[^\w]/g,"").slice(0,40)} ${String(error?.code??error?.message??"").replace(/[^A-Z0-9_]/g,"").slice(0,60)}`);void finishClosedBackup({status:error?.name==="DataDirLeaseError"?"busy":"unavailable"});return;}
   if (!desktopShutdownStarted) {
     // Lease errors are sanitized by the lease module; arbitrary child/errors
     // may carry credentials or paths and must not be echoed to diagnostics.

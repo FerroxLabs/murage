@@ -245,19 +245,19 @@ export function createBackupScheduleHost(host) {
       if(eligibility.status!=="due")return closedResult(eligibility.status,eligibility.status==="needs-review"?"pending-work":undefined);
       // This private main-owned hook must prove the existing installation lease,
       // exact profile/registration, and that normal startup never began.
-      stage="owner";if(typeof host.assertClosedStartup!=="function")throw Error("BACKUP_CLOSED_OWNER_UNAVAILABLE");
+      stage="owner";host.traceClosed?.(stage);if(typeof host.assertClosedStartup!=="function")throw Error("BACKUP_CLOSED_OWNER_UNAVAILABLE");
       await host.assertClosedStartup();
-      stage="capability";await assertClosedAllowed();
-      stage="references";const b=await checked();
+      stage="capability";host.traceClosed?.(stage);await assertClosedAllowed();
+      stage="references";host.traceClosed?.(stage);const b=await checked();
       if(b.allowClosedApp!==true)throw Error("BACKUP_CLOSED_CONSENT_REQUIRED");
       eligibility=coordinator.closedEligibility();
       if(eligibility.status!=="due")return closedResult(eligibility.status,eligibility.status==="needs-review"?"pending-work":undefined);
-      stage="state";const s=await coordinator.tick();
+      stage="state";host.traceClosed?.(stage);const s=await coordinator.tick();
       if(!s.enabled||s.schedule.closedApp!==true)return closedResult("disabled");
       if(!["due","waiting-idle","waiting-backup-mode"].includes(s.phase))return closedResult("needs-review","pending-work");
       intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
       coordinator.prepareHandoff(s.job.id,intent);coordinator.armHandoff(intent.id);
-      stage="capture";await captureArmed(true);
+      stage="capture";host.traceClosed?.(stage);await captureArmed(true);
       lastError=null;return closedResult("verified");
     }catch(error){
       if(intent){
