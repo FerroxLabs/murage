@@ -81,9 +81,10 @@ describe("Turn on backups through the real schedule host", () => {
 // the saved schedule, including "Also back up when Murage is closed"; setup
 // sent that choice back without the closed-app permission, the host refused
 // it, and the page was left saying daily backups are off. First-time setup
-// never had closedApp saved, so it never hit this.
+// never had closedApp saved, so it never hit this. Setup now always starts
+// with closed-app backups off, like a first setup.
 describe("Choose a different folder after Turn off", () => {
-  it("turns daily backups back on and starts the first backup, keeping the closed-app choice", async () => {
+  it("turns daily backups back on and starts the first backup, with closed-app backups off", async () => {
     const { host, bridge, calls, useSecondFolder } = realHost({ closedApp: true });
     // Earlier: set up, daily backups on with closed-app backups, then Turn off.
     const first = await host.setUpBackups({ existingKey: false });
@@ -104,7 +105,7 @@ describe("Choose a different folder after Turn off", () => {
     expect(outcome.state).toBe("capturing");
     const now = await host.status();
     expect(now.enabled).toBe(true);
-    expect(now.schedule.closedApp).toBe(true);
+    expect(now.schedule.closedApp).toBe(false);
     expect(now.refs?.destinationLabel).toBe("other-backups");
     expect(now.refs?.recoveryLabel).toBe("murage-recovery-key-2.txt");
     expect(calls.filter(call => call !== "cleanup")).toEqual(["folder", "create-key", "confirm", "prepare", "relaunch:backup"]);

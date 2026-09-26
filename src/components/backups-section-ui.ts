@@ -296,13 +296,12 @@ export async function completeBackupSetup(bridge: BackupScheduleBridge, options:
   // closed". Choosing a different folder after that came back here with
   // closedApp still set: sent without its permission the host refused it, and
   // where the background job had gone the choice was dropped, so either way
-  // daily backups stayed off. The closed-app choice is kept, with the
-  // permission the person gave when they ticked it, only while that job can
-  // still run; otherwise daily backups go on without it, as on first setup.
-  const closedApp = saved.closedApp && next.closedAppSupported === true;
-  const choice = enabledSchedule({ ...saved, closedApp, time: saved.time.trim() || DEFAULT_BACKUP_TIME }, next, true);
+  // daily backups stayed off. Setup is always a first setup: closed-app
+  // backups start off, and the person ticks them again, with their own
+  // permission, if they want them.
+  const choice = enabledSchedule({ ...saved, closedApp: false, time: saved.time.trim() || DEFAULT_BACKUP_TIME }, next, true);
   if (!choice) { steps.notice("Backup folder and recovery key saved. Choose a time below, then turn on daily backups."); return { state: "needs-schedule" }; }
-  const enabled = await bridge.configure(next.revision, { ...choice, allowIdleRestart: true, ...(choice.closedApp === true ? { allowClosedApp: true } : {}) });
+  const enabled = await bridge.configure(next.revision, { ...choice, allowIdleRestart: true });
   steps.applyStatus(enabled);
   if (!enabled.enabled) { steps.notice("Settings saved; daily backups are still off."); return { state: "needs-schedule" }; }
   if (!bridge.runNow) { steps.notice(SETUP_NO_FIRST_BACKUP); return { state: "no-first-backup" }; }
