@@ -138,3 +138,24 @@ staged("a link refused inside the capture is logged with its step and errno, nev
   expect(JSON.stringify(cause)).not.toMatch(/murage-data-owner|\.lease/);
   expect(existsSync(f.archive)).toBe(false);
 });
+
+staged("a helper that can't make its private folder in the backup folder is named as a folder problem, not a key problem (W-D1)", async () => {
+  const f = fixture();
+  // What the real helper did on the VM when the backup folder refused writes: exit 72 before PREPARED.
+  mocks.transport.mockImplementationOnce(async () => {
+    throw Object.assign(new (await import("./installation-database-snapshot.ts")).InstallationSnapshotError("AGE_PROCESS_FAILED"),
+      { toolDiagnostic: { tool: "murage-backup-age", toolStep: "prepare", exitCode: 72 }, helperClosed: true });
+  });
+  const caught = await writeEncryptedInstallationBackup(f.data, f.archive, options).catch(error => error);
+  expect(caught.code).toBe("BACKUP_FOLDER_UNUSABLE");
+  expect(describeCaptureError(caught)).toMatchObject({ step: "private-stage", tool: "murage-backup-age", toolStep: "prepare", exitCode: 72, innerCode: "AGE_PROCESS_FAILED" });
+  const sentence = captureFailureSentence({ stage: "capture", code: caught.code });
+  expect(sentence).toMatch(/backup folder/);
+  expect(sentence).not.toMatch(/recovery key/i);
+  // Once past PREPARED, a helper failure keeps its own code.
+  mocks.transport.mockImplementationOnce(async () => {
+    throw Object.assign(new (await import("./installation-database-snapshot.ts")).InstallationSnapshotError("AGE_PROCESS_FAILED"),
+      { toolDiagnostic: { tool: "murage-backup-age", toolStep: "release", exitCode: 72 }, helperClosed: true });
+  });
+  expect((await writeEncryptedInstallationBackup(f.data, f.archive, options).catch(error => error)).code).toBe("AGE_PROCESS_FAILED");
+});

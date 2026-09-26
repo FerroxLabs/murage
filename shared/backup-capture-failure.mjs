@@ -29,7 +29,7 @@ export const BACKUP_CAPTURE_CODES = Object.freeze([
   "BACKUP_LIMIT_EXCEEDED", "ARCHIVE_LIMIT_EXCEEDED", "INVALID_BACKUP_LIMITS", "INVALID_ARCHIVE_LIMITS", "SNAPSHOT_LIMIT_EXCEEDED",
   // encryption
   "SNAPSHOT_CANCELLED", "AGE_TOOL_TIMEOUT", "AGE_PROCESS_FAILED", "AGE_PROCESS_CLOSE_UNCONFIRMED", "AGE_TOOL_UNVERIFIED",
-  "ENCRYPTED_BACKUP_FAILED", "BACKUP_DISK_FULL", "BACKUP_FOLDER_NOT_WRITABLE", "BACKUP_FILE_IN_USE",
+  "ENCRYPTED_BACKUP_FAILED", "BACKUP_DISK_FULL", "BACKUP_FOLDER_NOT_WRITABLE", "BACKUP_FILE_IN_USE", "BACKUP_FOLDER_UNUSABLE",
   // what was captured
   "FIDELITY_READBACK_MISMATCH", "FIDELITY_RECOVERY_MISMATCH", "INVALID_FIDELITY_MANIFEST", "ARCHIVE_CHANGED", "UNSAFE_ARCHIVE_FILE",
   // the snapshot's own refusals (server/installation-fidelity-snapshot.ts).
@@ -98,6 +98,8 @@ const REASONS = {
     "The drive ran out of space while the backup was being written. Free up space on the drive that holds your backup folder, then back up again.",
   BACKUP_FOLDER_NOT_WRITABLE:
     "This computer didn't let Murage write a file the backup needed. Check that you can create files in your backup folder and in the folder that holds Murage's data, then back up again.",
+  BACKUP_FOLDER_UNUSABLE:
+    "Murage couldn't make its private working folder inside your backup folder. Choose a folder on this computer's own drive that you can create files in (not a network, removable or linked folder), then back up again.",
   BACKUP_FILE_IN_USE:
     "Another program was holding a file the backup needed, often antivirus or a sync app. Wait a few minutes, then back up again.",
   BACKUP_REFERENCE_CHANGED:

@@ -215,8 +215,19 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
     try{linkSync(join(result.directory,"backup.age"),target);}
     catch(error){throw withCaptureStep(capturedFilesystemError(error),"publish");}
     success=true;return result.value;
-  }catch(error){
+  }catch(caught){
+    let error=caught;
     if(error&&typeof error==="object"&&!(error as {captureStep?:string}).captureStep)withCaptureStep(error,"private-stage");
+    // The helper refused before it had a private folder to offer: it could
+    // not create or pin one inside the backup folder (not writable by this
+    // account, not an NTFS folder on this computer's own drive, or a link).
+    // That is about the folder, never the recovery key, which is only read
+    // later to check the finished file.
+    const tool=(error as {toolDiagnostic?:{tool?:string;toolStep?:string}}|undefined)?.toolDiagnostic;
+    if(error instanceof InstallationSnapshotError&&error.code==="AGE_PROCESS_FAILED"&&(error as {captureStep?:string}).captureStep==="private-stage"&&tool?.tool==="murage-backup-age"&&(tool.toolStep==="request"||tool.toolStep==="prepare")){
+      const {toolDiagnostic,retainedDirectory,helperClosed}=error as unknown as {toolDiagnostic:object;retainedDirectory?:string;helperClosed?:boolean};
+      error=withCaptureStep(Object.assign(new InstallationSnapshotError("BACKUP_FOLDER_UNUSABLE",{cause:error}),{toolDiagnostic,...(retainedDirectory?{retainedDirectory}:{}),...(helperClosed===undefined?{}:{helperClosed})}),"private-stage");
+    }
     // The private stage and its age writers have closed unless their exit is unconfirmed.
     if(scratch&&error&&typeof error==="object"){
       const unconfirmed=unconfirmedClose(error)||(error as {helperClosed?:boolean}).helperClosed===false;
