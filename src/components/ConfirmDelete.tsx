@@ -11,12 +11,16 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
+import { deletionConsequenceLines } from "@/lib/deletion-notes";
+import { api } from "@/state/store";
+
 export function ConfirmDelete({
   name,
   kind,
   detail,
   title,
   items,
+  preview,
   onCancel,
   onConfirm,
 }: {
@@ -30,12 +34,16 @@ export function ConfirmDelete({
    * (bulk delete). Shown in full, scrolling if long: the person must be able
    * to read every name before typing the confirmation. */
   items?: string[];
+  /** What is being deleted, for the saved-files count and the backups line
+   * (GET /api/deletion-preview). */
+  preview?: { botId?: string; groupId?: string; threadId?: string };
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const [typed, setTyped] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const matches = typed.trim().toLowerCase() === name.trim().toLowerCase();
+  const savedFiles = useSavedFileCount(preview);
 
   useEffect(() => inputRef.current?.focus(), []);
   useEffect(() => {
@@ -69,6 +77,9 @@ export function ConfirmDelete({
               {title ?? <>Delete {kind} “{name}”?</>}
             </h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">{detail}</p>
+            {preview && deletionConsequenceLines(savedFiles).map((line) => (
+              <p key={line} className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{line}</p>
+            ))}
             {items && items.length > 0 && (
               <ul
                 aria-label="What will be deleted"
@@ -114,4 +125,19 @@ export function ConfirmDelete({
       </div>
     </div>
   );
+}
+
+/** How many saved files a Delete takes with it; null until known. */
+export function useSavedFileCount(preview: { botId?: string; groupId?: string; threadId?: string } | undefined): number | null {
+  const [count, setCount] = useState<number | null>(null);
+  const query = preview ? new URLSearchParams(Object.entries(preview).filter((entry): entry is [string, string] => Boolean(entry[1]))).toString() : "";
+  useEffect(() => {
+    if (!query) return;
+    let live = true;
+    api(`/api/deletion-preview?${query}`).then((body: { savedFiles?: unknown }) => {
+      if (live && typeof body?.savedFiles === "number") setCount(body.savedFiles);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [query]);
+  return count;
 }

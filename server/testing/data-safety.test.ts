@@ -58,6 +58,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/engine-management.ts": "removes the mkdtemp scratch of an engine install probe",
   "server/fuigo-native-update.ts": "removes the mkdtemp probe home and download directory",
   "server/index.ts": "removes the mkdtemp scratch of a selected-conversation export",
+  "server/conversation-deletion.ts": "removes a deleted conversation's folders only when strictly inside a known root and reached without a symlink (removeConfined); never a root itself",
   "server/installation-archive.ts": "removes the mkdtemp write scratch and inspection stage of a backup archive",
   "server/installation-damaged-export.ts": "removes the mkdtemp scratch of a damaged-installation export",
   "server/installation-database-snapshot.ts": "removes the mkdtemp scratch beside the snapshot target",

@@ -5,7 +5,7 @@ import { backupSelectionSchema, type BackupSelection, type BackupCoverage } from
 import { portableArchivePath, type ArchiveLimits } from "./installation-archive.ts";
 import { InstallationSnapshotError, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import type { StateSnapshotManifest } from "./installation-state-snapshot.ts";
-const excluded = new Set(["messages.pre-memory-v2.db","native","credentials.bin","companion","connection-profiles","memory-index","models","logs","tmp","browser-profiles","browser-engine","door-identity","folder-trust.json","skill-index.db","skill-index.db-wal","skill-index.db-shm",
+const excluded = new Set(["messages.pre-memory-v2.db","native","pending-deletions.json","credentials.bin","companion","connection-profiles","memory-index","models","logs","tmp","browser-profiles","browser-engine","door-identity","folder-trust.json","skill-index.db","skill-index.db-wal","skill-index.db-shm",
   // Downloads Murage fetches again on demand: model catalogs (index.ts
   // ProviderConnectionsService cacheDir), managed engine binaries
   // (EngineManager root), the team-library catalog copy (team-library.ts

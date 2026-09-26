@@ -7,6 +7,8 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { BellOff, Check, ChevronDown, ChevronRight, Clock, Download, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
 import { api, useStore, type Bot, type Group, type Task } from "@/state/store";
+import { deletionConsequenceLines } from "@/lib/deletion-notes";
+import { useSavedFileCount } from "./ConfirmDelete";
 import type { RoutineRun } from "@/lib/routines";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE_LAST } from "@/lib/compact-chip";
@@ -185,6 +187,7 @@ export function ConversationTaskPicker({
   snoozes,
   questions,
   canSnooze = false,
+  deleteScope,
 }: {
   threadId: string;
   tasks: PickerTask[];
@@ -209,9 +212,12 @@ export function ConversationTaskPicker({
   questions?: Readonly<Record<string, number>>;
   /** Snooze is a desktop action; elsewhere the marker shows and nothing more. */
   canSnooze?: boolean;
+  /** Whose conversations these are, for the Delete confirmation's saved-file count. */
+  deleteScope?: { botId?: string; groupId?: string };
 }) {
   const [open, setOpen] = useState(initialOpen);
   const [snoozing, setSnoozing] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [sort, setSort] = useState<TaskSort>(readTaskSort);
   // The fold holding the open task starts expanded, so the check mark is
@@ -561,8 +567,9 @@ export function ConversationTaskPicker({
         ))}
         <button
           type="button"
-          onClick={() => onDelete(task.threadId)}
+          onClick={() => { clearDismiss(); setConfirmingDelete((before) => (before === task.threadId ? null : task.threadId)); }}
           disabled={Boolean(task.busy)||(busy && active)}
+          aria-expanded={confirmingDelete === task.threadId}
           aria-label="Delete task"
           title="Delete this task and its conversation"
           className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-20"
@@ -570,6 +577,14 @@ export function ConversationTaskPicker({
           <Trash2 size={13} />
         </button>
       </div>
+      {confirmingDelete === task.threadId && (
+        <ConfirmTaskDelete
+          name={name}
+          preview={{ ...deleteScope, threadId: task.threadId }}
+          onCancel={() => setConfirmingDelete(null)}
+          onConfirm={() => { setConfirmingDelete(null); onDelete(task.threadId); }}
+        />
+      )}
       {canSnooze && snoozing === task.threadId && (
         <div className="border-y border-hairline/40 bg-inset/40 px-1 py-1">
           <SnoozeChoices threadId={task.threadId} name={name} until={snoozedUntil} blocked={owed} now={nowAt} clock={clock}
@@ -810,6 +825,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
       onSwitch={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
       onRename={(threadId, title) => dispatch({ type: "renameTask", botId: bot.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId })}
+      deleteScope={{ botId: bot.id }}
       onTogglePin={(threadId, pinned) => dispatch({ type: "pinTask", botId: bot.id, threadId, pinned })}
     />
   );
@@ -843,6 +859,32 @@ export function GroupTaskPicker({ group }: { group: Group }) {
       onSwitch={(threadId) => dispatch({ type: "switchGroupTask", groupId: group.id, threadId })}
       onRename={(threadId, title) => dispatch({ type: "renameGroupTask", groupId: group.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteGroupTask", groupId: group.id, threadId })}
+      deleteScope={{ groupId: group.id }}
     />
+  );
+}
+
+/** The inline confirmation under a conversation row: what goes with it
+ * (saved files) and what stays (earlier backups), then Delete or Cancel. */
+export function ConfirmTaskDelete({ name, preview, onCancel, onConfirm, savedFiles: known }: {
+  name: string;
+  preview: { botId?: string; groupId?: string; threadId?: string };
+  onCancel: () => void;
+  onConfirm: () => void;
+  /** Tests pass the count; the app asks the server. */
+  savedFiles?: number;
+}) {
+  const fetched = useSavedFileCount(known === undefined ? preview : undefined);
+  const savedFiles = known ?? fetched;
+  return (
+    <div role="group" aria-label={`Delete ${name}?`} className="border-y border-hairline/40 bg-inset/40 px-2 py-2 text-[12.5px] text-ink">
+      <p className="font-medium">Delete this conversation?</p>
+      <p className="mt-0.5 text-ink-secondary">Its messages, files and history are removed from this computer.</p>
+      {deletionConsequenceLines(savedFiles).map((line) => <p key={line} className="mt-0.5 text-ink-secondary">{line}</p>)}
+      <div className="mt-1.5 flex justify-end gap-1.5">
+        <button type="button" onClick={onCancel} className="rounded px-2 py-1 text-ink-secondary hover:bg-raised hover:text-ink">Cancel</button>
+        <button type="button" onClick={onConfirm} className="rounded bg-danger px-2 py-1 font-medium text-white">Delete</button>
+      </div>
+    </div>
   );
 }

@@ -58,6 +58,7 @@ import { checkSession, onSignedOut, sessionSignedOut } from "@/lib/session-check
 import { onSaveFailed } from "@/lib/save-file";
 import { callNative, nativeAvailable } from "@/lib/native-shell";
 import { isPhoneClient } from "@/lib/phone-client";
+import { deletionNote } from "@/lib/deletion-notes";
 
 const MAX_ROUTINE_RUNS = 2_000;
 const ACTIVE_ROUTINE_RUN_STATUSES = new Set<RoutineRun["status"]>(["queued", "running", "waiting", "needs-you"]);
@@ -683,6 +684,8 @@ export interface AppState {
    * before then no thread can be placed. */
   hydrated?: boolean;
   error: string | null;
+  /** After a Delete: what could not be removed, in plain words (deletion-notes.ts). */
+  deletionNote: { title: string; items: string[] } | null;
   mascotMotion: {
     botId: string;
     nonce: number;
@@ -945,6 +948,7 @@ export type Action =
   | { type: "connected"; value: boolean }
   | { type: "signedOut" }
   | { type: "error"; message: string | null }
+  | { type: "deletionNote"; note: { title: string; items: string[] } | null }
   | { type: "toggleSettings"; open?: boolean; intent?: BotSettingsIntent }
   | { type: "clearBotSettingsIntent" }
   | { type: "togglePlugins"; open?: boolean }
@@ -1600,6 +1604,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, connected: action.value };
     case "signedOut":
       return { ...state, signedOut: true, connected: false };
+    case "deletionNote":
+      return { ...state, deletionNote: action.note };
     case "error":
       return {
         ...(action.message && state.selectedId
@@ -1916,6 +1922,7 @@ export const initialState: AppState = {
   signedOut: false,
   hydrated: false,
   error: null,
+  deletionNote: null,
   mascotMotion: null,
   pendingQueued: {},
   consumedQueueIds: {},
@@ -2216,6 +2223,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const threadWrites=useMemo(()=>new ThreadSettingsWrites(),[]);
   const dispatch = useMemo(() => {
+    const showDeletionNote = (response: unknown) => {
+      rawDispatch({ type: "deletionNote", note: deletionNote(response as Parameters<typeof deletionNote>[0]) });
+    };
     const showError = (e: unknown) => {
       rawDispatch({ type: "error", message: e instanceof Error ? e.message : String(e) });
       setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
@@ -2543,7 +2553,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         }
         case "deleteBot":
-          api(`/api/bots/${action.botId}`, { method: "DELETE" }).catch(showError);
+          api(`/api/bots/${action.botId}`, { method: "DELETE" }).then(showDeletionNote).catch(showError);
           break;
         case "markUnread":
           api(`/api/bots/${action.botId}/read`, { method: "POST", body: JSON.stringify({ unread: true,threadId:stateRef.current.bots.find(bot=>bot.id===action.botId)?.threadId }) }).catch(showError);
@@ -2646,7 +2656,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             .catch(showError);
           break;
         case "deleteGroup":
-          api(`/api/groups/${action.groupId}`, { method: "DELETE" }).catch(showError);
+          api(`/api/groups/${action.groupId}`, { method: "DELETE" }).then(showDeletionNote).catch(showError);
           break;
         case "setModel":
           if(action.threadId){void saveThread(action.botId,action.threadId,{modelSelection:action.selection}).catch(showError);break;}
@@ -2687,6 +2697,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "deleteTask":
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "DELETE" })
             .then((r: any) => {
+              showDeletionNote(r);
               const current = stateRef.current.bots.find(bot => bot.id === action.botId);
               if (r?.bot && current && (current.threadId === action.threadId || current.awaitingThreadSnapshot)) {
                 dispatch({ type: "botPatched", bot: r.bot });
@@ -2714,7 +2725,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "deleteGroupTask":
           api(`/api/groups/${action.groupId}/tasks/${action.threadId}`, { method: "DELETE" })
-            .then((r: any) => r?.group && dispatch({ type: "groupPatched", group: r.group }))
+            .then((r: any) => { showDeletionNote(r); if (r?.group) dispatch({ type: "groupPatched", group: r.group }); })
             .catch(showError);
           break;
         case "interruptGroup":

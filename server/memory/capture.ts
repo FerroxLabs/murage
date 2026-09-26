@@ -70,11 +70,18 @@ export function captureBranchChange(db: DatabaseSync, threadId: string, leafId: 
   db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE thread_id=? AND state!='revoked'").run(threadId);
 }
 
+/** Deleting a conversation forgets what memory captured from it, whatever
+ * the memory mode is now: sources captured while memory was on are still on
+ * disk after it is turned off. The rows stay (tombstones, epochs and the
+ * evidence graph point at them) but the conversation's words do not. */
 export function captureThreadDeletion(db: DatabaseSync, threadId: string) {
-  if (!enabled(db)) return;
+  if (!db.prepare("SELECT 1 FROM memory_sources WHERE thread_id=? LIMIT 1").get(threadId)) {
+    if (enabled(db)) db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE thread_id=?").run(threadId);
+    return;
+  }
   db.exec("UPDATE memory_meta SET deletion_epoch=deletion_epoch+1 WHERE id=1");
   const epoch = Number(db.prepare("SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch);
-  const sources = db.prepare("SELECT id FROM memory_sources WHERE thread_id=?").all(threadId);
+  const sources = db.prepare("SELECT id FROM memory_sources WHERE thread_id=? AND state!='deleted'").all(threadId);
   for (const source of sources) {
     db.prepare("INSERT INTO memory_tombstones VALUES(?,'source',?,NULL,NULL,?,'thread-deleted',?)").run(randomUUID(),source.id,epoch,Date.now());
     db.prepare("UPDATE memory_sources SET state='deleted' WHERE id=?").run(source.id);
@@ -82,4 +89,8 @@ export function captureThreadDeletion(db: DatabaseSync, threadId: string) {
   }
   db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE thread_id=?").run(threadId);
   applyMemoryTombstones(db);
+  db.prepare(`UPDATE memory_records SET text='' WHERE state='deleted' AND EXISTS (SELECT 1 FROM memory_evidence e JOIN memory_sources s
+    ON s.id=e.source_id WHERE e.record_id=memory_records.id AND e.record_version=memory_records.version AND s.thread_id=?)`).run(threadId);
+  db.prepare("UPDATE memory_source_versions SET payload=? WHERE source_id IN (SELECT id FROM memory_sources WHERE thread_id=? AND state='deleted')")
+    .run(JSON.stringify({ deleted: "thread-deleted" }), threadId);
 }
