@@ -39,10 +39,25 @@ export type ResourceBlocker = Readonly<{ resource: string; owner: TurnOwner; que
 type ResourceWaiter = {
   owner: TurnOwner;
   resources: readonly string[];
-  resolve: (granted: boolean) => void;
+  resolve: (granted: boolean | "yielded") => void;
   onWait?: (blockers: readonly ResourceBlocker[]) => void;
+  yields?: (blockers: readonly ResourceBlocker[]) => boolean;
   shown?: string;
 };
+
+/** A turn may go on WITHOUT some of what it asked for instead of waiting for
+ * it: `resources` names what it can do without, and `holderYields` says
+ * whether a holder is one worth not waiting behind. The built-in browser is
+ * the case (D4): a routine that holds the bot's browser profile while it
+ * waits for the person's approval, possibly for hours, must not block every
+ * other conversation with that bot. The turn that goes on never claims the
+ * browser, so two turns still never drive the same profile at once. */
+export type ResourceYield = Readonly<{ resources: ReadonlySet<string>; holderYields: (holder: TurnOwner) => boolean }>;
+
+function yieldsTo(policy: ResourceYield, blockers: readonly ResourceBlocker[]): boolean {
+  return blockers.length > 0 && blockers.every(blocker =>
+    !blocker.queued && policy.resources.has(blocker.resource) && policy.holderYields(blocker.owner));
+}
 
 /** A run's detached routing snapshot survives UI selection changes. Cancelling
  * retires dispatch authority immediately; resource and capacity leases remain
@@ -114,13 +129,18 @@ export class IndependentThreadRuns<T> {
     resources: readonly string[],
     onWait?: (blockers: readonly ResourceBlocker[]) => void,
     timeoutMs?: number,
-  ): Promise<boolean> {
+    yieldPolicy?: ResourceYield,
+  ): Promise<boolean | "yielded"> {
     if (!this.claimable(owner)) return Promise.resolve(false);
     const wanted = [...new Set([...this.resources.heldBy(owner), ...resources])];
     if (this.claim(owner, wanted)) return Promise.resolve(true);
+    // "yielded": go on without the yieldable resources. Decided before any
+    // release, so a turn that does not wait keeps everything it held.
+    if (yieldPolicy && yieldsTo(yieldPolicy, this.blockersFor(wanted, owner, this.waiters.length))) return Promise.resolve("yielded");
     this.resources.release(owner);
-    return new Promise<boolean>((resolve, reject) => {
-      const waiter: ResourceWaiter = { owner, resources: wanted, resolve, onWait };
+    return new Promise<boolean | "yielded">((resolve, reject) => {
+      const waiter: ResourceWaiter = { owner, resources: wanted, resolve, onWait,
+        ...(yieldPolicy ? { yields: (blockers: readonly ResourceBlocker[]) => yieldsTo(yieldPolicy, blockers) } : {}) };
       if (timeoutMs !== undefined && timeoutMs > 0) {
         const timer = setTimeout(() => {
           const index = this.waiters.indexOf(waiter);
@@ -154,6 +174,15 @@ export class IndependentThreadRuns<T> {
     if (released.length) this.pump();
     return released;
   }
+
+  /** What this generation holds right now. A turn that yields while queued
+   * has already released these (it never waits holding), so its caller
+   * re-acquires them without the yielded resources. */
+  heldBy(owner: TurnOwner): string[] { return this.current(owner) ? this.resources.heldBy(owner) : []; }
+
+  /** Re-examine every waiter: a holder may have become one worth not waiting
+   * behind (it started waiting for the person) without releasing anything. */
+  recheck(): void { if (this.waiters.length) this.pump(); }
 
   /** Whether this generation is waiting for a shared resource. */
   waiting(owner: TurnOwner): boolean { return this.waiters.some(waiter => sameOwner(waiter.owner, owner)); }
@@ -207,6 +236,13 @@ export class IndependentThreadRuns<T> {
     return Boolean(run && this.current(owner) && run.phase !== "stopping" && run.phase !== "settling");
   }
 
+  private blockersFor(resources: readonly string[], owner: TurnOwner, before: number): ResourceBlocker[] {
+    return [
+      ...this.resources.conflicts(resources, owner).map(blocker => ({ ...blocker, queued: false })),
+      ...this.queuedAhead(resources, owner, before),
+    ];
+  }
+
   private queuedAhead(resources: readonly string[], owner: TurnOwner, before = this.waiters.length): ResourceBlocker[] {
     const blocked: ResourceBlocker[] = [];
     for (const resource of resources) {
@@ -251,10 +287,10 @@ export class IndependentThreadRuns<T> {
       if (!ahead.length && this.resources.claimAll(waiter.resources, waiter.owner)) {
         this.waiters.splice(index, 1);waiter.resolve(true);continue;
       }
-      const blockers = [
-        ...this.resources.conflicts(waiter.resources, waiter.owner).map(blocker => ({ ...blocker, queued: false })),
-        ...ahead,
-      ];
+      const blockers = this.blockersFor(waiter.resources, waiter.owner, index);
+      if (waiter.yields?.(blockers)) {
+        this.waiters.splice(index, 1);waiter.resolve("yielded");continue;
+      }
       const shown = blockers.map(blocker => `${blocker.resource}\0${blocker.owner.threadId}\0${blocker.owner.generation}`).join("\n");
       if (waiter.shown !== shown) { waiter.shown = shown; waiter.onWait?.(blockers); }
       index++;

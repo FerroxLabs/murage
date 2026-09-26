@@ -77,7 +77,10 @@ const SOURCE = `WITH raw AS (
       WHEN 'options' THEN CASE
         WHEN json_extract(m.json,'$.card.expired')=1 AND json_extract(m.json,'$.card.unattended')=1
           AND COALESCE(json_extract(m.json,'$.card.sentAsMessage'),0)=0 AND COALESCE(json_extract(m.json,'$.card.dismissed'),0)=0 THEN 'missed'
-        WHEN json_type(m.json,'$.card.answered')='text' OR json_extract(m.json,'$.card.dismissed')=1 THEN 'resolved' ELSE 'pending' END
+        WHEN json_type(m.json,'$.card.answered')='text' OR json_extract(m.json,'$.card.dismissed')=1 THEN 'resolved'
+        -- D7: an approval whose request died with a previous process
+        -- (index.ts boot sweep) is not waiting on anyone any more.
+        WHEN json_extract(m.json,'$.card.orphaned')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'secret' THEN CASE WHEN json_extract(m.json,'$.secret.provided')=1 OR json_extract(m.json,'$.secret.dismissed')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'connector' THEN CASE WHEN json_extract(m.json,'$.connector.status')='connected' OR json_extract(m.json,'$.connector.dismissed')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.goalStatus'),json_extract(m.json,'$.routineRun.status'))
@@ -387,9 +390,13 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   //
   // Computed once and shared, because `routines` wants the same rollup and
   // this runs on the view the sidebar polls.
-  const rollups = view === "routines" || view === "connections" || decisions
-    ? rollUpRoutineRuns(routineFacts(db, allowed, access.threads, now, access.routineRuns), now)
-    : null;
+  //
+  // Read on EVERY view, because the rows it finds are counted in `decisions`
+  // and `connections`, and those counts label every tab. Reading it on three
+  // views only made the same Inbox say "Needs you (1)" on Results and "(2)" on
+  // Needs you. The rows themselves are still listed only where they belong.
+  const rollups = rollUpRoutineRuns(routineFacts(db, allowed, access.threads, now, access.routineRuns), now);
+  const listsRestore = view === "routines" || view === "connections" || decisions;
   // AND IT ASKS ONLY WHEN NOBODY ELSE IS ASKING.
   //
   // This is a LAST RESORT detector, not a second opinion. When a connector
@@ -403,7 +410,7 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
   // slug to match against the card; and this raises ONE row for every
   // connection cause anyway. Coarse evidence, coarse rule, and it errs
   // towards asking once rather than twice.
-  const restore = rollups && connectionCount === 0 ? connectionsToRestore(rollups) : [];
+  const restore = connectionCount === 0 ? connectionsToRestore(rollups) : [];
   return { items: rows.map(row => item(row, access)), total, page, pageSize,
     unread: rows.filter(row => row.read_version !== version(row.json)).length,
     // IT IS ADDED TO BOTH OR IT IS ADDED TO NEITHER. The three segment counts
@@ -416,12 +423,12 @@ export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAcce
     // ONE ROW PER ROUTINE, NOT PER RUN, and only where it is asked for. The
     // owner's thirty six rows were four routines; the tab says "one line per
     // routine, not per run" and this is that sentence kept in data.
-    ...(view === "routines" && rollups ? { routines: rollups } : {}),
+    ...(view === "routines" ? { routines: rollups } : {}),
     // Not an InboxItem, deliberately. There is no message under it, so it has
     // no read mark, no snooze and nothing to open: giving it the item shape
     // would mean inventing all three. It is a purpose-built row, exactly like
     // the routine rows above it.
-    ...(restore.length > 0 ? { restore } : {}) };
+    ...(listsRestore && restore.length > 0 ? { restore } : {}) };
 }
 
 /** Every conversation holding something owed to the owner: an approval, a

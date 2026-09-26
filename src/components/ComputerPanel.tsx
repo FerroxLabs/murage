@@ -1373,7 +1373,7 @@ export function ComputerPanel({
                     ? "Auto reuses a ready VPS when one exists, otherwise this computer, and asks you once before it first uses this computer. "
                     : "Auto uses a cloud box when one exists, otherwise this computer, and asks you once before it first uses this computer. ")}
               Pick where this bot's computer lives. <b className="text-ink">Local VM</b> is a Cua-controlled Linux desktop
-              in a container on this machine, free and separate from your own desktop. Set it up in App
+              in a container on this machine, kept apart from your own desktop. Set it up in App
               Settings → Local VM.
           </div>
           <ComputerDestinationGrid value={bot.computer ?? "auto"} unavailable={{

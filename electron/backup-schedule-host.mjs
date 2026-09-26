@@ -82,7 +82,8 @@ export function createBackupScheduleHost(host) {
     const s=coordinator.status();let refs;try{const b=await read();if(b)refs={installationRef:b.installationRef,destinationRef:b.destinationRef,recoveryRef:b.recoveryRef,destinationLabel:path.basename(b.destination),recoveryLabel:path.basename(b.keyFile)};}catch{lastError="BACKUP_BINDINGS_UNAVAILABLE";}
     let preUpgradeSupported=false;try{await assertUpgradeAllowed();preUpgradeSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
     let closedAppSupported=false;try{await assertClosedAllowed();closedAppSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
-    return {supported:host.supported(),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),refs,error:lastError};
+    const supported=host.supported();
+    return {supported,...(!supported&&host.checking?.()?{checking:true}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),refs,error:lastError};
   };
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
   const start=()=>{stopPolling();if(!coordinator.status().enabled)return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
@@ -323,16 +324,26 @@ export function createBackupScheduleHost(host) {
         if(typeof created?.file!=="string")throw Error("BACKUP_RECOVERY_KEY_UNVERIFIED");
         keyFile=created.file;
       }
+      // A key made for this setup opens nothing until the binding below is
+      // written. If the setup stops first, take it back (host.discardRecoveryKey
+      // removes only that exact, unchanged file) so a retry does not leave
+      // murage-recovery-key.txt, -2, -3 beside each other; if it cannot be
+      // removed, say where it was left.
+      const takeBack=()=>{if(!created)return null;let gone=false;try{gone=host.discardRecoveryKey?.(created.file)===true;}catch{gone=false;}return gone?null:{label:path.basename(created.file),publicKey:created.publicKey,folder:path.basename(path.dirname(created.file))};};
+      let settled=false;
+      try{
       const key=readBackupIdentity(keyFile,installation);if(!key.recipient)throw Error("BACKUP_IDENTITY_HEADER_REQUIRED");
       // The one confirmation. It names the folder, the key and where the key
       // was put, and it is where the person consents to Murage closing and
       // reopening its own window for a backup.
       const resolvedKey=realpathSync(keyFile);
       const keyNote=created?{label:path.basename(resolvedKey),publicKey:created.publicKey,folder:path.basename(path.dirname(resolvedKey))}:null;
-      if(!await host.confirmReferences({destination:path.basename(target),recoveryKey:path.basename(resolvedKey),recoveryKeyFolder:path.dirname(resolvedKey),createdKey:Boolean(created)}))return {cancelled:true,...(keyNote?{created:keyNote}:{})};
+      if(!await host.confirmReferences({destination:path.basename(target),recoveryKey:path.basename(resolvedKey),recoveryKeyFolder:path.dirname(resolvedKey),createdKey:Boolean(created)})){const left=takeBack();settled=true;return {cancelled:true,...(left?{created:left}:{})};}
       const b={version:1,installationIdentity:installationIdentity(bound),installationRef:"installation-"+hash(bound).slice(0,24),destinationRef:randomUUID(),recoveryRef:randomUUID(),destination:target,destinationIdentity:installationIdentity(target),keyFile:resolvedKey,keyFingerprint:hash(fingerprint(keyFile)),recipient:key.recipient,allowIdleRestart:false,allowClosedApp:false};
       await host.writeProtected(BACKUP_SCHEDULE_BINDINGS_KEY,JSON.stringify(b));
+      settled=true;
       setUpNote=keyNote;
+      }finally{if(!settled)takeBack();}
       }finally{running=false;}
       // Read only after the setup's own "preparing" flag is released: status
       // read inside it said pending:true, and the page refuses to switch on a

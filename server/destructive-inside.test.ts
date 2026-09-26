@@ -185,3 +185,102 @@ describe("a delete through a variable set earlier in the same command", () => {
       .toMatchObject({ source: "routine-allow", rule: key });
   });
 });
+
+// 0.1.60 Mac retest 2 D5: on Full access, `tmp=$(mktemp ./scratch.XXXXXX); …;
+// rm "$tmp"` in the bot's own folder raised "Delete something Murage cannot
+// place, so it may be outside its folder: $tmp". An unquoted `$(mktemp …)`
+// with a space in it was read as two words, so the assignment was never seen
+// and `$tmp` stayed unknown. Only a bare `$(mktemp)` (no space) was placed.
+describe("a mktemp file made in the bot's own folder", () => {
+  // the bot's folder is the only root besides temp, so one level up is outside
+  const thread = "/Users/ada/.murage/workspaces/dax/threads/t1";
+  const own: StopLinePlace = { cwd: thread, roots: [thread, "/tmp"], home: HOME, knownRecipients: new Set() };
+  const hit = (command: string) => classifyStopLine("Bash", { command }, command, own);
+
+  const placed = [
+    // the exact commands from the report
+    'tmp=$(mktemp ./scratch.XXXXXX); echo hello > "$tmp"; rtk read "$tmp"; rm "$tmp"',
+    'tmp=$(mktemp notes-tmp.XXXXXX) && echo hi > "$tmp" && cat "$tmp" && rm "$tmp"',
+    'tmp=$(mktemp); echo hello > "$tmp"; rm "$tmp"',
+    // the other ways a bot writes the same thing
+    'tmp=$(mktemp -p "$PWD"); echo x > "$tmp"; rm "$tmp"',
+    'tmp=$(mktemp -p "$PWD" run.XXXXXX); rm "$tmp"',
+    'tmp=$(mktemp -p ${PWD} run.XXXXXX); rm "$tmp"',
+    'tmp=$(mktemp -p . name.XXXX); rm "$tmp"',
+    'tmp=$(mktemp -p notes name.XXXX); rm "$tmp"',
+    'tmp=$(mktemp --tmpdir=. name.XXXX); rm "$tmp"',
+    'tmp=$(mktemp --tmpdir name.XXXX); rm "$tmp"',
+    'tmp=$(mktemp -t name.XXXX); rm "$tmp"',
+    'd=$(mktemp -d ./x.XXXX); touch "$d/a"; rm -r "$d"',
+    'd=$(mktemp -d ./x.XXXX) && rm -rf "$d"',
+    'TMP=$(mktemp ./scratch.XXXXXX); rm "$TMP"',
+    'scratch_file=$(mktemp ./s.XXXX); rm "${scratch_file}"',
+    'local tmp=$(mktemp ./scratch.XXXXXX); rm "$tmp"',
+    'export tmp=$(mktemp ./scratch.XXXXXX); rm "$tmp"',
+    "tmp=`mktemp ./scratch.XXXXXX`; rm \"$tmp\"",
+    'tmp="`mktemp ./scratch.XXXXXX`"; rm "$tmp"',
+    'tmp="$(mktemp -p "$PWD" run.XXXXXX)"; rm "$tmp"',
+    'tmp=$(mktemp ./scratch.XXXXXX); rm -f "$tmp"',
+    'tmp=$(mktemp ./scratch.XXXXXX); rm -- "$tmp"',
+    'tmp=$(mktemp ./scratch.XXXXXX); rm $tmp',
+    'tmp=$(  mktemp   ./scratch.XXXXXX  ); rm "$tmp"',
+    'tmp=$(mktemp "./my scratch.XXXXXX"); rm "$tmp"',
+    'base=./notes; tmp=$(mktemp -p "$base" n.XXXX); rm "$tmp"',
+    "tmp=$(mktemp ./scratch.XXXXXX)\necho hi > \"$tmp\"\nrm \"$tmp\"",
+  ];
+  for (const command of placed) {
+    it(`placed inside: ${command}`, () => {
+      expect(hit(command)).toBeNull();
+      expect(deletesPlacedInside(command, own)).toBe(true);
+    });
+  }
+
+  const outside: Array<[string, string]> = [
+    ['tmp=$(mktemp ../x.XXXX); rm "$tmp"', "Delete 1 item outside its folder: ~/.murage/workspaces/dax/threads/x.XXXX"],
+    ['tmp=$(mktemp -p ~/Documents x.XXXX); rm "$tmp"', "Delete 1 item outside its folder: ~/Documents/x.XXXX"],
+    ['tmp=$(mktemp -p /Users/ada/Documents x.XXXX); rm "$tmp"', "Delete 1 item outside its folder: ~/Documents/x.XXXX"],
+    ['tmp=$(mktemp -p "$HOME/Documents" x.XXXX); rm "$tmp"', "Delete 1 item outside its folder: ~/Documents/x.XXXX"],
+    ['tmp=$(mktemp --tmpdir=/Users/ada/Documents x.XXXX); rm "$tmp"', "Delete 1 item outside its folder: ~/Documents/x.XXXX"],
+    ['tmp=$(mktemp ./a.XXXX); tmp=~/Documents/x; rm "$tmp"', "Delete 1 item outside its folder: ~/Documents/x"],
+    ['tmp=$(mktemp ./a.XXXX); rm -rf "$tmp"/..', "Delete 1 item outside its folder: ~/.murage/workspaces/dax/threads/t1"],
+    ['d=$(mktemp -d ./x.XXXX); cd ~/Documents; rm -rf "$d"', "Delete 1 item outside its folder: ~/Documents/x.XXXX"],
+  ];
+  for (const [command, what] of outside) {
+    it(`still stops: ${command}`, () => {
+      expect(hit(command)?.what).toBe(what);
+      expect(deletesPlacedInside(command, own)).toBe(false);
+    });
+  }
+
+  const unplaced = [
+    // a variable from anything but mktemp
+    'tmp=$(cat list.txt); rm "$tmp"',
+    'tmp=$(ls -t | head -1); rm "$tmp"',
+    'tmp=$(find . -name x); rm "$tmp"',
+    'tmp=$(mktemp ./a.XXXX; echo ~/Documents/x); rm "$tmp"',
+    'tmp=$(mktemp $(cat dir) x.XXXX); rm "$tmp"',
+    'tmp=$(mktemp -p "$SOMEDIR" x.XXXX); rm "$tmp"',
+    'tmp=$(mktemp -p \'$PWD\' x.XXXX); rm "$tmp"',
+    'tmp=$(mktemp ./a.XXXX); tmp=$(cat other); rm "$tmp"',
+    'rm "$tmp"',
+  ];
+  for (const command of unplaced) {
+    it(`still asks: ${command}`, () => {
+      expect(hit(command)?.what).toMatch(/^Delete something Murage cannot place, so it may be outside its folder: /);
+      expect(deletesPlacedInside(command, own)).toBe(false);
+    });
+  }
+
+  it("still sees a delete hidden inside a substitution", () => {
+    const command = "x=$(rm -rf ~/Documents/y); echo $x";
+    expect(hit(command)).not.toBeNull();
+    expect(deletesPlacedInside(command, own)).toBe(false);
+    for (const other of ["echo $(rm -rf ~/Documents/y)", "x=`rm -rf ~/Documents/y`", 'x="$(rm -rf ~/Documents/y)"']) {
+      expect(hit(other)?.what, other).toBe("Delete 1 item outside its folder: ~/Documents/y");
+      expect(deletesPlacedInside(other, own), other).toBe(false);
+    }
+    const split = "x=$(cd /; rm -rf ~/Documents/y)";
+    expect(hit(split)).not.toBeNull();
+    expect(deletesPlacedInside(split, own)).toBe(false);
+  });
+});

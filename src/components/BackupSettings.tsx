@@ -27,7 +27,13 @@ export function BackupSettingsView({supported,busy,error,onRestart}:{supported:b
 
 function useBackupMode() {
   const [supported,setSupported]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState<string>();
-  useEffect(()=>{let active=true;void window.muragebox?.backup?.status().then(value=>{if(active)setSupported(value.supported);}).catch(()=>{});return()=>{active=false;};},[]);
+  useEffect(()=>{
+    let active=true,timer:number|undefined;
+    // Backup mode needs the same checked tool; keep asking until it is ready.
+    const read=()=>void window.muragebox?.backup?.status().then(value=>{if(!active)return;setSupported(value.supported);if(!value.supported)timer=window.setTimeout(read,3000);}).catch(()=>{});
+    read();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
+  },[]);
   const restart=async()=>{
     if(busy)return;setBusy(true);setError(undefined);
     try{await window.muragebox?.backup?.restart();}
@@ -66,7 +72,9 @@ export function useBackupSchedule() {
     return()=>{mounted.current=false;version.current++;};
   },[]);
   useEffect(()=>{
-    if(!status?.pending&&!status?.enabled)return;
+    // Also while the backup tool is still being checked after a start, so
+    // the page turns ready without being reopened.
+    if(!status?.pending&&!status?.enabled&&!(status&&!status.supported&&status.checking))return;
     let active=true,inFlight=false;
     const timer=window.setInterval(async()=>{
       if(gate.current||inFlight)return;
@@ -76,7 +84,7 @@ export function useBackupSchedule() {
       finally{inFlight=false;}
     },2000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[status?.pending,status?.enabled,bridge,closedBridge]);
+  },[status?.pending,status?.enabled,status?.supported,status?.checking,bridge,closedBridge]);
   const run=async(where:ScheduleArea,work:(expected:number)=>Promise<void>,describe:(cause:unknown)=>string=scheduleError)=>{
     if(gate.current||!bridge)return;
     gate.current=true;const expected=++version.current;setBusy(true);setError(null);setNotice(null);setArea(where);

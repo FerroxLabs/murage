@@ -25,12 +25,17 @@ export function BotPickerList({
     <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto">
       {bots.length === 0 && <div className="px-2 py-4 text-center text-[13px] text-ink-secondary">{emptyHint}</div>}
       {bots.map((b) => (
+        // The WHOLE row is the checkbox: avatar, name, second line and the
+        // round check all toggle it, by pointer or by Space/Enter. Its name
+        // is its text: the bot, then the second line when there is one.
         <button
           key={b.id}
+          type="button"
           onClick={() => onToggle(b.id)}
           role="checkbox"
           aria-checked={picked.has(b.id)}
-          className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-raised/50"
+          data-bot-picker-row={b.id}
+          className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-raised/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
         >
           <BotAvatar bot={b} state="happy" size={28} />
           {detail?.(b, picked.has(b.id)) ? (
@@ -42,6 +47,7 @@ export function BotPickerList({
             <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{b.name}</span>
           )}
           <span
+            aria-hidden="true"
             className={cn(
               "flex size-[18px] shrink-0 items-center justify-center rounded-full border",
               picked.has(b.id) ? "border-accent bg-accent text-white" : "border-hairline/60",

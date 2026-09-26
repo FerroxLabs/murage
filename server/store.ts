@@ -100,6 +100,11 @@ export interface OptionCardData {
   expired?: boolean;
   /** An expired question's answer went to the bot as an ordinary message. */
   sentAsMessage?: boolean;
+  /** D7: an approval left open by a previous process, found at startup. The
+   * request behind it died with that process, so it no longer counts as
+   * waiting in the Inbox; the card itself stays and answering it says the
+   * run ended (and offers Run again for a routine). */
+  orphaned?: boolean;
   /** Raised during a run nobody was watching (routine, webhook, Telegram);
    * an expired one of these stays in the Inbox as needing the owner. */
   unattended?: boolean;
@@ -1015,6 +1020,10 @@ function persistedBotsJson(bots: readonly BotRecord[]): string {
   })), null, 2);
 }
 
+/** What Store.appendMessage accepts, and what a rewrite returns (or null). */
+export type NewMessage = Omit<Message, "id" | "at"> & { at?: number };
+export type MessageRewrite = (threadId: string, message: NewMessage) => NewMessage | null;
+
 export class Store {
   bots: BotRecord[] = [];
   groups: GroupRecord[] = [];
@@ -1816,8 +1825,23 @@ export class Store {
     return next;
   }
 
-  appendMessage(threadId: string, message: Omit<Message, "id" | "at"> & { at?: number }): Message {
+  /** A last look at a message before it is written (see setMessageRewrite). */
+  private messageRewrite?: MessageRewrite;
+
+  /** Install (or clear) the one rewrite every appended message passes. The
+   * server uses it while Murage is closing: a turn killed by the shutdown
+   * must read "Murage closed while this was running", not the engine's own
+   * exit text ("fuigoAgent exited 143 …") under a Provider settings hint.
+   * A null result keeps the message out of the transcript; the returned
+   * message is then not recorded anywhere. */
+  setMessageRewrite(rewrite: MessageRewrite | undefined): void {
+    this.messageRewrite = rewrite;
+  }
+
+  appendMessage(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }): Message {
     const t = this.thread(threadId);
+    const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
+    if (message === null) return { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(input) };
     const full: Message = { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
     mdb.appendMessage(threadId, full);
     t.messages.push(full);
@@ -2687,16 +2711,22 @@ export class Store {
     this.emit({ type: "bot", botId });
   }
 
-  /** Delete a task and its transcript. A bot always keeps one. */
+  /** Delete a task and its transcript. A bot always keeps one: deleting the
+   * last one leaves a fresh, empty "New task" in its place, the same as a
+   * channel's last conversation (deleteGroupTask). It used to be refused
+   * after the owner had confirmed it, with "a bot keeps at least one task". */
   deleteTask(botId: string, threadId: string): BotRecord | null {
     const bot = this.bot(botId);
-    if (!bot || !bot.tasks || bot.tasks.length < 2) return null;
-    if (!bot.tasks.some((t) => t.threadId === threadId)) return null;
-    bot.tasks = bot.tasks.filter((t) => t.threadId !== threadId);
+    if (!bot || !bot.tasks?.some((t) => t.threadId === threadId)) return null;
+    if (bot.tasks.length < 2) this.createTask(botId, undefined, false);
+    bot.tasks = bot.tasks!.filter((t) => t.threadId !== threadId);
     this.deleteThreadRecord(threadId);
     if (bot.threadId === threadId) {
-      bot.threadId = bot.tasks[0]!.threadId;
-      bot.resumeCursors = { ...bot.tasks[0]!.resumeCursors };
+      const next = bot.tasks[0]!;
+      bot.threadId = next.threadId;
+      bot.resumeCursors = { ...next.resumeCursors };
+      bot.rewound = next.rewound;
+      bot.pinnedMessageId = next.pinnedMessageId;
     }
     this.saveBots();
     this.emit({ type: "bot", botId });

@@ -1,4 +1,5 @@
 import { track } from "@/lib/analytics";
+import { errorPreview } from "@/lib/error-preview";
 import { hostStoppedLabel } from "@/lib/host-stop";
 import { folderTrustLabel } from "@/lib/folder-trust";
 import { plainText } from "@/lib/plain-text";
@@ -375,7 +376,7 @@ export function sidebarBotPreview(bot: Bot): string {
   const last = visibleMessages(bot).at(-1);
   if (!last) return "";
   if (last.kind === "options" && last.card) return plainText(last.card.title);
-  if (last.kind === "activity" && last.tool) return hostStoppedLabel(last.tool.name) ?? folderTrustLabel(last.tool.name) ?? last.tool.name;
+  if (last.kind === "activity" && last.tool) return hostStoppedLabel(last.tool.name) ?? folderTrustLabel(last.tool.name) ?? errorPreview(last.tool) ?? last.tool.name;
   if (last.kind === "screen") return "Screen frame";
   return plainText(last.text ?? "");
 }
@@ -394,7 +395,7 @@ export function sidebarGroupPreview(group: Group, bots: Bot[]): string {
   const last = group.messages.at(-1);
   if (!last) return `${group.memberIds.length} ${group.memberIds.length === 1 ? "bot" : "bots"}`;
   const text = last.kind === "activity" && last.tool
-    ? hostStoppedLabel(last.tool.name) ?? folderTrustLabel(last.tool.name) ?? last.tool.name
+    ? hostStoppedLabel(last.tool.name) ?? folderTrustLabel(last.tool.name) ?? errorPreview(last.tool) ?? last.tool.name
     : last.kind === "goal.run" && last.goalRun
       ? sidebarGoalRunPreview(last.goalRun)
       : plainText(last.text ?? "");

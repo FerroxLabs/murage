@@ -106,3 +106,27 @@ describe("teamChangePatches", () => {
     expect("section" in patches.groups[0].patch).toBe(true);
   });
 });
+
+describe("members save (D11)", () => {
+  it("toggles one row without touching the others", async () => {
+    const { toggledMembers } = await import("./team-manage");
+    const picked = new Set(["ava", "ben"]);
+    expect([...toggledMembers(picked, "ben")]).toEqual(["ava"]);
+    expect([...toggledMembers(picked, "cal")]).toEqual(["ava", "ben", "cal"]);
+    expect([...picked]).toEqual(["ava", "ben"]);
+  });
+
+  it("says what a save changed instead of a bare \"Members saved.\"", async () => {
+    const { teamMembersSavedNote } = await import("./team-manage");
+    const names: Record<string, string> = { ava: "Ava", ben: "Ben", cal: "Cal" };
+    const nameOf = (id: string) => names[id];
+    expect(teamMembersSavedNote({ leadId: "ben" }, nameOf)).toBe("Ben leads the team now.");
+    expect(teamMembersSavedNote({ remove: ["ava"], leadId: null }, nameOf)).toBe("Removed Ava. The team has no lead now.");
+    expect(teamMembersSavedNote({ add: ["ben", "cal"] }, nameOf)).toBe("Added Ben and Cal.");
+    expect(teamMembersSavedNote({}, nameOf)).toBe("Nothing changed.");
+    const change = teamMembersChange(team, new Set(["ava"]), "ava")!;
+    expect(teamMembersSavedNote(change, nameOf)).toBe("Removed Ben.");
+    // Nothing asked for: there is no save to report (Save members is disabled).
+    expect(teamMembersChange(team, new Set(["ava", "ben"]), "ava")).toBeNull();
+  });
+});

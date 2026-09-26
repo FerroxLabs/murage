@@ -25,7 +25,9 @@ import {
   teamCandidateDetail,
   teamDeleteSummary,
   teamMembersChange,
+  teamMembersSavedNote,
   teamChangePatches,
+  toggledMembers,
   teamRenameProblem,
   type OpenTeamSettingsDetail,
   type TeamChanges,
@@ -435,7 +437,8 @@ export function TeamSettingsDialog({
         return;
       }
       adopt(next);
-      setStatus({ error: false, text: "Members saved." });
+      // Says what changed, so a save is never reported without one.
+      setStatus({ error: false, text: teamMembersSavedNote(change, (id) => candidates.find((bot) => bot.id === id)?.name ?? team.members.find((bot) => bot.id === id)?.name) });
     });
   };
 
@@ -471,14 +474,12 @@ export function TeamSettingsDialog({
           }}
           onSaveName={() => void saveName()}
           onToggle={(id) => {
+            // Worked out from the rendered state, with no state setter inside
+            // another's updater (React may run an updater twice).
             setStatus(null);
-            setPicked((current) => {
-              const next = new Set(current);
-              if (next.has(id)) next.delete(id);
-              else next.add(id);
-              if (!next.has(lead)) setLead("");
-              return next;
-            });
+            const next = toggledMembers(picked, id);
+            setPicked(next);
+            if (lead && !next.has(lead)) setLead("");
           }}
           onLead={setLead}
           onSaveMembers={() => void saveMembers()}

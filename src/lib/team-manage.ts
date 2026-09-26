@@ -90,6 +90,29 @@ export function teamMembersChange(team: TeamView, picked: ReadonlySet<string>, l
   return Object.keys(change).length ? change : null;
 }
 
+/** The members list after one row is clicked. */
+export function toggledMembers(picked: ReadonlySet<string>, id: string): Set<string> {
+  const next = new Set(picked);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  return next;
+}
+
+/** What a members save changed, in plain sentences. It used to say
+ *  "Members saved." whatever the save did, including when only the lead
+ *  moved, which read as a save that changed nothing. */
+export function teamMembersSavedNote(change: TeamMembersChange, nameOf: (id: string) => string | undefined): string {
+  const names = (ids: readonly string[]) => {
+    const list = ids.map((id) => nameOf(id) ?? "a bot");
+    return list.length <= 1 ? list.join("") : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+  };
+  const lines: string[] = [];
+  if (change.add?.length) lines.push(`Added ${names(change.add)}.`);
+  if (change.remove?.length) lines.push(`Removed ${names(change.remove)}.`);
+  if (change.leadId !== undefined) lines.push(change.leadId ? `${nameOf(change.leadId) ?? "The bot you chose"} leads the team now.` : "The team has no lead now.");
+  return lines.join(" ") || "Nothing changed.";
+}
+
 /** A bot's second line in the members list. */
 export function teamCandidateDetail(
   bot: RoleBot,

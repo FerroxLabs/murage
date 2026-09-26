@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { AGE_ORIGINAL_SHA256,trustedBackupAgeExecutable,trustedBackupAgeExecutableAsync,backupToolIdentity } from "./backup-age-attestation.mjs";
+import { AGE_ORIGINAL_SHA256,BACKUP_CODESIGN_RETRY_MS,trustedBackupAgeExecutable,trustedBackupAgeExecutableAsync,backupToolIdentity } from "./backup-age-attestation.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 import { packagedResticPath, trustedBackupResticExecutableAsync } from "./backup-restic-attestation.mjs";
 import { pathWithin } from "../shared/path-identity.mjs";
@@ -16,9 +16,50 @@ export function verifiedBackupTool(resources) {
   return trustedBackupAgeExecutable(file)?file:null;
 }
 
+
+// A backup tool is attested once (pinned bytes and, on macOS, the app's
+// signature) and then re-checked on every use by a cheap file identity that
+// includes each bundle folder's ctime. macOS itself changes that identity on
+// the first launch of a freshly installed or updated app: it writes
+// com.apple.macl onto Murage.app a second or two after launch, which moves
+// the bundle's ctime while the attestation is running (Mac customer re-test
+// 2, 2026-09-26). A cold first launch can also make one codesign run outlast
+// its bound while macOS is still assessing the new app. Either used to leave
+// backups and off-site copies "unavailable" until Murage was restarted.
+// Now a failed or invalidated attestation is simply done again, in full,
+// after a short and then growing delay, so nothing is trusted without a
+// fresh signature check and nothing needs a restart.
+export const BACKUP_TOOL_RETRY_DELAYS_MS = Object.freeze([1000, 5000, 15000, 30000, 60000, 120000, 300000]);
+export function createToolRecheck({ run, isUsable, delays = BACKUP_TOOL_RETRY_DELAYS_MS, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  let timer = null, attempt = 0, stopped = false;
+  return {
+    schedule(soon = false) {
+      if (stopped || timer || !isUsable()) return;
+      const delay = soon ? delays[0] : delays[Math.min(attempt, delays.length - 1)];
+      attempt++;
+      timer = setTimer(() => { timer = null; void Promise.resolve().then(run).catch(() => {}); }, delay);
+      timer?.unref?.();
+    },
+    succeeded() { attempt = 0; },
+    stop() { stopped = true; if (timer) clearTimer(timer); timer = null; },
+    scheduled: () => Boolean(timer),
+  };
+}
+const pause = ms => new Promise(resolve => { const timer = setTimeout(resolve, ms); timer.unref?.(); });
+/** Wait, bounded, until a capability's tool is attested; a backup relaunch
+ * must not fail its capture just because the first check at startup did. */
+async function waitForTool(capability, isUsable, timeoutMs, unavailable) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const tool = capability.currentTool();
+    if (tool) return tool;
+    try { return await capability.requireTool({ background: true }); }
+    catch (error) { if (!isUsable() || Date.now() + 1000 > deadline) throw error ?? unavailable(); await pause(1000); }
+  }
+}
 /** Desktop-owned availability, not a renderer grant. Windows actions reverify
  * the fixed packaged resources before reading a recovery identity. */
-export function createBackupToolCapability({ resourcesPath, currentExecutable, isUsable, macToolName = "age", verifyMacTool = trustedBackupAgeExecutableAsync }) {
+export function createBackupToolCapability({ resourcesPath, currentExecutable, isUsable, macToolName = "age", verifyMacTool = trustedBackupAgeExecutableAsync, recheckOptions }) {
   const windows = process.platform === "win32", mac = process.platform === "darwin";
   let identity = null, controller = null;
   let state = "pending", tool = null, pending = null, generation = 0;
@@ -27,12 +68,13 @@ export function createBackupToolCapability({ resourcesPath, currentExecutable, i
     if (!isUsable()) return null;
     if (mac) {
       if (state !== "ready") return null;
-      if (!identity || backupToolIdentity(tool, currentExecutable) !== identity) { generation++; state = "failed"; tool = null; identity = null; return null; }
+      // Changed since it was attested: attest again rather than give up.
+      if (!identity || backupToolIdentity(tool, currentExecutable) !== identity) { generation++; state = "pending"; tool = null; identity = null; recheck.schedule(true); return null; }
       return tool;
     }
     return windows ? state === "ready" ? tool : null : verifiedBackupTool(resourcesPath);
   };
-  const requireTool = async () => {
+  const requireTool = async ({ background = false } = {}) => {
     if (!isUsable()) throw unavailable();
     if (!windows && !mac) {
       const file = verifiedBackupTool(resourcesPath);
@@ -48,8 +90,8 @@ export function createBackupToolCapability({ resourcesPath, currentExecutable, i
         if (!["age", "restic"].includes(macToolName)) throw unavailable();
         const file = path.join(resourcesPath, "backup-tools", process.arch, macToolName);
         const before = backupToolIdentity(file, currentExecutable);
-        if (!before || !await verifyMacTool(file, { currentExecutable, signal: controller.signal }) || !isUsable() || epoch !== generation || backupToolIdentity(file, currentExecutable) !== before) throw unavailable();
-        identity = before; tool = file; state = "ready"; return tool;
+        if (!before || !await verifyMacTool(file, { currentExecutable, signal: controller.signal, ...(background ? { timeoutMs: BACKUP_CODESIGN_RETRY_MS } : {}) }) || !isUsable() || epoch !== generation || backupToolIdentity(file, currentExecutable) !== before) throw unavailable();
+        identity = before; tool = file; state = "ready"; recheck.succeeded(); return tool;
       }
       const { createWindowsBackupResourceResolver } = await import(pathToFileURL(path.join(resourcesPath, "server", "windows-backup-resources.js")).href);
       if (!isUsable() || epoch !== generation) throw unavailable();
@@ -59,17 +101,20 @@ export function createBackupToolCapability({ resourcesPath, currentExecutable, i
       tool = path.join(resourcesPath, "backup-tools", "x64", "age.exe"); state = "ready";
       return tool;
     })().catch(error => {
-      if (epoch === generation) { state = "failed"; tool = null; }
+      if (epoch === generation) { state = "failed"; tool = null; if (mac) recheck.schedule(); }
       throw error;
     });
     pending = work;
     try { return await work; } finally { if (pending === work) pending = null; }
   };
+  const recheck = createToolRecheck({ run: () => currentTool() ? undefined : requireTool({ background: true }), isUsable, ...(recheckOptions ?? {}) });
   return {
     currentTool,
-    status: () => { if (mac) currentTool(); return { state: windows || mac ? state : currentTool() ? "ready" : "failed" }; },
+    /** `checking` is true while an attestation runs or is due again soon. */
+    status: () => { if (mac) currentTool(); const current = windows || mac ? state : currentTool() ? "ready" : "failed"; return { state: current, checking: mac && (current === "pending" || recheck.scheduled()) }; },
     requireTool,
-    invalidate() { generation += 1; state = "failed"; tool = null; identity = null; controller?.abort(); },
+    waitReady: (timeoutMs = 180000) => waitForTool({ currentTool, requireTool }, isUsable, timeoutMs, unavailable),
+    invalidate() { generation += 1; state = "failed"; tool = null; identity = null; recheck.stop(); controller?.abort(); },
     async settled() { await pending?.catch(() => {}); },
   };
 }
@@ -135,26 +180,34 @@ export function readBackupIdentity(file, installation) {
  * platform and arch, attested once (pinned bytes; on macOS also the signed
  * payload), then re-checked by identity on every use. Actions re-attest in
  * the restic runner anyway. */
-export function createResticToolCapability({ resourcesPath, currentExecutable, isUsable, locate = packagedResticPath, verify = trustedBackupResticExecutableAsync }) {
+export function createResticToolCapability({ resourcesPath, currentExecutable, isUsable, locate = packagedResticPath, verify = trustedBackupResticExecutableAsync, recheckOptions }) {
   let state = "pending", tool = null, identity = null, pending = null, generation = 0, controller = null;
   const unavailable = () => Object.assign(new Error("Off-site backup tool unavailable"), { code: "BACKUP_UNAVAILABLE" });
   const currentTool = () => {
     if (!isUsable() || state !== "ready") return null;
-    if (!identity || backupToolIdentity(tool, currentExecutable) !== identity) { generation++; state = "failed"; tool = null; identity = null; return null; }
+    // Changed since it was attested (on macOS the first launch does this to
+    // the bundle itself): attest again rather than give up until a restart.
+    if (!identity || backupToolIdentity(tool, currentExecutable) !== identity) { generation++; state = "pending"; tool = null; identity = null; recheck.schedule(true); return null; }
     return tool;
   };
-  const requireTool = async () => {
+  const requireTool = async ({ background = false } = {}) => {
     if (!isUsable()) throw unavailable();
     if (pending) return pending;
     const epoch = ++generation; state = "pending"; tool = null; identity = null; controller = new AbortController();
     const work = (async () => {
       const file = locate(resourcesPath);
       const before = file ? backupToolIdentity(file, currentExecutable) : null;
-      if (!file || !before || !await verify(file, { currentExecutable, signal: controller.signal }) || !isUsable() || epoch !== generation || backupToolIdentity(file, currentExecutable) !== before) throw unavailable();
-      identity = before; tool = file; state = "ready"; return tool;
-    })().catch(error => { if (epoch === generation) { state = "failed"; tool = null; } throw error; });
+      // No file at all is a build without off-site copies: nothing to retry.
+      if (!file) throw Object.assign(unavailable(), { permanent: true });
+      if (!before || !await verify(file, { currentExecutable, signal: controller.signal, ...(background ? { timeoutMs: BACKUP_CODESIGN_RETRY_MS } : {}) }) || !isUsable() || epoch !== generation || backupToolIdentity(file, currentExecutable) !== before) throw unavailable();
+      identity = before; tool = file; state = "ready"; recheck.succeeded(); return tool;
+    })().catch(error => { if (epoch === generation) { state = "failed"; tool = null; if (!error?.permanent) recheck.schedule(); } throw error; });
     pending = work;
     try { return await work; } finally { if (pending === work) pending = null; }
   };
-  return { currentTool, requireTool, status: () => { currentTool(); return { state }; }, invalidate() { generation++; state = "failed"; tool = null; identity = null; controller?.abort(); }, async settled() { await pending?.catch(() => {}); } };
+  const recheck = createToolRecheck({ run: () => currentTool() ? undefined : requireTool({ background: true }), isUsable, ...(recheckOptions ?? {}) });
+  return { currentTool, requireTool,
+    status: () => { currentTool(); return { state, checking: state === "pending" || recheck.scheduled() }; },
+    waitReady: (timeoutMs = 180000) => waitForTool({ currentTool, requireTool }, isUsable, timeoutMs, unavailable),
+    invalidate() { generation++; state = "failed"; tool = null; identity = null; recheck.stop(); controller?.abort(); }, async settled() { await pending?.catch(() => {}); } };
 }

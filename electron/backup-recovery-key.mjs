@@ -302,6 +302,7 @@ const COPY_TARGET_REFUSALS = new Set(["BACKUP_RECOVERY_KEY_EXISTS", "BACKUP_RECO
  * caller receives only the chosen file's name and the public recipient. */
 export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestination, isUsable = () => true, now = () => Date.now(), folderStore = null, defaultFolder = () => null, chooseCopyFile = null, defaultFolders = null, isUsableDuringSetup = null }) {
   let pending = false, folder = null, keyFile = null;
+  const made = new Map();
   const remember = file => { folder = path.dirname(file); keyFile = file; folderStore?.write(folder, file); };
   const remembered = () => folderStore?.read() ?? null;
   const lastFolder = () => folder ?? remembered()?.folder ?? null;
@@ -323,8 +324,29 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
       if (!(isUsableDuringSetup ?? isUsable)()) throw new Error("BACKUP_UNAVAILABLE");
       const folders = [lastFolder(), ...(defaultFolders?.() ?? [defaultFolder()])].filter(value => typeof value === "string" && value);
       const created = createRecoveryKeyIn(folders, { installation: installation(), destination, now: now() });
+      const stat = lstatSync(created.file);
+      made.set(created.file, { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, previous: keyFile });
       remember(created.file);
       return created;
+    },
+    /** Removes a key createFor() made moments ago when the setup it was made
+     * for did not happen (the person cancelled the one confirmation, or the
+     * setup failed after it). No backup was ever encrypted to it, so it opens
+     * nothing, and leaving it made every retry add another key file beside it
+     * (murage-recovery-key-2.txt, -3...), with no way to tell which one is
+     * real. Only the exact file this process wrote, unchanged, is removed.
+     * Answers whether it is gone. */
+    discard(file) {
+      const record = made.get(file);
+      if (!record) return false;
+      made.delete(file);
+      try {
+        const stat = lstatSync(file);
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.dev !== record.dev || stat.ino !== record.ino || stat.size !== record.size || stat.mtimeMs !== record.mtimeMs) return false;
+        unlinkSync(file);
+      } catch (error) { if (error?.code !== "ENOENT") return false; }
+      if (keyFile === file) { keyFile = record.previous; folderStore?.write(folder, record.previous ?? null); }
+      return true;
     },
     /** Saves a second copy of the key somewhere the person picks. The secret
      * never leaves this process: they get back only the new file's name. */

@@ -1707,4 +1707,14 @@ describe("signed out", () => {
     expect(source).toMatch(/if \(isPermanentlyRefused\(error\)\) \{[\s\S]*?\}\s*if \(sessionSignedOut\(\)\) return;/);
     expect(source).toContain('stillSignedIn: async () => (await checkSession()) !== "signed-out"');
   });
+
+  it("a failed conversation Delete shows a plain sentence, never the server's text", () => {
+    const source = readFileSync(fileURLToPath(new URL("./store.tsx", import.meta.url)), "utf8");
+    for (const kind of ["deleteTask", "deleteGroupTask"]) {
+      const block = source.slice(source.indexOf(`case "${kind}":\n          api(`));
+      const body = block.slice(0, block.indexOf("break;"));
+      expect(body, kind).toContain("showError(new Error(deletionErrorSentence(e)))");
+      expect(body, kind).not.toMatch(/\.catch\(showError\)/);
+    }
+  });
 });

@@ -2,6 +2,7 @@ import { useId } from "react";
 import { AlertTriangle, ArrowUpRight, RefreshCw, Settings2 } from "lucide-react";
 import { providerErrorPresentation, type ProviderErrorInfo } from "../../shared/provider-error";
 import { t } from "@/lib/i18n";
+import { providerErrorCategory, providerErrorTitle } from "@/lib/error-preview";
 import { DiagnosticDetails,type IncidentMessageSelection } from "./DiagnosticDetails";
 import { parseRuntimeErrorDiagnostic } from "../../shared/error-diagnostic";
 
@@ -16,8 +17,8 @@ export function ProviderErrorCard({ info, details, diagnostic, turnId, incident,
 }) {
   const titleId = useId();
   const presentation = providerErrorPresentation(info);
-  const category = info.kind === "credits" || info.kind === "spend-cap" || info.kind === "payment" || info.kind === "authentication" || info.kind === "permission" || info.kind === "rate-limit" || info.kind === "unavailable" ? info.kind : "unknown";
-  const provider = info.provider === "flux-router" ? "Flux Router" : t("providerError.provider");
+  // The same category and heading the sidebar preview uses (lib/error-preview.ts).
+  const category = providerErrorCategory(info);
   const hasHttpStatus = Number.isInteger(info.httpStatus) && info.httpStatus >= 100 && info.httpStatus <= 599;
   const parsedDiagnostic = parseRuntimeErrorDiagnostic(diagnostic);
   const hasDiagnostic = parsedDiagnostic?.turnId === turnId && parsedDiagnostic !== undefined;
@@ -28,7 +29,7 @@ export function ProviderErrorCard({ info, details, diagnostic, turnId, incident,
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-danger/10 text-danger" aria-hidden="true"><AlertTriangle size={19} /></span>
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-medium uppercase tracking-wide text-ink-secondary">{info.provider === "flux-router" ? "Flux Router" : t("providerError.label")}</p>
-          <h3 id={titleId} className="mt-1 break-words text-[16px] font-semibold leading-snug">{t(`providerError.${category}.title`, { provider })}</h3>
+          <h3 id={titleId} className="mt-1 break-words text-[16px] font-semibold leading-snug">{providerErrorTitle(info)}</h3>
         </div>
       </div>
       <p className="mt-3 text-[13px] leading-relaxed text-ink-secondary">{t(`providerError.${category}.summary`)}</p>

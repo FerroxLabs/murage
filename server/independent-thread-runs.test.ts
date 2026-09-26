@@ -342,3 +342,52 @@ it("ignores a partial release from a generation that has been replaced", () => {
   expect(runs.releaseResources(stale, ["computer:bot:x"])).toEqual([]);
   expect(runs.owns(current, "computer:bot:x")).toBe(true);
 });
+
+// ── D4: a holder waiting on the person does not block the bot ─────────────
+it("goes on without the browser instead of waiting behind a run that is waiting for the person", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const waitingOnPerson = new Set<string>();
+  const policy = { resources: new Set(["browser:profile", "screen:bot:b"]), holderYields: (holder: { threadId: string }) => waitingOnPerson.has(holder.threadId) };
+  const routine = runs.admit("b", "routine", {}, ["browser:profile", "screen:bot:b"]);
+  waitingOnPerson.add("routine");
+  const chat = runs.admit("b", "chat", {}, ["workspace:/chat"]);
+  // At once, keeping what it already held.
+  await expect(runs.acquire(chat, ["browser:profile", "screen:bot:b"], undefined, undefined, policy)).resolves.toBe("yielded");
+  expect(runs.heldBy(chat)).toEqual(["workspace:/chat"]);
+  // The browser never had two drivers: the waiting run still owns it.
+  expect(runs.owns(routine, "browser:profile")).toBe(true);
+  expect(runs.owns(chat, "browser:profile")).toBe(false);
+});
+
+it("still waits behind a working holder, and stops waiting once that holder starts waiting for the person", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const waitingOnPerson = new Set<string>();
+  const policy = { resources: new Set(["browser:profile"]), holderYields: (holder: { threadId: string }) => waitingOnPerson.has(holder.threadId) };
+  runs.admit("b", "routine", {}, ["browser:profile"]);
+  const chat = runs.admit("b", "chat", {});
+  let result: unknown = "pending";
+  void runs.acquire(chat, ["browser:profile"], undefined, undefined, policy).then(value => { result = value; });
+  await Promise.resolve();
+  expect(result).toBe("pending");
+  expect(runs.waiting(chat)).toBe(true);
+  waitingOnPerson.add("routine");
+  runs.recheck();
+  await Promise.resolve();
+  expect(result).toBe("yielded");
+  expect(runs.waiting(chat)).toBe(false);
+});
+
+it("never yields a resource outside the policy: a needed screen is still waited for", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const policy = { resources: new Set(["browser:profile"]), holderYields: () => true };
+  const routine = runs.admit("b", "routine", {}, ["browser:profile", "screen:bot:b"]);
+  const chat = runs.admit("b", "chat", {});
+  let result: unknown = "pending";
+  void runs.acquire(chat, ["browser:profile", "screen:bot:b"], undefined, undefined, policy).then(value => { result = value; });
+  await Promise.resolve();
+  expect(result).toBe("pending");
+  runs.release(routine);
+  await Promise.resolve();
+  expect(result).toBe(true);
+  expect(runs.owns(chat, "screen:bot:b")).toBe(true);
+});

@@ -22,7 +22,7 @@ class FakeElement {
 }
 Object.assign(globalThis, { HTMLElement: FakeElement });
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
-const { WhatsNewCard, WHATS_NEW_CARD_COUNT, WHATS_NEW_TILES, WHATS_NEW_MORE } = await import("./WhatsNewDialog");
+const { WhatsNewCard, WHATS_NEW_CARD_COUNT, WHATS_NEW_TILES, WHATS_NEW_MORE, whatsNewArrowStep } = await import("./WhatsNewDialog");
 const { runWhatsNewAction } = await import("./WhatsNewHost");
 
 const source = readFileSync(new URL("./WhatsNewDialog.tsx", import.meta.url), "utf8");
@@ -77,12 +77,13 @@ describe("what's new cards", () => {
   });
 
   it("carries each card's buttons, as in the mockups", () => {
-    const buttons = (html: string) => [...html.matchAll(/<button[^>]*>([\s\S]*?)<\/button>/g)].map(([, inner]) => text(inner).trim());
+    // Pager dots are buttons too (three, no text), and come last.
+    const buttons = (html: string) => [...html.matchAll(/<button(?![^>]*data-whats-new-dot)[^>]*>([\s\S]*?)<\/button>/g)].map(([, inner]) => text(inner).trim());
     expect(buttons(render(0))).toEqual(["", "Open Backups", "Next"]);
     const highlights = buttons(render(1));
-    expect(highlights.slice(-2)).toEqual(["Next", "Got it"]);
-    expect(highlights.length).toBe(8);
-    expect(buttons(render(2))).toEqual(["Let's go"]);
+    expect(highlights.slice(-3)).toEqual(["Back", "Next", "Got it"]);
+    expect(highlights.length).toBe(9);
+    expect(buttons(render(2))).toEqual(["Back", "Let's go"]);
     expect(render(2)).toMatch(/<a href="https:\/\/github.com\/FerroxLabs\/murage-releases\/releases\/tag\/v0.1.60" target="_blank" rel="noopener noreferrer"[^>]*>Read the full release notes<\/a>/);
   });
 
@@ -203,4 +204,42 @@ describe("where the shortcuts go", () => {
     expect(went).toBe(false);
     expect(dispatch).not.toHaveBeenCalled();
   });
+
+  it("can go back from every card after the first, and every dot goes to its card (D11)", () => {
+    // Card 3 had no way back: its dots were a picture and the arrow keys did nothing.
+    const calls: string[] = [];
+    const card = (index: number) => WhatsNewCard({
+      index, releaseNotesUrl: "https://example.invalid", onNext: () => calls.push("next"), onClose: () => calls.push("close"), onAction: () => {},
+      onBack: () => calls.push("back"), onGo: (target: number) => calls.push(`go ${target}`),
+    });
+    const find = (node: unknown, match: (props: Record<string, unknown>) => boolean, found: Array<Record<string, unknown>> = []): Array<Record<string, unknown>> => {
+      if (Array.isArray(node)) { for (const child of node) find(child, match, found); return found; }
+      if (!node || typeof node !== "object") return found;
+      const element = node as { type?: unknown; props?: Record<string, unknown> };
+      if (typeof element.type === "function") return find((element.type as (props: unknown) => unknown)(element.props), match, found);
+      if (element.props) { if (match(element.props)) found.push(element.props); find(element.props.children, match, found); }
+      return found;
+    };
+    for (let index = 0; index < 3; index += 1) {
+      const dots = find(card(index), (props) => props["data-whats-new-dot"] !== undefined);
+      expect(dots.map((dot) => dot["aria-label"])).toEqual(["Card 1", "Card 2", "Card 3"]);
+      expect(dots.map((dot) => dot["aria-current"])).toEqual([0, 1, 2].map((dot) => (dot === index ? "step" : undefined)));
+      calls.length = 0;
+      for (const dot of dots) (dot.onClick as () => void)();
+      expect(calls).toEqual(["go 0", "go 1", "go 2"]);
+      const back = find(card(index), (props) => props.children === "Back");
+      expect(back.length, `card ${index + 1}`).toBe(index === 0 ? 0 : 1);
+      if (back[0]) { calls.length = 0; (back[0].onClick as () => void)(); expect(calls).toEqual(["back"]); }
+    }
+  });
+
+  it("pages with the arrow keys on every card", () => {
+    expect(whatsNewArrowStep("ArrowRight")).toBe(1);
+    expect(whatsNewArrowStep("ArrowLeft")).toBe(-1);
+    expect(whatsNewArrowStep("Tab")).toBe(0);
+    // The dialog applies the step with a clamp, the same on every card.
+    expect(source).toMatch(/const step = whatsNewArrowStep\(event\.key\);\s*if \(step !== 0\) \{ event\.preventDefault\(\); go\(index \+ step\); return; \}/);
+    expect(source).toContain("setIndex(Math.max(0, Math.min(target, WHATS_NEW_CARD_COUNT - 1)))");
+  });
 });
+

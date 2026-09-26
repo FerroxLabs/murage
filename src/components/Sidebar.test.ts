@@ -64,6 +64,22 @@ describe("plain-text sidebar message previews", () => {
     expect(sidebarBotPreview(bot(messages, { activeLeafId: "selected" }))).toBe("Selected");
   });
 
+  it("shows a failed turn as a plain sentence, never the engine's raw error (COPY)", () => {
+    const failed = (tool: NonNullable<Message["tool"]>) => message("", { kind: "activity", tool });
+    const raw = "error: API error (status 429 Too Many Requests): api_error: Available credit is low because other requests have temporarily reserved it.";
+    const rateLimited = sidebarBotPreview(bot([failed({ name: raw, ok: false, errorKind: "rate_limited" })]));
+    expect(rateLimited).toBe("The provider is limiting requests right now. Wait a moment, then retry.");
+    expect(sidebarBotPreview(bot([failed({ name: raw, ok: false })]))).toBe("This request hit a problem.");
+    expect(sidebarBotPreview(bot([failed({ name: "error: Flux Router needs credits", ok: false, providerError: { provider: "flux-router", kind: "credits", httpStatus: 402 } as never })])))
+      .toBe("Flux Router needs credits.");
+    expect(sidebarBotPreview(bot([failed({ name: "error: claude is not signed in", ok: false, setup: true })]))).toBe("This engine needs setup.");
+    const group = { messages: [failed({ name: raw, ok: false })], memberIds: ["preview-bot"] } as Group;
+    expect(sidebarGroupPreview(group, [])).toBe("This request hit a problem.");
+    for (const text of [rateLimited, sidebarGroupPreview(group, [])]) expect(text).not.toMatch(/\bstatus [45]\d\d\b|api_error|^error:/i);
+    // An ordinary tool activity still shows its name.
+    expect(sidebarBotPreview(bot([failed({ name: "Bash", ok: true })]))).toBe("Bash");
+  });
+
   it("strips team message Markdown while preserving the sender label", () => {
     const original = message("**Ready** with [notes](https://example.com)", { from: { botId: "preview-bot", name: "Kessler", color: "blue" } });
     const group = { messages: [original], memberIds: ["preview-bot"] } as Group;

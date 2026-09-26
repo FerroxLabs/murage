@@ -956,7 +956,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → House rules and About me",
     "where": "Murage docs → Features → House rules and About me",
     "url": "https://murage.app/docs/features/house-rules-and-about-me#who-reads-about-me",
-    "text": "Your bots read About me only on your own turns, when they are working for you. They never read it on turns started by other people (for example someone messaging your bot on Telegram, Slack or Discord), by webhooks, or by a message Murage cannot confirm came from you.\n\nTo leave it out for one bot, open What shapes (bot name) in that bot's settings and switch off the About you row."
+    "text": "Your bots read About me only on your own turns, when they are working for you. They never read it on turns started by other people (for example someone messaging your bot on Telegram, Slack or Discord), by webhooks, or by a message Murage cannot confirm came from you.\n\nTo leave it out for one bot, open What shapes (bot name) in that bot's settings and switch off the About me row."
   },
   {
     "id": "features/inbox#opening-the-inbox",
@@ -1264,7 +1264,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → What shapes a bot",
     "where": "Murage docs → Features → What shapes a bot",
     "url": "https://murage.app/docs/features/what-shapes-a-bot#what-shapes-a-bot",
-    "text": "Every bot's window has a section called What shapes (bot name), the third section in Bot settings. It lists everything that goes into that bot's instructions, grouped, in the order the model reads them. Desktop app only.\n\nThe groups are:\n- Your rules: House rules, which always come first.\n- Who it is: its description, personality, team brief, its notebook, and About you.\n- What it can use: its computer, connected apps, browser, web search and each skill.\n- This turn: routines, output folder, and the date and time."
+    "text": "Every bot's window has a section called What shapes (bot name), the third section in Bot settings. It lists everything that goes into that bot's instructions, grouped, in the order the model reads them. Desktop app only.\n\nThe groups are:\n- Your rules: House rules, which always come first.\n- Who it is: its description, personality, team brief, its notebook, and About me.\n- What it can use: its computer, connected apps, browser, web search and each skill.\n- This turn: routines, output folder, and the date and time."
   },
   {
     "id": "features/what-shapes-a-bot#switching-parts-off",
@@ -1274,7 +1274,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → What shapes a bot",
     "where": "Murage docs → Features → What shapes a bot",
     "url": "https://murage.app/docs/features/what-shapes-a-bot#switching-parts-off",
-    "text": "Parts you chose can be switched off from here: House rules, About you, the team brief, the Chief of Staff guide and each of the bot's own skills. A switched-off row says \"Off. (bot) doesn't read this now.\" Each row has View, and an Edit link that takes you to where the part is written (Edit in Settings for House rules and About you, Open in Skills for skills).\n\nRows with a lock are Murage's own rules. They say \"Always on\" and cannot be switched off."
+    "text": "Parts you chose can be switched off from here: House rules, About me, the team brief, the Chief of Staff guide and each of the bot's own skills. A switched-off row says \"Off. (bot) doesn't read this now.\" Each row has View, and an Edit link that takes you to where the part is written (Edit in Settings for House rules and About me, Open in Skills for skills).\n\nRows with a lock are Murage's own rules. They say \"Always on\" and cannot be switched off."
   },
   {
     "id": "features/what-shapes-a-bot#show-exactly-what-it-read",

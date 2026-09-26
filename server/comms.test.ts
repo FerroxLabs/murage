@@ -963,7 +963,7 @@ describe("comms e2e (fake ACP fleet)", () => {
       // The reload retired the helper's held turn (no turn.completed from the
       // disposed fleet) and the delegated prompt then ran on the new fleet.
       expect(helperBot.messages.some(
-        (m: any) => m.kind === "activity" && m.tool?.name === "error: turn interrupted because provider settings changed",
+        (m: any) => m.kind === "activity" && m.tool?.name === "stopped: engine settings changed while it was running, so Murage restarted its engines",
       )).toBe(true);
       expect(helperBot.messages.some(
         (m: any) => m.role === "user" && m.kind === "text" && m.text?.includes("[Delegated by @RetiredAsker"),

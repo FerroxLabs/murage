@@ -610,6 +610,7 @@
   "browserUnavailable.label": "Browser unavailable this turn: {reason}",
   "browserUnavailable.description": "The built-in browser could not be started, so this turn ran without browser tools. The next turn tries again.",
   "browserUnavailable.userChrome": "Your Chrome isn't reachable, so this turn ran without a browser. Open Chrome and turn on remote debugging at chrome://inspect/#remote-debugging.",
+  "browserUnavailable.held": "Another conversation with this bot is using the browser while it waits for your answer, so this turn ran without it. Answering that request lets the next turn use it.",
   "browserUnavailable.timedOut": "The browser didn't start in time, so this turn ran without it. It'll try again next turn.",
   "browserUnavailable.failed": "The browser couldn't start, so this turn ran without it. It'll try again next turn.",
   "browserUnavailable.details": "Details",

@@ -236,6 +236,7 @@ import { buildNotification, turnFailureBuzzes, type Notification } from "./notif
 import { createBackupRestartAdmission } from "./backup-restart-admission.ts";
 import {
   isEffortLevel,
+  type InstanceConfigMap,
   type ModelSelection,
   type ProviderInstance,
   type RequestOutcome,
@@ -262,7 +263,7 @@ import { channelProjectSystemLine, nextChannelProject } from "./project-channel.
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
-import { closeMessageDb, deleteThread as deleteThreadRows, openQuestionCardMessages, searchMessages } from "./message-db.ts";
+import { closeMessageDb, deleteThread as deleteThreadRows, openApprovalCardMessages, openQuestionCardMessages, searchMessages } from "./message-db.ts";
 import {
   QUESTION_NOTES,
   answersFromMessage,
@@ -490,7 +491,7 @@ import { mediaAssetsRoute } from "./media-assets.ts";
 import { resolveImageReferenceRoute } from "./image-reference-resolver.ts";
 import { turnOutcome, turnStopped, turnSucceeded, TURN_INTERRUPTED_NOTE, TURN_STOPPED_DESKTOP_ACTION_NOTE, TURN_STOPPED_NOTE } from "./turn-outcome.ts";
 import { hostStoppedActivityName, hostStoppedDisplayName, hostStoppedReason } from "../shared/host-stop.ts";
-import { browserUnavailableActivityName, browserUnavailableDisplayName, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
+import { BROWSER_HELD_FOR_ANSWER_REASON, browserUnavailableActivityName, browserUnavailableDisplayName, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
 import { LocalSetupError, localSetupFailureOf } from "./local-setup-failure.ts";
 import { createOutputPublisher, managedImageOutputPath, outputDestinationInstructions, publishAssistantImage } from "./output-publication.ts";
 import { sendDelegated } from "./route-delegation.ts";
@@ -1152,7 +1153,8 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
   }));
 }
 
-import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, RESOURCE_WAIT_TIMEOUT_MS, requireDirectThreadTarget, type DirectThreadRun, type ResourceBlocker } from "./independent-thread-runs.ts";
+import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, RESOURCE_WAIT_TIMEOUT_MS, requireDirectThreadTarget, type DirectThreadRun, type ResourceBlocker, type ResourceYield } from "./independent-thread-runs.ts";
+import type { TurnOwner } from "./turn-resources.ts";
 import { handoffCanStart, type HandoffAdmission } from "./handoff-admission.ts";
 import { admissionComputerClaims, computerResourceKeys, screenResourceKey, unusedComputerClaims, workspaceResource } from "./turn-resources.ts";
 type DirectTurnDispatchClaim = {
@@ -1175,8 +1177,26 @@ function botForDirectThread(botId:string,threadId:string):BotRecord|null {
  * visibly, on the task — while another thread holds them. The primitive never
  * waits while holding a claim; a Stop, provider reload or replaced generation
  * ends the wait as a setup cancellation, before any provider work exists. */
-async function acquireDirectTurnResources(run:DirectThreadRun<BotRecord>,resources:readonly string[],screenUse:"computer"|"browser",showHolder:boolean):Promise<void>{
-  if(!resources.length)return;
+/** A direct run whose conversation is waiting for the person (an approval or
+ * a question card is open). It keeps what it holds, but nobody should queue
+ * behind it for the browser (D4): it may wait for hours. */
+function holderWaitingOnPerson(holder:TurnOwner):boolean{
+  const run=directRuns.get(holder.threadId);
+  if(!run||run.generation!==holder.generation)return false;
+  return store.taskByThread(run.botId,holder.threadId)?.activity==="waiting-on-you";
+}
+/** The browser half of a turn's claims, as something the turn may go on
+ * without while its holder waits for the person. The screen is part of it
+ * only when the turn's computer does not need the screen itself. */
+function browserYield(browserResource:string,screenResource:string,computerClaims:readonly string[]):ResourceYield{
+  return {resources:new Set([browserResource,...(computerClaims.includes(screenResource)?[]:[screenResource])]),holderYields:holderWaitingOnPerson};
+}
+/** Resolves "yielded" when the turn goes on without `yieldPolicy`'s resources
+ * (see IndependentThreadRuns.acquire); everything else it asked for is still
+ * claimed before it returns. */
+async function acquireDirectTurnResources(run:DirectThreadRun<BotRecord>,resources:readonly string[],screenUse:"computer"|"browser",showHolder:boolean,yieldPolicy?:ResourceYield):Promise<"granted"|"yielded">{
+  if(!resources.length)return "granted";
+  const heldBefore=directRuns.heldBy(run);
   let waited=false;
   // Waiting for another thread's folder, computer or browser is not a stall.
   let releaseStallWait=()=>{};
@@ -1185,14 +1205,23 @@ async function acquireDirectTurnResources(run:DirectThreadRun<BotRecord>,resourc
     // watching; an 8am routine queued behind a thread that never lets go had
     // nobody to press Stop and simply never ran, never failed and never said
     // why. ResourceWaitTimeout leaves the queue as well as the promise.
-    const granted=await directRuns.acquire(run,resources,(blockers)=>{
+    const onWait=(blockers:readonly ResourceBlocker[])=>{
       waited=true;
       const waitingFor=resourceWaitFor(blockers,screenUse,showHolder);
       releaseStallWait();
       releaseStallWait=watchdog.waitingOn(run.threadId,waitingFor.resource,run.generation);
       store.setTaskWaiting(run.botId,run.threadId,waitingFor);
-    },RESOURCE_WAIT_TIMEOUT_MS);
+    };
+    const granted=await directRuns.acquire(run,resources,onWait,RESOURCE_WAIT_TIMEOUT_MS,yieldPolicy);
+    if(granted==="yielded"){
+      // A turn that yielded while queued had released what it held (it never
+      // waits holding); claim the rest again, now without the browser.
+      const rest=[...new Set([...heldBefore,...resources])].filter(resource=>!yieldPolicy!.resources.has(resource));
+      if(rest.length&&!await directRuns.acquire(run,rest,onWait,RESOURCE_WAIT_TIMEOUT_MS))throw new DirectTurnSetupCancelled("turn stopped while waiting for another thread");
+      return "yielded";
+    }
     if(!granted)throw new DirectTurnSetupCancelled("turn stopped while waiting for another thread");
+    return "granted";
   }finally{
     releaseStallWait();
     // Also on the timeout and on a refusal: a thread left showing "waiting for
@@ -1676,6 +1705,10 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
+// A run that starts waiting for the person releases nothing, so the queue is
+// looked at again whenever a bot's activity changes: whoever waits behind it
+// for the browser goes on without the browser instead (D4).
+store.onChange(change => { if (change.type === "bot") directRuns.recheck(); });
 const turnImages = new TurnImages(store, DATA_DIR);
 // Murage's own per-folder trust record (FUIGOTRUST1): what the human said
 // about a folder's AGENTS.md / .mcp.json / skills, remembered by workspace
@@ -5970,14 +6003,20 @@ async function startTurn(
         && shouldMountLocalComputer({ requested: undefined, hostPlatform: process.platform, providerSupportsLocal: mountsLocalComputer })
         && Boolean(readCuaConnection());
       const admittedComputerClaims = admissionComputerClaims({ botId: bot.id, wants, autoCloudPossible, autoHostScreenPossible });
+      // D4: when the bot's browser is held by another of its conversations
+      // that is waiting for the person, this turn goes on without the browser
+      // instead of queueing behind an answer that may take hours.
+      let browserYielded = false;
       {
+        const browserResource = browserHoldsScreen ? `browser:${unifiedBrowserKey(admissionBot!) ?? `guest:${bot.id}`}` : undefined;
         const expected = [
           ...(privateWorkspace && opts?.runOn !== "cloud" ? [workspaceResource(cwd ?? homedir())] : []),
           ...admittedComputerClaims,
-          ...(browserHoldsScreen
-            ? [`browser:${unifiedBrowserKey(admissionBot!) ?? `guest:${bot.id}`}`, screenResource] : []),
+          ...(browserResource ? [browserResource, screenResource] : []),
         ];
-        await acquireDirectTurnResources(run, expected, wants && wants !== "off" && wants !== "browser" ? "computer" : "browser", humanIsOwner);
+        const admitted = await acquireDirectTurnResources(run, expected, wants && wants !== "off" && wants !== "browser" ? "computer" : "browser", humanIsOwner,
+          browserResource ? browserYield(browserResource, screenResource, admittedComputerClaims) : undefined);
+        browserYielded = admitted === "yielded";
       }
       if (privateWorkspace && opts?.runOn !== "cloud") {
         if (!directTurnClaimExists(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before project admission");
@@ -6165,7 +6204,7 @@ async function startTurn(
           claimed: admittedComputerClaims,
           mountedKind: computerKind,
           previewRouted: previewCapture !== null,
-          browserHoldsScreen,
+          browserHoldsScreen: browserHoldsScreen && !browserYielded,
         });
         if (giveBack.length) directRuns.releaseResources(run, giveBack);
       }
@@ -6269,9 +6308,11 @@ async function startTurn(
         instance.adapter.capabilities.browserMcp === true
       ) {
         const selectedProfile = liveBot.browserProfile;
-        await acquireDirectTurnResources(run, [`browser:${unifiedBrowserKey(liveBot) ?? `guest:${bot.id}`}`, screenResource], computerKind ? "computer" : "browser", humanIsOwner);
+        const browserResource = `browser:${unifiedBrowserKey(liveBot) ?? `guest:${bot.id}`}`;
+        if (!browserYielded) browserYielded = await acquireDirectTurnResources(run, [browserResource, screenResource], computerKind ? "computer" : "browser", humanIsOwner,
+          browserYield(browserResource, screenResource, computerKind ? computerResources(computerKind) : [])) === "yielded";
         if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before dispatch");
-        const minted = await browserIntegration(bot.id, selectedProfile, threadId, () => {
+        const minted = browserYielded ? { unavailable: BROWSER_HELD_FOR_ANSWER_REASON } : await browserIntegration(bot.id, selectedProfile, threadId, () => {
           const current = store.bot(bot.id);
           return (
             directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId) &&
@@ -7648,6 +7689,24 @@ function rememberHostComputerConsent(botId: string, consent: "allowed" | "declin
     expired += 1;
   }
   if (expired) console.log(`questions: marked ${expired} unanswered question(s) from a previous run as expired`);
+}
+
+// The same for approvals: the ask behind each open card died with the
+// previous process, so its run is gone and Allow once can never reach it.
+// The card stays answerable in its conversation (answerRequest then says the
+// run ended, and offers Run again for a routine), but it is marked so the
+// Inbox and tray stop counting it as waiting (D7).
+{
+  let retired = 0;
+  for (const { threadId, message } of openApprovalCardMessages()) {
+    const current = store.messagesFor(threadId).find((candidate) => candidate.id === message.id);
+    if (!current?.card) continue;
+    const card = current.card;
+    if (!card.requestId || card.answered || card.dismissed || card.orphaned || card.routineRequest || card.skillRequest || isQuestionCard(card)) continue;
+    store.patchMessage(threadId, current.id, { card: { ...card, orphaned: true } });
+    retired += 1;
+  }
+  if (retired) console.log(`approvals: ${retired} approval(s) left open by a previous run no longer count as waiting`);
 }
 
 // Handoffs a previous process queued but never ran: the source turn is
@@ -9806,9 +9865,48 @@ function persistMcpServers(next: Record<string, unknown>): void {
   cfg.mcpServers = next;
 }
 
+/** Why a turn the host ended for an engine change stopped. Plain sentences
+ * behind "Stopped:" (shared/host-stop.ts), never the red error card with its
+ * "choose another configured model in Provider settings" advice (D3). */
+/** "Stopped: Murage closed while this was running" (beginAppClose). */
+const APP_CLOSED_STOP_REASON = "Murage closed while this was running";
+const ENGINE_TURNED_OFF_STOP_REASON = "the engine it was using was turned off or changed in Settings";
+const ENGINE_SETTINGS_STOP_REASON = "engine settings changed while it was running, so Murage restarted its engines";
+
+/** The instance ids whose resolved configuration differs between two
+ * snapshots of instanceConfigs(cfg): changed, added or removed. */
+function changedInstanceIds(before: InstanceConfigMap, after: InstanceConfigMap): Set<string> {
+  const changed = new Set<string>();
+  for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (JSON.stringify(before[id] ?? null) !== JSON.stringify(after[id] ?? null)) changed.add(id);
+  }
+  return changed;
+}
+
+/** A turn the host ended because its engine went away: the conversation says
+ * so in a plain sentence, its approvals leave the Inbox (D7), and the routine
+ * run it belonged to ends with the same truth. The routine is failed BEFORE
+ * the cards close, so a harness card held for the run cannot start a
+ * continuation turn on the engine being retired. */
+function retireTurnForEngineChange(threadId: string, botId: string, reason: string): void {
+  routines?.failThread(threadId, `The run stopped because ${reason}.`);
+  closeOpenApprovals(threadId);
+  noteHostStoppedTurn(threadId, botId, reason);
+}
+
 /** Rebuild the provider fleet after a config change so new keys take
- * effect without a server restart (kills any in-flight turns). */
-async function reloadProviders() {
+ * effect without a server restart.
+ *
+ * With `scope`, only those engines are rebuilt, and only the turns running on
+ * them end (D3): turning off an engine nobody is using must not kill a routine
+ * on another engine that is waiting for the person. Work on a scoped engine
+ * that cannot be attributed to a single direct run (a room turn) falls back
+ * to the whole-fleet rebuild, which ends every in-flight turn. */
+async function reloadProviders(scope?: ReadonlySet<string>) {
+  if (scope) {
+    if (scope.size === 0) return;
+    if (!scopedReloadUnsafe(scope)) return reloadScopedProviders(scope);
+  }
   providerFleetReady = false;
   const retiringDirect=store.bots.flatMap(bot=>directRuns.forBot(bot.id));
   const retiringProjects = projectTurnLeases.generations();
@@ -9831,7 +9929,7 @@ async function reloadProviders() {
     finalizeDelegationWatch(run.threadId,false,"","Delegated turn did not finish: provider settings changed");
     coordinationSlots.get(run.threadId)?.();
     store.setTaskActivity(run.botId,run.threadId,"idle");
-    store.appendMessage(run.threadId,{role:"bot",kind:"activity",tool:{name:"error: turn interrupted because provider settings changed",ok:false}});
+    retireTurnForEngineChange(run.threadId,run.botId,ENGINE_SETTINGS_STOP_REASON);
     retryDelegationsWaitingOn(run.botId);
   }
   await registry.load(instanceConfigs(cfg));
@@ -9854,16 +9952,77 @@ async function reloadProviders() {
       "",
       "Delegated turn did not finish: provider settings changed",
     );
-    store.appendMessage(b.threadId, {
-      role: "bot",
-      kind: "activity",
-      tool: { name: "error: turn interrupted: provider settings changed", ok: false },
-    });
+    retireTurnForEngineChange(b.threadId, b.id, ENGINE_SETTINGS_STOP_REASON);
     store.setActivity(b.id, "idle");
     retryDelegationsWaitingOn(b.id);
   }
   // killed turns settle here without a turn.completed event, so anything
   // queued behind them drains now — onto the freshly loaded fleet
+  drainQueuedSends();
+  drainConnectorResumes();
+  drainSecretResumes();
+  drainTeamIncidents();
+}
+
+/** The instance a direct run dispatched on (its detached routing snapshot). */
+function directRunInstanceId(run: DirectThreadRun<BotRecord>): string {
+  return run.snapshot.modelSelection.instanceId;
+}
+
+/** True when engine work on a scoped instance is not a direct run the scoped
+ * reload can end on its own: a room turn, or a bot marked busy with no direct
+ * run to explain it. Those keep the whole-fleet rebuild. */
+function scopedReloadUnsafe(scope: ReadonlySet<string>): boolean {
+  for (const bot of store.bots) {
+    const selections = new Set([bot.modelSelection.instanceId, ...(bot.tasks ?? []).flatMap(task => {
+      const selected = (task as { modelSelection?: ModelSelection }).modelSelection?.instanceId;
+      return selected ? [selected] : [];
+    })]);
+    if (![...selections].some(id => scope.has(id))) continue;
+    if (activeGroupTurnForBot(bot.id)) return true;
+    const runs = directRuns.forBot(bot.id);
+    const busyTasks = (bot.tasks ?? []).filter(task => task.busy);
+    if (bot.busy && busyTasks.length === 0) return true;
+    if (busyTasks.some(task => !runs.some(run => run.threadId === task.threadId))) return true;
+  }
+  return false;
+}
+
+/** reloadProviders(scope): rebuild only the scoped engines. Every turn on
+ * another engine keeps running, its browser, internal capabilities, folder
+ * leases and approval cards untouched. */
+async function reloadScopedProviders(scope: ReadonlySet<string>) {
+  providerFleetReady = false;
+  try {
+    const retiringDirect = store.bots.flatMap(bot => directRuns.forBot(bot.id)).filter(run => scope.has(directRunInstanceId(run)));
+    const retiringThreads = new Set(retiringDirect.map(run => run.threadId));
+    const retiringProjects = projectTurnLeases.generationsForThreads(retiringThreads);
+    for (const threadId of retiringThreads) {
+      revokeInternalThread(threadId);
+      await releaseBrowserCapabilityForThread(threadId);
+    }
+    bus.detach(scope);
+    try {
+      await registry.reload(scope, instanceConfigs(cfg));
+    } finally {
+      projectTurnLeases.disposed(retiringProjects);
+      bus.attach(registry.instances().filter(instance => scope.has(instance.instanceId)));
+    }
+    for (const run of retiringDirect) if (directRuns.current(run)) {
+      directRuns.release(run); clearDirectTurnDispatch(run.threadId, run.generation);
+      if (screenPollers.get(run.botId)?.threadId === run.threadId) stopScreenPoller(run.botId);
+      releaseLocalVmThread(run.threadId);
+      if (activeVpsThreads.get(run.botId) === run.threadId) activeVpsThreads.delete(run.botId);
+      recordMemorySettlement(run.threadId, run.generation, "interrupted");
+      finalizeDelegationWatch(run.threadId, false, "", "Delegated turn did not finish: its engine was turned off or changed");
+      coordinationSlots.get(run.threadId)?.();
+      store.setTaskActivity(run.botId, run.threadId, "idle");
+      retireTurnForEngineChange(run.threadId, run.botId, ENGINE_TURNED_OFF_STOP_REASON);
+      retryDelegationsWaitingOn(run.botId);
+    }
+  } finally {
+    providerFleetReady = true;
+  }
   drainQueuedSends();
   drainConnectorResumes();
   drainSecretResumes();
@@ -15990,14 +16149,16 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
       if (bot && (directThreadBusy(bot.id,m[2]) || routines!.isActiveThread(m[2]))) {
-        return json(res, 409, { error: "this task is running: stop it first" });
+        return json(res, 409, { error: "This conversation is still working. Stop it first, then delete it." });
       }
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
       const threadId = m[2];
       const { result: updated, report } = bot
         ? await runConversationDeletion(conversationDeletions, botDeletionInput(bot, [threadId]), () => store.deleteTask(bot.id, threadId), () => retireEngineSessions([threadId]))
         : { result: null, report: null };
-      if (!updated || !report) return json(res, 400, { error: "a bot keeps at least one task" });
+      // The store leaves a fresh conversation when this was the last one, so
+      // a null result now only means the bot or the conversation is gone.
+      if (!updated || !report) return json(res, 404, { error: "That conversation is already gone." });
       revokeInternalThread(m[2]);
       taskAllowances.clearThread(m[2]);
       turnCwdByThread.delete(m[2]);
@@ -16680,12 +16841,20 @@ const server = createServer(async (req, res) => {
       try {
         const result = enablement ? withInstanceEnabled(cfg, instancePatch[1], body.enabled) : withInstanceCli(cfg, instancePatch[1], body.cli);
         if (!result.ok) return json(res, 404, { error: `unknown instance "${instancePatch[1]}"` });
+        const previousInstances = instanceConfigs(cfg);
         // persist the whole instances map this rebuild produced — a fresh
         // saveConfig({instances}) merge would re-derive defaults identically,
         // but writing the resolved map keeps disk and runtime in lockstep
         saveConfig({ instances: result.config.instances });
         Object.assign(cfg, loadConfig());
-        await reloadProviders();
+        // Only the engines this change touched are rebuilt: "I don't use
+        // Droid" must not end a routine on Fuigo that is waiting for an
+        // answer (D3). The named engine is always among them, even when the
+        // write repeats its current value: a write to an engine retires the
+        // turns on it and their authority, as it always has.
+        const scope = changedInstanceIds(previousInstances, instanceConfigs(cfg));
+        scope.add(instancePatch[1]);
+        await reloadProviders(scope);
         // rescan BEFORE describe(): the response's cliCandidates are computed
         // from the memoized PATH, so resetting after would answer this request
         // with the pre-reset cache
@@ -17680,8 +17849,56 @@ const gracefulShutdown = createGracefulShutdown({
   exit: (code) => process.exit(code),
 });
 
+/** Every conversation with engine work in flight, and the bot doing it: the
+ * direct runs, busy tasks, room turns, and a bot busy with no task to show
+ * for it. */
+function threadsWithWorkInFlight(): Map<string, string> {
+  const threads = new Map<string, string>();
+  for (const bot of store.bots) {
+    for (const run of directRuns.forBot(bot.id)) threads.set(run.threadId, bot.id);
+    const busyTasks = (bot.tasks ?? []).filter(task => task.busy);
+    for (const task of busyTasks) threads.set(task.threadId, bot.id);
+    const room = activeGroupTurnForBot(bot.id);
+    if (room) threads.set(room.threadId, bot.id);
+    else if (bot.busy && busyTasks.length === 0) threads.set(bot.threadId, bot.id);
+  }
+  return threads;
+}
+
+/** Murage is closing (the app quit, the OS logged out, a signal). Say so in
+ * every conversation whose work this ends, BEFORE the engines are stopped:
+ * their children then die with SIGTERM (exit 143) or a closed transport, and
+ * that is not an engine failure to show as "fuigoAgent exited 143 …" with
+ * "choose another configured model in Provider settings" (D6). Anything a
+ * dying turn still writes as an error is dropped where the closing note was
+ * already written, and becomes that note anywhere else. */
+let appClosing = false;
+function beginAppClose(): void {
+  if (appClosing) return;
+  appClosing = true;
+  const noted = new Set<string>();
+  const noteClosing = (threadId: string, botId: string) => {
+    noted.add(threadId);
+    noteHostStoppedTurn(threadId, botId, APP_CLOSED_STOP_REASON);
+  };
+  try {
+    for (const [threadId, botId] of threadsWithWorkInFlight()) noteClosing(threadId, botId);
+  } catch (error) {
+    console.warn("Could not note the conversations Murage closed:", error instanceof Error ? error.message : String(error));
+  }
+  store.setMessageRewrite((threadId, message) => {
+    if (message.role !== "bot" || message.kind !== "activity" || !message.tool?.name.startsWith("error:")) return message;
+    if (noted.has(threadId)) return null;
+    noted.add(threadId);
+    return { role: "bot", kind: "activity", ...(message.from ? { from: message.from } : {}), tool: { name: hostStoppedActivityName(APP_CLOSED_STOP_REASON), ok: false } };
+  });
+}
+
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, gracefulShutdown);
+  process.on(signal, () => {
+    beginAppClose();
+    gracefulShutdown();
+  });
 }
 
 /** The scheduler has already pinned instructions and assigned this thread. */

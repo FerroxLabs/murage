@@ -81,67 +81,95 @@ export class ProviderRegistry {
    * load-bearing for selection. Boot now costs the SLOWEST engine, not the
    * sum. Measured 2026-09-22. */
   async load(configs: InstanceConfigMap) {
-    const resolve = async ([instanceId, entry]: [string, InstanceConfigMap[string]]): Promise<[string, RegistryEntry]> => {
-      const driver = this.driversByKind.get(entry.driver);
-      // Disabled is an admission barrier, not merely metadata on an already
-      // constructed adapter. Factory/catalog discovery can spawn native CLIs.
-      if (entry.enabled === false) {
-        return [instanceId, {
-          instanceId,
-          shadow: {
-            instanceId, driverKind: entry.driver, displayName: entry.displayName,
-            cli: cliOfRaw(entry.config), shadow: true, disabled: true,
-            reason: "This engine is disabled. Enable it before starting new work.",
-          },
-        }];
-      }
-      if (!driver) {
-        return [instanceId, {
-          instanceId,
-          shadow: {
-            instanceId,
-            driverKind: entry.driver,
-            displayName: entry.displayName,
-            cli: cliOfRaw(entry.config),
-            shadow: true,
-            reason: `unknown driver "${entry.driver}": kept as configured, unavailable here`,
-          },
-        }];
-      }
-      try {
-        const config = entry.config === undefined ? driver.defaultConfig() : driver.decodeConfig(entry.config);
-        // Override detection is on the RAW config, never the decoded one:
-        // decodeConfig fills in the driver default ("claude", "codex", …),
-        // so reading `cli` there would flag every instance as overridden.
-        const rawCli = cliOfRaw(entry.config);
-        if (rawCli) this.cliByInstance.set(instanceId, rawCli);
-        const live = await driver.create({
-          instanceId,
-          displayName: entry.displayName ?? driver.metadata.displayName,
-          environment: entry.environment ?? {},
-          enabled: entry.enabled ?? true,
-          config,
-        });
-        const decorated = decorateMemoryInstance(live);
-        this.catalogRefreshes.set(decorated, { attemptedAt: this.now() });
-        return [instanceId, { instanceId, live: decorated }];
-      } catch (e) {
-        return [instanceId, {
-          instanceId,
-          shadow: {
-            instanceId,
-            driverKind: entry.driver,
-            displayName: entry.displayName ?? driver.metadata.displayName,
-            cli: cliOfRaw(entry.config),
-            shadow: true,
-            reason: e instanceof Error ? e.message : String(e),
-          },
-        }];
-      }
-    };
     // Discovered together, recorded in configuration order.
-    for (const [instanceId, resolved] of await Promise.all(Object.entries(configs).map(resolve))) {
+    for (const [instanceId, resolved] of await Promise.all(Object.entries(configs).map(entry => this.resolveEntry(entry)))) {
       this.byId.set(instanceId, resolved);
+    }
+  }
+
+  /** Rebuild only these instances, leaving every other engine (and the turns
+   * running on it) untouched. Turning off an engine nobody is using must not
+   * kill a turn on another engine that is waiting for the person (D3): the
+   * whole-fleet rebuild in disposeAll + load did exactly that.
+   *
+   * Each named instance is disposed, then re-created from `configs`; one that
+   * is no longer configured is dropped. A kept id keeps its position in the
+   * map, because the first entry is load-bearing for selection. */
+  async reload(instanceIds: ReadonlySet<InstanceId>, configs: InstanceConfigMap) {
+    const retiring = [...instanceIds].flatMap(id => {
+      const live = this.byId.get(id)?.live;
+      return live ? [live] : [];
+    });
+    await Promise.allSettled(retiring.map(instance => this.catalogRefreshes.get(instance)?.pending));
+    const disposed = await Promise.allSettled(retiring.map(instance => instance.dispose()));
+    for (const id of instanceIds) this.cliByInstance.delete(id);
+    const wanted = Object.entries(configs).filter(([id]) => instanceIds.has(id));
+    const resolved = new Map(await Promise.all(wanted.map(entry => this.resolveEntry(entry))));
+    for (const id of instanceIds) {
+      const next = resolved.get(id);
+      if (next) this.byId.set(id, next);
+      else this.byId.delete(id);
+    }
+    const failed = disposed.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed) throw failed.reason;
+  }
+
+  private async resolveEntry([instanceId, entry]: [string, InstanceConfigMap[string]]): Promise<[string, RegistryEntry]> {
+    const driver = this.driversByKind.get(entry.driver);
+    // Disabled is an admission barrier, not merely metadata on an already
+    // constructed adapter. Factory/catalog discovery can spawn native CLIs.
+    if (entry.enabled === false) {
+      return [instanceId, {
+        instanceId,
+        shadow: {
+          instanceId, driverKind: entry.driver, displayName: entry.displayName,
+          cli: cliOfRaw(entry.config), shadow: true, disabled: true,
+          reason: "This engine is disabled. Enable it before starting new work.",
+        },
+      }];
+    }
+    if (!driver) {
+      return [instanceId, {
+        instanceId,
+        shadow: {
+          instanceId,
+          driverKind: entry.driver,
+          displayName: entry.displayName,
+          cli: cliOfRaw(entry.config),
+          shadow: true,
+          reason: `unknown driver "${entry.driver}": kept as configured, unavailable here`,
+        },
+      }];
+    }
+    try {
+      const config = entry.config === undefined ? driver.defaultConfig() : driver.decodeConfig(entry.config);
+      // Override detection is on the RAW config, never the decoded one:
+      // decodeConfig fills in the driver default ("claude", "codex", …),
+      // so reading `cli` there would flag every instance as overridden.
+      const rawCli = cliOfRaw(entry.config);
+      if (rawCli) this.cliByInstance.set(instanceId, rawCli);
+      const live = await driver.create({
+        instanceId,
+        displayName: entry.displayName ?? driver.metadata.displayName,
+        environment: entry.environment ?? {},
+        enabled: entry.enabled ?? true,
+        config,
+      });
+      const decorated = decorateMemoryInstance(live);
+      this.catalogRefreshes.set(decorated, { attemptedAt: this.now() });
+      return [instanceId, { instanceId, live: decorated }];
+    } catch (e) {
+      return [instanceId, {
+        instanceId,
+        shadow: {
+          instanceId,
+          driverKind: entry.driver,
+          displayName: entry.displayName ?? driver.metadata.displayName,
+          cli: cliOfRaw(entry.config),
+          shadow: true,
+          reason: e instanceof Error ? e.message : String(e),
+        },
+      }];
     }
   }
 

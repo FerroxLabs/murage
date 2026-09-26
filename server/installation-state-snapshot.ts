@@ -7,17 +7,15 @@ import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
+import { classifyDataDirEntry, DATA_DIR_RECORDS } from "./data-dir-inventory.ts";
 
-const JSON_COMPONENTS = new Set(["config.json", "bots.json", "groups.json", "routines.json", "calendar-calls.json", "webhooks.json", "delegations.json", "delegation-receipts.json", "section-contexts.json", "browser-cleanups.json"]);
-// Present only in some installations: queued-messages.json exists only while a
-// message waits behind a turn, and setup.json only once first run has begun.
-// Copied when present, never reported missing. Kept in step with
-// installation-fidelity-snapshot.ts applicationRoots.
-// 0.1.60 owner state: the What's New pages already shown (whats-new.ts), the
-// announcements already seen or dismissed (announcements.ts) and the owner's
-// House Rules text and switch (house-rules.ts). Copied as written.
-const OPTIONAL_JSON_COMPONENTS = new Set(["setup.json", "queued-messages.json", "whats-new.json", "announcements.json", "house-rules.md", "house-rules.json"]);
-const DIRECTORY_COMPONENTS = new Set(["attachments", "artifact-files", "workspaces", "skills", "skill-state", "checkpoints", "events"]);
+// What is copied is decided by data-dir-inventory.ts, the one list of every
+// top-level name Murage writes: required records are validated and
+// projected, optional owner files and owner folders are copied as written,
+// and everything else is left out here (the fidelity inventory refuses a
+// name that list does not know).
+const JSON_COMPONENTS = new Set(DATA_DIR_RECORDS);
+const isProjectedRecord = (path: string) => JSON_COMPONENTS.has(path) || classifyDataDirEntry(path)?.backup === "record";
 const SAFE_CONFIG_FIELDS = ["profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications"] as const;
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return value !== null && typeof value === "object" && !Array.isArray(value); }
@@ -206,7 +204,7 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       let output: number | undefined;
       try {
         output = openSync(to, "wx", 0o600);
-        if (JSON_COMPONENTS.has(path) || /^messages-[\w-]+\.json$/.test(path)) {
+        if (!path.includes("/") && !path.includes("\\") && isProjectedRecord(path)) {
           if (before.size > 64 * 1024 ** 2) fail("JSON_COMPONENT_TOO_LARGE");
           let value: unknown;
           try { value = JSON.parse(readFileSync(input, "utf8")); } catch { fail("INVALID_JSON_COMPONENT"); }
@@ -266,8 +264,9 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       for (const name of names) {
         if (name === "messages.db" || name === "messages.db-wal" || name === "messages.db-shm") continue;
         if (!safePart(name)) fail("NONPORTABLE_SNAPSHOT_PATH");
-        if (JSON_COMPONENTS.has(name) || OPTIONAL_JSON_COMPONENTS.has(name) || /^messages-[\w-]+\.json$/.test(name) || /^decisions\.ndjson(?:\.1)?$/.test(name)) copy(name);
-        else if (DIRECTORY_COMPONENTS.has(name)) walk(name);
+        const kind = classifyDataDirEntry(name)?.backup;
+        if (kind === "record" || kind === "owner-file") copy(name);
+        else if (kind === "owner-folder") walk(name);
         else omission(name, "Cache, native diagnostics, runtime state or unrecognized component excluded");
       }
       for (const name of JSON_COMPONENTS) if (!names.includes(name)) manifest.missing.push(name);

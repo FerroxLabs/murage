@@ -7,9 +7,17 @@ import { ZipFile } from "yazl";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { portableArchivePath, type ArchiveLimits } from "./installation-archive.ts";
 import { InstallationSnapshotError, withOfflineInstallation } from "./installation-database-snapshot.ts";
+import { classifyDataDirEntry, DATA_DIR_RECORDS } from "./data-dir-inventory.ts";
 
-const RECORDS = new Set(["config.json", "bots.json", "groups.json", "routines.json", "calendar-calls.json", "webhooks.json", "delegations.json", "delegation-receipts.json", "section-contexts.json", "browser-cleanups.json", "messages.db", "messages.db-wal", "messages.db-shm"]);
-const DIRECTORIES = new Set(["attachments", "artifact-files", "workspaces", "skills", "skill-state", "checkpoints", "events"]);
+// A damaged installation cannot take a consistent SQLite snapshot, so the
+// database and its sidecars are copied raw beside every name a backup would
+// restore (data-dir-inventory.ts, the one list of top-level names).
+const RECORDS = new Set([...DATA_DIR_RECORDS, "messages.db", "messages.db-wal", "messages.db-shm"]);
+const preserved = (name: string) => {
+  if (RECORDS.has(name)) return true;
+  const kind = classifyDataDirEntry(name)?.backup;
+  return kind === "record" || kind === "owner-file" || kind === "owner-folder";
+};
 const fail = (code: string): never => { throw new InstallationSnapshotError(code); };
 const same = (a: Stats, b: Stats) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
 
@@ -112,7 +120,7 @@ export async function writeInstallationDamagedExport(dataDir: string, destinatio
       for (const name of names) {
         if (!portableArchivePath(name) || folded.has(name.toLowerCase())) fail("NONPORTABLE_SNAPSHOT_PATH");
         folded.add(name.toLowerCase());
-        if (RECORDS.has(name) || DIRECTORIES.has(name) || /^messages-[\w-]+\.json$/.test(name) || /^decisions\.ndjson(?:\.1)?$/.test(name)) copy(name);
+        if (preserved(name)) copy(name);
         else {
           if (++entries > maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
           manifest.omitted.push({ path: name, reason: ["vm-home", "vm-homes"].includes(name) ? "VM workspace not quiesced; includes native browser credentials" : "Native credential home, connection realm, cache or unrecognized component excluded" });

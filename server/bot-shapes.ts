@@ -43,7 +43,7 @@ interface CatalogueEntry {
 export const SHAPE_CATALOGUE: Record<string, CatalogueEntry> = {
   "house-rules": { group: "rules", label: "House rules", what: "Your rules for every bot. They come first.", switchable: true, editor: "houseRules" },
   // The owner's own profile (about-me.ts); standing-context.ts hands it only to owner-audience turns.
-  "about-me": { group: "rules", label: "About you", what: "What you wrote about yourself in Settings. Bots get it only when they are talking with you.", switchable: true, editor: "aboutMe" },
+  "about-me": { group: "rules", label: "About me", what: "What you wrote about yourself in Settings. Bots get it only when they are talking with you.", switchable: true, editor: "aboutMe" },
   persona: { group: "identity", label: "Description and personality", what: "Its name, role, description and personality.", editor: "identity" },
   room: { group: "identity", label: "This room", what: "Who is in the room, its shared instructions and its project.", locked: true },
   computer: { group: "tools", label: "Computer", what: "How to use the computer it has this turn.", locked: true },

@@ -5,7 +5,7 @@ import type { OptionCardData } from "@/state/store";
 import type { InboxItem, InboxLink, InboxPage, InboxStateUpdate, InboxView, RoutineRollup } from "../../shared/inbox";
 import { InboxRequestAnswer, inlineAnswerKind, requestHeadline } from "./InboxRequest";
 import { useSetupView } from "./FirstRunChrome";
-import { signedOutEngineRows, withSignedOutEngines } from "@/lib/signed-out-engines";
+import { inboxTabCounts, signedOutEngineRows } from "@/lib/signed-out-engines";
 import { usePageVisible } from "@/lib/page-visible";
 
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
@@ -321,7 +321,9 @@ export function Inbox({ onOpen, onClose, refreshKey = 0, initialView = "decision
     .filter(engine => !gone.has(`engine:${engine.id}`));
   // The counts the tabs read, with the live rows folded in. Both numbers or
   // neither: the three segments sum to the umbrella.
-  const shown = result ? withSignedOutEngines(result, signedOut) : null;
+  // Every tab counts every signed-out engine, not only the tabs that list
+  // them (inboxTabCounts), so the numbers stay put when the tab changes.
+  const shown = inboxTabCounts(result, setupView, gone);
   const ownRows = [...restoreRows, ...signedOut];
   const dismissible = list.filter(item => item.dismissible);
   const clearable = list.filter(item => item.clearable);

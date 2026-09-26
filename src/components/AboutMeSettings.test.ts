@@ -38,9 +38,9 @@ describe("About me settings", () => {
   });
 
   it("is edited from its row in What shapes a bot", () => {
-    const row: ShapeRow = { id: "about-me", group: "rules", label: "About you", what: "What you wrote.", text: "x", switchable: true, locked: false, on: true, editor: "aboutMe" };
+    const row: ShapeRow = { id: "about-me", group: "rules", label: "About me", what: "What you wrote.", text: "x", switchable: true, locked: false, on: true, editor: "aboutMe" };
     const html = renderToStaticMarkup(createElement(BotShapesView, { view: { botId: "b", botName: "Moss", team: { section: "", label: "" }, rows: [row], lastTurn: null }, busy: null, error: "", onToggle: () => {}, onEdit: () => {} }));
-    expect(html).toContain('aria-label="Use About you"');
+    expect(html).toContain('aria-label="Use About me"');
     expect(html).toContain("Edit in Settings");
   });
 });

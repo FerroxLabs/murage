@@ -27,7 +27,7 @@ export function UsageSection() {
   const billings = new Set(rows.map((r) => r.billing));
 
   return (
-    <Card title="Usage" subtitle="Tokens and cost per bot, added up from every settled turn. Only engines that report a price show one.">
+    <Card title="Usage" subtitle="Tokens and cost per bot, added up from every settled turn. An engine that does not report its cost shows Unknown.">
       {rows.length === 0 ? (
         <div className="text-[13px] text-ink-secondary">Nothing spent yet. Figures appear after a bot's first turn.</div>
       ) : (
