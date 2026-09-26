@@ -231,6 +231,36 @@ interface Word {
 const HEREDOC_DATA = /^(cat|tee|head|tail|wc|sort|uniq|grep|egrep|fgrep|rg|jq|yq|pbcopy|base64|sed|awk|cut|tr|column|fold|less|more|diff|printf|echo|git|gh)$/;
 const SHELLS = /^(ba|z|da|k|fi)?sh$/;
 
+/** The end (exclusive) of the substitution starting at `start` (`$(` or a
+ * backtick) when it holds one plain command: words, quotes and `$NAME` /
+ * `${NAME}` only. Undefined for anything else (a separator, a redirect, a
+ * nested substitution, a line break, an unclosed quote), which is left to
+ * the word-by-word reading. */
+function simpleSubstitution(line: string, start: number): number | undefined {
+  const tick = line[start] === "`";
+  let i = start + (tick ? 1 : 2);
+  let quote: "'" | '"' | undefined;
+  for (; i < line.length; i += 1) {
+    const ch = line[i]!;
+    if (quote === "'") { if (ch === "'") quote = undefined; continue; }
+    if (ch === "\\") { if (line[i + 1] === "\n") return undefined; i += 1; continue; }
+    if (ch === "\n") return undefined;
+    if (ch === "`") return tick && !quote ? i + 1 : undefined;
+    if (ch === "$" && line[i + 1] === "(") return undefined;
+    if (ch === "$" && line[i + 1] === "{") {
+      const close = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/.exec(line.slice(i));
+      if (!close) return undefined;
+      i += close[0].length - 1;
+      continue;
+    }
+    if (quote === '"') { if (ch === '"') quote = undefined; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; continue; }
+    if (ch === ")" && !tick) return i + 1;
+    if (/[;|&<>(){}]/.test(ch)) return undefined;
+  }
+  return undefined;
+}
+
 /** Split a shell line into simple commands of words. Deliberately small: it
  * understands quotes and the usual separators, and marks anything it cannot
  * know (expansion, substitution) instead of guessing. `complex` is set when
@@ -266,6 +296,21 @@ function splitShell(line: string): { commands: Word[][]; complex: boolean; scan:
   };
   for (let i = 0; i < line.length; i += 1) {
     const ch = line[i]!;
+    if ((!quote || quote === '"') && ((ch === "$" && line[i + 1] === "(") || ch === "`")) {
+      // A substitution with nothing but one plain command in it
+      // (`$(mktemp ./scratch.XXXXXX)`) is one word, spaces and quotes
+      // included, so `tmp=$(mktemp …)` is read as the assignment it is. Any
+      // other substitution is split as before, so a command after a `;` in it
+      // is still seen as a command.
+      const end = simpleSubstitution(line, i);
+      if (end !== undefined) {
+        word += line.slice(i, end);
+        dynamic = true;
+        inWord = true;
+        i = end - 1;
+        continue;
+      }
+    }
     if (quote) {
       if (ch === quote) quote = undefined;
       else {
@@ -447,35 +492,112 @@ function expand(word: Word, vars: ReadonlyMap<string, string>): Word {
   return { text, dynamic: unknown || /[$`]/.test(text) };
 }
 
+/** The one plain command inside a whole-word substitution (`$(…)` or
+ * backticks), as the text between its delimiters. */
+function substitutionBody(value: string): string | undefined {
+  const m = /^\$\(([\s\S]*)\)$/.exec(value) ?? /^`([\s\S]*)`$/.exec(value);
+  if (!m || simpleSubstitution(value, 0) !== value.length) return undefined;
+  return m[1]!;
+}
+
+/** Where `mktemp …` puts its file, as mktemp prints it: relative to the
+ * current folder when the template or `-p` folder is relative (the shell
+ * then reads that relative to wherever the later command runs). `-p`,
+ * `--tmpdir[=DIR]` and `-t` are read as GNU and BSD mktemp read them; a
+ * folder spelled `$PWD` is the current folder and `$HOME` the home folder.
+ * Undefined for anything else. */
+function mktempPath(body: string, vars: ReadonlyMap<string, string>, cwd: string | undefined): string | undefined {
+  // a `$` inside single quotes is literal, but expand() below cannot tell
+  if (/'[^']*\$/.test(body)) return undefined;
+  const { commands, complex } = splitShell(body);
+  if (complex || commands.length !== 1) return undefined;
+  const prog = program(commands[0]!);
+  if (!prog || prog.name !== "mktemp" || commands[0]!.some((word) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text))) return undefined;
+  const known = (word: Word | undefined): string | undefined => {
+    if (!word) return undefined;
+    const w = expand(word, vars);
+    if (!w.dynamic) return w.text;
+    const pwd = /^(?:\$PWD|\$\{PWD\})(\/[^$`]*)?$/.exec(w.text);
+    return pwd && cwd ? `${cwd}${pwd[1] ?? ""}` : undefined;
+  };
+  let dir: string | undefined;
+  let template: string | undefined;
+  let inTemp = false;
+  const args = prog.args;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg.dynamic && !arg.text.startsWith("-")) {
+      if (template !== undefined) return undefined;
+      template = known(arg);
+      if (template === undefined) return undefined;
+      continue;
+    }
+    const text = arg.text;
+    if (text === "-p") { dir = known(args[++i]); if (dir === undefined) return undefined; }
+    else if (/^-p./.test(text)) { dir = known({ text: text.slice(2), dynamic: arg.dynamic }); if (dir === undefined) return undefined; }
+    else if (text.startsWith("--tmpdir=")) { dir = known({ text: text.slice("--tmpdir=".length), dynamic: arg.dynamic }); if (dir === undefined) return undefined; }
+    else if (text === "--tmpdir" || text === "-t") inTemp = true;
+    else if (/^-[dqut]+$/.test(text)) { if (text.includes("t")) inTemp = true; }
+    else if (/^--(directory|dry-run|quiet|suffix=.*)$/.test(text)) continue;
+    else if (text === "--suffix") i += 1;
+    else if (text === "--") continue;
+    else if (text.startsWith("-")) return undefined;
+    else if (template !== undefined) return undefined;
+    else template = text;
+  }
+  if (dir === "") return undefined;
+  if (dir === undefined && (inTemp || template === undefined)) {
+    // `-t` names a file in the temp folder; a folder in its name is refused
+    if (template?.includes("/")) return undefined;
+    dir = "/tmp";
+  }
+  const name = template ?? "tmp.XXXXXXXXXX";
+  if (dir === undefined) return name;
+  // with a folder, an absolute template is refused
+  if (name.startsWith("/")) return undefined;
+  return `${dir.replace(/(.)\/+$/, "$1")}/${name}`;
+}
+
 /** The value of `name=value` when it is not a plain literal but can still be
  * placed (0.1.60 Linux pass): `$(mktemp …)` is a new file in temp, in the
  * folder `-p`/`--tmpdir` names, or (a bare template) in the current folder;
  * a name built with `$(date …)` is that name with digits where the date is,
  * as long as the format cannot print a slash. Undefined for anything else,
- * which stays unknown. */
-function assignedValue(value: string): string | undefined {
-  const mk = /^(?:\$\(\s*mktemp((?:\s+[^\s()$`;|&<>]+)*)\s*\)|`\s*mktemp((?:\s+[^\s()$`;|&<>]+)*)\s*`)$/.exec(value);
-  if (mk) {
-    const args = (mk[1] ?? mk[2] ?? "").trim().split(/\s+/).filter(Boolean);
-    let dir: string | undefined;
-    let template: string | undefined;
-    let inTemp = false;
-    for (let i = 0; i < args.length; i += 1) {
-      const arg = args[i]!;
-      if (arg === "-p" || arg === "--tmpdir") dir = args[++i];
-      else if (arg.startsWith("--tmpdir=")) dir = arg.slice("--tmpdir=".length);
-      else if (arg === "-t") inTemp = true;
-      else if (!arg.startsWith("-")) template = arg;
-    }
-    if (dir === "") return undefined;
-    if (dir === undefined && (inTemp || template === undefined)) dir = "/tmp";
-    const name = template ?? "tmp.XXXXXXXXXX";
-    if (name.includes("/")) return dir === undefined || name.startsWith("/") ? name : undefined;
-    return dir === undefined ? name : `${dir.replace(/\/+$/, "")}/${name}`;
-  }
+ * which stays unknown. `raw` is the value as written, `value` the same after
+ * the variables already known were put in. */
+function assignedValue(value: string, raw: string, vars: ReadonlyMap<string, string>, cwd: string | undefined): string | undefined {
+  const body = substitutionBody(raw);
+  if (body !== undefined && /^\s*mktemp(\s|$)/.test(body)) return mktempPath(body, vars, cwd);
   const dated = value.replace(/\$\(\s*date(?:\s+[^()$`/;|&<>]*)?\)|`\s*date(?:\s+[^`$/;|&<>]*)?`/g, (call) => (/%[Dxc]/.test(call) ? call : "0"));
   if (dated === value || /[$`]/.test(dated)) return undefined;
   return dated;
+}
+
+/** Read `name=value` words (after `export`, `local` and the like) into
+ * `vars`. False when the command is not only assignments. */
+function assignAll(raw: Word[], vars: Map<string, string>, cwd: string | undefined): boolean {
+  const cmd = raw.map((word) => expand(word, vars));
+  const skip = cmd[0]?.text && /^(export|local|declare|readonly|typeset)$/.test(cmd[0].text) ? 1 : 0;
+  const assigning = cmd.slice(skip);
+  if (!assigning.length || !assigning.every((word) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text))) return false;
+  assigning.forEach((word, j) => {
+    const eq = word.text.indexOf("=");
+    const name = word.text.slice(0, eq);
+    const written = raw[skip + j]!.text;
+    const value = word.dynamic || raw[skip + j]!.dynamic
+      ? assignedValue(word.text.slice(eq + 1), written.slice(written.indexOf("=") + 1), vars, cwd)
+      : word.text.slice(eq + 1);
+    if (value === undefined) vars.delete(name);
+    else vars.set(name, value);
+  });
+  return true;
+}
+
+/** The plain commands inside the substitutions a word holds (`$(…)` and
+ * backticks written as one word). */
+function substitutionsIn(word: Word): string[] {
+  if (!word.dynamic) return [];
+  return [...word.text.matchAll(/\$\(([^()`]*)\)|`([^`]*)`/g)].map((m) => m[1] ?? m[2] ?? "");
 }
 
 function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null {
@@ -489,18 +611,17 @@ function shellHit(line: string, place: StopLinePlace, depth = 0): StopHit | null
   // placed like a literal. Anything else with a `$` stays unknown.
   const vars = new Map<string, string>([["HOME", place.home]]);
   for (const raw of commands) {
-    const cmd = raw.map((word) => expand(word, vars));
-    const assigning = cmd[0]?.text && /^(export|local|declare|readonly|typeset)$/.test(cmd[0].text) ? cmd.slice(1) : cmd;
-    if (assigning.length && assigning.every((word) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text))) {
-      for (const word of assigning) {
-        const eq = word.text.indexOf("=");
-        const name = word.text.slice(0, eq);
-        const value = word.dynamic ? assignedValue(word.text.slice(eq + 1)) : word.text.slice(eq + 1);
-        if (value === undefined) vars.delete(name);
-        else vars.set(name, value);
+    // a command inside a substitution (`x=$(rm -rf …)`) runs too
+    if (depth < 3) {
+      for (const word of raw) {
+        for (const body of substitutionsIn(word)) {
+          const inner = shellHit(body, { ...place, cwd }, depth + 1);
+          if (inner) return inner;
+        }
       }
-      continue;
     }
+    if (assignAll(raw, vars, cwd)) continue;
+    const cmd = raw.map((word) => expand(word, vars));
     const prog = program(cmd);
     if (!prog) continue;
     const { name, args } = prog;
@@ -1390,17 +1511,10 @@ export function deletesPlacedInside(command: string, given: StopLinePlace): bool
   const targets: Target[] = [];
   let seen = 0;
   for (const raw of commands) {
+    // a delete inside a substitution is not one this reader places
+    if (raw.some((word) => substitutionsIn(word).some((body) => /\b(rm|rmdir|unlink|trash|shred|srm|xargs|find|rsync)\b|-delete\b/.test(body)))) return false;
+    if (assignAll(raw, vars, cwd)) continue;
     const cmd = raw.map((word) => expand(word, vars));
-    const assigning = cmd[0]?.text && /^(export|local|declare|readonly|typeset)$/.test(cmd[0].text) ? cmd.slice(1) : cmd;
-    if (assigning.length && assigning.every((word) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text))) {
-      for (const word of assigning) {
-        const eq = word.text.indexOf("=");
-        const value = word.dynamic ? assignedValue(word.text.slice(eq + 1)) : word.text.slice(eq + 1);
-        if (value === undefined) vars.delete(word.text.slice(0, eq));
-        else vars.set(word.text.slice(0, eq), value);
-      }
-      continue;
-    }
     const prog = program(cmd);
     if (!prog) continue;
     if (prog.name === "cd") {
