@@ -36,3 +36,11 @@ test("one notification per failure, however many times Murage starts",async t=>{
  // A harness that refuses never breaks startup.
  assert.equal(await announceBackupFailure({status:failed,userData,post:async()=>{throw Error("down");}}),null);
 });
+
+test("Windows notifications carry the identity the installer gives Murage's shortcuts (W-D7)",()=>{
+ const root=new URL("..",import.meta.url);
+ const appId=/^appId:\s*(\S+)/m.exec(readFileSync(new URL("electron-builder.yml",root),"utf8"))?.[1];
+ const main=readFileSync(new URL("electron/main.mjs",root),"utf8");
+ assert.equal(appId,"com.murage.app");
+ assert.match(main,new RegExp(`process\\.platform === "win32" && app\\.isPackaged\\) app\\.setAppUserModelId\\("${appId.replaceAll(".","\\.")}"\\)`));
+});

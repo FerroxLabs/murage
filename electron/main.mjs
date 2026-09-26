@@ -538,6 +538,11 @@ if (process.platform === "linux") {
   app.disableHardwareAcceleration();
   app.setDesktopName("com.murage.app.desktop");
 }
+// Windows shows an app's toast notifications only under the identity its
+// Start-menu shortcut carries, which the installer sets to the appId
+// (electron-builder.yml). Without it Windows had no app to put Murage's
+// banners under and dropped them (0.1.60 Windows VM, W-D7).
+if (process.platform === "win32" && app.isPackaged) app.setAppUserModelId("com.murage.app");
 
 // One instance per user: without this lock a second launch forks a second
 // harness server on a fallback port and splits data dirs in two. The loser
