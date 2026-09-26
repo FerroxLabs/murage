@@ -298,6 +298,26 @@ test("the flow creates and copies without a file dialog for the key it just wrot
   }finally{p.cleanup();}
 });
 
+// D10: the retry after a cancelled setup reuses the plain name, never -2.
+test("discard removes only the unchanged key this flow made, and the next key takes the plain name",async()=>{
+  const p=place();try{
+    const flow=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,defaultFolders:()=>[p.safe],chooseFile:async()=>null});
+    const first=flow.createFor(p.destination);
+    assert.equal(flow.discard(first.file),true);
+    assert.deepEqual(readdirSync(p.safe),[]);
+    assert.equal(flow.lastKeyFile(),null);
+    const second=flow.createFor(p.destination);
+    assert.equal(path.basename(second.file),path.basename(first.file));
+    assert.deepEqual(readdirSync(p.safe),[path.basename(first.file)]);
+    // Not twice, not a file it did not make, not one changed since.
+    assert.equal(flow.discard(first.file.replace(/\.txt$/,"-other.txt")),false);
+    writeFileSync(second.file,readFileSync(second.file,"utf8")+"# the owner's note\n");
+    assert.equal(flow.discard(second.file),false);
+    assert.deepEqual(readdirSync(p.safe),[path.basename(second.file)]);
+    assert.equal(flow.discard(second.file),false);
+  }finally{p.cleanup();}
+});
+
 test("the key is written even though the setup that asked for it is in progress",async()=>{
   // main.mjs's isUsable() refuses while backupScheduleHost.isPreparing(), and
   // setUpBackups() holds that flag for the whole act — so the guard used while

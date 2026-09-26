@@ -553,9 +553,29 @@ test("one-act setup keeps every refusal the two-step selection had",async()=>{
   // Cancelling the folder picker writes nothing at all.
   const cancelled=fixture(({root})=>({chooseDestination:async()=>null,createRecoveryKey:async()=>{assert.fail("nothing is created before a folder is chosen");}}));
   try{assert.deepEqual(await cancelled.controller.setUpBackups(),{cancelled:true});assert.equal((await cancelled.controller.status()).refs,undefined);}finally{cancelled.cleanup();}
-  // Declining the confirmation binds nothing, and says the key exists.
+  // Declining the confirmation binds nothing. With no way to take the key
+  // back, it says where the key was left.
   const declined=fixture(({root})=>({confirmReferences:async()=>false,createRecoveryKey:async()=>madeKey(root)}));
   try{const answer=await declined.controller.setUpBackups();assert.equal(answer.cancelled,true);assert.equal(answer.created.label,"made-key.txt");assert.equal((await declined.controller.status()).refs,undefined);}finally{declined.cleanup();}
+});
+
+// Mac customer re-test 2 (D10): cancelling the one confirmation left
+// murage-recovery-key.txt behind, and the retry made murage-recovery-key-2.txt.
+test("a cancelled or failed setup takes back the key it made, so a retry does not add another",async()=>{
+  const discarded=[];
+  const declined=fixture(({root})=>({confirmReferences:async()=>false,createRecoveryKey:async()=>madeKey(root),discardRecoveryKey:file=>{discarded.push(path.basename(file));return true;}}));
+  try{const answer=await declined.controller.setUpBackups();assert.deepEqual(answer,{cancelled:true});assert.deepEqual(discarded,["made-key.txt"]);assert.equal((await declined.controller.status()).refs,undefined);}finally{declined.cleanup();}
+  // A key that could not be taken back is named, as before.
+  const kept=fixture(({root})=>({confirmReferences:async()=>false,createRecoveryKey:async()=>madeKey(root),discardRecoveryKey:()=>false}));
+  try{assert.equal((await kept.controller.setUpBackups()).created.label,"made-key.txt");}finally{kept.cleanup();}
+  // A setup that fails after the key was made takes it back too.
+  discarded.length=0;
+  const failing=fixture(({root})=>({createRecoveryKey:async()=>madeKey(root),writeProtected:async()=>{throw Error("BACKUP_BINDINGS_UNAVAILABLE");},discardRecoveryKey:file=>{discarded.push(path.basename(file));return true;}}));
+  try{await assert.rejects(failing.controller.setUpBackups(),/BACKUP_BINDINGS_UNAVAILABLE/);assert.deepEqual(discarded,["made-key.txt"]);}finally{failing.cleanup();}
+  // A setup that completes keeps its key.
+  discarded.length=0;
+  const done=fixture(({root})=>({createRecoveryKey:async()=>madeKey(root),discardRecoveryKey:file=>{discarded.push(path.basename(file));return true;}}));
+  try{const answer=await done.controller.setUpBackups();assert.equal(answer.created.label,"made-key.txt");assert.deepEqual(discarded,[]);}finally{done.cleanup();}
 });
 
 test("setup is refused while a backup is running or a schedule is already on",async()=>{

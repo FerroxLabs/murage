@@ -3500,6 +3500,7 @@ async function initializeBackupScheduleHost(){
     // Writes the key without a dialog, outside the installation and outside
     // the folder the backups go to.
     createRecoveryKey:destination=>backupRecoveryKeys.createFor(destination),
+    discardRecoveryKey:file=>backupRecoveryKeys.discard(file),
     // The one confirmation of the whole setup. It names both choices, says
     // where the key was put, and is where the person consents to Murage
     // closing and reopening its own window to take a backup.
