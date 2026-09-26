@@ -7,9 +7,9 @@ import { Readable } from "node:stream";
 import * as yauzl from "yauzl";
 import { ZipFile as ZipWriter } from "yazl";
 import { z } from "zod";
-import { stageInstallationState, type StateSnapshotManifest } from "./installation-state-snapshot.ts";
+import { stageInstallationStateWhileOwned, type StateSnapshotManifest } from "./installation-state-snapshot.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
-import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
+import { InstallationSnapshotError, withOfflineInstallation } from "./installation-database-snapshot.ts";
 import { BACKUP_SKIP_REASONS, MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_BACKUP_MANIFEST_BYTES, MAX_LISTED_SKIPS } from "../shared/backup-limits.ts";
 import { publishNoReplace } from "./publish-file.ts";
 
@@ -41,7 +41,11 @@ export type InstallationArchiveManifest = z.infer<typeof manifestSchema>;
 export interface ArchiveLimits { maxBytes?: number; maxFiles?: number; signal?: AbortSignal;
   /** Flush each extracted file. Only an extraction that becomes an
    * installation needs it; a readback check or an intermediate copy does not. */
-  durable?: boolean }
+  durable?: boolean;
+  /** Write each entry out. A readback check only needs every entry's hash,
+   * and writing a workspace of small files out again on a USB stick is slow
+   * and needs room there. */
+  extract?: boolean }
 function fail(code: string, path?: string): never { throw new InstallationSnapshotError(code, path ? { path } : undefined); }
 
 export function portableArchivePath(path: string): boolean {
@@ -187,7 +191,7 @@ export async function inspectArchiveEntries<T extends Pick<InstallationArchiveMa
           let fd: number | undefined;
           try {
             const target = join(directory, ...name.split("/"));
-            if (expected) {
+            if (expected && options.extract !== false) {
               mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
               fd = openSync(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW), 0o600);
             }
@@ -202,13 +206,13 @@ export async function inspectArchiveEntries<T extends Pick<InstallationArchiveMa
                 hash.update(buffer);
                 // Disk writes are bounded to one decompressed stream chunk.
                 let offset = 0;
-                while (offset < buffer.length) offset += writeSync(fd!, buffer, offset, buffer.length - offset);
+                if (fd !== undefined) while (offset < buffer.length) offset += writeSync(fd, buffer, offset, buffer.length - offset);
               } else chunks.push(buffer);
             }
             if (bytes !== entry.uncompressedSize) fail("ARCHIVE_SIZE_MISMATCH");
             if (expected) {
               if (hash.digest("hex") !== expected.sha256) fail("ARCHIVE_HASH_MISMATCH");
-              if (options.durable !== false) { if (process.platform === "win32") fsyncSync(fd!); else extracted.push(target); }
+              if (fd !== undefined && options.durable !== false) { if (process.platform === "win32") fsyncSync(fd); else extracted.push(target); }
             } else {
               let value: unknown;
               try { value = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { fail("INVALID_ARCHIVE_MANIFEST"); }
@@ -245,13 +249,17 @@ export async function writeInstallationArchive(dataDir: string, destination: str
   if (!portableArchivePath(basename(destination))) fail("INVALID_DESTINATION");
   try { lstatSync(destination); fail("DESTINATION_EXISTS"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  const stage = await stageInstallationState(dataDir, dirname(destination), options);
-  try { return await writeInstallationStageArchive(stage, destination, options); }
-  finally { rmSync(stage.directory, { recursive: true, force: true }); }
+  // Staged, archived and checked in one offline epoch: owner files are read
+  // in place, so the installation must stay closed until the archive is done.
+  return withOfflineInstallation(dataDir, async installation => {
+    const stage = await stageInstallationStateWhileOwned(installation, dirname(destination), options);
+    try { return await writeInstallationStageArchive(stage, destination, { ...options, beforePublish: stage.assertSourceUnchanged }); }
+    finally { rmSync(stage.directory, { recursive: true, force: true }); }
+  });
 }
 
 /** Serialise an already-owned recovery stage; fidelity callers avoid recapture. */
-export async function writeInstallationStageArchive(stage: { directory: string; manifest: StateSnapshotManifest }, destination: string, options: ArchiveLimits = {}) {
+export async function writeInstallationStageArchive(stage: { directory: string; manifest: StateSnapshotManifest; openFile?: (stored: string) => Readable }, destination: string, options: ArchiveLimits & { beforePublish?: () => void } = {}) {
   if (!portableArchivePath(basename(destination))) fail("INVALID_DESTINATION");
   const parent = dataDirLeasePaths(dirname(destination)).canonicalDataDir;
   const target = join(parent, basename(destination));
@@ -280,11 +288,14 @@ export async function writeInstallationStageArchive(stage: { directory: string; 
       const original = stage.manifest.files[index];
       writer.addReadStreamLazy(`state/${entry.path}`, { size: entry.bytes, compress: false, mode: 0o100600 }, callback => {
         try {
-          const path = join(stage.directory, "state", original.path);
-          const fd = openSync(path, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
-          let stream: ReturnType<typeof createReadStream>;
-          try { stream = createReadStream(path, { fd, autoClose: true }); }
-          catch (error) { closeSync(fd); throw error; }
+          let stream: Readable;
+          if (stage.openFile) stream = stage.openFile(original.path.replaceAll("\\", "/"));
+          else {
+            const path = join(stage.directory, "state", original.path);
+            const fd = openSync(path, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
+            try { stream = createReadStream(path, { fd, autoClose: true }); }
+            catch (error) { closeSync(fd); throw error; }
+          }
           inputs.add(stream);
           stream.once("close", () => inputs.delete(stream));
           callback(null, stream);
@@ -293,8 +304,9 @@ export async function writeInstallationStageArchive(stage: { directory: string; 
     }
     writer.end();
     await completed;
-    const inspection = await inspectInstallationArchive(file, scratch, { ...options, durable: false });
+    const inspection = await inspectInstallationArchive(file, scratch, { ...options, durable: false, extract: false });
     rmSync(inspection.directory, { recursive: true, force: true });
+    options.beforePublish?.();
     const fd = openSync(file, "r+"); // Flush the owned scratch file with write access on Windows.
     try { fsyncSync(fd); } finally { closeSync(fd); }
     publishNoReplace(file, target);

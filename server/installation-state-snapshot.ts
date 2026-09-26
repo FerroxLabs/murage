@@ -1,7 +1,7 @@
 // Private directory-stage builder for the versioned archive/restore workflow.
 // This is not a portable archive or an activated restored installation.
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync, statSync, writeFileSync, writeSync, type Stats } from "node:fs";
+import { closeSync, constants, createReadStream, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync, statSync, writeFileSync, writeSync, type ReadStream, type Stats } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, type BackupSkipReason } from "../shared/backup-limits.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
@@ -192,6 +192,10 @@ function projectComponent(name: string, value: unknown, omit: (path: string, rea
  * and inactive engine config require explicit restore reconstruction. Plain
  * transcript/file content can itself contain secrets; this is private data,
  * never a shareable diagnostics bundle. External project paths are not read. */
+/** The stage's contents list and its projected records, for inspection.
+ * Owner files are read in place (see openFile), so they are not in
+ * `directory`; anything that writes an archive stays inside the offline
+ * epoch and uses stageInstallationStateWhileOwned. */
 export async function stageInstallationState(dataDir: string, outputParent: string, options: { signal?: AbortSignal; maxBytes?: number; maxFiles?: number } = {}): Promise<{ directory: string; manifest: StateSnapshotManifest }> {
   return withOfflineInstallation(dataDir, async installation => {
     const { directory, manifest } = await stageInstallationStateWhileOwned(installation, outputParent, options);
@@ -219,7 +223,8 @@ export async function stageInstallationState(dataDir: string, outputParent: stri
  *  - past the file limit, or where a file can't be read, the item is left out
  *    and listed. The backup still completes.
  * Murage's own records at the top of the folder are still all-or-nothing. */
-export async function stageInstallationStateWhileOwned(installation: OfflineInstallation, outputParent: string, options: { signal?: AbortSignal; maxBytes?: number; maxFiles?: number } = {}): Promise<{ directory: string; manifest: StateSnapshotManifest; assertSourceUnchanged: () => void }> {
+export interface InstallationStage { directory: string; manifest: StateSnapshotManifest; assertSourceUnchanged: () => void; openFile: (stored: string) => ReadStream }
+export async function stageInstallationStateWhileOwned(installation: OfflineInstallation, outputParent: string, options: { signal?: AbortSignal; maxBytes?: number; maxFiles?: number } = {}): Promise<InstallationStage> {
   const root = installation.dataDir;
   const parent = dataDirLeasePaths(outputParent).canonicalDataDir;
   if (parent === root || parent.startsWith(root + sep)) fail("DESTINATION_INSIDE_INSTALLATION");
@@ -235,6 +240,8 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
     let items = 1;
     const observed = new Map<string, Stats>();
     const directories = new Map<string, string[]>();
+    /** Files read in place, by stored path: where they are and what they were. */
+    const inPlace = new Map<string, { absolute: string; identity: Stats }>();
     const manifest: StateSnapshotManifest = {
       format: "murage.installation-stage", version: 1, snapshotId: randomUUID(), createdAt: new Date().toISOString(), restorePolicy: "paused-review-required",
       files: [], omitted: [], missing: [], database: { status: "absent" },
@@ -263,8 +270,15 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       observed.set(absolute, before);
       if (!before.isFile()) fail("UNSAFE_SNAPSHOT_ENTRY", source);
       if (before.size > maxBytes - bytes) fail("SNAPSHOT_LIMIT_EXCEEDED", source);
+      // Only Murage's projected records are written into the stage; every
+      // other file is read in place, hashed now and streamed into the archive
+      // later from the same, unchanged file (openFile below). Copying them
+      // made a backup folder on a USB stick need room for a plaintext copy of
+      // the whole workspace beside the encrypted one, and wrote every small
+      // file twice (audit W-A2).
+      const projected = !stored.includes("/") && isProjectedRecord(stored);
       const to = join(stage, "state", ...stored.split("/"));
-      mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
+      if (projected) mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
       const hash = createHash("sha256");
       let size = 0;
       const input = openSync(absolute, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
@@ -272,8 +286,8 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       if (opened.ino !== before.ino || opened.dev !== before.dev || !opened.isFile()) { closeSync(input); fail("SOURCE_CHANGED", source); }
       let output: number | undefined;
       try {
-        output = openSync(to, "wx", 0o600);
-        if (!stored.includes("/") && isProjectedRecord(stored)) {
+        if (projected) {
+          output = openSync(to, "wx", 0o600);
           if (before.size > 64 * 1024 ** 2) fail("JSON_COMPONENT_TOO_LARGE", source);
           let value: unknown;
           try { value = JSON.parse(readFileSync(input, "utf8")); } catch { fail("INVALID_JSON_COMPONENT", source); }
@@ -290,13 +304,10 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
             size += length;
             if (size > maxBytes - bytes) fail("SNAPSHOT_LIMIT_EXCEEDED", source);
             hash.update(buffer.subarray(0, length));
-            let offset = 0;
-            while (offset < length) offset += writeSync(output, buffer, offset, length - offset);
           }
+          if (size !== before.size) fail("SOURCE_CHANGED", source);
+          inPlace.set(stored, { absolute, identity: before });
         }
-        // No flush: the stage is a private working copy, read straight back
-        // into the archive and removed. A flush per file made a bot folder of
-        // tens of thousands of files take many minutes.
       } catch (error) {
         if (error instanceof InstallationSnapshotError && !error.path) throw new InstallationSnapshotError(error.code, { path: source });
         throw error;
@@ -425,9 +436,27 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       // a directory rename-to-user-name race: portable file publication will
       // use no-replace linking when archive serialization is implemented.
       published = true;
-      return { directory: stage, manifest, assertSourceUnchanged };
+      /** A stream of one stored file: the staged copy for a projected record
+       * or the database, otherwise the original, refused unless it is still
+       * the very file that was hashed. */
+      const openFile = (stored: string) => {
+        const held = inPlace.get(stored);
+        if (!held) {
+          const path = join(stage, "state", ...stored.split("/"));
+          const fd = openSync(path, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
+          return createReadStream(path, { fd, autoClose: true });
+        }
+        const fd = openSync(held.absolute, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
+        const now = fstatSync(fd), was = held.identity;
+        if (now.dev !== was.dev || now.ino !== was.ino || now.size !== was.size || now.mtimeMs !== was.mtimeMs || !now.isFile()) { closeSync(fd); fail("SOURCE_CHANGED", relative(root, held.absolute)); }
+        return createReadStream(held.absolute, { fd, autoClose: true });
+      };
+      return { directory: stage, manifest, assertSourceUnchanged, openFile };
     } catch (error) {
       if (error instanceof InstallationSnapshotError) throw error;
+      // The drive holding the backup folder filled up while the stage was
+      // written: say so, as the rest of the capture does.
+      if (["ENOSPC", "EDQUOT"].includes(String((error as NodeJS.ErrnoException)?.code))) throw new InstallationSnapshotError("BACKUP_DISK_FULL", { cause: error });
       // A plain filesystem error still names the item it was about.
       const path = (error as NodeJS.ErrnoException)?.path;
       throw new InstallationSnapshotError("STATE_SNAPSHOT_FAILED", { cause: error, ...(typeof path === "string" && path.startsWith(root + sep) ? { path: relative(root, path) } : {}) });

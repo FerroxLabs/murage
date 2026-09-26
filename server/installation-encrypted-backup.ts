@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants, closeSync, createReadStream, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { closeSync, createReadStream, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES } from "../shared/backup-limits.ts";
 import { classifyDataDirEntry } from "./data-dir-inventory.ts";
@@ -217,8 +217,10 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
         for(const file of fidelity.sources)writer.addReadStreamLazy(`state/raw/${file.path}`,{size:file.bytes,compress:false,mode:0o100600},callback=>{
           try{const stream=openFidelitySource(file);streams.add(stream);stream.once("close",()=>streams.delete(stream));callback(null,stream);}catch(error){callback(error,Readable.from([]));}
         });
+        // Records and the database come from the stage; owner files stream
+        // straight from where they are, refused if they changed since hashing.
         for(const file of recovery.files)writer.addReadStreamLazy(`state/recovery/${file.path}`,{size:file.bytes,compress:false,mode:0o100600},callback=>{
-          try{const path=join(stage.directory,"state",...file.path.split("/"));const fd=openSync(path,constants.O_RDONLY|(process.platform==="win32"?0:constants.O_NOFOLLOW));const stream=createReadStream(path,{fd,autoClose:true});streams.add(stream);stream.once("close",()=>streams.delete(stream));callback(null,stream);}catch(error){callback(error,Readable.from([]));}
+          try{const stream=stage.openFile(file.path);streams.add(stream);stream.once("close",()=>streams.delete(stream));callback(null,stream);}catch(error){callback(error,Readable.from([]));}
         });
         writer.once("error",error=>(writer!.outputStream as Readable).destroy(error));
         writer.end();
@@ -231,7 +233,7 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
       finally{for(const stream of streams)stream.destroy();(writer?.outputStream as Readable|undefined)?.destroy();if(!retain)rmSync(stage.directory,{recursive:true,force:true});}
     });
     step="readback";
-    const inspection=await inspectEncryptedInstallationBackup(ciphertext,scratch,{...options,durable:false});
+    const inspection=await inspectEncryptedInstallationBackup(ciphertext,scratch,{...options,durable:false,extract:false});
     if(inspection.manifest.snapshotId!==manifest.snapshotId)fail("FIDELITY_READBACK_MISMATCH");
     const sha256=inspection.sha256;rmSync(inspection.directory,{recursive:true,force:true});
     step="flush";

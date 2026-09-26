@@ -202,3 +202,26 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("round trip: a used bot folde
     expect(readdirSync(f.parent)).toContain("second.age");
   } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
 }, 120_000);
+
+// 0.1.60 audit W-A2: the stage holds only Murage's projected records and the
+// database; owner files are hashed and later streamed from where they are,
+// so a backup folder on a USB stick needs room only for the encrypted file.
+it("the stage copies no owner file, and refuses one that changed after it was hashed", async () => {
+  const f = backupFixture();
+  const desk = deskOf(f.data);
+  mkdirSync(desk, { recursive: true });
+  writeFileSync(join(desk, "notes.md"), "first\n");
+  try {
+    await withOfflineInstallation(f.data, async installation => {
+      const stage = await stageInstallationStateWhileOwned(installation, f.parent);
+      try {
+        const staged = readdirSync(join(stage.directory, "state")).sort();
+        expect(staged).toEqual(["bots.json", "config.json", "groups.json", "messages.db"]);
+        const stored = "workspaces/bot/threads/thread/notes.md";
+        stage.openFile(stored).destroy();
+        writeFileSync(join(desk, "notes.md"), "changed after hashing\n");
+        expect(() => stage.openFile(stored)).toThrow(expect.objectContaining({ code: "SOURCE_CHANGED", path: "workspaces/bot/threads/thread/notes.md" }));
+      } finally { rmSync(stage.directory, { recursive: true, force: true }); }
+    });
+  } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+});
