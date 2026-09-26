@@ -873,6 +873,22 @@ async function responseError(res: Response, fallback: string) {
   }
 }
 
+/** What the Connected apps panel says when checking connection status fails.
+ * The service's own text (or a bare "HTTP 503") is for the log, not for a
+ * person (0.1.60 audit C3). */
+export function connectionStatusFailureSentence(status: number): string {
+  if (status === 401 || status === 403) return "Connected apps didn't accept this computer's sign-in, so their status couldn't be checked. Check your connection in Settings, then try again.";
+  if (status === 429) return "Connected apps are getting too many requests right now. Wait a minute, then refresh.";
+  if (status >= 500 || status === 408) return "Connected apps aren't answering right now, so their status couldn't be checked. Try again in a few minutes.";
+  return "Connected apps' status couldn't be checked. Try again in a few minutes.";
+}
+async function throwStatusFailure(res: Response, source: string): Promise<never> {
+  const detail = await responseError(res, "");
+  console.warn(`connected apps: ${source} status check failed: HTTP ${res.status}${detail ? ` ${detail.slice(0, 300)}` : ""}`);
+  const status = res.status >= 400 && res.status < 500 ? res.status : 502;
+  throw Object.assign(new Error(connectionStatusFailureSentence(res.status)), { status });
+}
+
 async function throwBrokerError(res: Response, fallback: string): Promise<never> {
   const status = res.status >= 400 && res.status < 500 ? res.status : 502;
   throw Object.assign(new Error(await responseError(res, fallback)), { status });
@@ -1254,7 +1270,7 @@ async function listSessionToolkits(
       `${apiBase()}/tool_router/session/${encodeURIComponent(sessionId)}/toolkits?${params}`,
       { headers: projectHeaders(apiKey), signal: AbortSignal.timeout(15_000) },
     );
-    if (!response.ok) throw new Error(await responseError(response, `Composio toolkits: HTTP ${response.status}`));
+    if (!response.ok) await throwStatusFailure(response, "own key inventory");
     const body = toolkitPageSchema.parse(await response.json());
     toolkits.push(...(body.items ?? []));
     const next = body.next_cursor || undefined;
@@ -1342,7 +1358,7 @@ function allServiceStates(
 export async function connectedServices(cfg: AppConfig): Promise<Record<string, ConnectorServiceState>> {
   if (activeBroker(cfg)) {
     const response = await brokerRequest(cfg, "/v1/connectors/connected");
-    if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
+    if (!response.ok) await throwStatusFailure(response, "managed inventory");
     const body = connectorServicesResponseSchema.parse(await response.json());
     return Object.fromEntries(
       Object.entries(body.services ?? {}).map(([slug, state]) => [slug, {
@@ -1370,7 +1386,7 @@ export async function connectedServices(cfg: AppConfig): Promise<Record<string, 
 export async function connectionStatus(cfg: AppConfig, slugs: string[]) {
   if (activeBroker(cfg) || !cfg.composio?.apiKey) {
     const response = await brokerRequest(cfg, `/v1/connectors?${new URLSearchParams({ services: slugs.join(",") })}`);
-    if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
+    if (!response.ok) await throwStatusFailure(response, "managed");
     const body = connectorServicesResponseSchema.parse(await response.json());
     return body.services ?? {};
   }
@@ -1392,7 +1408,7 @@ export async function connectionStatus(cfg: AppConfig, slugs: string[]) {
       ? listConnectedAccounts(cfg.composio.apiKey, userId, slugs).catch(() => [])
       : Promise.resolve([]),
   ]);
-  if (!res.ok) throw new Error(await responseError(res, `Composio toolkits: HTTP ${res.status}`));
+  if (!res.ok) await throwStatusFailure(res, "own key");
   const body = toolkitPageSchema.parse(await res.json());
   const bySlug = new Map((body.items ?? []).map((item) => [item.slug?.toLowerCase(), item]));
   const accountsBySlug = summarizeAccounts(accounts, slugs);

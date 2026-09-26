@@ -2,6 +2,7 @@
 // it dispatches typed commands over HTTP and folds the one SSE event
 // stream from the harness server into local state. The reducer stays
 // pure; everything async lives in the wrapped dispatch + SSE fold.
+import { requestFailedSentence } from "@/lib/request-failed";
 import type { TaskResourceWait } from "@/lib/resource-wait";
 import {
   createContext,
@@ -1969,9 +1970,11 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
   // for as long as the phone had the tab open.
   // The body rides along too, for refusals that carry more than a sentence
   // (Skill Guard's 409 names its findings and the content they cover).
-  if (!res.ok) throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), { status: res.status, body });
+  if (!res.ok) throw Object.assign(new Error(body.error ?? requestFailedSentence(res.status)), { status: res.status, body });
   return body;
 }
+
+export { requestFailedSentence };
 
 export interface PeripheralSnapshotLoad<Key extends string = string> {
   key: Key;

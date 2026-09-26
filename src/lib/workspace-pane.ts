@@ -10,6 +10,7 @@
 // - Every tab names its file by scope + relative path (an identity the
 //   server issued), never by an absolute path. Opening another bot's file
 //   never changes the selected conversation: tabs carry their own scope.
+import { requestFailedSentence } from "./request-failed";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
 import { WorkspaceFileRequestError, documentKey, type DocumentIdentity } from "@/lib/document-session";
 import { workspaceUrl, type ApiCall } from "@/lib/files-view";
@@ -298,7 +299,7 @@ export async function workspaceApi(path: string, init?: RequestInit, fetchImpl: 
   });
   const body = (await response.json().catch(() => ({}))) as { error?: unknown; code?: unknown; currentRevision?: unknown };
   if (response.ok) return body;
-  const message = typeof body.error === "string" ? body.error : `${response.status} ${response.statusText}`;
+  const message = typeof body.error === "string" ? body.error : requestFailedSentence(response.status);
   if (isWorkspaceFileErrorCode(body.code)) {
     throw Object.assign(
       new WorkspaceFileRequestError(body.code, message, typeof body.currentRevision === "string" ? body.currentRevision as FileRevision : undefined),
