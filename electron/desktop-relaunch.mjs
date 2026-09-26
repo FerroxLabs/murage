@@ -17,8 +17,9 @@ import { linuxRelaunchBlocked } from "./linux-relaunch.mjs";
  * the AppImage's own FUSE mount helper (setuid fusermount3) cannot run either.
  *
  * So an AppImage restarts the way a person starts it: from the AppImage file
- * itself (process.env.APPIMAGE), through a small detached shell that waits for
- * this process to exit and then runs the file. Node's spawn sets no
+ * itself (process.env.APPIMAGE), through a small detached shell that drops the
+ * descriptors it inherited, waits for this process to exit and then runs the
+ * file. Node's spawn sets no
  * no_new_privs, the AppImage mounts itself afresh, and its AppRun decides the
  * Chromium sandbox again exactly as on a first launch (it adds --no-sandbox
  * where user namespaces are restricted, the Ubuntu 24.04 default). */
@@ -27,7 +28,15 @@ import { linuxRelaunchBlocked } from "./linux-relaunch.mjs";
 // that never finishes means Murage is still open; starting a second copy then
 // would only be refused by the single-instance lock.
 const WAIT_TICKS = 3000; // 3000 × 0.2 s = 10 minutes
+// First it closes every inherited descriptor but stdio. Chromium keeps its
+// .pak and ICU files open without close-on-exec so its own children can
+// share them, and Node's spawn passes them on: the new copy then held files
+// in the old mount, so each restart left a mount and its AppImage runtime
+// behind (seen on Ubuntu 24.04). bash, because `exec {n}>&-` closes any
+// descriptor number and dash cannot; the AppImage's own AppRun needs bash, so
+// it is there wherever an AppImage runs.
 export const APPIMAGE_RELAUNCH_SCRIPT =
+  `if [ -d /proc/$$/fd ]; then for fd in /proc/$$/fd/*; do n=\${fd##*/}; case "$n" in 0|1|2) ;; *) exec {n}>&- ;; esac; done; fi; ` +
   `i=0; while kill -0 "$1" 2>/dev/null; do i=$((i+1)); [ "$i" -gt ${WAIT_TICKS} ] && exit 0; sleep 0.2; done; shift; exec "$@"`;
 
 /** The AppImage file this process was started from, or null when Murage is not
@@ -86,11 +95,10 @@ export function relaunchDesktop({ app, args, platform = process.platform, env = 
   // where the person started the first one.
   const inMount = dir => dir === appDir || dir.startsWith(appDir + "/");
   const start = [env.OWD, cwd, os.homedir()].find(dir => typeof dir === "string" && path.isAbsolute(dir) && !inMount(dir) && isDirectory(dir)) ?? "/";
-  const child = spawn("/bin/sh", ["-c", APPIMAGE_RELAUNCH_SCRIPT, "murage-relaunch", String(pid), file, ...args], {
+  const child = spawn("bash", ["-c", APPIMAGE_RELAUNCH_SCRIPT, "murage-relaunch", String(pid), file, ...args], {
     detached: true, stdio: "ignore", cwd: start, env: appImageRelaunchEnv(env, appDir),
   });
-  // /bin/sh is always there on Linux; a failed spawn must still never crash
-  // the quitting app.
+  // A failed spawn must still never crash the quitting app.
   child.on?.("error", () => {});
   child.unref?.();
   return "appimage";

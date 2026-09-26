@@ -10,7 +10,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
-import { appImageRelaunchEnv, relaunchBlockedCode, relaunchDesktop, runningAppImage } from "./desktop-relaunch.mjs";
+import { APPIMAGE_RELAUNCH_SCRIPT, appImageRelaunchEnv, relaunchBlockedCode, relaunchDesktop, runningAppImage } from "./desktop-relaunch.mjs";
 
 const MOUNT = "/tmp/.mount_MuragemkCion";
 const APPIMAGE = "/home/tester/Murage-0.1.60-x86_64.AppImage";
@@ -95,5 +95,26 @@ test("a real AppImage-style restart: the file itself runs only after the old pro
     assert.equal(libraryPath, "");
     assert.equal(dataDir, "/data/for/this/copy");
     assert.deepEqual(args, ["--no-sandbox", "--murage-backup-mode", "two words"]);
+  } finally { safeWipeSync(root); }
+});
+
+// Seen on Ubuntu 24.04 with a real AppImage: Chromium's .pak and ICU files are
+// open without close-on-exec, the restarted copy inherited them, and every
+// restart left the old mount and its AppImage runtime behind.
+test("the restart helper hands the AppImage no inherited descriptors (Linux)", { skip: process.platform !== "linux" }, async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "murage-appimage-fds-")));
+  try {
+    const out = path.join(root, "fds.txt"), held = path.join(root, "held.pak");
+    writeFileSync(held, "x");
+    const appImage = path.join(root, "Murage.AppImage");
+    writeFileSync(appImage, `#!/bin/sh\nls /proc/$$/fd > "${out}.tmp"; readlink /proc/$$/fd/* >> "${out}.tmp"; mv "${out}.tmp" "${out}"\n`);
+    chmodSync(appImage, 0o755);
+    // Open two descriptors without close-on-exec, the way Chromium holds its
+    // resource files, then become the helper exactly as relaunchDesktop runs it.
+    const helper = spawn("bash", ["-c", `exec 15<"${held}" 200<"${held}"; exec bash -c "$0" murage-relaunch 999999999 "${appImage}"`, APPIMAGE_RELAUNCH_SCRIPT], { stdio: "ignore" });
+    await new Promise(resolve => helper.once("exit", resolve));
+    assert.equal(await waitFor(() => existsSync(out)), true, "the AppImage was never started");
+    const listing = readFileSync(out, "utf8");
+    assert.equal(listing.includes(held), false, `inherited descriptor reached the AppImage:\n${listing}`);
   } finally { safeWipeSync(root); }
 });
