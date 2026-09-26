@@ -1,9 +1,9 @@
 import { pauseRestoredMemory } from "./memory/restore.ts";
 import { randomBytes, randomUUID } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { inspectInstallationArchive, type ArchiveLimits } from "./installation-archive.ts";
+import { inspectInstallationArchive, type ArchiveLimits, type InstallationArchiveManifest } from "./installation-archive.ts";
 import { InstallationSnapshotError, inspectInstallationDatabase } from "./installation-database-snapshot.ts";
 import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
@@ -19,6 +19,53 @@ const id = (value: unknown): value is string => typeof value === "string" && /^[
 const MAX_JSON_BYTES = 64 * 1024 ** 2;
 const RESERVED_RESTORE_FILES = new Set<string>([RESTORE_REVIEW_FILE, RESTORED_CONNECTIONS_FILE, "recovery-quarantine", "connection-profiles", "companion"]);
 const terminal = new Set(["completed", "failed", "cancelled", "missed", "blocked", "limit"]);
+
+/** A name this system can hold as it is. */
+function localName(name: string): boolean {
+  if (!name || name === "." || name === ".." || /[/\0]/.test(name)) return false;
+  if (process.platform !== "win32") return true;
+  return !/[\\:<>"|?*\x00-\x1f]/.test(name) && !/[ .]$/.test(name) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
+}
+function exists(path: string) { try { lstatSync(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; } }
+
+/** Put back what a bot's folder held besides plain files (audit A-01): each
+ * extra name of a hard-linked file as its own copy, each shortcut as a
+ * shortcut (never followed), and each real name that had to be stored under
+ * a safe spelling, where this system allows it. What can't be put back is
+ * kept under its stored name and listed in the restore's review notes. */
+function materializeOwnerEntries(state: string, manifest: InstallationArchiveManifest, modifications: Array<{ component: string; action: string }>) {
+  const inside = (path: string) => join(state, ...path.split("/"));
+  const linkPaths = new Set((manifest.links ?? []).map(link => link.path.toLowerCase()));
+  const underLink = (path: string) => { const parts = path.toLowerCase().split("/"); for (let index = 1; index < parts.length; index++) if (linkPaths.has(parts.slice(0, index).join("/"))) return true; return false; };
+  for (const copy of manifest.copies ?? []) {
+    if (underLink(copy.path) || underLink(copy.from)) fail("UNSAFE_ARCHIVE_PATH");
+    mkdirSync(dirname(inside(copy.path)), { recursive: true, mode: 0o700 });
+    copyFileSync(inside(copy.from), inside(copy.path), constants.COPYFILE_EXCL);
+  }
+  for (const link of manifest.links ?? []) {
+    if (underLink(link.path)) fail("UNSAFE_ARCHIVE_PATH");
+    mkdirSync(dirname(inside(link.path)), { recursive: true, mode: 0o700 });
+    try { symlinkSync(link.target, inside(link.path), process.platform === "win32" ? link.type : undefined); }
+    catch (error) {
+      // Windows lets only some accounts make shortcuts of this kind.
+      if (!["EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"].includes(String((error as NodeJS.ErrnoException).code))) throw error;
+      modifications.push({ component: link.path, action: `Shortcut to ${link.target} could not be re-created on this computer` });
+    }
+  }
+  // Deepest first, so each rename changes only the last part of a path whose
+  // folders still have their stored spelling.
+  const names = [...(manifest.names ?? [])].sort((a, b) => b.path.split("/").length - a.path.split("/").length || (a.path < b.path ? -1 : 1));
+  for (const entry of names) {
+    if (underLink(entry.path)) fail("UNSAFE_ARCHIVE_PATH");
+    const from = inside(entry.path), to = join(dirname(from), entry.name);
+    if (!exists(from)) continue;
+    if (!localName(entry.name) || exists(to)) {
+      modifications.push({ component: entry.path, action: `Restored as ${entry.path.split("/").pop()} because this computer can't hold the name ${entry.name} there` });
+      continue;
+    }
+    renameSync(from, to);
+  }
+}
 
 /** Prepare a private review-only candidate. It never replaces an installation
  * and does not clear the startup barrier. The original archive is unchanged;
@@ -51,7 +98,8 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
   };
   try {
     // No future archive may place its own marker/quarantine over ours.
-    if ([...files].some(path => RESERVED_RESTORE_FILES.has(path.toLowerCase()) || ["recovery-quarantine/", "connection-profiles/", "companion/"].some(prefix => path.toLowerCase().startsWith(prefix)))) fail("RESERVED_RESTORE_COMPONENT");
+    const stored = [...files, ...(inspected.manifest.links ?? []).map(link => link.path), ...(inspected.manifest.copies ?? []).map(copy => copy.path)];
+    if (stored.some(path => RESERVED_RESTORE_FILES.has(path.toLowerCase()) || ["recovery-quarantine/", "connection-profiles/", "companion/"].some(prefix => path.toLowerCase().startsWith(prefix)))) fail("RESERVED_RESTORE_COMPONENT");
     for (const path of ["routines.json", "calendar-calls.json", "webhooks.json", "delegation-receipts.json", "section-contexts.json"]) {
       if (files.has(path)) assertInstallationRecords(path, read(path));
     }
@@ -119,13 +167,22 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
     const routines = read("routines.json");
     if (routines !== undefined) {
       if (!object(routines) || routines.version !== 1 || !Array.isArray(routines.routines) || !Array.isArray(routines.runs)) fail("INVALID_RESTORE_ROUTINES");
-      routines.routines = routines.routines.map(value => { if (!object(value) || !id(value.id)) fail("INVALID_RESTORE_ROUTINES"); return { ...value, enabled: false }; });
+      // The same policy as bots and tasks (audit A-06): a restored routine
+      // follows its bot again (whose level is reset to Ask above) and keeps no
+      // "Always allow for this routine" grants.
+      routines.routines = routines.routines.map(value => {
+        if (!object(value) || !id(value.id)) fail("INVALID_RESTORE_ROUTINES");
+        const copy: RecordValue = { ...value, enabled: false, alwaysAllow: [] };
+        delete copy.permissionMode;
+        return copy;
+      });
       routines.runs = routines.runs.map(value => {
         if (!object(value) || !id(value.id) || typeof value.status !== "string") fail("INVALID_RESTORE_ROUTINES");
         if (terminal.has(value.status)) return value;
         return { ...value, status: "cancelled", error: "Pending work suspended after restoration; review its outcome before starting new work", finishedAt: Date.now() };
       });
       write("routines.json", routines);
+      modifications.push({ component: "routines.json", action: "Routines paused; each follows its bot's approval level again, with no routine grants" });
     }
     const calls = read("calendar-calls.json");
     if (calls !== undefined) {
@@ -196,6 +253,7 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
       } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
       finally { db.close(); }
     }
+    materializeOwnerEntries(state, inspected.manifest, modifications);
     write(RESTORED_CONNECTIONS_FILE, { version: 1, id: randomUUID() });
     modifications.push({ component: RESTORED_CONNECTIONS_FILE, action: "Fresh Murage credentials and companion/device state; native engine globals remain untouched" });
     write(RESTORE_REVIEW_FILE, { version: 1, status: "review-required", snapshotId: inspected.manifest.snapshotId, archiveSha256: inspected.sha256, quarantined, modifications });

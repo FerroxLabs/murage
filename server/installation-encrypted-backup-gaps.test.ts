@@ -53,7 +53,9 @@ it("cancels an in-flight capture, stops the pinned age child, publishes nothing 
   const open=fidelity.openFidelitySource;let observed:{running:string[];staged:boolean}|undefined;
   const hook=vi.spyOn(fidelity,"openFidelitySource").mockImplementation(item=>{
     const stream=open(item);
-    if(item.path==="workspaces/large.bin")stream.once("data",()=>{
+    // The raw copy of a record streams while age is already running (0.1.60
+    // keeps raw copies of records only; owner files are stored once).
+    if(item.path==="config.json")stream.once("data",()=>{
       observed={running:ownedAge(f.tool),staged:leftovers(f.parent).some(name=>existsSync(join(f.parent,name,"backup.age")))};
       controller.abort(new Error("synthetic in-flight capture cancellation"));
     });
@@ -77,7 +79,7 @@ it("refuses a destination another writer creates during capture and keeps that w
   const f=closedFixture(),before=digestTree(f.data),archive=join(f.parent,"backup.age");
   const open=fidelity.openFidelitySource;let raced=false;
   const hook=vi.spyOn(fidelity,"openFidelitySource").mockImplementation(item=>{
-    if(item.path==="workspaces/large.bin"&&!raced){writeFileSync(archive,"other writer bytes",{flag:"wx"});raced=true;}
+    if(item.path==="config.json"&&!raced){writeFileSync(archive,"other writer bytes",{flag:"wx"});raced=true;}
     return open(item);
   });
   try{

@@ -152,10 +152,16 @@ describe("a scheduled backup can actually be restored", () => {
       if (SIDECAR.test(file) || file.endsWith(".db")) continue; // databases are checkpointed snapshots, compared by contents below
       expect(before.get(file), `raw/${file} is not the file that went in`).toBe(digest);
     }
-    // Nothing the installation held was silently dropped from the fidelity copy.
-    const missing = [...before.keys()].filter(file => !raw.has(file) && !SIDECAR.test(file));
-    expect(missing, "files present before the backup but absent from its fidelity payload").toEqual([]);
-    expect(raw.has("workspaces/live-deal.md")).toBe(true);
+    // Nothing the installation held was silently dropped. Since 0.1.60 an
+    // owner file is stored once (its recovery copy IS its original bytes);
+    // only Murage's projected records keep a separate raw copy (audit A-05).
+    for (const [file, digest] of recoveryProjection) {
+      if (file.includes("/") && !file.endsWith(".db")) expect(before.get(file), `recovery/${file} is not the file that went in`).toBe(digest);
+    }
+    const missing = [...before.keys()].filter(file => !raw.has(file) && !recoveryProjection.has(file) && !SIDECAR.test(file));
+    expect(missing, "files present before the backup but absent from it").toEqual([]);
+    expect(raw.has("workspaces/live-deal.md")).toBe(false);
+    expect(recoveryProjection.get("workspaces/live-deal.md")).toBe(before.get("workspaces/live-deal.md"));
 
     // ---- 3. Destroy the installation, exactly as a lost machine would.
     const doomed = path.resolve(fixture.data);

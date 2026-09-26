@@ -100,7 +100,8 @@ it.skipIf(process.platform === "win32")("never follows app-owned symlinks into e
   mkdirSync(join(f.data, "workspaces"));
   symlinkSync(join(f.parent, "external"), join(f.data, "workspaces", "outside"));
   const result = await stageInstallationState(f.data, f.parent);
-  expect(result.manifest.omitted).toContainEqual({ path: join("workspaces", "outside"), reason: "Directory symlink not followed" });
+  // Stored as a shortcut (0.1.60 audit A-01), never followed.
+  expect(result.manifest.links).toEqual([{ path: "workspaces/outside", target: join(f.parent, "external"), type: expect.any(String) }]);
   expect(result.manifest.files.some(file => file.path.includes("untouched"))).toBe(false);
 });
 

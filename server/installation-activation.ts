@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, readlinkSync, readSync } from "node:fs";
+import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, RESTORE_ADDED_FILES } from "../shared/backup-limits.ts";
 import { basename, dirname, join, sep } from "node:path";
 import { homedir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
@@ -9,7 +10,6 @@ import { restoredConnectionProfile } from "../electron/restored-connections.mjs"
 import { InstallationSnapshotError, inspectInstallationDatabase } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
-import { portableArchivePath } from "./installation-archive.ts";
 import { parseStoredConfig } from "./config.ts";
 import type { JsonValue } from "./schema.ts";
 import { writeFileAtomic } from "./atomic.ts";
@@ -55,7 +55,9 @@ function validatePaused(root: string) {
     const value = json(join(root, name)); if (value === undefined) continue;
     assertInstallationRecords(name, value);
     if (!object(value)) continue;
-    if (name === "routines.json" && (records(value.routines).some(row => row.enabled !== false) || records(value.runs).some(row => ["queued", "running", "waiting"].includes(String(row.status))))) fail("RESTORE_WORK_NOT_PAUSED");
+    // A restored routine follows its bot and holds no grants (audit A-06),
+    // the same as the bots and tasks checked above.
+    if (name === "routines.json" && (records(value.routines).some(row => row.enabled !== false || row.permissionMode !== undefined || (row.alwaysAllow !== undefined && (!Array.isArray(row.alwaysAllow) || row.alwaysAllow.length > 0))) || records(value.runs).some(row => ["queued", "running", "waiting", "needs-you"].includes(String(row.status))))) fail("RESTORE_WORK_NOT_PAUSED");
     if (name === "calendar-calls.json" && records(value.calls).some(row => row.nextRunAt !== null)) fail("RESTORE_WORK_NOT_PAUSED");
     if (name === "webhooks.json" && records(value.webhooks).some(row => row.enabled !== false || row.verificationPending !== true)) fail("RESTORE_WORK_NOT_PAUSED");
   }
@@ -82,22 +84,34 @@ function validatePaused(root: string) {
 function fingerprint(root: string) {
   const digest = createHash("sha256");
   let files = 0, bytes = 0;
+  // The same limits the backup was made under (shared/backup-limits.ts), plus
+  // what the restore itself adds, so a restored copy always passes review.
+  const maxItems = MAX_BACKUP_FILES + RESTORE_ADDED_FILES, maxBytes = MAX_BACKUP_BYTES + 1024 ** 3;
+  let items = 0;
   function visit(relative: string, depth: number) {
-    if (depth > 64) fail("REVIEW_LIMIT_EXCEEDED");
+    if (depth > 128) fail("REVIEW_LIMIT_EXCEEDED");
     const file = join(root, relative), stat = lstatSync(file);
-    if (stat.isSymbolicLink()) fail("INVALID_REVIEW_FILE");
+    // A restored bot folder can hold shortcuts (audit A-01). One is never
+    // followed: its own text is part of what is reviewed. Only inside a
+    // folder, never one of Murage's own records at the top.
+    if (stat.isSymbolicLink()) {
+      if (!relative.includes("/") || ++items > maxItems) fail("INVALID_REVIEW_FILE");
+      digest.update(JSON.stringify([relative, "link", readlinkSync(file)]) + "\n");
+      return;
+    }
     digest.update(JSON.stringify([relative, stat.mode & 0o777]) + "\n");
     if (stat.isDirectory()) {
       const names = readdirSync(file).sort();
-      if (names.length > 100_000) fail("REVIEW_LIMIT_EXCEEDED");
+      if (names.length > maxItems) fail("REVIEW_LIMIT_EXCEEDED");
       for (const name of names) {
-        const next = relative ? relative + "/" + name : name;
-        if (!portableArchivePath(next)) fail("INVALID_REVIEW_FILE");
-        visit(next, depth + 1);
+        // Names are this computer's own (restore puts back real names where
+        // it can), so they are checked for safety here, not portability.
+        if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\0")) fail("INVALID_REVIEW_FILE");
+        visit(relative ? relative + "/" + name : name, depth + 1);
       }
       if (JSON.stringify(names) !== JSON.stringify(readdirSync(file).sort())) fail("SOURCE_CHANGED");
     } else {
-      if (!stat.isFile() || stat.nlink !== 1 || ++files > 100_000 || (bytes += stat.size) > 20 * 1024 ** 3) fail("REVIEW_LIMIT_EXCEEDED");
+      if (!stat.isFile() || stat.nlink !== 1 || ++files > maxItems || ++items > maxItems || (bytes += stat.size) > maxBytes) fail("REVIEW_LIMIT_EXCEEDED");
       const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       try {
         const opened = fstatSync(fd);

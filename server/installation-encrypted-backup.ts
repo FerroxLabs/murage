@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
-import { constants, closeSync, copyFileSync, createReadStream, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, rmSync } from "node:fs";
+import { constants, closeSync, createReadStream, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
+import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES } from "../shared/backup-limits.ts";
+import { classifyDataDirEntry } from "./data-dir-inventory.ts";
+import { publishNoReplace } from "./publish-file.ts";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 import { ZipFile } from "yazl";
@@ -74,24 +77,51 @@ async function withWindowsPrivateStage<T>(parent:string,options:EncryptedBackupO
   }
 }
 const budget=(options:ArchiveLimits)=>{
-  const maxBytes=options.maxBytes??20*1024**3,maxFiles=options.maxFiles??100000;
-  if(!Number.isSafeInteger(maxBytes)||maxBytes<1||!Number.isSafeInteger(maxFiles)||maxFiles<1||maxFiles>100000)fail("INVALID_BACKUP_LIMITS");
+  // Defaults are the largest limit a backup may be made at, so inspection and
+  // restore accept everything a backup verified (shared/backup-limits.ts).
+  const maxBytes=options.maxBytes??MAX_BACKUP_BYTES,maxFiles=options.maxFiles??MAX_BACKUP_FILES;
+  if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>MAX_BACKUP_BYTES||!Number.isSafeInteger(maxFiles)||maxFiles<1||maxFiles>MAX_BACKUP_FILES)fail("INVALID_BACKUP_LIMITS");
   return{maxBytes,maxFiles};
 };
 async function hashFile(path:string,signal?:AbortSignal){const hash=createHash("sha256");for await(const chunk of createReadStream(path,{signal}))hash.update(chunk);return hash.digest("hex");}
+/** Raw copies a version 2 backup keeps beside the recovery copy: Murage's
+ * own records (their recovery copy is projected) and the encrypted-only items. */
+function rawRecord(path:string){return !path.includes("/")&&path!=="messages.db"&&classifyDataDirEntry(path)?.backup==="record";}
 function parseFidelity(value:unknown,options:ArchiveLimits):FidelityManifest{
   const parsed=fidelityManifestSchema.safeParse(value);if(!parsed.success)fail("INVALID_FIDELITY_MANIFEST");
-  const manifest=parsed.data;validateArchiveFileList(manifest,options);
+  const manifest=parsed.data;const maxFiles=budget(options).maxFiles;
+  // Raw and recovery copies together: up to twice the item limit.
+  validateArchiveFileList(manifest,{...options,maxEntries:2*maxFiles});
   const recovery=validateInstallationArchiveManifest(manifest.recovery,options);
-  const expected=new Set(recovery.files.flatMap(file=>[`raw/${file.path}`,`recovery/${file.path}`]));
   const rawChannel=(path:string)=>path.startsWith("raw/channels/");
   const rawOnly=(path:string)=>rawChannel(path)||path==="raw/startup-background.json"||path==="raw/memory-index.db";
+  // Version 1 stored every file twice (raw/ and recovery/); version 2 keeps a
+  // raw copy only of the records. Both still read.
+  const expected=new Set(recovery.files.flatMap(file=>manifest.version===1||rawRecord(file.path)?[`raw/${file.path}`,`recovery/${file.path}`]:[`recovery/${file.path}`]));
   const declared=new Set(manifest.files.map(file=>file.path));
   if([...expected].some(path=>!declared.has(path))||manifest.files.some(file=>!expected.has(file.path)&&!rawOnly(file.path)))fail("FIDELITY_RECOVERY_MISMATCH");
   if(manifest.files.some(file=>rawChannel(file.path))&&!manifest.coverage.components.some(component=>component.path==="channels"&&component.status==="included"))fail("FIDELITY_RECOVERY_MISMATCH");
   if(declared.has("raw/memory-index.db")&&!manifest.coverage.components.some(component=>component.path==="memory-index.db"&&component.status==="included"))fail("FIDELITY_RECOVERY_MISMATCH");
-  for(const file of recovery.files){const copy=manifest.files.find(candidate=>candidate.path===`recovery/${file.path}`);if(copy?.bytes!==file.bytes||copy.sha256!==file.sha256)fail("FIDELITY_RECOVERY_MISMATCH");}
+  const byPath=new Map(manifest.files.map(file=>[file.path,file]));
+  for(const file of recovery.files){const copy=byPath.get(`recovery/${file.path}`);if(copy?.bytes!==file.bytes||copy.sha256!==file.sha256)fail("FIDELITY_RECOVERY_MISMATCH");}
   return manifest;
+}
+
+/** Bot names by id from a staged roster, to say whose folder an item was in. */
+function botNames(file:string):Record<string,string>{
+  try{
+    const roster=JSON.parse(readFileSync(file,"utf8"));if(!Array.isArray(roster))return{};
+    return Object.fromEntries(roster.filter(bot=>bot&&typeof bot.id==="string"&&typeof bot.name==="string"&&bot.name.trim()).map(bot=>[bot.id,bot.name.trim().slice(0,80)]));
+  }catch{return{};}
+}
+/** What a backup left out, for the page that reports it: at most 50 items,
+ * each a path inside the data folder with its reason, and the names of the
+ * bots whose folders they were in. */
+export function skippedSummary(recovery:Pick<StateSnapshotManifest,"skipped"|"skippedCount">,bots:Record<string,string>={}){
+  const count=recovery.skippedCount??0;if(!count)return{};
+  const items=(recovery.skipped??[]).slice(0,50);
+  const ids=new Set(items.map(item=>/^workspaces\/([^/]+)\//.exec(item.path)?.[1]).filter((id):id is string=>!!id&&Object.hasOwn(bots,id)));
+  return{skipped:{count,items,bots:Object.fromEntries([...ids].map(id=>[id,bots[id]]))}};
 }
 
 /** Authenticated decryption finishes before any archive entry is inspected. */
@@ -109,7 +139,7 @@ export async function inspectEncryptedInstallationBackup(archive:string,outputPa
       validate:context=>{privateDirectory=context.directory;pending=(async()=>{
         if(!context.plaintext)fail("AGE_PROCESS_FAILED");
         const signal=combineSignal(context.signal,options.signal);
-        const inspected=await inspectArchiveEntries(context.plaintext,context.directory,value=>parseFidelity(value,options),{...options,signal});
+        const inspected=await inspectArchiveEntries(context.plaintext,context.directory,value=>parseFidelity(value,options),{...options,signal,maxEntries:2*limits.maxFiles});
         const after=lstatSync(archive);
         if(source.dev!==after.dev||source.ino!==after.ino||source.size!==after.size||source.mtimeMs!==after.mtimeMs)fail("ARCHIVE_CHANGED");
         const sha256=await hashFile(archive,signal);
@@ -127,7 +157,10 @@ export async function inspectEncryptedInstallationBackup(archive:string,outputPa
   const plaintext=join(directory,"authenticated.zip");let success=false,retain=false;
   try{
     await decryptBackupFile(options.ageExecutable,options.identity,archive,plaintext,{maxBytes:limits.maxBytes+64*1024**2,signal:options.signal,timeoutMs:options.timeoutMs,closeTimeoutMs:options.closeTimeoutMs});
-    const inspected=await inspectArchiveEntries(plaintext,directory,value=>parseFidelity(value,options),options);
+    const inspected=await inspectArchiveEntries(plaintext,directory,value=>parseFidelity(value,options),{...options,maxEntries:2*limits.maxFiles});
+    // Every entry is checked and extracted; the decrypted copy of the whole
+    // archive is no longer needed and would double the space a restore takes.
+    rmSync(plaintext,{force:true});
     const after=lstatSync(archive);
     if(source.dev!==after.dev||source.ino!==after.ino||source.size!==after.size||source.mtimeMs!==after.mtimeMs)fail("ARCHIVE_CHANGED");
     const sha256=await hashFile(archive);
@@ -147,12 +180,14 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
   const execute=async(scratch:string,options:EncryptedBackupOptions&{recipient:string;selection:BackupSelection},held?:OfflineInstallation)=>{
   const ciphertext=join(scratch,"backup.age");
   let retain=false,step:CaptureStep="offline-open";
+  let bots:Record<string,string>={};
   try{
     const offline=<T,>(work:(installation:OfflineInstallation)=>Promise<T>)=>held?work(held):withOfflineInstallation(dataDir,work);
     const manifest=await offline(async installation=>{
       if(parent===installation.dataDir||parent.startsWith(installation.dataDir+sep))fail("DESTINATION_INSIDE_INSTALLATION");
       step="stage";
       const stage=await stageInstallationStateWhileOwned(installation,scratch,options);
+      if(stage.manifest.skippedCount)bots=botNames(join(stage.directory,"state","bots.json"));
       const streams=new Set<Readable>();let writer:ZipFile|undefined;
       try{
         stage.assertSourceUnchanged();
@@ -161,7 +196,7 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
         step="manifest";
         const recovery=validateInstallationArchiveManifest({...stage.manifest,format:"murage.installation",files:stage.manifest.files.map(file=>({...file,path:file.path.replaceAll("\\","/")}))},options);
         const files=[...fidelity.sources.map(file=>({path:`raw/${file.path}`,bytes:file.bytes,sha256:file.sha256})),...recovery.files.map(file=>({...file,path:`recovery/${file.path}`}))];
-        const manifest=parseFidelity({format:"murage.installation-fidelity",version:1,snapshotId:recovery.snapshotId,createdAt:recovery.createdAt,sourceInstallation:installation.dataDir,restorePolicy:"paused-review-required",database:{status:"absent"},files,coverage:fidelity.coverage,recovery},options);
+        const manifest=parseFidelity({format:"murage.installation-fidelity",version:2,snapshotId:recovery.snapshotId,createdAt:recovery.createdAt,sourceInstallation:installation.dataDir,restorePolicy:"paused-review-required",database:{status:"absent"},files,coverage:fidelity.coverage,recovery},options);
         writer=new ZipFile();
         const manifestBytes=Buffer.from(JSON.stringify(manifest)+"\n");
         if(manifestBytes.length>32*1024**2)fail("ARCHIVE_LIMIT_EXCEEDED");
@@ -183,14 +218,14 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
       finally{for(const stream of streams)stream.destroy();(writer?.outputStream as Readable|undefined)?.destroy();if(!retain)rmSync(stage.directory,{recursive:true,force:true});}
     });
     step="readback";
-    const inspection=await inspectEncryptedInstallationBackup(ciphertext,scratch,options);
+    const inspection=await inspectEncryptedInstallationBackup(ciphertext,scratch,{...options,durable:false});
     if(inspection.manifest.snapshotId!==manifest.snapshotId)fail("FIDELITY_READBACK_MISMATCH");
     const sha256=inspection.sha256;rmSync(inspection.directory,{recursive:true,force:true});
     step="flush";
     const fd=openSync(ciphertext,"r+");try{fsyncSync(fd);}finally{closeSync(fd);}
     step="publish";
-    if(process.platform!=="win32")linkSync(ciphertext,target);
-    return{path:target,sha256,snapshotId:manifest.snapshotId,coverage:manifest.coverage,restorePolicy:manifest.restorePolicy};
+    if(process.platform!=="win32")publishNoReplace(ciphertext,target);
+    return{path:target,sha256,snapshotId:manifest.snapshotId,coverage:manifest.coverage,restorePolicy:manifest.restorePolicy,...skippedSummary(manifest.recovery as StateSnapshotManifest,bots)};
   }catch(error){retain=retainFailure(error);const reported=error instanceof InstallationSnapshotError?error:capturedFilesystemError(error);withCaptureStep(reported,step);if(retain)Object.assign(reported,{retainedDirectory:scratch});throw reported;}
   finally{if(process.platform!=="win32"){if(!retain)rmSync(scratch,{recursive:true,force:true});else discardFailedStage(scratch,true);}}
   };
@@ -243,15 +278,21 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
 export async function restoreEncryptedInstallationNew(dataDir:string,archive:string,expectedSha256:string,options:EncryptedBackupOptions){
   if(!/^[a-f0-9]{64}$/.test(expectedSha256))fail("ARCHIVE_HASH_REQUIRED");
   const parent=dataDirLeasePaths(dirname(dataDir)).canonicalDataDir;
-  const inspected=await inspectEncryptedInstallationBackup(archive,parent,options);
+  // An intermediate copy: the restore proper re-extracts (and flushes) it.
+  const inspected=await inspectEncryptedInstallationBackup(archive,parent,{...options,durable:false});
   let restoredSuccessfully=false;
   try{
     if(inspected.sha256!==expectedSha256)fail("ARCHIVE_HASH_CHANGED");
     const target=dataDirLeasePaths(dataDir).canonicalDataDir;
     if(target===inspected.manifest.sourceInstallation||target.startsWith(inspected.manifest.sourceInstallation+sep))fail("RESTORE_SOURCE_TARGET_REFUSED");
     const recovery=validateInstallationArchiveManifest(inspected.manifest.recovery,options);
+    // Move (not copy) the checked recovery files into the stage the restore
+    // archive is made from, and drop the raw copies first: a restore needs no
+    // more free space than necessary.
+    rmSync(join(inspected.stateDirectory,"raw"),{recursive:true,force:true});
     const stage=mkdtempSync(join(inspected.directory,".recovery-"));
-    for(const file of recovery.files){const to=join(stage,"state",...file.path.split("/"));mkdirSync(dirname(to),{recursive:true,mode:0o700});copyFileSync(join(inspected.stateDirectory,"recovery",...file.path.split("/")),to,constants.COPYFILE_EXCL);}
+    if(recovery.files.length)renameSync(join(inspected.stateDirectory,"recovery"),join(stage,"state"));
+    else mkdirSync(join(stage,"state"),{mode:0o700});
     const recoveryArchive=await writeInstallationStageArchive({directory:stage,manifest:{...recovery,format:"murage.installation-stage"} as StateSnapshotManifest},join(inspected.directory,"recovery.zip"),options);
     const restored=await restoreInstallation(target,recoveryArchive.path,recoveryArchive.sha256,{requireNew:true,...(process.platform==="win32"?{preparationParent:inspected.directory}:{})});
     restoredSuccessfully=true;
