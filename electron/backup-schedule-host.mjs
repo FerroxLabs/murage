@@ -306,6 +306,7 @@ export function createBackupScheduleHost(host) {
       if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
       const existingKey=options?.existingKey===true;
       if(!existingKey&&typeof host.createRecoveryKey!=="function")throw Error("BACKUP_UNAVAILABLE");
+      let setUpNote=null;
       running=true;try{
       const destination=await host.chooseDestination();if(!destination)return {cancelled:true};
       const installation=realpathSync.native(host.installation()),target=realpathSync.native(destination);
@@ -331,9 +332,13 @@ export function createBackupScheduleHost(host) {
       if(!await host.confirmReferences({destination:path.basename(target),recoveryKey:path.basename(resolvedKey),recoveryKeyFolder:path.dirname(resolvedKey),createdKey:Boolean(created)}))return {cancelled:true,...(keyNote?{created:keyNote}:{})};
       const b={version:1,installationIdentity:installationIdentity(bound),installationRef:"installation-"+hash(bound).slice(0,24),destinationRef:randomUUID(),recoveryRef:randomUUID(),destination:target,destinationIdentity:installationIdentity(target),keyFile:resolvedKey,keyFingerprint:hash(fingerprint(keyFile)),recipient:key.recipient,allowIdleRestart:false,allowClosedApp:false};
       await host.writeProtected(BACKUP_SCHEDULE_BINDINGS_KEY,JSON.stringify(b));
-      const status=await publicStatus();
-      return keyNote?{...status,created:keyNote}:status;
+      setUpNote=keyNote;
       }finally{running=false;}
+      // Read only after the setup's own "preparing" flag is released: status
+      // read inside it said pending:true, and the page refuses to switch on a
+      // schedule that is pending, so "Back up every day" left daily backups off.
+      const status=await publicStatus();
+      return setUpNote?{...status,created:setUpNote}:status;
     },
     async selectReferences(){
       if(running||coordinator.status().enabled||activePhases.has(coordinator.status().phase))throw Error("BACKUP_BUSY");
@@ -357,8 +362,10 @@ export function createBackupScheduleHost(host) {
       const key=readBackupIdentity(keyFile,installation);if(!key.recipient)throw Error("BACKUP_IDENTITY_HEADER_REQUIRED");
       if(!await host.confirmReferences())return {cancelled:true};
       const b={version:1,installationIdentity:installationIdentity(bound),installationRef:"installation-"+hash(bound).slice(0,24),destinationRef:randomUUID(),recoveryRef:randomUUID(),destination:target,destinationIdentity:installationIdentity(target),keyFile:realpathSync(keyFile),keyFingerprint:hash(fingerprint(keyFile)),recipient:key.recipient,allowIdleRestart:false,allowClosedApp:false};
-      await host.writeProtected(BACKUP_SCHEDULE_BINDINGS_KEY,JSON.stringify(b));return publicStatus();
+      await host.writeProtected(BACKUP_SCHEDULE_BINDINGS_KEY,JSON.stringify(b));
       }finally{running=false;}
+      // As in setUpBackups: a status read while still preparing reports pending:true.
+      return publicStatus();
     },
     async configure(expectedRevision,input){
       if(running)throw Error("BACKUP_BUSY");if(!input||typeof input!=="object"||Array.isArray(input))throw Error("INVALID_BACKUP_SCHEDULE");
