@@ -156,3 +156,83 @@ export function captureFailureSentence(input) {
   const where = STAGE_WORDS[failure.stage];
   return `The last backup stopped ${where ?? "before it could finish"}. ${REASONS[failure.code] ?? REASONS.UNKNOWN_CAPTURE_FAILURE}`;
 }
+
+/* ------------------------------------------------------------------------
+ * The underlying cause, for the log only.
+ *
+ * The stage and code above are all the window ever shows. When a backup
+ * fails for a reason the code alone can't name (a plain filesystem error,
+ * the encryption tool exiting), the log also gets a small, redacted record
+ * of what actually failed: the step inside the capture, the errno and
+ * syscall, and for a tool its exit code and the start of its error output.
+ * No path, file name, key or recipient survives the redaction, and the
+ * record never reaches the window or the durable backup state.
+ * --------------------------------------------------------------------- */
+
+const CAUSE_STEPS = new Set([
+  "tool", "private-stage", "offline-open", "stage", "inventory", "manifest", "encrypt",
+  "readback", "flush", "publish", "worker",
+]);
+const CAUSE_TOOLS = new Set(["age", "murage-backup-age"]);
+
+/** Strip anything that could name a place or carry a secret. */
+export function redactCauseText(value, max = 200) {
+  if (typeof value !== "string") return undefined;
+  let text = value
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, " ")
+    .replace(/AGE-SECRET-KEY-1[0-9A-Za-z]+/g, "<key>")
+    .replace(/\bage1[0-9a-z]{8,}/g, "<recipient>")
+    .replace(/(["'`])[^"'`\r\n]*[\\/][^"'`\r\n]*\1/g, "$1<path>$1")
+    .replace(/\\\\[^"'<>|\r\n]*?(?=$|["'<>|\r\n]|:\s|,\s|\s\(|\)\s*$)/g, "<path>")
+    .replace(/\b[A-Za-z]:[\\/][^"'<>|\r\n]*?(?=$|["'<>|\r\n]|:\s|,\s|\s\(|\)\s*$)/g, "<path>")
+    .replace(/(^|[\s"'(=])\/[^\s"'<>|]+/g, "$1<path>")
+    .replace(/[A-Za-z0-9+/=_-]{24,}/g, "<redacted>")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text.length > max) text = text.slice(0, max);
+  return text || undefined;
+}
+
+/** A plain, bounded, allow-listed record, or null. Re-redacts every string. */
+export function normalizeCaptureCause(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const cause = {};
+  if (typeof input.step === "string" && CAUSE_STEPS.has(input.step)) cause.step = input.step;
+  if (typeof input.errno === "string" && /^E[A-Z0-9_]{1,30}$/.test(input.errno)) cause.errno = input.errno;
+  if (typeof input.syscall === "string" && /^[a-z_]{1,20}$/.test(input.syscall)) cause.syscall = input.syscall;
+  if (typeof input.code === "string" && /^[A-Z][A-Z0-9_]{0,60}$/.test(input.code)) cause.code = input.code;
+  if (typeof input.innerCode === "string" && /^[A-Z][A-Z0-9_]{0,60}$/.test(input.innerCode)) cause.innerCode = input.innerCode;
+  if (typeof input.tool === "string" && CAUSE_TOOLS.has(input.tool)) cause.tool = input.tool;
+  if (Number.isSafeInteger(input.exitCode) && input.exitCode >= -(2 ** 31) && input.exitCode < 2 ** 32) cause.exitCode = input.exitCode;
+  if (typeof input.signal === "string" && /^SIG[A-Z0-9]{1,10}$/.test(input.signal)) cause.signal = input.signal;
+  if (typeof input.toolStep === "string" && /^[a-z][a-z-]{0,30}$/.test(input.toolStep)) cause.toolStep = input.toolStep;
+  const stderr = redactCauseText(input.stderr);
+  if (stderr) cause.stderr = stderr;
+  const message = redactCauseText(input.message, 160);
+  if (message) cause.message = message;
+  if (typeof input.name === "string" && /^[A-Za-z]{1,40}$/.test(input.name)) cause.name = input.name;
+  return Object.keys(cause).length ? cause : null;
+}
+
+/** What an error thrown inside the capture says about itself, redacted. */
+export function describeCaptureError(error, step) {
+  if (!error || typeof error !== "object") return normalizeCaptureCause({ step });
+  const tool = error.toolDiagnostic && typeof error.toolDiagnostic === "object" ? error.toolDiagnostic : {};
+  const inner = error.cause && typeof error.cause === "object" ? error.cause : null;
+  const raw = inner ?? error;
+  const io = raw.ioCause && typeof raw.ioCause === "object" ? raw.ioCause : raw;
+  const errnoOf = value => typeof value === "string" && /^E[A-Z0-9]+$/.test(value) && !/_/.test(value) ? value : undefined;
+  const ownCode = value => typeof value === "string" && !errnoOf(value) ? value : undefined;
+  // A coded error's message is only its code again; say it once.
+  const coded = typeof error.code === "string" && /^[A-Z][A-Z0-9_]+$/.test(error.code) && !inner;
+  return normalizeCaptureCause({
+    step: error.captureStep ?? step,
+    errno: errnoOf(io.code) ?? errnoOf(io.errno),
+    syscall: io.syscall,
+    code: ownCode(error.code),
+    innerCode: inner ? ownCode(inner.code) : undefined,
+    name: raw.name,
+    message: coded ? undefined : raw.message,
+    ...tool,
+  });
+}

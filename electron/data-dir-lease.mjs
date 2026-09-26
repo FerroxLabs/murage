@@ -194,14 +194,19 @@ const MESSAGES = {
 
 export class DataDirLeaseError extends Error {
   name = "DataDirLeaseError";
-  constructor(code) {
+  constructor(code, io) {
     super(MESSAGES[code] ?? MESSAGES.LEASE_IO);
     this.code = code;
     // Deliberately no raw cause: JSON parser and filesystem errors can expose
-    // nonce-bearing records, paths or the parent-to-child capability.
+    // nonce-bearing records, paths or the parent-to-child capability. Only the
+    // errno and syscall of a filesystem failure are kept, never its message,
+    // so a redacted log can say which call failed.
+    const errno = typeof io?.code === "string" && /^E[A-Z0-9]{1,30}$/.test(io.code) ? io.code : undefined;
+    const syscall = typeof io?.syscall === "string" && /^[a-z_]{1,20}$/.test(io.syscall) ? io.syscall : undefined;
+    if (errno) Object.defineProperty(this, "ioCause", { value: Object.freeze({ errno, ...(syscall ? { syscall } : {}) }), enumerable: false });
   }
 }
-const fail = (code) => new DataDirLeaseError(code);
+const fail = (code, io) => new DataDirLeaseError(code, io);
 const absent = (error) => error?.code === "ENOENT";
 const localHost = () => hostname();
 
@@ -294,7 +299,7 @@ export function dataDirLeasePaths(dataDir) {
 function prepareAnchor(dataDir) {
   const paths = dataDirLeasePaths(dataDir);
   try { mkdirSync(dirname(paths.leasePath), { recursive: true, mode: 0o700 }); }
-  catch { throw fail("LEASE_IO"); }
+  catch (error) { throw fail("LEASE_IO", error); }
   if (dataDirLeasePaths(dataDir).leasePath !== paths.leasePath) throw fail("LEASE_PATH_CHANGED");
   return paths;
 }
@@ -376,15 +381,15 @@ function publishRecord(path, owner) {
     closeSync(fd);
     fd = undefined;
     try { linkSync(candidate, path); return true; }
-    catch (error) { if (error?.code === "EEXIST") return false; throw fail("LEASE_IO"); }
+    catch (error) { if (error?.code === "EEXIST") return false; throw fail("LEASE_IO", error); }
   } catch (error) {
     if (error instanceof DataDirLeaseError) throw error;
-    throw fail("LEASE_IO");
+    throw fail("LEASE_IO", error);
   } finally {
     if (fd !== undefined) { try { closeSync(fd); } catch {} }
     if (created) {
       try { unlinkSync(candidate); }
-      catch (error) { if (!absent(error)) throw fail("LEASE_IO"); }
+      catch (error) { if (!absent(error)) throw fail("LEASE_IO", error); }
     }
   }
 }
@@ -398,7 +403,7 @@ function removeOwnedRecord(path, expected) {
     unlinkSync(path);
   } catch (error) {
     if (error instanceof DataDirLeaseError) throw error;
-    throw fail("LEASE_IO");
+    throw fail("LEASE_IO", error);
   }
 }
 

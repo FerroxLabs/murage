@@ -7,6 +7,7 @@ import { backupAgePinForTarget } from "../shared/backup-age-pin.ts";
 import { trustedBackupAgeExecutable, normalizeBackupAgeDiagnostic } from "../electron/backup-age-attestation.mjs";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 import { createWindowsBackupResourceResolver } from "./windows-backup-resources.ts";
+import { redactCauseText } from "../shared/backup-capture-failure.mjs";
 function fail(code: string): never { throw new InstallationSnapshotError(code); }
 export function assertBackupAgeTool(executable: string, operation: "encrypt"|"decrypt" = "encrypt") {
   if (!backupAgePinForTarget(process.platform, process.arch)) fail("AGE_TOOL_PLATFORM_UNQUALIFIED");
@@ -56,10 +57,17 @@ async function runAge(executable: string,args: string[],input: Readable,output: 
   let bytes=0;
   const child=spawn(executable,args,{stdio:inputFd===undefined?["pipe","pipe","pipe"]:["pipe","pipe","pipe",inputFd],env:{PATH:""},windowsHide:true});
   let didClose=false;
-  const closed=new Promise<void>((resolve,reject)=>{child.once("error",()=>{if(!child.pid)didClose=true;reject(new InstallationSnapshotError("AGE_PROCESS_FAILED"));});child.once("close",code=>{didClose=true;code===0?resolve():reject(new InstallationSnapshotError("AGE_PROCESS_FAILED"));});});
+  // Log-only facts about the tool (never shown, never returned to a window):
+  // its exit, a spawn errno, and the head of its error output. The head is
+  // redacted by the log writer and again here, because it may name files.
+  const tool:{tool:"age";exitCode?:number;signal?:string;errno?:string;stderr?:string}={tool:"age"};
+  const closed=new Promise<void>((resolve,reject)=>{child.once("error",error=>{if(!child.pid)didClose=true;const errno=(error as NodeJS.ErrnoException).code;if(typeof errno==="string")tool.errno=errno;reject(new InstallationSnapshotError("AGE_PROCESS_FAILED"));});child.once("close",(code,signal)=>{didClose=true;if(typeof code==="number")tool.exitCode=code;if(signal)tool.signal=signal;code===0?resolve():reject(new InstallationSnapshotError("AGE_PROCESS_FAILED"));});});
   void closed.catch(()=>{});
-  // Never expose native stderr: it may contain filenames or key parser input.
-  child.stderr!.resume();
+  // Native stderr is never shown: it may contain filenames or key parser
+  // input. Only a bounded head is kept, and only for the redacted log.
+  let stderrHead="";
+  child.stderr!.on("data",(chunk:Buffer)=>{if(stderrHead.length<1024)stderrHead+=chunk.toString("utf8").slice(0,1024-stderrHead.length);});
+  const withTool=(code:string)=>{const stderr=redactCauseText(stderrHead);return Object.assign(new InstallationSnapshotError(code),{toolDiagnostic:{...tool,...(stderr?{stderr}:{}),...(tool.errno?{errno:tool.errno,syscall:"spawn"}:{})}});};
   const destination=createWriteStream(output,{fd:outputFd,autoClose:true});
   const bound=new Transform({transform(chunk,_encoding,done){bytes+=chunk.length;done(bytes>options.maxBytes?new InstallationSnapshotError("BACKUP_LIMIT_EXCEEDED"):null,chunk);}});
   const abort=()=>{child.kill("SIGTERM");};
@@ -73,10 +81,16 @@ async function runAge(executable: string,args: string[],input: Readable,output: 
   } catch (error) {
     const confirmed=await stopBackupAgeProcess(child,()=>didClose,closed,closeTimeoutMs);
     input.destroy();child.stdin?.destroy();child.stdout?.destroy();destination.destroy();
-    if(!confirmed){child.stderr?.destroy();child.unref();fail("AGE_PROCESS_CLOSE_UNCONFIRMED");}
+    if(!confirmed){child.stderr?.destroy();child.unref();throw withTool("AGE_PROCESS_CLOSE_UNCONFIRMED");}
     await Promise.allSettled(transfers);
     if(process.platform!=="win32")rmSync(output,{force:true});
-    fail(options.signal?.aborted?"SNAPSHOT_CANCELLED":error instanceof InstallationSnapshotError&&error.code==="AGE_TOOL_TIMEOUT"?"AGE_TOOL_TIMEOUT":"AGE_PROCESS_FAILED");
+    const reported=withTool(options.signal?.aborted?"SNAPSHOT_CANCELLED":error instanceof InstallationSnapshotError&&error.code==="AGE_TOOL_TIMEOUT"?"AGE_TOOL_TIMEOUT":"AGE_PROCESS_FAILED");
+    // A pipe failure (the zip stream feeding age, or the output file) is the
+    // real cause when age itself exited cleanly: keep its errno for the log.
+    const pipe=error as NodeJS.ErrnoException|undefined;
+    if(!(error instanceof InstallationSnapshotError)&&pipe&&typeof pipe==="object")Object.assign(reported.toolDiagnostic,{...(typeof pipe.code==="string"&&/^E[A-Z]/.test(pipe.code)?{errno:pipe.code}:{}),...(typeof pipe.syscall==="string"?{syscall:pipe.syscall}:{}),...(typeof pipe.message==="string"?{message:redactCauseText(pipe.message,160)}:{})});
+    else{const inner=(error as {toolDiagnostic?:object}|undefined)?.toolDiagnostic;if(inner&&typeof inner==="object")Object.assign(reported.toolDiagnostic,inner);}
+    throw reported;
   } finally {
     if(timer)clearTimeout(timer);
     options.signal?.removeEventListener("abort",abort);
