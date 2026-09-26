@@ -25,7 +25,7 @@ export const BACKUP_CAPTURE_STAGES = Object.freeze([
  * an engine's own error text is not ours to publish. */
 export const BACKUP_CAPTURE_CODES = Object.freeze([
   // handoff and references
-  "BACKUP_HANDOFF_REJECTED", "BACKUP_UNAVAILABLE", "BACKUP_REFERENCE_CHANGED",
+  "BACKUP_HANDOFF_REJECTED", "BACKUP_UNAVAILABLE", "BACKUP_REFERENCE_CHANGED", "BACKUP_FOLDER_MISSING", "BACKUP_RECOVERY_KEY_MISSING",
   "BACKUP_BINDINGS_INVALID", "BACKUP_BINDINGS_UNAVAILABLE", "BACKUP_RECEIPT_MISMATCH",
   // the recovery worker
   "RECOVERY_WORKER_TIMEOUT", "INVALID_RECOVERY_INPUT", "INVALID_RECOVERY_RESULT", "RECOVERY_INPUT_TIMEOUT",
@@ -192,6 +192,10 @@ const REASONS = {
     "Murage couldn't make its private working folder inside your backup folder. Choose a folder on this computer's own drive that you can create files in (not a network, removable or linked folder), then back up again.",
   BACKUP_FILE_IN_USE:
     "Another program was holding a file the backup needed, often antivirus or a sync app. Wait a few minutes, then back up again.",
+  BACKUP_FOLDER_MISSING:
+    "Murage couldn't find your backup folder. If it's on a drive, connect the drive; if you moved or renamed the folder, put it back. Or turn off daily backups and choose a folder again. Then back up again.",
+  BACKUP_RECOVERY_KEY_MISSING:
+    "Murage couldn't find your recovery key file. Put it back where it was, or turn off daily backups and choose your key again. Then back up again.",
   BACKUP_REFERENCE_CHANGED:
     "Your backup folder or your recovery key file has moved, changed or is no longer readable. Choose the folder and key again in Backups.",
   BACKUP_BINDINGS_INVALID:

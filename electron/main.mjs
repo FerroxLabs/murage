@@ -3584,6 +3584,9 @@ async function initializeBackupScheduleHost(){
     // The host supplies only its finite stage/code record; synchronously retain
     // that tiny line in this profile's existing log before generic refusal.
     traceClosed:stage=>closedTrace(`stage ${stage}`),
+    // A backup stopped before it could start (folder or key gone): the Inbox
+    // row and one notification, as after a failed capture (D3).
+    announceFailure:()=>announceLastBackupFailure(),
     reportCaptureFailure:failure=>{
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify(failure)}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },

@@ -57,6 +57,8 @@ export function scheduleError(cause: unknown): string {
     BACKUP_BUSY: "A backup is running. Wait for it to finish, then try again.",
     BACKUP_WORK_ACTIVE: "Work is still active. Scheduling will wait for an idle workspace.",
     BACKUP_SCHEDULE_CHANGED: "Settings changed. The latest saved state is shown after refresh; review your draft before trying again.",
+    BACKUP_FOLDER_MISSING: "Murage couldn't find your backup folder. If it's on a drive, connect the drive; if you moved or renamed the folder, put it back. Or turn off daily backups and choose a folder again. Then back up again.",
+    BACKUP_RECOVERY_KEY_MISSING: "Murage couldn't find your recovery key file. Put it back where it was, or turn off daily backups and choose your key again. Then back up again.",
     BACKUP_REFERENCE_CHANGED: "Your backup folder or recovery key has moved or changed. Turn off daily backups, then choose the backup folder and your recovery key again.",
     BACKUP_SCHEDULE_CONSENT_REQUIRED: "Murage still needs your permission to close and reopen its own window when it's idle, so it can take the backup. Murage does that itself, so you never need to quit it.",
     BACKUP_REVIEW_REQUIRED: "The last backup didn't finish, so daily backups are paused. Choose Clear and try again. Your existing backups are kept.",
