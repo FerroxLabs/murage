@@ -23,11 +23,11 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
   const controller = createInstallationRecoveryController({
     isTrustedSender: trusted, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, retainedDestination, run, retry, openDiagnostics,
     chooseEncryptedBackup: async () => {
-      const picked=await dialog.showOpenDialog(win,{title:"Choose an encrypted application-data backup",properties:["openFile"],filters:[{name:"Encrypted Murage backup",extensions:["age"]}]});
+      const picked=await dialog.showOpenDialog(win,{title:"Choose the backup to restore",properties:["openFile"],filters:[{name:"Encrypted Murage backup",extensions:["age"]}]});
       return picked.canceled||picked.filePaths.length!==1?null:{path:picked.filePaths[0],name:path.basename(picked.filePaths[0])};
     },
     chooseEncryptedDestination: async () => {
-      const picked=await dialog.showSaveDialog(win,{title:"Save an encrypted application-data backup",defaultPath:"murage-application-backup.age",filters:[{name:"Encrypted Murage backup",extensions:["age"]}]});
+      const picked=await dialog.showSaveDialog(win,{title:"Save a backup",defaultPath:"murage-application-backup.age",filters:[{name:"Encrypted Murage backup",extensions:["age"]}]});
       return picked.canceled?null:picked.filePath??null;
     },
     chooseRecoveryIdentity: async event => {
@@ -38,46 +38,46 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
       return{recipient,readIdentity:async()=>{await verifyIdentityAccess(event);return readBackupIdentity(file,context.dataDirectory).identity;}};
     },
     chooseBackup: async () => {
-      const picked = await dialog.showOpenDialog(win, { title: "Choose a Murage installation backup", properties: ["openFile"], filters: [{ name: "Murage backup", extensions: ["zip"] }] });
+      const picked = await dialog.showOpenDialog(win, { title: "Choose an older .zip recovery file", properties: ["openFile"], filters: [{ name: "Murage backup", extensions: ["zip"] }] });
       if (picked.canceled || picked.filePaths.length !== 1) return null;
       return { path: picked.filePaths[0], name: path.basename(picked.filePaths[0]) };
     },
     chooseDestination: async () => {
-      const picked = await dialog.showSaveDialog(win, { title: "Save a new private installation backup", defaultPath: "murage-installation-backup.zip", filters: [{ name: "Murage backup", extensions: ["zip"] }] });
+      const picked = await dialog.showSaveDialog(win, { title: "Save a .zip recovery file", defaultPath: "murage-installation-backup.zip", filters: [{ name: "Murage backup", extensions: ["zip"] }] });
       return picked.canceled ? null : picked.filePath ?? null;
     },
     confirm: async (_event, action, name, destination, installation) => {
       if(action==="backup-encrypted"||action==="restore-encrypted-new"){
         const restore=action==="restore-encrypted-new";
-        const answer=await dialog.showMessageBox(win,{type:"warning",buttons:["Cancel",restore?"Restore separately and restart for review":"Create encrypted backup"],defaultId:0,cancelId:0,noLink:true,
-          message:restore?`Restore ${name} into a new paused installation?`:"Preserve application data in an encrypted backup?",
-          detail:restore?`Original retained unchanged: ${context.dataDirectory}\nNew installation: ${destination}\n\nThe original fidelity data remains in the encrypted backup. The new installation uses a safe paused projection: credentials, native sessions and channel bindings are not reactivated. Murage restarts for review only after successful restore.`:`Destination: ${destination}\n\nOriginal settings may include credentials. They are preserved only inside encrypted fidelity data. Native sessions, VM homes and external folders are excluded. Channel history is retained, but re-pairing is required after restore. Keep an independent recovery key copy; losing it prevents recovery.`});
+        const answer=await dialog.showMessageBox(win,{type:"warning",buttons:["Cancel",restore?"Restore and restart":"Make backup"],defaultId:0,cancelId:0,noLink:true,
+          message:restore?"Restore this backup into a new folder?":"Make an encrypted backup of your Murage data?",
+          detail:restore?`Backup: ${name}\nYour current data stays as it is: ${context.dataDirectory}\nThe restored copy goes to: ${destination}\n\nWhen the restore has finished, Murage restarts so you can review the restored copy. It comes back paused: AI engines, schedules and messaging apps stay off until you connect them again.`:`Save to: ${destination}\n\nThe backup is encrypted with your recovery key and holds your settings, bots, conversations, files and channel history. It does not hold the local VM or folders outside Murage. Keep a copy of your recovery key somewhere else: without it the backup can't be opened.`});
         return answer.response===1;
       }
       if (action === "capture-separate") {
         const answer = await dialog.showMessageBox(win, {
-          type: "warning", buttons: ["Cancel", "Create separate recovery copy"], defaultId: 0, cancelId: 0, noLink: true,
-          message: "Recover from data available on this computer?",
-          detail: "Original installation: " + context.dataDirectory + "\n\nPrivate recovery copy: " + destination + "\nNew installation: " + installation +
-            "\n\nWindows will ask for one-time administrator approval. Murage will take a point-in-time snapshot without changing the original or its ownership records. Work in progress may be incomplete, and later changes are not included. The copy must pass validation before Murage restarts into paused review. Engines, schedules and memory stay off, and connections must be re-established. Cancelling leaves the startup selection unchanged.",
+          type: "warning", buttons: ["Cancel", "Make recovery copy"], defaultId: 0, cancelId: 0, noLink: true,
+          message: "Make a recovery copy from the data on this computer?",
+          detail: "Your current data: " + context.dataDirectory + "\n\nRecovery copy: " + destination + "\nRestored copy goes to: " + installation +
+            "\n\nWindows asks once for administrator approval. Murage copies your data as it is right now without changing the original. Unfinished work may be missing. The copy is checked, then Murage restarts so you can review it. AI engines, schedules and memory stay off, and you connect apps again. Cancel changes nothing.",
         });
         return answer.response === 1;
       }
       if (action === "restore-separate") {
         const answer = await dialog.showMessageBox(win, {
-          type: "warning", buttons: ["Cancel", "Restore to separate installation"], defaultId: 0, cancelId: 0, noLink: true,
-          message: "Restore " + name + " to a separate installation?",
-          detail: "Original retained unchanged: " + context.dataDirectory + "\n\nNew installation: " + destination +
-            "\n\nOnly the selected backup snapshot is restored. Newer conversations and deletion records in the original are not copied. This requires an existing valid Murage backup; it does not copy a live installation or clear ownership records. Murage will restart into recovery review. Engines, schedules and automatic work remain disabled, and connections must be re-established.",
+          type: "warning", buttons: ["Cancel", "Restore into a new folder"], defaultId: 0, cancelId: 0, noLink: true,
+          message: "Restore " + name + " into a new folder?",
+          detail: "Your current data stays as it is: " + context.dataDirectory + "\n\nThe restored copy goes to: " + destination +
+            "\n\nOnly what is in the backup comes back; anything newer is not copied. Murage restarts so you can review the restored copy. AI engines, schedules and automatic work stay off, and you connect apps again.",
         });
         return answer.response === 1;
       }
       const answer = await dialog.showMessageBox(win, {
-        type: "warning", buttons: ["Cancel", action === "activate" ? "Open reviewed installation" : action === "restore" ? "Restore backup" : "Undo restore"], defaultId: 0, cancelId: 0, noLink: true,
-        message: action === "activate" ? "Open this reviewed installation?" : action === "restore" ? "Restore " + name + "?" : "Return to the retained installation?",
-        detail: action === "activate" ? "Murage will restart. Engines and schedules remain disabled; no pending work is resumed. Enable engines and reconnect devices deliberately in Settings." : action === "restore"
-          ? "Your current installation will be retained separately. Restored agents and schedules will remain paused for review. Provider connections must be re-established."
-          : "The restored candidate will be retained separately. The previous installation will be put back; no retained data is deleted.",
+        type: "warning", buttons: ["Cancel", action === "activate" ? "Open restored copy" : action === "restore" ? "Restore backup" : "Undo restore"], defaultId: 0, cancelId: 0, noLink: true,
+        message: action === "activate" ? "Open the restored copy?" : action === "restore" ? "Restore " + name + "?" : "Undo the restore and go back to your previous data?",
+        detail: action === "activate" ? "Murage restarts with the restored copy. AI engines and schedules stay off and no unfinished work restarts. Turn engines on and reconnect your phone and messaging apps in Settings when you're ready." : action === "restore"
+          ? "Your current data is kept separately. Restored bots and schedules stay paused until you review them, and you connect AI engines again."
+          : "Your previous data is put back. The restored copy is kept separately; nothing is deleted.",
       });
       return answer.response === 1;
     },

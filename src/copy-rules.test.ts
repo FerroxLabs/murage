@@ -30,11 +30,11 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
-      if (entry === "e2e" || entry === "__fixtures__" || entry === "node_modules" || entry === "testing") continue;
+      if (entry === "e2e" || entry === "__fixtures__" || entry === "fixtures" || entry === "node_modules" || entry === "testing" || entry === "vendor" || entry === "resources") continue;
       walk(full, out);
       continue;
     }
-    if (!/\.(?:tsx|ts)$/.test(entry) || /\.(?:test|spec|fixture)\.tsx?$/.test(entry) || entry.endsWith(".d.ts")) continue;
+    if (!/\.(?:tsx|ts|mjs|cjs|js)$/.test(entry) || /\.(?:test|spec|fixture|node-test|electron\.test)\.(?:tsx?|mjs|cjs|js)$/.test(entry) || /\.d\.m?ts$/.test(entry)) continue;
     out.push(full);
   }
   return out;
@@ -50,7 +50,7 @@ function isQuiet(node: ts.Node): boolean {
     if (ts.isJsxAttribute(at)) return QUIET_ATTRIBUTES.has(at.name.getText()) || at.name.getText().startsWith("data-");
     if (ts.isCallExpression(at)) {
       const callee = at.expression.getText();
-      if (/^console\.|^(?:log|debug|logError|logWarn)$|\.(?:log|debug|warn|error|info)$|^(?:cn|clsx|classNames)$|^RegExp$|^require$/.test(callee)) return true;
+      if (/^console\.|^(?:log|debug|logError|logWarn|slog)$|\.(?:log|debug|warn|error|info)$|^(?:cn|clsx|classNames)$|^RegExp$|^require$/.test(callee)) return true;
       // text being searched for or split on is read, not shown
       if (/\.(?:indexOf|lastIndexOf|includes|split|startsWith|endsWith|replace|replaceAll)$/.test(callee) && at.arguments[0] === child) return true;
       // a catalogue key: the catalogue's own values are checked below
@@ -71,7 +71,8 @@ function isQuiet(node: ts.Node): boolean {
 
 /** Every piece of text in a file a person could read, with its line. */
 export function copyStrings(file: string, source: string): Array<{ line: number; end: number; text: string }> {
-  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : /\.(?:mjs|cjs|js)$/.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
   const out: Array<{ line: number; end: number; text: string }> = [];
   const lineOf = (at: number) => sf.getLineAndCharacterOfPosition(at).line + 1;
   const push = (node: ts.Node, text: string) => out.push({ line: lineOf(node.getStart(sf)), end: lineOf(node.getEnd()), text });
@@ -144,7 +145,72 @@ const MODEL_FACING_TEXT: Array<{ file: string; starts: string }> = [
   { file: "server/drivers/acp/core.ts", starts: "The user denied this operation." },
 ];
 
+// Desktop files whose strings never reach a person: a model reads them, or
+// they are storage keys and reason codes. Each needs its reason.
+const DESKTOP_NOT_COPY: Record<string, string> = {
+  "electron/browser-surface.cjs": "built-in browser tool results a model reads",
+  "electron/browser-host.cjs": "built-in browser tool results a model reads",
+  "electron/browser-snapshot.cjs": "page snapshots a model reads",
+  "electron/flux-composio-token.mjs": "credential storage key names",
+  "electron/managed-composio.mjs": "credential storage key names and broker wiring",
+  "electron/capabilities.cjs": "capability reason codes; the window words them",
+};
+
+/** Text in a static HTML page: markup, comments and scripts stripped. */
+export function htmlText(source: string): string[] {
+  return source.replace(/<!--[\s\S]*?-->/g, " ").replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+    .split(/<[^>]+>/).map(part => part.replace(/\s+/g, " ").trim()).filter(Boolean);
+}
+function htmlFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) { if (!["fixtures", "node_modules", "vendor", "resources"].includes(entry)) htmlFiles(full, out); continue; }
+    if (entry.endsWith(".html")) out.push(full);
+  }
+  return out;
+}
+
+// Backup and restore copy has rules of its own (0.1.60 customer pass): no talk
+// of what a storage provider may charge, none of the tools' names or internal
+// words, and never a raw error code in brackets.
+const BACKUP_COPY_FILES = ["src/components/BackupSettings.tsx", "src/components/BackupRemoteSettings.tsx", "src/components/backups-section-ui.ts", "src/components/backup-schedule-ui.ts",
+  "src/components/FirstRunBackupsRow.tsx", "shared/backup-capture-failure.mjs", "electron/installation-recovery-window.mjs", "electron/recovery/renderer.js", "electron/recovery/messages.js"];
+const BACKUP_RULES: Rule[] = [
+  { name: "provider charges", pattern: /\b(?:charges?|charged|pricing|price|fees?|billing)\b/i },
+  { name: "backup tool jargon", pattern: /age-keygen|\bage recovery key\b|native age|\bfidelity\b|application-data|\brestic\b|ownership record/i },
+  { name: "a raw error code", pattern: /\([A-Z][A-Z0-9]*_[A-Z0-9_]+\)/ },
+];
+
+// A lower-case word with no spaces (a schema value or a file name) is not a
+// sentence anyone reads.
+const sentence = (rule: Rule): Rule => ({ name: rule.name, pattern: { test: (text: string) => !/^[a-z0-9._-]+$/.test(text.trim()) && rule.pattern.test(text) } as RegExp });
+const BACKUP_WORDS = BACKUP_RULES.map(sentence);
+
 describe("product copy rules", () => {
+  it("the desktop app's own windows and dialogs show no em dash, no safe and never the connection service's name", () => {
+    expect(hits(walk(join(ROOT, "electron")), RULES, DESKTOP_NOT_COPY)).toEqual([]);
+    const found: string[] = [];
+    for (const file of htmlFiles(join(ROOT, "electron"))) for (const text of htmlText(readFileSync(file, "utf8")))
+      for (const rule of RULES) if (rule.pattern.test(text)) found.push(`${file.slice(ROOT.length)}: ${rule.name}: ${text.slice(0, 120)}`);
+    expect(found).toEqual([]);
+  });
+
+  it("backup and restore copy never talks price, tool names or raw error codes", () => {
+    expect(hits(BACKUP_COPY_FILES.map(name => join(ROOT, name)), BACKUP_WORDS)).toEqual([]);
+    const found: string[] = [];
+    for (const text of htmlText(readFileSync(join(ROOT, "electron/recovery/index.html"), "utf8")))
+      for (const rule of [...RULES, ...BACKUP_RULES]) if (rule.pattern.test(text)) found.push(`recovery/index.html: ${rule.name}: ${text.slice(0, 120)}`);
+    expect(found).toEqual([]);
+  });
+
+  it("the backup dialogs in the desktop's main process follow the backup rules too", () => {
+    const main = copyStrings("electron/main.mjs", readFileSync(join(ROOT, "electron/main.mjs"), "utf8"));
+    const backup = main.filter(entry => /backup|recovery key|off-site|restore|Backup mode/i.test(entry.text));
+    expect(backup.length).toBeGreaterThan(5);
+    const found = backup.flatMap(entry => [...RULES, ...BACKUP_WORDS].filter(rule => rule.pattern.test(entry.text)).map(rule => `electron/main.mjs:${entry.line}: ${rule.name}: ${entry.text.slice(0, 120)}`));
+    expect(found).toEqual([]);
+  });
+
   it("the renderer shows no em dash, no safe and never the connection service's name", () => {
     expect(hits(walk(join(ROOT, "src")), RULES)).toEqual([]);
   });

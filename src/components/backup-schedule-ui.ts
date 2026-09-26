@@ -48,26 +48,26 @@ export function schedulePhase(phase: string): string {
 export function scheduleError(cause: unknown): string {
   const code = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
   const messages: Record<string, string> = {
-    BACKUP_CLOSED_UNAVAILABLE:"Register the closed-app job in this supported desktop session before enabling closed-app backups.",
+    BACKUP_CLOSED_UNAVAILABLE:"Backups while Murage is closed need the background job first. Tick \"Also back up when Murage is closed\" again, then try once more.",
     BACKUP_CLOSED_CONSENT_REQUIRED:"Murage still needs your permission: to back up while it's closed, and to close and reopen its own window when it's idle. Murage does that itself, so you never need to quit it.",
     BACKUP_CLOSED_REVIEW_REQUIRED:"The closed-app job needs review. Refresh status before trying again; saved backup data is unchanged.",
     CLOSED_JOB_REVIEW_REQUIRED:"The closed-app job needs review. Refresh status before trying again; saved backup data is unchanged.",
-    BACKUP_BUSY: "Backup work is in progress. Wait, then refresh status.",
+    BACKUP_BUSY: "A backup is running. Wait for it to finish, then try again.",
     BACKUP_WORK_ACTIVE: "Work is still active. Scheduling will wait for an idle workspace.",
     BACKUP_SCHEDULE_CHANGED: "Settings changed. The latest saved state is shown after refresh; review your draft before trying again.",
-    BACKUP_REFERENCE_CHANGED: "A selected destination or recovery key changed. Disable the schedule, then choose references again when no transfer is active.",
+    BACKUP_REFERENCE_CHANGED: "Your backup folder or recovery key has moved or changed. Turn off daily backups, then choose the backup folder and your recovery key again.",
     BACKUP_SCHEDULE_CONSENT_REQUIRED: "Murage still needs your permission to close and reopen its own window when it's idle, so it can take the backup. Murage does that itself, so you never need to quit it.",
-    BACKUP_REVIEW_REQUIRED: "Backup needs review. Automatic retry is paused; preserve the existing backup evidence.",
-    BACKUP_SCHEDULE_REVIEW_REQUIRED: "Backup needs review. Automatic retry is paused; preserve the existing backup evidence.",
-    BACKUP_HANDOFF_DEFERRED: "Backup restart was deferred. Finish active work and refresh status.",
-    BACKUP_RELEASE_UNCONFIRMED: "Workspace shutdown could not be confirmed. Preserve the current workspace and refresh status.",
+    BACKUP_REVIEW_REQUIRED: "The last backup didn't finish, so daily backups are paused. Choose Clear and try again. Your existing backups are kept.",
+    BACKUP_SCHEDULE_REVIEW_REQUIRED: "The last backup didn't finish, so daily backups are paused. Choose Clear and try again. Your existing backups are kept.",
+    BACKUP_HANDOFF_DEFERRED: "The backup didn't start because Murage was busy. Finish what is running, then try again.",
+    BACKUP_RELEASE_UNCONFIRMED: "Murage couldn't close everything it needed to for the backup. Your workspace is unchanged. Wait a moment, then try again.",
     BACKUP_RELAUNCH_BLOCKED: "Murage can't restart itself on this computer, so backups that reopen Murage can't run. Reinstalling Murage usually fixes this.",
     BACKUP_ELEVATED: "Murage is running as administrator, and backups can't run that way. Close Murage, open it normally, then try again.",
-    BACKUP_UNAVAILABLE: "Scheduled backup is unavailable in this app. A supported packaged app and verified backup tool are required.",
-    INVALID_BACKUP_SCHEDULE: "Check the time, timezone and backup budgets before enabling.",
+    BACKUP_UNAVAILABLE: "Backups aren't available in this copy of Murage. Install Murage from its download page, then try again.",
+    INVALID_BACKUP_SCHEDULE: "Check the time, time zone and the backup limits under Advanced, then try again.",
   };
   for (const [key, value] of Object.entries(messages)) if (code.includes(key)) return value;
-  if (/BACKUP_(BINDINGS|DESTINATION|IDENTITY)/.test(code)) return "Choose the destination and an independently saved age recovery key again when the schedule is disabled and no transfer is active. No key is created here.";
+  if (/BACKUP_(BINDINGS|DESTINATION|IDENTITY)/.test(code)) return "Turn off daily backups and wait for any upload to finish, then choose the backup folder and your recovery key again. No new key is made here.";
   return "Backup settings could not be updated. Your data is preserved. Refresh status before trying again.";
 }
 /** What the schedule card says on its own, over and above the page summary.

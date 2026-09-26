@@ -35,7 +35,7 @@ test("quiescent restart awaits cleanup", async () => {
 });
 test("cleanup failure does not claim the app stayed ready", async () => {
   await assert.rejects(prepareUpdaterRestart(options({ cleanup: () => { throw new Error("held lease"); } })),
-    /could not finish closing safely.*update was not started.*reopen Murage/);
+    /could not finish closing, so the update was not started.*reopen it/);
 });
 test("installer retry after completed cleanup does not query a stopped harness", async () => {
   await prepareUpdaterRestart(options({ isClosing: () => true, isCleanedUp: () => true,

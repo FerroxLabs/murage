@@ -127,6 +127,14 @@ function installationRoot(dataDir: string) {
   if (entry(paths.leasePath + ".restore.json")) fail("INTERRUPTED_RESTORE_REQUIRES_ROLLBACK");
   return root;
 }
+function settleDatabase(root: string) {
+  const file = join(root, "messages.db");
+  const stat = entry(file);
+  if (!stat || !stat.isFile() || stat.isSymbolicLink()) return;
+  // Opening alone is lazy: only the first read attaches the WAL.
+  const db = new DatabaseSync(file, { readOnly: true });
+  try { db.prepare("SELECT count(*) FROM sqlite_schema").get(); } finally { db.close(); }
+}
 function reviewWhileOwned(root: string) {
   const marker = readRestoreReview(root), profile = restoredConnectionProfile(root);
   if (!marker || marker.version !== 1 || marker.status !== "review-required" || !profile ||
@@ -135,6 +143,13 @@ function reviewWhileOwned(root: string) {
       typeof marker.archiveSha256 !== "string" || !hashPattern.test(marker.archiveSha256)) fail("INVALID_RESTORE_REVIEW");
   const receipt = json(join(dirname(root), "." + basename(root) + ".restore-" + marker.transactionId + ".receipt.json"), 16_384);
   if (!object(receipt) || receipt.version !== 1 || receipt.id !== marker.transactionId || receipt.snapshotId !== marker.snapshotId || receipt.archiveSha256 !== marker.archiveSha256 || receipt.phase !== "candidate-installed") fail("INVALID_RESTORE_REVIEW");
+  // A read-only open of a WAL-mode messages.db (every restored one) makes
+  // SQLite create messages.db-wal and messages.db-shm. validatePaused opens it,
+  // so on the first review those two files appeared between the fingerprints
+  // below and the review failed with SOURCE_CHANGED; only a second attempt
+  // worked. Open and close it once first so both fingerprints see the same
+  // settled tree; a later open leaves the sidecars byte-identical.
+  settleDatabase(root);
   const before = fingerprint(root);
   validatePaused(root);
   const after = fingerprint(root);

@@ -1,4 +1,5 @@
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
+import { portAvailable } from "./port-availability.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs";
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Notification, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
@@ -260,11 +261,19 @@ function startAutomaticRemoteBackups(){
 }
 let closedBackupController=null;
 let closedBackupFinish=null;
+// A closed-app run has no window and no harness log, so until now a run that
+// stalled left no trace at all. Record where it got to, stage names only.
+function closedTrace(stage){
+  if(!closedBackupRequested)return;
+  try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] closed backup ${stage}\n`,{mode:0o600});}catch{/* Tracing never changes the run. */}
+}
 function finishClosedBackup(result){
   if(closedBackupFinish)return closedBackupFinish;
   closedBackupFinish=(async()=>{
-    try{await cleanupDesktopForExit();}
+    closedTrace("finishing");
+    try{await cleanupDesktopForExit();closedTrace("cleaned up");}
     catch{
+      closedTrace(`cleanup unconfirmed at ${String(desktopCleanupStage??"").replace(/[^\w -]/g,"").slice(0,60)}`);
       // Retain ownership if child shutdown is unconfirmed. Never claim a clean
       // closed-job exit or surface the normal workspace/recovery UI here.
       writeClosedBackupResult("needs-review");return;
@@ -318,7 +327,7 @@ const backupMode = createBackupModeController({
   readActivity: readBackupActivity,
   confirm: async () => {
     const answer = await dialog.showMessageBox(mainWindow, { type:"question", buttons:["Cancel","Restart into Backup mode"], defaultId:0, cancelId:0, noLink:true,
-      message:"Close this workspace and restart into Backup mode?", detail:"Murage will close its idle services and reopen without starting engines, schedules or connected channels. You will choose the backup destination and independent recovery key there. No backup starts until you choose it." });
+      message:"Close this workspace and restart into Backup mode?", detail:"Murage closes and reopens in Backup mode, with your bots, schedules and messaging apps paused. There you can restore a backup using your recovery key, or make a backup. Nothing happens until you choose." });
     return answer.response === 1;
   },
   prepare:async()=>{await requireDesktopBackupTool();return prepareDesktopBackup();},
@@ -352,7 +361,7 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   chooseCopyFile:async suggested=>{
     const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save a copy of your recovery key",buttonLabel:"Save copy",properties:["createDirectory"],
       defaultPath:suggested??path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
-      message:"Save this copy somewhere other than your backup folder \u2014 a USB drive, another computer, or import it into your password manager. Without this key nobody, including you, can open your backups."});
+      message:"Save this copy somewhere other than your backup folder: a USB drive, another computer, or your password manager. Without this key nobody, including you, can open your backups."});
     return answer.canceled||!answer.filePath?null:answer.filePath;
   },
   // `suggested` is a name not yet taken in that folder.
@@ -1568,6 +1577,13 @@ function receiveBrowserLifecycleCleanup(proc, rawMessage) {
 async function startServerOn(port) {
   assertDesktopStartupActive();
   if (!desktopDataOwner || !desktopDataDir) throw new Error("The packaged desktop does not own this installation");
+  // Never fork onto a port another program holds: the child would only die
+  // with EADDRINUSE. Counted as a foreign owner, as a health answer is.
+  if (!await portAvailable(port)) {
+    slog(`port ${port} is in use by another process; not starting the server there`);
+    return { proc: null, reason: "foreign-owner" };
+  }
+  assertDesktopStartupActive();
   const entry = path.join(process.resourcesPath, "server", "index.js");
   const childEnv = managedComposioChildEnvironment(composioBrokerUrl(), secureCredentials, {
     ...restoredHarnessEnvironment(process.env, restoredConnections),
@@ -1828,8 +1844,8 @@ function buildErrorPage({ allPortsOccupied }) {
   const serverLogPath = path.join(LOG_DIR, "server.log");
   const serverLogHref = pathToFileURL(serverLogPath).href;
   const reason = allPortsOccupied
-    ? "Every Murage port answered health checks from another process — likely a second copy of the app, or another program on ports 8799–28799. Quit that program, then quit and reopen Murage."
-    : "The background server didn't come up in time — this is usually slow startup, not a port conflict. Quit and reopen Murage.";
+    ? "Another program is using every port Murage can use (8799, 18799 and 28799). It is most likely a second copy of Murage. Quit that program, then quit and reopen Murage."
+    : "Murage's background server didn't start in time. This is usually a slow start, not a problem with your data. Quit and reopen Murage.";
   return (
     "data:text/html;charset=utf-8," +
     encodeURIComponent(
@@ -2252,14 +2268,14 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
   try { captureFailure = backupScheduleHost?.internalStatus().captureFailure ?? null; } catch { /* A missing note never blocks recovery. */ }
   const reason = reasonCode === "BACKUP_REQUESTED"
     ? (captureFailure ? captureFailureSentence(captureFailure) + " " : "")
-      + "Backup mode was opened deliberately. This workspace is stopped; engines, schedules and connected channels have not started. Choose a private backup operation, or return to the workspace."
+      + "You are in Backup mode. Your bots, schedules and messaging apps are paused while you are here. Restore a backup or make one, or choose Return to workspace."
     : reasonCode === "LEASE_FOREIGN_HOST"
-    ? "This installation has an ownership record for a different computer name. This does not establish that your data is damaged. Reinstalling Murage will not clear this record."
+    ? "Murage's data folder says it was last used on a computer with a different name. That does not mean anything is damaged, and reinstalling Murage won't change it."
     : reasonCode === "RESTORE_REVIEW_REQUIRED"
-    ? "This restored installation is paused for recovery review. Your previous installation remains retained."
+    ? "Your restored copy is paused until you review it. Your previous data is kept as it was."
     : reasonCode === "PORT_CONFLICT"
-      ? "Another process answered on Murage's ports. Close that process before retrying startup; restoring data will not resolve a port conflict."
-      : "Murage could not finish startup. Keep the original installation while you inspect recovery options.";
+      ? "Another program is using Murage's ports. Quit it, then choose Retry startup. Restoring a backup won't help with this."
+      : "Murage couldn't finish starting. Your data is kept as it is. Choose Retry startup, or restore a backup.";
   const recovery = openInstallationRecoveryWindow({
     BrowserWindow, ipcMain: electronIpcMain, dialog, baseDir: __dirname,
     context: { reason, ownership, backupMode: reasonCode === "BACKUP_REQUESTED", dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
@@ -3370,8 +3386,8 @@ async function initializeBackupRemoteHost(){
   const passwords=createRemotePasswordStore({
     excludedRoots:()=>[installation,app.getPath("userData"),ensureRemoteControlDirectory(control)],readProtected,updateProtected:updateSecureCredentialDocument,
     chooseFile:async()=>{
-      const answer=await dialog.showOpenDialog(mainWindow,{title:"Choose independently saved repository password",properties:["openFile"]});if(answer.canceled)return null;
-      const confirmed=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Use password file"],defaultId:0,cancelId:0,noLink:true,message:"Keep an independent copy of this repository password",detail:"This is separate from your recovery key and from the storage access keys or SSH key. Keep it outside Murage and its backup folders. Losing it prevents restoring the off-site copy. Selecting it does not connect or upload."});
+      const answer=await dialog.showOpenDialog(mainWindow,{title:"Choose your off-site password file",properties:["openFile"]});if(answer.canceled)return null;
+      const confirmed=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Use this file"],defaultId:0,cancelId:0,noLink:true,message:"Use this file as your off-site password?",detail:"It locks your off-site copy and is separate from your recovery key and your storage access keys. Keep it outside Murage and your backup folder, and keep a copy somewhere else: without it the off-site copy can't be restored. Choosing it doesn't connect or upload anything."});
       return confirmed.response===1?answer.filePaths[0]??null:null;
     },
     // Murage's own off-site password goes where the recovery key went, else
@@ -3411,7 +3427,9 @@ async function initializeBackupRemoteHost(){
 }
 async function initializeBackupScheduleHost(){
   if(!app.isPackaged||!desktopDataOwner)return;
+  closedTrace("tool");
   try { await requireDesktopBackupTool(); } catch { /* Keep backup unavailable without blocking ordinary startup. */ }
+  closedTrace("tool-checked");
   assertDesktopStartupActive();
   const installation=ownedDesktopDataDir();
   // The closed-app profile refuses a data folder other accounts can write to;
@@ -3419,11 +3437,15 @@ async function initializeBackupScheduleHost(){
   for(const directory of new Set([desktopRequestedDataDir,installation]))try{tightenOwnedDirectory(directory);}catch{/* The closed-app status names a folder that stays shared. */}
   // Read-only selected-profile routing must precede the first protected backup
   // reference read, including closed startup and existing offline returns.
+  closedTrace("folders");
   const selectedProfile=restoredConnectionProfile(installation);
   if(selectedProfile)CREDENTIALS_FILE=selectedProfile.credentialsFile;
+  closedTrace("importing coordinator");
   const {BackupCoordinator}=await import(pathToFileURL(path.join(process.resourcesPath,"server","backup-coordinator.js")).href);
+  closedTrace("coordinator imported");
   const stateDirectory=closedControlDirectory(installation);
   const coordinator=new BackupCoordinator({stateDirectory});
+  closedTrace("coordinator ready");
   const provider=createNativeClosedBackupProvider({home:app.getPath("home")});
   closedBackupController=createClosedBackupController({
     profile:()=>({version:1,platform:process.platform,owner:{uid:process.getuid?.()},requestedRoot:desktopRequestedDataDir,userData:fs.realpathSync.native(app.getPath("userData")),installation,installationIdentity:closedInstallationIdentity(installation),executable:fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe"))}),
@@ -3477,7 +3499,7 @@ async function initializeBackupScheduleHost(){
     // closing and reopening its own window to take a backup.
     confirmReferences:async summary=>{
       const detail=[
-        summary?.createdKey?`Your recovery key ${summary.recoveryKey} was created in ${summary.recoveryKeyFolder}. It is the only thing that can open your backups: if you lose it, nobody \u2014 including Murage \u2014 can get your work back. Keep a copy somewhere else, such as a USB drive or your password manager.`
+        summary?.createdKey?`Your recovery key ${summary.recoveryKey} was created in ${summary.recoveryKeyFolder}. It is the only thing that can open your backups: if you lose it, nobody (not even Murage) can get your work back. Keep a copy somewhere else, such as a USB drive or your password manager.`
           :`Murage will use the recovery key ${summary?.recoveryKey}. Leave it where it is, and keep a copy somewhere other than your backup folder.`,
         "To take a backup, Murage closes and reopens its own window when you are not using it. Murage does that itself, so you never need to quit it.",
       ].join("\n\n");
@@ -3490,6 +3512,7 @@ async function initializeBackupScheduleHost(){
     // Closed main has no harness logger and exits immediately after cleanup.
     // The host supplies only its finite stage/code record; synchronously retain
     // that tiny line in this profile's existing log before generic refusal.
+    traceClosed:stage=>closedTrace(`stage ${stage}`),
     reportCaptureFailure:failure=>{
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify(failure)}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },
@@ -3504,9 +3527,9 @@ async function initializeBackupScheduleHost(){
 const desktopStartup = app.whenReady().then(async () => {
   assertDesktopStartupActive();
   if(closedBackupRequested){
-    acquireDesktopDataOwner();await initializeBackupScheduleHost();desktopRecoveryMode=true;
+    closedTrace("ready");acquireDesktopDataOwner();closedTrace("owner");await initializeBackupScheduleHost();closedTrace("host");desktopRecoveryMode=true;
     // The worker waits for desktopStartup; never await it from this callback.
-    void desktopStartup.then(()=>backupScheduleHost.runClosedDue()).then(finishClosedBackup).catch(()=>finishClosedBackup({status:"unavailable"}));
+    void desktopStartup.then(()=>{closedTrace("run");return backupScheduleHost.runClosedDue();}).then(result=>{closedTrace(`result ${result?.status}${result?.reason?" "+result.reason:""}`);return finishClosedBackup(result);}).catch(()=>{closedTrace("failed");return finishClosedBackup({status:"unavailable"});});
     return;
   }
   const connectionError = error => dialog.showErrorBox("Murage server connection", error.message);
@@ -3536,7 +3559,7 @@ const desktopStartup = app.whenReady().then(async () => {
       void desktopStartup.then(()=>resumeBackedUpInstall({backup:backupScheduleHost,updater,currentVersion:app.getVersion(),cleanup:cleanupDesktopForExit})).catch(()=>{
         if(!desktopShutdownStarted){
           showDesktopRecovery("BACKUP_REQUESTED");
-          dialog.showErrorBox("Update paused","Murage could not confirm this update continuation. No automatic retry will run. Review diagnostics; return to the workspace only when the pending update can be safely cancelled.");
+          dialog.showErrorBox("Update paused","Murage couldn't confirm the update could carry on after the backup, so it stopped and will not try again by itself. Your data is unchanged. Open the diagnostics folder and contact support before returning to your workspace.");
         }
       });
       return;
@@ -3761,7 +3784,7 @@ const desktopStartup = app.whenReady().then(async () => {
 });
 void desktopStartup.then(()=>{if(!desktopRecoveryMode&&!desktopShutdownStarted){backupScheduleHost?.start();startAutomaticRemoteBackups();}}).catch(()=>{});
 void desktopStartup.catch((error) => {
-  if(closedBackupRequested){void finishClosedBackup({status:error?.name==="DataDirLeaseError"?"busy":"unavailable"});return;}
+  if(closedBackupRequested){closedTrace(`startup failed ${String(error?.name??"Error").replace(/[^\w]/g,"").slice(0,40)} ${String(error?.code??error?.message??"").replace(/[^A-Z0-9_]/g,"").slice(0,60)}`);void finishClosedBackup({status:error?.name==="DataDirLeaseError"?"busy":"unavailable"});return;}
   if (!desktopShutdownStarted) {
     // Lease errors are sanitized by the lease module; arbitrary child/errors
     // may carry credentials or paths and must not be echoed to diagnostics.

@@ -186,7 +186,7 @@ test("actual bootstrap selects fresh connection storage after ownership and befo
   assert.deepEqual(events, ["lease","/fixture/owned",{settingsDirectory:"/fresh/settings",stateDirectory:"/fresh/devices"},"/fresh/credentials.bin"]);
 });
 
-function serverLauncher({ proc, poll, track, environment = {} }) {
+function serverLauncher({ proc, poll, track, environment = {}, portAvailable = async () => true }) {
   const text = between("async function startServerOn(port) {", "async function startServerPackaged()");
   const owner = { utilityServerLeaseEnvironment:()=>({MURAGE_INTERNAL_DATA_DIR_LEASE:"private-fixture-capability"}) };
   const scope = {
@@ -198,7 +198,7 @@ function serverLauncher({ proc, poll, track, environment = {} }) {
     harnessResourceEnvironment:()=>({}),packagedGepaManifestEnvironment:()=>({MURAGE_GEPA_MANIFEST_SHA256:""}),workspaceCredentialEnv:()=>({}),slog:()=>{},
     utilityProcess:{fork:(_entry,_args,options)=>{proc.environment=options.env;return proc;}},
     receiveDesktopSurfaceSecret:()=>false,receiveBrowserControlHold:()=>false,receiveBrowserLifecycleCleanup:()=>false,syncBrowserConnection:()=>{},
-    pollServerIdentity:poll,SERVER_BOOT_TIMEOUT_MS:25,
+    pollServerIdentity:poll,SERVER_BOOT_TIMEOUT_MS:25,portAvailable,
     desktopDataOwner:owner,desktopDataDir:"/canonical/installation",assertDesktopStartupActive:()=>{},desktopShutdownStarted:false,
     trackOwnedServerChild:(child)=>({exit:new Promise(()=>{}),...track(child)}),
   };
@@ -218,6 +218,16 @@ test("actual utility launch overrides ambient root/delegation only in the owned 
   assert.deepEqual(ambient,{MURAGE_DATA_DIR:"relative-alias",MURAGE_INTERNAL_DATA_DIR_LEASE:"ambient-forged",MURAGE_GEPA_MANIFEST_SHA256:"ambient-forged-gepa-pin"});
 });
 
+// A port another program already holds is skipped without forking: a child
+// forked onto it died with EADDRINUSE and the crash log recorded an abnormal
+// utility exit on every launch and every return from a backup (0.1.60 pass).
+test("a port another program holds is skipped as a foreign owner without forking", async () => {
+  const proc = { on(){}, stdout:null, stderr:null };
+  const launch = serverLauncher({ proc, poll: async () => ({ outcome: "ready" }), track: () => ({}), portAvailable: async port => port !== 8799 });
+  assert.deepEqual(await launch(8799), { proc: null, reason: "foreign-owner" });
+  // The fork seam records the child's environment; it was never called.
+  assert.equal(proc.environment, undefined);
+});
 test("failed boot cannot return for port fallback before exact child exit", async () => {
   const proc=new EventEmitter();proc.pid=123;
   const gate=deferred();let killed=false;

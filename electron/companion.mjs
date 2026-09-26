@@ -399,7 +399,7 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
   for (let i = 0; i < 40; i++) {
     if (exited || lifecycle.failed) {
       await stop().catch(() => {});
-      lastError = "the companion could not start — check the log";
+      lastError = "the companion could not start. Check the log";
       return companionState();
     }
     try {
@@ -411,7 +411,7 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
       // it does not own and stopping it does nothing visible. Match the pid.
       if (state?.pid !== undefined && child.pid !== undefined && state.pid !== child.pid) {
         await stop().catch(() => {});
-        lastError = `port ${CONTROL_PORT} is already serving another companion — stop it and try again`;
+        lastError = `port ${CONTROL_PORT} is already serving another companion. Stop it and try again`;
         return companionState();
       }
       if (!Number.isSafeInteger(child.pid) || child.pid <= 0) {
