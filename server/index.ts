@@ -2570,7 +2570,12 @@ const INDIVIDUAL_CHIEF_CONFLICT =
 
 const wireBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
   const { resumeCursors: _resumeCursors, connectedAppAccess: _connectedAppAccess, accessRoleEpoch: _accessRoleEpoch, tasks, ...rest } = bot;
-  return { ...rest, avatarUrl: rest.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
+  // `busy` is always a boolean on the wire. The store omits undefined fields,
+  // so a bot that has never run a turn had none, and the desktop's backup
+  // activity check (electron/backup-mode.mjs backupActivityBusy) refuses a
+  // bot without one: Backup mode, and so every restore, could not open on a
+  // fresh install whose Chief of Staff had not answered yet.
+  return { ...rest, busy: rest.busy === true, avatarUrl: rest.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
 };
 
 /** Profile URLs are app-owned references, not merely strings with a trusted
