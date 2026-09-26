@@ -88,7 +88,7 @@ function BotUsageCard({ bot }: { bot: Bot }) {
         </div>
       </div>
       <div className="mt-2 text-[12px] text-ink-secondary">
-        {hasFiniteCost(usage.costUsd) ? `Cost ${costCaption(instance?.snapshot.billing)}.` : "This engine doesn't report a price; tokens are counted."}
+        {hasFiniteCost(usage.costUsd) ? `Cost ${costCaption(instance?.snapshot.billing)}.` : "This engine doesn't report its cost. Tokens are still counted."}
       </div>
     </div>
   );

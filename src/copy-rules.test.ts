@@ -186,6 +186,33 @@ const BACKUP_RULES: Rule[] = [
 const sentence = (rule: Rule): Rule => ({ name: rule.name, pattern: { test: (text: string) => !/^[a-z0-9._-]+$/.test(text.trim()) && rule.pattern.test(text) } as RegExp });
 const BACKUP_WORDS = BACKUP_RULES.map(sentence);
 
+// Price talk. The product never sells on price or mentions it. "free" is
+// counted only in its price sense: to free memory, free disk space, a free
+// slot and "free of" are other words.
+const PRICE: Rule = { name: "price talk", pattern: /\b(?:prices?|priced|pricing|cheap(?:er|est|ly)?|discount(?:s|ed)?)\b|\bfree\b(?! (?:slot|memory|disk|space|up\b|of\b))/i };
+// An engine's raw error text: an HTTP status or a provider's error type.
+const RAW_ERROR: Rule = { name: "a raw error code", pattern: /\bstatus [45]\d\d\b|\bapi_error\b|\bHTTP [45]\d\d\b/ };
+
+// Price wording that shipped before this rule, each exact, each waiting on
+// the owner's word (listed in the 0.1.60 fix2-ui report). A new or changed
+// string is caught.
+const PRICE_KNOWN: Array<{ file: string; text: string; why: string }> = [
+  { file: "src/components/LocalComputerSection.tsx", text: "Podman and Colima are free. Docker Desktop may require a paid licence for larger companies and government use.", why: "container runtime licensing" },
+  { file: "src/components/ModelsSettings.tsx", text: "Price not listed", why: "model catalogue pricing column" },
+  { file: "src/components/ModelsSettings.tsx", text: "Input price not listed", why: "model catalogue pricing column" },
+  { file: "src/components/ModelsSettings.tsx", text: "output price not listed", why: "model catalogue pricing column" },
+  { file: "src/components/SearchSettings.tsx", text: "Engine search first, free backup if needed", why: "web search mode names" },
+  { file: "src/components/SearchSettings.tsx", text: "Free search: Parallel, then DuckDuckGo", why: "web search mode names" },
+  { file: "src/components/SearchSettings.tsx", text: "No API key required. Queries go to Parallel and, if it fails, DuckDuckGo. Free-service availability may change.", why: "web search mode names" },
+  { file: "src/lib/model-metadata.ts", text: "Price varies by route", why: "model catalogue pricing column" },
+  { file: "src/lib/provider-model-picker.ts", text: "Price unavailable", why: "model catalogue pricing column" },
+  { file: "src/lib/provider-model-picker.ts", text: "compatible chat model  · prices per million tokens", why: "model catalogue pricing column" },
+];
+const PRICE_KNOWN_KEYS = new Set([
+  "connectedApps.lock.body", "connectedApps.flux.ctaBody", "connectedApps.flux.freeRuns", // the connected-apps daily allowance
+  "providerError.payment.summary", // names HTTP 402; ProviderErrorCard's tests pin it
+]);
+
 describe("product copy rules", () => {
   it("the desktop app's own windows and dialogs show no em dash, no safe and never the connection service's name", () => {
     expect(hits(walk(join(ROOT, "electron")), RULES, DESKTOP_NOT_COPY)).toEqual([]);
@@ -225,6 +252,28 @@ describe("product copy rules", () => {
   it("the server hands the window no em dash and no safe", () => {
     const files = [...walk(join(ROOT, "server")), ...walk(join(ROOT, "shared"))];
     expect(hits(files, [EM_DASH, SAFE], MODEL_FACING)).toEqual([]);
+  });
+
+  it("the renderer never talks price and shows no raw error code, beyond the reviewed exceptions", () => {
+    const allowText = (entries: Array<{ file: string; text: string }>) => (found: string) =>
+      !entries.some(entry => found.startsWith(`${entry.file}:`) && found.endsWith(`: ${entry.text.trim().slice(0, 120)}`));
+    const found = hits(walk(join(ROOT, "src")), [PRICE, RAW_ERROR]).filter(allowText(PRICE_KNOWN));
+    const dir = join(ROOT, "src/locales");
+    expect([...found, ...catalogueHits(join(dir, "en.json"), [PRICE, RAW_ERROR], PRICE_KNOWN_KEYS)]).toEqual([]);
+  });
+
+  it("the price and raw-error rules catch what the 0.1.60 Mac pass found, and not the other senses of free", () => {
+    for (const text of ["in a container on this machine, free and separate from your own desktop.", "Only engines that report a price show one.", "Cheaper models", "error: API error (status 429 Too Many Requests): api_error: Available credit is low"])
+      expect([PRICE, RAW_ERROR].some(rule => rule.pattern.test(text)), text).toBe(true);
+    for (const text of ["This page was paused to free memory.", "Check free disk space.", "Waiting for a free slot", "free up space", "free of secrets", "Waiting for a slot", "HTTP headers"])
+      expect([PRICE, RAW_ERROR].some(rule => rule.pattern.test(text)), text).toBe(false);
+  });
+
+  it("a one-line preview of a failed turn goes through the plain-sentence mapping, never the raw name", () => {
+    const sidebar = readFileSync(join(ROOT, "src/components/Sidebar.tsx"), "utf8");
+    const fallbacks = sidebar.match(/[^\n]*\?\? last\.tool\.name\b[^\n]*/g) ?? [];
+    expect(fallbacks.length).toBeGreaterThan(0);
+    for (const line of fallbacks) expect(line, line.trim()).toContain("errorPreview(last.tool) ?? last.tool.name");
   });
 
   it("reads literals and JSX text, never comments", () => {
