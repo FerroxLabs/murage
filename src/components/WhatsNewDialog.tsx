@@ -59,15 +59,24 @@ function CloseIcon() {
   );
 }
 
-/** One dot per card, the current one a long pill. */
-function Pager({ index }: { index: number }) {
+/** One dot per card, the current one a long pill. Each dot is a button that
+ *  goes to its card, on every card: on the last card the dots used to be a
+ *  picture, and there was no way back at all. */
+function Pager({ index, onGo }: { index: number; onGo?: (index: number) => void }) {
   return (
-    <span role="img" aria-label={`Card ${index + 1} of ${WHATS_NEW_CARD_COUNT}`} className="flex gap-1.5">
+    <span role="group" aria-label={`Card ${index + 1} of ${WHATS_NEW_CARD_COUNT}`} className="flex">
       {Array.from({ length: WHATS_NEW_CARD_COUNT }, (_, dot) => (
-        <span
+        <button
           key={dot}
-          className={cn("h-1.5 rounded-[3px]", dot === index ? "w-[18px] bg-[var(--wn-accent)]" : "w-1.5 bg-[var(--wn-ghost-edge)]")}
-        />
+          type="button"
+          data-whats-new-dot={dot}
+          aria-label={`Card ${dot + 1}`}
+          aria-current={dot === index ? "step" : undefined}
+          onClick={() => onGo?.(dot)}
+          className={cn("flex min-h-11 min-w-6 cursor-pointer items-center justify-center rounded-md border-0 bg-transparent p-0 px-[3px]", focusRing)}
+        >
+          <span aria-hidden="true" className={cn("block h-1.5 rounded-[3px]", dot === index ? "w-[18px] bg-[var(--wn-accent)]" : "w-1.5 bg-[var(--wn-ghost-edge)]")} />
+        </button>
       ))}
     </span>
   );
@@ -77,13 +86,17 @@ export interface WhatsNewCardProps {
   index: number;
   releaseNotesUrl: string;
   onNext: () => void;
+  /** The card before this one. Offered on every card after the first. */
+  onBack?: () => void;
+  /** A pager dot: straight to that card. */
+  onGo?: (index: number) => void;
   onClose: () => void;
   onAction: (action: WhatsNewAction) => void;
   headingRef?: (node: HTMLHeadingElement | null) => void;
 }
 
 /** One card, by index. Rendered alone by the tests; the dialog wraps it. */
-export function WhatsNewCard({ index, releaseNotesUrl, onNext, onClose, onAction, headingRef }: WhatsNewCardProps): ReactNode {
+export function WhatsNewCard({ index, releaseNotesUrl, onNext, onBack, onGo, onClose, onAction, headingRef }: WhatsNewCardProps): ReactNode {
   const titleId = `whats-new-title-${index + 1}`;
   if (index === 0) {
     return (
@@ -102,7 +115,7 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onClose, onAction
             <button type="button" className={primaryDark} onClick={() => onAction("backups")}>Open Backups</button>
             <button type="button" className={ghostDark} onClick={onNext}>Next</button>
             <span className="grow" />
-            <Pager index={0} />
+            <Pager index={0} onGo={onGo} />
           </div>
         </div>
       </section>
@@ -134,11 +147,12 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onClose, onAction
           ))}
         </ul>
         <div className="flex items-center gap-2.5">
+          <button type="button" className={ghostDark} onClick={onBack}>Back</button>
           <button type="button" className={primaryDark} onClick={onNext}>Next</button>
           <button type="button" className={ghostDark} onClick={onClose}>Got it</button>
           <span className="grow" />
           <span className="text-[12.5px] text-[var(--wn-ink-faint)] max-sm:hidden">Click any card to try it</span>
-          <span className="ml-3.5"><Pager index={1} /></span>
+          <span className="ml-3.5"><Pager index={1} onGo={onGo} /></span>
         </div>
       </section>
     );
@@ -161,13 +175,22 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onClose, onAction
         ))}
       </ul>
       <div className="relative flex items-center gap-2.5">
+        <button type="button" className={ghostDark} onClick={onBack}>Back</button>
         <button type="button" className={cn(primaryDark, "px-[22px]")} onClick={onClose}>Let's go</button>
         <a href={releaseNotesUrl} target="_blank" rel="noopener noreferrer" className={cn("flex min-h-11 items-center rounded-xl px-3 text-[13.5px] font-medium text-[var(--wn-accent-ink)] hover:text-[var(--wn-accent-ink-hover)]", focusRing)}>Read the full release notes</a>
         <span className="grow" />
-        <Pager index={2} />
+        <Pager index={2} onGo={onGo} />
       </div>
     </section>
   );
+}
+
+/** What an arrow key does on any card: -1 back, +1 forward, 0 nothing. The
+ *  dialog clamps, so Right on the last card and Left on the first stay put. */
+export function whatsNewArrowStep(key: string): -1 | 0 | 1 {
+  if (key === "ArrowRight") return 1;
+  if (key === "ArrowLeft") return -1;
+  return 0;
 }
 
 const FOCUSABLE = 'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
@@ -209,9 +232,14 @@ export function WhatsNewDialog({
   }, [index, open]);
 
   if (!open) return null;
-  const next = () => { moved.current = true; setIndex((current) => Math.min(current + 1, WHATS_NEW_CARD_COUNT - 1)); };
+  const go = (target: number) => { moved.current = true; setIndex(Math.max(0, Math.min(target, WHATS_NEW_CARD_COUNT - 1))); };
+  const next = () => go(index + 1);
+  const back = () => go(index - 1);
   const trap = (event: KeyboardEvent<HTMLDialogElement>) => {
     event.stopPropagation();
+    // The arrow keys page through the cards the same way on every card.
+    const step = whatsNewArrowStep(event.key);
+    if (step !== 0) { event.preventDefault(); go(index + step); return; }
     if (event.key !== "Tab") return;
     const items = [...event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)];
     if (!items.length) return;
@@ -237,6 +265,8 @@ export function WhatsNewDialog({
         index={index}
         releaseNotesUrl={releaseNotesUrl}
         onNext={next}
+        onBack={back}
+        onGo={go}
         onClose={onClose}
         onAction={onAction}
         headingRef={(node) => { heading.current = node; }}

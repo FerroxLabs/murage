@@ -104,7 +104,7 @@ async function walkCards(page: Page, skin: string, dir: string, width = "") {
     await page.waitForFunction(() => [...document.querySelectorAll("dialog[data-whats-new] img")].every((img) => (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0));
     await page.evaluate(() => document.fonts.ready);
     expect(await page.evaluate(() => document.fonts.check('42px "Instrument Serif"'))).toBe(true);
-    await expect(dialog(page).getByRole("img", { name: `Card ${index + 1} of ${CARDS.length}` })).toBeVisible();
+    await expect(dialog(page).getByRole("group", { name: `Card ${index + 1} of ${CARDS.length}` })).toBeVisible();
     expect(await axe(page)).toEqual([]);
     await page.mouse.move(0, 0);
     await page.screenshot({ path: join(dir, `whats-new-${index + 1}-${name}-${skin}${width}.png`) });
@@ -122,12 +122,25 @@ test("a 0.1.59 install updating sees the page once, walks all three cards, and a
   await page.goto(origin + "/__whats-new?skin=dark");
   await expect(card(page, "backups")).toBeVisible();
   await expect(dialog(page).getByRole("heading", { name: "Your work, kept." })).toBeFocused();
-  // focus stays inside: Tab from the last control comes back round
-  await dialog(page).getByRole("button", { name: "Next" }).focus();
+  // focus stays inside: Tab from the last control (the last pager dot) comes back round
+  await dialog(page).getByRole("button", { name: "Card 3", exact: true }).focus();
   await page.keyboard.press("Tab");
   await expect(dialog(page).getByRole("button", { name: "Close" })).toBeFocused();
   await page.keyboard.press("Shift+Tab");
-  await expect(dialog(page).getByRole("button", { name: "Next" })).toBeFocused();
+  await expect(dialog(page).getByRole("button", { name: "Card 3", exact: true })).toBeFocused();
+  // D11: the arrow keys and the dots page on every card, and card 3 has a way back
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await expect(card(page, "more")).toBeVisible();
+  await page.keyboard.press("ArrowRight");
+  await expect(card(page, "more")).toBeVisible();
+  await page.keyboard.press("ArrowLeft");
+  await expect(card(page, "highlights")).toBeVisible();
+  await dialog(page).getByRole("button", { name: "Card 3", exact: true }).click();
+  await dialog(page).getByRole("button", { name: "Back", exact: true }).click();
+  await expect(card(page, "highlights")).toBeVisible();
+  await dialog(page).getByRole("button", { name: "Card 1", exact: true }).click();
+  await expect(card(page, "backups")).toBeVisible();
   // back to the title (no ring) so the pictures show the resting state
   await dialog(page).getByRole("heading", { name: "Your work, kept." }).focus();
 
