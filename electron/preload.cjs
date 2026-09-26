@@ -103,6 +103,9 @@ contextBridge.exposeInMainWorld("muragebox", {
   backupRemote: {
     status: () => ipcRenderer.invoke("backup-remote:status"),
     save: (revision, input) => ipcRenderer.invoke("backup-remote:save", revision, input),
+    testConnection: (remoteRef, revision) => ipcRenderer.invoke("backup-remote:testConnection", remoteRef, revision),
+    trustServer: (remoteRef, revision, fingerprint) => ipcRenderer.invoke("backup-remote:trustServer", remoteRef, revision, fingerprint),
+    remove: (remoteRef, revision) => ipcRenderer.invoke("backup-remote:remove", remoteRef, revision),
     selectRepositoryPassword: (remoteRef, revision) => ipcRenderer.invoke("backup-remote:selectRepositoryPassword", remoteRef, revision),
     connect: (remoteRef, revision) => ipcRenderer.invoke("backup-remote:connect", remoteRef, revision),
     uploadLatest: (remoteRef, revision, jobId) => ipcRenderer.invoke("backup-remote:uploadLatest", remoteRef, revision, jobId),

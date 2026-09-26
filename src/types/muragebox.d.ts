@@ -178,7 +178,10 @@ type SkillRecordingPayload = {
       };
       backupRemote?: {
         status():Promise<import("../../server/backup-remote-host").BackupRemoteStatus>;
-        save(revision:number,input:{label:string;endpoint:string;bucket:string;prefix:string;region:string;bucketLookup:"auto"|"path"|"dns";credentials:{accessKeyId:string;secretAccessKey:string;sessionToken?:string}}):Promise<{saved:boolean}>;
+        save(revision:number,input:{kind?:"s3";label:string;endpoint:string;bucket:string;prefix:string;region:string;bucketLookup:"auto"|"path"|"dns";credentials:{accessKeyId:string;secretAccessKey:string;sessionToken?:string}}|{kind:"sftp";label:string;host:string;port:number;user:string;folder:string}):Promise<{saved:boolean}>;
+        testConnection?(remoteRef:string,revision:number):Promise<{state:"trust-required";fingerprint:string;keyType:string}|{state:"connected";created:boolean;remoteRef:string;revision:number;repositoryId:string}>;
+        trustServer?(remoteRef:string,revision:number,fingerprint:string):Promise<{trusted:boolean;fingerprint:string}>;
+        remove?(remoteRef:string,revision:number):Promise<{removed:boolean}>;
         selectRepositoryPassword(remoteRef:string,revision:number):Promise<{cancelled?:boolean;selected?:boolean}>;
         connect(remoteRef:string,revision:number):Promise<{connected:boolean;remoteRef:string;revision:number;repositoryId:string}>;
         uploadLatest(remoteRef:string,revision:number,jobId:string):Promise<{state:string;jobId:string;remoteRef:string;revision:number;snapshotId?:string}>;

@@ -16,7 +16,7 @@ import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { exportRemoteBackup } from "./backup-remote-export.mjs";
-import { remoteWorkDirectory,ensureRemoteControlDirectory } from "./backup-remote-runtime.mjs";
+import { remoteWorkDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory } from "./backup-remote-runtime.mjs";
 import { trustedBackupResticExecutableAsync } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
@@ -383,7 +383,7 @@ for(const action of ["status","stage","install","disable"]){
     return Promise.resolve().then(()=>closedBackupController[action]()).catch(()=>{throw Error("BACKUP_CLOSED_REVIEW_REQUIRED");});
   });
 }
-for(const [action,arity] of [["status",0],["save",2],["selectRepositoryPassword",2],["saveMaintenanceCredentials",3],["connect",2],["uploadLatest",3],["setAutomaticUpload",3],["reconcileLatest",3],["listBackups",2],["downloadBackup",3],["previewRetention",3],["applyRetention",4],["clearRetentionReview",3]]){
+for(const [action,arity] of [["status",0],["save",2],["testConnection",2],["trustServer",3],["remove",2],["selectRepositoryPassword",2],["saveMaintenanceCredentials",3],["connect",2],["uploadLatest",3],["setAutomaticUpload",3],["reconcileLatest",3],["listBackups",2],["downloadBackup",3],["previewRetention",3],["applyRetention",4],["clearRetentionReview",3]]){
   ipcMain.handle(`backup-remote:${action}`,(_event,...args)=>{
     if(args.length!==arity)throw Error("BACKUP_REMOTE_INPUT_INVALID");
     if(!backupRemoteHost||desktopShutdownStarted||desktopRecoveryMode||backupMode.isPreparing()||backupScheduleHost?.isPreparing()){
@@ -3362,7 +3362,7 @@ const remoteBackupAttestation = new AbortController();
 async function initializeBackupRemoteHost(){
   if(!app.isPackaged||!desktopDataOwner||desktopRecoveryMode||closedBackupRequested||!backupScheduleHost)return;
   const installation=ownedDesktopDataDir(),control=closedControlDirectory(installation);
-  const [{createBackupRemoteHost},{BackupRestic}]=await Promise.all([
+  const [{createBackupRemoteHost},{BackupRestic,resolveSshTools}]=await Promise.all([
     import(pathToFileURL(path.join(process.resourcesPath,"server","backup-remote-host.js")).href),
     import(pathToFileURL(path.join(process.resourcesPath,"server","backup-restic.js")).href),
   ]);
@@ -3371,7 +3371,7 @@ async function initializeBackupRemoteHost(){
     excludedRoots:()=>[installation,app.getPath("userData"),ensureRemoteControlDirectory(control)],readProtected,updateProtected:updateSecureCredentialDocument,
     chooseFile:async()=>{
       const answer=await dialog.showOpenDialog(mainWindow,{title:"Choose independently saved repository password",properties:["openFile"]});if(answer.canceled)return null;
-      const confirmed=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Use password file"],defaultId:0,cancelId:0,noLink:true,message:"Keep an independent copy of this repository password",detail:"This is separate from your age recovery key and S3 access key. Keep it outside Murage and its backup folders. Losing it prevents restoring the remote repository. Selecting it does not connect or upload."});
+      const confirmed=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Use password file"],defaultId:0,cancelId:0,noLink:true,message:"Keep an independent copy of this repository password",detail:"This is separate from your recovery key and from the storage access keys or SSH key. Keep it outside Murage and its backup folders. Losing it prevents restoring the off-site copy. Selecting it does not connect or upload."});
       return confirmed.response===1?answer.filePaths[0]??null:null;
     },
   });
@@ -3389,7 +3389,15 @@ async function initializeBackupRemoteHost(){
     latestReceipt:()=>backupScheduleHost.internalStatus().lastVerified,
     chooseDownloadFolder:async()=>{const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",properties:["openDirectory","createDirectory"]});return result.canceled?null:result.filePaths[0]??null;},
     exportDownloaded:async(copy,folder)=>exportRemoteBackup(copy,folder,{sourceRoot:control,excludedRoots:[installation,app.getPath("userData"),control]}),
-    createAdapter:binding=>new BackupRestic({executable:tool,attestationSignal:remoteBackupAttestation.signal,repository:binding.target,workDirectory:remoteWorkDirectory(control,binding.target.remoteRef,binding.target.revision),password:()=>passwords.read(binding.passwordRef),credentials:async()=>binding.credentials,...(binding.maintenanceCredentials?{maintenanceCredentials:async()=>binding.maintenanceCredentials}:{})}),
+    // SFTP uses the system's own OpenSSH client at a fixed absolute path; a
+    // missing one reaches the window as "how to add it". The owner pressing
+    // Test connection is what authorizes creating an S3 repository.
+    createAdapter:binding=>{
+      let sshTools;if(binding.target.kind==="sftp")try{sshTools=resolveSshTools();}catch{sshTools=undefined;}
+      return new BackupRestic({executable:tool,attestationSignal:remoteBackupAttestation.signal,repository:binding.target,workDirectory:remoteWorkDirectory(control,binding.target.remoteRef,binding.target.revision),password:()=>passwords.read(binding.passwordRef),credentials:async()=>binding.credentials,
+        ...(sshTools?{sshTools}:{}),...(binding.target.kind==="s3"?{authorizeInitialization:async()=>{}}:{}),...(binding.maintenanceCredentials?{maintenanceCredentials:async()=>binding.maintenanceCredentials}:{})});
+    },
+    forgetLocalState:remoteRef=>forgetRemoteWorkDirectory(control,remoteRef),
   });
 }
 async function initializeBackupScheduleHost(){
