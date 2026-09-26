@@ -1,4 +1,5 @@
 import {readClosedBackupDescriptor,assertClosedProfileBinding,closedInvocation} from "./backup-closed-profile.mjs";
+import {closedVolumeProblem} from "./backup-closed-volume.mjs";
 
 /** Bundled entry glue supplies registration, the SAME coordinator and launch.
  * No protected-store import or callback belongs in this lightweight trigger. */
@@ -11,7 +12,7 @@ function recordClosed(coordinator,result){
     coordinator.recordClosedResult?.(result);
   }catch{/* Recording never changes what the trigger reports. */}
 }
-export async function runClosedBackupTrigger({descriptorPath,environment={},platform=process.platform,readDescriptor=readClosedBackupDescriptor,validateBinding=assertClosedProfileBinding,validateRegistration,createCoordinator,launch}){
+export async function runClosedBackupTrigger({descriptorPath,environment={},platform=process.platform,readDescriptor=readClosedBackupDescriptor,validateBinding=assertClosedProfileBinding,validateRegistration,createCoordinator,launch,volumeProblem=descriptor=>closedVolumeProblem({platform,appPaths:[descriptor.executable],dataPaths:[descriptor.requestedRoot,descriptor.installation,descriptor.userData]})}){
   try{
     const descriptor=readDescriptor(descriptorPath);await validateBinding(descriptor);
     if(await validateRegistration(descriptor,descriptorPath)!==true)return{status:"unavailable"};
@@ -22,6 +23,11 @@ export async function runClosedBackupTrigger({descriptorPath,environment={},plat
     // On Linux the capture is the desktop app, which needs the owner's desktop
     // session: with no display it cannot start, so wait and say why.
     if(platform==="linux"&&!environment.DISPLAY&&!environment.WAYLAND_DISPLAY){recordClosed(coordinator,{status:"unavailable",reason:"capability-unavailable"});return{status:"unavailable"};}
+    // On macOS a capture that must read the app or the data folder from
+    // another volume blocks on its first read and never reports, so the run
+    // used to hang until the 32-minute timeout. stat() does not block there,
+    // so decide now, record why, and don't start the capture at all.
+    if(volumeProblem(descriptor)){recordClosed(coordinator,{status:"unavailable",reason:"volume-unreadable"});return{status:"unavailable"};}
     const before=coordinator.status?.()?.lastClosedResult;
     // Final main/host admission rechecks actual lease, registration and due state.
     const result=await launch(closedInvocation(descriptor,descriptorPath,{environment}));

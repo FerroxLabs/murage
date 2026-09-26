@@ -31,11 +31,12 @@ export function launchClosedCapture(invocation:any,{spawnChild=spawn,timeoutMs=3
     });
   });
 }
-export async function runBackupScheduleTrigger(argv=process.argv.slice(2),{environment=process.env,provider=createNativeClosedBackupProvider(),launch=launchClosedCapture,now=Date.now,platform=process.platform}:any={}){
+export async function runBackupScheduleTrigger(argv=process.argv.slice(2),{environment=process.env,provider=createNativeClosedBackupProvider(),launch=launchClosedCapture,now=Date.now,platform=process.platform,volumeProblem}:any={}){
   if(argv.length!==2||argv[0]!==CLOSED_DESCRIPTOR_FLAG)return{status:"unavailable"};
   return runClosedBackupTrigger({descriptorPath:argv[1],environment,platform,
     validateRegistration:async(descriptor:any,file:string)=>{await assertClosedRegistration(descriptor,file,provider);return true;},
     createCoordinator:(descriptor:any)=>new BackupCoordinator({stateDirectory:closedControlDirectory(descriptor.installation),now}),launch,
+    ...(volumeProblem?{volumeProblem}:{}),
   });
 }
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
