@@ -123,6 +123,14 @@ export function remoteBackupError(cause:unknown){
  // Anything not named above. The log (server.log) carries the redacted cause.
  return "Murage couldn't finish this step and didn't change anything. Refresh status, then try again. If it happens again, the reason is in Murage's log.";
 }
+/** A refused password file changes nothing (the store refuses before it
+ * saves anything), so the page stays usable: the person can choose another
+ * file straight away, as the refusal sentence tells them to. Every other
+ * failure locks connection and upload actions until status is refreshed. */
+export function leavesStatusCurrent(cause:unknown){
+ const code=String(cause instanceof Error?cause.message:cause);
+ return /BACKUP_REMOTE_PASSWORD_FILE_(?:PLACE|KIND|SHARED|SHARED_WINDOWS|FORMAT|UNREADABLE)\b/.test(code);
+}
 const inputClass="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:ring-2 focus-visible:ring-accent-border disabled:opacity-50";
 const buttonClass="min-h-11 rounded-lg border border-hairline/40 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 /** Where the last action's result is shown: next to the control that ran it. */
@@ -153,7 +161,7 @@ export function useBackupRemote(){
  }
  async function run(action:string,work:(api:RemoteBridge,expected:number)=>Promise<void>){
   if(gate.current||!bridge)return;gate.current=true;const expected=++version.current;setBusy(action);setError(null);setNotice(null);setArea(areaOf(action));
-  try{await work(bridge,expected);}catch(cause){if(mounted.current&&version.current===expected){setError(remoteBackupError(cause));setStale(true);setUploadConsent(false);}}
+  try{await work(bridge,expected);}catch(cause){if(mounted.current&&version.current===expected){setError(remoteBackupError(cause));if(!leavesStatusCurrent(cause))setStale(true);setUploadConsent(false);}}
   finally{gate.current=false;if(mounted.current)setBusy(null);}
  }
  useEffect(()=>{mounted.current=true;void run("refresh",async(_api,expected)=>refresh(expected));return()=>{mounted.current=false;version.current++;};},[]);
