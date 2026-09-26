@@ -38,6 +38,9 @@ function pinNtfs() {
 function unpinNtfs() { fs.linkSync = realLink; fs.renameSync = realRename; syncBuiltinESMExports(); }
 vi.mock("./installation-windows-backup-transport.ts", () => ({ runWindowsBackupTransport: mocks.transport }));
 vi.mock("./windows-backup-resources.ts", () => ({ createWindowsBackupResourceResolver: mocks.resources }));
+// The work folder's owner-only ACL is Windows tooling (icacls, Get-Acl); the
+// source fixture records the call instead (D4, backup-local-work.ts).
+vi.mock("../electron/backup-windows-acl.mjs", () => ({ currentUserSid: () => "S-1-5-21-1-2-3-1001", readAcl: () => ({ owner: "S-1-5-21-1-2-3-1001", protected: true, rules: [{ allow: true, sid: "S-1-5-21-1-2-3-1001", mask: 0x1f01ff, inherited: false }] }), aclIsOwnerOnly: () => true, restrictToOwner: () => {} }));
 import * as encryption from "./installation-backup-encryption.ts";
 import { writeEncryptedInstallationBackup } from "./installation-encrypted-backup.ts";
 import { initializeMessageTables } from "./message-tables.ts";

@@ -23,6 +23,7 @@ import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmdirSync, r
 import { basename, dirname, join } from "node:path";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
+import { aclIsOwnerOnly, currentUserSid, readAcl, restrictToOwner } from "../electron/backup-windows-acl.mjs";
 
 const RUN = /^run-(\d{1,10})-[A-Za-z0-9]{6}$/;
 
@@ -58,10 +59,23 @@ export function sweepBackupWork(dataDir: string): number {
   return removed;
 }
 
+/** Windows has no mode bits: the .murage-backup-work folder itself carries
+ * one ACL entry, the owner, with inheritance removed, and everything made
+ * inside inherits it (the same owner-only rule as the off-site folders). It
+ * is checked on every backup and restricted again when it isn't. */
+export type WindowsAcl = { ownerOnly: (folder: string) => boolean; restrict: (folder: string) => void };
+const windowsAcl: WindowsAcl = {
+  ownerOnly: folder => { try { return aclIsOwnerOnly(readAcl(folder), currentUserSid()); } catch { return false; } },
+  restrict: folder => restrictToOwner(folder, { directory: true }),
+};
+function ownerOnlyOnWindows(folder: string, acl: WindowsAcl, platform: string) {
+  if (platform !== "win32" || acl.ownerOnly(folder)) return;
+  try { acl.restrict(folder); } catch { throw new InstallationSnapshotError("BACKUP_FOLDER_NOT_WRITABLE"); }
+}
 /** A fresh owner-only run folder for one backup, after sweeping dead ones. */
-export function createBackupWork(dataDir: string): string {
+export function createBackupWork(dataDir: string, { acl = windowsAcl, platform = process.platform }: { acl?: WindowsAcl; platform?: string } = {}): string {
   const root = backupWorkRoot(dataDir);
-  privateFolder(dirname(root)); privateFolder(root);
+  privateFolder(dirname(root)); ownerOnlyOnWindows(dirname(root), acl, platform); privateFolder(root);
   sweepBackupWork(dataDir);
   const run = mkdtempSync(join(root, `run-${process.pid}-`));
   if (process.platform !== "win32") chmodSync(run, 0o700);

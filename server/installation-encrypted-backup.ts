@@ -146,7 +146,18 @@ export async function inspectEncryptedInstallationBackup(archive:string,outputPa
     }catch(error){
       let reported=error;
       try{await settleWindowsWork(pending,options);}catch(unsettled){reported=unsettled;}
-      if(privateDirectory&&reported&&typeof reported==="object")Object.assign(reported,{retainedDirectory:privateDirectory});
+      // A refused backup (wrong key, damaged file) may have left part of a
+      // decrypted archive in the helper's folder. It is removed once the
+      // helper and its readers have closed; kept only when that is
+      // unconfirmed, never announced as a "retained" plaintext copy (D5).
+      // The folder is the helper's own (it may have failed before the work
+      // saw it: age rejecting a damaged file mid-way).
+      const helperFolder=privateDirectory??(reported as {retainedDirectory?:unknown}|undefined)?.retainedDirectory;
+      if(typeof helperFolder==="string"&&reported&&typeof reported==="object"){
+        const unconfirmed=unconfirmedClose(reported)||(reported as {helperClosed?:boolean}).helperClosed===false;
+        if(!unconfirmed&&discardFailedStage(helperFolder,false))delete (reported as {retainedDirectory?:string}).retainedDirectory;
+        else Object.assign(reported,{retainedDirectory:helperFolder});
+      }
       throw reported;
     }
   }
@@ -178,10 +189,12 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
   const ciphertext=join(scratch,"backup.age");
   // Plaintext (the stage, the database snapshot, the readback's decrypted
   // archive) never goes into the backup folder, which may be a USB stick
-  // with no permissions: only `ciphertext` is written there. On Windows the
-  // helper's private folder is owner-only by ACL on a fixed NTFS drive.
-  const work=process.platform==="win32"?scratch:createBackupWork(sourceRoot);
-  let retain=false,step:CaptureStep="offline-open";
+  // or a synced folder: only `ciphertext` is written there. That holds on
+  // Windows too (0.1.60 Windows re-test 3 D4): the helper's private folder
+  // in the backup folder receives only backup.age; everything else goes to
+  // the owner-only .murage-backup-work beside the data folder.
+  const work=createBackupWork(sourceRoot);
+  let retain=false,step:CaptureStep="offline-open",failure:unknown;
   let bots:Record<string,string>={};
   try{
     const offline=<T,>(work:(installation:OfflineInstallation)=>Promise<T>)=>held?work(held):withOfflineInstallation(dataDir,work);
@@ -239,11 +252,15 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
     step="publish";
     if(process.platform!=="win32")publishNoReplace(ciphertext,target);
     return{path:target,sha256,snapshotId:manifest.snapshotId,coverage:manifest.coverage,restorePolicy:manifest.restorePolicy,...skippedSummary(manifest.recovery as StateSnapshotManifest,bots)};
-  }catch(error){retain=retainFailure(error);const reported=error instanceof InstallationSnapshotError?error:capturedFilesystemError(error);withCaptureStep(reported,step);if(retain)Object.assign(reported,{retainedDirectory:scratch});throw reported;}
+  }catch(error){failure=error;retain=retainFailure(error);const reported=error instanceof InstallationSnapshotError?error:capturedFilesystemError(error);withCaptureStep(reported,step);if(retain)Object.assign(reported,{retainedDirectory:scratch});throw reported;}
   finally{if(process.platform!=="win32"){if(!retain)rmSync(scratch,{recursive:true,force:true});else discardFailedStage(scratch,true);
     // An unconfirmed age exit may still hold a file in `work`; its run folder
     // is then swept once this process has gone.
-    if(!retain)removeBackupWork(work);}}
+    if(!retain)removeBackupWork(work);}
+    // Windows: the plaintext work never outlives the backup, failed or not,
+    // unless a tool's exit is unconfirmed (it may still hold a file); then
+    // the run folder, owner-only, is swept once this process has gone.
+    else if(!unconfirmedClose(failure))try{removeBackupWork(work);}catch{/* swept at the next backup or start */}}
   };
   if(process.platform!=="win32")return execute(mkdtempSync(join(parent,".murage-encrypted-write-")),options);
   let scratch:string|undefined,success=false;
@@ -313,6 +330,10 @@ export async function restoreEncryptedInstallationNew(dataDir:string,archive:str
     const restored=await restoreInstallation(target,recoveryArchive.path,recoveryArchive.sha256,{requireNew:true,...(process.platform==="win32"?{preparationParent:inspected.directory}:{})});
     restoredSuccessfully=true;
     return{...restored,encryptedSha256:inspected.sha256,coverage:inspected.manifest.coverage,rawFidelityActivated:false as const};
-  }catch(error){if(process.platform==="win32"&&error&&typeof error==="object")Object.assign(error,{retainedDirectory:inspected.directory});throw error;}
+  }catch(error){
+    // Windows: the decrypted copy is removed after a refusal too (D5); kept
+    // only if it can't be removed, and then reported.
+    if(process.platform==="win32"&&error&&typeof error==="object"&&!discardFailedStage(inspected.directory,false))Object.assign(error,{retainedDirectory:inspected.directory});
+    throw error;}
   finally{if(process.platform!=="win32"||restoredSuccessfully)rmSync(inspected.directory,{recursive:true,force:true});}
 }

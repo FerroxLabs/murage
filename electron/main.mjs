@@ -2426,7 +2426,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
   if (!desktopRecoveryMode || desktopShutdownStarted || (!separate && (owner !== desktopDataOwner || dataDirectory !== desktopDataDir))) throw Object.assign(new Error("Recovery ownership changed"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
   if(operation.includes("encrypted")&&(!ageTool||typeof parameters.readIdentity!=="function"))throw Object.assign(new Error("BACKUP_UNAVAILABLE"),{code:"BACKUP_UNAVAILABLE"});
   const args = operation === "backup-encrypted" ? ["backup-encrypted","--data-dir",dataDirectory,"--output",parameters.output,"--age-tool",ageTool,"--recipient",parameters.recipient,"--credential-policy","preserve-in-encrypted-fidelity"]
-    : operation === "inspect-encrypted" ? ["inspect-encrypted","--archive",parameters.archive,"--age-tool",ageTool]
+    : operation === "inspect-encrypted" ? ["inspect-encrypted","--archive",parameters.archive,"--age-tool",ageTool,...(process.platform==="win32"&&dataDirectory?["--data-dir",dataDirectory]:[])]
     : operation === "restore-encrypted-new" ? ["restore-encrypted-new","--data-dir",dataDirectory,"--archive",parameters.archive,"--sha256",parameters.sha256,"--age-tool",ageTool]
     : operation === "plan-restore" ? ["plan-restore", "--archive", parameters.archive]
     : operation === "review" ? ["review", "--data-dir", dataDirectory]
