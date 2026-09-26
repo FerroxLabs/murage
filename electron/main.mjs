@@ -1,4 +1,5 @@
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
+import { closedVolumeProblem } from "./backup-closed-volume.mjs";
 import { portAvailable } from "./port-availability.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs";
@@ -389,7 +390,7 @@ ipcMain.handle("backup-schedule:configure",(_event,...args)=>{if(args.length!==2
 for(const action of ["status","stage","install","disable"]){
   ipcMain.handle(`backup-closed:${action}`,(_event,...args)=>{
     if(args.length||!closedBackupController||closedBackupRequested||backupMode.isPreparing()||backupScheduleHost?.isPreparing())throw Error("BACKUP_CLOSED_UNAVAILABLE");
-    return Promise.resolve().then(()=>closedBackupController[action]()).catch(()=>{throw Error("BACKUP_CLOSED_REVIEW_REQUIRED");});
+    return Promise.resolve().then(()=>closedBackupController[action]()).catch(error=>{throw Error(error?.message==="BACKUP_CLOSED_VOLUME_UNREADABLE"?error.message:"BACKUP_CLOSED_REVIEW_REQUIRED");});
   });
 }
 for(const [action,arity] of [["status",0],["save",2],["testConnection",2],["trustServer",3],["remove",2],["createRepositoryPassword",2],["saveRepositoryPasswordCopy",2],["selectRepositoryPassword",2],["saveMaintenanceCredentials",3],["connect",2],["uploadLatest",3],["setAutomaticUpload",3],["reconcileLatest",3],["listBackups",2],["downloadBackup",3],["previewRetention",3],["applyRetention",4],["clearRetentionReview",3]]){
@@ -3451,6 +3452,7 @@ async function initializeBackupScheduleHost(){
   closedBackupController=createClosedBackupController({
     profile:()=>({version:1,platform:process.platform,owner:{uid:process.getuid?.()},requestedRoot:desktopRequestedDataDir,userData:fs.realpathSync.native(app.getPath("userData")),installation,installationIdentity:closedInstallationIdentity(installation),executable:fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe"))}),
     triggerSource:path.join(process.resourcesPath,"server","backup-schedule-trigger.js"),
+    volumeProblem:()=>closedVolumeProblem({appPaths:[process.execPath,process.resourcesPath],dataPaths:[desktopRequestedDataDir,installation,app.getPath("userData")]}),
     backupSupported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),provider,backup:()=>backupScheduleHost,
     confirmInstall:async()=>{const answer=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Set up background job"],defaultId:0,cancelId:0,noLink:true,message:"Let Murage back up while it's closed?",detail:"This adds a small background job to your user account that checks whether a backup is due. Nothing is backed up until you turn on daily backups. It runs only while you're signed in and doesn't store any passwords."});return answer.response===1;},
   });

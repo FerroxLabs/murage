@@ -45,6 +45,7 @@ files:
   - shared/backup-restic-pin.mjs
   - shared/update-candidate.mjs
   - shared/backup-capture-failure.mjs
+  - shared/closed-volume-sentences.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
