@@ -1,4 +1,5 @@
 import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { DeletionNoteBanner } from "./DeletionNoteBanner";
 import { createPortal } from "react-dom";
 import {
   ArrowDown,
@@ -1522,6 +1523,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
 
       {/* Error banner */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })}/>}
+      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} />}
 
       {/* Pinned message banner */}
       <PinnedBanner

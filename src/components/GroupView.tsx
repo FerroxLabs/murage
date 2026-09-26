@@ -2,6 +2,7 @@
 // carry the personality; avatars inside the room stay still so a busy group
 // does not become a wall of competing motion. Plain messages go to the room's
 // default responder; @mentions override that routing.
+import { DeletionNoteBanner } from "./DeletionNoteBanner";
 import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArrowDown, Check, ChevronDown, Folder, FolderOpen, Info, Loader2, MessageSquareReply, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Target, Trash2, X } from "lucide-react";
@@ -1453,6 +1454,7 @@ export function GroupView({ group }: { group: Group }) {
         <ConfirmDelete
           name={group.name}
           kind={channelNoun(group)}
+          preview={{ groupId: group.id }}
           detail={`Every message in ${group.name} goes with it. The bots stay.`}
           onCancel={() => setConfirmDelete(false)}
           onConfirm={() => {
@@ -1599,6 +1601,7 @@ export function GroupView({ group }: { group: Group }) {
       {/* A channel never showed an error: a refused delete or rename in the
           conversation picker just did nothing. Same banner as a bot chat. */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />}
+      {state.deletionNote && <DeletionNoteBanner note={state.deletionNote} onDismiss={() => dispatch({ type: "deletionNote", note: null })} />}
 
       {/* Instructions: one pinned line; click to edit */}
       {!setupPending && showChat && <div className="w-full px-5">

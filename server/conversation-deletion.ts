@@ -42,7 +42,17 @@ const FIRST_LINE_BYTES = 1024 * 1024;
 export type DeletionEngine = "fuigo" | "grok" | "claude" | "codex";
 export interface DeletionEngineHome { engine: DeletionEngine; home: string }
 /** Something this deletion could not remove, in words the owner can act on. */
-export interface DeletionLeftover { place: string; reason: string }
+/** Something this deletion could not remove, in plain words the app shows
+ * as "<what>, in <where>." Never a path to another conversation. */
+export interface DeletionLeftover { what: string; where: string }
+
+/** How the app names each engine. */
+export const ENGINE_LABEL: Readonly<Record<string, string>> = {
+  fuigoAgent: "Fuigo", grokAgent: "Grok", claudeAgent: "Claude Code", codex: "Codex", piAgent: "Pi", opencodeGo: "OpenCode",
+  geminiAgent: "Gemini CLI", qwenAgent: "Qwen Code", kimiAgent: "Kimi", cursorAgent: "Cursor", droidAgent: "Droid",
+  antigravityAgent: "Antigravity", hermesAgent: "Hermes", customAcp: "your custom engine",
+};
+const engineLabel = (kind: string) => ENGINE_LABEL[kind] ?? "An engine";
 export interface DeletionReport { leftovers: DeletionLeftover[]; failed: string[] }
 
 /** A deletion that has started. Everything a crash needs to finish it. */
@@ -331,7 +341,7 @@ function removeClaudeProjects(home: string, folders: string[], removed: string[]
       // session inside names this conversation's folder (and, for the cut
       // long form, at least one does).
       if (named.some((cwd) => !ours(cwd)) || ("prefix" in key && !named.length)) {
-        if ("exact" in key) leftovers.push({ place: dir, reason: "Claude Code keeps this folder's history under a name another folder also uses, so it was left in place." });
+        if ("exact" in key) leftovers.push({ what: "Claude Code's history of this conversation", where: "Claude Code's project history, filed under a name another folder shares" });
         continue;
       }
       record(removeConfined(projects, dir), dir, removed, failed);
@@ -469,11 +479,12 @@ export class ConversationDeletions {
     }
     const leftovers: DeletionLeftover[] = [];
     for (const folder of new Set(input.sharedFolders ?? [])) {
-      leftovers.push({ place: folder, reason: "This conversation worked in a folder other conversations can use. Its files there and the engine's history for that folder were kept." });
+      const name = pathApiFor(folder).basename(folder);
+      leftovers.push({ what: "Files this conversation made there, and the engine's history for that folder", where: folder === homedir() ? "your home folder" : `the folder "${name}" you chose` });
     }
     for (const kind of new Set(input.engineKinds ?? [])) {
       if (ENGINE_FOR_DRIVER[kind] || NO_LOCAL_HISTORY.has(kind)) continue;
-      leftovers.push({ place: kind, reason: "This engine keeps its own history in a place Murage cannot find exactly, so its copy of this conversation was not removed." });
+      leftovers.push({ what: `${engineLabel(kind)}'s own copy of this conversation`, where: `${engineLabel(kind)}'s history on this computer` });
     }
     const entry: PendingConversationDeletion = {
       id: randomUUID(),
@@ -605,7 +616,7 @@ export class ConversationDeletions {
       if (removed.length === before) continue;
       const name = { fuigo: "Fuigo", grok: "Grok", claude: "Claude Code", codex: "Codex" }[engine];
       const shared = { fuigo: "its logs and memory folders", grok: "its logs and memory folders", claude: "history.jsonl and its per-session side files", codex: "history.jsonl and its logs" }[engine];
-      leftovers.push({ place: home, reason: `${name}'s transcript of this conversation was removed. ${name} also keeps ${shared}, which every conversation shares, so they were left in place.` });
+      leftovers.push({ what: `Pieces of this conversation in ${shared}`, where: `${name}'s shared history on this computer` });
     }
   }
 

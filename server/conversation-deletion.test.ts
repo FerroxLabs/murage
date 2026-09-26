@@ -185,10 +185,10 @@ describe("ConversationDeletions", () => {
     expect(existsSync(join(codexHome, "sessions", "2026", "09", "25", "rollout-2026-09-25T11-00-00-def.jsonl"))).toBe(true);
 
     expect(report.failed).toEqual([]);
-    expect(report.leftovers.map((item) => item.place)).toContain("geminiAgent");
-    expect(report.leftovers.map((item) => item.place)).not.toContain("grok");
+    expect(report.leftovers.map((item) => item.what)).toContain("Gemini CLI's own copy of this conversation");
+    expect(report.leftovers.some((item) => item.what.includes("Grok"))).toBe(false);
     expect(deletions.pending()).toEqual([]);
-    for (const item of report.leftovers) expect(item.reason).not.toMatch(/\u2014|\bsafe(ly)?\b/i);
+    for (const item of report.leftovers) expect(`${item.what} ${item.where}`).not.toMatch(/\u2014|\bsafe(ly)?\b|\//i);
   });
 
   it("leaves a Claude Code folder whose sessions name another folder", async () => {
@@ -202,7 +202,7 @@ describe("ConversationDeletions", () => {
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
     const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "claude", home: claudeHome }] }, () => true);
     expect(existsSync(dir)).toBe(true);
-    expect(report.leftovers.some((item) => item.place === dir)).toBe(true);
+    expect(report.leftovers.some((item) => item.what === "Claude Code's history of this conversation")).toBe(true);
   });
 
   it("names Fuigo's memory folder the way Fuigo does, outside a git repository", () => {
@@ -268,7 +268,7 @@ describe("ConversationDeletions", () => {
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
     const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], sharedFolders: [picked] }, () => true);
     expect(existsSync(join(picked, "work.md"))).toBe(true);
-    expect(report.leftovers.some((item) => item.place === picked)).toBe(true);
+    expect(report.leftovers).toContainEqual({ what: "Files this conversation made there, and the engine's history for that folder", where: `the folder "${path.basename(picked)}" you chose` });
   });
 
   it("drops the record and removes nothing when the delete is refused", async () => {

@@ -1946,6 +1946,7 @@ function ArchivedChannelsPanel({
         <ConfirmDelete
           name={pendingDelete.name}
           kind={conversationNoun(pendingDelete)}
+          preview={{ groupId: pendingDelete.id }}
           detail={`Every message in ${pendingDelete.name} goes with it. The bots stay.`}
           onCancel={() => setPendingDelete(null)}
           onConfirm={() => {
@@ -3012,6 +3013,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         <ConfirmDelete
           name={pendingDelete.name}
           kind={pendingDelete.kind === "bot" ? "bot" : "conversation"}
+          preview={pendingDelete.kind === "bot" ? { botId: pendingDelete.id } : { groupId: pendingDelete.id }}
           detail={
             pendingDelete.kind === "bot"
               ? "Its entire conversation history goes with it, along with any skills it was given. This cannot be undone. Archive it instead if you might want it back."
