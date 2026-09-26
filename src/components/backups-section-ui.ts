@@ -55,6 +55,19 @@ export async function setUpClosedJob(
 
 export const CLOSED_JOB_REFUSED_REASON = "Your system didn't let Murage register a background job, so backups run only while Murage is open.";
 export const CLOSED_JOB_SHARED_FOLDER_REASON = "Other accounts on this computer can change Murage's data folder, so backups run only while Murage is open.";
+export const CLOSED_JOB_WONT_RUN_REASON = "Murage set up its background job, but your system couldn't start it, so backups run only while Murage is open. Tick \"Also back up when Murage is closed\" again to retry.";
+export const CLOSED_JOB_MOVED_REASON = "You opened Murage from a different app file, and its background job couldn't be moved to it, so backups run only while Murage is open. Tick \"Also back up when Murage is closed\" again to set it up for this copy.";
+/** A single-quoted shell word, so the command can be pasted as shown. */
+const shellWord = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+/** The app file (an AppImage made executable under umask 002) can be changed
+ * by other accounts, so the job would run a file someone else could rewrite.
+ * Names the file and the one command that fixes it. */
+export function closedAppFileSharedReason(file: string | undefined): string {
+  const named = typeof file === "string" && file.startsWith("/") && !/[\x00-\x1f]/.test(file) ? file : null;
+  return named
+    ? `Other accounts on this computer can change the Murage app file ${named}, so backups run only while Murage is open. To fix it, run chmod 755 ${shellWord(named)} in a terminal, then come back here.`
+    : "Other accounts on this computer can change the Murage app file, so backups run only while Murage is open. To fix it, run chmod 755 on the Murage app file in a terminal, then come back here.";
+}
 
 /** Why "Also back up when Murage is closed" can't be ticked, said next to the
  * box. Null when nothing went wrong or another line already explains it: no
@@ -64,6 +77,9 @@ export function closedJobBlockedReason(input: { bridge: boolean; closed: BackupC
   if (!bridge || stale || !closed?.supported) return null;
   if (closed.state === "installed" || closed.state === "disabled-removal-pending") return null;
   if (closed.blocked === "data-folder-shared") return CLOSED_JOB_SHARED_FOLDER_REASON;
+  if (closed.blocked === "app-file-shared") return closedAppFileSharedReason(closed.appFile);
+  if (closed.blocked === "job-wont-run") return CLOSED_JOB_WONT_RUN_REASON;
+  if (closed.blocked === "app-moved") return CLOSED_JOB_MOVED_REASON;
   const volume = closedVolumeSentence(closed.blocked);
   if (volume) return volume;
   return closed.state === "unavailable" || setupFailed ? CLOSED_JOB_REFUSED_REASON : null;
@@ -155,6 +171,9 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   if (input.closed?.state === "disabled-removal-pending") attention.push("Removing the background job still needs attention.");
   else if (s?.schedule.closedApp === true && closedVolumeSentence(input.closed?.blocked)) attention.push(closedVolumeSentence(input.closed?.blocked)!);
   else if (s?.lastClosedResult?.status === "unavailable" && s.lastClosedResult.reason === "volume-unreadable") attention.push(CLOSED_VOLUME_SENTENCES.app);
+  else if (s?.schedule.closedApp === true && input.closed?.blocked === "app-file-shared") attention.push(closedAppFileSharedReason(input.closed.appFile));
+  else if (s?.schedule.closedApp === true && input.closed?.blocked === "job-wont-run") attention.push(CLOSED_JOB_WONT_RUN_REASON);
+  else if (s?.schedule.closedApp === true && input.closed?.blocked === "app-moved") attention.push(CLOSED_JOB_MOVED_REASON);
   else if (s?.schedule.closedApp === true && input.closed?.state !== "installed") attention.push("Backing up while Murage is closed isn't set up yet.");
   if (input.remoteStale) attention.push("Off-site status needs a refresh.");
   if (input.remoteFailure) attention.push(input.remoteFailure);

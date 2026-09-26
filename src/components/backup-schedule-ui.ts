@@ -50,6 +50,7 @@ export function scheduleError(cause: unknown): string {
   const messages: Record<string, string> = {
     BACKUP_CLOSED_UNAVAILABLE:"Backups while Murage is closed need the background job first. Tick \"Also back up when Murage is closed\" again, then try once more.",
     BACKUP_CLOSED_CONSENT_REQUIRED:"Murage still needs your permission: to back up while it's closed, and to close and reopen its own window when it's idle. Murage does that itself, so you never need to quit it.",
+    BACKUP_CLOSED_JOB_WONT_RUN:"Murage set up its background job, but your system couldn't start it, so backups run only while Murage is open. Tick \"Also back up when Murage is closed\" again to retry.",
     BACKUP_CLOSED_REVIEW_REQUIRED:"The closed-app job needs review. Refresh status before trying again; saved backup data is unchanged.",
     CLOSED_JOB_REVIEW_REQUIRED:"The closed-app job needs review. Refresh status before trying again; saved backup data is unchanged.",
     BACKUP_BUSY: "A backup is running. Wait for it to finish, then try again.",

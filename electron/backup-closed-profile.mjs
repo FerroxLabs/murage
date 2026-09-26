@@ -52,9 +52,18 @@ export function closedTriggerDigest(file){
   try{if(!same(fstatSync(fd,{bigint:true})))refuse();const buffer=Buffer.alloc(65536),hash=createHash("sha256");let count=0;while(count<Number(before.size)){const n=readSync(fd,buffer,0,Math.min(buffer.length,Number(before.size)-count),count);if(!n)refuse();count+=n;hash.update(buffer.subarray(0,n));}if(!same(fstatSync(fd,{bigint:true}))||!same(lstatSync(file,{bigint:true})))refuse();return hash.digest("hex");}finally{closeSync(fd);}
 }
 
-/** Caller passes user arguments (without executable). Normal launches untouched. */
+/** electron-builder's AppRun (the AppImage's start script) puts this first on
+ * every launch where unprivileged user namespaces are restricted, the Ubuntu
+ * 24.04 default, and leaves it out when it is already somewhere in the
+ * arguments. See closedInvocation and parseClosedBackupArguments. */
+export const APPRUN_NO_SANDBOX="--no-sandbox";
+/** Caller passes user arguments (without executable). Normal launches untouched.
+ * One leading --no-sandbox is what AppRun adds to the capture on Ubuntu 24.04
+ * (the capture then really needs it: Chromium's sandbox cannot start there);
+ * it is accepted there and nowhere else. */
 export function parseClosedBackupArguments(argv){
   if(!Array.isArray(argv)||argv.some(value=>typeof value!=="string"))refuse();
+  if(argv[0]===APPRUN_NO_SANDBOX&&argv.includes(CLOSED_DUE_FLAG))argv=argv.slice(1);
   if(!argv.includes(CLOSED_DUE_FLAG)){if(argv.includes(CLOSED_DESCRIPTOR_FLAG))refuse();return null;}
   if(argv.length>16)refuse();
   const expected=[CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,"--murage-data-dir","--murage-user-data"];
@@ -79,6 +88,22 @@ export function closedProfileFolderShared(profile,{owner={uid:process.getuid?.()
   }
   return false;
 }
+/** The app file the closed-app job would run, when accounts other than its
+ * owner could change it (group or other writable), else null.
+ *
+ * The rule stays strict on purpose. The job runs that file as this person
+ * every minute, so whoever can rewrite it can run anything as them. An
+ * AppImage downloaded under Ubuntu's default umask 002 and then made
+ * executable is 0775, writable by its group. Usually that group is the
+ * person's own private group, but a group can gain members later, other
+ * accounts can share it as their primary group, and directory services make
+ * membership impossible to enumerate reliably, so "private" cannot be proven
+ * now or kept true. Instead the Backups page names this file and says the
+ * one command that fixes it (chmod 755), and the binding refuses until then. */
+export function closedProfileAppFileShared(profile){
+  let stat;try{stat=lstatSync(profile.executable);}catch{return null;}
+  return stat.isFile()&&!stat.isSymbolicLink()&&(stat.mode&0o022)?profile.executable:null;
+}
 export function assertClosedProfileBinding(descriptor,{platform=process.platform,owner={uid:process.getuid?.()},resolveSelection=resolveInstallationSelection}={}){
   const d=parseClosedBackupDescriptor(descriptor);if(d.platform!==platform||JSON.stringify(d.owner)!==JSON.stringify(owner)||platform==="win32")refuse();
   for(const key of ["requestedRoot","userData","installation"]){const stat=lstatSync(d[key]);if(!stat.isDirectory()||stat.isSymbolicLink()||stat.uid!==owner.uid||(stat.mode&0o022)||realpathSync.native(d[key])!==d[key])refuse();}
@@ -91,7 +116,14 @@ export function assertClosedProfileBinding(descriptor,{platform=process.platform
 export function closedInvocation(descriptor,descriptorPath,{mode="capture",environment={}}={}){
   const d=parseClosedBackupDescriptor(descriptor);closedPath(descriptorPath,d.platform);
   const env={};for(const key of ["HOME","PATH","TMPDIR","DISPLAY","WAYLAND_DISPLAY","XDG_RUNTIME_DIR","DBUS_SESSION_BUS_ADDRESS"])if(typeof environment[key]==="string"&&!/[\x00\r\n]/.test(environment[key]))env[key]=environment[key];
-  if(mode==="trigger")return{executable:d.executable,args:[d.triggerEntry,CLOSED_DESCRIPTOR_FLAG,descriptorPath],env:{...env,ELECTRON_RUN_AS_NODE:"1"}};
+  // The trigger runs Electron as plain Node. Node refuses any option before the
+  // script ("bad option: --no-sandbox", exit 9), so when an AppImage's AppRun
+  // put --no-sandbox first the trigger never ran on Ubuntu 24.04. AppRun only
+  // adds it when no argument already is --no-sandbox, so on Linux the trigger
+  // carries it LAST: Node hands it to the script as an ordinary argument, the
+  // trigger accepts it there, and AppRun adds nothing. The sandbox means
+  // nothing to a Node process, and AppRun then skips its per-minute probe.
+  if(mode==="trigger")return{executable:d.executable,args:[d.triggerEntry,CLOSED_DESCRIPTOR_FLAG,descriptorPath,...(d.platform==="linux"?[APPRUN_NO_SANDBOX]:[])],env:{...env,ELECTRON_RUN_AS_NODE:"1"}};
   if(mode!=="capture")refuse();const args=[CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,descriptorPath,"--murage-data-dir",d.requestedRoot,"--murage-user-data",d.userData];
   return{executable:d.executable,args,env:{...env,...closedProfileEnvironment(parseClosedBackupArguments(args),d,environment)}};
 }

@@ -53,7 +53,7 @@ describe("Backups settings section", () => {
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { vi } from "vitest";
-import { SETUP_FIRST_BACKUP_RUNNING, SETUP_NO_FIRST_BACKUP, backupSummary, closedJobNotice, completeBackupSetup, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
+import { CLOSED_JOB_MOVED_REASON, CLOSED_JOB_WONT_RUN_REASON, SETUP_FIRST_BACKUP_RUNNING, SETUP_NO_FIRST_BACKUP, backupSummary, closedAppFileSharedReason, closedJobNotice, completeBackupSetup, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
 import { BackupStatusCard, ScheduleCard, ScheduleSetup, type ScheduleController } from "./BackupSettings";
 import { scheduleError, schedulePhase } from "./backup-schedule-ui";
 import { remoteBackupStatus, type RemoteController } from "./BackupRemoteSettings";
@@ -334,6 +334,37 @@ describe("customer findings: plain words and reasons where the control is", () =
     expect(html).toContain("Other accounts on this computer can change Murage&#x27;s data folder, so backups run only while Murage is open.");
     expect(html).not.toContain(REASON);
     expect(checkboxTag(html)).toContain("backup-closed-reason");
+  });
+
+  // 0.1.60 audit L-F2: an AppImage made executable under umask 002 (0775).
+  // The page must say what the check refuses, and the exact fix.
+  it("names the app file and the chmod that fixes it when the AppImage is group-writable", () => {
+    const html = setup({ closed: { supported: true, state: "unavailable", closedApp: false, blocked: "app-file-shared", appFile: "/home/sam/Downloads/Murage-0.1.60-x86_64.AppImage" } });
+    expect(html).toContain("Other accounts on this computer can change the Murage app file /home/sam/Downloads/Murage-0.1.60-x86_64.AppImage, so backups run only while Murage is open.");
+    expect(html).toContain("run chmod 755 &#x27;/home/sam/Downloads/Murage-0.1.60-x86_64.AppImage&#x27; in a terminal");
+    expect(html).not.toContain(REASON);
+    expect(checkboxTag(html)).toContain("backup-closed-reason");
+    expect(checkboxTag(html)).toContain('disabled=""');
+    // A name with an apostrophe still pastes as one shell word.
+    expect(closedAppFileSharedReason("/home/sam/Sam's apps/Murage.AppImage")).toContain(`chmod 755 '/home/sam/Sam'\\''s apps/Murage.AppImage'`);
+  });
+  // L-F1 / L-F3: a job that can't run, or that still names another app file,
+  // is never shown as working, and ticking the box again is the way out.
+  it.each([
+    ["job-wont-run", "staged", "Murage set up its background job, but your system couldn&#x27;t start it, so backups run only while Murage is open."],
+    ["app-moved", "unconfigured", "You opened Murage from a different app file, and its background job couldn&#x27;t be moved to it"],
+  ] as const)("says why when %s, and leaves the box tickable", (blocked, state, text) => {
+    const html = setup({ closed: { supported: true, state, closedApp: false, blocked }, closedAllowed: true });
+    expect(html).toContain(text);
+    expect(html).not.toContain(REASON);
+    expect(checkboxTag(html)).not.toContain('disabled=""');
+  });
+  it("puts a failing or stranded job on the Needs attention list while closed-app backups are on", () => {
+    const base = { scheduleBridge: true, schedule: { ...on, schedule: { ...on.schedule, closedApp: true } }, scheduleStale: false, scheduleFailure: null, closedStale: false, remoteBridge: false, remote: null, remoteStale: false, remoteFailure: null };
+    expect(backupSummary({ ...base, closed: { supported: true, state: "staged", closedApp: true, blocked: "job-wont-run" } }).attention).toContain(CLOSED_JOB_WONT_RUN_REASON);
+    expect(backupSummary({ ...base, closed: { supported: true, state: "unconfigured", closedApp: true, blocked: "app-moved" } }).attention).toContain(CLOSED_JOB_MOVED_REASON);
+    expect(backupSummary({ ...base, closed: { supported: true, state: "unavailable", closedApp: true, blocked: "app-file-shared", appFile: "/home/sam/M.AppImage" } }).attention.join("\n")).toContain("chmod 755 '/home/sam/M.AppImage'");
+    expect(backupSummary({ ...base, closed: { supported: true, state: "staged", closedApp: true, blocked: "job-wont-run" } }).attention).not.toContain("Backing up while Murage is closed isn't set up yet.");
   });
 
   it("says it after a failed setup attempt even while the job can be retried", () => {

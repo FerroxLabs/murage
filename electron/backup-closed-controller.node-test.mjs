@@ -99,7 +99,12 @@ test("real lightweight entry validates staged registration and same coordinator 
   f.coordinator.configure(0,{enabled:true,closedApp:true,installationRef:"installation",destinationRef:"destination",recoveryRef:"recovery",timezone:"UTC",time:"09:00",catchupMs:60000,maxBytes:1000,maxDurationMs:1000,selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"}});
   f.setNow(Date.parse("2026-09-13T09:00:30Z"));
   assert.equal((await runBackupScheduleTrigger(["--murage-backup-descriptor",staged.descriptorPath],options)).status,"verified");assert.equal(launches,1);
-  f.setCurrent({...f.getCurrent(),registered:false});assert.equal((await runBackupScheduleTrigger(["--murage-backup-descriptor",staged.descriptorPath],options)).status,"unavailable");assert.equal(launches,1);
+  // Linux carries --no-sandbox last (AppImage AppRun); accepted only there.
+  f.setNow(Date.parse("2026-09-14T09:00:30Z"));
+  assert.equal((await runBackupScheduleTrigger(["--murage-backup-descriptor",staged.descriptorPath,"--no-sandbox"],options)).status,"verified");assert.equal(launches,2);
+  for(const argv of [["--no-sandbox","--murage-backup-descriptor",staged.descriptorPath],["--murage-backup-descriptor",staged.descriptorPath,"--other"],["--murage-backup-descriptor",staged.descriptorPath,"--no-sandbox","--no-sandbox"]])assert.equal((await runBackupScheduleTrigger(argv,options)).status,"unavailable");
+  assert.equal(launches,2);
+  f.setCurrent({...f.getCurrent(),registered:false});assert.equal((await runBackupScheduleTrigger(["--murage-backup-descriptor",staged.descriptorPath],options)).status,"unavailable");assert.equal(launches,2);
 });
 test("capture launcher waits for actual close and accepts only bounded structured success",async()=>{
   const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.kill=()=>true;
@@ -199,4 +204,25 @@ test("a due closed run whose app is on another volume ends without launching and
   assert.deepEqual(f.coordinator.status().lastClosedResult,{status:"unavailable",reason:"volume-unreadable",at:f.now(),revision:1});
   // With the default check and real volume facts, this Mac's own disk passes.
   assert.equal((await runBackupScheduleTrigger(["--murage-backup-descriptor",descriptor],{provider:f.provider,now:f.now,environment:{DISPLAY:":0"},launch})).status,"verified");assert.equal(launches,1);
+});
+test("a job whose command can't run is never reported installed, and says so",{skip:POSIX_ONLY},async t=>{
+  const f=fixture(t);await f.controller.stage();
+  // The native provider's proving run failed and it took the job down again.
+  const install=f.provider.install;f.provider.install=async()=>{throw Object.assign(Error("won't run"),{code:"CLOSED_NATIVE_JOB_WONT_RUN"});};
+  await assert.rejects(f.controller.install(),/BACKUP_CLOSED_JOB_WONT_RUN/);
+  assert.deepEqual({state:(await f.controller.status()).state,blocked:(await f.controller.status()).blocked},{state:"staged",blocked:"job-wont-run"});
+  // Ticking again once it can run clears it.
+  f.provider.install=install;assert.equal((await f.controller.install()).state,"installed");assert.equal((await f.controller.status()).blocked,undefined);
+  // A registered job whose last run failed (the app changed under it) is not "installed".
+  f.setCurrent({...f.getCurrent(),failing:true});
+  assert.deepEqual({state:(await f.controller.status()).state,blocked:(await f.controller.status()).blocked},{state:"staged",blocked:"job-wont-run"});
+  await assert.rejects(f.controller.assertInstalled().then(stage=>f.provider.read(stage)).then(current=>{if(current.failing)throw Error("failing");}));
+  // The next start rebuilds it, which proves it afresh.
+  const before=f.installs();assert.equal((await f.controller.restageForUpgrade()).state,"installed");assert.equal(f.installs(),before+1);
+});
+test("status names an app file other accounts can change, with the file",{skip:POSIX_ONLY},async t=>{
+  const f=fixture(t);chmodSync(f.profile.executable,0o775);
+  assert.deepEqual(await f.controller.status(),{supported:true,closedApp:false,lastClosedResult:undefined,state:"unavailable",blocked:"app-file-shared",appFile:f.profile.executable});
+  await assert.rejects(f.controller.stage());
+  chmodSync(f.profile.executable,0o755);assert.equal((await f.controller.stage()).state,"staged");
 });

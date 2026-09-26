@@ -19,7 +19,7 @@ function fixture(platform){
   const descriptor={version:1,platform,requestedRoot:path.join(home,"data"),userData:path.join(home,"desktop"),installation:path.join(home,"data"),installationIdentity:"a".repeat(64),owner,executable:path.join(home,"Installed Murage"),triggerEntry:path.join(home,"trigger.mjs"),triggerSha256:"b".repeat(64)};
   const descriptorPath=path.join(home,"stage","descriptor.json"),job={...buildClosedBackupJob(descriptor,descriptorPath,{backupSupported:true}),descriptor,descriptorPath};
   const root=path.join(home,...(platform==="darwin"?["Library","LaunchAgents"]:[".config","systemd","user"]));
-  const calls=[],state={loaded:false,enabled:false,timerActive:false,running:false,unknown:false,pidMissing:false,overrideUnknown:false,foreign:false,dropin:false,reload:false,fail:"",race:false};
+  const calls=[],state={loaded:false,enabled:false,timerActive:false,running:false,unknown:false,pidMissing:false,overrideUnknown:false,foreign:false,dropin:false,reload:false,fail:"",race:false,result:"success",runFails:false,starts:0};
   const run=async request=>{
     calls.push(request);const args=request.args;
     if(request.executable==="/usr/bin/osascript"){
@@ -34,12 +34,14 @@ function fixture(platform){
     assert.equal(request.executable,"/usr/bin/systemctl");assert.equal(args[0],"--user");
     if(args[1]==="show"){
       const name=args.at(-1),kind=name.endsWith(".timer")?"timer":"service";assert.equal(name,`${job.jobId}.${kind}`);const selected=args.find(arg=>arg.startsWith("--property=")).slice(11).split(",");assert.ok(args.includes("--all"));
-      const values={Id:name,LoadState:state.loaded?"loaded":"not-found",ActiveState:kind==="timer"?(state.timerActive?"active":"inactive"):(state.running?"active":"inactive"),SubState:kind==="timer"?(state.timerActive?"waiting":"dead"):(state.running?"running":"dead"),UnitFileState:kind==="timer"?(state.enabled?"enabled":"disabled"):"static",FragmentPath:state.loaded?path.join(root,name):"",DropInPaths:state.dropin?"/foreign/override.conf":"",NeedDaemonReload:state.reload?"yes":"no",MainPID:state.running?"1234":"0",Triggers:state.loaded?`${job.jobId}.service`:""};
+      const values={Id:name,LoadState:state.loaded?"loaded":"not-found",ActiveState:kind==="timer"?(state.timerActive?"active":"inactive"):(state.running?"active":"inactive"),SubState:kind==="timer"?(state.timerActive?"waiting":"dead"):(state.running?"running":"dead"),UnitFileState:kind==="timer"?(state.enabled?"enabled":"disabled"):"static",FragmentPath:state.loaded?path.join(root,name):"",DropInPaths:state.dropin?"/foreign/override.conf":"",NeedDaemonReload:state.reload?"yes":"no",MainPID:state.running?"1234":"0",Result:state.result,Triggers:state.loaded?`${job.jobId}.service`:""};
       if(state.foreign)values.FragmentPath="/foreign/unit";if(state.unknown)delete values.LoadState;
       return{code:0,stdout:selected.filter(key=>values[key]!==undefined).map(key=>`${key}=${values[key]}`).join("\n")+"\n"};
     }
-    if(args[1]===state.fail)return{code:1,stdout:""};assert.ok(["daemon-reload","enable","disable","stop"].includes(args[1]));
+    if(args[1]===state.fail)return{code:1,stdout:""};assert.ok(["daemon-reload","enable","disable","stop","start","reset-failed"].includes(args[1]));
     if(args[1]==="daemon-reload")state.loaded=job.files.every(file=>existsSync(path.join(root,file.name)));
+    else if(args[1]==="start"){assert.equal(args.at(-1),`${job.jobId}.service`);assert.ok(request.timeoutMs>=60000,"the proving run gets its own longer bound");state.starts++;state.result=state.runFails?"exit-code":"success";return{code:state.runFails?3:0,stdout:""};}
+    else if(args[1]==="reset-failed"){assert.equal(args.at(-1),`${job.jobId}.service`);state.result="success";}
     else{assert.equal(args.at(-1),`${job.jobId}.timer`);if(args[1]==="enable"){assert.ok(args.includes("--now"));state.enabled=true;state.timerActive=true;}if(args[1]==="disable"){assert.equal(args.includes("--now"),false);state.enabled=false;if(state.race)state.running=true;}if(args[1]==="stop")state.timerActive=false;}
     return{code:0,stdout:""};
   };
@@ -97,4 +99,26 @@ test("Mac query treats a nil copied Ref as absent and compares only launchd's ex
   const {LimitLoadToSessionType,...missing}=loaded;assert.equal(LimitLoadToSessionType,"Aqua");assert.deepEqual(query(missing),{version:1,status:"unavailable"});
   assert.deepEqual(query({...loaded,PID:-1}),{version:1,status:"unavailable"});
   assert.deepEqual(released,[]);
+});
+
+test("Linux: a job is kept only after one real run of its command succeeds; a failing one is taken down",{skip:POSIX_ONLY},async()=>{
+  const f=fixture("linux");try{
+    await f.provider.install(f.job,{expected:null});assert.equal(f.state.starts,1);
+    const good=await f.provider.read(f.job);assert.equal(good.registered,true);assert.equal(good.failing,undefined);
+    await f.provider.remove(f.job,{expected:good});assert.equal(await f.provider.read(f.job),null);
+    // The 0.1.60 AppImage on Ubuntu 24.04: the trigger's command exits 9 every time.
+    f.state.runFails=true;
+    await assert.rejects(f.provider.install(f.job,{expected:null}),error=>error.code==="CLOSED_NATIVE_JOB_WONT_RUN");
+    assert.equal(await f.provider.read(f.job),null,"nothing left registered that cannot run");
+    assert.ok(f.job.files.every(file=>!existsSync(path.join(f.root,file.name))));
+  }finally{f.cleanup();}
+});
+test("Linux: a registered job whose last run failed reads as failing, and installing proves it afresh",{skip:POSIX_ONLY},async()=>{
+  const f=fixture("linux");try{
+    await f.provider.install(f.job,{expected:null});
+    f.state.result="exit-code";
+    const failing=await f.provider.read(f.job);assert.equal(failing.registered,true);assert.equal(failing.failing,true);
+    await f.provider.install(f.job,{expected:failing});assert.equal(f.state.starts,2);
+    const again=await f.provider.read(f.job);assert.equal(again.registered,true);assert.equal(again.failing,undefined);
+  }finally{f.cleanup();}
 });

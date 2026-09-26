@@ -65,9 +65,11 @@ function matchesRegistration(job,current){
 export async function installClosedBackupJob(stage,{read,install}){
   const job=readClosedBackupStage(stage.directory);assertClosedProfileBinding(job.descriptor);
   const prior=await read(job);if(prior&&!matchesRegistration(job,prior))fail();
-  if(prior?.registered)return{state:"installed",jobId:job.jobId,definitionDigest:job.definitionDigest};
+  // A registered job whose command failed last time is not installed: the
+  // provider takes it down and registers and proves it again.
+  if(prior?.registered&&!prior.failing)return{state:"installed",jobId:job.jobId,definitionDigest:job.definitionDigest};
   if(prior?.running)fail();await install(job,{expected:prior});
-  const current=await read(job);if(!matchesRegistration(job,current)||!current.registered)fail();
+  const current=await read(job);if(!matchesRegistration(job,current)||!current.registered||current.failing)fail();
   return{state:"installed",jobId:job.jobId,definitionDigest:job.definitionDigest};
 }
 /** Disable authoritative schedule first; never terminate a running capture. */
