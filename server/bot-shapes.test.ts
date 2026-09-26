@@ -336,3 +336,11 @@ describe("About me, the owner's own profile", () => {
     expect(botShapeRows(current, null).map((row) => row.id)).not.toContain("about-me");
   });
 });
+
+describe("the owner's word for About me (D11)", () => {
+  it("labels the row About me, as Settings does, and never About you", async () => {
+    const { SHAPE_CATALOGUE } = await import("./bot-shapes.ts");
+    expect(SHAPE_CATALOGUE["about-me"]?.label).toBe("About me");
+    for (const [id, entry] of Object.entries(SHAPE_CATALOGUE)) expect(JSON.stringify(entry), id).not.toMatch(/About you/);
+  });
+});
