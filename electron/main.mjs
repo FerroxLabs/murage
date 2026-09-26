@@ -18,7 +18,7 @@ import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { exportRemoteBackup } from "./backup-remote-export.mjs";
-import { remoteWorkDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory } from "./backup-remote-runtime.mjs";
+import { remoteWorkDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
@@ -3425,6 +3425,7 @@ async function initializeBackupRemoteHost(){
         ...(sshTools?{sshTools}:{}),...(binding.target.kind==="s3"?{authorizeInitialization:async()=>{}}:{}),...(binding.maintenanceCredentials?{maintenanceCredentials:async()=>binding.maintenanceCredentials}:{})});
     },
     forgetLocalState:remoteRef=>forgetRemoteWorkDirectory(control,remoteRef),
+    sharedFolder:()=>remoteControlSharedFolder(control),
   });
 }
 async function initializeBackupScheduleHost(){

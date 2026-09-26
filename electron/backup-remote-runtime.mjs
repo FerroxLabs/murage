@@ -37,3 +37,11 @@ export function forgetRemoteWorkDirectory(control,remoteRef){
  if(!stat.isDirectory()||stat.isSymbolicLink()||!owned(stat))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
  rmSync(directory,{recursive:true,force:true});return true;
 }
+/** The folder that holds Murage's data folder, when other accounts can change
+ * it: off-site keys and journals would sit beside it, so they are refused.
+ * Null when it is private (or on Windows, where the tree is ACL-protected). */
+export function remoteControlSharedFolder(control){
+ if(!posix())return null;
+ const anchor=path.dirname(path.dirname(control));
+ try{const stat=lstatSync(anchor);return !stat.isDirectory()||stat.isSymbolicLink()||!owned(stat)||(stat.mode&0o022)?anchor:null;}catch{return anchor;}
+}

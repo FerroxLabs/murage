@@ -122,3 +122,17 @@ test("forgetting a destination removes only its own work folder",{skip:POSIX_ONL
  const outside=path.join(root,"outside");mkdirSync(outside);writeFileSync(path.join(outside,"precious"),"x");symlinkSync(outside,path.join(control,"remote","linked"));
  assert.throws(()=>forgetRemoteWorkDirectory(control,"linked"),/REVIEW_REQUIRED/);assert.equal(existsSync(path.join(outside,"precious")),true);
 });
+
+test("a data folder whose parent other accounts can change blocks off-site copies with its own reason",{skip:POSIX_ONLY},async t=>{
+ const {remoteControlSharedFolder}=await import("./backup-remote-runtime.mjs");const {chmodSync}=await import("node:fs");
+ const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-remote-shared-test-")));t.after(()=>safeWipeSync(root));
+ const anchor=path.join(root,"parent");mkdirSync(anchor,{mode:0o755});const control=path.join(anchor,".murage-backup-control","digest");
+ chmodSync(anchor,0o755);assert.equal(remoteControlSharedFolder(control),null);
+ chmodSync(anchor,0o775);assert.equal(remoteControlSharedFolder(control),anchor);
+ chmodSync(anchor,0o757);assert.equal(remoteControlSharedFolder(control),anchor);
+ let shared=anchor;const host=createBackupRemoteHost({supported:()=>true,readProtected:async()=>({}),updateProtected:async()=>{},selectPassword:async()=>null,latestVerified:async()=>null,sharedFolder:()=>shared,createAdapter:()=>{throw Error("never");}});
+ assert.deepEqual(await host.status(),{supported:true,pending:false,configured:false,state:"blocked",blocked:{reason:"data-folder-shared",folder:anchor}});
+ await assert.rejects(host.save(0,{kind:"sftp",label:"x",host:"nas",port:22,user:"u",folder:"f"}),/BACKUP_REMOTE_DATA_FOLDER_SHARED/);
+ await assert.rejects(host.createRepositoryPassword("ref",1),/BACKUP_REMOTE_DATA_FOLDER_SHARED/);
+ shared=null;assert.equal((await host.status()).state,"unconfigured");
+});
