@@ -19,7 +19,7 @@ import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { downloadFolderShared, exportRemoteBackup } from "./backup-remote-export.mjs";
-import { remoteWorkDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
+import { remoteWorkDirectory,remoteSshDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
@@ -3449,7 +3449,7 @@ async function initializeBackupRemoteHost(){
     // Test connection is what authorizes creating an S3 repository.
     createAdapter:binding=>{
       let sshTools;if(binding.target.kind==="sftp")try{sshTools=resolveSshTools();}catch{sshTools=undefined;}
-      return new BackupRestic({executable:tool,attestationSignal:remoteBackupAttestation.signal,repository:binding.target,workDirectory:remoteWorkDirectory(control,binding.target.remoteRef,binding.target.revision),password:()=>passwords.read(binding.passwordRef),credentials:async()=>binding.credentials,
+      return new BackupRestic({executable:tool,attestationSignal:remoteBackupAttestation.signal,repository:binding.target,workDirectory:remoteWorkDirectory(control,binding.target.remoteRef,binding.target.revision),...(process.platform==="win32"&&binding.target.kind==="sftp"?{sshDirectory:remoteSshDirectory(control)}:{}),password:()=>passwords.read(binding.passwordRef),credentials:async()=>binding.credentials,
         ...(sshTools?{sshTools}:{}),...(binding.target.kind==="s3"?{authorizeInitialization:async()=>{}}:{}),...(binding.maintenanceCredentials?{maintenanceCredentials:async()=>binding.maintenanceCredentials}:{})});
     },
     forgetLocalState:remoteRef=>forgetRemoteWorkDirectory(control,remoteRef),

@@ -166,7 +166,8 @@ export function hostKeyReadArguments(rawTarget:ResticSftpTarget,knownHosts:strin
  * OpenSSH server it fails with "unsupported KEX method" and prints no key
  * (W-D2 follow-up, 0.1.60 Windows VM). ssh filters that list; keyscan does not. */
 async function readHostKeyWithSsh(tools:SshTools,target:ResticSftpTarget,cwd:string,timeoutMs:number){
-  const knownHosts=join(cwd,`host-scan-${randomBytes(8).toString("hex")}.known_hosts`);
+  // Short on purpose: ssh for Windows stops at 260 characters of path.
+  const knownHosts=join(cwd,`hk-${randomBytes(4).toString("hex")}`);
   try{
     const result=await runTool(tools.ssh,hostKeyReadArguments(target,knownHosts),cwd,timeoutMs);
     if(result.timedOut)throw Error("RESTIC_SFTP_UNREACHABLE");

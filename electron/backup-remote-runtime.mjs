@@ -33,6 +33,15 @@ export function remoteWorkDirectory(control,remoteRef,revision,platform){
  for(const segment of ["remote",remoteRef,String(revision)]){directory=path.join(directory,segment);makeDirectory(directory,{restrict:segment==="remote",platform});inspect(directory);}
  return directory;
 }
+/** The owner-only "remote" folder itself, for SSH material on Windows: one
+ * level above every destination's work tree, so its paths stay well inside
+ * the 260 characters OpenSSH for Windows can open (see BackupResticOptions.sshDirectory). */
+export function remoteSshDirectory(control,platform){
+ ensureRemoteControlDirectory(control);
+ const directory=path.join(control,"remote");makeDirectory(directory,{restrict:true,platform});
+ const stat=lstatSync(directory);if(!stat.isDirectory()||stat.isSymbolicLink()||!owned(stat)||!privateMode(stat)||!canonical(directory))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
+ return directory;
+}
 /** Removes one destination's whole private work tree after its settings are
  * gone. The path is built from the checked reference, never from a caller path. */
 export function forgetRemoteWorkDirectory(control,remoteRef){

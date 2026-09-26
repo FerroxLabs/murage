@@ -56,7 +56,13 @@ export interface BackupResticOptions { executable:string; attestationSignal?:Abo
   /** SFTP only: absolute ssh and ssh-keyscan paths, resolved by main. */
   sshTools?:SshTools;
   /** SFTP only: the folder probe, replaceable in tests. */
-  probeFolder?:typeof probeSftpFolder }
+  probeFolder?:typeof probeSftpFolder;
+  /** SFTP only: where the per-run SSH key, known_hosts and host-key reads go,
+   * and ssh's working folder. Defaults to workDirectory. On Windows main passes
+   * the shorter owner-only "remote" folder: OpenSSH for Windows can't open a
+   * path past 260 characters, and a restored install's work folder under
+   * AppData\Roaming\murage\recovered-installations is already about 235. */
+  sshDirectory?:string }
 /** A pinned-identity or key refusal seen by the last SFTP run, kept for status. */
 const serverCheckSchema=z.object({version:z.literal(1),remoteRef:z.string().max(120),revision:z.number().int().nonnegative(),state:z.enum(["host-key-changed","key-refused"])}).strict();
 
@@ -159,7 +165,7 @@ export class BackupRestic {
     const password=await this.readPassword();let material:ReturnType<typeof writeSshMaterial>|undefined;
     try{
       if(!password.length||password.length>4096||password.includes(10)||password.includes(13)||password.includes(0))throw new Error("RESTIC_PASSWORD_INVALID");
-      material=writeSshMaterial(this.options.workDirectory,target,credentials);
+      material=writeSshMaterial(this.sshScratch(),target,credentials);
       const option=resticSftpCommandOption(tools.ssh,sftpSshArguments(target,material));
       const result=await this.run({args:["--repo",resticSftpRepository(target),"-o",option,"--json","--no-cache",...args],cwd,password,timeoutMs:this.options.timeoutMs??60000,sftp:true});
       if(result.lockReleaseUnconfirmed)this.lockReleaseWarnings++;
@@ -183,7 +189,8 @@ export class BackupRestic {
     }catch(error){if(s3&&!(error instanceof Error&&["RESTIC_TOOL_UNVERIFIED","RESTIC_PASSWORD_INVALID"].includes(error.message)))throw Error("RESTIC_REMOTE_OPERATION_FAILED");throw error;
     }finally{password.fill(0);}
   }
-  private lock(){mkdirSync(this.options.workDirectory,{recursive:true,mode:0o700});const lease=acquireDataDirLeaseForProcess(this.options.workDirectory);if(this.target?.kind==="sftp")sweepSshMaterial(this.options.workDirectory);return lease;}
+  private lock(){mkdirSync(this.options.workDirectory,{recursive:true,mode:0o700});const lease=acquireDataDirLeaseForProcess(this.options.workDirectory);if(this.target?.kind==="sftp")sweepSshMaterial(this.sshScratch());return lease;}
+  private sshScratch(){const directory=this.options.sshDirectory??this.options.workDirectory;if(!isAbsolute(directory)||directory.startsWith("\\\\"))throw new Error("RESTIC_LOCAL_PATH_REQUIRED");return directory;}
   private targetIdentity(){if(!this.target)throw Error("RESTIC_S3_TARGET_REQUIRED");return{remoteRef:this.target.remoteRef,revision:this.target.revision,targetHash:digest(JSON.stringify(this.target))};}
   private targetFile(){return join(this.options.workDirectory,"restic-target.json");}
   private readTarget(){
@@ -406,7 +413,7 @@ export class BackupRestic {
   /** Reads the SFTP server's host key for the owner to compare. Trusts nothing. */
   async scanServerIdentity(){
     if(this.target?.kind!=="sftp")throw Error("RESTIC_SFTP_TARGET_REQUIRED");const tools=this.sshTools(),lease=this.lock();
-    try{return await scanHostKey(tools,this.target,this.options.workDirectory);}finally{lease.release();}
+    try{return await scanHostKey(tools,this.target,this.sshScratch());}finally{lease.release();}
   }
   /** "Test connection": opens the repository, or creates it when there is none.
    * SFTP first proves the pinned identity, the key and a writable folder, and
@@ -417,8 +424,8 @@ export class BackupRestic {
     try{
       const prior=this.readTarget(),credentials=await this.resolveCredentials();let folder:Awaited<ReturnType<typeof probeSftpFolder>>|undefined;
       if(target.kind==="sftp"){
-        const tools=this.sshTools(),material=writeSshMaterial(this.options.workDirectory,target,resticSftpCredentialsSchema.parse(credentials));
-        try{folder=await (this.options.probeFolder??probeSftpFolder)({ssh:tools.ssh,args:sftpSshArguments(target,material),folder:target.folder,cwd:this.options.workDirectory,timeoutMs:this.options.timeoutMs??60000});}
+        const tools=this.sshTools(),material=writeSshMaterial(this.sshScratch(),target,resticSftpCredentialsSchema.parse(credentials));
+        try{folder=await (this.options.probeFolder??probeSftpFolder)({ssh:tools.ssh,args:sftpSshArguments(target,material),folder:target.folder,cwd:this.sshScratch(),timeoutMs:this.options.timeoutMs??60000});}
         catch(error){if(error instanceof Error)this.recordServerCheck(error.message);throw error;}
         finally{material.cleanup();}
         if(folder==="other-files")throw Error("RESTIC_SFTP_FOLDER_NOT_EMPTY");

@@ -165,7 +165,7 @@ describe.skipIf(process.platform==="win32")("host key read when ssh-keyscan can'
     for(const option of ["StrictHostKeyChecking=accept-new","PreferredAuthentications=none","PasswordAuthentication=no","IdentityFile=none","IdentityAgent=none","ProxyCommand=none"])expect(args).toContain(option);
     expect(args).toContain("-l backup");expect(args).toContain("-p 2222");
     // Nothing left behind in the private work folder.
-    expect(readdirSync(root).filter(name=>name.startsWith("host-scan-"))).toEqual([]);
+    expect(readdirSync(root).filter(name=>name.startsWith("hk-"))).toEqual([]);
   });
   it("does not fall back when keyscan simply finds no server",async()=>{
     const root=scratch(),{tools,calls}=fakeTools(root,{keyscanFails:true});

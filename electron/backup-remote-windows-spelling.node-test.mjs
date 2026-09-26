@@ -12,7 +12,7 @@ import {syncBuiltinESMExports} from "node:module";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import {safeWipeSync} from "../server/testing/safe-wipe.mjs";
-import {ensureRemoteControlDirectory,remoteWorkDirectory} from "./backup-remote-runtime.mjs";
+import {ensureRemoteControlDirectory,remoteWorkDirectory,remoteSshDirectory} from "./backup-remote-runtime.mjs";
 import {createRemotePasswordStore} from "./backup-remote-password.mjs";
 import {closedControlDirectory} from "./backup-closed-controller.mjs";
 
@@ -56,6 +56,9 @@ test("real Windows: control folder, work tree and password file work through the
  assert.equal(ensureRemoteControlDirectory(control),control);
  const work=remoteWorkDirectory(control,"remote-one",0);
  assert.equal(fs.statSync(work).isDirectory(),true);
+ // SSH material sits one level above every work tree, owner-only, far shorter.
+ const ssh=remoteSshDirectory(control);
+ assert.equal(path.dirname(path.dirname(work)).toLowerCase(),ssh.toLowerCase());assert.ok(ssh.length<work.length-30);
  const documents=path.join(home,"Documents");mkdirSync(documents);
  const store=createRemotePasswordStore({excludedRoots:()=>[installation,ensureRemoteControlDirectory(control)],readProtected:async()=>({}),updateProtected:async derive=>derive({}),createFolders:()=>[documents]});
  const created=await store.create();
