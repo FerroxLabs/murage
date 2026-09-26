@@ -1709,7 +1709,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
     "url": "https://murage.app/docs/self-hosting/data-and-backups#turn-on-backups",
-    "text": "In the Backups settings, choose Turn on backups. Murage asks you for one thing: the folder to keep the backups in. It then creates your recovery key itself, outside that folder, and asks you once to confirm the folder, the key and the one permission it needs — that Murage may close and reopen its own window when you are not using it, so it can take the backup. Murage does that itself; you never need to quit it. Daily backups are on as soon as you confirm.\n\nIf you already keep your own age key file, open I already have a recovery key and Murage will use that one instead of making a new one."
+    "text": "In the Backups settings, choose Turn on backups. Murage asks you for one thing: the folder to keep the backups in. It then creates your recovery key itself, outside that folder, and asks you once to confirm the folder, the key and the one permission it needs: that Murage may close and reopen its own window when you are not using it, so it can take the backup. Murage does that itself; you never need to quit it. Daily backups are on as soon as you confirm.\n\nIf you already keep your own age key file, open I already have a recovery key and Murage will use that one instead of making a new one."
   },
   {
     "id": "self-hosting/data-and-backups#keep-a-copy-of-your-recovery-key",
@@ -1719,7 +1719,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
     "url": "https://murage.app/docs/self-hosting/data-and-backups#keep-a-copy-of-your-recovery-key",
-    "text": "Your recovery key is the only thing that can open your backups, and Murage never keeps a copy. Murage saves it outside both its own data folder and your backup folder — a key stored beside the archives is lost with them. Use Save a copy… to put a second copy somewhere else, such as a USB drive, another computer or your password manager. Murage never replaces an existing file, and refuses any location inside its data folder or inside your backup folder."
+    "text": "Your recovery key is the only thing that can open your backups, and Murage never keeps a copy. Murage saves it outside both its own data folder and your backup folder, because a key stored beside the archives is lost with them. Use Save a copy… to put a second copy somewhere else, such as a USB drive, another computer or your password manager. Murage never replaces an existing file, and refuses any location inside its data folder or inside your backup folder."
   },
   {
     "id": "self-hosting/data-and-backups#back-up-now",
@@ -1730,6 +1730,46 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Murage docs → Self hosting → Data and backups",
     "url": "https://murage.app/docs/self-hosting/data-and-backups#back-up-now",
     "text": "Once your backup folder and recovery key are chosen and you have allowed Murage to restart for backups, Back up now runs one backup straight away instead of waiting for the daily time. Murage closes its idle services, restarts to take the backup, then reopens. It will not start while a bot is working or another backup is in progress. The result shows as your latest verified backup, just like a scheduled one."
+  },
+  {
+    "id": "self-hosting/data-and-backups#keep-an-off-site-copy",
+    "title": "Data and backups",
+    "description": "Know what Murage stores locally and what to preserve.",
+    "heading": "Keep an off-site copy",
+    "breadcrumb": "Murage docs → Self hosting → Data and backups",
+    "where": "Murage docs → Self hosting → Data and backups",
+    "url": "https://murage.app/docs/self-hosting/data-and-backups#keep-an-off-site-copy",
+    "text": "A backup on the same computer, or on a drive next to it, is lost with it. Under Off-site copy (optional) in the Backups settings, Murage can keep a second encrypted copy somewhere else. Choose where:\n- S3-compatible storage, such as Amazon S3, Backblaze B2, Cloudflare R2 or MinIO. Enter the endpoint, bucket, region and access keys from your storage provider. The bucket must already exist.\n- SFTP server (NAS, home server or VPS). Enter a name for the destination, the server name or IP address, the port (usually 22), the user name and a folder on the server. A folder without a leading slash is inside that user's home folder. Murage creates the folder if it is missing.…"
+  },
+  {
+    "id": "self-hosting/data-and-backups#setting-up-an-sftp-server",
+    "title": "Data and backups",
+    "description": "Know what Murage stores locally and what to preserve.",
+    "heading": "Setting up an SFTP server",
+    "breadcrumb": "Murage docs → Self hosting → Data and backups",
+    "where": "Murage docs → Self hosting → Data and backups",
+    "url": "https://murage.app/docs/self-hosting/data-and-backups#setting-up-an-sftp-server",
+    "text": "Murage signs in to your SFTP server with its own SSH key, made for that destination only. It never asks for, or uses, the server password.\n\n1. After you save the destination, Murage shows its public key. Choose Copy key.\n2. On the server, add the key as a new line in .ssh/authorizedkeys in the home folder of the user you entered.\n3. Choose Test connection. The first time, Murage shows the server's fingerprint (it starts with SHA256:) and asks you to trust it. If you can, compare it with the fingerprint the server itself reports, for example with ssh-keygen -lf /etc/ssh/sshhosted25519key.pub on the server.…"
+  },
+  {
+    "id": "self-hosting/data-and-backups#what-stays-private",
+    "title": "Data and backups",
+    "description": "Know what Murage stores locally and what to preserve.",
+    "heading": "What stays private",
+    "breadcrumb": "Murage docs → Self hosting → Data and backups",
+    "where": "Murage docs → Self hosting → Data and backups",
+    "url": "https://murage.app/docs/self-hosting/data-and-backups#what-stays-private",
+    "text": "The SSH key and any storage access keys are kept in your operating system's encrypted store, never in the Murage data folder, so they are not part of any backup. The key only exists as a file while Murage is talking to the server, in a private folder outside the data folder, and is removed straight after. Remove this destination forgets the destination's settings, its key and the trusted fingerprint. It does not delete copies already stored there; you can also remove Murage's key from the server's authorized keys."
+  },
+  {
+    "id": "self-hosting/data-and-backups#restore-from-the-off-site-copy",
+    "title": "Data and backups",
+    "description": "Know what Murage stores locally and what to preserve.",
+    "heading": "Restore from the off-site copy",
+    "breadcrumb": "Murage docs → Self hosting → Data and backups",
+    "where": "Murage docs → Self hosting → Data and backups",
+    "url": "https://murage.app/docs/self-hosting/data-and-backups#restore-from-the-off-site-copy",
+    "text": "Open Restore and choose Find off-site backups, pick a backup and choose Download verified copy. Then open Backup mode, choose the downloaded file and your recovery key. On a new computer, add the same destination first: for SFTP, add the new key Murage shows to the server, choose the same off-site password file and choose Test connection. Murage opens the existing repository instead of creating a new one."
   },
   {
     "id": "self-hosting/data-and-backups#do-not-copy-secrets-casually",
