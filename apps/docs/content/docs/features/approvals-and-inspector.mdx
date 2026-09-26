@@ -1,6 +1,6 @@
 ---
 title: Approvals and inspector
-description: Stay in control when agents ask questions, request access, or perform risky work.
+description: How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.
 icon: ShieldCheck
 ---
 
@@ -8,22 +8,77 @@ Murage renders structured agent events as native conversation cards. Questions, 
 
 ## Approval cards
 
-When an engine supports approvals, Murage surfaces the request instead of hiding it in terminal output. Read the requested action and scope before approving it. Denying an action sends control back to the agent so it can choose a safer path.
+When a bot wants to do something that needs your permission, Murage shows an approval card in the conversation instead of hiding the request in terminal output. Read the requested action and where it applies before you answer. Deny sends control back to the bot so it can choose another way. Cancel turn stops the whole turn.
 
-<ProductScreenshot name="approval-card" alt="An Murage approval card shown inside a conversation" caption="Approvals stay in context with the request and the agent's explanation." />
+The same choices appear on the desktop, in the Inbox and on Telegram (where the first button reads Approve once). The Always allow buttons are offered in the desktop app only.
 
-## Ask, Auto, Full access and No limits
+<ProductScreenshot name="approval-card" alt="A Murage approval card shown inside a conversation" caption="Approvals stay in context with the request and the agent's explanation." />
 
-Choose how a conversation is approved from the chip beside the composer:
+## Approval levels: Ask, Auto, Full access and No limits
 
-- **Ask** shows a card for each action that needs your permission.
-- **Auto** keeps the bot working, but still stops at anything that looks destructive or sensitive: shell profiles, API-key variables, credential stores.
-- **Full access** does not ask before running commands, editing files or contacting other bots. It still stops before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords. On those cards you can allow it once, allow the same kind of action in the same place for the rest of the task, or always.
-- **No limits** does anything without asking, except reading your keys and passwords.
+Choose how a conversation is approved from the permission chip beside the message box. The menu asks "How should this bot's actions be approved?" and offers four levels:
 
-Full access and No limits can be switched on only in the desktop app, and the first time for each bot you confirm a warning for each.
+- **Ask** (Ask for approval): ask before actions that need your permission.
+- **Auto** (Auto mode): keep going automatically; destructive and sensitive actions still ask.
+- **Full access**: keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys.
+- **No limits**: does anything without asking, except reading your keys and passwords.
 
-Some things still ask under Full access and No limits. A turn started by a webhook or a routine asks as it would under Auto, because someone other than you wrote that input or nobody is watching it. Image generation still asks before it spends. Questions your bot asks you still reach you, and a bot on Auto still asks once before it first uses your screen. Switch back to Auto or Ask at any time.
+The chip changes the level for this conversation. To set the level new conversations start at, open **Bot settings → Permissions → Approvals**. (Bot settings opens from the Bot settings button in the conversation header.)
+
+## Full access and the stop line
+
+Under Full access a bot runs commands, edits files and contacts other bots without asking. It still stops and asks at a few lines that matter:
+
+- deleting anything outside its own folder, including through Finder, scripts and code;
+- paying for anything;
+- messaging someone new or posting in public, such as a first comment, issue or release on a GitHub repository;
+- reading your keys and passwords.
+
+Messages to you, your own linked accounts and the person a channel conversation is with never stop. Engines under Full access send their permission asks to Murage, so these checks hold for Claude Code, Codex, Pi and ACP engines alike.
+
+Steps approved under Full access or No limits fold into one quiet line, "Approved N steps", that counts up and opens to list them.
+
+## No limits
+
+No limits lets deleting, paying and messaging go ahead without asking. It still asks before reading your keys and passwords. Choose it when you want the behaviour Full access had before 0.1.59.
+
+Full access and No limits can be switched on only in the desktop app. The first time for each bot you confirm a one-time warning ("Give @bot full access?" or "Give @bot no limits?", with Turn on full access or Turn on no limits). Switch back to Auto or Ask at any time.
+
+Some things still ask under Full access and No limits. A turn started by a webhook asks as it would under Auto. Image generation still asks before it spends. Questions your bot asks you still reach you. Your own messages from Telegram, Slack or Discord, and setup requests like installing skills, proposing routines or trusting folders, also ask unless you switch on the two options under **Bot settings → Permissions → Approvals**. Routines run at their own level: see Routines.
+
+## Allow once, Allow for this task, Always allow
+
+A stop card offers up to three ways to say yes:
+
+- **Allow once** allows just this step.
+- **Allow for this task** allows the same kind of action in the same place (the same folder, recipient or payee) until the task ends.
+- **Always allow** remembers the yes for this bot, scoped to that same folder, recipient or payee, never to everything. For a command it reads "Always allow any git command" (naming the program).
+
+On a conversation you started, you can also allow a place for the task in your own words in chat. The chat then notes exactly what was allowed.
+
+## Always allow this exact command
+
+A card for a command also offers **Always allow this exact command here**. It is the narrowest remembered yes: that exact command, only in that folder, and only on that engine. The bot asks again for any other command, folder or engine.
+
+## The Always allowed list
+
+Every Always allow a bot remembers is listed in **Bot settings → Permissions → Always allowed**. Exact-command grants show the command, the folder and the engine. Press Remove next to any item to take it back. The bot still asks before anything that looks destructive, reads your keys, deletes outside its folder, pays or messages someone new. The list, like granting one, is desktop only.
+
+## Engines that cannot ask
+
+Some engines have no way to ask before acting when they run inside Murage. The permission menu says so on the levels where it matters, for example "Antigravity cannot ask first, so it edits files here but runs no commands." Under Full access and No limits Murage runs such an engine with file edits only, rather than let it delete, pay or message with nobody asked.
+
+## Pi asks first
+
+Bots on the Pi engine ask Murage before running commands, editing outside their folder or using connected apps, like every other engine. Pi follows the same levels, stop line and Always allow choices.
+
+## Only you can say yes
+
+Only your own desktop app and paired devices can answer an approval card. A message whose sender Murage cannot confirm runs as an unattended turn, which asks the way a webhook turn does.
+
+## Fewer false stops
+
+Auto does not treat deleting inside a bot's own folders and temporary files as dangerous. Text a command writes into a file, and scripts handed to Python or Node, are judged by what they actually delete, not by words that happen to appear in them. Stopping other programs still asks.
 
 ## Inspector
 
@@ -31,4 +86,4 @@ Use **Inspector** when you need more detail than the conversation provides. It i
 
 ## When a run disconnects
 
-Murage retries transient streaming failures. If retries end in an authentication or configuration error, fix the underlying engine rather than repeatedly retrying the task. See [Agent engine troubleshooting](../providers/troubleshooting.mdx).
+Murage retries short streaming failures. If retries end in an authentication or configuration error, fix the underlying engine rather than repeatedly retrying the task. See [Agent engine troubleshooting](../providers/troubleshooting.mdx).

@@ -4,10 +4,22 @@ description: Fix OAuth loops, missing tools, and connections that appear to vani
 icon: Unplug
 ---
 
+## Connected apps not working: a bot says it has no connected apps
+
+If a bot says it has no connected apps, or cannot see an app you know is connected:
+
+1. Open Connected apps from the sidebar (**Tools → Connected apps**).
+2. Press the refresh button at the top of the panel (Refresh connection status).
+3. Check the Connected tab: the account should be listed there.
+4. Send the bot your request again. Each new message checks the connection again, so it does not need a restart.
+5. Check that the bot is allowed to use connected apps: **Bot settings → Access → Allow this bot to use connected apps**.
+
+Before 0.1.60, one failed check of the connected-apps service could leave every bot without its apps until Murage restarted. From 0.1.60 each bot's turn checks again, so a short network blip no longer cuts your bots off.
+
 ## Connection completes but the app still shows disconnected
 
 1. Return to Murage after the browser confirms success.
-2. Open **Connected apps** and use **Refresh connection status**.
+2. Open **Connected apps** and press the refresh button (**Refresh connection status**).
 3. Check the **Connected** tab for the account, including its alias.
 4. Retry from the original bot after the account appears active.
 

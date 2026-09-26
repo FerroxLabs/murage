@@ -1,20 +1,40 @@
 ---
-title: Voice, dictation, and memory
-description: Listen to agents, talk to them, and inspect what they remember.
+title: Voice, calls, notifications and memory
+description: Pick a bot's voice with play buttons, call a bot, send voice notes, turn off notification sounds, and inspect what bots remember.
 icon: AudioLines
 ---
 
-## Spoken replies
+## Voice through Flux
 
-Add an ElevenLabs key in App Settings, choose a voice, and use the speaker control on a response. Auto-speak can read new replies as they arrive.
+Calls, spoken replies and voice notes speak, listen and look things up through Flux by default, using the Flux key saved under Models. Your own keys (OpenAI, xAI, ElevenLabs and others) are optional and still work.
 
-The harness rewrites code-heavy Markdown into speech-friendly text before synthesis. Keys remain on the harness and never reach the renderer.
+## Change a bot's voice
 
-## Call mode
+Each bot has its own voice. Open **Bot settings → Voice & alerts → Voice**. Under Voice engine pick the voice service for this bot: Flux, xAI, ElevenLabs, or the built-in Mac or Windows voices. Bots in one room can sound different. xAI voices work with your own xAI key or through Flux.
 
-On macOS, call mode combines native on-device speech recognition with the configured ElevenLabs voice. It is deliberately half-duplex: the microphone pauses while the bot speaks to prevent the app from transcribing its own audio.
+## Voice picker
 
-Tool progress and approval requests can be narrated during a call so long-running work does not sound disconnected.
+The voice picker lists every voice with its name, how it sounds and its accent, for example "Kira: Upbeat, confident, American". Flux offers 41 voices. Search voices, or narrow the list with the Female, Male and Neutral chips and the accent chips. Every voice speaks every language.
+
+Every voice in the list has its own play button. Press it to hear a sample; it shows Loading while the sample is fetched and Stop while it plays.
+
+Switch on Read replies aloud to have the bot speak its answers as they arrive.
+
+## Calls
+
+A call starts speaking on the first sentence instead of waiting for the whole answer. A fast voice layer answers straight away, does quick lookups, and hands real work to the bot's own engine, with live status while the engine works.
+
+You can talk over the bot on macOS, Windows and Linux; a spoken "stop" stops it at once. Mute mutes your microphone, and Hang up ends the call. Approvals are asked out loud in plain words: say yes, no, or "yes for the rest of the call", which covers ordinary requests until you hang up. Routines, skills and using the computer are still asked each time. A note of the call is left in the chat.
+
+## Voice notes
+
+A bot can send an answer as a voice note in its own voice, in the chat and on Telegram, Slack and Discord. Ask it for a voice note or to hear something. If the turn ends while a voice note is being made, the voice note is dropped cleanly.
+
+## Notification sounds
+
+To turn off notification sounds on this computer, open **Settings → General → Notifications** and switch off Play a sound. It applies to this computer only and changes right away, so you keep the banners without the sound, for example on a call. The same card chooses which notifications you get (Needs your attention, Task completed, Task failed) and quiet hours.
+
+Each bot also has Notifications under **Bot settings → Voice & alerts**.
 
 ## Dictation
 

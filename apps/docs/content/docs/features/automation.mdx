@@ -1,20 +1,55 @@
 ---
 title: Routines and webhooks
-description: Start fresh agent tasks on a schedule or from an external event.
+description: Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.
 icon: CalendarClock
 ---
 
 ## Routines
 
-A routine runs once or on selected weekdays. Each run starts a fresh task using the selected bot's model, permissions, tools, and computer configuration.
+A routine runs a bot once or on a schedule you choose. Open **Routines** in the sidebar to see every routine on a calendar (day, three-day or week view, filtered by bot), or open **Bot settings → Routines** for that bot's own. Each run uses the bot's model, tools and computer.
 
-<ProductScreenshot name="docs-automations" alt="An empty Murage automations calendar ready for its first schedule" caption="Review work across a day, three-day, or week view and filter by bot." />
+<ProductScreenshot name="docs-automations" alt="An empty Murage routines calendar ready for its first schedule" caption="Review work across a day, three-day, or week view and filter by bot." />
 
-Run receipts distinguish queued, active, waiting, completed, missed, failed, and cancelled work. Murage must be running when a local routine becomes due.
+Run receipts distinguish queued, active, waiting on you, completed, missed, failed, and cancelled work. Murage must be running when a local routine becomes due.
+
+## One conversation per routine
+
+Each routine keeps one conversation, named after the routine. Every run happens in that same conversation, with a divider between runs, so runs no longer pile up as separate conversations. Open it to read what the routine did last time and what it is doing now.
+
+## Routine approval level
+
+Each routine runs at its own approval level: Ask, Auto, Full access or No limits. Set it in the routine editor under **Advanced → Approvals for this routine**, or from the permission chip in the routine's own conversation: choosing a level there sets it for the routine.
+
+A routine you have not set shows "Same as (bot name)" and follows its bot's level at the moment each run starts. So a bot on No limits no longer stops its own routines to ask. The routine's conversation, its editor and its approval cards all show the level that actually applies. Reading your keys always asks, at every level.
+
+## Waiting on you
+
+When a routine run hits a question or an approval, Murage tells you at once ("(routine) is waiting on you") and the run ends as **Waiting on you** instead of sitting until it times out. The card stays in the routine's conversation and can still be answered: open it with Review, answer the question or the approval, and the routine carries on from there.
+
+A run waiting on your answer stops its time limit clock and waits for you.
+
+## Always allow for this routine
+
+An approval card raised by a routine run offers **Always allow for this routine**. It covers that same command or place for that routine only, and it holds across every later run, so the routine stops asking about it. Other routines and ordinary conversations with the same bot still ask.
+
+Everything a routine is always allowed to do is listed in its editor under Always allowed for this routine, each with Remove. Reading your keys still asks.
+
+## Overlapping runs
+
+In the routine editor, "If the last run is still going" chooses what happens when a run is due while the last one is still running:
+
+- **Skip this time**: scheduled times are skipped while a run is still going.
+- **Queue one run**: one scheduled run waits until the current run finishes.
+
+Run now is separate from both. Skipped runs are counted and a streak of failures is shown. "Stop if still running after" sets an optional time limit for each run.
+
+## Routine problems
+
+The problems count at the top of Routines counts failed and missed runs you have not opened yet. Press it to open Routine problems, a list of exactly those runs, with Mark all as read.
 
 ## Webhook triggers
 
-Webhooks start the same queued task executor from an external HTTP request. They are independent from schedules and use a dedicated receiver on `127.0.0.1:8800` by default.
+Webhooks start the same queued task executor from an external HTTP request. They are independent from schedules and use a dedicated receiver on `127.0.0.1:8800` by default. A turn started by a webhook asks for approvals the way Auto does, because someone other than you wrote its input.
 
 The receiver exposes only health and secret hook routes. It does not expose the broader Murage API.
 

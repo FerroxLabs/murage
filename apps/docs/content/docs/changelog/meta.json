@@ -1,5 +1,5 @@
 {
   "title": "Changelog",
   "icon": "Clock",
-  "pages": ["index"]
+  "pages": ["index", "v0-1-60", "v0-1-59"]
 }

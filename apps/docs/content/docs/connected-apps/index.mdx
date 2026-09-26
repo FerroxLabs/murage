@@ -4,7 +4,7 @@ description: Give bots secure, user-authorized tools for Gmail, GitHub, Slack, N
 icon: PlugZap
 ---
 
-Open **Connected apps** from the sidebar, choose a service, and complete its authorization in your normal browser. Murage turns the resulting connection into tools that supported agent engines can use.
+Open **Connected apps** from the sidebar (**Tools → Connected apps**), choose a service, and complete its authorization in your normal browser. Murage turns the resulting connection into tools that supported agent engines can use.
 
 <ProductScreenshot name="docs-connected-apps" alt="The clean Murage connected-app marketplace" caption="Search the marketplace or review every account from the Connected tab." />
 
@@ -23,6 +23,14 @@ The installation identity is stored using Electron's operating-system-backed sec
 ## Self-hosted or source builds
 
 The managed service is a convenience for official packaged builds. A source build can use your own Composio project and `COMPOSIO_API_KEY`; see [Self-hosted Composio](./self-hosted-composio.mdx).
+
+## Letting a bot use connected apps
+
+Each bot has a switch for connected apps: **Bot settings → Access → Allow this bot to use connected apps**. What shapes (bot name) shows whether connected apps are part of what the bot can use.
+
+## Bots stay connected
+
+Each bot's turn checks the connected-apps service again before it starts, so a short network blip no longer leaves your bots without their apps until Murage restarts. This was fixed in 0.1.60. If a bot still says it has no connected apps, see **Troubleshooting → Connected apps**.
 
 ## Multiple accounts
 
