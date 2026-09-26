@@ -5,12 +5,15 @@
 // calls are proxied to a verification server with the desktop proof, so the
 // seen record in its data dir decides, across reloads, whether the page opens.
 //
-// The install is made an UPDATE first: asking as 0.1.58 on a fresh server is
-// the brand-new-install path (skipped, recorded), which leaves 0.1.58 behind
-// as the last version, exactly what a real 0.1.58 install that asked would.
+// The install is made a 0.1.59 install that has seen its own page first:
+// asking as 0.1.59 on a fresh server is the brand-new-install path (skipped,
+// recorded), which leaves 0.1.59 behind as the last version, exactly what a
+// real 0.1.59 install that asked would. A second, untouched server is the
+// brand-new 0.1.60 install, which by design never opens the page.
 //
-// Screenshots of all four cards at 1280x860, dark and light skin, land in
-// WHATS_NEW_SHOTS_DIR when it is set, else in the test's output directory.
+// Screenshots of all three cards at 1280x860 and 420x860, dark and light
+// skin, land in WHATS_NEW_SHOTS_DIR when it is set, else in the test's output
+// directory.
 import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
@@ -34,8 +37,10 @@ test.beforeAll(async () => {
   harness = await launchVerificationServer(process.env);
   const secret = ((await (await fetch(harness.info.url + "/api/desktop-secret")).json()) as { secret: string }).secret;
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret, "content-type": "application/json" };
-  // brand-new install on 0.1.58: skipped and recorded, so 0.1.59 is an update
-  expect(await (await fetch(`${harness.info.url}/api/whats-new?version=0.1.58`, { headers })).json()).toEqual({ version: "0.1.58", show: false });
+  // a 0.1.59 install: started fresh on 0.1.59 (skipped and recorded) and
+  // closed that page, so 0.1.60 is an update
+  expect(await (await fetch(`${harness.info.url}/api/whats-new?version=0.1.59`, { headers })).json()).toEqual({ version: "0.1.59", show: false });
+  expect(await (await fetch(`${harness.info.url}/api/whats-new/seen`, { method: "POST", headers, body: JSON.stringify({ version: "0.1.59" }) })).json()).toEqual({ version: "0.1.59", show: false });
   const root = fileURLToPath(new URL("../../", import.meta.url));
   cache = mkdtempSync(join(tmpdir(), "murage-whats-new-ui-"));
   server = await createServer({
@@ -49,8 +54,8 @@ test.beforeAll(async () => {
       name: "whats-new-fixture",
       resolveId(id) { if (id === "/whats-new-fixture-store") return "\0whats-new-store"; },
       load(id) {
-        // Ada's chat is open; the Chief leads. Dispatch only records.
-        if (id === "\0whats-new-store") return "window.__dispatched=[];export function useStore(){return {state:{bots:[{id:'chief',name:'Chief',chiefOfStaff:true,chiefScope:'workspace'},{id:'ada',name:'Ada'}],groups:[],selectedId:'ada'},dispatch(action){window.__dispatched.push(action);}};}";
+        // Dispatch only records.
+        if (id === "\0whats-new-store") return "window.__dispatched=[];export function useStore(){return {state:{bots:[],groups:[],selectedId:null},dispatch(action){window.__dispatched.push(action);}};}";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!(req.url === "/__whats-new" || req.url?.startsWith("/__whats-new?"))) return next();
@@ -77,7 +82,8 @@ const shotsDir = (fallback: string) => {
 };
 const dialog = (page: Page) => page.locator("dialog[data-whats-new]");
 const card = (page: Page, name: string) => dialog(page).locator(`[data-whats-new-card="${name}"]`);
-const CARDS = ["voice", "projects", "highlights", "more"] as const;
+const CARDS = ["backups", "highlights", "more"] as const;
+const LAST = CARDS.length - 1;
 
 async function axe(page: Page) {
   await page.addScriptTag({ path: axeScriptPath });
@@ -88,22 +94,25 @@ async function axe(page: Page) {
   return result.violations.map((violation) => `${violation.id}: ${JSON.stringify(violation.nodes.map((node) => node.target))}`);
 }
 
-async function walkCards(page: Page, skin: string, dir: string) {
+async function walkCards(page: Page, skin: string, dir: string, width = "") {
   for (const [index, name] of CARDS.entries()) {
     await expect(card(page, name)).toBeVisible();
+    const box = (await card(page, name).boundingBox())!;
+    expect(box.x, name).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width, name).toBeLessThanOrEqual(page.viewportSize()!.width);
     // every image decoded and the display font in use, before the picture
     await page.waitForFunction(() => [...document.querySelectorAll("dialog[data-whats-new] img")].every((img) => (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0));
     await page.evaluate(() => document.fonts.ready);
     expect(await page.evaluate(() => document.fonts.check('42px "Instrument Serif"'))).toBe(true);
-    await expect(dialog(page).getByRole("img", { name: `Card ${index + 1} of 4` })).toBeVisible();
+    await expect(dialog(page).getByRole("img", { name: `Card ${index + 1} of ${CARDS.length}` })).toBeVisible();
     expect(await axe(page)).toEqual([]);
     await page.mouse.move(0, 0);
-    await page.screenshot({ path: join(dir, `whats-new-${index + 1}-${name}-${skin}.png`) });
-    if (index < 3) await dialog(page).getByRole("button", { name: "Next", exact: true }).click();
+    await page.screenshot({ path: join(dir, `whats-new-${index + 1}-${name}-${skin}${width}.png`) });
+    if (index < LAST) { const next = dialog(page).getByRole("button", { name: "Next", exact: true }); await next.scrollIntoViewIfNeeded(); await next.click(); }
   }
 }
 
-test("shows once after an update, walks all four cards, and a dismissal survives a reload", async ({ page }, info) => {
+test("a 0.1.59 install updating sees the page once, walks all three cards, and a dismissal survives a reload", async ({ page }, info) => {
   test.skip(!HAS_PAGE, `${VERSION} has no What's new page`);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 860 });
@@ -111,8 +120,8 @@ test("shows once after an update, walks all four cards, and a dismissal survives
   expect((await seen()).show).toBe(true);
 
   await page.goto(origin + "/__whats-new?skin=dark");
-  await expect(card(page, "voice")).toBeVisible();
-  await expect(dialog(page).getByRole("heading", { name: "Just talk to your bots" })).toBeFocused();
+  await expect(card(page, "backups")).toBeVisible();
+  await expect(dialog(page).getByRole("heading", { name: "Your work, kept." })).toBeFocused();
   // focus stays inside: Tab from the last control comes back round
   await dialog(page).getByRole("button", { name: "Next" }).focus();
   await page.keyboard.press("Tab");
@@ -120,7 +129,7 @@ test("shows once after an update, walks all four cards, and a dismissal survives
   await page.keyboard.press("Shift+Tab");
   await expect(dialog(page).getByRole("button", { name: "Next" })).toBeFocused();
   // back to the title (no ring) so the pictures show the resting state
-  await dialog(page).getByRole("heading", { name: "Just talk to your bots" }).focus();
+  await dialog(page).getByRole("heading", { name: "Your work, kept." }).focus();
 
   await walkCards(page, "dark", dir);
   await expect(dialog(page).getByRole("link", { name: "Read the full release notes" })).toHaveAttribute("href", `https://github.com/FerroxLabs/murage-releases/releases/tag/v${VERSION}`);
@@ -150,32 +159,32 @@ test("reopens from Tools in the light skin, closes on Escape, and each highlight
   await page.keyboard.press("Escape");
   await expect(dialog(page)).toHaveCount(0);
 
-  // the Projects card's shortcut opens the New Project panel
+  // the hero's shortcut opens Settings at Backups
+  await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; });
   await page.getByRole("button", { name: "Tools" }).click();
   await page.getByRole("menuitem", { name: "What's new" }).click();
-  await dialog(page).getByRole("button", { name: "Next" }).click();
-  await dialog(page).getByRole("button", { name: "Start a project" }).click();
+  await dialog(page).getByRole("button", { name: "Open Backups" }).click();
   await expect(dialog(page)).toHaveCount(0);
-  expect(await page.evaluate(() => (window as unknown as { __actions: string[] }).__actions)).toEqual(["project"]);
+  expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched)).toEqual([{ type: "toggleAppSettings", open: true, section: "backups" }]);
 
-  // the six highlights, each through the real host
+  // the six highlights, each through the real host; Delete means gone only closes
   const expected: Record<string, unknown[]> = {
-    search: [{ type: "toggleAppSettings", open: true, section: "connections" }],
-    skills: [{ type: "toggleAppSettings", open: true, section: "skills" }],
-    houseRules: [{ type: "toggleAppSettings", open: true, section: "houseRules" }],
-    fullAccess: [{ type: "toggleSettings", open: true, intent: { section: "permissions" } }],
-    commands: [],
-    shapes: [{ type: "toggleSettings", open: true, intent: { section: "shapes" } }],
+    backups: [{ type: "toggleAppSettings", open: true, section: "backups" }],
+    offsite: [{ type: "toggleAppSettings", open: true, section: "backups" }],
+    routines: [{ type: "showRoutines" }],
+    delete: [],
+    phone: [{ type: "toggleAppSettings", open: true, section: "companion" }],
+    aboutMe: [{ type: "toggleAppSettings", open: true, section: "aboutMe" }],
   };
   for (const [tile, dispatched] of Object.entries(expected)) {
-    await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; });
+    await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; (window as unknown as { __navigated: number }).__navigated = 0; });
     await page.getByRole("button", { name: "Tools" }).click();
     await page.getByRole("menuitem", { name: "What's new" }).click();
-    await dialog(page).getByRole("button", { name: "Next" }).click();
     await dialog(page).getByRole("button", { name: "Next" }).click();
     await dialog(page).locator(`[data-whats-new-tile="${tile}"]`).click();
     await expect(dialog(page)).toHaveCount(0);
     expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched), tile).toEqual(dispatched);
+    expect(await page.evaluate(() => (window as unknown as { __navigated: number }).__navigated), tile).toBe(dispatched.length ? 1 : 0);
   }
   expect((await seen()).show).toBe(false);
 });
@@ -198,7 +207,36 @@ test("fits the smallest main window without clipping a card", async ({ page }, i
     expect(box!.y + box!.height).toBeLessThanOrEqual(600);
     await page.screenshot({ path: join(dir, `whats-new-${index + 1}-${name}-small.png`) });
     const next = dialog(page).getByRole("button", { name: "Next", exact: true });
-    if (index < 3) { await next.scrollIntoViewIfNeeded(); await next.click(); }
+    if (index < LAST) { await next.scrollIntoViewIfNeeded(); await next.click(); }
+  }
+});
+
+for (const skin of ["dark", "light"]) {
+  test(`fits a narrow window in the ${skin} skin`, async ({ page }, info) => {
+    test.skip(!HAS_PAGE, `${VERSION} has no What's new page`);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 420, height: 860 });
+    const dir = shotsDir(info.outputPath("shots"));
+    await page.goto(origin + `/__whats-new?skin=${skin}`);
+    await expect(page.getByText("The app behind the page.")).toBeVisible();
+    await page.getByRole("button", { name: "Tools" }).click();
+    await page.getByRole("menuitem", { name: "What's new" }).click();
+    await walkCards(page, skin, dir, "-narrow");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(420);
+  });
+}
+
+test("a brand-new 0.1.60 install is never shown the page, and it stays shut", async () => {
+  test.skip(!HAS_PAGE, `${VERSION} has no What's new page`);
+  const fresh = await launchVerificationServer(process.env);
+  try {
+    const secret = ((await (await fetch(fresh.info.url + "/api/desktop-secret")).json()) as { secret: string }).secret;
+    const freshHeaders = { ...headers, "x-murage-surface-secret": secret };
+    const ask = async () => (await (await fetch(`${fresh.info.url}/api/whats-new?version=${VERSION}`, { headers: freshHeaders })).json()) as { show: boolean };
+    expect(await ask()).toEqual({ version: VERSION, show: false });
+    expect(await ask()).toEqual({ version: VERSION, show: false });
+  } finally {
+    await fresh.close();
   }
 });
 

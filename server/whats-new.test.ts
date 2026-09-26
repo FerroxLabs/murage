@@ -72,6 +72,29 @@ describe("what's new seen logic", () => {
   });
 });
 
+describe("0.1.60's page", () => {
+  it("a 0.1.59 install that saw its page sees 0.1.60's once", async () => {
+    await checkWhatsNew("0.1.59", fresh, dir);
+    markWhatsNewSeen("0.1.59", dir);
+    expect(await checkWhatsNew("0.1.60", used, dir)).toEqual({ version: "0.1.60", show: true });
+    markWhatsNewSeen("0.1.60", dir);
+    expect(await checkWhatsNew("0.1.60", used, dir)).toEqual({ version: "0.1.60", show: false });
+    expect(readWhatsNew(dir)).toEqual({ seen: ["0.1.59", "0.1.60"], lastVersion: "0.1.60" });
+  });
+
+  it("a 0.1.59 install that never closed its page still sees 0.1.60's once", async () => {
+    expect(await checkWhatsNew("0.1.59", used, dir)).toEqual({ version: "0.1.59", show: true });
+    expect(await checkWhatsNew("0.1.60", used, dir)).toEqual({ version: "0.1.60", show: true });
+    markWhatsNewSeen("0.1.60", dir);
+    expect(await checkWhatsNew("0.1.60", used, dir)).toEqual({ version: "0.1.60", show: false });
+  });
+
+  it("a brand-new 0.1.60 install is never shown it, before or after setup", async () => {
+    expect(await checkWhatsNew("0.1.60", fresh, dir)).toEqual({ version: "0.1.60", show: false });
+    expect(await checkWhatsNew("0.1.60", used, dir)).toEqual({ version: "0.1.60", show: false });
+  });
+});
+
 describe("what's new route", () => {
   const request = (method: string, path: string, body?: unknown, version?: string) =>
     handleWhatsNewApi({ method, path, version, readBody: async () => body, isFreshInstall: used }, dir);

@@ -24,9 +24,10 @@ export type WhatsNewAction = "backups" | "offsite" | "routines" | "delete" | "ph
 
 export const WHATS_NEW_CARD_COUNT = 3;
 
-export const WHATS_NEW_TILES: Array<{ action: WhatsNewAction; img: string; alt: string; dot: string; title: string; body: string }> = [
+// `crop` keeps the picture's subject inside the tile's wide crop of a square image.
+export const WHATS_NEW_TILES: Array<{ action: WhatsNewAction; img: string; alt: string; dot: string; title: string; body: string; crop?: string }> = [
   { action: "backups", img: tileBackups, alt: "A stack of glowing glass discs with a seam of light", dot: "bg-[var(--wn-dot-blue)]", title: "Backups, start to finish", body: "Turn backups on once. Murage makes your recovery key, backs up every day and checks every backup." },
-  { action: "offsite", img: tileOffsite, alt: "Two glowing forms, near and far, joined by a thread of light", dot: "bg-[var(--wn-accent)]", title: "Off-site, your way", body: "A second encrypted copy on your own NAS or server over SFTP, or in S3-compatible storage. Murage sets it up for you." },
+  { action: "offsite", img: tileOffsite, alt: "Two glowing forms, near and far, joined by a thread of light", dot: "bg-[var(--wn-accent)]", title: "Off-site, your way", body: "A second encrypted copy on your own NAS or server over SFTP, or in S3-compatible storage. Murage sets it up for you.", crop: "object-[center_30%]" },
   { action: "routines", img: tileRoutines, alt: "A ribbon of light looping through a glowing ring", dot: "bg-[var(--wn-dot-gold)]", title: "Routines that keep going", body: "Each routine has its own approval level, so a routine on No limits gets on with it. If it needs you, it says so straight away." },
   { action: "delete", img: tileDelete, alt: "A glass shard dissolving into fine particles of light", dot: "bg-[var(--wn-dot-violet)]", title: "Delete means gone", body: "Deleting a conversation removes it everywhere, including the history your engines kept." },
   { action: "phone", img: tilePhone, alt: "A slim glowing slab with light rising from it", dot: "bg-[var(--wn-dot-mint)]", title: "Murage on your phone", body: "Photo uploads that work, a faster app, and Sign out this device." },
@@ -123,7 +124,7 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onClose, onAction
                 onClick={() => onAction(tile.action)}
                 className={cn("flex w-full cursor-pointer flex-col overflow-hidden rounded-2xl border border-[var(--wn-tile-edge)] bg-[var(--wn-tile)] p-0 text-left text-[var(--wn-ink)] transition-colors hover:border-[var(--wn-ghost-edge)]", focusRing)}
               >
-                <img src={tile.img} alt={tile.alt} width={316} height={150} className="block h-[150px] w-full object-cover [@media(max-height:720px)]:h-[100px]" />
+                <img src={tile.img} alt={tile.alt} width={316} height={150} className={cn("block h-[150px] w-full object-cover [@media(max-height:720px)]:h-[100px]", tile.crop)} />
                 <span className="flex flex-col gap-1 px-3.5 pb-3.5 pt-3">
                   <span className="flex items-center gap-2"><span aria-hidden="true" className={cn("size-2 rounded-full", tile.dot)} /><span className="text-[14.5px] font-semibold">{tile.title}</span></span>
                   <span className="text-[13px] leading-normal text-[var(--wn-ink-muted)]">{tile.body}</span>
