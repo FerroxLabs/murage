@@ -6,7 +6,7 @@ import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Notification, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
 import { createApprovalNotifications } from "./approval-notification.mjs";
-import { BACKUP_MODE_ARGUMENT, createBackupModeController, createBackupToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
+import { BACKUP_MODE_ARGUMENT, createBackupModeController, createBackupToolCapability, createResticToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { captureFailureSentence } from "../shared/backup-capture-failure.mjs";
 import { createRecoveryKeyFlow, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
@@ -18,8 +18,8 @@ import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { exportRemoteBackup } from "./backup-remote-export.mjs";
-import { remoteWorkDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory } from "./backup-remote-runtime.mjs";
-import { trustedBackupResticExecutableAsync } from "./backup-restic-attestation.mjs";
+import { remoteWorkDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
+import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
 import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
@@ -3401,10 +3401,11 @@ async function initializeBackupRemoteHost(){
       return answer.canceled||!answer.filePath?null:answer.filePath;
     },
   });
-  const tool=path.join(process.resourcesPath,"backup-tools",process.arch,"restic");
+  // One pinned restic per shipped platform and arch (shared/backup-restic-pin.mjs).
+  const tool=packagedResticPath(process.resourcesPath);
   const owner=desktopDataOwner;
-  desktopResticTool=createBackupToolCapability({resourcesPath:process.resourcesPath,currentExecutable:process.execPath,macToolName:"restic",verifyMacTool:trustedBackupResticExecutableAsync,
-    isUsable:()=>Boolean(process.platform==="darwin"&&!desktopShutdownStarted&&!desktopRecoveryMode&&desktopDataOwner===owner&&ownedDesktopDataDir()===installation&&!credentialStoreUnavailable)});
+  desktopResticTool=createResticToolCapability({resourcesPath:process.resourcesPath,currentExecutable:process.execPath,
+    isUsable:()=>Boolean(tool&&!desktopShutdownStarted&&!desktopRecoveryMode&&desktopDataOwner===owner&&ownedDesktopDataDir()===installation&&!credentialStoreUnavailable)});
   try{await desktopResticTool.requireTool();}catch{ /* Observational availability remains false; actions still attest afresh. */ }
   assertDesktopStartupActive();
   if(desktopDataOwner!==owner||ownedDesktopDataDir()!==installation)return;
@@ -3424,6 +3425,7 @@ async function initializeBackupRemoteHost(){
         ...(sshTools?{sshTools}:{}),...(binding.target.kind==="s3"?{authorizeInitialization:async()=>{}}:{}),...(binding.maintenanceCredentials?{maintenanceCredentials:async()=>binding.maintenanceCredentials}:{})});
     },
     forgetLocalState:remoteRef=>forgetRemoteWorkDirectory(control,remoteRef),
+    sharedFolder:()=>remoteControlSharedFolder(control),
   });
 }
 async function initializeBackupScheduleHost(){

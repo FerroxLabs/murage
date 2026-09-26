@@ -69,3 +69,9 @@ it("every create-or-open refusal has its own plain sentence, never a bare code",
   expect(text,code).not.toBe(generic);expect(text).not.toMatch(/[A-Z]{3,}_[A-Z_]+|—|\bsafe/);
  }
 });
+it("a shared data folder is shown with its path and fix, never a bare code",()=>{
+ const status=remoteBackupStatus({supported:true,pending:false,configured:false,state:"blocked",blocked:{reason:"data-folder-shared",folder:"/home/sam/work"}});
+ expect(status.blocked).toEqual({reason:"data-folder-shared",folder:"/home/sam/work"});
+ expect(()=>remoteBackupStatus({supported:true,pending:false,configured:false,state:"blocked",blocked:{reason:"other",folder:"/x"}})).toThrow();
+ expect(remoteBackupError(Error("Error invoking remote method 'backup-remote:save': Error: BACKUP_REMOTE_DATA_FOLDER_SHARED"))).toContain("Remove their write access");
+});

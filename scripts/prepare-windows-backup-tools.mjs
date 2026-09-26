@@ -7,6 +7,7 @@ import { Transform } from "node:stream";
 import { fileURLToPath } from "node:url";
 import yauzl from "yauzl";
 import { WINDOWS_BACKUP_ARCHIVE, WINDOWS_BACKUP_RAW_SHA256 } from "../shared/windows-backup-tools.mjs";
+import { RESTIC_PINS } from "../shared/backup-restic-pin.mjs";
 
 const maxBytes = 64 * 1024 ** 2;
 const members = new Map([["age/age.exe", ["age.exe", WINDOWS_BACKUP_RAW_SHA256.age]], ["age/age-keygen.exe", ["age-keygen.exe", WINDOWS_BACKUP_RAW_SHA256.keygen]], ["age/LICENSE", ["LICENSE", WINDOWS_BACKUP_RAW_SHA256.license]]]);
@@ -24,9 +25,11 @@ function hash(file) {
   } finally { closeSync(fd); }
 }
 function realDirectory(path) { const stat = lstatSync(path); if (!stat.isDirectory() || stat.isSymbolicLink()) throw Error("WINDOWS_BACKUP_DIRECTORY_UNSAFE"); }
-export function verifyWindowsBackupTools(directory) {
+export function verifyWindowsBackupTools(directory, { restic = true } = {}) {
   realDirectory(directory);
   for (const [name, digest] of members.values()) if (hash(join(directory, name)) !== digest) throw Error(`WINDOWS_BACKUP_RAW_MISMATCH: ${name}`);
+  // Off-site copies: the raw upstream restic.exe, never signed or rewritten.
+  if (restic && hash(join(directory, RESTIC_PINS["win32-x64"].executable)) !== RESTIC_PINS["win32-x64"].originalSha256) throw Error("WINDOWS_BACKUP_RAW_MISMATCH: restic.exe");
 }
 async function extract(archive, directory) {
   const zip = await new Promise((resolve, reject) => yauzl.open(archive, { lazyEntries: true, autoClose: false, strictFileNames: true, validateEntrySizes: true }, (error, zip) => error ? reject(error) : resolve(zip)));
@@ -64,7 +67,7 @@ export async function stageWindowsBackupTools({ root = fileURLToPath(new URL("..
     if (existsSync(parent)) realDirectory(parent); else mkdirSync(parent);
   }
   for (const [name, digest] of members.values()) if (existsSync(join(output, name)) && hash(join(output, name)) !== digest) throw Error("WINDOWS_BACKUP_RESOURCE_COLLISION");
-  if ([...members.values()].every(([name]) => existsSync(join(output, name)))) { verifyWindowsBackupTools(output); return output; }
+  if ([...members.values()].every(([name]) => existsSync(join(output, name)))) { verifyWindowsBackupTools(output, { restic: false }); return output; }
   const scratch = mkdtempSync(join(tmpdir(), "murage-windows-age-stage-"));
   try {
     const input = archive ?? join(scratch, "age.zip");
@@ -76,9 +79,9 @@ export async function stageWindowsBackupTools({ root = fileURLToPath(new URL("..
       writeFileSync(input, Buffer.concat(chunks), { flag: "wx", mode: 0o600 });
     }
     if (hash(input) !== WINDOWS_BACKUP_ARCHIVE.sha256) throw Error("WINDOWS_BACKUP_ARCHIVE_MISMATCH");
-    await extract(input, scratch); verifyWindowsBackupTools(scratch);
+    await extract(input, scratch); verifyWindowsBackupTools(scratch, { restic: false });
     for (const [name] of members.values()) if (!existsSync(join(output, name))) copyFileSync(join(scratch, name), join(output, name), constants.COPYFILE_EXCL);
-    verifyWindowsBackupTools(output); return output;
+    verifyWindowsBackupTools(output, { restic: false }); return output;
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -71,7 +71,7 @@ export function RoutineWatchPicker({ bots, onClose }: { bots: Bot[]; onClose: ()
         <label className="text-[13px]">Expires after (days)<input className={`${field} mt-1`} type="number" min={1} max={365} value={days} onChange={event => setDays(Number(event.target.value))} required /></label>
         <label className="text-[13px]">Maximum checks<input className={`${field} mt-1`} type="number" min={1} max={10000} value={maxChecks} onChange={event => setMaxChecks(Number(event.target.value))} required /></label>
       </div>
-      <p className="text-[12px] text-ink-secondary">Read-only. No bot runs or provider charges. Only changes appear in Inbox; quiet hours follow notification settings.</p>
+      <p className="text-[12px] text-ink-secondary">Read-only. No bot runs. Only changes appear in Inbox; quiet hours follow notification settings.</p>
       {error && <p role="alert" className="text-[13px] text-danger">{error}</p>}
       <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="min-h-11 rounded-lg border border-hairline/50 px-4 text-[13px]">Cancel</button><button type="submit" disabled={!selected || loading || working} className="min-h-11 rounded-lg bg-accent px-4 text-[13px] font-medium text-white disabled:opacity-50">{working ? "Preparing…" : "Review in chat"}</button></div>
     </form>

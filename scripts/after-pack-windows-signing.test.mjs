@@ -10,6 +10,10 @@ vi.mock("../shared/windows-backup-tools.mjs", async () => {
   const { createHash } = await import("node:crypto"); const sha = value => createHash("sha256").update(value).digest("hex");
   return { WINDOWS_BACKUP_RAW_SHA256: { age: sha("raw age fixture"), keygen: sha("raw keygen fixture"), license: sha("raw license fixture") }, WINDOWS_BACKUP_ARCHIVE: { url: "https://invalid.example/never-used", sha256: "0".repeat(64) } };
 });
+vi.mock("../shared/backup-restic-pin.mjs", async original => {
+  const actual = await original(); const { createHash } = await import("node:crypto");
+  return { ...actual, RESTIC_PINS: { ...actual.RESTIC_PINS, "win32-x64": { ...actual.RESTIC_PINS["win32-x64"], originalSha256: createHash("sha256").update("raw restic fixture").digest("hex") } } };
+});
 import { WINDOWS_BACKUP_ARCHIVE } from "../shared/windows-backup-tools.mjs";
 import { stageWindowsBackupTools, verifyWindowsBackupTools } from "./prepare-windows-backup-tools.mjs";
 
@@ -94,7 +98,7 @@ function fixture() {
   fs.writeFileSync(helperManifest, JSON.stringify({ schema: 1, target: "win32-x64", executable: "launcher.exe", binarySha256: createHash("sha256").update(header).digest("hex") }));
   const backupDirectory = path.join(resources, "backup-tools", "x64"); fs.mkdirSync(backupDirectory, { recursive: true });
   const backupHelper = path.join(backupDirectory, "murage-backup-age.exe"); fs.writeFileSync(backupHelper, header);
-  for (const [file, bytes] of [["age.exe", "raw age fixture"], ["age-keygen.exe", "raw keygen fixture"], ["LICENSE", "raw license fixture"]]) fs.writeFileSync(path.join(backupDirectory, file), bytes);
+  for (const [file, bytes] of [["age.exe", "raw age fixture"], ["age-keygen.exe", "raw keygen fixture"], ["LICENSE", "raw license fixture"], ["restic.exe", "raw restic fixture"]]) fs.writeFileSync(path.join(backupDirectory, file), bytes);
   const signIf = vi.fn(async file => {
     expect(verifyFuigoExecutable).toHaveBeenCalledWith(executable, "win32-x64");
     expect(verifyBrowserBundle).toHaveBeenCalledWith(path.join(resources, "browser-engine"), "win32-x64");
@@ -163,12 +167,12 @@ it("requires the backup helper instead of accepting the copy step's missing-file
   await expect(afterPack(f.context)).rejects.toThrow(); expect(f.signIf).not.toHaveBeenCalled();
 });
 
-it("copies all four backup resources individually without early signing", async () => {
+it("copies all five backup resources (age, keygen, license, helper, restic) individually without early signing", async () => {
   const require = createRequire(import.meta.url), builder = path.dirname(require.resolve("electron-builder/package.json"));
   const { FileMatcher, copyFiles } = require(require.resolve("app-builder-lib/out/fileMatcher.js", { paths: [builder] }));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "murage-backup-copy-")); temporaryDirectories.push(root);
   const config = parse(fs.readFileSync(new URL("../electron-builder.yml", import.meta.url), "utf8"));
-  const entries = config.win.extraResources.filter(entry => entry.to.startsWith("backup-tools/x64/")); expect(entries).toHaveLength(4);
+  const entries = config.win.extraResources.filter(entry => entry.to.startsWith("backup-tools/x64/")); expect(entries).toHaveLength(5); expect(entries.map(entry => entry.to)).toContain("backup-tools/x64/restic.exe");
   const source = path.join(root, "dist-native/backup-tools/win32-x64"); fs.mkdirSync(source, { recursive: true });
   for (const entry of entries) fs.writeFileSync(path.join(root, entry.from), `original ${path.basename(entry.from)}`);
   const transformer = vi.fn(() => null);
@@ -185,7 +189,7 @@ it("stages only pinned named ZIP members and refuses archive mismatch or existin
   for (const [file, value] of [["age/age.exe", "raw age fixture"], ["age/age-keygen.exe", "raw keygen fixture"], ["age/LICENSE", "raw license fixture"], ["age/ignored.txt", "not extracted"]]) zip.addBuffer(Buffer.from(value), file);
   zip.end(); await done; const bytes = Buffer.concat(chunks), archive = path.join(root, "fixture.zip"); fs.writeFileSync(archive, bytes);
   WINDOWS_BACKUP_ARCHIVE.sha256 = createHash("sha256").update(bytes).digest("hex");
-  const output = await stageWindowsBackupTools({ root, archive }); verifyWindowsBackupTools(output);
+  const output = await stageWindowsBackupTools({ root, archive }); verifyWindowsBackupTools(output, { restic: false }); expect(() => verifyWindowsBackupTools(output)).toThrow("restic.exe");
   expect(fs.readdirSync(output).sort()).toEqual(["LICENSE", "age-keygen.exe", "age.exe"]); expect(fs.existsSync(path.join(output, "ignored.txt"))).toBe(false);
   fs.appendFileSync(path.join(output, "age.exe"), "changed"); await expect(stageWindowsBackupTools({ root, archive })).rejects.toThrow("COLLISION");
   const other = fs.mkdtempSync(path.join(os.tmpdir(), "murage-backup-bad-archive-")); temporaryDirectories.push(other);
@@ -197,7 +201,7 @@ it("release signature gate exempts only exact verified upstream paths and still 
   const gate = workflow.jobs.windows.steps.find(step => step.name === "Gate: the installer must actually be signed").run;
   const fixed = "release/win-unpacked/resources/backup-tools/x64";
   const exemptions = [...gate.matchAll(/\$rawBackupFiles\.Add\(\[System\.IO\.Path\]::GetFullPath\('([^']+)'\)\)/g)].map(match => match[1]);
-  expect(exemptions).toEqual([`${fixed}/age.exe`, `${fixed}/age-keygen.exe`]);
+  expect(exemptions).toEqual([`${fixed}/age.exe`, `${fixed}/age-keygen.exe`, `${fixed}/restic.exe`]);
   expect(gate).toContain("$rawBackupFiles.Contains([System.IO.Path]::GetFullPath($_.FullName))");
   expect(gate).not.toMatch(/\$rawBackupFiles\.Contains\([^\n]*\$_\.Name/);
   expect(gate.indexOf("if ($LASTEXITCODE -ne 0)")).toBeLessThan(gate.indexOf("$rawBackupFiles ="));

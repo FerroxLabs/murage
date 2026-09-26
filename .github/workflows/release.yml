@@ -213,6 +213,12 @@ jobs:
             bin_team=$(codesign -dv --verbose=4 "$bin" 2>&1 | sed -n 's/^TeamIdentifier=//p')
             test -n "$app_team" && test "$bin_team" = "$app_team" || {
               echo "::error::cloudflared is not signed by the app's Developer ID team in $app"; exit 1; }
+            # Local and off-site backups: age and restic for this app's arch,
+            # the pinned payloads, signed by the same team as the app.
+            arch=x64
+            case "$app" in *mac-arm64*) arch=arm64 ;; esac
+            node scripts/verify-packaged-backup-tools.mjs "$app/Contents/Resources" darwin "$arch" \
+              || { echo "::error::backup tools missing or unpinned in $app"; exit 1; }
             echo "ok: $app"
           done
 
@@ -397,7 +403,7 @@ jobs:
       - name: "Gate: the installer must actually be signed"
         shell: pwsh
         run: |
-          # Only the two exact upstream age paths may remain unsigned, after
+          # Only the exact upstream age and restic paths may remain unsigned, after
           # the complete raw inventory (including LICENSE) passes shared pins.
           # Our backup helper still requires a valid Ferrox signature.
           $verifyBackup = @'
@@ -412,6 +418,9 @@ jobs:
           $rawBackupFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
           [void]$rawBackupFiles.Add([System.IO.Path]::GetFullPath('release/win-unpacked/resources/backup-tools/x64/age.exe'))
           [void]$rawBackupFiles.Add([System.IO.Path]::GetFullPath('release/win-unpacked/resources/backup-tools/x64/age-keygen.exe'))
+          # restic.exe (off-site copies) is also the raw upstream asset, its
+          # exact bytes checked by verifyWindowsBackupTools above.
+          [void]$rawBackupFiles.Add([System.IO.Path]::GetFullPath('release/win-unpacked/resources/backup-tools/x64/restic.exe'))
           # Every other executable must carry a VALID signature, ours or a
           # vendor's. But we bundle third-party binaries (cloudflared) that are
           # signed by their own publisher, so demanding our subject everywhere
@@ -564,6 +573,8 @@ jobs:
           grep -Eq '^repo: murage-releases$' "$update" || { echo "::error::wrong update repo"; exit 1; }
       - name: Verify package contents and metadata
         run: node scripts/verify-linux-package.mjs
+      - name: "Gate: local and off-site backup tools are the pinned x64 builds"
+        run: node scripts/verify-packaged-backup-tools.mjs release/linux-unpacked/resources linux x64
       - name: Match a normal Ubuntu package parent on the ephemeral runner
         run: |
           test ! -L /opt

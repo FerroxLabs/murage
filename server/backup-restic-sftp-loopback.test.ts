@@ -46,7 +46,7 @@ async function fixture(){
   const receipt=(job="b")=>({jobId:job.repeat(64),installationRef:"installation",destinationRef:"local-destination",selectionHash:"c".repeat(64),snapshotId:randomUUID(),artifactRef:"artifact",sha256:sha(bytes),bytes:bytes.length,verifiedAt:1});
   const base:ResticSftpTarget={kind:"sftp",remoteRef:"loopback",revision:1,credentialRef:"loopback-key",host:"127.0.0.1",port:server.port,user:userInfo().username,folder:join(root,"server","backups","murage")};
   const sshTools=resolveSshTools();
-  const adapter=(target:ResticSftpTarget,options:{work?:string;password?:string}={})=>new BackupRestic({executable:tool!,repository:target,workDirectory:join(root,options.work??`work-${target.revision}`),password:async()=>Buffer.from(options.password??password),credentials:async()=>key,sshTools,timeoutMs:60000});
+  const adapter=(target:ResticSftpTarget,options:{work?:string;password?:string}={})=>new BackupRestic({executable:tool!,repository:target,workDirectory:join(root,options.work??`work dir ${target.revision}`),password:async()=>Buffer.from(options.password??password),credentials:async()=>key,sshTools,timeoutMs:60000});
   const authorize=()=>writeFileSync(join(root,"authorized_keys"),key.publicKey+"\n",{mode:0o600});
   return{root,server,key,password,bytes,input,receipt,base,adapter,authorize};
 }
@@ -78,7 +78,7 @@ describe.skipIf(!qualified)("pinned restic over a loopback SFTP server",()=>{
     const fresh=f.adapter(pinned,{work:"fresh-installation"});expect(await fresh.prepareRepository()).toMatchObject({created:false,repositoryId:created.repositoryId});
     const copy=await fresh.downloadBackup(stored.snapshotId!);expect(readFileSync(copy.archivePath)).toEqual(f.bytes);expect(copy.receipt).toEqual(receipt);
     // The private key is on disk only while ssh runs.
-    for(const work of ["work-2","fresh-installation"]){expect(privateKeyOnDisk(join(f.root,work))).toBe(false);expect(readdirSync(join(f.root,work)).some(name=>name.startsWith("ssh-"))).toBe(false);}
+    for(const work of ["work dir 2","fresh-installation"]){expect(privateKeyOnDisk(join(f.root,work))).toBe(false);expect(readdirSync(join(f.root,work)).some(name=>name.startsWith("ssh-"))).toBe(false);}
   },120000);
 
   it("a wrong password, a folder with other files and a changed server identity are refused",async()=>{

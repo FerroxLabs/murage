@@ -53,7 +53,8 @@ export async function stageBackupAge({root=repository,target,archive}={}) {
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const args=process.argv.slice(2),explicit=args[0]?.startsWith("--target=");
-  const target=explicit?args.shift().slice(9):(process.platform==="darwin"?"darwin-arm64":process.platform==="linux"&&process.arch==="x64"?"linux-x64":undefined);
-  if(args.length>1)throw Error("BACKUP_AGE_BUILD_ARGUMENTS_INVALID");
-  await stageBackupAge({target,archive:args[0]});
+  // A macOS package job builds both architectures, so it stages both tools.
+  const targets=explicit?[args.shift().slice(9)]:(process.platform==="darwin"?["darwin-arm64","darwin-x64"]:process.platform==="linux"&&process.arch==="x64"?["linux-x64"]:[undefined]);
+  if(args.length>1||(args.length&&targets.length>1))throw Error("BACKUP_AGE_BUILD_ARGUMENTS_INVALID");
+  for(const target of targets)await stageBackupAge({target,archive:args[0]});
 }

@@ -241,6 +241,10 @@ win:
       to: backup-tools/x64/age-keygen.exe
     - from: dist-native/backup-tools/win32-x64/LICENSE
       to: backup-tools/x64/LICENSE
+    # restic.exe is the raw upstream asset, pinned like age.exe and copied as a
+    # single file so Windows signing never rewrites it.
+    - from: dist-native/backup-tools/win32-x64/restic.exe
+      to: backup-tools/x64/restic.exe
     - from: dist-native/fuigo-probe/win32-x64/launcher.exe
       to: fuigo-probe/launcher.exe
     - from: dist-native/fuigo-probe/win32-x64/manifest.json
@@ -318,6 +322,11 @@ linux:
       filter:
         - "${arch}/age"
         - LICENSE
+    # restic's license ships once, in licenses/restic, for every platform.
+    - from: dist-native/backup-restic-linux
+      to: backup-tools
+      filter:
+        - "${arch}/restic"
     - from: dist-native/fuigo-probe/linux-x64/launcher
       to: fuigo-probe/launcher
     - from: dist-native/fuigo-probe/linux-x64/manifest.json

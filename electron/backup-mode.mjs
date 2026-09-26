@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { AGE_ORIGINAL_SHA256,trustedBackupAgeExecutable,trustedBackupAgeExecutableAsync,backupToolIdentity } from "./backup-age-attestation.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
+import { packagedResticPath, trustedBackupResticExecutableAsync } from "./backup-restic-attestation.mjs";
 import { pathWithin } from "../shared/path-identity.mjs";
 export const BACKUP_MODE_ARGUMENT = "--murage-backup-mode";
 // Same verified binary as shared/backup-age-pin.ts; a test pins this boundary.
@@ -129,4 +130,31 @@ export function readBackupIdentity(file, installation) {
     const recipient = /^#\s*public key:\s*(age1[a-z0-9]{40,100})\s*$/m.exec(identity)?.[1];
     return { identity, recipient };
   } finally { closeSync(fd); }
+}
+/** Off-site copies' restic, on every packaged platform: one fixed path per
+ * platform and arch, attested once (pinned bytes; on macOS also the signed
+ * payload), then re-checked by identity on every use. Actions re-attest in
+ * the restic runner anyway. */
+export function createResticToolCapability({ resourcesPath, currentExecutable, isUsable, locate = packagedResticPath, verify = trustedBackupResticExecutableAsync }) {
+  let state = "pending", tool = null, identity = null, pending = null, generation = 0, controller = null;
+  const unavailable = () => Object.assign(new Error("Off-site backup tool unavailable"), { code: "BACKUP_UNAVAILABLE" });
+  const currentTool = () => {
+    if (!isUsable() || state !== "ready") return null;
+    if (!identity || backupToolIdentity(tool, currentExecutable) !== identity) { generation++; state = "failed"; tool = null; identity = null; return null; }
+    return tool;
+  };
+  const requireTool = async () => {
+    if (!isUsable()) throw unavailable();
+    if (pending) return pending;
+    const epoch = ++generation; state = "pending"; tool = null; identity = null; controller = new AbortController();
+    const work = (async () => {
+      const file = locate(resourcesPath);
+      const before = file ? backupToolIdentity(file, currentExecutable) : null;
+      if (!file || !before || !await verify(file, { currentExecutable, signal: controller.signal }) || !isUsable() || epoch !== generation || backupToolIdentity(file, currentExecutable) !== before) throw unavailable();
+      identity = before; tool = file; state = "ready"; return tool;
+    })().catch(error => { if (epoch === generation) { state = "failed"; tool = null; } throw error; });
+    pending = work;
+    try { return await work; } finally { if (pending === work) pending = null; }
+  };
+  return { currentTool, requireTool, status: () => { currentTool(); return { state }; }, invalidate() { generation++; state = "failed"; tool = null; identity = null; controller?.abort(); }, async settled() { await pending?.catch(() => {}); } };
 }

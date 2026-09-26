@@ -49,6 +49,9 @@ export interface BackupRemoteHostOptions {
  /** Removes the destination's private work folder (journals, pinned-identity
   * checks, leftover run folders). Called after its binding is gone. */
  forgetLocalState?:(remoteRef:string)=>Promise<void>|void;
+ /** A folder other accounts can change holds Murage's data folder: off-site
+  * work is refused until it is private. Returns that folder, or null. */
+ sharedFolder?:()=>string|null;
  createSshKey?:()=>ResticSftpCredentials;
  /** Resolve only current host-owned verified receipt and its bound destination. */
  latestVerified:()=>Promise<{archivePath:string;receipt:BackupReceipt}|null>;
@@ -63,6 +66,8 @@ export interface BackupRemoteStatus {
  supported:boolean;pending:boolean;configured:boolean;state:string;
  revision?:number;remoteRef?:string;label?:string;passwordSelected?:boolean;repositoryId?:string;
  kind?:"s3"|"sftp";
+ /** Off-site copies are refused while this folder can be changed by other accounts. */
+ blocked?:{reason:"data-folder-shared";folder:string};
  /** Public details only. The private key never leaves main. */
  sftp?:{host:string;port:number;user:string;folder:string;publicKey:string;fingerprint?:string};
  /** The last SFTP run was refused: the pinned identity changed, or the key was not accepted. */
@@ -78,7 +83,7 @@ function readBinding(document:Document):Binding|null{
 }
 const safeErrors=new Set(["BACKUP_REMOTE_UNAVAILABLE","BACKUP_REMOTE_CHANGED","BACKUP_REMOTE_PASSWORD_REQUIRED","BACKUP_REMOTE_JOB_CHANGED","BACKUP_REMOTE_BUSY","BACKUP_REMOTE_INPUT_INVALID","BACKUP_REMOTE_REVIEW_REQUIRED","BACKUP_REMOTE_MAINTENANCE_REQUIRED","BACKUP_REMOTE_RETENTION_CHANGED",
  "BACKUP_REMOTE_HOST_KEY_CHANGED","BACKUP_REMOTE_KEY_REFUSED","BACKUP_REMOTE_SERVER_UNREACHABLE","BACKUP_REMOTE_SFTP_UNAVAILABLE","BACKUP_REMOTE_FOLDER_NOT_WRITABLE","BACKUP_REMOTE_FOLDER_NOT_EMPTY","BACKUP_REMOTE_FOLDER_INVALID","BACKUP_REMOTE_WRONG_PASSWORD","BACKUP_REMOTE_SSH_MISSING","BACKUP_REMOTE_SSH_MISSING_WINDOWS","BACKUP_REMOTE_REPOSITORY_CHANGED","BACKUP_REMOTE_TRUST_CHANGED",
- "BACKUP_REMOTE_STORAGE_UNREACHABLE","BACKUP_REMOTE_CREATE_FAILED","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_TOOL_UNVERIFIED","BACKUP_REMOTE_KEYS_UNREADABLE","BACKUP_REMOTE_NOT_A_REPOSITORY","BACKUP_REMOTE_SETUP_INTERRUPTED","BACKUP_REMOTE_PASSWORD_NOT_CREATED","BACKUP_REMOTE_PASSWORD_COPY_FAILED"]);
+ "BACKUP_REMOTE_STORAGE_UNREACHABLE","BACKUP_REMOTE_CREATE_FAILED","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_TOOL_UNVERIFIED","BACKUP_REMOTE_KEYS_UNREADABLE","BACKUP_REMOTE_NOT_A_REPOSITORY","BACKUP_REMOTE_SETUP_INTERRUPTED","BACKUP_REMOTE_PASSWORD_NOT_CREATED","BACKUP_REMOTE_PASSWORD_COPY_FAILED","BACKUP_REMOTE_DATA_FOLDER_SHARED"]);
 /** Adapter codes a person can act on, renamed for the window. Everything else stays "needs review". */
 const connectionErrors:Record<string,string>={RESTIC_SFTP_HOST_KEY_CHANGED:"BACKUP_REMOTE_HOST_KEY_CHANGED",RESTIC_SFTP_KEY_REFUSED:"BACKUP_REMOTE_KEY_REFUSED",RESTIC_SFTP_UNREACHABLE:"BACKUP_REMOTE_SERVER_UNREACHABLE",RESTIC_SFTP_UNAVAILABLE:"BACKUP_REMOTE_SFTP_UNAVAILABLE",
  RESTIC_SFTP_FOLDER_NOT_WRITABLE:"BACKUP_REMOTE_FOLDER_NOT_WRITABLE",RESTIC_SFTP_FOLDER_NOT_EMPTY:"BACKUP_REMOTE_FOLDER_NOT_EMPTY",RESTIC_SFTP_FOLDER_INVALID:"BACKUP_REMOTE_FOLDER_INVALID",RESTIC_WRONG_PASSWORD:"BACKUP_REMOTE_WRONG_PASSWORD",
@@ -94,7 +99,7 @@ export function createBackupRemoteHost(options:BackupRemoteHostOptions){
  const id=()=>reference.parse((options.createId??randomUUID)());
  async function exclusive<T>(work:()=>Promise<T>):Promise<T>{
   if(pending)refuse("BACKUP_REMOTE_BUSY");pending=true;
-  try{if(!options.supported())refuse("BACKUP_REMOTE_UNAVAILABLE");return await work();}
+  try{if(!options.supported())refuse("BACKUP_REMOTE_UNAVAILABLE");if(options.sharedFolder?.())refuse("BACKUP_REMOTE_DATA_FOLDER_SHARED");return await work();}
   catch(error){if(error instanceof Error&&safeErrors.has(error.message))throw error;return refuse();}
   finally{pending=false;}
  }
@@ -110,6 +115,10 @@ export function createBackupRemoteHost(options:BackupRemoteHostOptions){
  const publicDetails=(binding:Binding)=>binding.target.kind==="sftp"?{kind:"sftp" as const,sftp:{host:binding.target.host,port:binding.target.port,user:binding.target.user,folder:binding.target.folder,publicKey:(binding.credentials as ResticSftpCredentials).publicKey,...(binding.target.hostKey?{fingerprint:sshFingerprint(binding.target.hostKey.key)}:{})}}:{kind:"s3" as const};
  async function status():Promise<BackupRemoteStatus>{
   const supported=options.supported();if(!supported)return{supported:false,pending,configured:false,state:"unavailable"};
+  const shared=options.sharedFolder?.();
+  if(shared){
+   return{supported:true,pending,configured:false,state:"blocked",blocked:{reason:"data-folder-shared",folder:shared}};
+  }
   try{
    const binding=readBinding(await options.readProtected());if(!binding)return{supported:true,pending,configured:false,revision:0,state:"unconfigured"};
    const automaticUpload:NonNullable<BackupRemoteStatus["automaticUpload"]>=!binding.automatic?{enabled:false,state:"disabled"}:{enabled:true,state:binding.automatic.paused||binding.automatic.revision!==binding.target.revision?"needs-review":"enabled"};

@@ -29,7 +29,7 @@ export function remoteSftpInput(draft:SftpDraft){
  return{kind:"sftp" as const,label,host:parsedHost.data,port:port.data,user:user.data,folder:parsedFolder.data};
 }
 export type DestinationKind="s3"|"sftp";
-const labels:Record<string,string>={unconfigured:"No off-site destination saved","password-required":"Choose the off-site password file",disconnected:"Destination saved, not connected",connected:"Off-site storage connected",initializing:"Off-site setup needs review","needs-review":"Off-site copy needs review",unavailable:"Off-site copies are unavailable in this app"};
+const labels:Record<string,string>={unconfigured:"No off-site destination saved","password-required":"Choose the off-site password file",disconnected:"Destination saved, not connected",connected:"Off-site storage connected",blocked:"Off-site copies are off",initializing:"Off-site setup needs review","needs-review":"Off-site copy needs review",unavailable:"Off-site copies are unavailable in this app"};
 export interface RetentionDraft {keepLast:string;keepDaily:string;keepWeekly:string;keepMonthly:string}
 const retentionFields=[["keepLast","Keep latest copies"],["keepDaily","Keep daily copies"],["keepWeekly","Keep weekly copies"],["keepMonthly","Keep monthly copies"]] as const;
 const retentionIssues:Record<string,string>={"repository-locked":"the repository stayed locked","forget-failed":"the provider did not confirm removal","prune-failed":"unused storage was not fully reclaimed","operation-failed":"the result could not be confirmed"};
@@ -65,6 +65,8 @@ export function remoteBackupStatus(value:unknown):BackupRemoteStatus{
   }
   if(v.serverCheck==="host-key-changed"||v.serverCheck==="key-refused")result.serverCheck=v.serverCheck;
  }
+ const blocked=v.blocked as Record<string,unknown>|undefined;
+ if(blocked!==undefined){if(!blocked||blocked.reason!=="data-folder-shared"||typeof blocked.folder!=="string"||!blocked.folder.startsWith("/")||blocked.folder.length>4096||/[\x00-\x1f]/.test(blocked.folder))throw Error("Invalid blocked status");result.blocked={reason:"data-folder-shared",folder:blocked.folder};}
  const upload=v.lastUpload as Record<string,unknown>|undefined;
  if(upload){if(!["not-uploaded","needs-review","verified"].includes(String(upload.state))||typeof upload.jobId!=="string"||!/^[a-f0-9]{64}$/.test(upload.jobId))throw Error("Invalid upload status");result.lastUpload={state:upload.state as "not-uploaded"|"needs-review"|"verified",jobId:upload.jobId,...(upload.lockRelease==="unconfirmed"?{lockRelease:"unconfirmed" as const}:{})};}
  const automatic=v.automaticUpload as Record<string,unknown>|undefined;
@@ -76,8 +78,10 @@ export function remoteBackupStatus(value:unknown):BackupRemoteStatus{
  }
  return result;
 }
+const DATA_FOLDER_SHARED_TEXT="Other accounts on this computer can change the folder that holds Murage's data folder, so Murage does not keep off-site keys there. Remove their write access to that folder, then refresh.";
 export function remoteBackupError(cause:unknown){
  const code=cause instanceof Error?cause.message:"";
+ if(code.includes("DATA_FOLDER_SHARED"))return DATA_FOLDER_SHARED_TEXT;
  if(code.includes("HOST_KEY_CHANGED"))return "The server's identity is not the one you trusted, so Murage did not connect. If the server was not reinstalled or replaced, ask whoever runs it before going further. If it was, choose Change destination and save it again to check the new fingerprint.";
  if(code.includes("TRUST_CHANGED"))return "The server showed a different fingerprint when Murage checked again, so nothing was trusted. Test the connection again and compare the new fingerprint.";
  if(code.includes("KEY_REFUSED"))return "The server did not accept Murage's key. Add the key shown above to the server's authorized keys for this user name, then test the connection again.";
@@ -166,6 +170,7 @@ export function OffsiteStatus({r}:{r:RemoteController}){
  const {status,bridge,stale}=r;
  return <>
   <p role="status" className="text-[13px] font-medium text-ink">{status?labels[status.state]:bridge?"Checking the off-site copy…":"Off-site copies are unavailable in this window"}</p>
+  {status?.blocked&&<p role="alert" className="break-words text-[13px] text-warning">{DATA_FOLDER_SHARED_TEXT} Folder: {status.blocked.folder}. On Linux or macOS, for example: chmod go-w "{status.blocked.folder}"</p>}
   {status&&!status.supported&&<p className="text-[13px] text-ink-secondary">Off-site copies need a supported desktop build with its verified backup tool. Backups on this computer are separate.</p>}
   {status?.pending&&<p role="status" className="text-[13px] text-ink-secondary">Off-site work is in progress. Refresh after it finishes.</p>}
   {stale&&<p role="alert" className="text-[13px] text-warning">Status needs a refresh. Connection and upload actions are locked.</p>}

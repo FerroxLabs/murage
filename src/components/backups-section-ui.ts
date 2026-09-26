@@ -80,6 +80,7 @@ const offsiteLabels: Record<string, string> = {
   "password-required": "Saved; choose the off-site password file",
   disconnected: "Saved, not connected",
   connected: "Connected",
+  blocked: "Off: data folder can be changed by other accounts",
   initializing: "Setup needs review",
   "needs-review": "Needs review",
   unavailable: "Not available in this app",
