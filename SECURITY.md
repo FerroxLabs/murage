@@ -2,8 +2,8 @@
 
 ## Reporting a vulnerability
 
-Please **do not open a public issue** for security problems. Email **soni.mil2001@gmail.com** with
-the details (or use GitHub's private vulnerability reporting on this repo if enabled). You'll get a
+Please **do not open a public issue** for security problems. Email **security@ferroxlabs.com** with
+the details (or use GitHub's private vulnerability reporting on this repo: Security > Report a vulnerability). You'll get a
 response as soon as possible, normally within a few days.
 
 ## Scope notes for researchers
