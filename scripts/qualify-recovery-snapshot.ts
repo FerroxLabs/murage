@@ -29,7 +29,7 @@ function hashes(root: string, prefix = ""): Record<string, string> {
   return result;
 }
 // Frozen qualification cases: first real-provider failure stops this round.
-for (const scenario of ["cancel", "identity", "unc", "overlap", "idle", "concurrent", "journal", "restore", "reparse", "quota", "invalid-records"]) {
+for (const scenario of ["cancel", "identity", "unc", "overlap", "idle", "concurrent", "journal", "restore", "reparse", "quota", "invalid-records", "skill-links", "foreign-junction"]) {
   const root = mkdtempSync(join(realpathSync(process.env.RUNNER_TEMP!), "murage-vss-fixture-"));
   const source = join(root, "source"), clone = join(root, "clone"); mkdirSync(source);
   const config = { profile: { name: "before" }, instances: { fake: { driver: "claudeAgent", enabled: true, config: { apiKey: "fake-do-not-import" } } } };
@@ -55,6 +55,16 @@ for (const scenario of ["cancel", "identity", "unc", "overlap", "idle", "concurr
   if (scenario === "journal") { mkdirSync(join(source, ".package-import-transaction")); writeFileSync(join(source, ".package-import-transaction", "journal.json"), "{}"); }
   if (scenario === "restore") writeFileSync(`${paths.leasePath}.restore.json`, "{}");
   if (scenario === "reparse") { mkdirSync(join(root, "external")); symlinkSync(join(root, "external"), join(source, "attachments"), "junction"); }
+  // C8: Murage links each enabled skill into the bot's engine folders as a
+  // junction (server/skills.ts). Those are left out and listed; a junction at
+  // the same place that leads anywhere else still refuses the capture.
+  const skill = join(source, "workspaces", "bot", "skills", "research"), links = join(source, "workspaces", "bot", ".claude", "skills");
+  if (scenario === "skill-links" || scenario === "foreign-junction") {
+    mkdirSync(skill, { recursive: true }); writeFileSync(join(skill, "SKILL.md"), "# research\n"); mkdirSync(links, { recursive: true });
+    mkdirSync(join(source, "workspaces", "bot", ".agents", "skills"), { recursive: true });
+    if (scenario === "skill-links") { symlinkSync(skill, join(links, "research"), "junction"); symlinkSync(skill, join(source, "workspaces", "bot", ".agents", "skills", "research"), "junction"); }
+    else { mkdirSync(join(root, "external", "skills"), { recursive: true }); symlinkSync(join(root, "external", "skills"), join(links, "research"), "junction"); }
+  }
   if (scenario === "quota") { mkdirSync(join(source, "attachments")); writeFileSync(join(source, "attachments", "large"), Buffer.alloc(256)); }
   const before = hashes(source);
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -86,7 +96,13 @@ for (const scenario of ["cancel", "identity", "unc", "overlap", "idle", "concurr
     assert.ok(receipt, "native receipt missing");
     results.push({ scenario, root, receipt });
     writeFileSync(join(evidence, "results.json"), JSON.stringify(results, null, 2));
-    const expectedCopy = ["idle", "concurrent", "invalid-records"].includes(scenario);
+    const expectedCopy = ["idle", "concurrent", "invalid-records", "skill-links"].includes(scenario);
+    if (scenario === "skill-links") {
+      assert.equal(receipt.skillLinksOmitted, 2, JSON.stringify(receipt));
+      assert.deepEqual([...receipt.skillLinks].sort(), ["workspaces/bot/.agents/skills/research", "workspaces/bot/.claude/skills/research"]);
+      assert.equal(existsSync(join(clone, "workspaces", "bot", ".claude", "skills", "research")), false, "the link is not copied or followed");
+      assert.equal(readFileSync(join(clone, "workspaces", "bot", "skills", "research", "SKILL.md"), "utf8"), "# research\n");
+    }
     assert.equal(receipt.copyComplete, expectedCopy, JSON.stringify(receipt));
     if (expectedCopy) {
       assert.equal(receipt.status, 0); assert.equal(receipt.snapshotReleased, true);

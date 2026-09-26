@@ -5,7 +5,7 @@ import { PassThrough } from "node:stream";
 import { captureRecoveryCopy } from "./installation-recovery-snapshot.mjs";
 
 const id = { volumeSerial: "12", fileId: "1".repeat(32) };
-function fake(mode = "success") {
+function fake(mode = "success", extra = {}) {
   let calls = 0;
   const spawn = (_helper, args) => {
     calls++; assert.deepEqual(args, ["--bridge", "123"]);
@@ -15,7 +15,7 @@ function fake(mode = "success") {
     child.kill = () => { queueMicrotask(close); return true; };
     child.stdin.on("finish", () => queueMicrotask(close));
     const send = object => child.stdout.write(JSON.stringify(object) + "\n");
-    const success = () => send({ event: "result", nonce, status: 0, copyComplete: true, snapshotReleased: true, snapshotId: "12345678-1234-1234-1234-123456789abc", sourceIdentity: id });
+    const success = () => send({ event: "result", nonce, status: 0, copyComplete: true, snapshotReleased: true, snapshotId: "12345678-1234-1234-1234-123456789abc", sourceIdentity: id, ...extra });
     child.stdin.on("data", data => {
       const text = String(data);
       if (text.startsWith("MURAGE_RECOVERY_1")) {
@@ -45,4 +45,16 @@ for (const mode of ["nonce", "oversized", "premature"]) test(`rejects ${mode} na
 });
 test("rejects injected path framing before starting a bridge", async () => {
   const host = fake(); await assert.rejects(captureRecoveryCopy({ ...parameters, source: "C:\\source\nCONFIRM", spawn: host.spawn, confirm: async () => true }), { code: "INVALID_RECOVERY_CAPTURE" }); assert.equal(host.calls, 0);
+});
+// C8: the native capture leaves Murage's own skill junctions out (never
+// followed) and lists them; anything else in that list is refused.
+test("passes through the skill shortcuts the capture left out, and only those", async () => {
+  const links = ["workspaces/bot/.claude/skills/research", "workspaces/bot/threads/t1/.agents/skills/pdf"];
+  const listed = await captureRecoveryCopy({ ...parameters, spawn: fake("success", { skillLinksOmitted: 3, skillLinks: links }).spawn, confirm: async () => true });
+  assert.equal(listed.skillLinksOmitted, 3); assert.deepEqual(listed.skillLinks, links);
+  const older = await captureRecoveryCopy({ ...parameters, spawn: fake().spawn, confirm: async () => true });
+  assert.equal(older.skillLinksOmitted, 0); assert.deepEqual(older.skillLinks, []);
+  for (const extra of [{ skillLinksOmitted: 1, skillLinks: ["attachments/x"] }, { skillLinksOmitted: 1, skillLinks: ["workspaces/.claude/skills/x"] }, { skillLinksOmitted: 1, skillLinks: ["workspaces/bot/.claude/skills/a/b"] },
+    { skillLinksOmitted: 0, skillLinks: links }, { skillLinksOmitted: -1, skillLinks: [] }, { skillLinksOmitted: 1 }, { skillLinks: [] }, { skillLinksOmitted: 1, skillLinks: ["workspaces/b\\x/.claude/skills/y"] }])
+    await assert.rejects(captureRecoveryCopy({ ...parameters, spawn: fake("success", extra).spawn, confirm: async () => true }), { code: "INVALID_RECOVERY_CAPTURE_RESULT" }, JSON.stringify(extra));
 });

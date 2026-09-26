@@ -2361,7 +2361,9 @@ async function runSnapshotDesktopRecovery(confirm) {
     finally { owner.release(); }
     if (cancellation.signal.aborted) throw Object.assign(new Error("Recovery stopped"), { code: "RECOVERY_CAPTURE_CANCELLED" });
     const result = await runSeparateDesktopRecovery({ archive, sha256: saved.sha256 }, plan, cancellation.signal);
-    return { ...result, recoveryArchive: archive };
+    // Skill shortcuts the capture left out (C8): listed, and re-created by
+    // Murage from each bot's skill manifest in the restored copy.
+    return { ...result, recoveryArchive: archive, skillLinksOmitted: captured.skillLinksOmitted, skillLinks: captured.skillLinks };
   } catch (error) {
     if (retainedSeparateDirectory !== plan.dataDirectory && (fs.existsSync(captureDirectory) || fs.existsSync(`${captureDirectory}.capture.json`))) retainedSeparateDirectory = captureDirectory;
     throw error;

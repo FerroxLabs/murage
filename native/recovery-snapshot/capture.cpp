@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "capture.h"
+#include <winioctl.h>
 #include <vss.h>
 #include <vsserror.h>
 #include <vswriter.h>
@@ -8,6 +9,7 @@
 #include <aclapi.h>
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <cwctype>
 #include <stdexcept>
@@ -105,7 +107,7 @@ void awaitSnapshot(IVssAsync* async, const ApprovedCapture& request) {
     require(status == VSS_S_ASYNC_PENDING, FAILED(status) ? status : E_ABORT);
   }
 }
-struct Entry { std::wstring name; DWORD attributes; };
+struct Entry { std::wstring name; DWORD attributes; DWORD reparseTag; };
 std::vector<Entry> entries(const std::wstring& directory, std::uint32_t bound) {
   WIN32_FIND_DATAW data{};
   HANDLE search = FindFirstFileW((directory + L"\\*").c_str(), &data);
@@ -118,7 +120,7 @@ std::vector<Entry> entries(const std::wstring& directory, std::uint32_t bound) {
     std::wstring name(data.cFileName);
     if (name == L"." || name == L"..") continue;
     require(safePart(name)); require(result.size() < bound, HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_QUOTA));
-    result.push_back({name, data.dwFileAttributes});
+    result.push_back({name, data.dwFileAttributes, (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ? data.dwReserved0 : 0});
   } while (FindNextFileW(search, &data));
   require(GetLastError() == ERROR_NO_MORE_FILES, HRESULT_FROM_WIN32(GetLastError()));
   std::sort(result.begin(), result.end(), [](const Entry& a, const Entry& b) { return fold(a.name) < fold(b.name); });
@@ -134,8 +136,50 @@ bool selected(const std::wstring& name) {
   if (!name.starts_with(L"messages-") || !name.ends_with(L".json") || name.size() <= 14) return false;
   return std::all_of(name.begin()+9, name.end()-5, [](wchar_t c) { return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') || c == L'_' || c == L'-'; });
 }
+// Mount-point reparse data (ntifs.h REPARSE_DATA_BUFFER, junction arm).
+struct MountPointReparse {
+  DWORD tag; WORD dataLength, reserved;
+  WORD substituteOffset, substituteLength, printOffset, printLength;
+  wchar_t path[1];
+};
+std::vector<std::wstring> parts(const std::wstring& path) {
+  std::vector<std::wstring> out; size_t at = 0;
+  for (;;) { const auto end = path.find(L'\\', at); out.push_back(path.substr(at, end == std::wstring::npos ? end : end - at)); if (end == std::wstring::npos) return out; at = end + 1; }
+}
+// True only for a junction Murage itself makes for a bot's engine
+// (server/skills.ts syncSkillLinks, server/procedure-bundles.ts): at
+// workspaces\<bot>[\...]\.claude|.agents|.grok\skills\<name>, pointing at a
+// skills folder inside this installation's own workspaces. The junction is
+// read as data, never opened through. Anything else keeps being refused.
+bool murageSkillLink(const std::wstring& snapshotPath, const std::wstring& relative, const Entry& entry,
+                     const std::vector<std::wstring>& liveRoots, const ApprovedCapture& request) {
+  if (entry.reparseTag != IO_REPARSE_TAG_MOUNT_POINT || !(entry.attributes & FILE_ATTRIBUTE_DIRECTORY)) return false;
+  const auto p = parts(relative); const auto n = p.size();
+  if (n < 5 || p[0] != L"workspaces" || p[n-2] != L"skills" || (p[n-3] != L".claude" && p[n-3] != L".agents" && p[n-3] != L".grok")) return false;
+  Handle link(CreateFileW(snapshotPath.c_str(), FILE_READ_ATTRIBUTES | (request.callerReadToken ? READ_CONTROL : 0),
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr));
+  if (request.callerReadToken) hr(captureReadAccess(link.value, request.callerReadToken, true));
+  std::vector<BYTE> buffer(MAXIMUM_REPARSE_DATA_BUFFER_SIZE); DWORD size = 0;
+  if (!DeviceIoControl(link.value, FSCTL_GET_REPARSE_POINT, nullptr, 0, buffer.data(), static_cast<DWORD>(buffer.size()), &size, nullptr)) return false;
+  if (size < offsetof(MountPointReparse, path)) return false;
+  const auto* data = reinterpret_cast<const MountPointReparse*>(buffer.data());
+  if (data->tag != IO_REPARSE_TAG_MOUNT_POINT || data->substituteOffset % 2 || data->substituteLength % 2 ||
+      offsetof(MountPointReparse, path) + size_t(data->substituteOffset) + data->substituteLength > size) return false;
+  std::wstring target(data->path + data->substituteOffset / 2, data->substituteLength / 2);
+  if (!target.starts_with(L"\\??\\")) return false;
+  target = fold(target.substr(4));
+  while (!target.empty() && target.back() == L'\\') target.pop_back();
+  if (target.size() < 4 || !iswalpha(target[0]) || target[1] != L':' || target[2] != L'\\') return false;
+  const auto t = parts(target.substr(3));
+  if (std::any_of(t.begin(), t.end(), [](const std::wstring& part) { return !safePart(part); })) return false;
+  if (std::find(t.begin(), t.end(), L"skills") == t.end()) return false;
+  for (const auto& root : liveRoots) if (target.starts_with(root + L"\\workspaces\\")) return true;
+  return false;
+}
+std::wstring portable(std::wstring relative) { std::replace(relative.begin(), relative.end(), L'\\', L'/'); return relative; }
 void copyEntry(const std::wstring& source, const std::wstring& destination, bool directory,
-               const ApprovedCapture& request, CaptureReceipt& receipt, unsigned depth) {
+               const ApprovedCapture& request, CaptureReceipt& receipt, unsigned depth,
+               const std::wstring& relative, const std::vector<std::wstring>& liveRoots) {
   checkCancel(request);
   require(depth <= 64 && ++receipt.entries <= request.maxEntries, HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_QUOTA));
   auto input = openRead(source, directory, false, request.callerReadToken != nullptr);
@@ -144,9 +188,16 @@ void copyEntry(const std::wstring& source, const std::wstring& destination, bool
   require(id.VolumeSerialNumber == receipt.sourceIdentity.VolumeSerialNumber);
   if (directory) {
     win(CreateDirectoryW(destination.c_str(), nullptr));
-    for (const auto& entry : entries(source, request.maxEntries))
+    for (const auto& entry : entries(source, request.maxEntries)) {
+      const auto child = relative + L"\\" + entry.name;
+      if ((entry.attributes & FILE_ATTRIBUTE_REPARSE_POINT) && murageSkillLink(source + L"\\" + entry.name, child, entry, liveRoots, request)) {
+        require(++receipt.skillLinksOmitted <= request.maxEntries, HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_QUOTA));
+        if (receipt.skillLinks.size() < 64) receipt.skillLinks.push_back(portable(child));
+        continue; // Not copied, not followed; the clone simply lacks it.
+      }
       copyEntry(source + L"\\" + entry.name, destination + L"\\" + entry.name,
-        bool(entry.attributes & FILE_ATTRIBUTE_DIRECTORY), request, receipt, depth+1);
+        bool(entry.attributes & FILE_ATTRIBUTE_DIRECTORY), request, receipt, depth+1, child, liveRoots);
+    }
     return;
   }
   BY_HANDLE_FILE_INFORMATION info{}; win(GetFileInformationByHandle(input.value, &info));
@@ -253,11 +304,18 @@ CaptureReceipt captureApprovedInstallation(const ApprovedCapture& request, SaveR
       require(name != L".package-import-transaction" && name != L"vm-home" && name != L"vm-homes", HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED));
       if (selected(name)) require(name == entry.name && !(entry.attributes & FILE_ATTRIBUTE_REPARSE_POINT));
     }
+    // The live data folder in every spelling a junction may carry: as the
+    // caller gave it and as the file system names it (case-folded, without
+    // the \\?\ prefix).
+    std::vector<std::wstring> liveRoots{fold(request.source)};
+    { std::vector<wchar_t> dos(32768); const DWORD length = GetFinalPathNameByHandleW(sourcePins.back().value, dos.data(), static_cast<DWORD>(dos.size()), VOLUME_NAME_DOS);
+      if (length > 0 && length < dos.size()) { std::wstring path(dos.data(), length); if (path.starts_with(L"\\\\?\\") && !path.starts_with(L"\\\\?\\UNC\\")) path = path.substr(4); liveRoots.push_back(fold(path)); } }
+    for (auto& root : liveRoots) while (!root.empty() && root.back() == L'\\') root.pop_back();
     checkCancel(request); createPrivate(destination);
     auto privatePin = openRead(destination, true, true);
     for (const auto& entry : names) if (selected(entry.name))
       copyEntry(snapshot + L"\\" + entry.name, destination + L"\\" + entry.name,
-        bool(entry.attributes & FILE_ATTRIBUTE_DIRECTORY), request, receipt, 0);
+        bool(entry.attributes & FILE_ATTRIBUTE_DIRECTORY), request, receipt, 0, entry.name, liveRoots);
     checkCancel(request); receipt.copyComplete = true; receipt.status = S_OK;
   } catch (const Failure& failure) { receipt.status = failure.status; }
     catch (...) { receipt.status = E_FAIL; }

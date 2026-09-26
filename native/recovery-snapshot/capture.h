@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <string>
 #include <cstdint>
+#include <vector>
 
 namespace murage::recovery {
 // Internal native seam ONLY. Not a CLI, RPC endpoint, Node export or elevation
@@ -30,6 +31,13 @@ struct CaptureReceipt {
   bool snapshotReleased = false;
   HRESULT cleanupStatus = S_OK;
   HRESULT status = E_PENDING;
+  // Murage's own skill junctions (workspaces\<bot>\...\.claude|.agents|.grok\
+  // skills\<name>) are left out, never followed, and listed here: Murage
+  // re-creates them from the skill manifest after a restore, exactly as the
+  // JS stage omits them (NATIVE_SKILL_LINK_OMITTED). Paths use "/" and are
+  // relative to the data folder; the list is bounded, the count is not.
+  std::uint32_t skillLinksOmitted = 0;
+  std::vector<std::wstring> skillLinks;
 };
 // Must durably record only bounded receipt facts in task-owned storage. Called
 // before copying and after cleanup; failures stop capture, retaining partial data.
