@@ -89,21 +89,35 @@ void unchanged(HANDLE h, const FileState& before) {
     std::memcmp(after.id.FileId.Identifier, before.id.FileId.Identifier, 16) == 0 &&
     CompareFileTime(&after.info.ftLastWriteTime, &before.info.ftLastWriteTime) == 0);
 }
-Handle openGuard(const std::wstring& p, bool directory) {
+// share: who else may open the object while it is held. The default (read
+// only) is for the private stage and the files this helper reads.
+Handle openGuard(const std::wstring& p, bool directory, DWORD share = FILE_SHARE_READ) {
   Handle h(CreateFileW(p.c_str(), (directory ? FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY : GENERIC_READ) | READ_CONTROL,
-    FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | (directory ? FILE_FLAG_BACKUP_SEMANTICS : FILE_FLAG_SEQUENTIAL_SCAN), nullptr));
+    share, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | (directory ? FILE_FLAG_BACKUP_SEMANTICS : FILE_FLAG_SEQUENTIAL_SCAN), nullptr));
   need(GetFileType(h.h) == FILE_TYPE_DISK);
   FILE_ATTRIBUTE_TAG_INFO info{}; win(GetFileInformationByHandleEx(h.h, FileAttributeTagInfo, &info, sizeof(info)));
   need(!(info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && bool(info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == directory);
   (void)identity(h.h); return h;
 }
+// Holds every folder from the drive root down to p for the whole run, so
+// none of them can be renamed, deleted or swapped for a junction: without
+// FILE_SHARE_DELETE nobody can open them for DELETE. FILE_SHARE_WRITE is
+// granted because these are ordinary folders other programs use (C:\ root,
+// C:\Users, C:\Users\<name>, %APPDATA%\murage): renaming, hard linking or
+// saving-by-rename INTO a folder opens that folder for write, and a read-only
+// share made every such operation fail with a sharing violation for as long
+// as a backup or restore ran (W-A6, and the lease EBUSY behind W-D1). Write
+// access to a folder only adds or removes entries inside it; it can't rename
+// or replace the held folder itself, so the path stays the same. This matches
+// the recovery helper's pins (capture.cpp pinPath, broker.cpp pin).
+constexpr DWORD ancestorShare = FILE_SHARE_READ | FILE_SHARE_WRITE;
 std::vector<Handle> pinDirectories(const std::wstring& p) {
   pathValid(p); wchar_t fsName[32]{};
   need(GetDriveTypeW(p.substr(0, 3).c_str()) == DRIVE_FIXED);
   win(GetVolumeInformationW(p.substr(0, 3).c_str(), nullptr, 0, nullptr, nullptr, nullptr, fsName, 32)); need(std::wstring(fsName) == L"NTFS");
-  std::vector<Handle> held; held.push_back(openGuard(p.substr(0, 3), true));
+  std::vector<Handle> held; held.push_back(openGuard(p.substr(0, 3), true, ancestorShare));
   size_t at = 3;
-  for (;;) { const auto end = p.find(L'\\', at); held.push_back(openGuard(p.substr(0, end), true)); if (end == std::wstring::npos) break; at = end + 1; }
+  for (;;) { const auto end = p.find(L'\\', at); held.push_back(openGuard(p.substr(0, end), true, ancestorShare)); if (end == std::wstring::npos) break; at = end + 1; }
   return held;
 }
 Handle token(HANDLE p) { HANDLE raw = nullptr; win(OpenProcessToken(p, TOKEN_QUERY, &raw)); return Handle(raw); }
