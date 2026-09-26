@@ -184,7 +184,7 @@ function SftpKeySteps({r}:{r:RemoteController}){
   <button className={buttonClass} type="button" onClick={copy}>{copied?"Key copied":"Copy key"}</button>
   <ol className="list-decimal space-y-1 pl-5 text-[13px] text-ink-secondary">
    <li>On the server, add the key above as a new line in the file .ssh/authorized_keys in the home folder of {sftp.user}.</li>
-   <li>Choose the off-site password file below.</li>
+   <li>Below, choose Create off-site password (or, on a new computer, the password file you kept).</li>
    <li>Choose Test connection. The first time, Murage shows the server's fingerprint and asks you to trust it.</li>
   </ol>
   <p className="text-[12px] text-ink-secondary">On a Synology, TrueNAS or similar NAS: switch on SFTP in its file services settings, enable the user home folder, then add the key for {sftp.user}. Some NAS apps have a place to paste an SSH public key for a user.</p>
