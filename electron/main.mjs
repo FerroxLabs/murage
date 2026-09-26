@@ -20,6 +20,7 @@ import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { downloadFolderShared, exportRemoteBackup } from "./backup-remote-export.mjs";
+import { backupFolderRefusal } from "./backup-folder-check.mjs";
 import { remoteWorkDirectory,remoteSshDirectory,remoteControlDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
@@ -328,7 +329,7 @@ const desktopBackupTool = createBackupToolCapability({
 async function requireDesktopBackupTool() {
   const owner = desktopDataOwner, installation = desktopDataDir;
   const tool = await desktopBackupTool.requireTool();
-  if (!owner || owner !== desktopDataOwner || installation !== desktopDataDir || desktopShutdownStarted) throw Object.assign(new Error("Backup ownership changed"), { code: "BACKUP_UNAVAILABLE" });
+  if (!owner || owner !== desktopDataOwner || installation !== desktopDataDir || desktopShutdownStarted) throw Object.assign(new Error("BACKUP_UNAVAILABLE"), { code: "BACKUP_UNAVAILABLE" });
   return tool;
 }
 const backupMode = createBackupModeController({
@@ -2421,7 +2422,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
   if (!desktopRecoveryMode || desktopShutdownStarted || (!archiveOnly && (!owner || !dataDirectory))) throw Object.assign(new Error("Recovery unavailable"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
   const ageTool=operation.includes("encrypted")?await requireDesktopBackupTool():null;
   if (!desktopRecoveryMode || desktopShutdownStarted || (!separate && (owner !== desktopDataOwner || dataDirectory !== desktopDataDir))) throw Object.assign(new Error("Recovery ownership changed"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
-  if(operation.includes("encrypted")&&(!ageTool||typeof parameters.readIdentity!=="function"))throw Object.assign(new Error("Encrypted backup unavailable"),{code:"BACKUP_UNAVAILABLE"});
+  if(operation.includes("encrypted")&&(!ageTool||typeof parameters.readIdentity!=="function"))throw Object.assign(new Error("BACKUP_UNAVAILABLE"),{code:"BACKUP_UNAVAILABLE"});
   const args = operation === "backup-encrypted" ? ["backup-encrypted","--data-dir",dataDirectory,"--output",parameters.output,"--age-tool",ageTool,"--recipient",parameters.recipient,"--credential-policy","preserve-in-encrypted-fidelity"]
     : operation === "inspect-encrypted" ? ["inspect-encrypted","--archive",parameters.archive,"--age-tool",ageTool]
     : operation === "restore-encrypted-new" ? ["restore-encrypted-new","--data-dir",dataDirectory,"--archive",parameters.archive,"--sha256",parameters.sha256,"--age-tool",ageTool]
@@ -3543,6 +3544,7 @@ async function initializeBackupScheduleHost(){
       await updateSecureCredentialDocument(current=>({...current,[key]:value}));
     },
     chooseDestination:()=>choose(["openDirectory","createDirectory"],"Choose scheduled backup destination"),
+    backupFolderRefusal:folder=>backupFolderRefusal(folder),
     // Start where a key was just created here; the user still picks it.
     chooseKey:()=>choose(["openFile"],"Choose your recovery key file",backupRecoveryKeys.lastFolder()).then(file=>{if(file)backupRecoveryKeys.rememberKeyFile(file);return file;}),
     // Writes the key without a dialog, outside the installation and outside
