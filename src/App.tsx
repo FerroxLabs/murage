@@ -14,6 +14,7 @@ import { SignedOutCard } from "@/components/SignedOutCard";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
+import { enginesOnlySwitchedOff } from "@/lib/engines-off";
 import { CommandPalette } from "@/components/CommandPalette";
 import { FirstRunPhases } from "@/components/FirstRunPhases";
 import { useSetupView } from "@/components/FirstRunChrome";
@@ -127,6 +128,9 @@ function Shell() {
         (i.models?.default ?? "").trim().length > 0,
     );
 
+  // Engines switched off (a restored copy) never hide the conversations: the
+  // chat stays, with a notice above it (D7).
+  const enginesOff = noEngines && enginesOnlySwitchedOff(state.instances) && Boolean(bot || group);
   // App-wide shortcuts: ⌘N new bot · ⌘1–9 jump to bot · ⌘⇧[ / ⌘⇧] prev/next.
   // Kept deliberately small; every panel already closes on Esc.
   useEffect(() => {
@@ -340,6 +344,15 @@ function Shell() {
           onClose={() => setLocalVmWorkspaceBotId(null)}
           onOpenComputer={openComputerFromWorkspace}
         />
+      ) : enginesOff ? (
+        <div className="flex h-full min-w-0 flex-1 flex-col">
+          <div role="status" className="flex flex-wrap items-center gap-3 border-b border-hairline/40 bg-inset px-4 py-2 text-[13px] text-ink">
+            <span className="min-w-0 flex-1">Your conversations are all here. AI engines are switched off in this copy, so bots can't answer yet. Turn one on in Settings, then Engines.</span>
+            <button type="button" className="min-h-9 rounded-lg border border-hairline/40 px-3 text-[13px] font-medium text-ink hover:bg-app focus-visible:ring-2 focus-visible:ring-accent-border"
+              onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "engines" })}>Open Engines</button>
+          </div>
+          <div className="flex min-h-0 flex-1">{group ? <GroupView key={group.id} group={group} /> : <ChatView bot={bot!} />}</div>
+        </div>
       ) : noEngines ? (
         <NoEngines />
       ) : group ? (
