@@ -11016,10 +11016,12 @@ const server = createServer(async (req, res) => {
     // to do until the review is cleared, and one notification goes out.
     if(path==="/api/backup-failure-notice"&&method==="POST"){
       if(requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"no such route"});
-      const input=z.object({action:z.enum(["report","clear"]),stage:z.string().max(40).optional(),code:z.string().max(80).optional(),notify:z.boolean().optional()}).strict().safeParse(await readBody(req));
+      // `path`: the item inside the data folder the refusal was about (0.1.60
+      // audit A-01), dropped by normalizeCaptureFailure unless it is one.
+      const input=z.object({action:z.enum(["report","clear"]),stage:z.string().max(40).optional(),code:z.string().max(80).optional(),path:z.string().max(1024).optional(),notify:z.boolean().optional()}).strict().safeParse(await readBody(req));
       if(!input.success)return json(res,400,{error:"INVALID_BACKUP_FAILURE_NOTICE"});
       if(input.data.action==="clear"){backupFailedNotice=null;return json(res,200,{cleared:true});}
-      const failure=normalizeCaptureFailure({stage:input.data.stage,code:input.data.code});
+      const failure=normalizeCaptureFailure({stage:input.data.stage,code:input.data.code,path:input.data.path});
       if(!failure)return json(res,400,{error:"INVALID_BACKUP_FAILURE_NOTICE"});
       const sentence=`${captureFailureSentence(failure)} Open Settings, then Backups, to clear it and back up again.`;
       backupFailedNotice={sentence,at:Date.now()};

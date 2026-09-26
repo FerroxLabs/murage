@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, createReadStream, createWriteStream, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readSync, rmSync, writeSync, type Stats } from "node:fs";
+import { closeSync, constants, createReadStream, createWriteStream, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readSync, rmSync, writeSync, type Stats } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { Readable } from "node:stream";
@@ -8,6 +8,8 @@ import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { portableArchivePath, type ArchiveLimits } from "./installation-archive.ts";
 import { InstallationSnapshotError, withOfflineInstallation } from "./installation-database-snapshot.ts";
 import { classifyDataDirEntry, DATA_DIR_RECORDS } from "./data-dir-inventory.ts";
+import { REBUILDABLE_FOLDERS } from "./installation-state-snapshot.ts";
+import { publishNoReplace } from "./publish-file.ts";
 
 // A damaged installation cannot take a consistent SQLite snapshot, so the
 // database and its sidecars are copied raw beside every name a backup would
@@ -75,15 +77,20 @@ export async function writeInstallationDamagedExport(dataDir: string, destinatio
       observed.set(source, before);
       if (before.isSymbolicLink()) { manifest.omitted.push({ path, reason: "Symlink not followed" }); return; }
       if (before.isDirectory()) {
+        // What a bot ordinarily makes in its folder never stops this either
+        // (0.1.60 audit A-01): rebuildable folders and names a zip can't hold
+        // are left in place and listed as omitted.
+        if (path.startsWith("workspaces/") && REBUILDABLE_FOLDERS.has(basename(source))) { manifest.omitted.push({ path, reason: "Rebuildable dependency or cache folder left in place" }); return; }
         const folded = new Set<string>();
         for (const name of readdirSync(source).sort()) {
-          if (folded.has(name.toLowerCase())) fail("NONPORTABLE_SNAPSHOT_PATH");
+          const child = `${path}/${name}`;
+          if (folded.has(name.toLowerCase()) || !portableArchivePath(child)) { manifest.omitted.push({ path: child.replace(/[\x00-\x1f]/g, "?"), reason: "Name another system can't hold; left in place" }); continue; }
           folded.add(name.toLowerCase());
-          copy(`${path}/${name}`, depth + 1);
+          copy(child, depth + 1);
         }
         return;
       }
-      if (!before.isFile() || before.nlink !== 1) fail("UNSAFE_SNAPSHOT_ENTRY");
+      if (!before.isFile()) { manifest.omitted.push({ path, reason: "Not a regular file; left in place" }); return; }
       if (before.size > maxBytes - bytes) fail("SNAPSHOT_LIMIT_EXCEEDED");
       const to = join(scratch, "preservation", ...path.split("/"));
       mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
@@ -93,7 +100,7 @@ export async function writeInstallationDamagedExport(dataDir: string, destinatio
       const hash = createHash("sha256");
       try {
         const opened = fstatSync(input);
-        if (!same(before, opened) || !opened.isFile() || opened.nlink !== 1) fail("SOURCE_CHANGED");
+        if (!same(before, opened) || !opened.isFile()) fail("SOURCE_CHANGED");
         out = openSync(to, "wx", 0o600);
         const buffer = Buffer.alloc(64 * 1024);
         for (;;) {
@@ -146,7 +153,7 @@ export async function writeInstallationDamagedExport(dataDir: string, destinatio
       for await (const chunk of createReadStream(file)) { check(); hash.update(chunk); }
       const fd = openSync(file, "r+");
       try { fsyncSync(fd); } finally { closeSync(fd); }
-      linkSync(file, target);
+      publishNoReplace(file, target);
       return { path: target, sha256: hash.digest("hex"), manifest };
     } catch (error) {
       throw error instanceof InstallationSnapshotError ? error : new InstallationSnapshotError((error as NodeJS.ErrnoException).code === "EEXIST" ? "DESTINATION_EXISTS" : "DAMAGED_EXPORT_FAILED");

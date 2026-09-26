@@ -68,7 +68,8 @@ it("exports damaged JSON and database bytes unchanged as private non-restorable 
   expect(readdirSync(f.root).filter(name => name.startsWith(".murage-"))).toEqual([]);
 });
 
-it.each(["bytes", "files", "cancel", "path"])("refuses %s limits without publishing or modifying damaged data", async kind => {
+// A name a zip can't hold is left in place and listed (below), not refused.
+it.each(["bytes", "files", "cancel"])("refuses %s limits without publishing or modifying damaged data", async kind => {
   const f = fixture();
   if (kind === "path") f.put("workspaces/CON", "unsafe portable name");
   const original = readFileSync(join(f.data, "config.json"));
@@ -104,4 +105,26 @@ it.skipIf(process.platform === "win32")("omits source symlinks and rejects desti
   expect(readFileSync(outside, "utf8")).toBe("external credential canary");
   const alias = join(f.root, "alias"); symlinkSync(f.data, alias);
   await expect(writeInstallationDamagedExport(f.data, join(alias, "output.zip"))).rejects.toMatchObject({ code: "DESTINATION_INSIDE_INSTALLATION" });
+});
+
+// 0.1.60 audit A-01: what a bot ordinarily makes in its folder never stops
+// the private preservation export either.
+it("preserves a used bot folder: hard links, colon names and node_modules do not stop it", async () => {
+  const f = fixture();
+  const desk = join(f.data, "workspaces", "bot");
+  mkdirSync(join(desk, "site", "node_modules", "dep"), { recursive: true });
+  writeFileSync(join(desk, "site", "node_modules", "dep", "index.js"), "x");
+  writeFileSync(join(desk, "a.js"), "shared\n");
+  const { linkSync } = await import("node:fs");
+  linkSync(join(desk, "a.js"), join(desk, "b.js"));
+  writeFileSync(join(desk, "log 10:30.txt"), "timestamped\n");
+  f.put("workspaces/CON", "device name");
+  const result = await writeInstallationDamagedExport(f.data, f.target);
+  const paths = result.manifest.files.map(file => file.path);
+  expect(paths).toEqual(expect.arrayContaining(["workspaces/bot/a.js", "workspaces/bot/b.js"]));
+  expect(result.manifest.omitted).toEqual(expect.arrayContaining([
+    { path: "workspaces/bot/site/node_modules", reason: "Rebuildable dependency or cache folder left in place" },
+    { path: "workspaces/bot/log 10:30.txt", reason: "Name another system can't hold; left in place" },
+    { path: "workspaces/CON", reason: "Name another system can't hold; left in place" },
+  ]));
 });

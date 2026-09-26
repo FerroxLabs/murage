@@ -13,15 +13,33 @@ it("keeps fidelity metadata under the same lease and detects later component cha
     const inventory=await inventoryFidelity(installation,stage,selection);
     expect(inventory.coverage.fullInstallation).toBe(false);
     expect(inventory.sources.find(file=>file.path==="config.json")?.bytes).toBe(readFileSync(join(f.data,"config.json")).length);
+    // Owner files are stored once, through the stage; the stage notices them.
     writeFileSync(join(f.data,"workspaces","report.md"),"changed");
-    expect(inventory.assertUnchanged).toThrow();expect(stage.assertSourceUnchanged).toThrow();
+    expect(stage.assertSourceUnchanged).toThrow();
+    // Records keep a raw copy too; both notice those.
+    writeFileSync(join(f.data,"config.json"),JSON.stringify({profile:{name:"Changed"}}));
+    expect(inventory.assertUnchanged).toThrow();
   });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });
-it.each(["unknown","symlink"])("refuses incomplete selected coverage: %s",async kind=>{
+it("refuses incomplete selected coverage: an unknown top-level name, and names it",async()=>{
   const f=backupFixture();try{
-    if(kind==="unknown")writeFileSync(join(f.data,"new-state.json"),"private unknown component");
-    else{mkdirSync(join(f.parent,"outside"));symlinkSync(join(f.parent,"outside"),join(f.data,"workspaces","linked"));}
-    await expect(withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return inventoryFidelity(installation,stage,selection);})).rejects.toThrow();
+    writeFileSync(join(f.data,"new-state.json"),"private unknown component");
+    await expect(withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return inventoryFidelity(installation,stage,selection);})).rejects.toMatchObject({code:"BACKUP_UNCLASSIFIED_COMPONENT",path:"new-state.json"});
+  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+});
+// 0.1.60 audit A-01: a shortcut in a bot's folder is stored as a shortcut,
+// never followed; one to a folder outside the data folder is also listed, so
+// the owner knows its contents are not in the backup.
+it("stores a shortcut to a folder outside the data folder without following it, and lists it",async()=>{
+  const f=backupFixture();try{
+    mkdirSync(join(f.parent,"outside"));writeFileSync(join(f.parent,"outside","private.txt"),"outside bytes");
+    symlinkSync(join(f.parent,"outside"),join(f.data,"workspaces","linked"));
+    await withOfflineInstallation(f.data,async installation=>{
+      const stage=await stageInstallationStateWhileOwned(installation,f.parent);await inventoryFidelity(installation,stage,selection);
+      expect(stage.manifest.links).toEqual([{path:"workspaces/linked",target:join(f.parent,"outside"),type:"dir"}]);
+      expect(stage.manifest.files.some(file=>file.path.startsWith("workspaces/linked/"))).toBe(false);
+      expect(stage.manifest.skipped).toContainEqual({path:"workspaces/linked",reason:"linked-folder"});
+    });
   }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });
 
@@ -129,7 +147,7 @@ it("backs up a 0.1.60 data folder: What's New, announcements and House Rules kep
 // .claude/.agents/.grok skills folders. Those links made EVERY backup of a bot
 // with a skill stop with BACKUP_SELECTED_COMPONENT_UNAVAILABLE on the packaged
 // 0.1.60 app (2026-09-26). They are left out and re-created; the skill itself
-// is captured. A link that leads anywhere else still refuses.
+// is captured. A link that leads anywhere else is stored as a link.
 it.each(["murage-skill-link","outside-link"])("backs up a bot with skills: %s",async kind=>{
   const f=backupFixture(),bot=join(f.data,"workspaces","bot-1"),skill=join(bot,"skills","brand-voice");
   mkdirSync(skill,{recursive:true});writeFileSync(join(skill,"SKILL.md"),"---\nname: brand-voice\n---\nWrite plainly.\n");
@@ -140,7 +158,14 @@ it.each(["murage-skill-link","outside-link"])("backs up a bot with skills: %s",a
   }
   try{
     const run=()=>withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return{stage,inventory:await inventoryFidelity(installation,stage,selection)};});
-    if(kind==="outside-link"){await expect(run()).rejects.toThrow("BACKUP_SELECTED_COMPONENT_UNAVAILABLE");return;}
+    // 0.1.60 audit A-01: any other shortcut is stored as a shortcut (never
+    // followed) and, pointing outside the data folder, listed.
+    if(kind==="outside-link"){
+      const {stage}=await run();
+      expect(stage.manifest.links?.map(link=>link.path).sort()).toEqual([".agents",".claude",".grok"].map(dir=>`workspaces/bot-1/${dir}/skills/brand-voice`));
+      expect(stage.manifest.skipped?.filter(item=>item.reason==="linked-folder").length).toBe(3);
+      return;
+    }
     const {stage}=await run();
     expect(stage.manifest.files.some(file=>file.path.replaceAll("\\","/")==="workspaces/bot-1/skills/brand-voice/SKILL.md")).toBe(true);
     expect(stage.manifest.omitted.filter(item=>item.path.replaceAll("\\","/").endsWith("/skills/brand-voice")).length).toBe(3);

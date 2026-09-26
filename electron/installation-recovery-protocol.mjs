@@ -1,3 +1,24 @@
+import { captureFailurePath } from "../shared/backup-capture-failure.mjs";
+const skipReasons = new Set(["rebuildable", "file-limit", "unreadable", "special", "too-deep", "linked-folder"]);
+/** A backup's list of left-out items, or null when malformed. */
+export function backupSkippedSummary(value) {
+  if (!value || typeof value !== "object" || !Number.isSafeInteger(value.count) || value.count < 1 || !Array.isArray(value.items) || value.items.length > 50) return null;
+  const items = [];
+  for (const item of value.items) {
+    const path = captureFailurePath(item?.path);
+    if (!path || !skipReasons.has(item.reason)) return null;
+    items.push({ path, reason: item.reason });
+  }
+  const bots = {};
+  if (value.bots !== undefined) {
+    if (!value.bots || typeof value.bots !== "object" || Array.isArray(value.bots)) return null;
+    for (const [id, name] of Object.entries(value.bots)) {
+      if (!/^[\w-]{1,160}$/.test(id) || typeof name !== "string" || !name.trim() || name.length > 80 || /[\x00-\x1f\x7f]/.test(name)) return null;
+      bots[id] = name;
+    }
+  }
+  return { count: value.count, items, bots };
+}
 const operations = new Set(["backup", "inspect", "plan-restore", "restore", "rollback", "review", "activate", "backup-encrypted", "inspect-encrypted", "restore-encrypted-new"]);
 const fields = ["path", "sha256", "snapshotId", "status", "previousDataDir", "receipt", "retainedCandidate", "activationAvailable", "reviewHash", "activationId", "connectionProfileId", "engines", "schedules", "pendingWork"];
 
@@ -33,6 +54,12 @@ export function recoveryDesktopSummary(result) {
     if(!Number.isSafeInteger(included)||included<0||!Number.isSafeInteger(excluded)||excluded<0||included+excluded>100000)invalid();
     summary.coverage={scope:"application-data",fullInstallation:false,includedCount:included,excludedCount:excluded};
     if(result.operation==="restore-encrypted-new"){summary.rawFidelityActivated=false;summary.archiveSha256=result.archiveSha256;summary.encryptedSha256=result.encryptedSha256;}
+  }
+  // What a backup left out of a bot's folder (audit A-01): a bounded list of
+  // paths inside the data folder, so the page can list them in plain words.
+  if(result.skipped!==undefined&&["backup","backup-encrypted"].includes(result.operation)){
+    const skipped=backupSkippedSummary(result.skipped);if(!skipped)invalid();
+    summary.skipped=skipped;
   }
   for (const key of fields) {
     const value = result[key];

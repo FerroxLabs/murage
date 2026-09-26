@@ -1,4 +1,5 @@
 import { backupScheduleSchema,backupClosedResultSchema, type BackupSchedule } from "../../shared/backup-schedule";
+import { BACKUP_FOLDER_REFUSALS } from "../../shared/backup-folder-refusals.mjs";
 
 export interface ScheduleDraft { time: string; timezone: string; catchup: string; size: string; duration: string; preUpgrade:boolean; closedApp:boolean }
 const fields = { catchup: ["catchupMs", 3600000], size: ["maxBytes", 1024 ** 3], duration: ["maxDurationMs", 60000] } as const;
@@ -68,8 +69,13 @@ export function scheduleError(cause: unknown): string {
     BACKUP_ELEVATED: "Murage is running as administrator, and backups can't run that way. Close Murage, open it normally, then try again.",
     BACKUP_UNAVAILABLE: "Backups aren't available in this copy of Murage. Install Murage from its download page, then try again.",
     INVALID_BACKUP_SCHEDULE: "Check the time, time zone and the backup limits under Advanced, then try again.",
+    // Kept by electron/main.mjs across IPC on purpose (audit IPC-L1).
+    BACKUP_CLOSED_VOLUME_UNREADABLE: "Murage or its data folder is on a drive a background job can't read, so backups while Murage is closed can't be set up. Keep Murage in your Applications folder and its data folder on this computer's own disk, then turn this on again.",
+    // Back up now, refused before anything started (audit IPC-L2).
+    BACKUP_ACTIVITY_UNAVAILABLE: "Murage couldn't check whether your bots are busy, so the backup didn't start. Wait a moment for Murage to finish starting, then try again.",
+    BACKUP_PREPARE_UNCONFIRMED: "Murage couldn't confirm your bots had paused for the backup, so it didn't start. Your workspace is unchanged. Wait a moment, then try again.",
   };
-  for (const [key, value] of Object.entries(messages)) if (code.includes(key)) return value;
+  for (const [key, value] of Object.entries({ ...messages, ...BACKUP_FOLDER_REFUSALS })) if (code.includes(key)) return value;
   if (/BACKUP_(BINDINGS|DESTINATION|IDENTITY)/.test(code)) return "Turn off daily backups and wait for any upload to finish, then choose the backup folder and your recovery key again. No new key is made here.";
   return "Backup settings could not be updated. Your data is preserved. Refresh status before trying again.";
 }

@@ -1,8 +1,9 @@
 // Private directory-stage builder for the versioned archive/restore workflow.
 // This is not a portable archive or an activated restored installation.
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync, writeFileSync, writeSync, type Stats } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { closeSync, constants, createReadStream, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync, statSync, writeFileSync, writeSync, type ReadStream, type Stats } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, type BackupSkipReason } from "../shared/backup-limits.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
@@ -19,7 +20,8 @@ const isProjectedRecord = (path: string) => JSON_COMPONENTS.has(path) || classif
 const SAFE_CONFIG_FIELDS = ["profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications"] as const;
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return value !== null && typeof value === "object" && !Array.isArray(value); }
-function fail(code: string): never { throw new InstallationSnapshotError(code); }
+function fail(code: string, path?: string): never { throw new InstallationSnapshotError(code, path ? { path } : undefined); }
+const portable = (path: string) => path.split(sep).join("/");
 
 export interface StateSnapshotManifest {
   format: "murage.installation-stage";
@@ -31,15 +33,18 @@ export interface StateSnapshotManifest {
   omitted: Array<{ path: string; reason: string }>;
   missing: string[];
   database: { status: "absent" } | { status: "copied"; messages: number; threads: number; bytes: number; sha256: string };
+  links?: Array<{ path: string; target: string; type: "file" | "dir" }>;
+  copies?: Array<{ path: string; from: string }>;
+  names?: Array<{ path: string; name: string }>;
+  skipped?: Array<{ path: string; reason: BackupSkipReason }>;
+  skippedCount?: number;
 }
 
 // skills.ts and procedure-bundles.ts link every enabled skill into each bot
 // workspace's .claude/skills, .agents/skills and .grok/skills so the bot's
 // engine finds it. Those links point back at the skill inside the same
 // workspaces tree, which is captured anyway, and Murage re-creates them from
-// the skill manifest. Left out, they are not a gap; refusing them made every
-// backup of a bot with a skill stop with BACKUP_SELECTED_COMPONENT_UNAVAILABLE.
-// Any other link, or one that leads outside workspaces/, still refuses.
+// the skill manifest, so they are left out rather than stored.
 export const NATIVE_SKILL_LINK_OMITTED = "Skill shortcut Murage re-creates for the bot's engine; not restored";
 function nativeSkillLink(root: string, relative: string): boolean {
   const portable = relative.split(sep).join("/");
@@ -54,10 +59,43 @@ function nativeSkillLink(root: string, relative: string): boolean {
 }
 
 function safePart(name: string): boolean {
-  return !!name && name !== "." && name !== ".." && name.length <= 255 &&
-    !/[\\/:\x00-\x1f]/.test(name) && !/[ .]$/.test(name) &&
+  return !!name && name !== "." && name !== ".." && Buffer.byteLength(name) <= 255 && name === name.normalize("NFC") &&
+    !/[\\/:<>"|?*\x00-\x1f\x7f]/.test(name) && !/[ .]$/.test(name) &&
     !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
 }
+const percent = (text: string) => [...Buffer.from(text)].map(byte => "%" + byte.toString(16).toUpperCase().padStart(2, "0")).join("");
+/** A spelling of `name` every supported system can hold, for the archive:
+ * characters Windows refuses (and "%" itself) as %XX, trailing dots and
+ * spaces too, a device name's first letter, canonical Unicode. The real name
+ * is kept in the manifest and put back wherever the restoring system allows. */
+export function portableSpelling(name: string): string {
+  let out = "";
+  for (const character of name.normalize("NFC")) out += /[\\/:<>"|?*%\x00-\x1f\x7f]/.test(character) ? percent(character) : character;
+  out = out.replace(/[ .]+$/, tail => percent(tail));
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(out)) out = percent(out[0]) + out.slice(1);
+  if (!out) out = "%2E";
+  if (Buffer.byteLength(out) > 255) out = "murage-long-name-" + createHash("sha256").update(name).digest("hex").slice(0, 32);
+  return out;
+}
+
+/** Folders a bot's tools rebuild on demand: package installs, virtual
+ * environments, compiler and framework caches. Left out of backups (and
+ * listed), so a bot's ordinary `npm install` can neither fill the backup nor
+ * push it past its file limit. Any folder holding the standard CACHEDIR.TAG
+ * marker (Rust's target/, many tool caches) or a pyvenv.cfg (a Python
+ * virtual environment under any name) is treated the same way. */
+export const REBUILDABLE_FOLDERS: ReadonlySet<string> = new Set([
+  "node_modules", ".pnpm-store", ".yarn-cache", ".npm", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+  ".tox", ".nox", ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache", ".vite", ".angular", ".gradle", ".cache",
+]);
+function rebuildableFolder(absolute: string, name: string): boolean {
+  if (REBUILDABLE_FOLDERS.has(name)) return true;
+  for (const marker of ["CACHEDIR.TAG", "pyvenv.cfg"]) {
+    try { if (lstatSync(join(absolute, marker)).isFile()) return true; } catch { /* absent */ }
+  }
+  return false;
+}
+const deniedRead = (error: unknown) => ["EACCES", "EPERM"].includes(String((error as NodeJS.ErrnoException)?.code));
 
 function projectConfig(value: unknown, omit: (path: string, reason: string) => void): JsonObject {
   if (!object(value)) fail("INVALID_CONFIG_COMPONENT");
@@ -154,6 +192,10 @@ function projectComponent(name: string, value: unknown, omit: (path: string, rea
  * and inactive engine config require explicit restore reconstruction. Plain
  * transcript/file content can itself contain secrets; this is private data,
  * never a shareable diagnostics bundle. External project paths are not read. */
+/** The stage's contents list and its projected records, for inspection.
+ * Owner files are read in place (see openFile), so they are not in
+ * `directory`; anything that writes an archive stays inside the offline
+ * epoch and uses stageInstallationStateWhileOwned. */
 export async function stageInstallationState(dataDir: string, outputParent: string, options: { signal?: AbortSignal; maxBytes?: number; maxFiles?: number } = {}): Promise<{ directory: string; manifest: StateSnapshotManifest }> {
   return withOfflineInstallation(dataDir, async installation => {
     const { directory, manifest } = await stageInstallationStateWhileOwned(installation, outputParent, options);
@@ -161,126 +203,231 @@ export async function stageInstallationState(dataDir: string, outputParent: stri
   });
 }
 
-/** Internal composition seam: a caller keeps fidelity and recovery in one epoch. */
-export async function stageInstallationStateWhileOwned(installation: OfflineInstallation, outputParent: string, options: { signal?: AbortSignal; maxBytes?: number; maxFiles?: number } = {}): Promise<{ directory: string; manifest: StateSnapshotManifest; assertSourceUnchanged: () => void }> {
+/** Internal composition seam: a caller keeps fidelity and recovery in one epoch.
+ *
+ * Every top-level name is checked against data-dir-inventory.ts HERE, so every
+ * consumer of the stage (the encrypted backup and the older-style .zip file
+ * alike, audit K-02) refuses a name Murage does not know or a state it must
+ * not capture, instead of quietly leaving it out.
+ *
+ * Inside folders of owner work (a bot's own folder above all), nothing a bot
+ * ordinarily makes stops the backup (audit A-01):
+ *  - a shortcut (symbolic link) is stored as a shortcut and never followed;
+ *  - a file with several names (a hard link: pnpm, git) is stored once, and
+ *    each further name is restored as its own copy;
+ *  - a name another system can't hold (a colon, a trailing dot, CON.txt, two
+ *    names differing only in case) is stored under a safe spelling and put
+ *    back under its real name wherever the restoring system allows it;
+ *  - rebuildable folders (node_modules, virtual environments, caches) are left
+ *    out and listed;
+ *  - past the file limit, or where a file can't be read, the item is left out
+ *    and listed. The backup still completes.
+ * Murage's own records at the top of the folder are still all-or-nothing. */
+export interface InstallationStage { directory: string; manifest: StateSnapshotManifest; assertSourceUnchanged: () => void; openFile: (stored: string) => ReadStream }
+export async function stageInstallationStateWhileOwned(installation: OfflineInstallation, outputParent: string, options: { signal?: AbortSignal; maxBytes?: number; maxFiles?: number } = {}): Promise<InstallationStage> {
   const root = installation.dataDir;
   const parent = dataDirLeasePaths(outputParent).canonicalDataDir;
   if (parent === root || parent.startsWith(root + sep)) fail("DESTINATION_INSIDE_INSTALLATION");
-  const maxBytes = options.maxBytes ?? 20 * 1024 ** 3;
-  const maxFiles = options.maxFiles ?? 100_000;
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || !Number.isSafeInteger(maxFiles) || maxFiles < 1) fail("INVALID_SNAPSHOT_LIMITS");
+  const maxBytes = options.maxBytes ?? MAX_BACKUP_BYTES;
+  const maxFiles = options.maxFiles ?? MAX_BACKUP_FILES;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BACKUP_BYTES || !Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > MAX_BACKUP_FILES) fail("INVALID_SNAPSHOT_LIMITS");
     if (!lstatSync(root).isDirectory()) fail("INSTALLATION_MISSING");
     const stage = mkdtempSync(join(parent, ".murage-state-snapshot-"));
     let published = false;
     let bytes = 0;
-    let entries = 0;
+    /** Restorable items: files, stored shortcuts and extra names. One place
+     * is kept for the conversation database, copied last. */
+    let items = 1;
     const observed = new Map<string, Stats>();
+    const directories = new Map<string, string[]>();
+    /** Files read in place, by stored path: where they are and what they were. */
+    const inPlace = new Map<string, { absolute: string; identity: Stats }>();
     const manifest: StateSnapshotManifest = {
       format: "murage.installation-stage", version: 1, snapshotId: randomUUID(), createdAt: new Date().toISOString(), restorePolicy: "paused-review-required",
       files: [], omitted: [], missing: [], database: { status: "absent" },
     };
+    const links: NonNullable<StateSnapshotManifest["links"]> = [], copies: NonNullable<StateSnapshotManifest["copies"]> = [], names: NonNullable<StateSnapshotManifest["names"]> = [];
+    const skipped: NonNullable<StateSnapshotManifest["skipped"]> = [];
+    let skippedCount = 0;
+    // Shown to the person, so a name with a control character or of absurd
+    // length is made printable here rather than refused later.
+    const shown = (path: string) => { const text = portable(path).replace(/[\x00-\x1f\x7f]/g, "?"); return text.length > 1000 ? text.slice(0, 999) + "…" : text; };
+    const skip = (path: string, reason: BackupSkipReason) => { skippedCount++; if (skipped.length < MAX_LISTED_SKIPS) skipped.push({ path: shown(path), reason }); };
+    /** First stored name of each multiply-linked file, by device and inode. */
+    const firstName = new Map<string, string>();
     const omission = (path: string, reason: string) => manifest.omitted.push({ path, reason });
     const check = () => { if (options.signal?.aborted) fail("SNAPSHOT_CANCELLED"); };
-    const add = (path: string, size: number, sha256: string) => {
+    const add = (path: string, size: number, sha256: string, source: string) => {
       bytes += size;
-      if (bytes > maxBytes || manifest.files.length >= maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
+      if (bytes > maxBytes) fail("SNAPSHOT_LIMIT_EXCEEDED", source);
       manifest.files.push({ path, bytes: size, sha256 });
     };
-    const copy = (path: string) => {
+    /** Copy one regular file from `source` (real, relative) to `stored` (archive spelling). */
+    const copy = (source: string, stored: string) => {
       check();
-      const source = join(root, path);
-      const before = lstatSync(source);
-      observed.set(source, before);
-      if (before.isSymbolicLink()) { omission(path, "Symlink not followed; review external or managed link after restore"); return; }
-      if (!before.isFile() || before.nlink !== 1) fail("UNSAFE_SNAPSHOT_ENTRY");
-      if (before.size > maxBytes - bytes || manifest.files.length >= maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
-      const to = join(stage, "state", path);
-      mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
+      const absolute = join(root, source);
+      const before = lstatSync(absolute);
+      observed.set(absolute, before);
+      if (!before.isFile()) fail("UNSAFE_SNAPSHOT_ENTRY", source);
+      if (before.size > maxBytes - bytes) fail("SNAPSHOT_LIMIT_EXCEEDED", source);
+      // Only Murage's projected records are written into the stage; every
+      // other file is read in place, hashed now and streamed into the archive
+      // later from the same, unchanged file (openFile below). Copying them
+      // made a backup folder on a USB stick need room for a plaintext copy of
+      // the whole workspace beside the encrypted one, and wrote every small
+      // file twice (audit W-A2).
+      const projected = !stored.includes("/") && isProjectedRecord(stored);
+      const to = join(stage, "state", ...stored.split("/"));
+      if (projected) mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
       const hash = createHash("sha256");
       let size = 0;
-      const input = openSync(source, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
+      const input = openSync(absolute, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
       const opened = fstatSync(input);
-      if (opened.ino !== before.ino || opened.dev !== before.dev || !opened.isFile()) { closeSync(input); fail("SOURCE_CHANGED"); }
+      if (opened.ino !== before.ino || opened.dev !== before.dev || !opened.isFile()) { closeSync(input); fail("SOURCE_CHANGED", source); }
       let output: number | undefined;
       try {
-        output = openSync(to, "wx", 0o600);
-        if (!path.includes("/") && !path.includes("\\") && isProjectedRecord(path)) {
-          if (before.size > 64 * 1024 ** 2) fail("JSON_COMPONENT_TOO_LARGE");
+        if (projected) {
+          output = openSync(to, "wx", 0o600);
+          if (before.size > 64 * 1024 ** 2) fail("JSON_COMPONENT_TOO_LARGE", source);
           let value: unknown;
-          try { value = JSON.parse(readFileSync(input, "utf8")); } catch { fail("INVALID_JSON_COMPONENT"); }
-          const buffer = Buffer.from(JSON.stringify(projectComponent(path, value, omission)) + "\n");
+          try { value = JSON.parse(readFileSync(input, "utf8")); } catch { fail("INVALID_JSON_COMPONENT", source); }
+          const buffer = Buffer.from(JSON.stringify(projectComponent(stored, value, omission)) + "\n");
           hash.update(buffer); size = buffer.length;
           let offset = 0;
           while (offset < buffer.length) offset += writeSync(output, buffer, offset, buffer.length - offset);
         } else {
-          {
-            const buffer = Buffer.alloc(64 * 1024);
-            for (;;) {
-              check();
-              const length = readSync(input, buffer, 0, buffer.length, null);
-              if (!length) break;
-              size += length;
-              if (size > maxBytes - bytes) fail("SNAPSHOT_LIMIT_EXCEEDED");
-              hash.update(buffer.subarray(0, length));
-              let offset = 0;
-              while (offset < length) offset += writeSync(output, buffer, offset, length - offset);
-            }
+          const buffer = Buffer.alloc(64 * 1024);
+          for (;;) {
+            check();
+            const length = readSync(input, buffer, 0, buffer.length, null);
+            if (!length) break;
+            size += length;
+            if (size > maxBytes - bytes) fail("SNAPSHOT_LIMIT_EXCEEDED", source);
+            hash.update(buffer.subarray(0, length));
           }
+          if (size !== before.size) fail("SOURCE_CHANGED", source);
+          inPlace.set(stored, { absolute, identity: before });
         }
-        fsyncSync(output);
+      } catch (error) {
+        if (error instanceof InstallationSnapshotError && !error.path) throw new InstallationSnapshotError(error.code, { path: source });
+        throw error;
       } finally { try { if (output !== undefined) closeSync(output); } finally { closeSync(input); } }
-      const after = lstatSync(source);
-      if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs) fail("SOURCE_CHANGED");
-      add(path, size, hash.digest("hex"));
+      const after = lstatSync(absolute);
+      if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs) fail("SOURCE_CHANGED", source);
+      add(stored, size, hash.digest("hex"), source);
     };
-    const walk = (path: string, depth = 0) => {
+    /** One item inside a folder of owner work. `source` is its real relative
+     * path, `stored` its archive spelling. */
+    const walk = (source: string, stored: string, depth: number) => {
       check();
-      if (++entries > maxFiles || depth > 64) fail("SNAPSHOT_LIMIT_EXCEEDED");
-      const before = lstatSync(join(root, path));
-      if (before.isSymbolicLink()) { omission(path, nativeSkillLink(root, path) ? NATIVE_SKILL_LINK_OMITTED : "Directory symlink not followed"); return; }
-      if (!before.isDirectory()) { copy(path); return; }
-      const names = readdirSync(join(root, path)).sort();
-      const folded = new Set<string>();
-      for (const name of names) {
-        const normalized = name.normalize("NFC").toLowerCase();
-        if (!safePart(name) || folded.has(normalized)) fail("NONPORTABLE_SNAPSHOT_PATH");
-        folded.add(normalized);
-        walk(join(path, name), depth + 1);
+      const absolute = join(root, source);
+      const before = lstatSync(absolute);
+      const bot = source.split(sep)[0] === "workspaces";
+      if (before.isSymbolicLink()) {
+        if (depth === 0) { skip(source, "linked-folder"); observed.set(absolute, before); return; }
+        if (nativeSkillLink(root, source)) { omission(portable(source), NATIVE_SKILL_LINK_OMITTED); return; }
+        if (items >= maxFiles) { skip(source, "file-limit"); return; }
+        let target: string;
+        try { target = readlinkSync(absolute); } catch (error) { if (deniedRead(error)) { skip(source, "unreadable"); return; } throw error; }
+        let type: "file" | "dir" = "file";
+        try { if (statSync(absolute).isDirectory()) type = "dir"; } catch { /* A dangling shortcut is kept as one. */ }
+        observed.set(absolute, before);
+        links.push({ path: stored, target, type }); items++;
+        // A shortcut to a folder outside the data folder is kept, and listed:
+        // what it points at is not in the backup.
+        if (type === "dir") {
+          let outside = true;
+          try { const real = realpathSync.native(absolute), home = realpathSync.native(root); outside = real !== home && !real.startsWith(home + sep); } catch { /* treated as outside */ }
+          if (outside) skip(source, "linked-folder");
+        }
+        return;
       }
-      if (JSON.stringify(readdirSync(join(root, path)).sort()) !== JSON.stringify(names)) fail("SOURCE_CHANGED");
+      if (before.isDirectory()) {
+        if (depth > 0 && bot && rebuildableFolder(absolute, basename(absolute))) { skip(source, "rebuildable"); return; }
+        if (depth > 64) { skip(source, "too-deep"); return; }
+        let entries: string[];
+        try { entries = readdirSync(absolute).sort(); } catch (error) { if (deniedRead(error)) { skip(source, "unreadable"); return; } throw error; }
+        directories.set(absolute, entries);
+        // Names are stored under a spelling unique in this folder even where
+        // case is ignored; the real name goes in `names`.
+        const taken = new Set<string>();
+        for (const name of entries) {
+          let spelled = safePart(name) ? name : portableSpelling(name);
+          for (let attempt = 2; taken.has(spelled.toLowerCase()); attempt++) spelled = portableSpelling(name) + "%23" + attempt;
+          taken.add(spelled.toLowerCase());
+          const childStored = stored + "/" + spelled;
+          const before = manifest.files.length + links.length + copies.length;
+          walk(join(source, name), childStored, depth + 1);
+          // Only an entry the archive holds (or a folder above one) keeps its
+          // real name here; an empty folder is not stored at all.
+          if (spelled !== name && manifest.files.length + links.length + copies.length > before) names.push({ path: childStored, name });
+        }
+        return;
+      }
+      if (!before.isFile()) { skip(source, "special"); return; }
+      if (items >= maxFiles) { skip(source, "file-limit"); return; }
+      if (before.nlink > 1) {
+        const key = `${before.dev}:${before.ino}`, first = firstName.get(key);
+        if (first) { observed.set(absolute, before); copies.push({ path: stored, from: first }); items++; return; }
+        firstName.set(key, stored);
+      }
+      try { copy(source, stored); }
+      catch (error) {
+        if (!(error instanceof InstallationSnapshotError) && deniedRead(error)) { firstName.forEach((value, key) => { if (value === stored) firstName.delete(key); }); skip(source, "unreadable"); return; }
+        throw error;
+      }
+      items++;
     };
     try {
       check();
-      const names = readdirSync(root).sort();
+      const rootNames = readdirSync(root).sort();
       // SQLite may create/remove these exact auxiliary files while taking its
       // own consistent backup. All other membership and file checks remain.
       const rootMembership=(entries:string[])=>entries.filter(name=>name!=="messages.db-wal"&&name!=="messages.db-shm");
-      if (names.length > maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
-      // These bind-mounted workspaces also hold native browser profiles. The
-      // installation lease does not quiesce their guests, and copying profiles
-      // back into place would bypass credential reauthentication. Refuse until
-      // a stopped-VM export and credential-safe restore policy are available.
-      if (names.some(name => name === "vm-home" || name === "vm-homes")) fail("VM_WORKSPACE_BACKUP_UNSUPPORTED");
-      for (const name of names) {
-        if (name === "messages.db" || name === "messages.db-wal" || name === "messages.db-shm") continue;
-        if (!safePart(name)) fail("NONPORTABLE_SNAPSHOT_PATH");
-        const kind = classifyDataDirEntry(name)?.backup;
-        if (kind === "record" || kind === "owner-file") copy(name);
-        else if (kind === "owner-folder") walk(name);
-        else omission(name, "Cache, native diagnostics, runtime state or unrecognized component excluded");
+      if (rootNames.length > maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
+      // One list decides every top-level name (data-dir-inventory.ts).
+      const kinds = new Map<string, NonNullable<ReturnType<typeof classifyDataDirEntry>>>();
+      for (const name of rootNames) {
+        const entry = classifyDataDirEntry(name);
+        if (!entry) fail("BACKUP_UNCLASSIFIED_COMPONENT", name);
+        if (entry.backup === "refused") fail(entry.code ?? "BACKUP_UNCLASSIFIED_COMPONENT", name);
+        kinds.set(name, entry);
       }
-      for (const name of JSON_COMPONENTS) if (!names.includes(name)) manifest.missing.push(name);
+      // Records and single owner files first, so the owner's folders can
+      // never crowd them out of the file limit.
+      for (const name of rootNames) {
+        const kind = kinds.get(name)!.backup;
+        if (kind === "record" || kind === "owner-file") {
+          if (!safePart(name)) fail("NONPORTABLE_SNAPSHOT_PATH", name);
+          copy(name, name); items++;
+        }
+      }
+      for (const name of rootNames) {
+        const kind = kinds.get(name)!.backup;
+        if (kind === "owner-folder") walk(name, name, 0);
+        else if (kind !== "record" && kind !== "owner-file" && kind !== "database" && kind !== "sidecar") omission(name, kinds.get(name)!.why);
+      }
+      for (const name of JSON_COMPONENTS) if (!rootNames.includes(name)) manifest.missing.push(name);
+      if (links.length) manifest.links = links;
+      if (copies.length) manifest.copies = copies;
+      if (names.length) manifest.names = names;
+      if (skippedCount) { manifest.skipped = skipped; manifest.skippedCount = skippedCount; }
       mkdirSync(join(stage, "state"), { recursive: true, mode: 0o700 });
       manifest.database = await installation.snapshotDatabase(join(stage, "state", "messages.db"));
-      if (manifest.database.status === "copied") add("messages.db", manifest.database.bytes, manifest.database.sha256);
+      if (manifest.database.status === "copied") add("messages.db", manifest.database.bytes, manifest.database.sha256, "messages.db");
       else manifest.missing.push("messages.db");
       check();
       const assertSourceUnchanged = () => {
         check();
-        if (JSON.stringify(rootMembership(readdirSync(root).sort())) !== JSON.stringify(rootMembership(names))) fail("SOURCE_CHANGED");
+        if (JSON.stringify(rootMembership(readdirSync(root).sort())) !== JSON.stringify(rootMembership(rootNames))) fail("SOURCE_CHANGED");
         for (const [path, before] of observed) {
           const after = lstatSync(path);
-          if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) fail("SOURCE_CHANGED");
+          if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) fail("SOURCE_CHANGED", relative(root, path));
+        }
+        for (const [path, entries] of directories) {
+          let now: string[];
+          try { now = readdirSync(path).sort(); } catch { fail("SOURCE_CHANGED", relative(root, path)); }
+          if (JSON.stringify(now) !== JSON.stringify(entries)) fail("SOURCE_CHANGED", relative(root, path));
         }
       };
       assertSourceUnchanged();
@@ -289,8 +436,29 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       // a directory rename-to-user-name race: portable file publication will
       // use no-replace linking when archive serialization is implemented.
       published = true;
-      return { directory: stage, manifest, assertSourceUnchanged };
+      /** A stream of one stored file: the staged copy for a projected record
+       * or the database, otherwise the original, refused unless it is still
+       * the very file that was hashed. */
+      const openFile = (stored: string) => {
+        const held = inPlace.get(stored);
+        if (!held) {
+          const path = join(stage, "state", ...stored.split("/"));
+          const fd = openSync(path, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
+          return createReadStream(path, { fd, autoClose: true });
+        }
+        const fd = openSync(held.absolute, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW));
+        const now = fstatSync(fd), was = held.identity;
+        if (now.dev !== was.dev || now.ino !== was.ino || now.size !== was.size || now.mtimeMs !== was.mtimeMs || !now.isFile()) { closeSync(fd); fail("SOURCE_CHANGED", relative(root, held.absolute)); }
+        return createReadStream(held.absolute, { fd, autoClose: true });
+      };
+      return { directory: stage, manifest, assertSourceUnchanged, openFile };
     } catch (error) {
-      throw error instanceof InstallationSnapshotError ? error : new InstallationSnapshotError("STATE_SNAPSHOT_FAILED");
+      if (error instanceof InstallationSnapshotError) throw error;
+      // The drive holding the backup folder filled up while the stage was
+      // written: say so, as the rest of the capture does.
+      if (["ENOSPC", "EDQUOT"].includes(String((error as NodeJS.ErrnoException)?.code))) throw new InstallationSnapshotError("BACKUP_DISK_FULL", { cause: error });
+      // A plain filesystem error still names the item it was about.
+      const path = (error as NodeJS.ErrnoException)?.path;
+      throw new InstallationSnapshotError("STATE_SNAPSHOT_FAILED", { cause: error, ...(typeof path === "string" && path.startsWith(root + sep) ? { path: relative(root, path) } : {}) });
     } finally { if (!published) rmSync(stage, { recursive: true, force: true }); }
 }

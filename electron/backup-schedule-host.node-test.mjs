@@ -673,3 +673,15 @@ test("Turn on backups reaches setup when the bridge forwards an empty options sl
   assert.deepEqual(setUpBackupsRequest([{ existingKey: true }]), { existingKey: true });
   for (const bad of [[null], ["x"], [[]], [{ existingKey: "yes" }], [{ other: true }], [undefined, undefined]]) assert.equal(setUpBackupsRequest(bad), null);
 });
+
+// 0.1.60 audit W-A2: on Windows a folder the backup helper can't use (a USB
+// stick, a network folder, a non-NTFS drive) is refused when it is chosen,
+// before a key is written or Murage restarts for a first backup that fails.
+test("a folder the backup can't use is refused at folder choice, before anything is made",async()=>{
+  for(const code of ["BACKUP_FOLDER_REMOVABLE","BACKUP_FOLDER_NETWORK","BACKUP_FOLDER_NOT_NTFS"]){
+    const f=fixture(()=>({backupFolderRefusal:()=>code,createRecoveryKey:async()=>{assert.fail("no key may be written for a refused folder");}}));
+    try{await assert.rejects(f.controller.setUpBackups(),new RegExp(code));assert.equal((await f.controller.status()).refs,undefined);}finally{f.cleanup();}
+    const g=fixture(()=>({backupFolderRefusal:()=>code}));
+    try{await assert.rejects(g.controller.selectReferences(),new RegExp(code));}finally{g.cleanup();}
+  }
+});

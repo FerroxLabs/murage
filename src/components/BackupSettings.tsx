@@ -394,6 +394,7 @@ export function BackupStatusCard({summary,s,r,onRestore}:{summary:BackupSummary;
       {rows.map(([label,value])=><div key={label} className="contents"><dt className="text-ink-secondary">{label}</dt><dd className="break-words text-ink">{value}</dd></div>)}
     </dl>
     {s.status?.lastVerified&&<p className="text-[12px] text-ink-secondary">The last backup was checked on this computer. To be sure a restore works, try one from Restore.</p>}
+    {(summary.skipped?.length??0)>0&&<div className="text-[12px] text-ink-secondary">{summary.skipped!.map(line=><p key={line} className="break-words">{line}</p>)}</div>}
     {summary.attention.length>0&&<div role="status" className="text-[13px] text-warning">
       <p className="font-medium">Needs attention</p>
       <ul className="list-disc pl-5">{summary.attention.map(item=><li key={item}>{item}</li>)}</ul>

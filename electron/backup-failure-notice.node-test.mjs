@@ -44,3 +44,10 @@ test("Windows notifications carry the identity the installer gives Murage's shor
  assert.equal(appId,"com.murage.app");
  assert.match(main,new RegExp(`process\\.platform === "win32" && app\\.isPackaged\\) app\\.setAppUserModelId\\("${appId.replaceAll(".","\\.")}"\\)`));
 });
+
+// 0.1.60 audit A-01: the Inbox names the item too, and only one inside the data folder.
+test("the report carries the item inside the data folder the refusal named",()=>{
+ const status=path=>({phase:"needs-review",job:{id:"job-2"},captureFailure:{stage:"capture",code:"INVALID_INSTALLATION_RECORDS",path}});
+ assert.equal(backupFailureNotice(status("routines.json"),null).body.path,"routines.json");
+ assert.equal(backupFailureNotice(status("/Users/sam/secret"),null).body.path,undefined);
+});

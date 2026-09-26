@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,8 +50,11 @@ it("stages private app content under one epoch, excluding credential fields and 
   expect(webhooks.webhooks[0]).not.toHaveProperty("secretHash");
   expect(JSON.stringify(webhooks)).not.toContain("a8".repeat(32));
   expect(webhooks.deliveries).toEqual([{ key: "endpoint:already-accepted", runId: "finished-run", at: 1 }]);
-  expect(readFileSync(join(directory, "state", "attachments", "fixture.txt"), "utf8")).toBe("Private attachment content");
-  expect(readFileSync(join(directory, "state", "artifact-files", "report.html"), "utf8")).toBe("<h1>Saved report</h1>");
+  // Owner files are hashed and read in place (0.1.60 audit W-A2), never copied into the stage.
+  const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+  expect(manifest.files.find(file => file.path === "attachments/fixture.txt")?.sha256).toBe(sha("Private attachment content"));
+  expect(manifest.files.find(file => file.path === "artifact-files/report.html")?.sha256).toBe(sha("<h1>Saved report</h1>"));
+  expect(existsSync(join(directory, "state", "attachments", "fixture.txt"))).toBe(false);
   expect(manifest.files.every(file => /^[0-9a-f]{64}$/.test(file.sha256))).toBe(true);
   expect(manifest.files.some(file => file.path.includes("external"))).toBe(false);
   expect(readFileSync(join(f.data, "config.json"), "utf8")).toBe(original);
@@ -100,7 +104,8 @@ it.skipIf(process.platform === "win32")("never follows app-owned symlinks into e
   mkdirSync(join(f.data, "workspaces"));
   symlinkSync(join(f.parent, "external"), join(f.data, "workspaces", "outside"));
   const result = await stageInstallationState(f.data, f.parent);
-  expect(result.manifest.omitted).toContainEqual({ path: join("workspaces", "outside"), reason: "Directory symlink not followed" });
+  // Stored as a shortcut (0.1.60 audit A-01), never followed.
+  expect(result.manifest.links).toEqual([{ path: "workspaces/outside", target: join(f.parent, "external"), type: expect.any(String) }]);
   expect(result.manifest.files.some(file => file.path.includes("untouched"))).toBe(false);
 });
 

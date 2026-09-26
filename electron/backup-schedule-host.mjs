@@ -5,7 +5,7 @@ import path from "node:path";
 import { readBackupIdentity } from "./backup-mode.mjs";
 import { pathWithin, samePath } from "../shared/path-identity.mjs";
 import { parseUpdateCandidate, canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
-import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, normalizeCaptureCause } from "../shared/backup-capture-failure.mjs";
+import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, captureFailurePath, normalizeCaptureCause } from "../shared/backup-capture-failure.mjs";
 
 export const BACKUP_SCHEDULE_BINDINGS_KEY = "backupScheduleBindings";
 const hash=value=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -53,7 +53,9 @@ export function setUpBackupsRequest(args){
 export function captureFailureDiagnostic(stage,error){
   const candidate=captureFailureCodes.has(error?.code)?error.code:captureFailureCodes.has(error?.message)?error.message:null;
   let backupAgeAttestation=null;try{if(candidate==="AGE_TOOL_UNVERIFIED")backupAgeAttestation=normalizeBackupAgeDiagnostic(error?.backupAgeAttestation);}catch{/* Diagnostic properties are not trusted. */}
-  return{stage:captureFailureStages.has(stage)?stage:"unknown",code:candidate??ownedCaptureWaits.get(error?.message)??"UNKNOWN_CAPTURE_FAILURE",...(backupAgeAttestation?{backupAgeAttestation}:{})};
+  // The item inside the data folder the refusal is about, when it names one.
+  let path;try{path=captureFailurePath(error?.path);}catch{/* Diagnostic properties are not trusted. */}
+  return{stage:captureFailureStages.has(stage)?stage:"unknown",code:candidate??ownedCaptureWaits.get(error?.message)??"UNKNOWN_CAPTURE_FAILURE",...(path?{path}:{}),...(backupAgeAttestation?{backupAgeAttestation}:{})};
 }
 
 /** Existing coordinator and native ownership/worker are injected, never duplicated. */
@@ -94,7 +96,7 @@ export function createBackupScheduleHost(host) {
     // Said before setup starts, so daily backups are never switched on on a
     // computer where no backup could ever run.
     let restartBlocked=null;try{restartBlocked=captureBlocked();}catch{/* A probe failure is not a refusal. */}
-    return {supported,...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(heldBy?{heldBy}:{}),...(!supported&&host.checking?.()?{checking:true}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),refs,error:lastError};
+    return {supported,...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(heldBy?{heldBy}:{}),...(!supported&&host.checking?.()?{checking:true}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),...(s.lastSkipped?{lastSkipped:s.lastSkipped}:{}),refs,error:lastError};
   };
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
   const start=()=>{stopPolling();if(!coordinator.status().enabled)return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
@@ -223,7 +225,7 @@ export function createBackupScheduleHost(host) {
       if(result?.ok!==true||result.operation!=="backup-encrypted"||!samePath(result.path,output)||result.coverage?.fullInstallation!==false||result.coverage?.scope!=="application-data")throw Error("BACKUP_RECEIPT_MISMATCH");
       const {sha256,bytes}=verifiedArtifact(output,s.schedule.maxBytes);
       if(sha256!==result.sha256)throw Error("BACKUP_RECEIPT_MISMATCH");
-      captureStage="receipt-commit";coordinator.clearCaptureFailure?.();coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
+      captureStage="receipt-commit";coordinator.clearCaptureFailure?.();coordinator.recordSkipped?.(s.job.id,result.skipped);coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
       // Durable receipt precedes relaunch. A failed return never recaptures.
       captureStage="return";if(closed)coordinator.completeReturn(intent.id);
       else await host.relaunch("normal");
@@ -333,6 +335,9 @@ export function createBackupScheduleHost(host) {
       const destination=await host.chooseDestination();if(!destination)return {cancelled:true};
       const installation=realpathSync.native(host.installation()),target=realpathSync.native(destination);
       if(pathWithin(installation,target)||!lstatSync(target).isDirectory())throw Error("BACKUP_DESTINATION_INVALID");
+      // A folder the backup can't use is refused now, before any key is made
+      // or Murage restarts for a first backup that would fail (audit W-A2).
+      {const refusal=host.backupFolderRefusal?.(target);if(refusal)throw Error(refusal);}
       await verifyIdentityAccess();
       if(!samePath(installation,realpathSync.native(host.installation())))throw Error("BACKUP_REFERENCE_CHANGED");
       const bound=realpathSync(host.installation());
@@ -384,6 +389,7 @@ export function createBackupScheduleHost(host) {
       // read as outside; the plain realpath keeps the spelling it was given.
       const installation=realpathSync.native(host.installation()),target=realpathSync.native(destination);
       if(pathWithin(installation,target)||!lstatSync(target).isDirectory())throw Error("BACKUP_DESTINATION_INVALID");
+      {const refusal=host.backupFolderRefusal?.(target);if(refusal)throw Error(refusal);}
       await verifyIdentityAccess();
       // Recheck with the resolver that produced `installation`: the plain one
       // keeps Windows' lowercased spelling and never matches the native one.

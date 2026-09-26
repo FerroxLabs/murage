@@ -161,6 +161,11 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   // writeFileAtomic (atomic.ts) writes `<name>.<pid>.<uuid>.tmp` beside the
   // file and renames it over; a crash between the two leaves it behind.
   { pattern: new RegExp(`^[^/\\\\]+\\.\\d+\\.${UUID}\\.tmp$`), entry: excluded(LEFTOVER), example: "about-me.md.4242.0f8e2b1a-3c4d-4e5f-8a9b-0c1d2e3f4a5b.tmp" },
+  // The desktop app saves config.json (secureComposioConfig,
+  // secureWorkspaceConfig) and the startup settings (savePreferences) through
+  // `<name>.<pid>.tmp` and a rename (electron/main.mjs). A crash between the
+  // two leaves that name; it is a partial copy of a file that is backed up.
+  { pattern: /^(?:config|startup-background)\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "startup-background.json.48213.tmp" },
   // A bot-package import's per-file replacement (package-import-transaction.ts).
   { pattern: /^[^/\\]+\.package-[\w-]+\.tmp$/, entry: excluded(LEFTOVER), example: "bots.json.package-0f8e2b1a.tmp" },
   // A memory index that failed its integrity check is set aside and rebuilt

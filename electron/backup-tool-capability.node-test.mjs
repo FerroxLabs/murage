@@ -63,9 +63,9 @@ test("Windows verification coalesces and shutdown invalidates its pending result
 }));
 
 test("Windows capability refuses a wrong helper identity or lost host before readiness", () => fixture(async ({ capability, state }) => {
-  state.wrong = true; await assert.rejects(capability.requireTool(), /unavailable/);
+  state.wrong = true; await assert.rejects(capability.requireTool(), /BACKUP_UNAVAILABLE/);
   assert.equal(capability.currentTool(), null); state.wrong = false; state.usable = false;
-  await assert.rejects(capability.requireTool(), /unavailable/); assert.equal(state.calls, 1);
+  await assert.rejects(capability.requireTool(), /BACKUP_UNAVAILABLE/); assert.equal(state.calls, 1);
 }));
 
 const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
@@ -144,7 +144,7 @@ test("macOS: the bundle changing under a ready tool re-attests it instead of dis
 }));
 test("macOS: the bundle changing during the startup attestation is retried until it holds still",()=>macFixture(async({state,capability,file,app})=>{
  state.during=()=>touchBundle(app);
- await assert.rejects(capability.requireTool(),/unavailable/);
+ await assert.rejects(capability.requireTool(),/BACKUP_UNAVAILABLE/);
  assert.equal(capability.status().checking,true);
  await until(()=>capability.currentTool()===file);assert.equal(state.calls,2);
 }));

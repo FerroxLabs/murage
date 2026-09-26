@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { backupSelectionSchema } from "./installation-backup.ts";
+import { MAX_BACKUP_BYTES } from "./backup-limits.ts";
 import { parseUpdateCandidate, type UpdateCandidate } from "./update-candidate.mjs";
 
 export const backupUpdateCandidateSchema = z.unknown().transform((value, context): UpdateCandidate => {
@@ -15,7 +16,8 @@ export const backupScheduleSchema = z.object({
   installationRef: backupReferenceSchema.optional(), destinationRef: backupReferenceSchema.optional(), recoveryRef: backupReferenceSchema.optional(),
   timezone: zone.optional(), time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
   catchupMs: z.number().int().min(60000).max(7 * 86400000).optional(),
-  maxBytes: z.number().int().positive().max(1024 ** 4).optional(), maxDurationMs: z.number().int().min(1000).max(30 * 60000).optional(),
+  // The same ceiling restore accepts (shared/backup-limits.ts).
+  maxBytes: z.number().int().positive().max(MAX_BACKUP_BYTES).optional(), maxDurationMs: z.number().int().min(1000).max(30 * 60000).optional(),
   selection: backupSelectionSchema.optional(), preUpgrade: z.boolean().default(false), closedApp: z.boolean().optional(),
 }).strict().superRefine((value, context) => {
   if (value.enabled && [value.installationRef,value.destinationRef,value.recoveryRef,value.timezone,value.time,value.catchupMs,value.maxBytes,value.maxDurationMs,value.selection].some(entry => entry === undefined))

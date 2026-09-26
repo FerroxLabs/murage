@@ -56,8 +56,19 @@ describe.skipIf(process.platform === "win32")("a backup that stopped is announce
 
   it("only the desktop can report, and only the finite stage and code", async () => {
     expect((await request("POST", "/api/backup-failure-notice", { action: "report", stage: "capture", code: "BACKUP_FILE_IN_USE" }, {})).status).toBe(404);
-    expect((await request("POST", "/api/backup-failure-notice", { action: "report", stage: "capture", code: "BACKUP_FILE_IN_USE", path: "C:\\Users\\Sam Lee" })).status).toBe(400);
+    expect((await request("POST", "/api/backup-failure-notice", { action: "report", stage: "capture", code: "BACKUP_FILE_IN_USE", message: "C:\\Users\\Sam Lee" })).status).toBe(400);
     expect((await request("GET", "/api/inbox?view=decisions")).body.backupFailed).toBeUndefined();
+  });
+
+  // 0.1.60 audit A-01: the item inside the data folder is named; a path
+  // anywhere else is never shown.
+  it("names the item inside the data folder, and nothing outside it", async () => {
+    const inside = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "capture", code: "INVALID_INSTALLATION_RECORDS", path: "routines.json" });
+    expect(inside.body.sentence).toContain("The item is routines.json in Murage's data folder.");
+    const outside = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "capture", code: "BACKUP_FILE_IN_USE", path: "C:\\Users\\Sam Lee" });
+    expect(outside.status).toBe(200);
+    expect(outside.body.sentence).not.toContain("Sam Lee");
+    await request("POST", "/api/backup-failure-notice", { action: "clear" });
   });
 
   it("the Inbox says what failed and what to do until it is cleared", async () => {

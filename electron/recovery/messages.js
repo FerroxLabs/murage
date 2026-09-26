@@ -16,7 +16,11 @@
   const REVIEW_CHANGED = "The restored copy changed after it was checked. Choose Review restored installation again.";
   const TOOL = "Murage couldn't check its own backup tool on this computer. Reinstall Murage, then try again.";
   const BUSY = "Murage is still finishing something else. Wait a moment, then try again.";
-  const OWNER = "Another copy of Murage may still be open. Quit every other Murage window, then choose Return to workspace.";
+  // The button that retries reads "Return to workspace" in Backup mode and
+  // "Retry startup" in the ordinary recovery window (renderer.js), so the
+  // sentence names the one on screen (audit IPC-L3).
+  const OWNER = "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.";
+  const OWNER_BACKUP_MODE = "Another copy of Murage may still be open. Quit every other Murage window, then choose Return to workspace.";
   const SLOW = "That took too long, so Murage stopped it and nothing was changed. Try again; a large backup can take several minutes.";
   const TOO_BIG = "This backup is larger than Murage can restore in one go. Contact support with the diagnostics folder.";
   const PLACE = "That location can't be used. Choose a new file name in a folder outside Murage's data folder.";
@@ -27,7 +31,7 @@
   const UNDO_FAILED = "The restore couldn't be undone, and your files were kept as they are. Open the diagnostics folder and contact support.";
   const VM = "Backups can't include a local VM's files yet, so the backup was not made. Open the diagnostics folder and contact support.";
   const PARTS = "Part of your workspace couldn't be read, so the backup was not made. Close anything else using Murage's data folder, then try again.";
-  const UNKNOWN_PART = "There is a file in Murage's data folder that Murage doesn't recognise, so the backup was not made. Open the diagnostics folder and contact support.";
+  const UNKNOWN_PART = "There is something in Murage's data folder that Murage doesn't recognise, so the backup was not made. Move anything you put in that folder somewhere else, then try again.";
   const CANCELLED = "Stopped. Nothing was changed.";
   const EXPIRED = "Choose the backup again before restoring.";
   const CAPTURE_WINDOWS = "This way of recovering is only available on Windows. Restore from a backup file instead.";
@@ -63,6 +67,7 @@
     [LIMITS, ["INVALID_ARCHIVE_LIMITS", "INVALID_AGE_PROCESS_LIMITS", "INVALID_SNAPSHOT_LIMITS", "INVALID_BACKUP_LIMITS", "INVALID_BACKUP_BUDGET"]],
     [DEFAULT, ["BACKUP_CREDENTIAL_POLICY_REQUIRED", "INVALID_RECOVERY_REQUEST", "INVALID_RECOVERY_RESULT", "RECOVERY_OPERATION_FAILED"]],
     [TOO_BIG, ["BACKUP_LIMIT_EXCEEDED", "SNAPSHOT_LIMIT_EXCEEDED", "ARCHIVE_LIMIT_EXCEEDED", "REVIEW_LIMIT_EXCEEDED"]],
+    ["On Windows one backup can hold up to 20 GB, and your workspace is bigger than that, so no backup was made. Move large files out of your bots' folders, then try again.", ["BACKUP_WINDOWS_SIZE_LIMIT"]],
     [PLACE, ["DESTINATION_EXISTS", "DESTINATION_INSIDE_INSTALLATION", "INVALID_DESTINATION", "RESTORE_PATH_ALREADY_EXISTS", "BROAD_RESTORE_TARGET_REFUSED", "RESTORE_SOURCE_TARGET_REFUSED",
       "UNSAFE_RESTORE_DIRECTORY", "UNSAFE_RESTORE_TARGET", "INVALID_PRIVATE_RESTORE_PARENT", "RESTORE_NEW_TARGET_REQUIRED", "INSTALLATION_SELECTION_INVALID"]],
     [PAUSED, ["RESTORE_REVIEW_REQUIRED", "RESTORE_ALREADY_REQUIRES_REVIEW"]],
@@ -84,5 +89,73 @@
   ];
   const messages = {};
   for (const [sentence, codes] of groups) for (const code of codes) messages[code] = sentence;
-  root.murageRecoveryMessages = { messages, fallback: DEFAULT, sentence: code => messages[code] || DEFAULT };
+
+  // Making a backup (Save an older-style .zip recovery file, Make a backup
+  // now) can stop with codes the restore side uses too. The restore wording
+  // ("damaged", "nothing was restored", "choose another backup") is wrong
+  // there and sent people the wrong way (audit A-03), so a capture gets its
+  // own sentence.
+  const CAPTURE_ITEM = "Something where Murage keeps its own files can't be copied into a backup, so no backup was made. Move it out of Murage's data folder, then try again.";
+  const CAPTURE_RECORD = "One of Murage's own records couldn't be read the way a backup needs, so no backup was made. Open Murage normally once, then try again. If it happens again, open the diagnostics folder and send the newest log to support.";
+  const CAPTURE_DATABASE = "Murage couldn't make a consistent copy of your conversations, so no backup was made. Nothing was changed. Open the diagnostics folder and send the newest log to support.";
+  const CAPTURE_TOO_BIG = "Your workspace is bigger than one backup can hold, so no backup was made. Move large files out of your bots' folders, then try again.";
+  const CAPTURE_CHANGED = "Your workspace changed while the backup was being taken, so no backup was made. Close anything else using Murage's data folder, then try again.";
+  const CAPTURE_READBACK = "Murage read the new backup file back and it didn't match what it wrote, so it wasn't kept. Check that nothing else writes to that folder, then try again.";
+  const CAPTURE_KEY = "The tool that encrypts your backup couldn't finish, so no backup was made. Check that you chose your recovery key file, then try again.";
+  const captureGroups = [
+    [CAPTURE_ITEM, ["UNSAFE_SNAPSHOT_ENTRY", "NONPORTABLE_SNAPSHOT_PATH", "UNSAFE_ARCHIVE_PATH"]],
+    [CAPTURE_RECORD, ["INVALID_INSTALLATION_RECORDS", "INVALID_CONFIG_COMPONENT", "INVALID_JSON_COMPONENT", "INVALID_ROSTER_COMPONENT", "INVALID_WEBHOOK_COMPONENT", "JSON_COMPONENT_TOO_LARGE"]],
+    [CAPTURE_DATABASE, ["DATABASE_INTEGRITY_FAILED", "DATABASE_SCHEMA_UNSUPPORTED", "DATABASE_UNREADABLE", "UNSAFE_DATABASE_FILE", "UNSUPPORTED_DATABASE_SIZE", "INVALID_MESSAGE_IDENTITY", "INVALID_MESSAGE_JSON", "INVALID_ACTIVE_BRANCH", "CYCLIC_MESSAGE_BRANCH", "INVALID_MESSAGE_PARENT", "UNSAFE_MEMORY_LEDGER", "MEMORY_DATABASE_MISSING"]],
+    [CAPTURE_TOO_BIG, ["BACKUP_LIMIT_EXCEEDED", "SNAPSHOT_LIMIT_EXCEEDED", "ARCHIVE_LIMIT_EXCEEDED"]],
+    [CAPTURE_CHANGED, ["SOURCE_CHANGED"]],
+    [CAPTURE_READBACK, ["ARCHIVE_COMPRESSION_RATIO_EXCEEDED", "ARCHIVE_ENTRY_COUNT_MISMATCH", "ARCHIVE_HASH_MISMATCH", "ARCHIVE_INSPECTION_FAILED", "ARCHIVE_SIZE_MISMATCH", "ARCHIVE_CHANGED",
+      "INVALID_ARCHIVE_MANIFEST", "MANIFEST_MUST_BE_FIRST", "MISSING_ARCHIVE_ENTRY", "UNDECLARED_ARCHIVE_ENTRY", "UNSAFE_ARCHIVE_ENTRY", "UNSAFE_ARCHIVE_FILE",
+      "FIDELITY_READBACK_MISMATCH", "FIDELITY_RECOVERY_MISMATCH", "INVALID_FIDELITY_MANIFEST", "INVALID_DATABASE_MANIFEST"]],
+    [CAPTURE_KEY, ["AGE_PROCESS_FAILED"]],
+  ];
+  const captureMessages = {};
+  for (const [sentence, codes] of captureGroups) for (const code of codes) captureMessages[code] = sentence;
+  const CAPTURE_ACTIONS = new Set(["backup", "backup-encrypted"]);
+  /** Plain, bounded path inside the data folder, or null. */
+  const item = path => typeof path === "string" && path.length <= 1024 && !/[\x00-\x1f\x7f]/.test(path) && !/^(?:[\\/~]|[A-Za-z]:)/.test(path) && !path.split(/[\\/]/).some(part => !part || part === "." || part === "..") ? path : null;
+  /** The sentence for `code`. `context.action` is the button that failed,
+   * `context.backupMode` whether this is the Backup mode page, and
+   * `context.path` the item inside the data folder it was about. */
+  const sentence = (code, context = {}) => {
+    const capture = CAPTURE_ACTIONS.has(context.action);
+    let text = (capture && captureMessages[code]) || messages[code] || DEFAULT;
+    if (code === "RECOVERY_OWNERSHIP_REQUIRED" && context.backupMode) text = OWNER_BACKUP_MODE;
+    const named = item(context.path);
+    return named ? `${text} The item is ${named} in Murage's data folder.` : text;
+  };
+  // What a backup made here left out (audit A-01), worded exactly as the
+  // Backups page does (shared/backup-skipped.mjs; recovery-messages.node-test
+  // keeps the two the same). This page can only load its own classic scripts.
+  const SKIP_REASONS = {
+    rebuildable: "installed packages or a cache, reinstall them after a restore",
+    "file-limit": "over the 100,000-item limit for one backup",
+    unreadable: "couldn't be read",
+    special: "not a regular file",
+    "too-deep": "too many folders deep",
+    "linked-folder": "a shortcut to a folder outside Murage's data folder, so its contents aren't in the backup",
+  };
+  const skippedLines = skipped => {
+    if (!skipped || typeof skipped !== "object" || !Number.isSafeInteger(skipped.count) || skipped.count < 1 || !Array.isArray(skipped.items)) return [];
+    const bots = skipped.bots && typeof skipped.bots === "object" ? skipped.bots : {};
+    const groups = new Map();
+    for (const entry of skipped.items) {
+      if (!entry || typeof entry.path !== "string" || !Object.hasOwn(SKIP_REASONS, entry.reason)) continue;
+      const bot = /^workspaces\/([^/]+)\/(.+)$/.exec(entry.path);
+      const where = bot ? (typeof bots[bot[1]] === "string" ? `${bots[bot[1]]}'s folder` : "a bot's folder") : "Murage's data folder";
+      const shown = bot ? bot[2] : entry.path;
+      if (!groups.has(where)) groups.set(where, []);
+      groups.get(where).push(`${shown} (${SKIP_REASONS[entry.reason]})`);
+    }
+    const lines = [...groups].map(([where, entries]) => `Skipped ${entries.length} ${entries.length === 1 ? "item" : "items"} in ${where}: ${entries.join(", ")}.`);
+    const listed = [...groups.values()].reduce((total, entries) => total + entries.length, 0);
+    if (skipped.count > listed) lines.push(`${lines.length ? "And" : "Skipped"} ${skipped.count - listed} more ${skipped.count - listed === 1 ? "item" : "items"} for the same reasons.`);
+    if (lines.length) lines.push("Everything else was backed up.");
+    return lines;
+  };
+  root.murageRecoveryMessages = { messages, captureMessages, fallback: DEFAULT, sentence, skippedLines };
 })(globalThis);

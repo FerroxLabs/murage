@@ -1,8 +1,9 @@
 import { initializeThreadSnooze } from "./thread-snooze.ts";
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, rmSync, statSync, writeSync, type Stats } from "node:fs";
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, rmSync, statSync, writeSync, type Stats } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
+import { publishNoReplace } from "./publish-file.ts";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { validateMemorySchema } from "./memory/schema.ts";
 import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
@@ -13,10 +14,14 @@ import { initializeImageOperations } from "./image-operations-schema.ts";
 
 export class InstallationSnapshotError extends Error {
   readonly code: string;
-  constructor(code: string, options?: { cause?: unknown }) {
-    super(`Murage database snapshot refused (${code}). Original installation data was preserved.`, options);
+  /** The item in the data folder the refusal is about, relative to it and
+   * with "/" separators, so the person is told which file to look at. */
+  readonly path?: string;
+  constructor(code: string, options?: { cause?: unknown; path?: string }) {
+    super(`Murage database snapshot refused (${code}). Original installation data was preserved.`, options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = "InstallationSnapshotError";
     this.code = code;
+    if (options?.path) this.path = options.path.split("\\").join("/");
   }
 }
 
@@ -252,7 +257,7 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
     const bytes = statSync(staged).size;
     const flush = openSync(staged, "r+"); // Windows FlushFileBuffers requires a writable handle.
     try { fsyncSync(flush); } finally { closeSync(flush); }
-    linkSync(staged, target);
+    publishNoReplace(staged, target);
     return { status: "copied" as const, ...counts, bytes, sha256 };
   } catch (error) {
     throw error instanceof InstallationSnapshotError ? error : new InstallationSnapshotError(

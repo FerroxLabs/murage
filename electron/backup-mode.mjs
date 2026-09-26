@@ -63,7 +63,9 @@ export function createBackupToolCapability({ resourcesPath, currentExecutable, i
   const windows = process.platform === "win32", mac = process.platform === "darwin";
   let identity = null, controller = null;
   let state = "pending", tool = null, pending = null, generation = 0;
-  const unavailable = () => Object.assign(new Error("Encrypted backup unavailable"), { code: "BACKUP_UNAVAILABLE" });
+  // The message is the code: only the message crosses ipcRenderer.invoke
+  // (audit IPC-L2), and the page maps codes to sentences.
+  const unavailable = () => Object.assign(new Error("BACKUP_UNAVAILABLE"), { code: "BACKUP_UNAVAILABLE" });
   const currentTool = () => {
     if (!isUsable()) return null;
     if (mac) {
