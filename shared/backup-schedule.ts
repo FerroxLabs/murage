@@ -26,7 +26,7 @@ export const backupClosedResultSchema=z.object({
   status:z.enum(["disabled","not-due","busy","verified","needs-review","unavailable"]),
   at:z.number().int().nonnegative(),revision:z.number().int().nonnegative(),
   jobId:z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  reason:z.enum(["pending-work","owner-unavailable","references-unavailable","capture-unconfirmed","state-unavailable","capability-unavailable"]).optional(),
+  reason:z.enum(["pending-work","owner-unavailable","references-unavailable","capture-unconfirmed","state-unavailable","capability-unavailable","volume-unreadable"]).optional(),
 }).strict();
 export type BackupClosedResult=z.infer<typeof backupClosedResultSchema>;
 export const backupReceiptSchema = z.object({

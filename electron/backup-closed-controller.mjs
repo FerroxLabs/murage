@@ -22,7 +22,7 @@ export async function assertClosedRegistration(descriptor,descriptorPath,provide
 }
 
 /** Main chooses all paths and callbacks. The renderer gets only safe state. */
-export function createClosedBackupController({profile,triggerSource,backupSupported,provider,backup,confirmInstall}){
+export function createClosedBackupController({profile,triggerSource,backupSupported,provider,backup,confirmInstall,volumeProblem=()=>null}){
   let running=false,lastState=null;
   const location=()=>closedControlDirectory(profile().installation);
   const pointer=()=>path.join(location(),"closed-job-pointer.json");
@@ -40,6 +40,8 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
     const common={supported:supported(),closedApp:schedule?.enabled===true&&schedule?.schedule.closedApp===true,lastClosedResult:schedule?.lastClosedResult};
     if(!common.supported)return{...common,state:"unavailable"};
     if(closedProfileFolderShared(profile()))return{...common,state:"unavailable",blocked:"data-folder-shared"};
+    // A background job cannot read files on another volume (backup-closed-volume.mjs).
+    const volume=volumeProblem();if(volume)return{...common,state:"unavailable",blocked:`volume-${volume}`};
     try{
       const stage=readStage();if(!stage)return{...common,state:"unconfigured"};
       const current=await provider.read(stage);
@@ -52,7 +54,7 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
    * job definition that runs it. Shared by staging and by re-staging after an
    * upgrade, so both write exactly the same thing. */
   function stageCurrent(){
-    if(!supported())refuse();const p=profile(),uid=p.owner.uid,control=location();
+    if(!supported())refuse();if(volumeProblem())throw Error("BACKUP_CLOSED_VOLUME_UNREADABLE");const p=profile(),uid=p.owner.uid,control=location();
     ensurePrivateDirectory(path.dirname(control),uid);ensurePrivateDirectory(control,uid);
     const digest=closedTriggerDigest(triggerSource),triggerEntry=path.join(control,`closed-trigger-${digest}.mjs`);
     try{if(closedTriggerDigest(triggerEntry)!==digest)refuse();}catch(error){
@@ -85,6 +87,16 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
     let current;
     try{current=readStage();}catch{return status();}
     if(!current)return status();
+    // Registered earlier from a volume a background job can't read (or moved
+    // there since): every run would hang, so take the job down now. The
+    // Backups page then says what to move where.
+    if(volumeProblem()){
+      if((await provider.read(current).catch(()=>null))?.registered){
+        const result=await disableClosedBackupJob(current,{disableSchedule:async()=>{},...provider});
+        lastState=result.state==="disabled"?"disabled":"disabled-removal-pending";
+      }
+      return status();
+    }
     let digest;
     try{digest=closedTriggerDigest(triggerSource);}catch{return status();}
     if(current.descriptor.triggerSha256===digest)return status();
@@ -104,7 +116,7 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
     return status();
   });}
   async function install(){return exclusive(async()=>{
-    if(!supported())refuse();const selected=readStage();if(!selected)refuse();
+    if(!supported())refuse();if(volumeProblem())throw Error("BACKUP_CLOSED_VOLUME_UNREADABLE");const selected=readStage();if(!selected)refuse();
     if(await confirmInstall()!==true)return{...(await status()),cancelled:true};
     const current=readStage();if(!current||current.definitionDigest!==selected.definitionDigest)refuse();
     await installClosedBackupJob(current,provider);lastState="installed";return status();

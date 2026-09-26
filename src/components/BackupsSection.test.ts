@@ -294,6 +294,14 @@ describe("customer findings: plain words and reasons where the control is", () =
     expect(html.indexOf(REASON)).toBeLessThan(html.indexOf("Backup limits"));
   });
 
+  // The app or the data folder on another volume: a background job can't
+  // read it (electron/backup-closed-volume.mjs), so say what to move where.
+  it.each([["volume-app", "need Murage in your Applications folder on this Mac&#x27;s own disk. Move Murage there"], ["volume-data", "need Murage&#x27;s data folder on this Mac&#x27;s own disk, not on another drive"], ["volume-both", "Move both there"]] as const)("says what to move when %s blocks backups while Murage is closed", (blocked, text) => {
+    const html = setup({ closed: { supported: true, state: "unavailable", closedApp: false, blocked } });
+    expect(html).toContain(text);
+    expect(html).not.toContain(REASON);
+    expect(checkboxTag(html)).toContain('disabled=""');
+  });
   it("names the data folder when that, not the system, is why the job can't be set up", () => {
     const html = setup({ closed: { supported: true, state: "unavailable", closedApp: false, blocked: "data-folder-shared" } });
     expect(html).toContain("Other accounts on this computer can change Murage&#x27;s data folder, so backups run only while Murage is open.");
@@ -503,5 +511,18 @@ describe("setup ends with a verified backup, not a to-do", () => {
     await expect(drive(host)).rejects.toThrow("BACKUP_RECOVERY_KEY_LOCATION_INVALID");
     (host.bridge as unknown as { setUp: () => Promise<unknown> }).setUp = async () => ({ refused: "/Users/someone/secret" });
     await expect(drive(host)).rejects.toThrow("INVALID_BACKUP_SETUP_RESULT");
+  });
+});
+
+describe("backups while Murage is closed, from another volume", () => {
+  const onClosed = { ...healthy.schedule!, schedule: { ...healthy.schedule!.schedule, closedApp: true } };
+  it("the summary says what to move when the job is blocked by where Murage lives", () => {
+    const summary = backupSummary({ ...healthy, schedule: onClosed, closed: { supported: true, state: "unavailable", closedApp: true, blocked: "volume-data" } });
+    expect(summary.attention).toContain("Backups while Murage is closed need Murage's data folder on this Mac's own disk, not on another drive. Move the data folder there, then turn this on again.");
+    expect(summary.attention).not.toContain("Backing up while Murage is closed isn't set up yet.");
+  });
+  it("a run that ended because of it says so too", () => {
+    const summary = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, lastClosedResult: { status: "unavailable", reason: "volume-unreadable", at: 1, revision: 3 } } });
+    expect(summary.attention.some(line => line.includes("Applications folder on this Mac's own disk"))).toBe(true);
   });
 });

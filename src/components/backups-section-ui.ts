@@ -1,6 +1,7 @@
 // Pure helpers for Settings → Backups. Everything here reads the status the
 // existing bridges already return; nothing adds a call or relaxes a check.
 import type { BackupRemoteStatus } from "../../server/backup-remote-host";
+import { CLOSED_VOLUME_SENTENCES, closedVolumeSentence } from "../../shared/closed-volume-sentences.mjs";
 import { DEFAULT_BACKUP_TIME, enabledSchedule, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase } from "./backup-schedule-ui";
 import { captureFailureSentence } from "../../shared/backup-capture-failure.mjs";
 
@@ -62,6 +63,8 @@ export function closedJobBlockedReason(input: { bridge: boolean; closed: BackupC
   if (!bridge || stale || !closed?.supported) return null;
   if (closed.state === "installed" || closed.state === "disabled-removal-pending") return null;
   if (closed.blocked === "data-folder-shared") return CLOSED_JOB_SHARED_FOLDER_REASON;
+  const volume = closedVolumeSentence(closed.blocked);
+  if (volume) return volume;
   return closed.state === "unavailable" || setupFailed ? CLOSED_JOB_REFUSED_REASON : null;
 }
 
@@ -138,6 +141,8 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   else if (s?.lastClosedResult?.status === "unavailable" && s.lastClosedResult.reason === "capability-unavailable" && !(s.lastVerified && s.lastVerified.verifiedAt >= s.lastClosedResult.at)) attention.push("A backup was due while Murage was closed, but it couldn't start because you weren't signed in to your desktop. It runs the next time you are, or when you open Murage.");
   if (input.closedStale) attention.push("Background job status couldn't be refreshed.");
   if (input.closed?.state === "disabled-removal-pending") attention.push("Removing the background job still needs attention.");
+  else if (s?.schedule.closedApp === true && closedVolumeSentence(input.closed?.blocked)) attention.push(closedVolumeSentence(input.closed?.blocked)!);
+  else if (s?.lastClosedResult?.status === "unavailable" && s.lastClosedResult.reason === "volume-unreadable") attention.push(CLOSED_VOLUME_SENTENCES.app);
   else if (s?.schedule.closedApp === true && input.closed?.state !== "installed") attention.push("Backing up while Murage is closed isn't set up yet.");
   if (input.remoteStale) attention.push("Off-site status needs a refresh.");
   if (input.remoteFailure) attention.push(input.remoteFailure);
