@@ -242,7 +242,10 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
     const links: NonNullable<StateSnapshotManifest["links"]> = [], copies: NonNullable<StateSnapshotManifest["copies"]> = [], names: NonNullable<StateSnapshotManifest["names"]> = [];
     const skipped: NonNullable<StateSnapshotManifest["skipped"]> = [];
     let skippedCount = 0;
-    const skip = (path: string, reason: BackupSkipReason) => { skippedCount++; if (skipped.length < MAX_LISTED_SKIPS) skipped.push({ path: portable(path), reason }); };
+    // Shown to the person, so a name with a control character or of absurd
+    // length is made printable here rather than refused later.
+    const shown = (path: string) => { const text = portable(path).replace(/[\x00-\x1f\x7f]/g, "?"); return text.length > 1000 ? text.slice(0, 999) + "…" : text; };
+    const skip = (path: string, reason: BackupSkipReason) => { skippedCount++; if (skipped.length < MAX_LISTED_SKIPS) skipped.push({ path: shown(path), reason }); };
     /** First stored name of each multiply-linked file, by device and inode. */
     const firstName = new Map<string, string>();
     const omission = (path: string, reason: string) => manifest.omitted.push({ path, reason });

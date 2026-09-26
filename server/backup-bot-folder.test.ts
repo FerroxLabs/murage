@@ -119,6 +119,17 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("an unreadab
   } finally { chmodSync(join(desk, "locked.txt"), 0o600); f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
 });
 
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("an unreadable file whose name holds a line break is listed printably", async () => {
+  const f = backupFixture();
+  const desk = deskOf(f.data);
+  mkdirSync(desk, { recursive: true });
+  writeFileSync(join(desk, "odd\nname.txt"), "x"); chmodSync(join(desk, "odd\nname.txt"), 0o000);
+  try {
+    const manifest = await stageAndInventory(f.data, f.parent);
+    expect(manifest.skipped).toContainEqual({ path: "workspaces/bot/threads/thread/odd?name.txt", reason: "unreadable" });
+  } finally { chmodSync(join(desk, "odd\nname.txt"), 0o600); f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
+});
+
 it("a refusal about Murage's own records names the file", async () => {
   const f = backupFixture();
   writeFileSync(join(f.data, "routines.json"), "{not json");
