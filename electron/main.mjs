@@ -1,4 +1,5 @@
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
+import { portAvailable } from "./port-availability.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs";
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Notification, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
@@ -1568,6 +1569,13 @@ function receiveBrowserLifecycleCleanup(proc, rawMessage) {
 async function startServerOn(port) {
   assertDesktopStartupActive();
   if (!desktopDataOwner || !desktopDataDir) throw new Error("The packaged desktop does not own this installation");
+  // Never fork onto a port another program holds: the child would only die
+  // with EADDRINUSE. Counted as a foreign owner, as a health answer is.
+  if (!await portAvailable(port)) {
+    slog(`port ${port} is in use by another process; not starting the server there`);
+    return { proc: null, reason: "foreign-owner" };
+  }
+  assertDesktopStartupActive();
   const entry = path.join(process.resourcesPath, "server", "index.js");
   const childEnv = managedComposioChildEnvironment(composioBrokerUrl(), secureCredentials, {
     ...restoredHarnessEnvironment(process.env, restoredConnections),
