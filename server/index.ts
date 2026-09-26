@@ -10814,6 +10814,15 @@ const server = createServer(async (req, res) => {
         body: method === "PUT" ? await readBody(req) : undefined }, threadSnoozeDeps);
       if (result) return json(res, result.status, result.body);
     }
+    // What a Delete confirmation says before anything goes: how many saved
+    // files (Files library) leave with the conversation, the bot or the channel.
+    if (method === "GET" && path === "/api/deletion-preview") {
+      const botId = url.searchParams.get("botId"), groupId = url.searchParams.get("groupId"), threadId = url.searchParams.get("threadId");
+      const bot = botId ? store.bot(botId) : undefined, group = groupId ? store.group(groupId) : undefined;
+      const all = bot ? [bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)] : group ? [group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)] : [];
+      if (!all.length || (threadId && !all.includes(threadId))) return json(res, 404, { error: "nothing to delete there" });
+      return json(res, 200, { savedFiles: conversationDeletions.savedFiles(threadId ? [threadId] : [...new Set(all)]) });
+    }
     // The menu bar / system tray menu (electron/background-lifecycle.mjs).
     // Desktop only: it lists the Inbox. Read-only; the menu answers an
     // ordinary approval through /api/threads/:id/respond like the app does.

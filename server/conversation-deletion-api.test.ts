@@ -78,6 +78,13 @@ it("removes a deleted conversation's content everywhere Murage and its engines p
   const otherDesk = join(data, "workspaces", bot.id, "threads", keep);
   touch(join(data, ".fuigo", "sessions", rustUrlEncode(otherDesk), "s", "chat_history.jsonl"), "other conversation");
 
+  // A saved file (Files library) from this conversation: counted in the
+  // confirmation, then removed with the conversation.
+  touch(join(desk, "report.md"), `# Report ${MARKER}`);
+  const saved = await api("POST", "/api/artifacts/register", { botId: bot.id, threadId: doomed, relativePath: "report.md" });
+  expect(saved.status, JSON.stringify(saved.body)).toBeLessThan(300);
+  expect((await api("GET", `/api/deletion-preview?botId=${bot.id}&threadId=${doomed}`)).body).toEqual({ savedFiles: 1 });
+  expect((await api("GET", `/api/deletion-preview?botId=${bot.id}&threadId=${keep}`)).body).toEqual({ savedFiles: 0 });
   writeFileSync(join(data, "decisions.ndjson.1"), `${JSON.stringify({ at: new Date().toISOString(), threadId: doomed, botName: "Delete fixture", tool: "Bash", summary: MARKER, decision: "user-allowed", source: "user" })}\n`);
   const deleted = await api("DELETE", `/api/bots/${bot.id}/tasks/${doomed}`);
   expect(deleted.status).toBe(200);
@@ -87,6 +94,8 @@ it("removes a deleted conversation's content everywhere Murage and its engines p
   for (const path of [desk, join(data, "events", `${doomed}.ndjson`), join(data, "native", `${doomed}.ndjson`), join(data, "native", `${doomed}.previous.ndjson`),
     join(data, "skill-state", bot.id, "task-bundles", doomed), claudeProject, fuigoSession]) expect(existsSync(path), path).toBe(false);
   expect(existsSync(join(data, ".fuigo", "sessions", rustUrlEncode(otherDesk)))).toBe(true);
+  expect((await api("GET", `/api/deletion-preview?botId=${bot.id}&threadId=${doomed}`)).status).toBe(404);
+  expect(readdirSync(join(data, "artifact-files")).filter((name) => !name.startsWith("."))).toEqual([]);
   expect(existsSync(join(data, "workspaces", bot.id, "MEMORY.md"))).toBe(true);
   expect(existsSync(join(data, "pending-deletions.json")) ? JSON.parse(readFileSync(join(data, "pending-deletions.json"), "utf8")) : []).toEqual([]);
 

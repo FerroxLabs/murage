@@ -561,6 +561,14 @@ export class ConversationDeletions {
 
   /** Finish every deletion a crash interrupted. A record whose thread is
    * still live never committed and is dropped; the owner can delete again. */
+  /** How many saved files (the Files library) Delete will remove with these conversations. */
+  savedFiles(threadIds: string[]): number {
+    const ids = threadIds.filter((id) => ID.test(id));
+    if (!ids.length || !this.hasTable("artifacts")) return 0;
+    const row = this.options.database().prepare(`SELECT count(*) AS n FROM artifacts WHERE thread_id IN (${ids.map(() => "?").join(",")})`).get(...ids) as { n: number } | undefined;
+    return Number(row?.n ?? 0);
+  }
+
   /** Drop the conversations' other records (handoffs, audit summaries). */
   async forget(threadIds: string[]): Promise<void> {
     try { await this.options.forgetThreads?.(threadIds.filter((id) => ID.test(id))); } catch (error) { console.error("conversation deletion: could not drop records", error); }
