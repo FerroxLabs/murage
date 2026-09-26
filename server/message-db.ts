@@ -292,6 +292,28 @@ export function openQuestionCardMessages(): Array<{ threadId: string; message: M
   return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
 }
 
+/** Permission cards (a card carrying a tool) still waiting on an answer. The
+ * request behind every one lives only in memory (the engine's ask, the image
+ * or computer-consent broker), so after a restart none of them can be
+ * answered where it stands, and each would sit in the Inbox under "Waiting 1
+ * hour" with Allow once and Deny that can do nothing (D7). Harness-owned
+ * proposals are durable and are left alone. */
+export function openApprovalCardMessages(): Array<{ threadId: string; message: Message }> {
+  const rows = db()
+    .prepare(
+      "SELECT thread_id, json FROM messages WHERE kind = 'options' " +
+        "AND json_type(json, '$.card.requestId') = 'text' " +
+        "AND json_type(json, '$.card.tool') = 'text' " +
+        "AND json_type(json, '$.card.answered') IS NULL " +
+        "AND COALESCE(json_extract(json, '$.card.dismissed'), 0) = 0 " +
+        "AND json_type(json, '$.card.routineRequest') IS NULL " +
+        "AND json_type(json, '$.card.skillRequest') IS NULL " +
+        "AND json_type(json, '$.card.intake') IS NULL",
+    )
+    .all() as Array<{ thread_id: string; json: string }>;
+  return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
+}
+
 function writeActiveLeaf(threadId: string, leafId: string | null): void {
   db()
     .prepare(

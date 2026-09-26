@@ -193,4 +193,16 @@ describe("an engine change or an app close around a run waiting for the person",
     expect(await pendingApprovals()).toBe(0);
     await desktopApi("DELETE", `/api/bots/${bot.id}`);
   }, 90_000);
+
+  it("D7: an approval a crashed process left open is closed at the next start", async () => {
+    const bot = await makeBot("Crashed mid wait");
+    const card = await waitingForApproval(bot);
+    // No cleanup at all: the card is still open on disk.
+    await waitForExit(child!, { signal: "SIGKILL" });
+    await start();
+
+    expect((await messagesOf(bot.threadId)).find((message) => message.id === card.id)?.card).toMatchObject({ answered: "unavailable", dismissed: true });
+    expect(await pendingApprovals()).toBe(0);
+    await desktopApi("DELETE", `/api/bots/${bot.id}`);
+  }, 90_000);
 });

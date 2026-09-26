@@ -263,7 +263,7 @@ import { channelProjectSystemLine, nextChannelProject } from "./project-channel.
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
-import { closeMessageDb, deleteThread as deleteThreadRows, openQuestionCardMessages, searchMessages } from "./message-db.ts";
+import { closeMessageDb, deleteThread as deleteThreadRows, openApprovalCardMessages, openQuestionCardMessages, searchMessages } from "./message-db.ts";
 import {
   QUESTION_NOTES,
   answersFromMessage,
@@ -7649,6 +7649,23 @@ function rememberHostComputerConsent(botId: string, consent: "allowed" | "declin
     expired += 1;
   }
   if (expired) console.log(`questions: marked ${expired} unanswered question(s) from a previous run as expired`);
+}
+
+// The same for approvals: the ask behind each open card died with the
+// previous process, so its run is gone and Allow once can never reach it.
+// Settled the way a turn's own end settles them (closeOpenApprovals), so the
+// card closes and it leaves the Inbox (D7).
+{
+  let retired = 0;
+  for (const { threadId, message } of openApprovalCardMessages()) {
+    const current = store.messagesFor(threadId).find((candidate) => candidate.id === message.id);
+    if (!current?.card) continue;
+    const card = current.card;
+    if (!card.requestId || card.answered || card.dismissed || card.routineRequest || card.skillRequest || isQuestionCard(card)) continue;
+    store.patchMessage(threadId, current.id, { card: { ...card, answered: "unavailable", dismissed: true } });
+    retired += 1;
+  }
+  if (retired) console.log(`approvals: closed ${retired} approval(s) left open by a previous run`);
 }
 
 // Handoffs a previous process queued but never ran: the source turn is
