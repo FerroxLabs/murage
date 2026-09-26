@@ -257,6 +257,8 @@ export interface VerificationServer {
   child: ChildProcess;
   /** Stop the owned process and reload its same isolated profile without reseeding. */
   restart(): Promise<void>;
+  /** Stop the owned process and keep its data folder for inspection; close() still removes it. */
+  stop(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -269,12 +271,16 @@ export async function launchVerificationServer(
     portRange?: { from: number; span: number };
     /** Extra MURAGE_ANNOUNCEMENTS_* variables, e.g. a loopback stub feed. */
     env?: Partial<Record<"MURAGE_ANNOUNCEMENTS_URL" | "MURAGE_ANNOUNCEMENTS_TEST_KEY", string>>;
+    /** Give the child a HOME outside its data folder, so everything at the
+     * data folder's root is Murage's own (data-dir-inventory.test.ts). */
+    separateHome?: boolean;
   } = {},
 ): Promise<VerificationServer> {
   const port = await freePortBlock([0, 1], options.portRange?.from, options.portRange?.span);
   if (signal?.aborted) throw new ControlMurageError("verification launch cancelled");
   const url = `http://127.0.0.1:${port}`;
   const dataDir = mkdtempSync(join(tmpdir(), "murage-verify-data-"));
+  const home = options.separateHome ? mkdtempSync(join(tmpdir(), "murage-verify-home-")) : dataDir;
   const fixtureTemp = join(dataDir, "tmp");
   const fixtureDumpPath = join(dataDir, "fake-claude-dump.json");
   const fixtureFinishGateDir = join(dataDir, "finish-fake");
@@ -300,17 +306,17 @@ export async function launchVerificationServer(
     if (value && platformKeys.has(normalized)) childEnv[normalized] = value;
   }
   Object.assign(childEnv, {
-    HOME: dataDir,
-    USERPROFILE: dataDir,
-    APPDATA: join(dataDir, "AppData", "Roaming"),
-    LOCALAPPDATA: join(dataDir, "AppData", "Local"),
-    XDG_CONFIG_HOME: join(dataDir, ".config"),
-    XDG_CACHE_HOME: join(dataDir, ".cache"),
-    XDG_DATA_HOME: join(dataDir, ".local", "share"),
+    HOME: home,
+    USERPROFILE: home,
+    APPDATA: join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: join(home, "AppData", "Local"),
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_CACHE_HOME: join(home, ".cache"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
     TEMP: fixtureTemp,
     TMP: fixtureTemp,
     TMPDIR: fixtureTemp,
-    HERMES_HOME: join(dataDir, ".hermes"),
+    HERMES_HOME: join(home, ".hermes"),
     MURAGE_DATA_DIR: dataDir,
     MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
     MURAGE_PORT: String(port),
@@ -363,6 +369,7 @@ export async function launchVerificationServer(
   } catch (error) {
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(dataDir);
+    if (home !== dataDir) await removeTempDir(home);
     throw error;
   }
 
@@ -386,12 +393,17 @@ export async function launchVerificationServer(
         catch (error) { await waitForExit(child, { signal: "SIGTERM" }); throw error; }
       } finally { restarting = false; }
     },
+    async stop() {
+      if (restarting) throw new ControlMurageError("verification fixture is restarting");
+      await waitForExit(child, { signal: "SIGTERM" });
+    },
     async close() {
       if (closed) return;
       if (restarting) throw new ControlMurageError("verification fixture is restarting");
       closed = true;
       await waitForExit(child, { signal: "SIGTERM" });
       await removeTempDir(dataDir);
+      if (home !== dataDir) await removeTempDir(home);
     },
   };
   return fixture;

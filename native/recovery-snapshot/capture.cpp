@@ -125,8 +125,11 @@ std::vector<Entry> entries(const std::wstring& directory, std::uint32_t bound) {
   for (size_t i = 1; i < result.size(); ++i) require(fold(result[i-1].name) != fold(result[i].name));
   return result;
 }
+// Every name server/data-dir-inventory.ts marks restorable (record, owner
+// file, owner folder, database). data-dir-inventory.test.ts fails when this
+// list falls behind it.
 bool selected(const std::wstring& name) {
-  static const std::array names = {L"config.json", L"bots.json", L"groups.json", L"routines.json", L"calendar-calls.json", L"webhooks.json", L"delegations.json", L"delegation-receipts.json", L"section-contexts.json", L"browser-cleanups.json", L"attachments", L"workspaces", L"skills", L"skill-state", L"checkpoints", L"events", L"messages.db", L"messages.db-wal", L"messages.db-shm", L"messages.db-journal", L"decisions.ndjson", L"decisions.ndjson.1"};
+  static const std::array names = {L"config.json", L"bots.json", L"groups.json", L"routines.json", L"calendar-calls.json", L"webhooks.json", L"delegations.json", L"delegation-receipts.json", L"section-contexts.json", L"browser-cleanups.json", L"setup.json", L"queued-messages.json", L"whats-new.json", L"announcements.json", L"house-rules.md", L"house-rules.json", L"about-me.md", L"attachments", L"artifact-files", L"workspaces", L"skills", L"skill-state", L"skill-collection", L"checkpoints", L"events", L"messages.db", L"messages.db-wal", L"messages.db-shm", L"messages.db-journal", L"decisions.ndjson", L"decisions.ndjson.1"};
   if (std::find(names.begin(), names.end(), name) != names.end()) return true;
   if (!name.starts_with(L"messages-") || !name.ends_with(L".json") || name.size() <= 14) return false;
   return std::all_of(name.begin()+9, name.end()-5, [](wchar_t c) { return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') || c == L'_' || c == L'-'; });
