@@ -166,7 +166,7 @@ export class BackupRestic {
       if(result.removalUnconfirmed)this.removalWarnings++;
       if(result.sshFailure){this.recordServerCheck(result.sshFailure);throw Error(result.sshFailure);}
       if(typeof result.stdout!=="string"||Buffer.byteLength(result.stdout)>2*1024*1024)throw Error("RESTIC_RESULT_INVALID");return result;
-    }catch(error){if(error instanceof Error&&["RESTIC_SFTP_HOST_KEY_CHANGED","RESTIC_SFTP_KEY_REFUSED"].includes(error.message))throw error;throw Error("RESTIC_REMOTE_OPERATION_FAILED");
+    }catch(error){if(error instanceof Error&&["RESTIC_SFTP_HOST_KEY_CHANGED","RESTIC_SFTP_KEY_REFUSED","RESTIC_TOOL_UNVERIFIED","RESTIC_PASSWORD_INVALID"].includes(error.message))throw error;throw Error("RESTIC_REMOTE_OPERATION_FAILED");
     }finally{password.fill(0);material?.cleanup();}
   }
   private async readPassword(){try{return Buffer.from(await this.options.password());}catch(error){if(this.target)throw Error("RESTIC_PASSWORD_UNAVAILABLE");throw error;}}
@@ -180,7 +180,7 @@ export class BackupRestic {
       if(result.lockReleaseUnconfirmed)this.lockReleaseWarnings++;
       if(result.removalUnconfirmed)this.removalWarnings++;
       if(s3&&(typeof result.stdout!=="string"||Buffer.byteLength(result.stdout)>2*1024*1024))throw Error("RESTIC_RESULT_INVALID");return result;
-    }catch(error){if(s3)throw Error("RESTIC_REMOTE_OPERATION_FAILED");throw error;
+    }catch(error){if(s3&&!(error instanceof Error&&["RESTIC_TOOL_UNVERIFIED","RESTIC_PASSWORD_INVALID"].includes(error.message)))throw Error("RESTIC_REMOTE_OPERATION_FAILED");throw error;
     }finally{password.fill(0);}
   }
   private lock(){mkdirSync(this.options.workDirectory,{recursive:true,mode:0o700});const lease=acquireDataDirLeaseForProcess(this.options.workDirectory);if(this.target?.kind==="sftp")sweepSshMaterial(this.options.workDirectory);return lease;}

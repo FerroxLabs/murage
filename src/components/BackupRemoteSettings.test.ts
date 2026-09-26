@@ -62,3 +62,10 @@ it("SFTP refusals are explained in plain words, Windows says how to add OpenSSH"
  expect(remoteBackupError(Error("BACKUP_REMOTE_FOLDER_NOT_EMPTY"))).toContain("empty folder");
  expect(remoteBackupError(Error("BACKUP_REMOTE_WRONG_PASSWORD"))).toContain("password file");
 });
+it("every create-or-open refusal has its own plain sentence, never a bare code",()=>{
+ const generic=remoteBackupError(Error("SOMETHING_ELSE"));
+ for(const code of ["BACKUP_REMOTE_STORAGE_UNREACHABLE","BACKUP_REMOTE_CREATE_FAILED","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_PASSWORD_NOT_CREATED","BACKUP_REMOTE_PASSWORD_COPY_FAILED","BACKUP_REMOTE_TOOL_UNVERIFIED","BACKUP_REMOTE_KEYS_UNREADABLE","BACKUP_REMOTE_NOT_A_REPOSITORY","BACKUP_REMOTE_SETUP_INTERRUPTED","BACKUP_REMOTE_HOST_KEY_CHANGED","BACKUP_REMOTE_TRUST_CHANGED","BACKUP_REMOTE_KEY_REFUSED","BACKUP_REMOTE_SSH_MISSING","BACKUP_REMOTE_SFTP_UNAVAILABLE","BACKUP_REMOTE_SERVER_UNREACHABLE","BACKUP_REMOTE_FOLDER_NOT_EMPTY","BACKUP_REMOTE_FOLDER_NOT_WRITABLE","BACKUP_REMOTE_FOLDER_INVALID","BACKUP_REMOTE_WRONG_PASSWORD","BACKUP_REMOTE_REPOSITORY_CHANGED"]){
+  const text=remoteBackupError(Error(`Error invoking remote method 'backup-remote:testConnection': Error: ${code}`));
+  expect(text,code).not.toBe(generic);expect(text).not.toMatch(/[A-Z]{3,}_[A-Z_]+|—|\bsafe/);
+ }
+});

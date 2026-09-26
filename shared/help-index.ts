@@ -1769,7 +1769,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
     "url": "https://murage.app/docs/self-hosting/data-and-backups#restore-from-the-off-site-copy",
-    "text": "Open Restore and choose Find off-site backups, pick a backup and choose Download verified copy. Then open Backup mode, choose the downloaded file and your recovery key. On a new computer, add the same destination first: for SFTP, add the new key Murage shows to the server, choose the same off-site password file and choose Test connection. Murage opens the existing repository instead of creating a new one."
+    "text": "Open Restore and choose Find off-site backups, pick a backup and choose Download verified copy. Then open Backup mode, choose the downloaded file and your recovery key. On a new computer, add the same destination first: for SFTP, add the new key Murage shows to the server, choose the password file you kept with Choose a password file I already have, and choose Test connection. Murage opens the existing repository instead of creating a new one."
   },
   {
     "id": "self-hosting/data-and-backups#do-not-copy-secrets-casually",

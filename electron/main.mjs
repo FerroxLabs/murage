@@ -383,7 +383,7 @@ for(const action of ["status","stage","install","disable"]){
     return Promise.resolve().then(()=>closedBackupController[action]()).catch(()=>{throw Error("BACKUP_CLOSED_REVIEW_REQUIRED");});
   });
 }
-for(const [action,arity] of [["status",0],["save",2],["testConnection",2],["trustServer",3],["remove",2],["selectRepositoryPassword",2],["saveMaintenanceCredentials",3],["connect",2],["uploadLatest",3],["setAutomaticUpload",3],["reconcileLatest",3],["listBackups",2],["downloadBackup",3],["previewRetention",3],["applyRetention",4],["clearRetentionReview",3]]){
+for(const [action,arity] of [["status",0],["save",2],["testConnection",2],["trustServer",3],["remove",2],["createRepositoryPassword",2],["saveRepositoryPasswordCopy",2],["selectRepositoryPassword",2],["saveMaintenanceCredentials",3],["connect",2],["uploadLatest",3],["setAutomaticUpload",3],["reconcileLatest",3],["listBackups",2],["downloadBackup",3],["previewRetention",3],["applyRetention",4],["clearRetentionReview",3]]){
   ipcMain.handle(`backup-remote:${action}`,(_event,...args)=>{
     if(args.length!==arity)throw Error("BACKUP_REMOTE_INPUT_INVALID");
     if(!backupRemoteHost||desktopShutdownStarted||desktopRecoveryMode||backupMode.isPreparing()||backupScheduleHost?.isPreparing()){
@@ -3374,6 +3374,15 @@ async function initializeBackupRemoteHost(){
       const confirmed=await dialog.showMessageBox(mainWindow,{type:"question",buttons:["Cancel","Use password file"],defaultId:0,cancelId:0,noLink:true,message:"Keep an independent copy of this repository password",detail:"This is separate from your recovery key and from the storage access keys or SSH key. Keep it outside Murage and its backup folders. Losing it prevents restoring the off-site copy. Selecting it does not connect or upload."});
       return confirmed.response===1?answer.filePaths[0]??null:null;
     },
+    // Murage's own off-site password goes where the recovery key went, else
+    // Documents, else Home: never the data, settings, control or backup folder.
+    createFolders:()=>{const folders=[];const remembered=recoveryKeyFolderStore(path.join(app.getPath("userData"),"backup-key-folder.json")).read()?.folder;if(remembered)folders.push(remembered);for(const name of ["documents","home"]){try{folders.push(app.getPath(name));}catch{/* not on every platform */}}return folders;},
+    createExcludedRoots:async()=>{let destination=null;try{destination=await backupScheduleHost?.selectedDestination?.();}catch{/* no backup folder chosen */}return typeof destination==="string"&&path.isAbsolute(destination)?[destination]:[];},
+    chooseCopyFile:async suggested=>{
+      const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save a copy of your off-site password",buttonLabel:"Save copy",properties:["createDirectory"],defaultPath:suggested,nameFieldLabel:"Password file:",
+        message:"Keep this copy away from this computer, for example on a USB drive or in your password manager. You need it, with your recovery key, to restore the off-site copy on a new computer."});
+      return answer.canceled||!answer.filePath?null:answer.filePath;
+    },
   });
   const tool=path.join(process.resourcesPath,"backup-tools",process.arch,"restic");
   const owner=desktopDataOwner;
@@ -3384,7 +3393,7 @@ async function initializeBackupRemoteHost(){
   if(desktopDataOwner!==owner||ownedDesktopDataDir()!==installation)return;
   backupRemoteHost=createBackupRemoteHost({
     supported:()=>Boolean(!desktopShutdownStarted&&!desktopRecoveryMode&&desktopDataOwner&&!credentialStoreUnavailable&&desktopResticTool.currentTool()),
-    readProtected,updateProtected:updateSecureCredentialDocument,selectPassword:()=>passwords.select(),
+    readProtected,updateProtected:updateSecureCredentialDocument,selectPassword:()=>passwords.select(),createPassword:()=>passwords.create(),copyPassword:passwordRef=>passwords.saveCopy(passwordRef),
     latestVerified:()=>backupScheduleHost.latestVerifiedArtifact(),
     latestReceipt:()=>backupScheduleHost.internalStatus().lastVerified,
     chooseDownloadFolder:async()=>{const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",properties:["openDirectory","createDirectory"]});return result.canceled?null:result.filePaths[0]??null;},

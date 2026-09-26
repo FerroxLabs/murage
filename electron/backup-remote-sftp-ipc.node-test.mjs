@@ -17,6 +17,7 @@ import ts from "typescript";
 import {safeWipeSync} from "../server/testing/safe-wipe.mjs";
 import {createBackupRemoteHost} from "../dist-server/backup-remote-host.js";
 import {forgetRemoteWorkDirectory,remoteWorkDirectory} from "./backup-remote-runtime.mjs";
+import {createRemotePasswordStore} from "./backup-remote-password.mjs";
 
 const POSIX_ONLY=process.platform==="win32"&&"remote backup owner and mode checks are POSIX-only";
 const ORIGIN="http://127.0.0.1:47321";
@@ -46,32 +47,39 @@ function preloadBridge(handlers,crossings){
  return exposed.muragebox.backupRemote;
 }
 
-function fixture(){
- let document={},count=0,scanned=blob(1);const connected=new Set(),crossings=[],forgotten=[],downloads=[];
- const host=createBackupRemoteHost({supported:()=>true,readProtected:async()=>structuredClone(document),updateProtected:async derive=>{document=derive(structuredClone(document));},
-  selectPassword:async()=>({passwordRef:"independent-password"}),latestVerified:async()=>({archivePath:"/host/verified.age",receipt}),latestReceipt:()=>receipt,now:()=>10,createId:()=>`ref-${++count}`,
+function fixture(t){
+ let document={},count=0,scanned=blob(1);const connected=new Set(),crossings=[],forgotten=[],downloads=[],passwordsSeen=[];
+ const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-remote-ipc-test-")));t.after(()=>safeWipeSync(root));
+ const installation=path.join(root,"installation"),keys=path.join(root,"keys"),usb=path.join(root,"usb");for(const dir of [installation,keys,usb])mkdirSync(dir,{mode:0o700});
+ const readProtected=async()=>structuredClone(document),updateProtected=async derive=>{document=derive(structuredClone(document));};
+ const passwords=createRemotePasswordStore({chooseFile:async()=>null,excludedRoots:()=>[installation],readProtected,updateProtected,createFolders:()=>[keys],createExcludedRoots:async()=>[],chooseCopyFile:async()=>path.join(usb,"copy.txt")});
+ const host=createBackupRemoteHost({supported:()=>true,readProtected,updateProtected,
+  selectPassword:async()=>({passwordRef:"independent-password"}),createPassword:()=>passwords.create(),copyPassword:ref=>passwords.saveCopy(ref),latestVerified:async()=>({archivePath:"/host/verified.age",receipt}),latestReceipt:()=>receipt,now:()=>10,createId:()=>`ref-${++count}`,
   chooseDownloadFolder:async()=>"/chosen",exportDownloaded:async copy=>{downloads.push(copy.snapshotId);return{saved:true,archivePath:"/chosen/Murage-backup-x/backup.age",directory:"/chosen/Murage-backup-x"};},
   forgetLocalState:ref=>{forgotten.push(ref);},
   createAdapter:binding=>{const id=`${binding.target.remoteRef}:${binding.target.revision}`;return{
    connectionStatus:()=>({state:connected.has(id)?"connected":"disconnected",repositoryId:"d".repeat(64)}),
    connect:async()=>({connected:true,remoteRef:binding.target.remoteRef,revision:binding.target.revision,repositoryId:"d".repeat(64)}),
    scanServerIdentity:async()=>{assert.equal(binding.credentials.privateKey.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----"),true);return{type:"ssh-ed25519",key:scanned,fingerprint:"SHA256:"+createHash("sha256").update(Buffer.from(scanned,"base64")).digest("base64").replace(/=+$/,"")};},
-   prepareRepository:async()=>{assert.ok(binding.target.hostKey,"never prepared without a pinned identity");connected.add(id);return{connected:true,created:true,remoteRef:binding.target.remoteRef,revision:binding.target.revision,repositoryId:"d".repeat(64)};},
+   prepareRepository:async()=>{assert.ok(binding.target.hostKey,"never prepared without a pinned identity");if(binding.passwordRef!=="independent-password")passwordsSeen.push(Buffer.from(await passwords.read(binding.passwordRef)).toString());connected.add(id);return{connected:true,created:true,remoteRef:binding.target.remoteRef,revision:binding.target.revision,repositoryId:"d".repeat(64)};},
    store:async()=>({state:"verified",snapshotId:"e".repeat(64)}),
    listBackups:async()=>({repositoryId:"d".repeat(64),backups:[{snapshotId:"e".repeat(64),jobId:receipt.jobId,createdAt:5,verified:false}],ignored:0}),
    downloadBackup:async snapshotId=>({state:"downloaded-verified",snapshotId,repositoryId:"d".repeat(64),archivePath:"/private/backup.age",receiptPath:"/private/receipt.json",receipt}),
   };}});
  const operations=new Set();
  const handlers=mainHandlers({backupRemoteHost:host,backupRemoteOperations:operations,desktopShutdownStarted:false,desktopRecoveryMode:false,backupMode:{isPreparing:()=>false},backupScheduleHost:{isPreparing:()=>false}});
- return{bridge:preloadBridge(handlers,crossings),handlers,crossings,forgotten,downloads,document:()=>document,setScanned:key=>{scanned=key;}};
+ return{bridge:preloadBridge(handlers,crossings),handlers,crossings,forgotten,downloads,passwordsSeen,keys,usb,document:()=>document,setScanned:key=>{scanned=key;}};
 }
 
-test("SFTP set-up, trust, connect, upload, recover and remove through the real preload and main handlers",async()=>{
- const f=fixture(),api=f.bridge;
- for(const name of ["testConnection","trustServer","remove"])assert.equal(typeof api[name],"function",`preload offers ${name}`);
+test("SFTP set-up, password made by Murage, trust, connect, upload, recover and remove through the real preload and main handlers",{skip:POSIX_ONLY},async t=>{
+ const f=fixture(t),api=f.bridge;
+ for(const name of ["testConnection","trustServer","remove","createRepositoryPassword","saveRepositoryPasswordCopy"])assert.equal(typeof api[name],"function",`preload offers ${name}`);
  assert.deepEqual(await api.save(0,{kind:"sftp",label:"Home NAS",host:"nas.example.com",port:22,user:"backup",folder:"murage-backups"}),{saved:true});
  let status=await api.status();assert.equal(status.kind,"sftp");assert.match(status.sftp.publicKey,/^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5\S+ murage-backup$/);
- const ref=status.remoteRef;await api.selectRepositoryPassword(ref,1);
+ const ref=status.remoteRef;
+ const created=await api.createRepositoryPassword(ref,1);assert.deepEqual(created,{created:true,path:path.join(f.keys,"murage-offsite-password.txt")});
+ const password=readFileSync(created.path,"utf8").trim();assert.match(password,/^[A-Za-z0-9_-]{43}$/);assert.equal((await api.status()).passwordSelected,true);
+ assert.deepEqual(await api.saveRepositoryPasswordCopy(ref,2),{saved:true,path:path.join(f.usb,"copy.txt")});
  const first=await api.testConnection(ref,2);assert.equal(first.state,"trust-required");assert.match(first.fingerprint,/^SHA256:[A-Za-z0-9+/]{43}$/);
  assert.deepEqual(await api.trustServer(ref,2,first.fingerprint),{trusted:true,fingerprint:first.fingerprint});
  const connected=await api.testConnection(ref,3);assert.deepEqual(connected,{state:"connected",created:true,remoteRef:ref,revision:3,repositoryId:"d".repeat(64)});
@@ -83,14 +91,16 @@ test("SFTP set-up, trust, connect, upload, recover and remove through the real p
  assert.equal((await api.status()).configured,false);
  // Every call the bridge made carried exactly main's arity, and no value in
  // either direction ever held the private key.
- const arity={status:0,save:2,testConnection:2,trustServer:3,remove:2,selectRepositoryPassword:2,uploadLatest:3,listBackups:2,downloadBackup:3};
+ const arity={status:0,save:2,testConnection:2,trustServer:3,remove:2,createRepositoryPassword:2,saveRepositoryPasswordCopy:2,selectRepositoryPassword:2,uploadLatest:3,listBackups:2,downloadBackup:3};
  for(const crossing of f.crossings.filter(item=>"count" in item))assert.equal(crossing.count,arity[crossing.channel.slice("backup-remote:".length)],crossing.channel);
- const everything=JSON.stringify(f.crossings);assert.equal(everything.includes("PRIVATE KEY"),false);assert.equal(everything.includes("privateKey"),false);
+ const everything=JSON.stringify(f.crossings);assert.equal(everything.includes("PRIVATE KEY"),false);
+ assert.deepEqual(f.passwordsSeen,[password]);assert.equal(everything.includes(password),false);assert.equal(JSON.stringify(f.document()).includes(password),false);assert.equal(everything.includes("privateKey"),false);
  assert.equal(JSON.stringify(f.document()).includes("PRIVATE KEY"),false);
 });
 
-test("the handlers refuse wrong arity, a changed server and option-shaped fields",async()=>{
- const f=fixture(),api=f.bridge;
+test("the handlers refuse wrong arity, a changed server and option-shaped fields",{skip:POSIX_ONLY},async t=>{
+ const f=fixture(t),api=f.bridge;
+ assert.throws(()=>f.handlers.get("backup-remote:createRepositoryPassword")({},"ref"),/INPUT_INVALID/);
  assert.throws(()=>f.handlers.get("backup-remote:testConnection")({},"ref"),/INPUT_INVALID/);
  assert.throws(()=>f.handlers.get("backup-remote:trustServer")({},"ref",1),/INPUT_INVALID/);
  assert.throws(()=>f.handlers.get("backup-remote:remove")({},"ref",1,"extra"),/INPUT_INVALID/);

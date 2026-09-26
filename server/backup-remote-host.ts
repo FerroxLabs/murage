@@ -41,6 +41,10 @@ export interface BackupRemoteHostOptions {
  /** Must serialize derivation and durable OS-encrypted persistence. */
  updateProtected:(derive:(current:Document)=>Document)=>Promise<unknown>;
  selectPassword:()=>Promise<{passwordRef:string}|null>;
+ /** Murage makes the off-site password file itself (main only); returns where it went. */
+ createPassword?:()=>Promise<{passwordRef:string;path:string}>;
+ /** Saves a second copy of that file where the person chooses. */
+ copyPassword?:(passwordRef:string)=>Promise<{saved:true;path:string}|{cancelled:true}>;
  createAdapter:(binding:Readonly<{target:ResticS3Target;credentials:ResticS3Credentials;passwordRef:string;maintenanceCredentials?:ResticS3Credentials}|{target:ResticSftpTarget;credentials:ResticSftpCredentials;passwordRef:string}>)=>RemoteAdapter;
  /** Removes the destination's private work folder (journals, pinned-identity
   * checks, leftover run folders). Called after its binding is gone. */
@@ -73,11 +77,16 @@ function readBinding(document:Document):Binding|null{
  try{if(typeof raw!=="string"||Buffer.byteLength(raw)>32768)throw Error();return bindingSchema.parse(JSON.parse(raw));}catch{return refuse();}
 }
 const safeErrors=new Set(["BACKUP_REMOTE_UNAVAILABLE","BACKUP_REMOTE_CHANGED","BACKUP_REMOTE_PASSWORD_REQUIRED","BACKUP_REMOTE_JOB_CHANGED","BACKUP_REMOTE_BUSY","BACKUP_REMOTE_INPUT_INVALID","BACKUP_REMOTE_REVIEW_REQUIRED","BACKUP_REMOTE_MAINTENANCE_REQUIRED","BACKUP_REMOTE_RETENTION_CHANGED",
- "BACKUP_REMOTE_HOST_KEY_CHANGED","BACKUP_REMOTE_KEY_REFUSED","BACKUP_REMOTE_SERVER_UNREACHABLE","BACKUP_REMOTE_SFTP_UNAVAILABLE","BACKUP_REMOTE_FOLDER_NOT_WRITABLE","BACKUP_REMOTE_FOLDER_NOT_EMPTY","BACKUP_REMOTE_FOLDER_INVALID","BACKUP_REMOTE_WRONG_PASSWORD","BACKUP_REMOTE_SSH_MISSING","BACKUP_REMOTE_SSH_MISSING_WINDOWS","BACKUP_REMOTE_REPOSITORY_CHANGED","BACKUP_REMOTE_TRUST_CHANGED"]);
+ "BACKUP_REMOTE_HOST_KEY_CHANGED","BACKUP_REMOTE_KEY_REFUSED","BACKUP_REMOTE_SERVER_UNREACHABLE","BACKUP_REMOTE_SFTP_UNAVAILABLE","BACKUP_REMOTE_FOLDER_NOT_WRITABLE","BACKUP_REMOTE_FOLDER_NOT_EMPTY","BACKUP_REMOTE_FOLDER_INVALID","BACKUP_REMOTE_WRONG_PASSWORD","BACKUP_REMOTE_SSH_MISSING","BACKUP_REMOTE_SSH_MISSING_WINDOWS","BACKUP_REMOTE_REPOSITORY_CHANGED","BACKUP_REMOTE_TRUST_CHANGED",
+ "BACKUP_REMOTE_STORAGE_UNREACHABLE","BACKUP_REMOTE_CREATE_FAILED","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_TOOL_UNVERIFIED","BACKUP_REMOTE_KEYS_UNREADABLE","BACKUP_REMOTE_NOT_A_REPOSITORY","BACKUP_REMOTE_SETUP_INTERRUPTED","BACKUP_REMOTE_PASSWORD_NOT_CREATED","BACKUP_REMOTE_PASSWORD_COPY_FAILED"]);
 /** Adapter codes a person can act on, renamed for the window. Everything else stays "needs review". */
 const connectionErrors:Record<string,string>={RESTIC_SFTP_HOST_KEY_CHANGED:"BACKUP_REMOTE_HOST_KEY_CHANGED",RESTIC_SFTP_KEY_REFUSED:"BACKUP_REMOTE_KEY_REFUSED",RESTIC_SFTP_UNREACHABLE:"BACKUP_REMOTE_SERVER_UNREACHABLE",RESTIC_SFTP_UNAVAILABLE:"BACKUP_REMOTE_SFTP_UNAVAILABLE",
  RESTIC_SFTP_FOLDER_NOT_WRITABLE:"BACKUP_REMOTE_FOLDER_NOT_WRITABLE",RESTIC_SFTP_FOLDER_NOT_EMPTY:"BACKUP_REMOTE_FOLDER_NOT_EMPTY",RESTIC_SFTP_FOLDER_INVALID:"BACKUP_REMOTE_FOLDER_INVALID",RESTIC_WRONG_PASSWORD:"BACKUP_REMOTE_WRONG_PASSWORD",
- RESTIC_SFTP_SSH_MISSING:"BACKUP_REMOTE_SSH_MISSING",RESTIC_SFTP_SSH_MISSING_WINDOWS:"BACKUP_REMOTE_SSH_MISSING_WINDOWS",RESTIC_REPOSITORY_CHANGED:"BACKUP_REMOTE_REPOSITORY_CHANGED"};
+ RESTIC_SFTP_SSH_MISSING:"BACKUP_REMOTE_SSH_MISSING",RESTIC_SFTP_SSH_MISSING_WINDOWS:"BACKUP_REMOTE_SSH_MISSING_WINDOWS",RESTIC_REPOSITORY_CHANGED:"BACKUP_REMOTE_REPOSITORY_CHANGED",
+ RESTIC_CONNECT_UNCONFIRMED:"BACKUP_REMOTE_STORAGE_UNREACHABLE",RESTIC_REMOTE_OPERATION_FAILED:"BACKUP_REMOTE_STORAGE_UNREACHABLE",RESTIC_INIT_UNCONFIRMED:"BACKUP_REMOTE_CREATE_FAILED",RESTIC_INITIALIZATION_REFUSED:"BACKUP_REMOTE_CREATE_FAILED",
+ RESTIC_PASSWORD_UNAVAILABLE:"BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE",RESTIC_PASSWORD_INVALID:"BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE",RESTIC_TOOL_UNVERIFIED:"BACKUP_REMOTE_TOOL_UNVERIFIED",
+ RESTIC_S3_CREDENTIALS_UNAVAILABLE:"BACKUP_REMOTE_KEYS_UNREADABLE",RESTIC_SFTP_KEY_UNAVAILABLE:"BACKUP_REMOTE_KEYS_UNREADABLE",RESTIC_REPOSITORY_ID_INVALID:"BACKUP_REMOTE_NOT_A_REPOSITORY",RESTIC_TARGET_REVIEW_REQUIRED:"BACKUP_REMOTE_SETUP_INTERRUPTED",
+ RESTIC_SFTP_PROTOCOL:"BACKUP_REMOTE_SFTP_UNAVAILABLE",RESTIC_SFTP_CLOSED:"BACKUP_REMOTE_SERVER_UNREACHABLE"};
 const translate=(error:unknown):never=>{const code=error instanceof Error?connectionErrors[error.message]:undefined;if(code)throw Error(code);throw error;};
 /** Main-only orchestration: no arbitrary paths/commands or implicit connection. */
 export function createBackupRemoteHost(options:BackupRemoteHostOptions){
@@ -208,6 +217,25 @@ export function createBackupRemoteHost(options:BackupRemoteHostOptions){
   await options.updateProtected(current=>{const binding=readBinding(current);check(binding,expectedRevision,remoteRef);if(!binding)refuse();const {automatic:_automatic,...rest}=binding;return{...current,[BACKUP_REMOTE_BINDING_KEY]:JSON.stringify({...rest,passwordRef:passwordRef.data,target:{...binding.target,revision:binding.target.revision+1}})};});
   return{selected:true};
  });}
+ /** Murage creates the off-site password file and selects it for this destination. */
+ async function createRepositoryPassword(remoteRef:unknown,expectedRevision:unknown){return exclusive(async()=>{
+  if(!reference.safeParse(remoteRef).success)refuse("BACKUP_REMOTE_CHANGED");
+  const prior=readBinding(await options.readProtected());check(prior,expectedRevision,remoteRef);if(!prior)refuse();
+  if(!options.createPassword)refuse("BACKUP_REMOTE_UNAVAILABLE");
+  let created:{passwordRef:string;path:string};try{created=await options.createPassword();}catch{return refuse("BACKUP_REMOTE_PASSWORD_NOT_CREATED");}
+  const passwordRef=reference.safeParse(created.passwordRef);if(!passwordRef.success||typeof created.path!=="string"||created.path.length>4096)refuse("BACKUP_REMOTE_PASSWORD_NOT_CREATED");
+  await options.updateProtected(current=>{const binding=readBinding(current);check(binding,expectedRevision,remoteRef);if(!binding)refuse();const {automatic:_automatic,...rest}=binding;return{...current,[BACKUP_REMOTE_BINDING_KEY]:JSON.stringify({...rest,passwordRef:passwordRef.data,target:{...binding.target,revision:binding.target.revision+1}})};});
+  return{created:true,path:created.path};
+ });}
+ async function saveRepositoryPasswordCopy(remoteRef:unknown,expectedRevision:unknown){return exclusive(async()=>{
+  if(!reference.safeParse(remoteRef).success)refuse("BACKUP_REMOTE_CHANGED");
+  const binding=readBinding(await options.readProtected());check(binding,expectedRevision,remoteRef);if(!binding)refuse();
+  if(!binding.passwordRef)refuse("BACKUP_REMOTE_PASSWORD_REQUIRED");if(!options.copyPassword)refuse("BACKUP_REMOTE_UNAVAILABLE");
+  let result:Awaited<ReturnType<NonNullable<BackupRemoteHostOptions["copyPassword"]>>>;try{result=await options.copyPassword(binding.passwordRef);}catch{return refuse("BACKUP_REMOTE_PASSWORD_COPY_FAILED");}
+  if("cancelled" in result)return{cancelled:true as const};
+  if(result.saved!==true||typeof result.path!=="string")refuse("BACKUP_REMOTE_PASSWORD_COPY_FAILED");
+  return{saved:true as const,path:result.path};
+ });}
  async function connect(remoteRef:unknown,expectedRevision:unknown){return exclusive(async()=>{
   if(!reference.safeParse(remoteRef).success)refuse("BACKUP_REMOTE_CHANGED");
   const binding=readBinding(await options.readProtected());check(binding,expectedRevision,remoteRef);if(!binding)refuse();
@@ -328,5 +356,5 @@ export function createBackupRemoteHost(options:BackupRemoteHostOptions){
   const storage=adapter(binding);if(!storage.clearRetentionReview)refuse();
   storage.clearRetentionReview(previewId as string);return{cleared:true};
  });}
- return{status,save,testConnection,trustServer,remove,selectRepositoryPassword,saveMaintenanceCredentials,connect,uploadLatest,setAutomaticUpload,runAutomaticUpload,reconcileLatest,listBackups,downloadBackup,previewRetention,applyRetention,clearRetentionReview,isPending:()=>pending};
+ return{status,save,testConnection,trustServer,remove,createRepositoryPassword,saveRepositoryPasswordCopy,selectRepositoryPassword,saveMaintenanceCredentials,connect,uploadLatest,setAutomaticUpload,runAutomaticUpload,reconcileLatest,listBackups,downloadBackup,previewRetention,applyRetention,clearRetentionReview,isPending:()=>pending};
 }

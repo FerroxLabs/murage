@@ -31,7 +31,7 @@ A backup on the same computer, or on a drive next to it, is lost with it. Under 
 - **S3-compatible storage**, such as Amazon S3, Backblaze B2, Cloudflare R2 or MinIO. Enter the endpoint, bucket, region and access keys from your storage provider. The bucket must already exist.
 - **SFTP server (NAS, home server or VPS)**. Enter a name for the destination, the server name or IP address, the port (usually 22), the user name and a folder on the server. A folder without a leading slash is inside that user's home folder. Murage creates the folder if it is missing.
 
-Then choose an **off-site password file**. It locks the off-site copy and is separate from your recovery key. Keep your own copy of it outside Murage: you need it, and your recovery key, to restore from the off-site copy on another computer.
+Then choose **Create off-site password**. Murage makes a long random password that locks the off-site copy and saves it as a file next to your recovery key (never inside Murage's data folder or your backup folder), then tells you where it is. Use **Save a copy of the off-site password…** to keep a second copy away from this computer: you need it, and your recovery key, to restore from the off-site copy on another computer. If you already have a password file, for example when restoring on a new computer, choose **Choose a password file I already have** instead.
 
 Finally choose **Test connection**. Murage checks the connection and opens the backup repository at the destination, or creates it when there isn't one yet. You never need to create a repository yourself. Nothing is uploaded until you choose **Upload latest verified backup** or turn on automatic uploads.
 
@@ -55,7 +55,7 @@ The SSH key and any storage access keys are kept in your operating system's encr
 
 ### Restore from the off-site copy
 
-Open **Restore** and choose **Find off-site backups**, pick a backup and choose **Download verified copy**. Then open Backup mode, choose the downloaded file and your recovery key. On a new computer, add the same destination first: for SFTP, add the new key Murage shows to the server, choose the same off-site password file and choose **Test connection**. Murage opens the existing repository instead of creating a new one.
+Open **Restore** and choose **Find off-site backups**, pick a backup and choose **Download verified copy**. Then open Backup mode, choose the downloaded file and your recovery key. On a new computer, add the same destination first: for SFTP, add the new key Murage shows to the server, choose the password file you kept with **Choose a password file I already have**, and choose **Test connection**. Murage opens the existing repository instead of creating a new one.
 
 ## Do not copy secrets casually
 
