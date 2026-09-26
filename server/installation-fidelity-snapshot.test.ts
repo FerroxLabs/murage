@@ -125,3 +125,24 @@ it("backs up a 0.1.60 data folder: What's New, announcements and House Rules kep
     }
   });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });
+// skills.ts syncSkillLinks links every enabled skill into the bot workspace's
+// .claude/.agents/.grok skills folders. Those links made EVERY backup of a bot
+// with a skill stop with BACKUP_SELECTED_COMPONENT_UNAVAILABLE on the packaged
+// 0.1.60 app (2026-09-26). They are left out and re-created; the skill itself
+// is captured. A link that leads anywhere else still refuses.
+it.each(["murage-skill-link","outside-link"])("backs up a bot with skills: %s",async kind=>{
+  const f=backupFixture(),bot=join(f.data,"workspaces","bot-1"),skill=join(bot,"skills","brand-voice");
+  mkdirSync(skill,{recursive:true});writeFileSync(join(skill,"SKILL.md"),"---\nname: brand-voice\n---\nWrite plainly.\n");
+  mkdirSync(join(f.parent,"elsewhere"));
+  for(const dir of [".claude/skills",".agents/skills",".grok/skills"]){
+    mkdirSync(join(bot,dir),{recursive:true});
+    symlinkSync(kind==="murage-skill-link"?skill:join(f.parent,"elsewhere"),join(bot,dir,"brand-voice"),"dir");
+  }
+  try{
+    const run=()=>withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return{stage,inventory:await inventoryFidelity(installation,stage,selection)};});
+    if(kind==="outside-link"){await expect(run()).rejects.toThrow("BACKUP_SELECTED_COMPONENT_UNAVAILABLE");return;}
+    const {stage}=await run();
+    expect(stage.manifest.files.some(file=>file.path.replaceAll("\\","/")==="workspaces/bot-1/skills/brand-voice/SKILL.md")).toBe(true);
+    expect(stage.manifest.omitted.filter(item=>item.path.replaceAll("\\","/").endsWith("/skills/brand-voice")).length).toBe(3);
+  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+});

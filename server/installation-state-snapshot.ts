@@ -1,8 +1,8 @@
 // Private directory-stage builder for the versioned archive/restore workflow.
 // This is not a portable archive or an activated restored installation.
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, rmSync, writeFileSync, writeSync, type Stats } from "node:fs";
-import { dirname, join, sep } from "node:path";
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync, writeFileSync, writeSync, type Stats } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
@@ -33,6 +33,26 @@ export interface StateSnapshotManifest {
   omitted: Array<{ path: string; reason: string }>;
   missing: string[];
   database: { status: "absent" } | { status: "copied"; messages: number; threads: number; bytes: number; sha256: string };
+}
+
+// skills.ts and procedure-bundles.ts link every enabled skill into each bot
+// workspace's .claude/skills, .agents/skills and .grok/skills so the bot's
+// engine finds it. Those links point back at the skill inside the same
+// workspaces tree, which is captured anyway, and Murage re-creates them from
+// the skill manifest. Left out, they are not a gap; refusing them made every
+// backup of a bot with a skill stop with BACKUP_SELECTED_COMPONENT_UNAVAILABLE.
+// Any other link, or one that leads outside workspaces/, still refuses.
+export const NATIVE_SKILL_LINK_OMITTED = "Skill shortcut Murage re-creates for the bot's engine; not restored";
+function nativeSkillLink(root: string, relative: string): boolean {
+  const portable = relative.split(sep).join("/");
+  if (!/^workspaces\/(?:[^/]+\/)+\.(?:claude|agents|grok)\/skills\/[^/]+$/.test(portable)) return false;
+  try {
+    // Compare real paths: the link text keeps whatever spelling DATA_DIR had
+    // (on macOS /var and /private/var name the same folder).
+    const link = join(root, relative), workspaces = realpathSync.native(join(root, "workspaces")) + sep;
+    const target = realpathSync.native(resolve(dirname(link), readlinkSync(link)));
+    return target.startsWith(workspaces) && target.split(sep).includes("skills");
+  } catch { return false; }
 }
 
 function safePart(name: string): boolean {
@@ -219,7 +239,7 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       check();
       if (++entries > maxFiles || depth > 64) fail("SNAPSHOT_LIMIT_EXCEEDED");
       const before = lstatSync(join(root, path));
-      if (before.isSymbolicLink()) { omission(path, "Directory symlink not followed"); return; }
+      if (before.isSymbolicLink()) { omission(path, nativeSkillLink(root, path) ? NATIVE_SKILL_LINK_OMITTED : "Directory symlink not followed"); return; }
       if (!before.isDirectory()) { copy(path); return; }
       const names = readdirSync(join(root, path)).sort();
       const folded = new Set<string>();
