@@ -250,6 +250,20 @@ class DraftStorageUnavailableError extends Error {
   }
 }
 
+/** Removes every preserved document draft of a deleted bot or conversation.
+ * Returns how many were removed. */
+export function forgetMarkdownDrafts(
+  backend: DraftBackend,
+  owner: { botId: string } | { threadIds: readonly string[] },
+): Promise<number> {
+  return backend.transact((records) => {
+    const gone = records
+      .filter((record) => ("botId" in owner ? record.botId === owner.botId : owner.threadIds.includes(record.threadId)))
+      .map((record) => record.key);
+    return { delete: gone, result: gone.length };
+  }, { write: true });
+}
+
 /** The renderer IndexedDB backend. Without IndexedDB every operation fails
  * with `storage-unavailable`; drafts are never silently kept in memory. */
 export function createIndexedDbDraftBackend(

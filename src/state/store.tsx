@@ -22,6 +22,8 @@ import { hostStoppedReason } from "../../shared/host-stop";
 import { normalizeAgentPlan, type AgentPlanEntry } from "../../shared/agent-plan";
 import type { EmberColor, EmberMotion } from "@/lib/mascot";
 import { botRole } from "@/lib/bot-role";
+import { forgetDeletedDrafts } from "@/lib/drafts";
+import { createIndexedDbDraftBackend, forgetMarkdownDrafts } from "@/lib/markdown-drafts";
 import { initialWorkspacePaneState, workspacePaneReducer, type WorkspacePaneAction, type WorkspacePaneState } from "@/lib/workspace-pane";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
 import type { MascotBodyId } from "../../shared/mascot-bodies";
@@ -226,6 +228,15 @@ export type GroupDefaultResponder =
   | { kind: "mentions" };
 
 /** A room: several bots + you in one shared thread. */
+/** A deleted conversation's unsaved document edits go with it. Best-effort:
+ * without IndexedDB there is nothing stored to remove. */
+let documentDraftBackend: ReturnType<typeof createIndexedDbDraftBackend> | undefined;
+function forgetDocumentDrafts(owner: { botId: string } | { threadIds: readonly string[] }): void {
+  if (typeof indexedDB === "undefined") return;
+  documentDraftBackend ??= createIndexedDbDraftBackend();
+  void forgetMarkdownDrafts(documentDraftBackend, owner).catch(() => {});
+}
+
 export interface Group {
   id: string;
   threadId: string;
@@ -2279,6 +2290,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (action.type === "deleteBot" || action.type === "botRemoved") botPatchQueue.cancel(action.botId);
       // A queued message is still real until the server confirms deletion.
       // All other actions keep their existing optimistic behavior.
+      // Read before the reducer drops the channel: its conversations are
+      // what its document drafts are keyed by.
+      const groupBeforeDelete =
+        action.type === "deleteGroup" ? stateRef.current.groups.find((group) => group.id === action.groupId) : undefined;
       if (action.type !== "cancelQueued" && action.type !== "cancelGroupQueued") rawDispatch(action);
       switch (action.type) {
         case "createRoutine":
@@ -2556,6 +2571,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         }
         case "deleteBot":
+          forgetDeletedDrafts({ botId: action.botId });
+          forgetDocumentDrafts({ botId: action.botId });
           api(`/api/bots/${action.botId}`, { method: "DELETE" }).then(showDeletionNote).catch(showError);
           break;
         case "markUnread":
@@ -2659,6 +2676,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             .catch(showError);
           break;
         case "deleteGroup":
+          forgetDeletedDrafts({ groupId: action.groupId });
+          if (groupBeforeDelete) forgetDocumentDrafts({ threadIds: [groupBeforeDelete.threadId, ...(groupBeforeDelete.tasks ?? []).map((task) => task.threadId)] });
           api(`/api/groups/${action.groupId}`, { method: "DELETE" }).then(showDeletionNote).catch(showError);
           break;
         case "setModel":
@@ -2698,6 +2717,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }).catch(showError);
           break;
         case "deleteTask":
+          forgetDeletedDrafts({ threadId: action.threadId });
+          forgetDocumentDrafts({ threadIds: [action.threadId] });
           api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "DELETE" })
             .then((r: any) => {
               showDeletionNote(r);
@@ -2727,6 +2748,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }).catch(showError);
           break;
         case "deleteGroupTask":
+          forgetDeletedDrafts({ threadId: action.threadId });
+          forgetDocumentDrafts({ threadIds: [action.threadId] });
           api(`/api/groups/${action.groupId}/tasks/${action.threadId}`, { method: "DELETE" })
             .then((r: any) => { showDeletionNote(r); if (r?.group) dispatch({ type: "groupPatched", group: r.group }); })
             .catch((e: unknown) => showError(new Error(deletionErrorSentence(e))));

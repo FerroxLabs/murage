@@ -44,6 +44,11 @@ const failedSendListeners = new Map<string, Set<(sends: FailedComposerSend[]) =>
 const restoredSendIds = new Map<string, string>();
 let failedSendSequence = 0;
 
+// Drafts of a conversation, bot or channel that was deleted. Nothing is
+// written for them again, so a composer still mounted for a moment, or a send
+// that fails after the delete, cannot put the text back into storage.
+const forgottenDrafts = new Set<string>();
+
 // Drafts whose stored failed list has been read into `failedSends`. Read
 // lazily, per conversation, the way restoredSendId reads its stored id.
 const loadedFailedSends = new Set<string>();
@@ -65,6 +70,7 @@ function isFailedSend(value: unknown): value is FailedComposerSend {
 /** Best-effort, like every other draft write: a refused write leaves the
  * list in memory for this session, which is what it always was. */
 function storeFailedSends(id: string, sends: FailedComposerSend[]): void {
+  if (forgottenDrafts.has(id)) return;
   const store = getStore();
   const all = read(store, FAILED_SENDS_KEY);
   if (sends.length) all[id] = sends.slice(-MAX_FAILED_SENDS_PER_DRAFT);
@@ -77,7 +83,7 @@ function storeFailedSends(id: string, sends: FailedComposerSend[]): void {
 }
 
 type Values = Record<string, unknown>;
-type Store = Pick<Storage, "getItem" | "setItem"> | undefined;
+type Store = Pick<Storage, "getItem" | "setItem"> & Partial<Pick<Storage, "removeItem">> | undefined;
 const fallbackChannelModes = new Map<string, ChannelMode>();
 const channelModesByStore = new WeakMap<object, Map<string, ChannelMode>>();
 
@@ -100,6 +106,7 @@ export function getDraftChannelMode(store: Store, id: string): ChannelMode {
 
 export function setDraftChannelMode(store: Store, id: string, mode: ChannelMode): void {
   channelModeMemory(store).set(id, mode);
+  if (forgottenDrafts.has(id)) return;
   const modes = read(store, CHANNEL_MODES_KEY);
   if (mode === "goal") modes[id] = mode;
   else delete modes[id];
@@ -125,6 +132,7 @@ export function getDraft(store: Store, id: string): string {
 }
 
 export function setDraft(store: Store, id: string, text: string): void {
+  if (forgottenDrafts.has(id)) return;
   const drafts = read(store, KEY);
   // an emptied composer drops its entry rather than storing "" forever
   if (text) drafts[id] = text;
@@ -150,6 +158,7 @@ export function getDraftAttachments(store: Store, id: string, fallback: Attachme
 }
 
 export function setDraftAttachments(store: Store, id: string, attachments: Attachment[]): boolean {
+  if (forgottenDrafts.has(id)) return false;
   const drafts = read(store, ATTACHMENTS_KEY);
   if (attachments.length) drafts[id] = attachments;
   else delete drafts[id];
@@ -267,6 +276,7 @@ export function restoredSendId(draftId: string): string | undefined {
 }
 
 function setStoredSendId(store: Store, draftId: string, sendId: string | undefined): void {
+  if (forgottenDrafts.has(draftId)) return;
   const ids = read(store, SEND_IDS_KEY);
   if (sendId) ids[draftId] = sendId;
   else delete ids[draftId];
@@ -405,6 +415,47 @@ export function useFailedComposerSends(id: string): FailedComposerSend[] {
     };
   }, [id]);
   return sends;
+}
+
+/** What was deleted. Composer drafts are keyed `bot:<bot>:<thread>` (and the
+ * older `bot:<bot>`) or `group:<channel>:<thread>`. */
+export type DeletedDraftOwner = { threadId: string } | { botId: string } | { groupId: string };
+
+export function draftBelongsTo(draftId: string, owner: DeletedDraftOwner): boolean {
+  if ("threadId" in owner) return /^(bot|group):[^:]+:/.test(draftId) && draftId.endsWith(`:${owner.threadId}`);
+  if ("botId" in owner) return draftId === `bot:${owner.botId}` || draftId.startsWith(`bot:${owner.botId}:`);
+  return draftId.startsWith(`group:${owner.groupId}:`);
+}
+
+/** Deleting a conversation, a bot or a channel removes every unsent draft it
+ * had from browser storage straight away: the text, attachment chips, goal
+ * mode, the kept send id and the failed-send list. Before this the text stayed
+ * in localStorage after the conversation was gone. */
+export function forgetDeletedDrafts(owner: DeletedDraftOwner, store: Store = getStore()): void {
+  const ids = new Set<string>();
+  for (const key of [KEY, ATTACHMENTS_KEY, SEND_IDS_KEY, CHANNEL_MODES_KEY, FAILED_SENDS_KEY]) {
+    const values = read(store, key);
+    const owned = Object.keys(values).filter((id) => draftBelongsTo(id, owner));
+    if (!owned.length) continue;
+    for (const id of owned) { ids.add(id); delete values[id]; }
+    try {
+      if (!Object.keys(values).length && store?.removeItem) store.removeItem(key);
+      else store?.setItem(key, JSON.stringify(values));
+    } catch {
+      /* best-effort, like every draft write */
+    }
+  }
+  const memoryIds = [...draftRevisions.keys(), ...restoredSendIds.keys(), ...failedSends.keys(), ...loadedFailedSends, ...channelModeMemory(store).keys()];
+  for (const id of memoryIds) if (draftBelongsTo(id, owner)) ids.add(id);
+  for (const id of ids) {
+    forgottenDrafts.add(id);
+    restoredSendIds.delete(id);
+    failedSends.delete(id);
+    loadedFailedSends.delete(id);
+    channelModeMemory(store).delete(id);
+    draftRevisions.set(id, draftRevision(id) + 1);
+  }
+  if ("threadId" in owner) replyDrafts.delete(owner.threadId);
 }
 
 // Reaching for localStorage is itself a failure point: on an origin with

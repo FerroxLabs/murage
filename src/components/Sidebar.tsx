@@ -3,6 +3,7 @@ import { errorPreview } from "@/lib/error-preview";
 import { hostStoppedLabel } from "@/lib/host-stop";
 import { folderTrustLabel } from "@/lib/folder-trust";
 import { plainText } from "@/lib/plain-text";
+import { useAnchoredMenu, type MenuAnchor } from "@/lib/menu-placement";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -381,10 +382,8 @@ export function sidebarBotPreview(bot: Bot): string {
   return plainText(last.text ?? "");
 }
 
-interface MenuState {
+interface MenuState extends MenuAnchor {
   botId: string;
-  x: number;
-  y: number;
 }
 
 export function sidebarGroupPreview(group: Group, bots: Bot[]): string {
@@ -483,7 +482,7 @@ function GroupListItem({
 }: {
   group: Group;
   density: SidebarDensity;
-  onMenu: (menu: { groupId: string; x: number; y: number }) => void;
+  onMenu: (menu: { groupId: string } & MenuAnchor) => void;
   onNavigate: () => void;
 }) {
   const { state, dispatch } = useStore();
@@ -566,7 +565,7 @@ function GroupListItem({
         onClick={(event) => {
           event.stopPropagation();
           const rect = event.currentTarget.getBoundingClientRect();
-          onMenu({ groupId: group.id, x: rect.left, y: rect.bottom });
+          onMenu({ groupId: group.id, x: rect.left, y: rect.bottom, anchorTop: rect.top });
         }}
         aria-label={`More actions for ${group.name}`}
         aria-haspopup="menu"
@@ -589,7 +588,7 @@ function RoomContextMenu({
   onSnooze,
   snoozable = false,
 }: {
-  menu: { groupId: string; x: number; y: number };
+  menu: { groupId: string } & MenuAnchor;
   onClose: () => void;
   onRequestDelete: (group: { id: string; name: string }) => void;
   onMoveToSection: (groupId: string) => void;
@@ -603,6 +602,8 @@ function RoomContextMenu({
   const group = state.groups.find((g) => g.id === menu.groupId);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(group?.name ?? "");
+  // Measured and kept inside the window: flips above the row, or scrolls.
+  const placed = useAnchoredMenu<HTMLDivElement>(menu);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -627,13 +628,12 @@ function RoomContextMenu({
     if (name) dispatch({ type: "patchGroup", groupId: group.id, patch: { name } });
     onClose();
   };
-  const top = Math.min(menu.y, window.innerHeight - 204);
-  const left = Math.min(menu.x, window.innerWidth - 240);
   return createPortal(
     <div
       data-room-menu
-      style={{ top, left }}
-      className="fixed z-40 w-[228px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60"
+      ref={placed.ref}
+      style={placed.style}
+      className="fixed z-40 w-[228px] overflow-y-auto overflow-x-hidden overscroll-contain rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60"
     >
       {renaming ? (
         <div className="flex items-center gap-1 px-2 py-1">
@@ -871,7 +871,7 @@ function SectionPicker({
 }: {
   /** the target's current section; undefined = none */
   current: string | undefined;
-  anchor: { x: number; y: number };
+  anchor: MenuAnchor;
   onClose: () => void;
   /** "" clears — the server drops an empty section */
   onAssign: (section: string) => void;
@@ -879,6 +879,7 @@ function SectionPicker({
   const { state } = useStore();
   const [name, setName] = useState("");
   const trimmed = name.trim();
+  const placed = useAnchoredMenu<HTMLDivElement>(anchor);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -909,14 +910,12 @@ function SectionPicker({
     onClose();
   };
 
-  const top = Math.max(8, Math.min(anchor.y, window.innerHeight - 300));
-  const left = Math.min(anchor.x, window.innerWidth - 260);
-
   return (
     <div
       data-section-picker
-      style={{ top, left }}
-      className="fixed z-40 w-[236px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-2 shadow-2xl shadow-black/60"
+      ref={placed.ref}
+      style={placed.style}
+      className="fixed z-40 w-[236px] overflow-y-auto overflow-x-hidden overscroll-contain rounded-xl border border-hairline/50 bg-card py-2 shadow-2xl shadow-black/60"
     >
       <div className="px-3.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
         Move to team
@@ -1116,6 +1115,9 @@ export function BotContextMenu({
 }) {
   const { state, dispatch } = useStore();
   const bot = state.bots.find((b) => b.id === menu.botId);
+  // Measured and kept inside the window. A fixed height guess put Archive and
+  // Delete below the bottom edge for a row in the lower half of the sidebar.
+  const placed = useAnchoredMenu<HTMLDivElement>(menu);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -1150,10 +1152,6 @@ export function BotContextMenu({
         : visibleBotCount <= 1
           ? "Keep at least one active bot"
           : undefined;
-  // keep the menu on-screen near the click
-  const top = Math.max(8, Math.min(menu.y, window.innerHeight - 380));
-  const left = Math.min(menu.x, window.innerWidth - 240);
-
   const item = (
     icon: React.ReactNode,
     label: string,
@@ -1199,8 +1197,9 @@ export function BotContextMenu({
       role="menu"
       aria-label={`Actions for ${bot.name}`}
       onKeyDown={onMenuKeyDown}
-      style={{ top, left }}
-      className="fixed z-40 w-[228px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60"
+      ref={placed.ref}
+      style={placed.style}
+      className="fixed z-40 w-[228px] overflow-y-auto overflow-x-hidden overscroll-contain rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60"
     >
       {[
         item(
@@ -1426,7 +1425,7 @@ function BotListItem({
    *  is not a right-click goes through this. */
   const openMenuAt = (element: HTMLElement) => {
     const rect = element.getBoundingClientRect();
-    onMenu({ botId: bot.id, x: rect.left, y: rect.bottom });
+    onMenu({ botId: bot.id, x: rect.left, y: rect.bottom, anchorTop: rect.top });
   };
   // The menu must be reachable without a pointer AND without a right-click:
   // Shift+F10 and the dedicated ContextMenu key (whose native event carries
@@ -1973,14 +1972,14 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const importReturnRef = useRef<HTMLButtonElement>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [sectionPicker, setSectionPicker] = useState<MenuState | null>(null);
-  const [roomMenu, setRoomMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
+  const [roomMenu, setRoomMenu] = useState<({ groupId: string } & MenuAnchor) | null>(null);
   // Deleting a bot or a room is irreversible and was one click. The dialog
   // lives here rather than in the context menus because those close on click,
   // which would unmount the confirmation the moment it opened.
   const [pendingDelete, setPendingDelete] = useState<
     { kind: "bot" | "room"; id: string; name: string } | null
   >(null);
-  const [roomSectionPicker, setRoomSectionPicker] = useState<{ groupId: string; x: number; y: number } | null>(null);
+  const [roomSectionPicker, setRoomSectionPicker] = useState<({ groupId: string } & MenuAnchor) | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   // null = closed. The value says which of the two the "+" menu asked for,
   // because a project and a channel are made by the same panel.
@@ -1997,7 +1996,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const [inboxOpen, setInboxOpen] = useState(false);
   const approvals = usePendingApprovals(desktop === true, state.connected);
   const threadAttention = useThreadAttention();
-  const [snoozeTarget, setSnoozeTarget] = useState<{ threadId: string; name: string; x: number; y: number } | null>(null);
+  const [snoozeTarget, setSnoozeTarget] = useState<({ threadId: string; name: string } & MenuAnchor) | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const toolsTriggerRef = useRef<HTMLButtonElement>(null);
   // What's new: opens by itself once after an update (desktop only), and
@@ -2951,9 +2950,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           onArchive={(bot) => void archiveBot(bot)}
           onToggleHidden={(bot) => void toggleSidebarHidden(bot)}
           onRequestDelete={(bot) => setPendingDelete({ kind: "bot", id: bot.id, name: bot.name })}
-          onMoveToSection={(botId) => setSectionPicker({ botId, x: menu.x, y: menu.y })}
+          onMoveToSection={(botId) => setSectionPicker({ botId, x: menu.x, y: menu.y, anchorTop: menu.anchorTop })}
           snoozable={desktop === true}
-          onSnooze={(bot) => setSnoozeTarget({ threadId: bot.threadId, name: bot.name, x: menu.x, y: menu.y })}
+          onSnooze={(bot) => setSnoozeTarget({ threadId: bot.threadId, name: bot.name, x: menu.x, y: menu.y, anchorTop: menu.anchorTop })}
         />
       )}
       {snoozeTarget && (
@@ -2994,10 +2993,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           menu={roomMenu}
           onClose={() => setRoomMenu(null)}
           onRequestDelete={(group) => setPendingDelete({ kind: "room", id: group.id, name: group.name })}
-          onMoveToSection={(groupId) => setRoomSectionPicker({ groupId, x: roomMenu.x, y: roomMenu.y })}
+          onMoveToSection={(groupId) => setRoomSectionPicker({ groupId, x: roomMenu.x, y: roomMenu.y, anchorTop: roomMenu.anchorTop })}
           onArchive={(group) => void archiveGroup(group)}
           snoozable={desktop === true}
-          onSnooze={(group) => setSnoozeTarget({ threadId: group.threadId, name: group.name, x: roomMenu.x, y: roomMenu.y })}
+          onSnooze={(group) => setSnoozeTarget({ threadId: group.threadId, name: group.name, x: roomMenu.x, y: roomMenu.y, anchorTop: roomMenu.anchorTop })}
         />
       )}
       {roomSectionPicker && (

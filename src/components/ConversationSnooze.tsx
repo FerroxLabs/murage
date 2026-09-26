@@ -3,12 +3,13 @@
 //
 // Snooze a conversation, see that it is snoozed, and see that a question is
 // waiting in it. Rules in src/lib/thread-snooze.ts and shared/thread-snooze.ts.
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { createPortal } from "react-dom";
 import { BellOff, CalendarClock, MessageCircleQuestion } from "lucide-react";
 import { api } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { changeThreadSnooze } from "@/lib/thread-attention";
+import { useAnchoredMenu, type MenuAnchor } from "@/lib/menu-placement";
 import {
   SNOOZE_MAX_MS, formatSnoozedUntil, pickedTimeToEpoch, pickedTimeValue, questionBadgeLabel, snoozePresets, type SnoozeClock,
 } from "@/lib/thread-snooze";
@@ -132,8 +133,9 @@ export function SnoozeChoices({ threadId, name, until, blocked, onDone, now: now
 }
 
 /** The same choices, floating where a sidebar menu was. */
-export function SnoozePopover({ x, y, onClose, ...choices }: Parameters<typeof SnoozeChoices>[0] & { x: number; y: number; onClose: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
+export function SnoozePopover({ x, y, anchorTop, onClose, ...choices }: Parameters<typeof SnoozeChoices>[0] & MenuAnchor & { onClose: () => void }) {
+  // Measured and kept inside the window, like the menu it replaces.
+  const { ref, style } = useAnchoredMenu<HTMLDivElement>({ x, y, anchorTop });
   useEffect(() => {
     const onDown = (event: MouseEvent) => { if (!(event.target instanceof Node) || !ref.current?.contains(event.target)) onClose(); };
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
@@ -143,12 +145,10 @@ export function SnoozePopover({ x, y, onClose, ...choices }: Parameters<typeof S
     return () => { window.removeEventListener("mousedown", onDown); window.removeEventListener("keydown", onKey); };
   }, [onClose]);
   const width = Math.min(272, window.innerWidth - 16);
-  const top = Math.max(8, Math.min(y, window.innerHeight - 320));
-  const left = Math.max(8, Math.min(x, window.innerWidth - width - 8));
   return createPortal(
     <div ref={ref} role="dialog" aria-label={`Snooze ${choices.name}`} data-snooze-popover=""
-      style={{ top, left, width }}
-      className="fixed z-50 rounded-xl border border-hairline/50 bg-card p-1.5 shadow-2xl shadow-black/60">
+      style={{ ...style, width }}
+      className="fixed z-50 overflow-y-auto overscroll-contain rounded-xl border border-hairline/50 bg-card p-1.5 shadow-2xl shadow-black/60">
       <SnoozeChoices {...choices} onDone={() => { choices.onDone(); onClose(); }} />
     </div>,
     document.body,

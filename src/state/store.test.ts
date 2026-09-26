@@ -1711,7 +1711,11 @@ describe("signed out", () => {
   it("a failed conversation Delete shows a plain sentence, never the server's text", () => {
     const source = readFileSync(fileURLToPath(new URL("./store.tsx", import.meta.url)), "utf8");
     for (const kind of ["deleteTask", "deleteGroupTask"]) {
-      const block = source.slice(source.indexOf(`case "${kind}":\n          api(`));
+      // The side-effect case (the reducer has one of the same name): it
+      // removes the conversation's drafts first, then calls the server.
+      const at = source.indexOf(`case "${kind}":\n          forgetDeletedDrafts(`);
+      expect(at, kind).toBeGreaterThan(0);
+      const block = source.slice(at);
       const body = block.slice(0, block.indexOf("break;"));
       expect(body, kind).toContain("showError(new Error(deletionErrorSentence(e)))");
       expect(body, kind).not.toMatch(/\.catch\(showError\)/);
