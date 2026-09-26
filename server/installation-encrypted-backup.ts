@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { ZipFile } from "yazl";
 import { fidelityManifestSchema, type BackupSelection, type FidelityManifest } from "../shared/installation-backup.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
-import { InstallationSnapshotError, withOfflineInstallation } from "./installation-database-snapshot.ts";
+import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { stageInstallationStateWhileOwned, type StateSnapshotManifest } from "./installation-state-snapshot.ts";
 import { inspectArchiveEntries, portableArchivePath, validateArchiveFileList, validateInstallationArchiveManifest, writeInstallationStageArchive, type ArchiveLimits } from "./installation-archive.ts";
 import { inventoryFidelity, openFidelitySource } from "./installation-fidelity-snapshot.ts";
@@ -129,11 +129,12 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
   const sourceRoot=dataDirLeasePaths(dataDir).canonicalDataDir;
   if(parent===sourceRoot||parent.startsWith(sourceRoot+sep))fail("DESTINATION_INSIDE_INSTALLATION");
   try{lstatSync(target);fail("DESTINATION_EXISTS");}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
-  const execute=async(scratch:string,options:EncryptedBackupOptions&{recipient:string;selection:BackupSelection})=>{
+  const execute=async(scratch:string,options:EncryptedBackupOptions&{recipient:string;selection:BackupSelection},held?:OfflineInstallation)=>{
   const ciphertext=join(scratch,"backup.age");
   let retain=false,step:CaptureStep="offline-open";
   try{
-    const manifest=await withOfflineInstallation(dataDir,async installation=>{
+    const offline=<T,>(work:(installation:OfflineInstallation)=>Promise<T>)=>held?work(held):withOfflineInstallation(dataDir,work);
+    const manifest=await offline(async installation=>{
       if(parent===installation.dataDir||parent.startsWith(installation.dataDir+sep))fail("DESTINATION_INSIDE_INSTALLATION");
       step="stage";
       const stage=await stageInstallationStateWhileOwned(installation,scratch,options);
@@ -181,7 +182,20 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
   if(process.platform!=="win32")return execute(mkdtempSync(join(parent,".murage-encrypted-write-")),options);
   let scratch:string|undefined,success=false;
   try{
-    const result=await withWindowsPrivateStage(parent,options,async(directory,signal)=>{scratch=directory;return execute(directory,{...options,signal});});
+    // The data-folder lease is taken before the native helper starts and let
+    // go only after it has closed. The helper pins every folder above the
+    // backup folder against change (share-read only), and the lease records
+    // are published by hard link into the folder that holds the data folder:
+    // by default the same C:\Users\<name> that sits above "Murage Backups".
+    // Taken the other way round, that link failed with EBUSY and every
+    // Windows backup stopped with ENCRYPTED_BACKUP_FAILED.
+    let result:{value:Awaited<ReturnType<typeof execute>>;directory:string};
+    try{
+      result=await withOfflineInstallation(dataDir,installation=>withWindowsPrivateStage(parent,options,async(directory,signal)=>{scratch=directory;return execute(directory,{...options,signal},installation);}));
+    }catch(error){
+      if(error instanceof InstallationSnapshotError)throw error;
+      throw withCaptureStep(new InstallationSnapshotError("ENCRYPTED_BACKUP_FAILED",{cause:error}),(error as {name?:string}|undefined)?.name==="DataDirLeaseError"?"offline-open":"private-stage");
+    }
     // Publish only after the native private-stage lease and all age writers close.
     try{linkSync(join(result.directory,"backup.age"),target);}
     catch(error){throw withCaptureStep(new InstallationSnapshotError((error as NodeJS.ErrnoException).code==="EEXIST"?"DESTINATION_EXISTS":"ENCRYPTED_BACKUP_FAILED",{cause:error}),"publish");}
