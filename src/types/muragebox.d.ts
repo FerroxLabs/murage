@@ -154,7 +154,9 @@ type SkillRecordingPayload = {
     closedApp:boolean;
     lastClosedResult?:import("../../shared/backup-schedule").BackupClosedResult;
     /** Why the job can't be set up, when Murage can tell. */
-    blocked?:"data-folder-shared"|"volume-app"|"volume-data"|"volume-both";
+    blocked?:"data-folder-shared"|"volume-app"|"volume-data"|"volume-both"|"app-file-shared"|"app-moved"|"job-wont-run"|"job-outdated";
+    /** With blocked "app-file-shared": the app file to fix (chmod 755). */
+    appFile?:string;
   }
   interface Window {
     muragebox?: {

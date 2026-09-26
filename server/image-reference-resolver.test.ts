@@ -127,7 +127,8 @@ describe("resolve-image-reference: one exact-byte flow", () => {
     const messages = f.store.messagesFor(f.threadId);
     expect(messages).toHaveLength(before + 1);
     const disclosure = messages.at(-1)!;
-    expect(disclosure.text).toContain("Nothing is generated or billed until you approve");
+    expect(disclosure.text).toContain("Nothing is generated until you approve");
+    expect(disclosure.text).not.toMatch(/billed/);
     expect(disclosure.text).toContain("refs/sketch one.png");
     expect(disclosure.attachments?.map(item => item.path)).toEqual([join(f.attachments, c!.id), join(f.attachments, d!.id)]);
     expect(JSON.stringify(result)).not.toContain(f.root);

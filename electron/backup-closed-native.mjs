@@ -3,7 +3,7 @@ import {userInfo} from "node:os";
 import {lstatSync,mkdirSync,realpathSync,unlinkSync,writeFileSync} from "node:fs";
 import path from "node:path";
 import {buildClosedBackupJob} from "./backup-closed-jobs.mjs";
-import {closedInvocation,readClosedPrivateFile} from "./backup-closed-profile.mjs";
+import {closedInvocation,closedProfileId,readClosedPrivateFile} from "./backup-closed-profile.mjs";
 
 const fail=(code="CLOSED_NATIVE_REVIEW_REQUIRED")=>{throw Object.assign(new Error("Closed backup registration requires review."),{code});};
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
@@ -36,10 +36,10 @@ export function selectedMacJobEnabled(stdout,label){
   return !disabled;
 }
 
-function defaultRun({executable,args,input}){
+function defaultRun({executable,args,input,timeoutMs=10000}){
   return new Promise((resolve,reject)=>{
     const env={HOME:userInfo().homedir,PATH:"/usr/bin:/bin",LANG:"C",LC_ALL:"C"};for(const key of ["XDG_RUNTIME_DIR","DBUS_SESSION_BUS_ADDRESS"])if(typeof process.env[key]==="string")env[key]=process.env[key];
-    const child=execFile(executable,args,{env,encoding:"utf8",timeout:10000,maxBuffer:LIMIT,windowsHide:true},(error,stdout)=>{
+    const child=execFile(executable,args,{env,encoding:"utf8",timeout:timeoutMs,maxBuffer:LIMIT,windowsHide:true},(error,stdout)=>{
       if(error&&(error.killed||typeof error.code!=="number")){reject(Object.assign(new Error("Closed backup native command unavailable."),{code:"CLOSED_NATIVE_UNAVAILABLE"}));return;}
       resolve({code:error?.code??0,stdout});
     });
@@ -47,6 +47,10 @@ function defaultRun({executable,args,input}){
   });
 }
 const PROPERTIES=["Id","LoadState","ActiveState","SubState","UnitFileState","FragmentPath","DropInPaths","NeedDaemonReload","MainPID"];
+// How long the first, proving run of a Linux job may take. It normally ends in
+// about a second (nothing is due while Murage is open, and a due capture is
+// refused as busy by the open app), but an AppImage mounts itself first.
+export const CLOSED_FIRST_RUN_TIMEOUT_MS=120000;
 function properties(stdout,requested){
   if(typeof stdout!=="string"||Buffer.byteLength(stdout)>LIMIT)fail("CLOSED_NATIVE_UNAVAILABLE");const out={};
   for(const line of stdout.trimEnd().split("\n")){const at=line.indexOf("=");if(at<1)fail("CLOSED_NATIVE_UNAVAILABLE");const key=line.slice(0,at);if(!requested.includes(key)||Object.hasOwn(out,key))fail("CLOSED_NATIVE_UNAVAILABLE");out[key]=line.slice(at+1);}
@@ -69,6 +73,14 @@ export function createNativeClosedBackupProvider({platform=process.platform,owne
   }
   function validate(job){
     if(!supported||job?.owner?.uid!==owner.uid||Object.keys(job.owner).length!==1||job?.descriptor?.platform!==platform)fail("CLOSED_NATIVE_UNAVAILABLE");
+    // An older Murage's Linux job (readLegacyClosedBackupStage): its unit text
+    // is checked against its own record, not rebuilt; only read and remove
+    // ever see it, never install.
+    if(job.legacy===true){
+      const jobId=`com.murage.backup.${closedProfileId(job.descriptor)}`;
+      if(platform!=="linux"||job.jobId!==jobId||!same(job.files.map(file=>file.name),[`${jobId}.service`,`${jobId}.timer`])||job.files.some(file=>typeof file.text!=="string"||Buffer.byteLength(file.text)>LIMIT))fail();
+      return job;
+    }
     const expected=buildClosedBackupJob(job.descriptor,job.descriptorPath,{backupSupported:true});
     if(!expected.supported||!same(expected.owner,owner)||expected.jobId!==job.jobId||!same(expected.files,job.files)||!/^com\.murage\.backup\.[a-f0-9]{64}$/.test(job.jobId))fail();return expected;
   }
@@ -100,7 +112,7 @@ export function createNativeClosedBackupProvider({platform=process.platform,owne
       return{absent:false,registered:enabled,enabled,running:value.pid===null||value.pid>0,activityKnown:value.pid!==null};
     }
     const values={};
-    for(const kind of ["service","timer"]){const requested=kind==="service"?PROPERTIES:[...PROPERTIES.filter(key=>key!=="MainPID"),"Triggers"];const name=`${job.jobId}.${kind}`,result=await command("/usr/bin/systemctl",["--user","show","--all","--no-pager",`--property=${requested.join(",")}`,name]);if(result.code!==0)fail("CLOSED_NATIVE_UNAVAILABLE");const value=properties(result.stdout,requested);if(value.Id!==name)fail();
+    for(const kind of ["service","timer"]){const requested=kind==="service"?[...PROPERTIES,"Result"]:[...PROPERTIES.filter(key=>key!=="MainPID"),"Triggers"];const name=`${job.jobId}.${kind}`,result=await command("/usr/bin/systemctl",["--user","show","--all","--no-pager",`--property=${requested.join(",")}`,name]);if(result.code!==0)fail("CLOSED_NATIVE_UNAVAILABLE");const value=properties(result.stdout,requested);if(value.Id!==name)fail();
       if(value.LoadState!=="not-found"){
         if(value.LoadState!=="loaded"||value.FragmentPath!==path.join(root,name)||value.DropInPaths!==""||value.NeedDaemonReload!=="no")fail();
         if(kind==="timer"&&value.Triggers!==`${job.jobId}.service`)fail();
@@ -108,22 +120,45 @@ export function createNativeClosedBackupProvider({platform=process.platform,owne
       if(kind==="service"&&(!/^(0|[1-9][0-9]*)$/.test(value.MainPID)||!Number.isSafeInteger(Number(value.MainPID))))fail("CLOSED_NATIVE_UNAVAILABLE");values[kind]=value;
     }
     const {service,timer}=values;const running=Number(service.MainPID)>0||!["inactive","failed"].includes(service.ActiveState);
-    return{absent:service.LoadState==="not-found"&&timer.LoadState==="not-found",registered:service.LoadState==="loaded"&&timer.LoadState==="loaded"&&timer.UnitFileState==="enabled"&&timer.ActiveState==="active",running,activityKnown:true};
+    // Result is the last run's outcome ("success" before any run). The trigger
+    // itself exits 0 whatever it decides, so anything else means the job's
+    // command could not run at all: the 0.1.60 AppImage trigger died on
+    // AppRun's --no-sandbox exactly like that, every minute, unseen.
+    const failing=service.LoadState==="loaded"&&service.Result!=="success";
+    return{absent:service.LoadState==="not-found"&&timer.LoadState==="not-found",registered:service.LoadState==="loaded"&&timer.LoadState==="loaded"&&timer.UnitFileState==="enabled"&&timer.ActiveState==="active",running,activityKnown:true,failing};
   }
-  async function read(job){validate(job);const files=disk(job),state=await native(job);if(!files){if(!state.absent)fail();return null;}return{jobId:job.jobId,owner:{uid:owner.uid},files,registered:state.registered,running:state.running,activityKnown:state.activityKnown};}
+  async function read(job){validate(job);const files=disk(job),state=await native(job);if(!files){if(!state.absent)fail();return null;}return{jobId:job.jobId,owner:{uid:owner.uid},files,registered:state.registered,running:state.running,activityKnown:state.activityKnown,...(state.failing?{failing:true}:{})};}
   async function compare(job,expected){const current=await read(job);if(!same(current,expected)||current?.running)fail();return current;}
   async function exclusive(fn){if(operation)fail();operation=true;try{return await fn();}finally{operation=false;}}
   async function install(job,{expected}={}){return exclusive(async()=>{
-    validate(job);const prior=await read(job);if(!same(prior,expected))fail();if(prior?.registered)return;if(prior?.running)fail();directory(true);
+    if(job?.legacy)fail();validate(job);const prior=await read(job);if(!same(prior,expected))fail();if(prior?.registered&&!prior.failing)return;if(prior?.running)fail();
+    // Registered but its command failed: take it down, then register it anew
+    // below, so it is proven by a fresh run.
+    if(prior?.failing){await rollback(job);if(await read(job))fail();}
+    directory(true);
     for(const file of job.files){try{const current=readClosedPrivateFile(path.join(root,file.name),{uid:owner.uid,maxBytes:LIMIT});if(current!==file.text)fail();}catch(error){if(error.code!=="ENOENT")throw error;writeFileSync(path.join(root,file.name),file.text,{flag:"wx",mode:0o600,flush:true});}}
     if(platform==="darwin"){
       const state=await read(job);if(state?.running)fail();if(!state?.registered){await mutate("/bin/launchctl",["enable",`gui/${owner.uid}/${job.jobId}`]);const again=await read(job);if(!again)fail();if(!again.registered){const latest=await native(job);if(!latest.absent||latest.running||!same(disk(job),job.files))fail();await mutate("/bin/launchctl",["bootstrap",`gui/${owner.uid}`,path.join(root,job.files[0].name)]);}}
     }else{
       // Read exact bytes again immediately before manager mutation.
       if(!same(disk(job),job.files))fail();await mutate("/usr/bin/systemctl",["--user","daemon-reload"]);const current=await read(job);if(current?.running)fail();await mutate("/usr/bin/systemctl",["--user","enable","--now",`${job.jobId}.timer`]);
+      // Registered is not enough: run the job once, now, exactly as systemd
+      // will every minute, and keep it only if its command really ran.
+      // (Starting a oneshot service waits for it; a run the timer already
+      // began is joined, not doubled.)
+      let ran=false;try{const started=await run({executable:"/usr/bin/systemctl",args:["--user","start",`${job.jobId}.service`],timeoutMs:CLOSED_FIRST_RUN_TIMEOUT_MS});ran=started?.code===0;}catch{ran=false;}
+      const after=await read(job).catch(()=>null);
+      if(!ran||!after?.registered||after.failing){await rollback(job);fail("CLOSED_NATIVE_JOB_WONT_RUN");}
     }
     const current=await read(job);if(!current?.registered)fail("CLOSED_NATIVE_UNAVAILABLE");
   });}
+  /** Takes down a Linux job whose first run failed, so nothing is left
+   * registered that cannot run. Best effort: each step is tried. */
+  async function rollback(job){
+    for(const args of [["--user","disable",`${job.jobId}.timer`],["--user","stop",`${job.jobId}.timer`]])await command("/usr/bin/systemctl",args).catch(()=>{});
+    try{if(same(disk(job),job.files))for(const file of job.files)unlinkSync(path.join(root,file.name));}catch{/* Refused below as not registered. */}
+    for(const args of [["--user","daemon-reload"],["--user","reset-failed",`${job.jobId}.service`]])await command("/usr/bin/systemctl",args).catch(()=>{});
+  }
   async function remove(job,{expected}={}){return exclusive(async()=>{
     validate(job);const current=await compare(job,expected);if(!current)return;
     if(platform==="darwin"){

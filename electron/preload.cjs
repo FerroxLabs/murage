@@ -11,6 +11,16 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 // Sandboxed preloads cannot require sibling files, so the check is inline.
 const RENDERER_ORIGIN_ARGUMENT = "--murage-renderer-origin=";
 
+/** ipcRenderer.invoke for a call whose refusal a person reads verbatim.
+ * Electron rejects with "Error invoking remote method '<channel>': Error:
+ * <message>"; only <message> was ever meant to be shown. */
+const IPC_WRAPPER = /^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/;
+function invokeShown(channel, ...args) {
+  return ipcRenderer.invoke(channel, ...args).catch((error) => {
+    throw new Error(String(error?.message ?? error).replace(IPC_WRAPPER, ""));
+  });
+}
+
 function bridgeOriginTrusted() {
   try {
     const argument = (process.argv ?? []).find(
@@ -241,10 +251,13 @@ contextBridge.exposeInMainWorld("muragebox", {
       return () => ipcRenderer.removeListener("skill-recorder:end", handler);
     },
   },
+  // Shown verbatim by the Skill recorder and Transcription settings: without
+  // the strip a refusal read "Error invoking remote method
+  // 'assemblyai:streaming-token': Error: …".
   transcription: {
-    status: () => ipcRenderer.invoke("assemblyai:status"),
-    setKey: (value) => ipcRenderer.invoke("assemblyai:set-key", value),
-    streamingToken: () => ipcRenderer.invoke("assemblyai:streaming-token"),
+    status: () => invokeShown("assemblyai:status"),
+    setKey: (value) => invokeShown("assemblyai:set-key", value),
+    streamingToken: () => invokeShown("assemblyai:streaming-token"),
   },
   /** Absolute path of a dropped File — Electron 32 removed File.path, and
    * only the preload can ask. "" when the drag carried no file on disk. */
@@ -344,20 +357,13 @@ contextBridge.exposeInMainWorld("muragebox", {
    * revalidates the real path (F4-T5). The refusal text is shown verbatim, so
    * strip the wrapper ipcRenderer adds around a main-process throw. */
   workspaceFileAction: (scope, relativePath, action) =>
-    ipcRenderer.invoke("desktop:workspace-file-action", scope, relativePath, action).catch((error) => {
-      const message = String(error?.message ?? error);
-      throw new Error(message.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, ""));
-    }),
+    invokeShown("desktop:workspace-file-action", scope, relativePath, action),
   /** Ask where to save a bot-created file (inside ~/.murage), copy it
    * there and reveal it. Returns the chosen path, or null if the user
    * cancelled the dialog. The chat bubble shows the
    * rejection text verbatim, so strip the "Error invoking remote method"
    * wrapper ipcRenderer adds around a main-process throw. */
-  saveFile: (filePath) =>
-    ipcRenderer.invoke("desktop:save-file", filePath).catch((error) => {
-      const message = String(error?.message ?? error);
-      throw new Error(message.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, ""));
-    }),
+  saveFile: (filePath) => invokeShown("desktop:save-file", filePath),
   /** Store a provider credential with OS-backed encryption. */
   mutateProviderConnection: (input) => ipcRenderer.invoke("model-provider:mutate", input),
   mutateFluxConnection: (input) => ipcRenderer.invoke("flux-connection:mutate", input),

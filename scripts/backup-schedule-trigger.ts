@@ -3,7 +3,7 @@ import path from "node:path";
 import {pathToFileURL} from "node:url";
 import {BackupCoordinator} from "../server/backup-coordinator.ts";
 import {runClosedBackupTrigger} from "../electron/backup-closed-trigger.mjs";
-import {CLOSED_DESCRIPTOR_FLAG} from "../electron/backup-closed-profile.mjs";
+import {APPRUN_NO_SANDBOX,CLOSED_DESCRIPTOR_FLAG} from "../electron/backup-closed-profile.mjs";
 import {assertClosedRegistration,closedControlDirectory} from "../electron/backup-closed-controller.mjs";
 import {createNativeClosedBackupProvider} from "../electron/backup-closed-native.mjs";
 
@@ -32,6 +32,9 @@ export function launchClosedCapture(invocation:any,{spawnChild=spawn,timeoutMs=3
   });
 }
 export async function runBackupScheduleTrigger(argv=process.argv.slice(2),{environment=process.env,provider=createNativeClosedBackupProvider(),launch=launchClosedCapture,now=Date.now,platform=process.platform,volumeProblem}:any={}){
+  // closedInvocation puts --no-sandbox last on Linux so an AppImage's AppRun
+  // does not put it first, where Electron-as-Node refuses it.
+  if(argv.length===3&&argv[2]===APPRUN_NO_SANDBOX)argv=argv.slice(0,2);
   if(argv.length!==2||argv[0]!==CLOSED_DESCRIPTOR_FLAG)return{status:"unavailable"};
   return runClosedBackupTrigger({descriptorPath:argv[1],environment,platform,
     validateRegistration:async(descriptor:any,file:string)=>{await assertClosedRegistration(descriptor,file,provider);return true;},

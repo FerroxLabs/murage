@@ -166,7 +166,7 @@ export function ModelsSettings() {
     <section aria-labelledby="models-heading" className="rounded-xl border border-hairline/40 p-4">
       <h3 id="models-heading" className="text-[15px] font-medium text-ink">Model connections</h3>
       <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Paste one model API key. Recognition happens on this computer; unclear keys need a provider choice.</p>
-      <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">API usage is billed to that provider account, separately from engine subscriptions.</p>
+      <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">API usage goes through that provider account, separately from engine subscriptions.</p>
       <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void add(); }}>
         <label className="block text-[13px]">API key<input ref={key} type="password" aria-label="Model API key" defaultValue="" autoComplete="off" spellCheck={false} maxLength={4096} disabled={Boolean(busy)} onInput={recognize} placeholder="Paste a model API key" className={`${input} mt-1.5`} /></label>
         {hasKey && !keyIssue && (hints.length === 1 ? <p className="text-[12px] text-success">Recognized as {labels[hints[0]]}. Nothing is sent until you add the connection.</p> : <fieldset><legend className="text-[12px] text-ink-secondary">Which provider issued this key?</legend><div className="mt-2 grid grid-cols-2 gap-2">{(hints.length ? hints : presets).map(preset => <button key={preset} type="button" aria-pressed={chosen === preset} disabled={Boolean(busy)} onClick={() => setChosen(preset)} className={`${button} ${chosen === preset ? "ring-2 ring-accent" : ""}`}>{labels[preset]}</button>)}</div></fieldset>)}

@@ -187,7 +187,7 @@ describe("every test outcome is a plain sentence with a next action (spec T1)", 
   });
 
   it("promises the test costs nothing, because that is the question it raises", () => {
-    expect(nextActionFor(server(), model()).help).toMatch(/nothing is billed|no cloud/i);
+    expect(nextActionFor(server(), model()).help).toMatch(/nothing is sent to a cloud provider/i);
   });
 });
 

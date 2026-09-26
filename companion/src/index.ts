@@ -525,7 +525,7 @@ const listen = (server: ReturnType<typeof createServer>, port: number, host: str
       // A second copy of the sidecar is the usual cause once the harness's
       // own ports are ruled out above, and "close whatever is using it"
       // sends someone hunting through `lsof` for a process they started.
-      const hint = ` — another copy of the companion may already be running; ${
+      const hint = `. Another copy of the companion may already be running; ${
         port === COMPANION_PORT
           ? "MURAGE_COMPANION_PORT"
           : port === BROWSER_PORT
@@ -572,7 +572,7 @@ async function main(): Promise<void> {
   if (COMPANION_BIND === null) {
     throw new Error(
       `MURAGE_COMPANION_BIND is set to "${COMPANION_BIND_RAW}", which is not one of ` +
-        `lan, loopback, tailnet, off. Refusing to start rather than guessing — the guess would be ` +
+        `lan, loopback, tailnet, off. Refusing to start rather than guessing, because the guess would be ` +
         `"lan", which binds 0.0.0.0.`,
     );
   }
@@ -622,7 +622,7 @@ async function main(): Promise<void> {
   // on every failure: not installed, not logged in, not running all just mean
   // "no name", and the address still works.
   const tailscaleTried: string[] = [];
-  await refreshTailnetName((cli, outcome) => tailscaleTried.push(`  ${cli} — ${outcome}`)).catch(() => {});
+  await refreshTailnetName((cli, outcome) => tailscaleTried.push(`  ${cli}: ${outcome}`)).catch(() => {});
 
   // After the tailnet name, because the bind host and the door's own host
   // allowlist both depend on it. Under `auto` a machine with no tailnet gets

@@ -70,6 +70,11 @@ export function relaunchBlockedCode(options = {}) {
 }
 
 const MOUNT_PATH_LISTS = ["PATH", "LD_LIBRARY_PATH", "XDG_DATA_DIRS", "GSETTINGS_SCHEMA_DIR"];
+// electron-builder's AppRun sets XDG_DATA_DIRS to
+//   ${APPDIR}/usr/share/:<what it was>:/usr/share/gnome:/usr/local/share/:/usr/share/
+// on every start. Dropping the mount's entry alone left that fixed tail, so
+// each restart (a daily backup restarts twice) added three more entries.
+const APPRUN_XDG_TAIL = ["/usr/share/gnome", "/usr/local/share/", "/usr/share/"];
 /** The environment for the restarted AppImage: this one, minus what the old
  * mount added. The AppImage runtime and AppRun set these again for the new
  * mount; a stale APPDIR would even be preferred by AppRun over the new one. */
@@ -79,7 +84,12 @@ export function appImageRelaunchEnv(env, appDir) {
   const inMount = entry => entry === appDir || entry.startsWith(appDir + "/");
   for (const name of MOUNT_PATH_LISTS) {
     if (typeof next[name] !== "string") continue;
-    const kept = next[name].split(":").filter(entry => entry && !inMount(entry));
+    const entries = next[name].split(":");
+    let kept = entries.filter(entry => entry && !inMount(entry));
+    // Undo AppRun's XDG_DATA_DIRS exactly: only when its mount entry leads
+    // (so AppRun really made this value) and its fixed tail is there.
+    if (name === "XDG_DATA_DIRS" && entries[0] && inMount(entries[0].replace(/\/$/, ""))
+      && kept.slice(-APPRUN_XDG_TAIL.length).join(":") === APPRUN_XDG_TAIL.join(":")) kept = kept.slice(0, -APPRUN_XDG_TAIL.length);
     if (kept.length) next[name] = kept.join(":"); else delete next[name];
   }
   return next;

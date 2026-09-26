@@ -399,7 +399,7 @@ ipcMain.handle("backup-schedule:configure",(_event,...args)=>{if(args.length!==2
 for(const action of ["status","stage","install","disable"]){
   ipcMain.handle(`backup-closed:${action}`,(_event,...args)=>{
     if(args.length||!closedBackupController||closedBackupRequested||backupMode.isPreparing()||backupScheduleHost?.isPreparing())throw Error("BACKUP_CLOSED_UNAVAILABLE");
-    return Promise.resolve().then(()=>closedBackupController[action]()).catch(error=>{throw Error(error?.message==="BACKUP_CLOSED_VOLUME_UNREADABLE"?error.message:"BACKUP_CLOSED_REVIEW_REQUIRED");});
+    return Promise.resolve().then(()=>closedBackupController[action]()).catch(error=>{throw Error(["BACKUP_CLOSED_VOLUME_UNREADABLE","BACKUP_CLOSED_JOB_WONT_RUN"].includes(error?.message)?error.message:"BACKUP_CLOSED_REVIEW_REQUIRED");});
   });
 }
 for(const [action,arity] of [["status",0],["save",2],["testConnection",2],["trustServer",3],["remove",2],["createRepositoryPassword",2],["saveRepositoryPasswordCopy",2],["selectRepositoryPassword",2],["saveMaintenanceCredentials",3],["connect",2],["uploadLatest",3],["setAutomaticUpload",3],["reconcileLatest",3],["listBackups",2],["downloadBackup",3],["previewRetention",3],["applyRetention",4],["clearRetentionReview",3]]){

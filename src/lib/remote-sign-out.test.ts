@@ -25,9 +25,9 @@ describe("signing this device out", () => {
 
   it("says the computer's own sentence when it could not finish", async () => {
     const result = await signOutThisDevice(
-      reply(500, { error: "could not sign this device out on the computer — try again" }) as unknown as typeof fetch,
+      reply(500, { error: "Could not sign this device out on the computer. Try again." }) as unknown as typeof fetch,
     );
-    expect(result).toEqual({ ok: false, error: "could not sign this device out on the computer — try again" });
+    expect(result).toEqual({ ok: false, error: "Could not sign this device out on the computer. Try again." });
   });
 
   it("says the computer is unreachable when the request never lands", async () => {

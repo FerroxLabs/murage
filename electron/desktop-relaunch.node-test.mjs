@@ -3,15 +3,18 @@
 // the AppImage's temporary mount, which is gone once the old process exits.
 // The restart now goes through the AppImage file itself.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { APPIMAGE_RELAUNCH_SCRIPT, appImageRelaunchEnv, relaunchBlockedCode, relaunchDesktop, runningAppImage } from "./desktop-relaunch.mjs";
 
+const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MOUNT = "/tmp/.mount_MuragemkCion";
 const APPIMAGE = "/home/tester/Murage-0.1.60-x86_64.AppImage";
 const appImageEnv = { APPIMAGE, APPDIR: MOUNT, ARGV0: "./Murage-0.1.60-x86_64.AppImage", OWD: "/home/tester",
@@ -48,10 +51,35 @@ test("the restarted AppImage gets this environment minus what the old mount adde
   const env = appImageRelaunchEnv(appImageEnv, MOUNT);
   for (const name of ["APPDIR", "APPIMAGE", "ARGV0", "OWD", "LD_LIBRARY_PATH", "GSETTINGS_SCHEMA_DIR"]) assert.equal(env[name], undefined, name);
   assert.equal(env.PATH, "/usr/local/bin:/usr/bin");
-  assert.equal(env.XDG_DATA_DIRS, "/usr/share/gnome:/usr/local/share/:/usr/share/");
+  // AppRun's fixed tail goes too: the session had no XDG_DATA_DIRS.
+  assert.equal(env.XDG_DATA_DIRS, undefined);
   assert.equal(env.MURAGE_DATA_DIR, "/home/tester/rt2/ai/data");
   // A similarly named folder is not the mount.
   assert.equal(appImageRelaunchEnv({ PATH: `${MOUNT}x/bin:/usr/bin` }, MOUNT).PATH, `${MOUNT}x/bin:/usr/bin`);
+});
+
+// 0.1.60 audit L-F4: XDG_DATA_DIRS grew by AppRun's three-entry tail on
+// every restart. The export below is the exact line the shipped AppRun runs.
+test("XDG_DATA_DIRS does not grow with AppImage restarts", { skip: process.platform === "win32" || !existsSync(path.join(repo, "node_modules", ".pnpm")) }, () => {
+  const pnpm = path.join(repo, "node_modules", ".pnpm");
+  const require = createRequire(import.meta.url);
+  const { generateAppRunScript } = require(path.join(pnpm, readdirSync(pnpm).find(n => n.startsWith("app-builder-lib@")), "node_modules", "app-builder-lib", "out", "targets", "appimage", "appImageUtil.js"));
+  const line = generateAppRunScript({ ExecutableName: "murage", ProductName: "Murage", ProductFilename: "Murage" }).split("\n").find(l => l.startsWith("export XDG_DATA_DIRS="));
+  const appRunXdg = (env, appDir) => spawnSync("/bin/bash", ["-c", `${line}; printf %s "$XDG_DATA_DIRS"`], { env: { APPDIR: appDir, ...(env.XDG_DATA_DIRS ? { XDG_DATA_DIRS: env.XDG_DATA_DIRS } : {}) }, encoding: "utf8" }).stdout;
+  for (const session of ["/usr/share/ubuntu:/usr/local/share/:/usr/share/:/var/lib/snapd/desktop", undefined]) {
+    let env = session ? { XDG_DATA_DIRS: session } : {};
+    const seen = [];
+    for (let restart = 0; restart < 10; restart++) {
+      const appDir = `/tmp/.mount_Murage${restart}`;
+      env = { XDG_DATA_DIRS: appRunXdg(env, appDir) };   // AppRun on this start
+      env = appImageRelaunchEnv(env, appDir);             // desktop-relaunch.mjs on the next restart
+      seen.push(env.XDG_DATA_DIRS);
+    }
+    // Every restart hands on exactly what the session started with.
+    assert.deepEqual(new Set(seen), new Set([session]), `XDG_DATA_DIRS per restart: ${seen.join(" | ")}`);
+  }
+  // A value AppRun did not make is left alone, tail and all.
+  assert.equal(appImageRelaunchEnv({ XDG_DATA_DIRS: "/opt/x:/usr/share/gnome:/usr/local/share/:/usr/share/" }, MOUNT).XDG_DATA_DIRS, "/opt/x:/usr/share/gnome:/usr/local/share/:/usr/share/");
 });
 
 test("outside an AppImage the restart is Electron's own", () => {

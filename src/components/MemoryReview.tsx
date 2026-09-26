@@ -88,7 +88,7 @@ export function MemoryReview({ inspection, audiences, busy, onAction, onClose }:
       {active && <>
         <form className="space-y-2" onSubmit={event => { event.preventDefault(); void onAction({ action: "review-as-skill", id: record.id, version: record.version, botId: skillBot }, "Skill review requested in the selected bot's conversation. Any proposed skill still needs your approval."); }}>
           <label className="block space-y-1 text-[13px]">Bot to review this skill<select className={memoryInputClass} value={skillBot} onChange={event => setSkillBot(event.target.value)}><option value="">Choose an authorized bot</option>{audiences.filter(item => item.kind === "bot").map(item => <option key={item.id} value={item.ownerKey}>{item.label}</option>)}</select></label>
-          <p className="text-[12px] text-ink-secondary">Starts the existing /learn workflow with this exact memory version as its source. The selected bot must already have access. Its model may incur usage charges; no skill is activated by this action.</p>
+          <p className="text-[12px] text-ink-secondary">Starts the existing /learn workflow with this exact memory version as its source. The selected bot must already have access, and the review runs on that bot's model. No skill is activated by this action.</p>
           <button className={memoryButtonClass} disabled={!skillBot}>Review as skill</button>
         </form>
         <form className="space-y-2" onSubmit={event => { event.preventDefault(); void onAction({ action: "correct", id: record.id, version: record.version, text: correction }, "Correction saved as a new version."); }}>

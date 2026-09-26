@@ -26,7 +26,7 @@ it("shows owner corrections for active memory and disables mutations while pendi
   expect(html).toContain("Share with audience");
   expect(html).toContain("Review as skill");
   expect(html).toContain("Bot to review this skill");
-  expect(html).toContain("no skill is activated by this action");
+  expect(html).toContain("No skill is activated by this action");
   expect(html).toContain('<fieldset disabled=""');
 });
 

@@ -125,7 +125,7 @@ describe("the pairing route's per-client limiter", () => {
     // the body so a client that never reads headers still backs off.
     expect(locked.retryAfter).toBe("5");
     expect(locked.body.retryAfter).toBe(5);
-    expect(locked.body.error).toMatch(/too many pairing attempts/);
+    expect(locked.body.error).toMatch(/Too many pairing attempts/);
     // The whole point. A refusal that still called redeem would be a refusal
     // that still spent one of the window's five attempts.
     expect(redeems).toBe(SIGN_IN_FREE_ATTEMPTS + 1);

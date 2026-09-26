@@ -6,7 +6,7 @@ import { createElement, isValidElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { LAZY_RETRY_TEXT, LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { LAZY_RETRY_TEXT, LazyBoundary, PANEL_ERROR_RETRY, PANEL_ERROR_TEXT, isChunkLoadError, retryableLazy } from "./LazyBoundary";
 
 const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
 
@@ -36,9 +36,10 @@ describe("LazyBoundary", () => {
     const reload = vi.fn();
     const { instance, onRetry } = boundary({ reload });
     expect(renderToStaticMarkup(instance.render() as ReactElement)).toBe("<span>panel</span>");
-    instance.state = { ...instance.state, ...LazyBoundary.getDerivedStateFromError() };
+    const chunk = new TypeError("Failed to fetch dynamically imported module: http://127.0.0.1:8799/assets/SettingsModal-abc.js");
+    instance.state = { ...instance.state, ...LazyBoundary.getDerivedStateFromError(chunk) };
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    instance.componentDidCatch(new Error("chunk"));
+    instance.componentDidCatch(chunk);
     expect(onRetry).toHaveBeenCalledOnce();
     const html = renderToStaticMarkup(instance.render() as ReactElement);
     expect(LAZY_RETRY_TEXT).toBe("Couldn't open this. Tap to retry.");
@@ -60,12 +61,46 @@ describe("LazyBoundary", () => {
   it("offers Close when the panel can be dismissed, so a dead network is not a trap", () => {
     const onDismiss = vi.fn();
     const { instance } = boundary({ onDismiss });
-    instance.state = { failed: true };
+    instance.state = { failed: true, broken: false };
     const html = renderToStaticMarkup(instance.render() as ReactElement);
     expect(html).toContain("Close");
     const inline = boundary({ inline: true }).instance;
-    inline.state = { failed: true };
+    inline.state = { failed: true, broken: false };
     expect(renderToStaticMarkup(inline.render() as ReactElement)).not.toContain("fixed inset-0");
+  });
+});
+
+// 0.1.60 audit L1: any render error was treated as a failed chunk load, and
+// its "retry" reloaded the whole window (ending a live call).
+describe("a panel that throws while rendering is not a failed load", () => {
+  it("knows a chunk-load failure in each engine's words, and nothing else", () => {
+    for (const message of ["Failed to fetch dynamically imported module: https://x/a.js", "error loading dynamically imported module: https://x/a.js", "Importing a module script failed.", "Unable to preload CSS for /assets/a.css"])
+      expect(isChunkLoadError(new TypeError(message)), message).toBe(true);
+    expect(isChunkLoadError(Object.assign(new Error("x"), { name: "ChunkLoadError" }))).toBe(true);
+    for (const error of [new TypeError("Cannot read properties of undefined (reading 'map')"), new Error("chunk"), null, undefined, "Failed"])
+      expect(isChunkLoadError(error), String(error)).toBe(false);
+  });
+
+  it("stays in the panel, never reloads, and Try again draws only the panel again", () => {
+    const reload = vi.fn(), onRetry = vi.fn(), onDismiss = vi.fn();
+    const instance = new LazyBoundary({ children: createElement("span", null, "panel"), onRetry, onDismiss, reload });
+    instance.setState = ((update: object) => { instance.state = { ...instance.state, ...update }; }) as never;
+    const bug = new TypeError("Cannot read properties of undefined (reading 'map')");
+    instance.state = { ...instance.state, ...LazyBoundary.getDerivedStateFromError(bug) };
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    instance.componentDidCatch(bug);
+    expect(error).toHaveBeenCalled();
+    expect(onRetry).not.toHaveBeenCalled();
+    const html = renderToStaticMarkup(instance.render() as ReactElement);
+    expect(html).toContain("Something went wrong while showing this, so it couldn&#x27;t be opened.");
+    expect(html).toContain(PANEL_ERROR_RETRY);
+    expect(html).toContain("Close");
+    expect(html).not.toContain(LAZY_RETRY_TEXT.slice(0, 10));
+    expect(PANEL_ERROR_TEXT).not.toMatch(/Cannot read|undefined/);
+    instance.renderAgain();
+    expect(renderToStaticMarkup(instance.render() as ReactElement)).toBe("<span>panel</span>");
+    expect(reload).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 });
 
@@ -91,7 +126,7 @@ it("a failed call screen's Close ends that call, and leaves a newer one alone", 
   const onDismiss = (id: string) => () => call.endCall(id);
   call.startCall("bot-1");
   const instance = new LazyBoundary({ children: null, onRetry: vi.fn(), onDismiss: onDismiss("bot-1") });
-  instance.state = { failed: true };
+  instance.state = { failed: true, broken: false };
   const overlay = instance.render() as ReactElement<{ children: ReactElement[] }>;
   const close = (overlay.props.children as unknown as ReactElement<{ onClick: () => void; children: string }>[])
     .find((child) => child && child.props?.children === "Close")!;

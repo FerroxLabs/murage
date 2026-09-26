@@ -323,7 +323,7 @@ describe("every way a typed code can fail gets its own answer", () => {
     const { code } = registry.openPairing();
     const answer = await submitCode(wrongFor(code));
     expect(answer.status).toBe(401);
-    expect(bodyOf(answer).error).toBe("that pairing credential is not right");
+    expect(bodyOf(answer).error).toBe("That pairing code or link is not right. Check it and try again.");
   });
 
   it("says an expired code expired, rather than that pairing is not happening", async () => {
@@ -365,7 +365,7 @@ describe("every way a typed code can fail gets its own answer", () => {
   it("says nothing is in progress only when nothing ever was", async () => {
     const answer = await submitCode("424242");
     expect(answer.status).toBe(401);
-    expect(bodyOf(answer).error).toBe("no pairing is in progress — open Phone settings on your computer");
+    expect(bodyOf(answer).error).toBe("No pairing is in progress. Open Phone settings on your computer.");
   });
 });
 
@@ -726,7 +726,7 @@ describe("pairing into a full fleet", () => {
   it("puts a Try again button on /enter instead of spending the link", async () => {
     const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
     const { node, posted } = runEnter(page.body, "#murage_pair_abc", [
-      { ok: false, body: { error: "this computer already has the most devices it can pair — replace an old one on your computer, then try again", reason: "full", devices: [] } },
+      { ok: false, body: { error: "This computer already has the most devices it can pair. Replace an old one on your computer, then try again.", reason: "full", devices: [] } },
       { ok: true, body: {} },
     ]);
     node("go").listeners.click();
@@ -742,8 +742,8 @@ describe("pairing into a full fleet", () => {
   it("drops the Try again label once a retry fails for another reason", async () => {
     const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
     const { node } = runEnter(page.body, "#murage_pair_abc", [
-      { ok: false, body: { error: "this computer already has the most devices it can pair — replace an old one on your computer, then try again", reason: "full", devices: [] } },
-      { ok: false, body: { error: "that pairing code has expired — start pairing again", reason: "expired" } },
+      { ok: false, body: { error: "This computer already has the most devices it can pair. Replace an old one on your computer, then try again.", reason: "full", devices: [] } },
+      { ok: false, body: { error: "That pairing code has expired. Start pairing again.", reason: "expired" } },
     ]);
     node("go").listeners.click();
     await settle();
@@ -809,7 +809,7 @@ describe("signing this device out, from the device", () => {
     try {
       const failed = await knock("DELETE", "/session/device", header);
       expect(failed.status).toBe(500);
-      expect(bodyOf(failed)).toEqual({ error: "could not sign this device out on the computer — try again" });
+      expect(bodyOf(failed)).toEqual({ error: "Could not sign this device out on the computer. Try again." });
       // The cookie is kept: the device is still paired, and this is the one
       // credential able to ask again.
       expect(failed.headers["set-cookie"]).toBeUndefined();

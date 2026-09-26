@@ -32,7 +32,7 @@ import { companionEnv, ownChild, resolveCompanionEntry, spawnCompanion, startupP
 import { createDoorNonce, deploymentOwner, doorVersion, probeDoor, readDoorNonce, writeDoorNonce } from "../lib/door-identity.mjs";
 import { envFilePermissions, inspectEnvFile, readEnvFile, retainRecoveryCopy, writeEnvFile } from "../lib/env-file.mjs";
 import { tailnetAddresses } from "../lib/network-trust.mjs";
-import { closePairing, controlPort, expiryText, openPairing, watchPairing } from "../lib/pair.mjs";
+import { closePairing, controlPort, controlRequest, expiryText, fullFleet, openPairing, removeDevice, watchPairing } from "../lib/pair.mjs";
 import { NotPlainFile, asAccount } from "../lib/private-files.mjs";
 import {
   ServiceAccountRefused,
@@ -241,7 +241,7 @@ async function ensureTailscaleInstalled(plan) {
   }
   console.log(c.dim("\n  Tailscale is not installed. It is what keeps this box off the public internet."));
   if (!(plan ? plan.installTailscale : await confirm("  Install Tailscale now?", true))) {
-    fail("Skipped. Without Tailscale this deployment has no secure path in — setup will not claim otherwise.");
+    fail("Skipped. Without Tailscale this deployment has no secure path in; setup will not claim otherwise.");
     return false;
   }
   if (process.platform !== "linux") {
@@ -297,7 +297,7 @@ async function enrolTailnet(ctx, port = DOOR_PORT, harnessPort = DEFAULT_PORT, p
     console.log(c.dim(`    ${c.o("https://login.tailscale.com/admin/settings/keys")}`));
     console.log(c.dim("  For a disposable cloud box choose an EPHEMERAL key: the node then evicts"));
     console.log(c.dim("  itself from your tailnet when the box is destroyed, instead of lingering"));
-    console.log(c.dim("  forever as a dead entry. (Ephemeral is a property of the KEY — there is no"));
+    console.log(c.dim("  forever as a dead entry. (Ephemeral is a property of the KEY, and there is no"));
     console.log(c.dim("   `tailscale up` flag for it, so setup cannot choose it for you.)"));
     console.log(c.dim("  The key is read without echo and written to a 0600 file; it is never passed"));
     console.log(c.dim("  as a command-line argument, so it cannot leak via `ps` or shell history.\n"));
@@ -398,7 +398,7 @@ async function bringDoorUp(ctx, port, harnessPort) {
     console.log(c.dim("  The companion sidecar is not in this install either, so setup cannot start"));
     console.log(c.dim("  it: no payload/companion/index.js, no dist-companion/index.js (pnpm"));
     console.log(c.dim("  build:companion), no companion/src/index.ts."));
-    console.log(c.dim("  Not configuring a tailnet proxy — it would point at a port nothing is"));
+    console.log(c.dim("  Not configuring a tailnet proxy; it would point at a port nothing is"));
     console.log(c.dim("  listening on, and the tailnet URL would answer 502."));
     return { up: false, started: false, stop: noop };
   }
@@ -495,8 +495,8 @@ async function bringDoorUp(ctx, port, harnessPort) {
     throw error;
   }
   if (!waited.up) {
-    warn(`the browser door is not running: ${c.dim(already.url)} — ${waited.reason}`);
-    console.log(c.dim("  Not configuring a tailnet proxy — it would point at a port nothing is"));
+    warn(`the browser door is not running: ${c.dim(already.url)}; ${waited.reason}`);
+    console.log(c.dim("  Not configuring a tailnet proxy; it would point at a port nothing is"));
     console.log(c.dim("  listening on, and the tailnet URL would answer 502."));
     await stop();
     return { up: false, started: true, stop: noop };
@@ -581,7 +581,7 @@ async function frontTheDoor(ctx, port, harnessPort, plan = null) {
  * is the sentence that stops them acting on stale advice.
  */
 function announceDeviceDoorClosed() {
-  ok(`the device door on ${c.b("8810")} is ${c.b("not opened")} — the sidecar is started with MURAGE_COMPANION_BIND=off.`);
+  ok(`the device door on ${c.b("8810")} is ${c.b("not opened")}; the sidecar is started with MURAGE_COMPANION_BIND=off.`);
   console.log(c.dim("  Nothing binds that port, so there is no 0.0.0.0 listener to firewall. The"));
   console.log(c.dim("  control page (8811) and the browser door (8813) still come up as normal."));
   console.log(c.dim("  Pairing a phone over the LAN is a desktop feature; a cloud box has no LAN"));
@@ -775,7 +775,7 @@ async function unattendedPreflight(options, storedBag) {
 }
 
 async function setup(argv = []) {
-  heading("Murage — headless cloud deploy (tailnet only)");
+  heading("Murage: headless cloud deploy (tailnet only)");
 
   const mode = unattendedMode(argv, "murage setup");
   const found = resolveServerEntry();
@@ -868,7 +868,7 @@ async function setup(argv = []) {
         name = PROVIDER_ENV[which] ?? null;
       }
       if (name) providerEnv[name] = entry;
-      else warn(`Unrecognised provider — not stored.${storedKeys.length ? " The keys already configured are kept." : ""} Re-run setup to add one.`);
+      else warn(`Unrecognised provider; not stored.${storedKeys.length ? " The keys already configured are kept." : ""} Re-run setup to add one.`);
     }
   }
 
@@ -922,7 +922,7 @@ async function setup(argv = []) {
     if (enrolment.served) {
       console.log(`      tailnet proxy: ${c.dim(`127.0.0.1:${DOOR_PORT}`)} (browser door)`);
     } else {
-      console.log(`      tailnet proxy: ${c.r("none")} — the browser door on ${DOOR_PORT} could not be brought up`);
+      console.log(`      tailnet proxy: ${c.r("none")}; the browser door on ${DOOR_PORT} could not be brought up`);
     }
     console.log(`      public share : ${c.g("none")}`);
     if (url && enrolment.served) {
@@ -932,7 +932,7 @@ async function setup(argv = []) {
   } else {
     fail(c.r("This box is NOT secured. Setup will not pretend otherwise."));
     for (const reason of enrolment.reasons ?? []) console.log(`      ${c.dim("- " + reason)}`);
-    console.log(c.dim("\n  The server will still start, but it binds 127.0.0.1 only — so until"));
+    console.log(c.dim("\n  The server will still start, but it binds 127.0.0.1 only, so until"));
     console.log(c.dim("  Tailscale is enrolled, the only way in is an SSH tunnel:"));
     console.log(c.dim(`    ssh -N -L ${port}:127.0.0.1:${port} <user>@<this-box>`));
   }
@@ -1196,7 +1196,7 @@ async function start(argv = []) {
       },
       onExit: code => {
         if (stopping) return;
-        fail(`the companion sidecar exited (code ${code}) — taking the harness down so both restart together.`);
+        fail(`the companion sidecar exited (code ${code}); taking the harness down so both restart together.`);
         void shutdown(1);
       },
     });
@@ -1228,7 +1228,7 @@ export async function startSidecar(env, harnessPort, deps = {}) {
   if (deps.signal?.aborted) return null;
   const resolved = resolve_(INSTALLER_ROOT, REPO_ROOT, existsSync, env);
   if (!resolved) {
-    say("the companion sidecar is not in this install — starting the harness alone.");
+    say("the companion sidecar is not in this install; starting the harness alone.");
     log(c.dim("  Nothing will be listening on the browser door, so the tailnet URL will 502."));
     log(c.dim("  Build it (pnpm build:companion) or set MURAGE_COMPANION_ENTRY, then restart."));
     return null;
@@ -1376,21 +1376,21 @@ function resolveStatusPaths(argv, serviceUserFromEnv = null, command = "status")
 }
 
 async function status(argv = []) {
-  heading("Murage — deployment status");
+  heading("Murage: deployment status");
 
   // Never prompts, so the unattended switches are accepted and simply consumed.
   const mode = unattendedMode(argv, "murage status");
   const { dataDir, envFile: ENV_FILE } = resolveStatusPaths(mode.rest, process.env.MURAGE_SERVICE_USER?.trim() || null);
 
   const perms = envFilePermissions(ENV_FILE);
-  if (!perms.exists) warn(`no env file at ${ENV_FILE} — run \`murage setup\``);
-  else if (!perms.private) fail(`${ENV_FILE} is mode 0${perms.mode.toString(8)} — it holds API keys and must be 0600`);
+  if (!perms.exists) warn(`no env file at ${ENV_FILE}; run \`murage setup\``);
+  else if (!perms.private) fail(`${ENV_FILE} is mode 0${perms.mode.toString(8)}; it holds API keys and must be 0600`);
   else ok(`env file ${c.dim(ENV_FILE)} is 0600`);
 
   const env = { ...process.env, ...readEnvFile(ENV_FILE) };
   try {
     const bind = resolveBindFromEnv(env);
-    ok(`bind policy: ${c.b(`${bind.address}`)} (${bind.mode}) — ${bind.reason}`);
+    ok(`bind policy: ${c.b(`${bind.address}`)} (${bind.mode}); ${bind.reason}`);
   } catch (e) {
     fail(`bind policy REFUSES to start: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -1402,7 +1402,7 @@ async function status(argv = []) {
   await reportDoor(env.MURAGE_DATA_DIR || dataDir);
 
   if (!ts.isInstalled()) {
-    fail("tailscale is not installed — there is no secure path into this box");
+    fail("tailscale is not installed; there is no secure path into this box");
     return;
   }
   const verdict = ts.verdictFromStatus(ts.status());
@@ -1427,7 +1427,7 @@ async function status(argv = []) {
     );
     ok("no public share on this node");
   } else {
-    warn(`no tailnet proxy in front of the browser door 127.0.0.1:${DOOR_PORT} — re-run \`murage setup\``);
+    warn(`no tailnet proxy in front of the browser door 127.0.0.1:${DOOR_PORT}; re-run \`murage setup\``);
   }
   console.log("");
 }
@@ -1448,12 +1448,12 @@ async function status(argv = []) {
 async function reportDoor(dataDir) {
   const resolved = resolveCompanionEntry(INSTALLER_ROOT, REPO_ROOT);
   if (resolved) ok(`companion sidecar present: ${c.dim(resolved.entry)} (${resolved.kind})`);
-  else fail("the companion sidecar is NOT in this install — nothing can serve the browser door");
+  else fail("the companion sidecar is NOT in this install; nothing can serve the browser door");
 
   const recorded = readDoorNonce(dataDir, { owner: deploymentOwner(dataDir) });
   const door = await probeDoor({ port: DOOR_PORT, nonce: recorded.nonce, nonceError: recorded.error ?? undefined, version: INSTALLER_VERSION });
   const where = c.dim(`127.0.0.1:${DOOR_PORT}`);
-  if (!door.answered) fail(`browser door NOT answering on ${where} — ${door.reason}`);
+  if (!door.answered) fail(`browser door NOT answering on ${where}; ${door.reason}`);
   else if (door.identity === "match" && door.ready) {
     ok(`browser door answering on ${where} (HTTP ${door.status}), and proved it is this deployment's door (installer ${door.doorVersion})`);
   } else if (door.identity === "match") fail(`this deployment's browser door answers on ${where} but is not ready (${door.reason})`);
@@ -1483,7 +1483,7 @@ function resetpass(argv = []) {
     console.log(c.dim("    1. the listener binds 127.0.0.1 only;"));
     console.log(c.dim("    2. only the tailnet proxy can reach it;"));
     console.log(c.dim("    3. your tailnet ACL decides who reaches the proxy."));
-    console.log(c.dim("\n  To revoke access, revoke it there — remove the device or tighten the ACL:"));
+    console.log(c.dim("\n  To revoke access, revoke it there: remove the device or tighten the ACL:"));
     console.log(`    ${c.o("https://login.tailscale.com/admin/machines")}`);
     console.log(c.dim("  To evict this box from the tailnet right now:"));
     console.log(`    ${c.o("sudo tailscale logout")}\n`);
@@ -1515,23 +1515,38 @@ function resetpass(argv = []) {
  * way the desktop's does; scrollback and a provisioning log do not.
  * @param {string[]} argv everything after `pair`
  */
-async function pair(argv = []) {
-  heading("Murage — pair a phone");
-  const mode = unattendedMode(argv, "murage pair");
-  const wait = !mode.rest.includes("--no-wait");
-  const { dataDir, envFile } = resolveStatusPaths(mode.rest.filter((arg) => arg !== "--no-wait"), process.env.MURAGE_SERVICE_USER?.trim() || null, "pair");
+/** The companion's control port, once this deployment's door has proved it
+ * is ours (see `pair`). Exits with the reason otherwise. */
+async function provenControlPort(args, command) {
+  const { dataDir, envFile } = resolveStatusPaths(args, process.env.MURAGE_SERVICE_USER?.trim() || null, command);
   const env = { ...process.env, ...readEnvFile(envFile) };
   const dir = env.MURAGE_DATA_DIR || dataDir;
-
   const recorded = readDoorNonce(dir, { owner: deploymentOwner(dir) });
   const door = await probeDoor({ port: DOOR_PORT, nonce: recorded.nonce, nonceError: recorded.error ?? undefined, version: INSTALLER_VERSION });
   if (!(door.answered && door.identity === "match" && door.ready)) {
     fail(`this deployment's browser door is not running on ${c.dim(`127.0.0.1:${DOOR_PORT}`)}${door.reason ? ` (${door.reason})` : ""}.`);
-    console.log(c.dim("  Start it with `murage start`, then run `murage pair` again.\n"));
+    console.log(c.dim(`  Start it with \`murage start\`, then run \`murage ${command}\` again.\n`));
     process.exit(EXIT.ENVIRONMENT);
   }
+  return controlPort(env);
+}
 
-  const port = controlPort(env);
+/** The devices a full box offers to replace, least recently seen first, and
+ * the one command that frees a slot: the phone's "replace an old one on your
+ * computer", said here. */
+function printFullFleet(devices) {
+  warn(`this box already has the most devices it can pair (${devices.length}), so a new phone will be refused until one is removed.`);
+  console.log(c.dim("  Least recently used first. Remove one, and the phone can use the same code:\n"));
+  for (const d of devices.slice(0, 5)) console.log(`      ${c.b(d.name)}  ${c.dim(`last used ${d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString() : "never"}`)}  ${c.dim("id")} ${d.id}`);
+  if (devices.length > 5) console.log(c.dim(`      …and ${devices.length - 5} more. \`murage devices\` lists them all.`));
+  console.log(`\n  ${c.o(`murage devices remove ${devices[0].id}`)}\n`);
+}
+
+async function pair(argv = []) {
+  heading("Murage: pair a phone");
+  const mode = unattendedMode(argv, "murage pair");
+  const wait = !mode.rest.includes("--no-wait");
+  const port = await provenControlPort(mode.rest.filter((arg) => arg !== "--no-wait"), "pair");
   const opened = await openPairing({ port });
   if (!opened.ok) {
     fail(opened.reason);
@@ -1555,6 +1570,11 @@ async function pair(argv = []) {
   console.log(c.dim(`  The phone must be signed into the same tailnet as this box. The code works once.`));
   console.log(c.dim(`  ${expiryText(opened.expiresAt)} (at ${at})\n`));
 
+  // Said before the phone tries, as the desktop's pairing screen does.
+  let full = [];
+  try { full = fullFleet((await controlRequest(port, "GET", "/state", 5_000)).body); } catch { full = []; }
+  if (full.length) printFullFleet(full);
+
   if (!wait) {
     console.log(c.dim("  The window stays open until a phone uses it or it expires. Running `murage pair` again replaces it.\n"));
     return;
@@ -1569,6 +1589,8 @@ async function pair(argv = []) {
     // One line, rewritten in place, on a terminal. A log gets the line above
     // and the outcome below, not six hundred countdown lines.
     onTick: (text) => { if (tty) process.stdout.write(`\r  ${c.dim(text)}   `); },
+    // Only when it becomes full after the window opened; otherwise it was said above.
+    onFull: (devices) => { if (full.length) return; if (tty) process.stdout.write("\n"); printFullFleet(devices); },
   });
   process.removeListener("SIGINT", stop);
   if (tty) process.stdout.write("\n");
@@ -1586,6 +1608,7 @@ async function pair(argv = []) {
     expired: "that code expired before a phone used it.",
     replaced: "a newer pairing window was opened (on the desktop, or by another `murage pair`), so this code stopped working.",
     closed: "the pairing window was closed before a phone used it.",
+    full: "this box already has the most devices it can pair, so no phone could use that code. Remove one with `murage devices remove <id>` first.",
     unreachable: "lost contact with the companion. Check `murage status`.",
   }[result.outcome];
   fail(why);
@@ -1593,9 +1616,42 @@ async function pair(argv = []) {
   process.exit(EXIT.ENVIRONMENT);
 }
 
+/**
+ * `murage devices`: list the paired phones and browsers.
+ * `murage devices remove <id>`: remove one; its sign-ins end at once. The
+ * headless answer to the phone's "replace an old one on your computer".
+ * @param {string[]} argv everything after `devices`
+ */
+async function devices(argv = []) {
+  heading("Murage: paired devices");
+  const [action, id, ...rest] = argv[0] === "remove" ? argv : [null, null, ...argv];
+  if (action === "remove" && !id) {
+    fail("say which device: `murage devices remove <id>`. Run `murage devices` to list them.");
+    process.exit(EXIT.USAGE);
+  }
+  const port = await provenControlPort(rest, "devices");
+  if (action === "remove") {
+    const removed = await removeDevice({ port, id });
+    if (!removed.ok) { fail(removed.reason); process.exit(EXIT.ENVIRONMENT); }
+    ok("removed. That device is signed out, and its place is free for a new one.\n");
+    return;
+  }
+  let state;
+  try { state = (await controlRequest(port, "GET", "/state", 5_000)).body ?? {}; } catch {
+    fail(`nothing answered on the companion's control page, 127.0.0.1:${port}. Is \`murage start\` running?`);
+    process.exit(EXIT.ENVIRONMENT);
+  }
+  const list = (Array.isArray(state.devices) ? state.devices : []).filter((d) => typeof d?.id === "string")
+    .sort((a, b) => (Number(a.lastSeenAt) || 0) - (Number(b.lastSeenAt) || 0));
+  if (!list.length) { console.log("  No devices are paired. Pair one with `murage pair`.\n"); return; }
+  for (const d of list) console.log(`  ${c.b(typeof d.name === "string" && d.name ? d.name : "a device")}  ${c.dim(`last used ${d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString() : "never"}`)}  ${c.dim("id")} ${d.id}`);
+  const max = Number(state.maxDevices);
+  console.log(c.dim(`\n  ${list.length}${max ? ` of ${max}` : ""} paired, least recently used first. Remove one with \`murage devices remove <id>\`.\n`));
+}
+
 function help() {
   console.log(`
-  ${c.o("murage")} — deploy Murage's headless server, reachable only over your tailnet
+  ${c.o("murage")}: deploy Murage's headless server, reachable only over your tailnet
 
   ${c.b("murage setup")}       Join the tailnet, wire a provider key, front the app, verify it
       ${c.dim("[--service-user <account>]")}  the account the systemd unit runs as; required when run as root
@@ -1605,6 +1661,8 @@ function help() {
   ${c.b("murage resetpass")}   Break-glass admin reset, if this build has one
   ${c.b("murage pair")}        Pair a phone: show a QR and a 6-digit code, then wait for it
       ${c.dim("[--no-wait]")}  print the code and exit; the window stays open until used or expired
+  ${c.b("murage devices")}     List paired phones and browsers, least recently used first
+      ${c.dim("remove <id>")}  remove one and sign it out, freeing its place for a new phone
   ${c.b("murage help")}        This message
 
   Data dir : ${c.dim(DATA_DIR)}   ${c.dim("(override with MURAGE_DATA_DIR)")}
@@ -1614,7 +1672,7 @@ function help() {
   ${c.dim("--non-interactive (or --yes / -y, or MURAGE_NON_INTERACTIVE=1) never prompts.")}
   ${c.dim("Anything it still needs is listed in one go and the run exits 2, changing nothing.")}
 
-    ${c.o("--tailscale-auth-key-file <path>")}  ${c.dim("MURAGE_TAILSCALE_AUTHKEY_FILE — first line is the key")}
+    ${c.o("--tailscale-auth-key-file <path>")}  ${c.dim("MURAGE_TAILSCALE_AUTHKEY_FILE: first line is the key")}
     ${c.o("--tailscale-auth-key-stdin")}        ${c.dim("read it from stdin instead")}
     ${c.o("--provider-key-file <path>")}        ${c.dim("MURAGE_PROVIDER_KEY_FILE")}
     ${c.o("--provider-key-stdin")}              ${c.dim("(only one secret may come from stdin)")}
@@ -1648,6 +1706,7 @@ if (isMain) {
   else if (cmd === "status") await status(process.argv.slice(3));
   else if (cmd === "resetpass" || cmd === "reset-password") resetpass(process.argv.slice(3));
   else if (cmd === "pair") await pair(process.argv.slice(3));
+  else if (cmd === "devices") await devices(process.argv.slice(3));
   else if (cmd === "version" || cmd === "--version" || cmd === "-v") {
     try {
       console.log(JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")).version);

@@ -17,6 +17,13 @@
 //
 // `retryableLazy` still swaps in a fresh lazy when a load fails, which lets a
 // browser that does not cache the failure open the panel again after Close.
+//
+// Only a failed chunk load gets that treatment (0.1.60 audit L1). Any other
+// render error used to show the same "Couldn't open this" and, on the tap,
+// reload the whole window: that ended a live call, and a panel that always
+// throws came straight back after the reload. Such an error now stays in the
+// panel with its own words, "Try again" re-renders only the panel, and
+// nothing reloads.
 import { Component, lazy, type ComponentProps, type ComponentType, type ReactNode } from "react";
 
 export interface RetryableLazy<P extends object> {
@@ -40,6 +47,17 @@ export function retryableLazy<T extends ComponentType<any>>(load: () => Promise<
 }
 
 export const LAZY_RETRY_TEXT = "Couldn't open this. Tap to retry.";
+export const PANEL_ERROR_TEXT = "Something went wrong while showing this, so it couldn't be opened.";
+export const PANEL_ERROR_RETRY = "Try again";
+
+/** Whether an error is a lazy chunk that could not be fetched, as each engine
+ * words it, or Vite's own preload failure. Nothing else is. */
+export function isChunkLoadError(error: unknown): boolean {
+  const e = error as { name?: unknown; message?: unknown } | null | undefined;
+  if (e?.name === "ChunkLoadError") return true;
+  const message = typeof e?.message === "string" ? e.message : "";
+  return /Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|Unable to preload CSS for|Loading (?:CSS )?chunk \S+ failed/i.test(message);
+}
 
 export class LazyBoundary extends Component<
   {
@@ -53,15 +71,19 @@ export class LazyBoundary extends Component<
     /** Test seam; the page reload by default. */
     reload?: () => void;
   },
-  { failed: boolean }
+  { failed: boolean; broken: boolean }
 > {
-  state = { failed: false };
+  state = { failed: false, broken: false };
 
-  static getDerivedStateFromError() {
-    return { failed: true };
+  static getDerivedStateFromError(error: unknown) {
+    return isChunkLoadError(error) ? { failed: true, broken: false } : { failed: false, broken: true };
   }
 
   componentDidCatch(error: unknown) {
+    if (!isChunkLoadError(error)) {
+      console.error("murage: a panel failed to render", error);
+      return;
+    }
     console.warn("murage: a panel could not be loaded", error);
     // Swap in a fresh import now, not on the tap: a panel closed and opened
     // again later starts clean too, instead of replaying the old rejection.
@@ -72,7 +94,13 @@ export class LazyBoundary extends Component<
     (this.props.reload ?? (() => window.location.reload()))();
   };
 
+  /** A render error: draw the panel again, and only the panel. */
+  renderAgain = () => {
+    this.setState({ broken: false });
+  };
+
   render() {
+    if (this.state.broken) return this.renderBroken();
     if (!this.state.failed) return this.props.children;
     const button = (
       <button
@@ -95,5 +123,26 @@ export class LazyBoundary extends Component<
         )}
       </div>
     );
+  }
+
+  renderBroken() {
+    const { onDismiss, inline } = this.props;
+    const body = (
+      <div className="flex max-w-sm flex-col items-center gap-3 rounded-xl border border-hairline/50 bg-card p-4 text-center shadow-xl">
+        <p className="text-[13px] text-ink">{PANEL_ERROR_TEXT}</p>
+        <div className="flex gap-2">
+          <button type="button" onClick={this.renderAgain} className="min-h-11 rounded-xl border border-hairline/50 bg-card px-4 text-[13px] text-ink hover:bg-raised">
+            {PANEL_ERROR_RETRY}
+          </button>
+          {onDismiss && (
+            <button type="button" onClick={onDismiss} className="min-h-11 rounded-xl px-4 text-[13px] text-ink-secondary hover:text-ink">
+              Close
+            </button>
+          )}
+        </div>
+      </div>
+    );
+    if (inline) return <div role="alert">{body}</div>;
+    return <div role="alert" className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">{body}</div>;
   }
 }

@@ -1,10 +1,12 @@
 import {lstatSync,mkdirSync,readFileSync,realpathSync,rmSync,writeFileSync} from "node:fs";
 import path from "node:path";
-import {assertClosedProfileBinding,closedDigest,closedProfileFolderShared,closedProfileId,closedTriggerDigest,readClosedPrivateFile} from "./backup-closed-profile.mjs";
-import {disableClosedBackupJob,installClosedBackupJob,readClosedBackupStage,removeClosedBackupStage,stageClosedBackupJob} from "./backup-closed-jobs.mjs";
+import {assertClosedProfileBinding,closedDigest,closedProfileAppFileShared,closedProfileFolderShared,closedProfileId,closedTriggerDigest,readClosedPrivateFile} from "./backup-closed-profile.mjs";
+import {disableClosedBackupJob,installClosedBackupJob,readClosedBackupStage,readLegacyClosedBackupStage,removeClosedBackupStage,stageClosedBackupJob} from "./backup-closed-jobs.mjs";
 
 const refuse=()=>{throw Error("BACKUP_CLOSED_REVIEW_REQUIRED");};
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+const missing=file=>{try{lstatSync(file);return false;}catch(error){return error.code==="ENOENT";}};
+const wontRunError=error=>error?.code==="CLOSED_NATIVE_JOB_WONT_RUN";
 export function closedControlDirectory(installation){return path.join(path.dirname(installation),".murage-backup-control",closedDigest(installation));}
 function privateDirectory(directory,uid){
   const s=lstatSync(directory);if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==uid||(s.mode&0o077)||realpathSync.native(directory)!==directory)refuse();
@@ -23,16 +25,38 @@ export async function assertClosedRegistration(descriptor,descriptorPath,provide
 
 /** Main chooses all paths and callbacks. The renderer gets only safe state. */
 export function createClosedBackupController({profile,triggerSource,backupSupported,provider,backup,confirmInstall,volumeProblem=()=>null}){
-  let running=false,lastState=null;
+  // wontRun: the last registration's proving run failed (the job was taken
+  // down again). rebuildFailed: the job named another app file ("app-moved")
+  // or was written by an older Murage ("job-outdated") and could not be
+  // rebuilt for this one. Both are said on the Backups page until fixed.
+  let running=false,lastState=null,wontRun=false,rebuildFailed=null;
   const location=()=>closedControlDirectory(profile().installation);
   const pointer=()=>path.join(location(),"closed-job-pointer.json");
-  function readStage(){
+  /** The staged job for this profile, or null.
+   *
+   * `forRemoval`: the job may name another app file than the one running now.
+   * That happens when a person downloads a new AppImage by hand (its file name
+   * carries the version) and opens it: the job still names the old file. Such
+   * a stage is returned marked `moved`, and without checking the old file,
+   * which may be gone: taking a job down or moving it needs only the stage's
+   * own integrity, never the app file it used to run. */
+  function readStage({forRemoval=false}={}){
     const p=profile();let value;
     try{value=JSON.parse(readClosedPrivateFile(pointer()));}catch(error){if(error.code==="ENOENT")return null;throw error;}
     if(!value||Object.keys(value).sort().join()!=="directory,version"||value.version!==1||value.directory!==`closed-${closedProfileId({...p,triggerEntry:path.join(location(),"unused-trigger.mjs"),triggerSha256:"0".repeat(64)})}`)refuse();
-    const stage=readClosedBackupStage(path.join(location(),value.directory));
-    for(const key of Object.keys(p))if(!same(stage.descriptor[key],p[key]))refuse();
-    assertClosedProfileBinding(stage.descriptor);return stage;
+    let stage;
+    // A pointer whose stage was taken down (a move that could not finish) is
+    // nothing staged: the person can set the job up again.
+    try{stage=readClosedBackupStage(path.join(location(),value.directory));}catch(error){
+      if(missing(path.join(location(),value.directory)))return null;
+      // Written by an older Murage with a different job definition: it can
+      // only be taken down (and rebuilt), so only removal may read it.
+      if(!forRemoval)throw error;stage=readLegacyClosedBackupStage(path.join(location(),value.directory));
+    }
+    let moved=false;
+    for(const key of Object.keys(p))if(!same(stage.descriptor[key],p[key])){if(forRemoval&&key==="executable"){moved=true;continue;}refuse();}
+    if(moved)return{...stage,moved:true};
+    if(!forRemoval)assertClosedProfileBinding(stage.descriptor);return stage;
   }
   const supported=()=>Boolean(backupSupported()&&provider.supported);
   async function status(){
@@ -40,13 +64,28 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
     const common={supported:supported(),closedApp:schedule?.enabled===true&&schedule?.schedule.closedApp===true,lastClosedResult:schedule?.lastClosedResult};
     if(!common.supported)return{...common,state:"unavailable"};
     if(closedProfileFolderShared(profile()))return{...common,state:"unavailable",blocked:"data-folder-shared"};
+    // The app file itself (an AppImage made executable under umask 002): the
+    // page names it and says the one command that fixes it.
+    const appFile=closedProfileAppFileShared(profile());if(appFile)return{...common,state:"unavailable",blocked:"app-file-shared",appFile};
     // A background job cannot read files on another volume (backup-closed-volume.mjs).
     const volume=volumeProblem();if(volume)return{...common,state:"unavailable",blocked:`volume-${volume}`};
     try{
-      const stage=readStage();if(!stage)return{...common,state:"unconfigured"};
+      const stage=readStage({forRemoval:true});
+      if(!stage)return{...common,state:"unconfigured",...(rebuildFailed?{blocked:rebuildFailed}:wontRun?{blocked:"job-wont-run"}:{})};
+      // Still naming the app file Murage ran from before, or written by an
+      // older Murage, and not rebuilt yet: ticking the box again takes the
+      // old job down and sets this one up.
+      if(stage.moved)return{...common,state:"unconfigured",blocked:"app-moved"};
+      if(stage.legacy)return{...common,state:"unconfigured",blocked:"job-outdated"};
+      assertClosedProfileBinding(stage.descriptor);
       const current=await provider.read(stage);
       if(current&&(!same(current.files,stage.files)||current.jobId!==stage.jobId||!same(current.owner,stage.owner)))refuse();
-      return{...common,state:lastState==="disabled-removal-pending"?lastState:current?.registered?"installed":lastState==="disabled"?"disabled":"staged"};
+      // Registered but its command did not run last time: not "installed".
+      // Reported as prepared, so ticking the box again re-registers and
+      // proves it (installClosedBackupJob takes a failing job down first).
+      if(current?.registered&&current.failing)return{...common,state:"staged",blocked:"job-wont-run"};
+      const state=lastState==="disabled-removal-pending"?lastState:current?.registered?"installed":lastState==="disabled"?"disabled":"staged";
+      return{...common,state,...(state!=="installed"&&wontRun?{blocked:"job-wont-run"}:{})};
     }catch{return{...common,state:"unavailable"};}
   }
   async function exclusive(fn){if(running)throw Error("BACKUP_BUSY");running=true;try{return await fn();}finally{running=false;}}
@@ -68,7 +107,15 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
     try{if(readClosedPrivateFile(pointer())!==payload)refuse();}catch(error){if(error.code!=="ENOENT")throw error;writeFileSync(pointer(),payload,{flag:"wx",mode:0o600,flush:true});}
     lastState="staged";return staged;
   }
-  async function stage(){return exclusive(async()=>{stageCurrent();return status();});}
+  /** A stage left naming an app file Murage no longer runs from is taken
+   * down (its job first, if registered) so the current app can be staged. */
+  async function dropMovedStage(){
+    const prior=readStage({forRemoval:true});if(!prior?.moved&&!prior?.legacy)return;
+    if((await provider.read(prior))!==null&&(await disableClosedBackupJob(prior,{disableSchedule:async()=>{},...provider})).state!=="disabled")refuse();
+    removeClosedBackupStage(prior.directory,{legacy:prior.legacy===true});
+    try{rmSync(prior.descriptor.triggerEntry,{force:true});}catch{/* Rewritten by the next stage when it is the same trigger. */}
+  }
+  async function stage(){return exclusive(async()=>{await dropMovedStage();stageCurrent();return status();});}
   /** Carry an existing registration across an app upgrade.
    *
    * The trigger is part of the app, so a new version brings a new one, with a
@@ -85,7 +132,7 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
   async function restageForUpgrade(){return exclusive(async()=>{
     if(!supported())return status();
     let current;
-    try{current=readStage();}catch{return status();}
+    try{current=readStage({forRemoval:true});}catch{return status();}
     if(!current)return status();
     // Registered earlier from a volume a background job can't read (or moved
     // there since): every run would hang, so take the job down now. The
@@ -99,27 +146,39 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
     }
     let digest;
     try{digest=closedTriggerDigest(triggerSource);}catch{return status();}
-    if(current.descriptor.triggerSha256===digest)return status();
-    const registered=Boolean((await provider.read(current).catch(()=>null))?.registered);
+    // Three reasons to rebuild the job: a new trigger (an upgrade), a new app
+    // file (an AppImage downloaded by hand has a new versioned name; the job
+    // follows the copy of Murage the person now opens), or a registered job
+    // whose command no longer runs.
+    const registration=await provider.read(current).catch(()=>null);
+    if(!current.moved&&!current.legacy&&current.descriptor.triggerSha256===digest&&!registration?.failing)return status();
+    const registered=Boolean(registration?.registered);
     if(registered){
       // The authoritative schedule is NOT touched: this is the same job, not a
       // withdrawal of consent.
       const result=await disableClosedBackupJob(current,{disableSchedule:async()=>{},...provider});
       if(result.state!=="disabled"){lastState="disabled-removal-pending";return status();}
     }
-    removeClosedBackupStage(current.directory);
+    removeClosedBackupStage(current.directory,{legacy:current.legacy===true});
     // The superseded trigger file is this app's litter, and the data folder is
     // not allowed to hold files Murage cannot account for.
     try{rmSync(current.descriptor.triggerEntry,{force:true});}catch{/* A trigger left behind never blocks the new job. */}
-    const staged=stageCurrent();
-    if(registered){await installClosedBackupJob(staged,provider);lastState="installed";}
+    try{
+      const staged=stageCurrent();
+      if(registered){await installClosedBackupJob(staged,provider);lastState="installed";}
+      wontRun=false;rebuildFailed=null;
+    }catch(error){
+      // Never a silent stop: the old job is down, so say why on the page.
+      if(wontRunError(error))wontRun=true;else if(current.moved)rebuildFailed="app-moved";else if(current.legacy)rebuildFailed="job-outdated";
+    }
     return status();
   });}
   async function install(){return exclusive(async()=>{
     if(!supported())refuse();if(volumeProblem())throw Error("BACKUP_CLOSED_VOLUME_UNREADABLE");const selected=readStage();if(!selected)refuse();
     if(await confirmInstall()!==true)return{...(await status()),cancelled:true};
     const current=readStage();if(!current||current.definitionDigest!==selected.definitionDigest)refuse();
-    await installClosedBackupJob(current,provider);lastState="installed";return status();
+    try{await installClosedBackupJob(current,provider);}catch(error){if(wontRunError(error)){wontRun=true;throw Error("BACKUP_CLOSED_JOB_WONT_RUN");}throw error;}
+    lastState="installed";wontRun=false;rebuildFailed=null;return status();
   });}
   async function disable(){return exclusive(async()=>{
     const host=backup();if(!host)refuse();
@@ -127,8 +186,10 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
     // Disable even if the registration pointer itself is missing or changed.
     await disableSchedule();
     try{
-      const staged=readStage();if(!staged){lastState="disabled";return status();}
+      const staged=readStage({forRemoval:true});if(!staged){lastState="disabled";return status();}
       const result=await disableClosedBackupJob(staged,{disableSchedule:async()=>{},...provider});lastState=result.state;
+      // A job for an app file Murage no longer runs from is not kept prepared.
+      if((staged.moved||staged.legacy)&&result.state==="disabled"){await dropMovedStage();rebuildFailed=null;}
       return status();
     }catch{lastState="disabled-removal-pending";return{supported:supported(),closedApp:false,state:lastState};}
   });}

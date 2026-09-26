@@ -32,7 +32,16 @@ test("closed argv and environments reproduce both profile selectors and refuse d
  const parsed=parseClosedBackupArguments(capture.args);assert.deepEqual(closedProfileEnvironment(parsed,d,{}),{MURAGE_DATA_DIR:d.requestedRoot,MURAGE_USER_DATA:d.userData});assert.throws(()=>closedProfileEnvironment(parsed,d,{MURAGE_DATA_DIR:"/foreign"}));assert.throws(()=>closedInvocation(d,descriptorPath,{environment:{MURAGE_USER_DATA:"/foreign"}}));
  for(const args of [[...capture.args,"--murage-login"],[...capture.args,CLOSED_DUE_FLAG],[CLOSED_DESCRIPTOR_FLAG,descriptorPath],[CLOSED_DUE_FLAG,"--unknown","x"],capture.args.map(value=>value===d.userData?"relative":value)])assert.throws(()=>parseClosedBackupArguments(args));
  assert.equal(parseClosedBackupArguments(Array(30).fill("--ordinary")),null);
- const trigger=closedInvocation(d,descriptorPath,{mode:"trigger"});assert.deepEqual(trigger.args,[d.triggerEntry,CLOSED_DESCRIPTOR_FLAG,descriptorPath]);assert.deepEqual(trigger.env,{ELECTRON_RUN_AS_NODE:"1"});
+ const trigger=closedInvocation(d,descriptorPath,{mode:"trigger"});assert.deepEqual(trigger.args,[d.triggerEntry,CLOSED_DESCRIPTOR_FLAG,descriptorPath,...(d.platform==="linux"?["--no-sandbox"]:[])]);assert.deepEqual(trigger.env,{ELECTRON_RUN_AS_NODE:"1"});
+ // Linux: the trigger carries --no-sandbox LAST, so an AppImage's AppRun adds
+ // nothing in front of it (Electron-as-Node refuses a leading one).
+ assert.deepEqual(closedInvocation({...d,platform:"linux"},descriptorPath,{mode:"trigger"}).args,[d.triggerEntry,CLOSED_DESCRIPTOR_FLAG,descriptorPath,"--no-sandbox"]);
+ assert.deepEqual(closedInvocation({...d,platform:"darwin"},descriptorPath,{mode:"trigger"}).args,[d.triggerEntry,CLOSED_DESCRIPTOR_FLAG,descriptorPath]);
+ // The capture AppRun starts on Ubuntu 24.04 has --no-sandbox first: accepted
+ // exactly there and once, never anywhere else.
+ assert.deepEqual(parseClosedBackupArguments(["--no-sandbox",...capture.args]),parsed);
+ for(const args of [["--no-sandbox","--no-sandbox",...capture.args],[...capture.args,"--no-sandbox"],[CLOSED_DUE_FLAG,"--no-sandbox",...capture.args.slice(1)]])assert.throws(()=>parseClosedBackupArguments(args));
+ assert.equal(parseClosedBackupArguments(["--no-sandbox"]),null);
 });
 test("profile validation re-resolves default and restored selection and checks current owner/artifact",{skip:POSIX_ONLY},()=>{
  const f=fixture(),d=f.descriptor;assert.deepEqual(assertClosedProfileBinding(d),d);

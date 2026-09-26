@@ -140,7 +140,7 @@ describe("saveImage", () => {
   it("rejects unsupported mimes, empty bodies, and oversize bodies", () => {
     expect(() => saveImage(Buffer.from("x"), "image/svg+xml")).toThrow(/unsupported image type/);
     expect(() => saveImage(Buffer.alloc(0), "image/png")).toThrow(/empty/);
-    expect(() => saveImage(Buffer.alloc(IMAGE_MAX_BYTES + 1), "image/png")).toThrow(/exceeds/);
+    expect(() => saveImage(Buffer.alloc(IMAGE_MAX_BYTES + 1), "image/png")).toThrow(/too large/);
   });
 
   it("makes UUID-keyed image retries idempotent without changing legacy callers", () => {
@@ -183,7 +183,7 @@ describe("aggregate attachment storage", () => {
       throw new Error("expected quota rejection");
     } catch (error) {
       expect(error).toMatchObject({ status: 507 });
-      expect(error).toHaveProperty("message", expect.stringMatching(/storage is full/));
+      expect(error).toHaveProperty("message", expect.stringMatching(/no more room for attachments/));
     }
     expect(existsSync(referenced.path)).toBe(true);
     expect(statSync(referenced.path).size).toBe(ATTACHMENTS_MAX_BYTES);
@@ -199,7 +199,7 @@ describe("aggregate attachment storage", () => {
       yield Buffer.from("four");
     })(), "first.txt", "text/plain", { expectedBytes: 4 });
 
-    expect(() => saveImage(Buffer.from("xx"), "image/png")).toThrow(/storage is full/);
+    expect(() => saveImage(Buffer.from("xx"), "image/png")).toThrow(/no more room for attachments/);
     await expect(first).resolves.toMatchObject({ bytes: 4 });
   });
 
@@ -252,7 +252,7 @@ describe("aggregate attachment storage", () => {
     const orphan = `${ATTACHMENTS_DIR}/.murage-upload-${UPLOAD_A}-${UPLOAD_B}.partial`;
     writeFileSync(orphan, "xx");
 
-    expect(() => saveImage(Buffer.from("y"), "image/png")).toThrow(/storage is full/);
+    expect(() => saveImage(Buffer.from("y"), "image/png")).toThrow(/no more room for attachments/);
     const old = new Date(Date.now() - ATTACHMENT_PARTIAL_MAX_AGE_MS - 1_000);
     utimesSync(orphan, old, old);
     // Quota pressure still triggers cleanup, without scanning each MiB of a
@@ -279,7 +279,7 @@ describe("aggregate attachment storage", () => {
     const first = saveImage(Buffer.from("x"), "image/png");
     truncateSync(first.path, ATTACHMENTS_MAX_BYTES - 2);
     __resetAttachmentAccountingForTests();
-    expect(() => saveImage(Buffer.from("yyy"), "image/png")).toThrow(/storage is full/);
+    expect(() => saveImage(Buffer.from("yyy"), "image/png")).toThrow(/no more room for attachments/);
 
     deleteAttachment(first.path);
     expect(existsSync(first.path)).toBe(false);
@@ -307,7 +307,7 @@ describe("aggregate attachment storage", () => {
       .resolves.toMatchObject({ bytes: 2 });
     expect(readdirSync(ATTACHMENTS_DIR).some((name) => name.endsWith(".partial"))).toBe(false);
     expect(() => saveImage(Buffer.from("y"), "image/png")).not.toThrow();
-    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(/storage is full/);
+    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(/no more room for attachments/);
   });
 
   it.each([1, 2])("counts an image after %i partial-cleanup failures and an idempotent retry", async (failures) => {
@@ -326,7 +326,7 @@ describe("aggregate attachment storage", () => {
     await expect(saveImageUpload(Buffer.from("xx"), "image/png", UPLOAD_A)).resolves.toMatchObject({ bytes: 2 });
     expect(readdirSync(ATTACHMENTS_DIR).some((name) => name.endsWith(".partial"))).toBe(false);
     expect(() => saveImage(Buffer.from("y"), "image/png")).not.toThrow();
-    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(/storage is full/);
+    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(/no more room for attachments/);
   });
 
   it("does not count an in-flight commit twice when cleanup failure causes a rescan", async () => {
@@ -354,14 +354,14 @@ describe("aggregate attachment storage", () => {
       }
       expect(() => saveImage(Buffer.from("x"), "image/png", UPLOAD_B)).toThrow("partial file is locked");
       // This scan sees the linked file while its commit callback is pending.
-      expect(() => saveImage(Buffer.from("y"), "image/png")).toThrow(/storage is full/);
+      expect(() => saveImage(Buffer.from("y"), "image/png")).toThrow(/no more room for attachments/);
     } finally {
       finishCommit();
       await pending;
     }
     await saveImageUpload(Buffer.from("x"), "image/png", UPLOAD_B);
     expect(() => saveImage(Buffer.from("yy"), "image/png")).not.toThrow();
-    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(/storage is full/);
+    expect(() => saveImage(Buffer.from("z"), "image/png")).toThrow(/no more room for attachments/);
   });
 
   it("initializes correctly on a fresh process against a directory that already has files", () => {
@@ -374,7 +374,7 @@ describe("aggregate attachment storage", () => {
     writeFileSync(preexisting, "x");
     truncateSync(preexisting, ATTACHMENTS_MAX_BYTES - 2);
 
-    expect(() => saveImage(Buffer.from("yyy"), "image/png")).toThrow(/storage is full/);
+    expect(() => saveImage(Buffer.from("yyy"), "image/png")).toThrow(/no more room for attachments/);
     expect(() => saveImage(Buffer.from("y"), "image/png")).not.toThrow();
   });
 
@@ -395,7 +395,7 @@ describe("aggregate attachment storage", () => {
     writeFileSync(orphan, "x"); truncateSync(orphan, ATTACHMENTS_MAX_BYTES);
     const old = new Date(Date.now() - ATTACHMENT_PARTIAL_MAX_AGE_MS - 1000); utimesSync(orphan, old, old);
     vi.mocked(unlinkSync).mockImplementation(() => { throw Object.assign(new Error("locked"), { code: "EPERM" }); });
-    expect(() => saveImage(Buffer.from("x"), "image/png")).toThrow(/storage is full/);
+    expect(() => saveImage(Buffer.from("x"), "image/png")).toThrow(/no more room for attachments/);
     expect(existsSync(orphan)).toBe(true);
   });
 
@@ -519,5 +519,24 @@ describe("shared files", () => {
     await expect(document).resolves.toMatchObject({ bytes: 11 });
     await expect(image).rejects.toMatchObject({ status: 409 });
     expect(readdirSync(ATTACHMENTS_DIR)).toEqual([`${UPLOAD_A}.pdf`]);
+  });
+});
+
+// 0.1.60 audit C4: "attachments storage is full (limit 536870912 bytes)"
+// reached the composer. Limits are said in human units and plain words.
+describe("attachment limit sentences", () => {
+  it("say sizes in human units, never a raw byte count", async () => {
+    const { ATTACHMENTS_FULL_MESSAGE, FILE_TOO_LARGE_MESSAGE, IMAGE_TOO_LARGE_MESSAGE, humanBytes } = await import("./attachments.ts");
+    expect(ATTACHMENTS_FULL_MESSAGE).toContain("512 MB");
+    expect(FILE_TOO_LARGE_MESSAGE).toContain("25 MB");
+    expect(IMAGE_TOO_LARGE_MESSAGE).toContain("10 MB");
+    for (const text of [ATTACHMENTS_FULL_MESSAGE, FILE_TOO_LARGE_MESSAGE, IMAGE_TOO_LARGE_MESSAGE]) {
+      expect(text).not.toMatch(/\d{5,}|bytes|limit \d|\(/);
+      expect(text).toMatch(/^[A-Z].*\.$/);
+    }
+    expect([humanBytes(1536 * 1024 * 1024), humanBytes(2048), humanBytes(12)]).toEqual(["1.5 GB", "2 KB", "12 bytes"]);
+  });
+  it("the oversized image refusal is one of them", () => {
+    expect(() => saveImage(Buffer.alloc(IMAGE_MAX_BYTES + 1), "image/png")).toThrow("That image is too large. Images can be up to 10 MB.");
   });
 });

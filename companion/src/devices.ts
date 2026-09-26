@@ -543,6 +543,10 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
 /** The paired fleet: who may reach the harness through the sidecar, and the
  * one short-lived window in which a new phone may join it. Backed by a file,
  * loaded once at construction and written on every change. */
+/** What the phone is told when the new device could not be written to disk. */
+export const PAIRING_SAVE_FAILED =
+  "This computer could not save the pairing, so this device is not signed in. Check that the computer has free disk space, then try again.";
+
 export class DeviceRegistry {
   private devices: DeviceRecord[] = [];
   private window: PairingWindow | null = null;
@@ -817,24 +821,24 @@ export class DeviceRegistry {
       const spent = this.recallSpent(presented);
       if (spent?.reason === "used") {
         return {
-          error: "that code has already signed a device in — open Phone settings on your computer for a new one",
+          error: "That code has already signed a device in. Open Phone settings on your computer for a new one.",
           reason: "used",
         };
       }
       if (spent?.reason === "burned") {
         return {
-          error: "that code was cancelled after too many wrong guesses — start pairing again on your computer",
+          error: "That code was cancelled after too many wrong guesses. Start pairing again on your computer.",
           reason: "burned",
         };
       }
       if (spent?.reason === "expired") {
         return {
-          error: "that code has expired — open Phone settings on your computer and show a new one",
+          error: "That code has expired. Open Phone settings on your computer and show a new one.",
           reason: "expired",
         };
       }
       return {
-        error: "no pairing is in progress — open Phone settings on your computer",
+        error: "No pairing is in progress. Open Phone settings on your computer.",
         reason: "no-pairing",
       };
     }
@@ -850,9 +854,9 @@ export class DeviceRegistry {
       if (window.attemptsLeft <= 0) {
         this.spend("burned");
         this.clearReplay();
-        return { error: "too many incorrect codes — start pairing again", reason: "locked-out" };
+        return { error: "Too many incorrect codes. Start pairing again on your computer.", reason: "locked-out" };
       }
-      return { error: "that pairing credential is not right", reason: "wrong" };
+      return { error: "That pairing code or link is not right. Check it and try again.", reason: "wrong" };
     }
     // After the code, not before. Checked first, a full fleet answers every
     // wrong guess with "too many paired devices" — which tells a guesser
@@ -864,7 +868,7 @@ export class DeviceRegistry {
     // is readable, rather than being sent back to the computer for a new one.
     if (this.unavailable) {
       return {
-        error: "this computer could not read its list of paired devices, so pairing is paused — check Phone settings on your computer",
+        error: "This computer could not read its list of paired devices, so pairing is paused. Check Phone settings on your computer.",
         reason: "unavailable",
       };
     }
@@ -876,7 +880,7 @@ export class DeviceRegistry {
       // phone to say what is going on. Not ids — replacing one happens on the
       // computer (`replaceCandidates`), never from the phone.
       return {
-        error: "this computer already has the most devices it can pair — replace an old one on your computer, then try again",
+        error: "This computer already has the most devices it can pair. Replace an old one on your computer, then try again.",
         reason: "full",
         devices: this.byLastSeen().map(({ name, lastSeenAt }) => ({ name, lastSeenAt })),
       };
@@ -908,7 +912,10 @@ export class DeviceRegistry {
       this.persist();
     } catch (e) {
       this.devices = previous;
-      return { error: `could not save the pairing: ${(e as Error).message}`, reason: "save-failed" };
+      // The details stay in this computer's log: the file system's message
+      // names paths on this computer and means nothing on a phone.
+      console.warn(`companion: could not save the pairing: ${(e as Error).message}`);
+      return { error: PAIRING_SAVE_FAILED, reason: "save-failed" };
     }
     if (replaced) {
       this.lastSeenWrites.delete(replaced.id);

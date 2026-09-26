@@ -20,7 +20,15 @@ export function buildClosedBackupJob(descriptor,descriptorPath,{backupSupported=
     const text=`<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>${xml(jobId)}</string>\n<key>ProgramArguments</key><array>${[invocation.executable,...invocation.args].map(value=>`<string>${xml(value)}</string>`).join("")}</array>\n<key>EnvironmentVariables</key><dict><key>ELECTRON_RUN_AS_NODE</key><string>1</string></dict>\n<key>StartInterval</key><integer>60</integer>\n<key>RunAtLoad</key><true/>\n<key>LimitLoadToSessionType</key><string>Aqua</string>\n<key>ProcessType</key><string>Background</string>\n<key>KeepAlive</key><false/>\n<!-- ${marker} -->\n</dict></plist>\n`;
     files=[{name:`${jobId}.plist`,text}];
   }else{
-    const service=`# ${marker}\n[Unit]\nDescription=Murage closed backup due check\n\n[Service]\nType=oneshot\nExecStart=${[execStartExecutable("closed backup executable",invocation.executable),...invocation.args.map(value=>execStartWord("closed backup argument",value))].join(" ")}\n${environmentLine("ELECTRON_RUN_AS_NODE","1")}\nUMask=0077\nTimeoutStartSec=infinity\nStandardOutput=null\nStandardError=null\n`;
+    // KillMode=process: an AppImage's runtime keeps a small FUSE process
+    // that, once the app exits, unmounts the image and removes its
+    // /tmp/.mount_* folder. The default (control-group) signals it the moment
+    // the trigger exits, which left an empty /tmp/.mount_* folder behind on
+    // most runs, up to 1,440 a day; mixed SIGKILLs it, which left the image
+    // mounted with nothing serving it (both measured on the 0.1.60 Ubuntu
+    // 24.04 VM). process leaves it to finish; the trigger itself already
+    // waits for, and bounds, the capture it starts.
+    const service=`# ${marker}\n[Unit]\nDescription=Murage closed backup due check\n\n[Service]\nType=oneshot\nExecStart=${[execStartExecutable("closed backup executable",invocation.executable),...invocation.args.map(value=>execStartWord("closed backup argument",value))].join(" ")}\n${environmentLine("ELECTRON_RUN_AS_NODE","1")}\nUMask=0077\nTimeoutStartSec=infinity\nKillMode=process\nStandardOutput=null\nStandardError=null\n`;
     const timer=`# ${marker}\n[Unit]\nDescription=Murage owning-user backup trigger\n\n[Timer]\nOnStartupSec=10s\nOnUnitActiveSec=60s\nAccuracySec=1s\nUnit=${jobId}.service\n\n[Install]\nWantedBy=timers.target\n`;
     files=[{name:`${jobId}.service`,text:service},{name:`${jobId}.timer`,text:timer}];
   }
@@ -53,8 +61,28 @@ export function readClosedBackupStage(directory,{uid=process.getuid?.()}={}){
   for(const file of job.files)if(readClosedPrivateFile(path.join(directory,file.name),{uid,maxBytes:65536})!==file.text)fail();
   return{state:"staged",directory,descriptorPath,descriptor,...job};
 }
+/** A Linux stage an older Murage wrote, whose unit text this version would
+ * write differently (a changed template, such as the 0.1.60 drafts' job
+ * before --no-sandbox and KillMode). readClosedBackupStage refuses it,
+ * because it rebuilds the definition from the descriptor; that left such a
+ * job registered, reported "unavailable" and impossible to remove. This
+ * checks it against its OWN record instead: the private folder, the
+ * descriptor, the marker's descriptor digest and job id, the exact file set
+ * and the marker's digest of the files' bytes. It is only ever taken down
+ * and rebuilt, never installed. */
+export function readLegacyClosedBackupStage(directory,{uid=process.getuid?.()}={}){
+  privateDirectory(directory,uid);const descriptorPath=path.join(directory,"descriptor.json"),descriptor=readClosedBackupDescriptor(descriptorPath,{uid});
+  if(descriptor.owner.uid!==uid||!["linux","darwin"].includes(descriptor.platform))fail();
+  let marker;try{marker=JSON.parse(readClosedPrivateFile(path.join(directory,"stage.json"),{uid}));}catch{fail();}
+  const jobId=`com.murage.backup.${closedProfileId(descriptor)}`,names=descriptor.platform==="darwin"?[`${jobId}.plist`]:[`${jobId}.service`,`${jobId}.timer`];
+  if(!marker||Object.keys(marker).sort().join()!=="definitionDigest,descriptorDigest,jobId,owner,version"||marker.version!==1||marker.jobId!==jobId||!same(marker.owner,descriptor.owner)||marker.descriptorDigest!==closedDescriptorDigest(descriptor)||!/^[a-f0-9]{64}$/.test(marker.definitionDigest))fail();
+  if(!same(readdirSync(directory).sort(),["descriptor.json","stage.json",...names].sort()))fail();
+  const files=names.map(name=>({name,text:readClosedPrivateFile(path.join(directory,name),{uid,maxBytes:65536})}));
+  if(filesDigest(files)!==marker.definitionDigest||!files.every(file=>file.text.includes(`MurageClosedBackup ${jobId} ${marker.descriptorDigest}`)))fail();
+  return{state:"staged",legacy:true,directory,descriptorPath,descriptor,supported:true,jobId,owner:descriptor.owner,descriptorDigest:marker.descriptorDigest,definitionDigest:marker.definitionDigest,files};
+}
 export function removeClosedBackupStage(directory,options){
-  const stage=readClosedBackupStage(directory,options);
+  let stage;try{stage=readClosedBackupStage(directory,options);}catch(error){if(!options?.legacy)throw error;stage=readLegacyClosedBackupStage(directory,options);}
   for(const name of [...stage.files.map(file=>file.name),"descriptor.json","stage.json"])unlinkSync(path.join(directory,name));rmdirSync(directory);
   return{state:"removed"};
 }
@@ -65,16 +93,18 @@ function matchesRegistration(job,current){
 export async function installClosedBackupJob(stage,{read,install}){
   const job=readClosedBackupStage(stage.directory);assertClosedProfileBinding(job.descriptor);
   const prior=await read(job);if(prior&&!matchesRegistration(job,prior))fail();
-  if(prior?.registered)return{state:"installed",jobId:job.jobId,definitionDigest:job.definitionDigest};
+  // A registered job whose command failed last time is not installed: the
+  // provider takes it down and registers and proves it again.
+  if(prior?.registered&&!prior.failing)return{state:"installed",jobId:job.jobId,definitionDigest:job.definitionDigest};
   if(prior?.running)fail();await install(job,{expected:prior});
-  const current=await read(job);if(!matchesRegistration(job,current)||!current.registered)fail();
+  const current=await read(job);if(!matchesRegistration(job,current)||!current.registered||current.failing)fail();
   return{state:"installed",jobId:job.jobId,definitionDigest:job.definitionDigest};
 }
 /** Disable authoritative schedule first; never terminate a running capture. */
 export async function disableClosedBackupJob(stage,{disableSchedule,read,remove}){
   await disableSchedule();
   try{
-    const job=readClosedBackupStage(stage.directory),prior=await read(job);if(!prior)return{state:"disabled"};
+    const job=stage.legacy?readLegacyClosedBackupStage(stage.directory):readClosedBackupStage(stage.directory),prior=await read(job);if(!prior)return{state:"disabled"};
     if(!matchesRegistration(job,prior)||prior.running)return{state:"disabled-removal-pending"};
     await remove(job,{expected:prior});return(await read(job))===null?{state:"disabled"}:{state:"disabled-removal-pending"};
   }catch{return{state:"disabled-removal-pending"};}

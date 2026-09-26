@@ -489,10 +489,10 @@ function render(s) {
       : "<p class=dim>No network address yet.</p>") +
     (s.tailnetName && s.lan ? "<p class=dim>On this network only: <code>" + esc(s.lan) + ":" + s.port + "</code></p>" : "") +
     (s.tailscale && !s.tailnetName
-      ? "<p class=dim>On a tailnet, but this computer's MagicDNS name could not be read from Tailscale — either MagicDNS is off, or its command line tool is not where we looked. The address above still works from anywhere on the tailnet; it just changes if Tailscale ever re-issues it. The console output lists what was tried.</p>"
+      ? "<p class=dim>On a tailnet, but this computer's MagicDNS name could not be read from Tailscale. Either MagicDNS is off, or its command line tool is not where we looked. The address above still works from anywhere on the tailnet; it just changes if Tailscale ever re-issues it. The console output lists what was tried.</p>"
       : "") +
     (!s.tailscale
-      ? "<p class=dim>Reachable on this network only. Install Tailscale on both this computer and your phone to reach it from anywhere — including networks that stop devices from seeing each other.</p>"
+      ? "<p class=dim>Reachable on this network only. Install Tailscale on both this computer and your phone to reach it from anywhere, including networks that stop devices from seeing each other.</p>"
       : "") +
     (s.discovery.advertising
       ? "<p class=dim>Your phone can also find this computer as \\u201c" + esc(s.discovery.name) + "\\u201d.</p>"

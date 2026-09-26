@@ -142,7 +142,7 @@ export function EngineSelect<T extends PickerEngine>({id,labelId,instances,value
 export function pickerRowTitle(row: Pick<PickerModel, "selection"|"pricing">): string {
   const label = modelPriceLabel(row);
   if (!row.pricing) return label === PRICE_UNKNOWN ? PRICE_UNKNOWN
-    : `${label} · Flux Router picks a model for each turn, so what a turn costs depends on which one runs.`;
+    : `${label} · Flux Router picks a model for each turn, so this depends on which one runs.`;
   return [
     `Input $${row.pricing.inputPerMillion ?? 'unknown'}/M`,
     `Output $${row.pricing.outputPerMillion ?? 'unknown'}/M`,

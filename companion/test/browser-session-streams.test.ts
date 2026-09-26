@@ -432,7 +432,7 @@ describe("a live browser stream", () => {
     try {
       const failed = await signOut(browser.value);
       expect(failed.status).toBe(500);
-      expect(JSON.parse(failed.body)).toEqual({ error: "could not sign out on this computer — try again" });
+      expect(JSON.parse(failed.body)).toEqual({ error: "Could not sign out on this computer. Try again." });
       // The cookie is not cleared: the credential is still live on disk, and
       // this browser is the one that can retry.
       expect(failed.setCookie).toBe("");

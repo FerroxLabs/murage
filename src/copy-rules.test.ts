@@ -42,15 +42,17 @@ function walk(dir: string, out: string[] = []): string[] {
 
 const QUIET_ATTRIBUTES = new Set(["className", "class", "style", "key", "id", "href", "src", "rel", "target", "type", "role", "name", "value", "autoComplete", "inputMode", "pattern", "d", "viewBox", "fill", "stroke"]);
 
-/** Where a literal sits decides whether anyone reads it. */
-function isQuiet(node: ts.Node): boolean {
+/** Where a literal sits decides whether anyone reads it. `terminal`: the
+ * file is a command-line tool, whose console output IS what a person reads. */
+function isQuiet(node: ts.Node, terminal = false): boolean {
   let child: ts.Node = node;
   for (let at: ts.Node | undefined = node.parent; at; child = at, at = at.parent) {
     if (ts.isTypeNode(at) || ts.isImportDeclaration(at) || ts.isExportDeclaration(at) || ts.isImportTypeNode(at)) return true;
     if (ts.isJsxAttribute(at)) return QUIET_ATTRIBUTES.has(at.name.getText()) || at.name.getText().startsWith("data-");
     if (ts.isCallExpression(at)) {
       const callee = at.expression.getText();
-      if (/^console\.|^(?:log|debug|logError|logWarn|slog)$|\.(?:log|debug|warn|error|info)$|^(?:cn|clsx|classNames)$|^RegExp$|^require$/.test(callee)) return true;
+      if (!terminal && /^console\.|^(?:log|debug|logError|logWarn|slog)$|\.(?:log|debug|warn|error|info)$/.test(callee)) return true;
+      if (/^(?:cn|clsx|classNames)$|^RegExp$|^require$/.test(callee)) return true;
       // text being searched for or split on is read, not shown
       if (/\.(?:indexOf|lastIndexOf|includes|split|startsWith|endsWith|replace|replaceAll)$/.test(callee) && at.arguments[0] === child) return true;
       // a catalogue key: the catalogue's own values are checked below
@@ -70,7 +72,7 @@ function isQuiet(node: ts.Node): boolean {
 }
 
 /** Every piece of text in a file a person could read, with its line. */
-export function copyStrings(file: string, source: string): Array<{ line: number; end: number; text: string }> {
+export function copyStrings(file: string, source: string, { terminal = false }: { terminal?: boolean } = {}): Array<{ line: number; end: number; text: string }> {
   const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : /\.(?:mjs|cjs|js)$/.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
   const out: Array<{ line: number; end: number; text: string }> = [];
@@ -78,9 +80,9 @@ export function copyStrings(file: string, source: string): Array<{ line: number;
   const push = (node: ts.Node, text: string) => out.push({ line: lineOf(node.getStart(sf)), end: lineOf(node.getEnd()), text });
   const visit = (node: ts.Node) => {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-      if (!isQuiet(node)) push(node, node.text);
+      if (!isQuiet(node, terminal)) push(node, node.text);
     } else if (ts.isTemplateExpression(node)) {
-      if (!isQuiet(node)) push(node, [node.head.text, ...node.templateSpans.map(span => span.literal.text)].join(" "));
+      if (!isQuiet(node, terminal)) push(node, [node.head.text, ...node.templateSpans.map(span => span.literal.text)].join(" "));
     } else if (ts.isJsxText(node)) {
       if (node.text.trim()) push(node, node.text);
     }
@@ -90,12 +92,15 @@ export function copyStrings(file: string, source: string): Array<{ line: number;
   return out;
 }
 
-function hits(files: string[], rules: Rule[], allow: Record<string, string> = {}): string[] {
+function hits(files: string[], rules: Rule[], allow: Record<string, string> = {}, options: { terminal?: boolean } = {}): string[] {
   const found: string[] = [];
   for (const file of files) {
     const label = file.slice(ROOT.length);
     if (allow[label]) continue;
-    for (const { line, text } of copyStrings(file, readFileSync(file, "utf8"))) {
+    for (const { line, text: raw } of copyStrings(file, readFileSync(file, "utf8"), options)) {
+      // A whole page kept in a template: only its visible text is read, not
+      // its inline script or style.
+      const text = /^\s*<!doctype html>/i.test(raw) ? htmlText(raw).join(" ") : raw;
       if (PENDING.some(entry => entry.file === label && text === entry.text)) continue;
       if (MODEL_FACING_TEXT.some(entry => entry.file === label && text.startsWith(entry.starts))) continue;
       for (const rule of rules) if (rule.pattern.test(text)) found.push(`${label}:${line}: ${rule.name}: ${text.trim().slice(0, 120)}`);
@@ -156,6 +161,9 @@ const DESKTOP_NOT_COPY: Record<string, string> = {
   "electron/capabilities.cjs": "capability reason codes; the window words them",
 };
 
+// Companion files whose strings never reach a person. Each needs its reason.
+const COMPANION_NOT_COPY: Record<string, string> = {};
+
 /** Text in a static HTML page: markup, comments and scripts stripped. */
 export function htmlText(source: string): string[] {
   return source.replace(/<!--[\s\S]*?-->/g, " ").replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
@@ -192,7 +200,11 @@ const BACKUP_WORDS = BACKUP_RULES.map(sentence);
 // 0.1.60 Linux D13 added the phrasings the first rule let through: "Charges
 // go to that connection's account", "testing a model costs nothing" and
 // "may require a paid licence".
-const PRICE: Rule = { name: "price talk", pattern: /\b(?:prices?|priced|pricing|cheap(?:er|est|ly)?|discount(?:s|ed)?|paid|charges? go|costs? (?:nothing|money))\b|\bat no cost\b|\bfree\b(?! (?:slot|memory|disk|space|up\b|of\b|text\b|-text\b))/i };
+// 0.1.60 audit C2 added what that still let through: "may incur usage
+// charges", "bills the Flux key", "to keep the cost down", "what a turn
+// costs" and "asks before it spends". ("In charge" and a spending limit the
+// person sets are other words.)
+const PRICE: Rule = { name: "price talk", pattern: /\b(?:prices?|priced|pricing|cheap(?:er|est|ly)?|discount(?:s|ed)?|paid|charges? go|costs? (?:nothing|money))\b|\bat no cost\b|\bfree\b(?! (?:slot|memory|disk|space|up\b|of\b|text\b|-text\b))|\bincur\w*|\bcharges\b|\bbill(?:s|ed)\b|\bspends?\b(?!-)|\bcosts? down\b|\bwhat (?:a|an|each|the) \w+ costs\b/i };
 // An engine's raw error text: an HTTP status or a provider's error type.
 const RAW_ERROR: Rule = { name: "a raw error code", pattern: /\bstatus [45]\d\d\b|\bapi_error\b|\bHTTP [45]\d\d\b/ };
 
@@ -206,6 +218,8 @@ const PRICE_KNOWN: Array<{ file: string; text: string; why: string }> = [
   { file: "src/lib/model-metadata.ts", text: "Price varies by route", why: "model catalogue pricing column" },
   { file: "src/lib/provider-model-picker.ts", text: "Price unavailable", why: "model catalogue pricing column" },
   { file: "src/lib/provider-model-picker.ts", text: "compatible chat model  · prices per million tokens", why: "model catalogue pricing column" },
+  { file: "src/lib/usage.ts", text: "equivalent: on your subscription, not billed", why: "Usage page cost column caption, left for the owner in 0.1.60 fix3" },
+  { file: "src/lib/usage.ts", text: "billed to your API key", why: "Usage page cost column caption, left for the owner in 0.1.60 fix3" },
 ];
 const PRICE_KNOWN_KEYS = new Set([
   "providerError.payment.summary", // names HTTP 402; ProviderErrorCard's tests pin it
@@ -247,6 +261,15 @@ describe("product copy rules", () => {
     expect(found).toEqual([]);
   });
 
+  // 0.1.60 audit M1: every pairing refusal reached the phone's sign-in page
+  // with an em dash, and neither the phone's door nor the headless installer
+  // was scanned. The companion's console output is its log (not scanned);
+  // the installer is a command-line tool, so its console output is copy.
+  it("the phone's door and the headless installer show no em dash and no safe", () => {
+    expect(hits(walk(join(ROOT, "companion/src")), [EM_DASH, SAFE], COMPANION_NOT_COPY)).toEqual([]);
+    expect(hits(walk(join(ROOT, "installer")).filter(file => !file.includes("/test/")), [EM_DASH, SAFE], {}, { terminal: true })).toEqual([]);
+  });
+
   it("the server hands the window no em dash and no safe", () => {
     const files = [...walk(join(ROOT, "server")), ...walk(join(ROOT, "shared"))];
     expect(hits(files, [EM_DASH, SAFE], MODEL_FACING)).toEqual([]);
@@ -263,9 +286,13 @@ describe("product copy rules", () => {
   it("the price and raw-error rules catch what the 0.1.60 Mac pass found, and not the other senses of free", () => {
     for (const text of ["in a container on this machine, free and separate from your own desktop.", "Only engines that report a price show one.", "Cheaper models", "error: API error (status 429 Too Many Requests): api_error: Available credit is low",
       // 0.1.60 Linux D13
-      "Images use Flux. Charges go to that connection’s account.", "Nothing here is sent to a cloud provider, and testing a model costs nothing.", "Docker Desktop may require a paid licence", "Free search: Parallel, then DuckDuckGo", "{count} free runs left today."])
+      "Images use Flux. Charges go to that connection’s account.", "Nothing here is sent to a cloud provider, and testing a model costs nothing.", "Docker Desktop may require a paid licence", "Free search: Parallel, then DuckDuckGo", "{count} free runs left today.",
+      // 0.1.60 audit C2
+      "Its model may incur usage charges; no skill is activated by this action.", "Uses your existing key and may incur model charges.", "It bills the Flux key saved in Settings.",
+      "One low quality square draft, to keep the cost down. OpenAI bills your own API account.", "Flux Router picks a model for each turn, so what a turn costs depends on which one runs.",
+      "API usage is billed to that provider account", "image generation still asks before it spends.", "Search queries are sent to the selected third-party provider and may incur separate charges."])
       expect([PRICE, RAW_ERROR].some(rule => rule.pattern.test(text)), text).toBe(true);
-    for (const text of ["This page was paused to free memory.", "Check free disk space.", "Waiting for a free slot", "free up space", "free of secrets", "Waiting for a slot", "HTTP headers"])
+    for (const text of ["This page was paused to free memory.", "Check free disk space.", "Waiting for a free slot", "free up space", "free of secrets", "Waiting for a slot", "HTTP headers", "On email you stay in charge.", "Your spending limit requires reliable cost information before this check can run."])
       expect([PRICE, RAW_ERROR].some(rule => rule.pattern.test(text)), text).toBe(false);
   });
 

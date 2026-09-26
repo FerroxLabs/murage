@@ -1493,7 +1493,7 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
         // The device is still on disk and still in memory. Saying "signed
         // out" would be false, and clearing the cookie would hide the only
         // credential able to retry. No detail: it names paths on the computer.
-        return sendJson(res, 500, { error: "could not sign this device out on the computer — try again" });
+        return sendJson(res, 500, { error: "Could not sign this device out on the computer. Try again." });
       }
       if (!deviceId) return sendJson(res, 401, { error: "sign in", signIn: "/enter" });
       // Browser streams already ended with their sessions (`onSessionEnded`);
@@ -1515,7 +1515,7 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           const seconds = Math.max(1, Math.ceil(waiting.retryAfterMs / 1000));
           res.setHeader("retry-after", String(seconds));
           return sendJson(res, 429, {
-            error: `too many sign-in attempts from this device — try again in ${seconds} seconds`,
+            error: `Too many sign-in attempts from this device. Try again in ${seconds} seconds.`,
             retryAfter: seconds,
           });
         }
@@ -1576,7 +1576,7 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           // Saying "signed out" here would be false, and clearing the cookie
           // would only hide the credential from the one browser able to retry.
           // No detail: the underlying error names paths on this computer.
-          return sendJson(res, 500, { error: "could not sign out on this computer — try again" });
+          return sendJson(res, 500, { error: "Could not sign out on this computer. Try again." });
         }
         res.setHeader("set-cookie", clearedCookie(identity));
         return sendJson(res, 200, { ok: true });
@@ -1637,7 +1637,7 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
     // read from the same record. Off until the computer owner turns it on.
     if (isCloudDesktopJoin(method, path) && !device?.cloudDesktopAccess) {
       return sendJson(res, 403, {
-        error: "cloud desktop access is off for this device — enable it in Murage → Settings → Phone",
+        error: "Cloud desktop access is off for this device. Turn it on in Murage → Settings → Phone.",
       });
     }
     const carriesProof = isCloudDesktopJoin(method, path) || needsLaunchProof(method, path);
@@ -1827,7 +1827,7 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
         (raw) => {
           if (declaresCloudRun(raw)) {
             return sendJson(res, 403, {
-              error: "cloud routines are set up on your computer — this browser is not allowed cloud access",
+              error: "Cloud routines are set up on your computer. This browser is not allowed cloud access.",
             });
           }
           forward(raw);
@@ -2261,15 +2261,15 @@ export function tailnetBindAddress(
     return {
       refused:
         `Tailscale reports this node at ${reported}, but no interface on this machine carries that ` +
-        `address — the tailnet interface may be coming up or going down`,
+        `address; the tailnet interface may be coming up or going down`,
     };
   }
   if (!fromInterfaces) return { refused: "this machine has no Tailscale address" };
   if (!reported) {
     return {
       refused:
-        `this machine has ${fromInterfaces} in the 100.64.0.0/10 range, but Tailscale did not confirm it — ` +
-        `its command line tool was not found, is not signed in, or did not answer — and an address in that ` +
+        `this machine has ${fromInterfaces} in the 100.64.0.0/10 range, but Tailscale did not confirm it: ` +
+        `its command line tool was not found, is not signed in, or did not answer. An address in that ` +
         `range is not proof on its own that it belongs to Tailscale`,
     };
   }
