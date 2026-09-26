@@ -20,7 +20,7 @@ import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { downloadFolderShared, exportRemoteBackup } from "./backup-remote-export.mjs";
-import { remoteWorkDirectory,remoteSshDirectory,remoteControlDirectory,localAppDataDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
+import { remoteWorkDirectory,remoteSshDirectory,prepareRemoteFolder,remoteControlDirectory,localAppDataDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
@@ -3409,6 +3409,10 @@ async function announceLastBackupFailure(){
 async function initializeBackupRemoteHost(){
   if(!app.isPackaged||!desktopDataOwner||desktopRecoveryMode||closedBackupRequested||!backupScheduleHost)return;
   const installation=ownedDesktopDataDir(),control=remoteControlDirectory({control:closedControlDirectory(installation),userData:app.getPath("userData"),localAppData:process.platform==="win32"?localAppDataDirectory():null});
+  // Windows: the owner-only "remote" folder is made here, asynchronously, so
+  // later adapter setup never runs icacls or PowerShell in the main process.
+  // A failure is reported when an off-site step first needs the folder.
+  if(process.platform==="win32")try{await prepareRemoteFolder(control);}catch{/* the adapter-time check names it */}
   const [{createBackupRemoteHost},{BackupRestic,resolveSshTools}]=await Promise.all([
     import(pathToFileURL(path.join(process.resourcesPath,"server","backup-remote-host.js")).href),
     import(pathToFileURL(path.join(process.resourcesPath,"server","backup-restic.js")).href),

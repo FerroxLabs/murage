@@ -116,3 +116,35 @@ test("real Windows: the off-site folder is created under local app data, owner-o
  // Only the two empty folders this test made, one at a time, never recursively.
  fs.rmdirSync(ssh);fs.rmdirSync(control);
 });
+
+// Follow-up to the main-process freeze: the owner-only "remote" folder is made
+// ahead of time with the asynchronous ACL tools, so creating work trees later
+// never starts icacls or PowerShell synchronously.
+test("Windows: prepareRemoteFolder locks the remote folder asynchronously; later work trees run no synchronous ACL tool",async t=>{
+ const {prepareRemoteFolder}=await import("./backup-remote-runtime.mjs");
+ const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-remote-prepare-")));t.after(()=>safeWipeSync(root));
+ const control=path.join(root,"murage","offsite","0123456789abcdef");
+ const platform=Object.getOwnPropertyDescriptor(process,"platform");
+ Object.defineProperty(process,"platform",{...platform,value:"win32"});t.after(()=>Object.defineProperty(process,"platform",platform));
+ const asyncCalls=[],syncCalls=[];
+ const restrict=async(directory,options)=>{await new Promise(r=>setImmediate(r));asyncCalls.push([path.relative(root,directory),options.directory]);};
+ const remote=await prepareRemoteFolder(control,{platform:"win32",restrict});
+ assert.equal(remote,path.join(control,"remote"));
+ assert.deepEqual(asyncCalls,[[path.join("murage","offsite","0123456789abcdef","remote"),true]]);
+ const sync={restrictToOwner:(...args)=>syncCalls.push(args)};
+ const work=remoteWorkDirectory(control,"remote-one",1,sync),ssh=remoteSshDirectory(control,sync);
+ assert.equal(path.dirname(path.dirname(work)),ssh);assert.deepEqual(syncCalls,[]);
+ // Already prepared: no second lock-down.
+ await prepareRemoteFolder(control,{platform:"win32",restrict});assert.equal(asyncCalls.length,1);
+ // POSIX: nothing to prepare.
+ assert.equal(await prepareRemoteFolder(control,{platform:"linux",restrict}),null);
+});
+test("Windows: a failed lock-down leaves no unlocked remote folder behind",async t=>{
+ const {prepareRemoteFolder}=await import("./backup-remote-runtime.mjs");
+ const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-remote-prepare-fail-")));t.after(()=>safeWipeSync(root));
+ const control=path.join(root,"murage","offsite","0123456789abcdef");
+ const platform=Object.getOwnPropertyDescriptor(process,"platform");
+ Object.defineProperty(process,"platform",{...platform,value:"win32"});t.after(()=>Object.defineProperty(process,"platform",platform));
+ await assert.rejects(prepareRemoteFolder(control,{platform:"win32",restrict:async()=>{throw Error("BACKUP_WINDOWS_ACL_FAILED");}}),/ACL_FAILED/);
+ assert.equal(fs.existsSync(path.join(control,"remote")),false);
+});

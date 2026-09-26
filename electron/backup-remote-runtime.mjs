@@ -1,6 +1,6 @@
-import {lstatSync,mkdirSync,realpathSync,rmSync} from "node:fs";
+import {lstatSync,mkdirSync,realpathSync,rmSync,rmdirSync} from "node:fs";
 import path from "node:path";
-import {restrictToOwner} from "./backup-windows-acl.mjs";
+import {restrictToOwner,restrictToOwnerAsync} from "./backup-windows-acl.mjs";
 import {samePath} from "../shared/path-identity.mjs";
 // POSIX: owner uid and 0700 are checked in place on every use. Windows has
 // neither, so the "remote" tree is created with an owner-only ACL
@@ -73,6 +73,22 @@ export function remoteSshDirectory(control,platform){
  ensureRemoteControlDirectory(control);
  const directory=path.join(control,"remote");makeDirectory(directory,{restrict:true,platform});
  const stat=lstatSync(directory);if(!stat.isDirectory()||stat.isSymbolicLink()||!owned(stat)||!privateMode(stat)||!canonical(directory))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
+ return directory;
+}
+/** Windows: makes the owner-only "remote" folder ahead of time with the
+ * asynchronous ACL tools, from main's async startup. Every work tree and the
+ * SSH folder live under it and inherit its ACL, so once it exists the
+ * synchronous remoteWorkDirectory/remoteSshDirectory only check folders and
+ * never start icacls or PowerShell in Electron's main process, which froze the
+ * window (see backup-windows-acl.mjs runAsync). A folder whose lock-down fails
+ * is removed again while still empty. POSIX: nothing to do. */
+export async function prepareRemoteFolder(control,{platform=process.platform,restrict=restrictToOwnerAsync}={}){
+ if(platform!=="win32")return null;
+ ensureRemoteControlDirectory(control);
+ const directory=path.join(control,"remote");
+ let created=false;try{mkdirSync(directory,{mode:0o700});created=true;}catch(error){if(error.code!=="EEXIST")throw error;}
+ if(created){try{await restrict(directory,{directory:true});}catch(error){try{rmdirSync(directory);}catch{/* reported below */}throw error;}}
+ const stat=lstatSync(directory);if(!stat.isDirectory()||stat.isSymbolicLink()||!canonical(directory))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
  return directory;
 }
 /** Removes one destination's whole private work tree after its settings are
