@@ -5,7 +5,7 @@ import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
 import { createApprovalNotifications } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, createBackupModeController, createBackupToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
-import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost } from "./backup-schedule-host.mjs";
+import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { captureFailureSentence } from "../shared/backup-capture-failure.mjs";
 import { createRecoveryKeyFlow, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
@@ -371,9 +371,8 @@ ipcMain.handle("backup-schedule:select",(_event,...args)=>{if(args.length||!back
 // One act: choose the folder, the key is written here, one confirmation.
 ipcMain.handle("backup-schedule:set-up",(_event,...args)=>{
   if(args.length>1||!backupScheduleHost||backupMode.isPreparing()||backupRecoveryKeys.isPending())throw new Error("BACKUP_UNAVAILABLE");
-  if(args.length===1&&(typeof args[0]!=="object"||args[0]===null||Array.isArray(args[0])||Object.keys(args[0]).some(key=>key!=="existingKey")||!["boolean","undefined"].includes(typeof args[0].existingKey)))throw new Error("INVALID_BACKUP_REQUEST");
-  const existingKey=args[0]?.existingKey===true;
-  return settleRecoveryKeyRequest(()=>backupScheduleHost.setUpBackups({existingKey}));
+  const request=setUpBackupsRequest(args);if(!request)throw new Error("INVALID_BACKUP_REQUEST");
+  return settleRecoveryKeyRequest(()=>backupScheduleHost.setUpBackups(request));
 });
 ipcMain.handle("backup-schedule:run-now",(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing()||backupRecoveryKeys.isPending())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.runNow(args[0]);});
 ipcMain.handle("backup-schedule:clear-review",(_event,...args)=>{if(args.length!==1||!Number.isSafeInteger(args[0])||args[0]<0)throw new Error("INVALID_BACKUP_REQUEST");if(!backupScheduleHost||backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return backupScheduleHost.clearReview(args[0]);});

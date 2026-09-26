@@ -38,6 +38,18 @@ const ownedCaptureWaits=new Map([
   ["Computer-use cleanup has not completed","OWNED_CUA_STOP_UNSETTLED"],
 ].map(([label,code])=>[label+"; Murage kept installation ownership. Wait and retry Quit.",code]));
 /** Local diagnostic only: never retain arbitrary error fields, messages or paths. */
+/** The arguments of a "backup-schedule:set-up" request, or null when they are
+ * malformed. The preload bridge always forwards its one options slot, so the
+ * ordinary "Turn on backups" call arrives as [undefined]; that is the plain
+ * road, not a malformed request. */
+export function setUpBackupsRequest(args){
+  if(!Array.isArray(args)||args.length>1)return null;
+  const options=args[0];
+  if(options===undefined)return {existingKey:false};
+  if(typeof options!=="object"||options===null||Array.isArray(options))return null;
+  if(Object.keys(options).some(key=>key!=="existingKey")||!["boolean","undefined"].includes(typeof options.existingKey))return null;
+  return {existingKey:options.existingKey===true};
+}
 export function captureFailureDiagnostic(stage,error){
   const candidate=captureFailureCodes.has(error?.code)?error.code:captureFailureCodes.has(error?.message)?error.message:null;
   let backupAgeAttestation=null;try{if(candidate==="AGE_TOOL_UNVERIFIED")backupAgeAttestation=normalizeBackupAgeDiagnostic(error?.backupAgeAttestation);}catch{/* Diagnostic properties are not trusted. */}

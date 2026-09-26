@@ -11,7 +11,7 @@ import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { BackupCoordinator } from "../server/backup-coordinator.ts";
 import { acquireDataDirLease } from "./data-dir-lease.mjs";
-import { createBackupScheduleHost } from "./backup-schedule-host.mjs";
+import { createBackupScheduleHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { backupFixture,testAgeKeys } from "../server/testing/backup-fixture.ts";
 import { canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
@@ -564,4 +564,14 @@ test("setup is refused while a backup is running or a schedule is already on",as
     await f.enable();
     await assert.rejects(f.controller.setUpBackups(),/BACKUP_BUSY/);
   }finally{f.cleanup();}
+});
+
+test("Turn on backups reaches setup when the bridge forwards an empty options slot", () => {
+  // preload.cjs forwarded `options` even when it was undefined, and the old
+  // check refused [undefined] as malformed: the ordinary setup never opened.
+  assert.deepEqual(setUpBackupsRequest([undefined]), { existingKey: false });
+  assert.deepEqual(setUpBackupsRequest([]), { existingKey: false });
+  assert.deepEqual(setUpBackupsRequest([{}]), { existingKey: false });
+  assert.deepEqual(setUpBackupsRequest([{ existingKey: true }]), { existingKey: true });
+  for (const bad of [[null], ["x"], [[]], [{ existingKey: "yes" }], [{ other: true }], [undefined, undefined]]) assert.equal(setUpBackupsRequest(bad), null);
 });
