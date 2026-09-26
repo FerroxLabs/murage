@@ -21,21 +21,40 @@ function makeDirectory(directory,{restrict=false,platform}={}){
 }
 /** The folder off-site work state lives in. POSIX: the private control folder
  * beside the data folder, as before. Windows: a short per-installation folder
- * in the app's own settings folder, owner-only like the rest. Windows can't
- * create a folder past 248 characters (or open a file past 260 with ssh), and
- * beside a restored install's data folder
- * (AppData\Roaming\murage\recovered-installations\<id>) the work tree was
- * already about 235: every upload failed with ENAMETOOLONG from mkdtemp.
- * Off-site copies never worked on Windows before this, so nothing moves. */
-export function remoteControlDirectory({control,userData,platform=process.platform}){
+ * under this computer's own local app data, owner-only like the rest:
+ * `%LOCALAPPDATA%\murage\offsite\<16 of the installation digest>`.
+ * - Short: Windows can't create a folder past 248 characters (or open a file
+ *   past 260 with ssh), and beside a restored install's data folder the work
+ *   tree was about 235, so every upload failed with ENAMETOOLONG (W-D2).
+ * - Local: companies often redirect AppData\Roaming (Electron's userData) to
+ *   a network share. icacls and ssh can't use a \\server\share path, so the
+ *   earlier `<userData>\offsite` made off-site copies unavailable there (W-A4).
+ *   Local AppData is never redirected or roamed, which also keeps per-machine
+ *   SSH keys and job journals on the machine that made them.
+ * userData is the fallback only when local app data is unusable and userData
+ * itself is on a local drive. Off-site copies never worked on Windows before
+ * 0.1.60, so nothing moves. */
+export function remoteControlDirectory({control,userData,localAppData,platform=process.platform}){
  if(platform!=="win32")return control;
  const digest=path.win32.basename(control);
- if(!/^[0-9a-f]{64}$/.test(digest)||typeof userData!=="string"||!path.win32.isAbsolute(userData))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
- return path.win32.join(userData,"offsite",digest.slice(0,16));
+ const local=value=>typeof value==="string"&&/^[A-Za-z]:\\/.test(value)&&!/["\x00-\x1f]/.test(value);
+ if(!/^[0-9a-f]{64}$/.test(digest))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
+ if(local(localAppData))return path.win32.join(localAppData,"murage","offsite",digest.slice(0,16));
+ if(local(userData))return path.win32.join(userData,"offsite",digest.slice(0,16));
+ throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
+}
+/** %LOCALAPPDATA% in its real spelling, or null. Never a network path. */
+export function localAppDataDirectory(env=process.env,{realpath=realpathSync.native}={}){
+ const value=env.LOCALAPPDATA;
+ if(typeof value!=="string"||!/^[A-Za-z]:\\/.test(value)||/["\x00-\x1f]/.test(value))return null;
+ try{const real=realpath(value);return /^[A-Za-z]:\\/.test(real)?real:null;}catch{return null;}
 }
 /** Every ancestor below a main-owned private control root is checked in place. */
 export function ensureRemoteControlDirectory(control){
  const parent=path.dirname(control),anchor=path.dirname(parent);
+ // Windows: the anchor is Murage's own folder in local app data (see
+ // remoteControlDirectory), made on first use. POSIX anchors are never made.
+ if(!posix())makeDirectory(anchor);
  const base=lstatSync(anchor);if(!base.isDirectory()||base.isSymbolicLink()||!owned(base)||(posix()&&(base.mode&0o022))||!canonical(anchor))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");
  for(const directory of [parent,control]){makeDirectory(directory);const stat=lstatSync(directory);if(!stat.isDirectory()||stat.isSymbolicLink()||!owned(stat)||!privateMode(stat)||!canonical(directory))throw Error("BACKUP_REMOTE_REVIEW_REQUIRED");}
  return control;

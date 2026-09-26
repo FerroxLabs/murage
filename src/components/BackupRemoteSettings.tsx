@@ -104,6 +104,7 @@ export function remoteBackupError(cause:unknown){
  if(code.includes("CONTROL_UNAVAILABLE"))return "Murage couldn't prepare its private off-site folder beside its data folder, so it didn't create or choose a password file. Check that you can create folders in the folder that holds Murage's data, then try again.";
  if(code.includes("PASSWORD_FILE_PLACE"))return "That file is inside Murage's own folders or your backup folder. Keep the off-site password somewhere else, such as Documents, then choose it again.";
  if(code.includes("PASSWORD_FILE_KIND"))return "That isn't a plain password file. Choose a small text file (under 4 KB) that is not a shortcut or link.";
+ if(code.includes("PASSWORD_FILE_SHARED_WINDOWS"))return "Other accounts on this computer can open that file. Copy it into your Documents folder, which only you can open, then choose the copy and delete the original.";
  if(code.includes("PASSWORD_FILE_SHARED"))return "Other accounts on this computer can read that file. Make it readable only by you, then choose it again.";
  if(code.includes("PASSWORD_FILE_FORMAT"))return "That file doesn't hold a single-line password. Choose a file with the password on one line and nothing else.";
  if(code.includes("PASSWORD_NOT_CREATED"))return "Murage could not create the off-site password file. Check that your Documents or home folder can be written to, then try again.";
@@ -121,6 +122,14 @@ export function remoteBackupError(cause:unknown){
  if(code.includes("BUSY"))return "A backup operation is already running. Wait for it to finish, then refresh.";
  // Anything not named above. The log (server.log) carries the redacted cause.
  return "Murage couldn't finish this step and didn't change anything. Refresh status, then try again. If it happens again, the reason is in Murage's log.";
+}
+/** A refused password file changes nothing (the store refuses before it
+ * saves anything), so the page stays usable: the person can choose another
+ * file straight away, as the refusal sentence tells them to. Every other
+ * failure locks connection and upload actions until status is refreshed. */
+export function leavesStatusCurrent(cause:unknown){
+ const code=String(cause instanceof Error?cause.message:cause);
+ return /BACKUP_REMOTE_PASSWORD_FILE_(?:PLACE|KIND|SHARED|SHARED_WINDOWS|FORMAT|UNREADABLE)\b/.test(code);
 }
 const inputClass="mt-1 min-h-11 w-full min-w-0 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:ring-2 focus-visible:ring-accent-border disabled:opacity-50";
 const buttonClass="min-h-11 rounded-lg border border-hairline/40 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
@@ -152,7 +161,7 @@ export function useBackupRemote(){
  }
  async function run(action:string,work:(api:RemoteBridge,expected:number)=>Promise<void>){
   if(gate.current||!bridge)return;gate.current=true;const expected=++version.current;setBusy(action);setError(null);setNotice(null);setArea(areaOf(action));
-  try{await work(bridge,expected);}catch(cause){if(mounted.current&&version.current===expected){setError(remoteBackupError(cause));setStale(true);setUploadConsent(false);}}
+  try{await work(bridge,expected);}catch(cause){if(mounted.current&&version.current===expected){setError(remoteBackupError(cause));if(!leavesStatusCurrent(cause))setStale(true);setUploadConsent(false);}}
   finally{gate.current=false;if(mounted.current)setBusy(null);}
  }
  useEffect(()=>{mounted.current=true;void run("refresh",async(_api,expected)=>refresh(expected));return()=>{mounted.current=false;version.current++;};},[]);

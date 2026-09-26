@@ -1,5 +1,5 @@
 import {it,expect} from "vitest";
-import {remoteBackupInput,remoteBackupStatus,remoteBackupError,remoteBackupCatalogue,remoteRetentionPolicy,remoteRetentionPreview,type RemoteDraft} from "./BackupRemoteSettings";
+import {leavesStatusCurrent,remoteBackupInput,remoteBackupStatus,remoteBackupError,remoteBackupCatalogue,remoteRetentionPolicy,remoteRetentionPreview,type RemoteDraft} from "./BackupRemoteSettings";
 const draft:RemoteDraft={label:"Backup",endpoint:"https://s3.example.invalid",bucket:"fixture-bucket",prefix:"murage",region:"auto",bucketLookup:"auto",accessKeyId:"FAKE_ACCESS",secretAccessKey:"FAKE_SECRET",sessionToken:""};
 it("validates explicit S3 settings without choosing a provider or embedding credentials in URLs",()=>{
  expect(remoteBackupInput(draft)).toMatchObject({endpoint:draft.endpoint,credentials:{accessKeyId:"FAKE_ACCESS",secretAccessKey:"FAKE_SECRET"}});
@@ -81,10 +81,19 @@ it("a shared data folder is shown with its path and fix, never a bare code",()=>
 });
 it("names why an off-site password step was refused instead of a bare 'could not be confirmed' (W-D2)",()=>{
  const sentences=new Set<string>();
- for(const code of ["BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_PASSWORD_NOT_CREATED"]){
+ for(const code of ["BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE","BACKUP_REMOTE_PASSWORD_NOT_CREATED"]){
   const sentence=remoteBackupError(Error(code));sentences.add(sentence);
   expect(sentence,code).not.toMatch(/could not be confirmed|BACKUP_|—/);
  }
- expect(sentences.size).toBe(7);
+ expect(sentences.size).toBe(8);
+ // Windows has no chmod: its sentence says what to do there (W-A5).
+ expect(remoteBackupError(Error("Error invoking remote method 'backupRemote:selectPassword': Error: BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS"))).toMatch(/Documents folder/);
  expect(remoteBackupError(Error("SOMETHING_ELSE"))).not.toMatch(/could not be confirmed/);
+});
+
+it("a refused password file leaves the page usable; everything else asks for a refresh (W-A5)",()=>{
+    for(const code of ["BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE"])
+      expect(leavesStatusCurrent(Error(`Error invoking remote method 'backupRemote:selectPassword': Error: ${code}`)),code).toBe(true);
+    for(const code of ["BACKUP_REMOTE_REVIEW_REQUIRED","BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_NOT_CREATED","BACKUP_REMOTE_CHANGED","BACKUP_REMOTE_PASSWORD_FILE_SHAREDX"])
+      expect(leavesStatusCurrent(Error(code)),code).toBe(false);
 });

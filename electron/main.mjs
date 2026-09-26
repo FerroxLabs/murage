@@ -20,7 +20,7 @@ import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { downloadFolderShared, exportRemoteBackup } from "./backup-remote-export.mjs";
-import { remoteWorkDirectory,remoteSshDirectory,remoteControlDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
+import { remoteWorkDirectory,remoteSshDirectory,remoteControlDirectory,localAppDataDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
@@ -2361,7 +2361,9 @@ async function runSnapshotDesktopRecovery(confirm) {
     finally { owner.release(); }
     if (cancellation.signal.aborted) throw Object.assign(new Error("Recovery stopped"), { code: "RECOVERY_CAPTURE_CANCELLED" });
     const result = await runSeparateDesktopRecovery({ archive, sha256: saved.sha256 }, plan, cancellation.signal);
-    return { ...result, recoveryArchive: archive };
+    // Skill shortcuts the capture left out (C8): listed, and re-created by
+    // Murage from each bot's skill manifest in the restored copy.
+    return { ...result, recoveryArchive: archive, skillLinksOmitted: captured.skillLinksOmitted, skillLinks: captured.skillLinks };
   } catch (error) {
     if (retainedSeparateDirectory !== plan.dataDirectory && (fs.existsSync(captureDirectory) || fs.existsSync(`${captureDirectory}.capture.json`))) retainedSeparateDirectory = captureDirectory;
     throw error;
@@ -3406,7 +3408,7 @@ async function announceLastBackupFailure(){
 }
 async function initializeBackupRemoteHost(){
   if(!app.isPackaged||!desktopDataOwner||desktopRecoveryMode||closedBackupRequested||!backupScheduleHost)return;
-  const installation=ownedDesktopDataDir(),control=remoteControlDirectory({control:closedControlDirectory(installation),userData:app.getPath("userData")});
+  const installation=ownedDesktopDataDir(),control=remoteControlDirectory({control:closedControlDirectory(installation),userData:app.getPath("userData"),localAppData:process.platform==="win32"?localAppDataDirectory():null});
   const [{createBackupRemoteHost},{BackupRestic,resolveSshTools}]=await Promise.all([
     import(pathToFileURL(path.join(process.resourcesPath,"server","backup-remote-host.js")).href),
     import(pathToFileURL(path.join(process.resourcesPath,"server","backup-restic.js")).href),

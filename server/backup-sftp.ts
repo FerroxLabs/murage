@@ -85,9 +85,21 @@ export function resticSftpCommandOption(ssh:string,args:string[]){
   return `"sftp.command=${command.replaceAll('"','""')}"`;
 }
 
-/** Absolute tool paths only; PATH is never consulted. */
-export function resolveSshTools(platform:NodeJS.Platform=process.platform,exists:(file:string)=>boolean=file=>{try{return statSync(file).isFile();}catch{return false;}}):SshTools{
-  const candidates:[string,string][]=platform==="win32"?[["C:\\Windows\\System32\\OpenSSH\\ssh.exe","C:\\Windows\\System32\\OpenSSH\\ssh-keyscan.exe"]]
+/** The Windows folder, from SystemRoot (windir as a fallback): Windows can be
+ * installed on a drive other than C: or in a folder not named Windows (W-A7).
+ * Only a plain local drive path is accepted; null when neither is usable. */
+export function windowsSystemRoot(env:NodeJS.ProcessEnv=process.env):string|null{
+  for(const name of ["SystemRoot","windir"] as const){
+    const value=env[name];
+    if(typeof value==="string"&&/^[A-Za-z]:\\[^"'\x00-\x1f;%]*$/.test(value)&&!/(^|\\)\.\.?(\\|$)/.test(value.slice(3)))return value.replace(/\\+$/,"");
+  }
+  return null;
+}
+/** Absolute tool paths only; PATH is never consulted. On Windows, the
+ * built-in OpenSSH client under the system's own System32. */
+export function resolveSshTools(platform:NodeJS.Platform=process.platform,exists:(file:string)=>boolean=file=>{try{return statSync(file).isFile();}catch{return false;}},env:NodeJS.ProcessEnv=process.env):SshTools{
+  const windows=platform==="win32"?windowsSystemRoot(env):null;
+  const candidates:[string,string][]=platform==="win32"?(windows?[[`${windows}\\System32\\OpenSSH\\ssh.exe`,`${windows}\\System32\\OpenSSH\\ssh-keyscan.exe`]]:[])
     :platform==="darwin"?[["/usr/bin/ssh","/usr/bin/ssh-keyscan"]]:[["/usr/bin/ssh","/usr/bin/ssh-keyscan"],["/bin/ssh","/bin/ssh-keyscan"]];
   for(const [ssh,keyscan] of candidates)if(exists(ssh)&&exists(keyscan))return{ssh,keyscan};
   throw Error(platform==="win32"?"RESTIC_SFTP_SSH_MISSING_WINDOWS":"RESTIC_SFTP_SSH_MISSING");

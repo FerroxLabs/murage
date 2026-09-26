@@ -1,7 +1,7 @@
 import {randomBytes,randomUUID} from "node:crypto";
-import {constants,openSync,closeSync,lstatSync,fstatSync,readSync,realpathSync,writeFileSync,unlinkSync} from "node:fs";
+import {constants,openSync,closeSync,lstatSync,fstatSync,readSync,realpathSync,writeFileSync,unlinkSync,mkdirSync,rmdirSync,linkSync} from "node:fs";
 import path from "node:path";
-import {restrictToOwner} from "./backup-windows-acl.mjs";
+import {restrictToOwnerAsync,assertPrivateToOwnerAsync,volumeKeepsAclsAsync} from "./backup-windows-acl.mjs";
 // Windows has no uid or mode bits: its files are made owner-only by ACL instead.
 const posix=()=>process.platform!=="win32";
 export const BACKUP_REMOTE_PASSWORDS_KEY="backupRemotePasswordReferences";
@@ -9,13 +9,25 @@ export const BACKUP_REMOTE_PASSWORDS_KEY="backupRemotePasswordReferences";
 const refuse=(code="BACKUP_REMOTE_PASSWORD_UNAVAILABLE",cause)=>{throw cause===undefined||cause?.message===code?Error(code):Error(code,{cause});};
 // Refusals a person can act on keep their own name all the way to the window,
 // instead of the bare "could not be confirmed" every one of them used to become.
-const NAMED=new Set(["BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE"]);
+const NAMED=new Set(["BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_FILE_PLACE","BACKUP_REMOTE_PASSWORD_FILE_KIND","BACKUP_REMOTE_PASSWORD_FILE_SHARED","BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS","BACKUP_REMOTE_PASSWORD_FILE_FORMAT","BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE"]);
 const named=error=>error instanceof Error&&NAMED.has(error.message)?error.message:"BACKUP_REMOTE_PASSWORD_UNAVAILABLE";
 /** Murage's own private folders, checked first: when they can't be prepared
  * the refusal says so, not that the chosen or created file was wrong. */
 const roots=excludedRoots=>{try{return excludedRoots();}catch(error){return refuse("BACKUP_REMOTE_CONTROL_UNAVAILABLE",error);}};
 const ref=value=>typeof value==="string"&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(value);
 const identity=stat=>["dev","ino","size","uid","mode","mtimeNs","ctimeNs"].map(key=>String(stat[key]));
+// Windows has no mode bits: who else may open the file is in its ACL, read
+// with the same owner rule the files Murage creates are held to (W-A5). A
+// file in C:\Users\Public, a shared folder or one granting Users or Everyone
+// is refused by name. A failure to read the ACL refuses too.
+// Runs before every read, asynchronously (Electron's main process must not
+// block: see backup-windows-acl.mjs runAsync); readFile then pins the file's
+// identity, so a file swapped after the check is refused there.
+async function windowsPrivate(file,checkPrivate){
+ if(posix()||typeof file!=="string"||!path.isAbsolute(file)||/[\x00-\x1f\x7f]/.test(file))return;
+ let resolved;try{resolved=realpathSync.native(file);}catch{return refuse("BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE");}
+ try{await checkPrivate(resolved);}catch(error){return refuse(error?.message==="BACKUP_WINDOWS_ACL_SHARED"?"BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS":"BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE",error);}
+}
 function readFile(file,excludedRoots,uid){
  if((posix()&&(!Number.isSafeInteger(uid)||uid<1))||typeof file!=="string"||!path.isAbsolute(file)||/[\x00-\x1f\x7f]/.test(file))refuse();
  let before,resolved;try{before=lstatSync(file,{bigint:true});resolved=realpathSync.native(file);}catch{return refuse("BACKUP_REMOTE_PASSWORD_FILE_UNREADABLE");}
@@ -41,19 +53,52 @@ function insideAny(resolved,roots){
  for(const root of roots){let real;try{real=realpathSync.native(root);}catch{continue;}if(resolved===real||resolved.startsWith(real+path.sep))return true;}
  return false;
 }
+/** Writes `bytes` as a new owner-only file at one of `names` inside `folder`,
+ * never replacing a file. Returns the path, or null when every name is taken.
+ * POSIX: open(O_CREAT|O_EXCL, 0600) is owner-only from the first byte.
+ * Windows: mode means nothing, and the file would first carry the folder's
+ * inherited ACL, so a sync client or another account could open it before
+ * icacls ran (K-10). Instead a new private folder is made beside the target
+ * and restricted to the owner while still empty; the file is created inside
+ * it (so it inherits only the owner), written, restricted and verified, then
+ * hard linked to its final name (link never replaces an existing file, and
+ * keeps the file's own ACL) and the staging name removed. */
+async function writeOwnerOnly(folder,names,bytes,{restrictFile,restrictDirectory,createId}){
+ if(posix()){
+  for(const name of names){
+   const file=path.join(folder,name);
+   try{writeFileSync(file,bytes,{flag:"wx",mode:0o600,flush:true});}catch(error){if(error.code==="EEXIST")continue;throw error;}
+   return file;
+  }
+  return null;
+ }
+ const stage=path.join(folder,`.murage-offsite-${createId()}`);
+ mkdirSync(stage); // never adopts an existing folder
+ const staged=path.join(stage,"password");
+ try{
+  await restrictDirectory(stage);
+  writeFileSync(staged,bytes,{flag:"wx",flush:true});
+  await restrictFile(staged);
+  for(const name of names){
+   const file=path.join(folder,name);
+   try{linkSync(staged,file);}catch(error){if(error.code==="EEXIST")continue;throw error;}
+   return file;
+  }
+  return null;
+ }finally{
+  try{unlinkSync(staged);}catch{/* not written, or already gone */}
+  try{rmdirSync(stage);}catch{/* left empty and owner-only; nothing secret inside */}
+ }
+}
 /** A new owner-only file in the first usable folder, never replacing one. */
-function writeNewFile(folders,excludedRoots,uid,bytes,restrictFile){
+async function writeNewFile(folders,excludedRoots,uid,bytes,options){
  for(const folder of folders){
   try{
    if(typeof folder!=="string"||!path.isAbsolute(folder))continue;
    const real=realpathSync.native(folder),stat=lstatSync(real);
    if(!stat.isDirectory()||stat.isSymbolicLink()||(posix()&&stat.uid!==uid)||insideAny(real,excludedRoots))continue;
-   for(let n=1;n<100;n++){
-    const file=path.join(real,n===1?`${REMOTE_PASSWORD_FILE_NAME}.txt`:`${REMOTE_PASSWORD_FILE_NAME}-${n}.txt`);
-    try{writeFileSync(file,bytes,{flag:"wx",mode:0o600,flush:true});}catch(error){if(error.code!=="EEXIST")throw error;continue;}
-    try{restrictFile(file);}catch(error){try{unlinkSync(file);}catch{/* refused below either way */}throw error;}
-    return file;
-   }
+   const names=[];for(let n=1;n<100;n++)names.push(n===1?`${REMOTE_PASSWORD_FILE_NAME}.txt`:`${REMOTE_PASSWORD_FILE_NAME}-${n}.txt`);
+   const file=await writeOwnerOnly(real,names,bytes,options);if(file)return file;
   }catch{/* try the next folder */}
  }
  return refuse();
@@ -68,7 +113,10 @@ function references(document){
  }catch{return refuse();}
 }
 /** All file selections and encrypted-document callbacks belong to main. */
-export function createRemotePasswordStore({chooseFile,excludedRoots,readProtected,updateProtected,uid=process.getuid?.(),createId=randomUUID,createFolders=()=>[],createExcludedRoots=()=>[],chooseCopyFile=null,restrict=file=>{if(!posix())restrictToOwner(file);}}){
+export function createRemotePasswordStore({chooseFile,excludedRoots,readProtected,updateProtected,uid=process.getuid?.(),createId=randomUUID,createFolders=()=>[],createExcludedRoots=()=>[],chooseCopyFile=null,
+ restrict=async file=>{if(!posix())await restrictToOwnerAsync(file);},restrictDirectory=async directory=>{if(!posix())await restrictToOwnerAsync(directory,{directory:true});},checkPrivate=assertPrivateToOwnerAsync,stageId=randomUUID,keepsAcls=volumeKeepsAclsAsync}){
+ const written={restrictFile:restrict,restrictDirectory,createId:stageId};
+ const read=async(file,roots)=>{await windowsPrivate(file,checkPrivate);return readFile(file,roots,uid);};
  async function register(selected){
   const passwordRef=createId();if(!ref(passwordRef))refuse();
   await updateProtected(current=>{const saved=references(current);if(Object.keys(saved).length>=32||Object.hasOwn(saved,passwordRef))refuse();return{...current,[BACKUP_REMOTE_PASSWORDS_KEY]:JSON.stringify({...saved,[passwordRef]:{path:selected.path,fingerprint:selected.fingerprint}})};});
@@ -84,8 +132,8 @@ export function createRemotePasswordStore({chooseFile,excludedRoots,readProtecte
     if(posix()&&(!Number.isSafeInteger(uid)||uid<1))refuse();
     bytes=Buffer.from(randomBytes(32).toString("base64url")+"\n");
     const excluded=[...roots(excludedRoots),...(await createExcludedRoots())];
-    file=writeNewFile(createFolders(),excluded,uid,bytes,restrict);
-    try{selected=readFile(file,excluded,uid);}catch(error){try{unlinkSync(file);}catch{/* reported below */}throw error;}
+    file=await writeNewFile(createFolders(),excluded,uid,bytes,written);
+    try{selected=await read(file,excluded);}catch(error){try{unlinkSync(file);}catch{/* reported below */}throw error;}
     return{passwordRef:await register(selected),path:selected.path};
    }catch(error){return refuse(error instanceof Error&&error.message==="BACKUP_REMOTE_CONTROL_UNAVAILABLE"?error.message:undefined,error);}finally{bytes?.fill(0);selected?.password.fill(0);}
   },
@@ -94,13 +142,17 @@ export function createRemotePasswordStore({chooseFile,excludedRoots,readProtecte
    let selected,bytes;
    try{
     const saved=references(await readProtected());if(!ref(passwordRef)||!Object.hasOwn(saved,passwordRef)||typeof chooseCopyFile!=="function")refuse();
-    const record=saved[passwordRef];selected=readFile(record.path,excludedRoots(),uid);if(JSON.stringify(selected.fingerprint)!==JSON.stringify(record.fingerprint))refuse();
+    const record=saved[passwordRef];selected=await read(record.path,excludedRoots());if(JSON.stringify(selected.fingerprint)!==JSON.stringify(record.fingerprint))refuse();
     const target=await chooseCopyFile(path.join(path.dirname(record.path),"murage-offsite-password-copy.txt"));if(!target)return{cancelled:true};
     if(typeof target!=="string"||!path.isAbsolute(target)||/[\x00-\x1f\x7f]/.test(target))refuse();
     const folder=realpathSync.native(path.dirname(target));if(insideAny(folder,[...excludedRoots(),...(await createExcludedRoots())]))refuse();
     const destination=path.join(folder,path.basename(target));if(destination===selected.path)refuse();
-    bytes=Buffer.concat([selected.password,Buffer.from("\n")]);writeFileSync(destination,bytes,{flag:"wx",mode:0o600,flush:true});
-    try{restrict(destination);}catch(error){try{unlinkSync(destination);}catch{/* reported below */}throw error;}
+    bytes=Buffer.concat([selected.password,Buffer.from("\n")]);
+    // A USB stick (FAT32, exFAT) has no ACLs to set: the copy is written as
+    // it would be on Mac or Linux there, never replacing a file. Everywhere
+    // else it is born owner-only like the original.
+    if(!posix()&&!(await keepsAcls(folder)))writeFileSync(destination,bytes,{flag:"wx",flush:true});
+    else{const copied=await writeOwnerOnly(folder,[path.basename(target)],bytes,written);if(copied!==destination)refuse();}
     return{saved:true,path:destination};
    }catch{return refuse();}finally{bytes?.fill(0);selected?.password.fill(0);}
   },
@@ -109,7 +161,7 @@ export function createRemotePasswordStore({chooseFile,excludedRoots,readProtecte
    try{
     const excluded=roots(excludedRoots);
     const file=await chooseFile();if(!file)return null;
-    selected=readFile(file,[...excluded,...(await createExcludedRoots())],uid);const passwordRef=createId();if(!ref(passwordRef))refuse();
+    selected=await read(file,[...excluded,...(await createExcludedRoots())]);const passwordRef=createId();if(!ref(passwordRef))refuse();
     await updateProtected(current=>{const saved=references(current);if(Object.keys(saved).length>=32||Object.hasOwn(saved,passwordRef))refuse();return{...current,[BACKUP_REMOTE_PASSWORDS_KEY]:JSON.stringify({...saved,[passwordRef]:{path:selected.path,fingerprint:selected.fingerprint}})};});
     return{passwordRef};
    }catch(error){return refuse(named(error),error);}finally{selected?.password.fill(0);}
@@ -118,7 +170,7 @@ export function createRemotePasswordStore({chooseFile,excludedRoots,readProtecte
    let selected;
    try{
     const saved=references(await readProtected());if(!ref(passwordRef)||!Object.hasOwn(saved,passwordRef))refuse();
-    const record=saved[passwordRef];selected=readFile(record.path,excludedRoots(),uid);
+    const record=saved[passwordRef];selected=await read(record.path,excludedRoots());
     if(JSON.stringify(selected.fingerprint)!==JSON.stringify(record.fingerprint))refuse();return Buffer.from(selected.password);
    }catch{return refuse();}finally{selected?.password.fill(0);}
   },

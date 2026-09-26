@@ -169,10 +169,22 @@ FILE_ID_INFO readIdentity(HANDLE pipe, Guard& guard) {
   const std::string digits = "0123456789abcdef";
   for (size_t i=0; i<16; ++i) { const auto a=digits.find(hex[i*2]), b=digits.find(hex[i*2+1]); need(a<16 && b<16); id.FileId.Identifier[i]=static_cast<BYTE>(a*16+b); } return id;
 }
+// Murage's own skill junctions the capture left out (capture.h). Their paths
+// hold only checked name parts joined by "/", so they need no escaping; the
+// list stops well inside the 8 KiB line the bridge accepts.
+std::string skillLinksJson(const CaptureReceipt& r) {
+  std::string list; size_t bytes = 0;
+  for (const auto& link : r.skillLinks) {
+    const auto text = utf8(link); if (bytes + text.size() > 3072) break;
+    need(text.find_first_of("\"\\") == std::string::npos && std::none_of(text.begin(), text.end(), [](char c) { return static_cast<unsigned char>(c) < 32; }));
+    list += (list.empty() ? "\"" : ",\"") + text + "\""; bytes += text.size();
+  }
+  return ",\"skillLinksOmitted\":" + std::to_string(r.skillLinksOmitted) + ",\"skillLinks\":[" + list + "]";
+}
 std::string resultJson(const CaptureReceipt& r, const char* event) {
   return std::string("{\"event\":\"") + event + "\",\"nonce\":\"" + guid(r.nonce) + "\",\"status\":" + std::to_string(static_cast<unsigned long>(r.status)) +
     ",\"snapshotId\":\"" + guid(r.snapshotId) + "\",\"copyComplete\":" + (r.copyComplete ? "true" : "false") +
-    ",\"snapshotReleased\":" + (r.snapshotReleased ? "true" : "false") + ",\"sourceIdentity\":" + identityJson(r.sourceIdentity) + "}\n";
+    ",\"snapshotReleased\":" + (r.snapshotReleased ? "true" : "false") + ",\"sourceIdentity\":" + identityJson(r.sourceIdentity) + skillLinksJson(r) + "}\n";
 }
 void checkpoint(const CaptureReceipt& r, void* pipe) { write(*static_cast<HANDLE*>(pipe), resultJson(r, "checkpoint")); }
 std::wstring pipeName(const std::string& nonce) { return L"\\\\.\\pipe\\MurageRecovery-" + wide(nonce); }

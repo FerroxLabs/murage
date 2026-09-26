@@ -3,6 +3,13 @@ import { randomUUID } from "node:crypto";
 const fail = code => Object.assign(new Error(code), { code });
 const identity = value => value && typeof value === "object" && /^\d{1,20}$/.test(value.volumeSerial) && /^[a-f0-9]{32}$/.test(value.fileId);
 const path = value => typeof value === "string" && /^[a-z]:\\/i.test(value) && value.length < 8192 && !/[\x00-\x1f]/.test(value);
+// Murage's own skill junctions the native capture left out and listed (C8):
+// workspaces/<bot>/.../.claude|.agents|.grok/skills/<name>. Murage re-creates
+// them from the skill manifest, as it does after any restore.
+const skillLink = value => typeof value === "string" && value.length < 4096 && /^workspaces\/(?:[^/\\\x00-\x1f"]+\/)+\.(?:claude|agents|grok)\/skills\/[^/\\\x00-\x1f"]+$/.test(value);
+const skillLinks = message => message.skillLinksOmitted === undefined && message.skillLinks === undefined ||
+  Number.isSafeInteger(message.skillLinksOmitted) && message.skillLinksOmitted >= 0 && message.skillLinksOmitted <= 100000 &&
+  Array.isArray(message.skillLinks) && message.skillLinks.length <= Math.min(64, message.skillLinksOmitted) && message.skillLinks.every(skillLink);
 
 /** Trusted-main adapter only. Renderer provides an action, never these paths.
  * The bridge binds native identities before confirm() and carries the one-shot
@@ -45,7 +52,7 @@ export async function captureRecoveryCopy({ spawn, helper, source, destination, 
           if (message.status === 0 && (phase !== "capture" || !preview || message.copyComplete !== true || message.snapshotReleased !== true ||
             !/^[a-f0-9-]{36}$/i.test(message.snapshotId) || /^0{8}-/.test(message.snapshotId) ||
             !identity(message.sourceIdentity) || message.sourceIdentity.fileId !== preview.sourceIdentity.fileId ||
-            message.sourceIdentity.volumeSerial !== preview.sourceIdentity.volumeSerial)) throw new Error();
+            message.sourceIdentity.volumeSerial !== preview.sourceIdentity.volumeSerial || !skillLinks(message))) throw new Error();
           result = message; phase = "result";
         } else throw new Error();
       } catch { invalidate(); }
@@ -67,6 +74,6 @@ export async function captureRecoveryCopy({ spawn, helper, source, destination, 
     if (!result || buffered.trim()) throw fail("INVALID_RECOVERY_CAPTURE_RESULT");
     if (result.status !== 0) throw fail(result.status === 0x800704c7 ? "RECOVERY_CAPTURE_CANCELLED" : "RECOVERY_CAPTURE_FAILED");
     if (exit !== 0) throw fail("INVALID_RECOVERY_CAPTURE_RESULT");
-    return { ...result, directory: destination, consistency: "crash-consistent", activationAvailable: false };
+    return { ...result, skillLinksOmitted: result.skillLinksOmitted ?? 0, skillLinks: result.skillLinks ?? [], directory: destination, consistency: "crash-consistent", activationAvailable: false };
   } finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); cancel(); void confirmation; }
 }

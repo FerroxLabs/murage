@@ -26,7 +26,9 @@ std::string facts(const CaptureReceipt& r) {
   for (auto byte : r.sourceIdentity.FileId.Identifier) out << digits[byte >> 4] << digits[byte & 15];
   out << "\",\"volume\":\"";
   for (auto c : r.volume) { if (c == L'\\') out << '\\'; out << static_cast<char>(c); }
-  out << "\",\"bytes\":" << r.bytes << ",\"entries\":" << r.entries << "}"; return out.str();
+  out << "\",\"bytes\":" << r.bytes << ",\"entries\":" << r.entries << ",\"skillLinksOmitted\":" << r.skillLinksOmitted << ",\"skillLinks\":[";
+  for (size_t i = 0; i < r.skillLinks.size(); ++i) { out << (i ? ",\"" : "\""); for (auto c : r.skillLinks[i]) out << static_cast<char>(c < 128 ? c : '?'); out << "\""; }
+  out << "]}"; return out.str();
 }
 void save(const CaptureReceipt& receipt, void* opaque) {
   auto& context = *static_cast<Context*>(opaque);
@@ -50,7 +52,7 @@ int wmain(int argc, wchar_t** argv) {
   const auto temporary = fs::canonical(fs::path(std::getenv("RUNNER_TEMP")));
   if (root.parent_path() != temporary || !root.filename().wstring().starts_with(L"murage-vss-fixture-")) return 91;
   const std::wstring scenario(argv[2]);
-  if (scenario != L"idle" && scenario != L"concurrent" && scenario != L"journal" && scenario != L"restore" && scenario != L"reparse" && scenario != L"quota" && scenario != L"cancel" && scenario != L"identity" && scenario != L"unc" && scenario != L"overlap" && scenario != L"invalid-records") return 92;
+  if (scenario != L"idle" && scenario != L"concurrent" && scenario != L"journal" && scenario != L"restore" && scenario != L"reparse" && scenario != L"quota" && scenario != L"cancel" && scenario != L"identity" && scenario != L"unc" && scenario != L"overlap" && scenario != L"invalid-records" && scenario != L"skill-links" && scenario != L"foreign-junction") return 92;
   HRESULT status = CoInitializeEx(nullptr, COINIT_MULTITHREADED); if (FAILED(status)) return 93;
   status = CoInitializeSecurity(nullptr, -1, nullptr, nullptr, RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
     RPC_C_IMP_LEVEL_IMPERSONATE, nullptr, EOAC_DYNAMIC_CLOAKING, nullptr);
