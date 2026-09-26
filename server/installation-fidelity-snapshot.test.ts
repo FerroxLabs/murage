@@ -97,3 +97,31 @@ it("still refuses an unrecovered package-import transaction",async()=>{
   try{await expect(withOfflineInstallation(f.data,async installation=>{const stage=await stageInstallationStateWhileOwned(installation,f.parent);return inventoryFidelity(installation,stage,selection);})).rejects.toThrow("BACKUP_UNCLASSIFIED_COMPONENT");
   }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });
+// 0.1.60 added four writers at the data-folder root and none was classified,
+// so on a packaged 0.1.60 app EVERY backup refused with
+// BACKUP_UNCLASSIFIED_COMPONENT once What's New had been shown (found
+// 2026-09-26). Written here by the real modules, not by hand.
+it("backs up a 0.1.60 data folder: What's New, announcements and House Rules kept, caches left out",async()=>{
+  const f=backupFixture();
+  const { markWhatsNewSeen }=await import("./whats-new.ts");
+  const { saveHouseRules }=await import("./house-rules.ts");
+  const { EngineCommandCache }=await import("./engine-commands.ts");
+  markWhatsNewSeen("0.1.60",f.data);
+  saveHouseRules({text:"Always answer in plain English.",enabled:true},f.data);
+  new EngineCommandCache(f.data).record("bot-1","codex",[{name:"review",description:"Review"}]);
+  // announcements.ts RECORD_FILE and CACHE_DIR, as Announcements writes them.
+  writeFileSync(join(f.data,"announcements.json"),JSON.stringify({version:1,seen:["a1"],dismissed:[]}));
+  mkdirSync(join(f.data,"announcements-cache"));writeFileSync(join(f.data,"announcements-cache","feed.json"),"{}");
+  try{await withOfflineInstallation(f.data,async installation=>{
+    const stage=await stageInstallationStateWhileOwned(installation,f.parent);
+    const inventory=await inventoryFidelity(installation,stage,selection);inventory.assertUnchanged();
+    for(const name of ["whats-new.json","announcements.json","house-rules.md","house-rules.json"]){
+      expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:name,status:"included"}));
+      expect(stage.manifest.files.some(file=>file.path===name)).toBe(true);
+    }
+    for(const name of ["announcements-cache","engine-commands.json"]){
+      expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:name,status:"excluded"}));
+      expect(inventory.sources.some(file=>file.path===name||file.path.startsWith(`${name}/`))).toBe(false);
+    }
+  });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+});

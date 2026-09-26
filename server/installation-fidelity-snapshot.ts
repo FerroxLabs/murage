@@ -12,6 +12,10 @@ const excluded = new Set(["messages.pre-memory-v2.db","native","credentials.bin"
   // REMOTE_CATALOG_CACHE_FILE, only catalog.json), the memory embedding model
   // (memory/settings.ts) and the pinned agent-browser binary (browser-engine.ts).
   "provider-catalogs","managed-engines","team-library","memory-model","tools",
+  // The signed announcements feed as last fetched (announcements.ts
+  // CACHE_DIR) and each bot's engine "/" commands as last reported
+  // (engine-commands.ts CACHE_FILE): both refilled on their own.
+  "announcements-cache","engine-commands.json",
   // Runtime bookkeeping with no owner choice in it: handoff budgets that
   // expire after 24 hours (coordination-budget.ts), and who holds each native
   // browser session (browser-control.ts), keyed to profiles that are already
@@ -33,7 +37,7 @@ const excluded = new Set(["messages.pre-memory-v2.db","native","credentials.bin"
 // setup.json keeps the Chief of Staff and brief routine first run chose
 // (server/setup.ts); queued-messages.json holds the owner's own words that were
 // waiting behind a turn when Murage closed (index.ts F7). Both are owner state.
-const applicationRoots=new Set(["config.json","bots.json","groups.json","routines.json","calendar-calls.json","webhooks.json","delegations.json","delegation-receipts.json","section-contexts.json","browser-cleanups.json","setup.json","queued-messages.json","attachments","artifact-files","workspaces","skills","skill-state","checkpoints","events","channels","startup-background.json","memory-index.db"]);
+const applicationRoots=new Set(["config.json","bots.json","groups.json","routines.json","calendar-calls.json","webhooks.json","delegations.json","delegation-receipts.json","section-contexts.json","browser-cleanups.json","setup.json","queued-messages.json","attachments","artifact-files","workspaces","skills","skill-state","checkpoints","events","channels","startup-background.json","memory-index.db","whats-new.json","announcements.json","house-rules.md","house-rules.json"]);
 // Scratch that outlives a crash: mkdtemp dirs for a memory evolution run
 // (index.ts) and a package import's staging (bot-package-import.ts), and a
 // stale permission socket (procs.ts brokerSocketPath). The import's own
@@ -63,7 +67,7 @@ export async function inventoryFidelity(installation:OfflineInstallation,stage:{
   for(const name of roots){
     if(["messages.db-wal","messages.db-shm"].includes(name)||memorySidecar(name))continue;
     if(included.has(name)||applicationRoots.has(name))components.push({path:name,status:"included",reason:name==="memory-index.db"?"Consistent memory search projection retained encrypted only; rebuild from paused messages.db authority after review":name==="channels"?"Channel bindings and receipt history retained encrypted only; re-pairing required before use":name==="startup-background.json"?"Startup preferences retained encrypted only; automatic startup is not restored":"Application data preserved in encrypted fidelity payload"});
-    else if(isExcluded(name))components.push({path:name,status:"excluded",reason:name==="messages.pre-memory-v2.db"?"Pre-upgrade copy of messages.db kept for manual 0.1.x rollback only; the live messages.db is the backed-up authority":["door-identity","folder-trust.json"].includes(name)?"Host identity and folder execution authority require fresh trust; not restored":name.startsWith("skill-index.db")?"Derived skill search index rebuilt from the skill library; not restored":["provider-catalogs","managed-engines","team-library","memory-model","tools"].includes(name)?"Downloaded copy fetched again when needed; not restored":scratchLeftover.test(name)?"Temporary files left by an interrupted task; not restored":"Outside application-data capture; native/credential/derived state is not restored"});
+    else if(isExcluded(name))components.push({path:name,status:"excluded",reason:name==="messages.pre-memory-v2.db"?"Pre-upgrade copy of messages.db kept for manual 0.1.x rollback only; the live messages.db is the backed-up authority":["door-identity","folder-trust.json"].includes(name)?"Host identity and folder execution authority require fresh trust; not restored":name.startsWith("skill-index.db")?"Derived skill search index rebuilt from the skill library; not restored":["provider-catalogs","managed-engines","team-library","memory-model","tools","announcements-cache","engine-commands.json"].includes(name)?"Downloaded copy fetched again when needed; not restored":scratchLeftover.test(name)?"Temporary files left by an interrupted task; not restored":"Outside application-data capture; native/credential/derived state is not restored"});
     else fail("BACKUP_UNCLASSIFIED_COMPONENT");
   }
   // A skipped link inside a selected directory is not a complete capture.

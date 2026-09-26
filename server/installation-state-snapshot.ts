@@ -13,7 +13,10 @@ const JSON_COMPONENTS = new Set(["config.json", "bots.json", "groups.json", "rou
 // message waits behind a turn, and setup.json only once first run has begun.
 // Copied when present, never reported missing. Kept in step with
 // installation-fidelity-snapshot.ts applicationRoots.
-const OPTIONAL_JSON_COMPONENTS = new Set(["setup.json", "queued-messages.json"]);
+// 0.1.60 owner state: the What's New pages already shown (whats-new.ts), the
+// announcements already seen or dismissed (announcements.ts) and the owner's
+// House Rules text and switch (house-rules.ts). Copied as written.
+const OPTIONAL_JSON_COMPONENTS = new Set(["setup.json", "queued-messages.json", "whats-new.json", "announcements.json", "house-rules.md", "house-rules.json"]);
 const DIRECTORY_COMPONENTS = new Set(["attachments", "artifact-files", "workspaces", "skills", "skill-state", "checkpoints", "events"]);
 const SAFE_CONFIG_FIELDS = ["profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications"] as const;
 type JsonObject = Record<string, unknown>;
