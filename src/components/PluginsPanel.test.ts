@@ -316,9 +316,9 @@ describe("once FluxRouter holds the apps", () => {
   });
 
   it("shows what is left of the free daily allowance, and nothing when funded", () => {
-    expect(texts(notices({}, flux({ freeRunsRemainingToday: 12 })))).toContain("12 free runs left today.");
-    expect(texts(notices({}, flux({ freeRunsRemainingToday: 0 })))).toContain("0 free runs left today.");
-    expect(texts(notices({}, flux({ freeRunsRemainingToday: null })))).not.toContain("free runs left");
+    expect(texts(notices({}, flux({ freeRunsRemainingToday: 12 })))).toContain("12 runs left today.");
+    expect(texts(notices({}, flux({ freeRunsRemainingToday: 0 })))).toContain("0 runs left today.");
+    expect(texts(notices({}, flux({ freeRunsRemainingToday: null })))).not.toContain("runs left");
   });
 
   it("confirms a completed move for a day and then stops mentioning it", () => {
@@ -401,7 +401,7 @@ describe("the connected-apps lock", () => {
     // against the live catalogue, so the copy names apps instead of a number.
     expect(en["connectedApps.lock.title"]).toBe("Connect your apps");
     expect(en["connectedApps.lock.body"]).toBe(
-      "Your bots can use hundreds of apps, including Gmail, Slack, Notion and GitHub. Add your Flux Router key to unlock them, with a free daily allowance included.",
+      "Your bots can use hundreds of apps, including Gmail, Slack, Notion and GitHub. Add your Flux Router key to unlock them, with a daily allowance included.",
     );
     expect(Object.values(en).some(value => /\d+\+ (?:more |)apps|and \d+\+ more/.test(value))).toBe(false);
     expect(en["connectedApps.lock.button"]).toBe("Add Flux Router key");

@@ -406,7 +406,7 @@ test("setup refuses before choosing a folder or writing a key when Murage can't 
   }
 });
 test("an older host that answers relaunchBlocked with true still refuses with the general code; an unknown string is not echoed",async()=>{
-  for(const [answer,code] of [[true,"BACKUP_RELAUNCH_BLOCKED"],["rm -rf /","BACKUP_RELAUNCH_BLOCKED"]]){
+  for(const [answer,code] of [[true,"BACKUP_RELAUNCH_BLOCKED"],["not a code","BACKUP_RELAUNCH_BLOCKED"]]){
     const f=fixture({relaunchBlocked:()=>answer});
     try{assert.equal((await f.controller.status()).relaunchBlocked,code);await assert.rejects(f.controller.setUpBackups({}),new RegExp(code));}finally{f.cleanup();}
   }
