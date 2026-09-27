@@ -2,7 +2,8 @@ export interface BackupCaptureFailure { readonly stage: string; readonly code: s
 export const BACKUP_CAPTURE_STAGES: readonly string[];
 export const BACKUP_CAPTURE_CODES: readonly string[];
 export function normalizeCaptureFailure(input: unknown): BackupCaptureFailure | null;
-export function captureFailureSentence(input: unknown): string;
+export function captureFailureSentence(input: unknown, options?: { folderName?: string }): string;
+export function backupFolderMissingReason(folderName?: string): string;
 export function captureFailurePath(value: unknown): string | undefined;
 export function captureFailureReason(code: unknown, path?: unknown): string;
 export interface BackupCaptureCause {

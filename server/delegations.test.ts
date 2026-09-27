@@ -31,6 +31,10 @@ import {
   _loadPending,
   _pendingCount,
   _resetPending,
+  BUSY_RETRY_FALLBACK_MS,
+  hasActiveDelegationWork,
+  releaseParkedDelegations,
+  stopWaitingDelegation,
 } from "./delegations.ts";
 import { cancelPeerApprovalsForThread, peerAllowKey, resolvePeerComms } from "./peer-approval.ts";
 import { Store, type BotRecord } from "./store.ts";
@@ -1326,5 +1330,137 @@ describe("dropUnreachableDelegations", () => {
     expect(pendingDelegationInfo(kept.id!)).not.toBeNull();
     // Nothing else to drop the second time.
     expect(dropUnreachableDelegations(commsBus)).toBe(0);
+  });
+});
+
+// 0.1.60 Linux re-test 4, L4-1: a handoff parked on a teammate whose room
+// turn outlasted its own settle. The teammate's settle released the wait
+// while the room still held them, so the retry parked again ("retry 2/3"),
+// and no later event ever woke it: the teammate stayed idle, the handoff
+// stayed parked, and it counted as running work that held every backup.
+describe("a parked handoff whose wake-up already passed", () => {
+  let store: Store;
+  let from: BotRecord;
+  let target: BotRecord;
+  let approvalBus: { store: Store; broadcast: (payload: unknown) => void };
+  let broadcastOnly: CommsBus["broadcast"];
+  let canStart: boolean;
+  let bus: CommsBus;
+
+  beforeEach(() => {
+    rmSync(DATA_DIR, { recursive: true, force: true });
+    _resetPending();
+    store = new Store(selection);
+    from = store.createBot();
+    target = store.createBot();
+    store.patchBot(from.id, { name: "Ember" });
+    store.patchBot(target.id, { name: "Maple" });
+    const buses = setupBuses(store);
+    approvalBus = buses.approvalBus;
+    broadcastOnly = buses.commsBus.broadcast;
+    canStart = false;
+    bus = { store, broadcast: broadcastOnly, canStartHandoff: () => canStart };
+  });
+
+  const chips = (needle: string) =>
+    store.messagesFor(from.threadId).filter((m) => m.kind === "activity" && m.tool?.name?.includes(needle));
+
+  /** Park the handoff twice, the way the room did: once when Ember's turn
+   * settled, once when Maple's room reply settled while the room still
+   * held Maple. */
+  async function parkTwice(runTarget: Parameters<typeof drainDelegations>[3]): Promise<string> {
+    const queued = queueDelegation(bus, from, { toBotId: target.id, message: "run pwd", depth: 0 }, 1);
+    drainDelegations(bus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => chips("retry 1/").length === 1);
+    expect(releaseDelegationsWaitingOn(target.id)).toEqual([from.threadId]);
+    drainDelegations(bus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => chips("retry 2/").length === 1);
+    return queued.id!;
+  }
+
+  it("runs once the teammate can take it, with no further settle to wake it", async () => {
+    const runTarget = vi.fn();
+    await parkTwice(runTarget);
+    // The room lets Maple go. No turn of Maple's settles after this.
+    canStart = true;
+    expect(releaseParkedDelegations((botId, sourceThreadId) => bus.canStartHandoff!(botId, sourceThreadId))).toEqual([from.threadId]);
+    drainDelegations(bus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => runTarget.mock.calls.length === 1 && _pendingCount(from.threadId) === 0);
+    expect(chips("canceled").length).toBe(0);
+  });
+
+  it("leaves a handoff parked while the teammate still cannot take it and the fallback has not come round", async () => {
+    const runTarget = vi.fn();
+    const id = await parkTwice(runTarget);
+    expect(releaseParkedDelegations(() => false, Date.now() + BUSY_RETRY_FALLBACK_MS - 1_000)).toEqual([]);
+    expect(pendingDelegationInfo(id)).toMatchObject({ attempts: 2 });
+  });
+
+  it("gives up with a plain line after its attempts when the teammate stays busy, on the timer alone", async () => {
+    const runTarget = vi.fn();
+    const id = await parkTwice(runTarget);
+    // No settle ever comes. The fallback timer spends the last attempt.
+    expect(releaseParkedDelegations(() => false, Date.now() + BUSY_RETRY_FALLBACK_MS)).toEqual([from.threadId]);
+    drainDelegations(bus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => _pendingCount(from.threadId) === 0);
+    expect(runTarget).not.toHaveBeenCalled();
+    expect(chips("Delegation to @Maple canceled: still busy after").length).toBe(1);
+    expect(findDelegationReceipt(id)).toMatchObject({ status: "busy_gave_up" });
+  });
+
+  it("keeps the time it started waiting across a restart, so the fallback still comes round", async () => {
+    const runTarget = vi.fn();
+    await parkTwice(runTarget);
+    _resetPending();
+    _loadPending();
+    expect(releaseParkedDelegations(() => false, Date.now() + BUSY_RETRY_FALLBACK_MS)).toEqual([from.threadId]);
+  });
+
+  it("does not count as running work while it only waits, and does again once it is released to run", async () => {
+    const runTarget = vi.fn();
+    queueDelegation(bus, from, { toBotId: target.id, message: "run pwd", depth: 0 }, 1);
+    // Queued behind its own source turn: that is work in progress.
+    expect(hasActiveDelegationWork()).toBe(true);
+    drainDelegations(bus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => chips("retry 1/").length === 1);
+    // Once the drain that parked it has let go of the thread.
+    await waitFor(() => !hasActiveDelegationWork());
+    expect(pendingDelegationSnapshot({ activeOnly: true })).toEqual([]);
+    expect(pendingDelegationSnapshot()).toHaveLength(1);
+    releaseDelegationsWaitingOn(target.id);
+    expect(hasActiveDelegationWork()).toBe(true);
+  });
+
+  it("offers Stop on the waiting line, and Stop drops the handoff with a receipt and a plain line", async () => {
+    const runTarget = vi.fn();
+    const id = await parkTwice(runTarget);
+    const waiting = chips("waiting: they're busy");
+    // Only the newest waiting line offers Stop.
+    expect(waiting.map((m) => m.delegationWait?.id)).toEqual([undefined, id]);
+    expect(stopWaitingDelegation(bus, id)).toBe(true);
+    expect(_pendingCount(from.threadId)).toBe(0);
+    expect(chips("Delegation to @Maple stopped by you").length).toBe(1);
+    expect(findDelegationReceipt(id)).toMatchObject({ status: "cancelled" });
+    expect(chips("waiting: they're busy").every((m) => !m.delegationWait)).toBe(true);
+    // A later wake-up finds nothing to run.
+    canStart = true;
+    expect(releaseParkedDelegations(() => true)).toEqual([]);
+    expect(stopWaitingDelegation(bus, id)).toBe(false);
+  });
+
+  it("clears Stop from the waiting line once the handoff runs", async () => {
+    const runTarget = vi.fn();
+    await parkTwice(runTarget);
+    canStart = true;
+    releaseParkedDelegations(() => true);
+    drainDelegations(bus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => runTarget.mock.calls.length === 1 && _pendingCount(from.threadId) === 0);
+    expect(chips("waiting: they're busy").every((m) => !m.delegationWait)).toBe(true);
+  });
+
+  it("does not stop a handoff that is not waiting", () => {
+    const queued = queueDelegation(bus, from, { toBotId: target.id, message: "run pwd", depth: 0 }, 1);
+    expect(stopWaitingDelegation(bus, queued.id!)).toBe(false);
+    expect(_pendingCount(from.threadId)).toBe(1);
   });
 });

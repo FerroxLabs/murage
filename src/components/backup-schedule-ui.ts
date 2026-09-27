@@ -1,5 +1,6 @@
 import { backupScheduleSchema,backupClosedResultSchema, type BackupSchedule } from "../../shared/backup-schedule";
 import { BACKUP_FOLDER_REFUSALS } from "../../shared/backup-folder-refusals.mjs";
+import { backupFolderMissingReason } from "../../shared/backup-capture-failure.mjs";
 
 export interface ScheduleDraft { time: string; timezone: string; catchup: string; size: string; duration: string; preUpgrade:boolean; closedApp:boolean }
 const fields = { catchup: ["catchupMs", 3600000], size: ["maxBytes", 1024 ** 3], duration: ["maxDurationMs", 60000] } as const;
@@ -46,7 +47,9 @@ export function schedulePhase(phase: string): string {
     "needs-review": "The last backup didn't finish; backups are paused until you clear it","install-requested":"Update installation requested","upgrade-complete":"Update completed after backup","upgrade-cancelled":"Update cancelled" };
   return labels[phase] ?? "Status needs review. Refresh to check the backup.";
 }
-export function scheduleError(cause: unknown): string {
+/** `folderName` is the name the page shows as "Backup folder: <name>", so a
+ * missing folder is named the same way (never by its path). */
+export function scheduleError(cause: unknown, { folderName }: { folderName?: string } = {}): string {
   const code = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
   const messages: Record<string, string> = {
     BACKUP_CLOSED_UNAVAILABLE:"Backups while Murage is closed need the background job first. Tick \"Also back up when Murage is closed\" again, then try once more.",
@@ -57,7 +60,7 @@ export function scheduleError(cause: unknown): string {
     BACKUP_BUSY: "A backup is running. Wait for it to finish, then try again.",
     BACKUP_WORK_ACTIVE: "Work is still active. Scheduling will wait for an idle workspace.",
     BACKUP_SCHEDULE_CHANGED: "Settings changed. The latest saved state is shown after refresh; review your draft before trying again.",
-    BACKUP_FOLDER_MISSING: "Murage couldn't find your backup folder. If it's on a drive, connect the drive; if you moved or renamed the folder, put it back. Or turn off daily backups and choose a folder again. Then back up again.",
+    BACKUP_FOLDER_MISSING: backupFolderMissingReason(folderName),
     BACKUP_RECOVERY_KEY_MISSING: "Murage couldn't find your recovery key file. Put it back where it was, or turn off daily backups and choose your key again. Then back up again.",
     BACKUP_REFERENCE_CHANGED: "Your backup folder or recovery key has moved or changed. Turn off daily backups, then choose the backup folder and your recovery key again.",
     BACKUP_SCHEDULE_CONSENT_REQUIRED: "Murage still needs your permission to close and reopen its own window when it's idle, so it can take the backup. Murage does that itself, so you never need to quit it.",
@@ -90,8 +93,8 @@ export function scheduleError(cause: unknown): string {
  * anything it already says is not repeated here; an error it does not carry,
  * such as one raised by another part of the page, still appears beside the
  * controls it applies to. */
-export function scheduleCardNotice(areaError: string | null, statusError: string | null | undefined, attention: readonly string[] = []): string | null {
-  const text = areaError ?? (statusError ? scheduleError(statusError) : null);
+export function scheduleCardNotice(areaError: string | null, statusError: string | null | undefined, attention: readonly string[] = [], folderName?: string): string | null {
+  const text = areaError ?? (statusError ? scheduleError(statusError, { folderName }) : null);
   if (!text) return null;
   return attention.includes(text) ? null : text;
 }

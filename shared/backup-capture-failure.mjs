@@ -192,8 +192,7 @@ const REASONS = {
     "Murage couldn't make its private working folder inside your backup folder. Choose a folder on this computer's own drive that you can create files in (not a network, removable or linked folder), then back up again.",
   BACKUP_FILE_IN_USE:
     "Another program was holding a file the backup needed, often antivirus or a sync app. Wait a few minutes, then back up again.",
-  BACKUP_FOLDER_MISSING:
-    "Murage couldn't find your backup folder. If it's on a drive, connect the drive; if you moved or renamed the folder, put it back. Or turn off daily backups and choose a folder again. Then back up again.",
+  BACKUP_FOLDER_MISSING: backupFolderMissingReason(),
   BACKUP_RECOVERY_KEY_MISSING:
     "Murage couldn't find your recovery key file. Put it back where it was, or turn off daily backups and choose your key again. Then back up again.",
   BACKUP_REFERENCE_CHANGED:
@@ -278,12 +277,23 @@ export function normalizeCaptureFailure(input) {
 
 /** One or two sentences naming the step and the reason, and the item in the
  * data folder when there is one. */
-export function captureFailureSentence(input) {
+export function captureFailureSentence(input, { folderName } = {}) {
   const failure = normalizeCaptureFailure(input);
   if (!failure) return "";
   const where = STAGE_WORDS[failure.stage];
   const item = failure.path ? ` The item is ${failure.path} in Murage's data folder.` : "";
-  return `The last backup stopped ${where ?? "before it could finish"}. ${REASONS[failure.code] ?? REASONS.UNKNOWN_CAPTURE_FAILURE}${item}`;
+  const reason = failure.code === "BACKUP_FOLDER_MISSING" ? backupFolderMissingReason(folderName) : REASONS[failure.code] ?? REASONS.UNKNOWN_CAPTURE_FAILURE;
+  return `The last backup stopped ${where ?? "before it could finish"}. ${reason}${item}`;
+}
+
+/** A backup folder that is simply gone, named the way the Backups page names
+ * it ("Backup folder: Backups"): the folder's own name, never its path. A
+ * surface with no name to give (a notification, Backup mode) says "your
+ * backup folder" as before. */
+export function backupFolderMissingReason(folderName) {
+  // eslint-disable-next-line no-control-regex
+  const name = typeof folderName === "string" ? folderName.replace(/[\u0000-\u001f\u007f-\u009f"]/g, "").trim().slice(0, 120) : "";
+  return `Murage couldn't find your backup folder${name ? ` "${name}"` : ""}. If it's on a drive, connect the drive; if you moved or renamed the folder, put it back. Or turn off daily backups and choose a folder again. Then back up again.`;
 }
 
 /** The reason alone, for a page that says the step itself (Backup mode). */

@@ -4,6 +4,7 @@
 // default responder; @mentions override that routing.
 import { DeletionNoteBanner } from "./DeletionNoteBanner";
 import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
+import { DelegationWaitRow } from "./DelegationWaitRow";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArrowDown, Check, ChevronDown, Folder, FolderOpen, Info, Loader2, MessageSquareReply, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Target, Trash2, X } from "lucide-react";
 import {
@@ -291,6 +292,8 @@ const Transcript = memo(function Transcript({
           ) : m.kind === "activity" && m.tool ? (
             isApprovedStepsLine(m) ? (
               <ApprovedStepsRow message={m} />
+            ) : m.delegationWait ? (
+              <DelegationWaitRow text={m.tool.name} onStop={() => dispatch({ type: "stopDelegation", delegationId: m.delegationWait!.id })} />
             ) : hostStoppedReason(m.tool.name) ? (
               <StoppedRow reason={hostStoppedReason(m.tool.name)!} />
             ) : isStoppedMidDesktopAction(m.tool.name) ? (

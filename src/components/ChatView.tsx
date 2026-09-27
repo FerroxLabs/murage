@@ -75,6 +75,7 @@ import { folderTrustNotice } from "../../shared/folder-trust";
 import { routineRunMarker } from "../../shared/routine-run-marker";
 import { RoutineRunDivider } from "./RoutineRunDivider";
 import { RoutineRunAgainRow } from "./RoutineRunAgainRow";
+import { DelegationWaitRow } from "./DelegationWaitRow";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
@@ -1081,6 +1082,11 @@ const MessagesList = memo(function MessagesList({
               if (m.routineRunAgain && m.tool) {
                 const routineId = m.routineRunAgain.routineId;
                 return <RoutineRunAgainRow text={m.tool.name} onRunAgain={() => dispatch({ type: "runRoutine", routineId })} />;
+              }
+              // a delegation waiting on a busy teammate: Stop drops it
+              if (m.delegationWait && m.tool) {
+                const delegationId = m.delegationWait.id;
+                return <DelegationWaitRow text={m.tool.name} onStop={() => dispatch({ type: "stopDelegation", delegationId })} />;
               }
               // where one run of a routine begins in its own conversation
               const runMarker = routineRunMarker(m);

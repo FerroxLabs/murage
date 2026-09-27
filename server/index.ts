@@ -281,7 +281,7 @@ import {
 } from "./question-normalize.ts";
 import { isQuestionCard, questionFromChoices, questionsForCard } from "../shared/questions.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
-import { _loadPending, discardDelegations, forgetDelegationsForThreads, drainDelegations, dropUnreachableDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, formatDelegationElapsed, summarizeDelegatedActivity, type QueueResult } from "./delegations.ts";
+import { _loadPending, discardDelegations, forgetDelegationsForThreads, drainDelegations, dropUnreachableDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, releaseParkedDelegations, hasActiveDelegationWork, stopWaitingDelegation, formatDelegationElapsed, summarizeDelegatedActivity, type QueueResult } from "./delegations.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -2806,6 +2806,10 @@ function finishGroupTurnOperation(groupId: string, operation: GroupTurnOperation
   // the true end. The drain re-checks activeGroupTurnForBot, so a room turn
   // begun meanwhile still holds it (upstream OpenMausBot #1664).
   drainQueuedSends();
+  // The room held its members until this point, so a member's own settle
+  // could not release a handoff waiting on them: it parked again, and no
+  // later event woke it (0.1.60 L4-1). Their true release is here.
+  queueMicrotask(retryParkedDelegations);
   // A follow-up sent while this operation was running belongs to the
   // harness, not whichever composer happened to be mounted. Hand the next
   // one to the ordinary channel runner as soon as the channel is truly idle.
@@ -5347,18 +5351,36 @@ function retryDelegationsWaitingOn(botId: string): void {
     // (handoffCanStartNow) and releases only the handoffs that pass it, so
     // no busy retry is spent on one whose own thread is still taken. Claims
     // are unchanged: the drain still takes them at dispatch.
+    //
+    // An idle bot asks the same question. Idle is not the same as free: a
+    // room keeps its members until its whole turn ends, so a member whose
+    // room reply just settled still could not take the handoff. Releasing it
+    // then only spent a retry and parked it again, with no later event to
+    // wake it (0.1.60 L4-1). The room's end and the timer below release
+    // what this leaves parked.
     const stillBusy = store.bot(botId)?.busy === true;
     const threadId = store.bot(botId)?.threadId;
     if (!stillBusy && threadId) coordinationSlots.get(threadId)?.();
     if (coordinationAdmissionClosed()) { deferredDelegationRetries.add(botId); return; }
-    const released = stillBusy
-      ? releaseDelegationsWaitingOn(botId, (sourceThreadId) => handoffCanStartNow(botId, sourceThreadId))
-      : releaseDelegationsWaitingOn(botId);
+    const released = releaseDelegationsWaitingOn(botId, (sourceThreadId) => handoffCanStartNow(botId, sourceThreadId));
     for (const waitingThread of released) {
       drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
     }
   });
 }
+/** Every parked handoff whose teammate can take it now, or that has waited
+ * the fallback period with no wake-up (delegations.ts
+ * releaseParkedDelegations). Runs when a room turn ends and on a timer, so a
+ * handoff whose wake-up passed while its teammate was still held is never
+ * left waiting for a restart. */
+function retryParkedDelegations(): void {
+  if (coordinationAdmissionClosed()) return;
+  for (const waitingThread of releaseParkedDelegations(handoffCanStartNow)) {
+    drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
+  }
+}
+const PARKED_DELEGATION_SWEEP_MS = 30_000;
+setInterval(retryParkedDelegations, PARKED_DELEGATION_SWEEP_MS).unref?.();
 /** Re-run the idle releases that arrived while admission was closed. Each
  * goes back through the same hook, so a bot that has since become busy again
  * waits for its own settle as usual. */
@@ -10107,7 +10129,10 @@ function artifactScopes(): ArtifactScope[] {
   }
   return scopes;
 }
-const engineWorkActive = () => store.bots.some(bot => bot.busy) || store.groups.some(groupIsWorking) || pendingDelegationSnapshot().length > 0;
+// A handoff parked on a busy teammate is not running work: it is on disk,
+// and nothing dispatches it while a backup holds admission. Counting it
+// refused every backup with nothing to finish or stop (0.1.60 L4-1).
+const engineWorkActive = () => store.bots.some(bot => bot.busy) || store.groups.some(groupIsWorking) || hasActiveDelegationWork();
 
 /**
  * Who is actually busy, in the names the person uses.
@@ -10137,7 +10162,7 @@ function busyEngineWorkers(): Array<{ name: string; where?: string }> {
     const responder = group.busyBotId ? store.bot(group.busyBotId) : null;
     add(responder?.name, group.dm ? undefined : group.name?.trim().slice(0, 60) || undefined);
   }
-  for (const pending of pendingDelegationSnapshot()) add(store.bot(pending.toBotId)?.name);
+  for (const pending of pendingDelegationSnapshot({ activeOnly: true })) add(store.bot(pending.toBotId)?.name);
   return [...byName.values()];
 }
 
@@ -12565,6 +12590,13 @@ const server = createServer(async (req, res) => {
     // is open to every signed-in surface, the phone included (#1629).
     if (path === "/api/routine-runs/seen-all" && method === "POST") {
       return json(res, 200, { runs: routines!.markAllSeen() });
+    }
+    // Stop on a delegation's waiting line: drops that parked handoff.
+    const delegationStopMatch = path.match(/^\/api\/delegations\/([\w-]{4,64})\/stop$/);
+    if (delegationStopMatch && method === "POST") {
+      return stopWaitingDelegation(commsBus, delegationStopMatch[1])
+        ? json(res, 200, { stopped: true })
+        : json(res, 409, { error: "This delegation is no longer waiting." });
     }
     const runMatch = path.match(/^\/api\/routine-runs\/([\w-]+)\/(cancel|seen)$/);
     if (runMatch && method === "POST") {

@@ -64,6 +64,12 @@ interface PendingDelegationItem extends DelegationItem {
    * queue activity must not count that same period again; the target's idle
    * transition clears this marker before the next retry. */
   waitingOnBusy?: boolean;
+  /** When this item last parked. The fallback timer retries a parked item
+   * that no idle transition has woken for BUSY_RETRY_FALLBACK_MS. */
+  waitingSince?: number;
+  /** The newest "waiting" line on the source thread, which carries the Stop
+   * control while the item waits. Cleared once the item leaves the queue. */
+  waitMessageId?: string;
 }
 
 /** Declared in shared/record-values.ts, which the backup reads too. */
@@ -109,6 +115,14 @@ const MAX_RECEIPTS = 100;
 const RECEIPT_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const RESULT_MAX_CHARS = 4_000;
 export const MAX_BUSY_ATTEMPTS = 3;
+/** How long a parked handoff waits for its wake-up before the fallback timer
+ * retries it anyway. The wake-up is the target going idle, and some of those
+ * transitions happen while the target still cannot take the handoff (a room
+ * that holds its members until its whole turn ends); nothing fires after
+ * that, so without this the handoff waited until a restart (0.1.60 L4-1).
+ * A retry the timer finds still busy spends an attempt, so a teammate who
+ * stays busy ends in the usual "canceled" line rather than an endless wait. */
+export const BUSY_RETRY_FALLBACK_MS = 5 * 60_000;
 
 /** Must this handoff wait for the target?
  *
@@ -224,6 +238,106 @@ export function releaseDelegationsWaitingOn(toBotId: string, admit?: (sourceThre
   return threads;
 }
 
+/** Release every parked handoff that should be retried now, whoever it
+ * waits on, and return the source threads to drain.
+ *
+ * Two reasons release an item. Its target can take it right now: the idle
+ * transition that should have woken it already passed while the target was
+ * still held (a room keeps its members until the whole room turn ends, and
+ * nothing fires after that). Or it has waited BUSY_RETRY_FALLBACK_MS with
+ * no wake-up at all: the drain then re-checks, and a target still busy
+ * costs an attempt, so the wait ends in the usual "canceled" line. The
+ * server calls this when a room turn ends and on a timer. */
+export function releaseParkedDelegations(
+  canStart: (toBotId: string, sourceThreadId: string) => boolean,
+  now = Date.now(),
+  fallbackMs = BUSY_RETRY_FALLBACK_MS,
+): string[] {
+  const threads: string[] = [];
+  for (const [threadId, items] of pendingDelegations) {
+    if (drainingThreads.has(threadId)) continue;
+    let released = false;
+    for (const item of items) {
+      if (!item.waitingOnBusy) continue;
+      const due = now - (item.waitingSince ?? now) >= fallbackMs;
+      let ready = false;
+      try { ready = canStart(item.toBotId, threadId); } catch { ready = false; }
+      if (!ready && !due) continue;
+      delete item.waitingOnBusy;
+      released = true;
+    }
+    if (released) threads.push(threadId);
+  }
+  if (threads.length) savePending();
+  return threads;
+}
+
+/** Is any queued handoff actually in progress? A parked one is not: it only
+ * waits for a busy teammate, it is on disk, and nothing can dispatch it
+ * while a backup holds admission. Counting it as running work refused every
+ * backup, with nothing for the person to finish or stop (0.1.60 L4-1). A
+ * fresh item still counts: its source turn is settling and it runs next. */
+export function hasActiveDelegationWork(): boolean {
+  for (const [threadId, items] of pendingDelegations) {
+    if (drainingThreads.has(threadId) || items.some((item) => !item.waitingOnBusy)) return true;
+  }
+  return false;
+}
+
+/** The person's Stop on a waiting line: drop that one parked handoff, with
+ * a receipt the delegating bot can read and a line where the wait was
+ * shown. False when it is not waiting any more (it ran, gave up, or is
+ * being dispatched right now). */
+export function stopWaitingDelegation(bus: CommsBus, id: string): boolean {
+  for (const [threadId, items] of pendingDelegations) {
+    const item = items.find((candidate) => candidate.id === id);
+    if (!item) continue;
+    if (!item.waitingOnBusy || drainingThreads.has(threadId)) return false;
+    const target = bus.store.bot(item.toBotId);
+    const name = target?.name ?? item.toBotId;
+    acknowledgeDelegation(threadId, id, bus);
+    recordDelegationReceipt({
+      id,
+      sourceThreadId: threadId,
+      toBotId: item.toBotId,
+      toBotName: name,
+      status: "cancelled",
+      result: "the owner stopped this handoff while it was waiting",
+    });
+    bus.store.appendMessage(threadId, {
+      role: "bot",
+      kind: "activity",
+      tool: { name: `Delegation to @${name} stopped by you`, ok: false },
+    });
+    return true;
+  }
+  return false;
+}
+
+/** Take the Stop control off an item's waiting line. Never throws: the line
+ * is only a view of the queue, and the thread may be gone. */
+function clearWaitLine(bus: CommsBus | undefined, threadId: string, item: PendingDelegationItem): void {
+  const messageId = item.waitMessageId;
+  if (!messageId) return;
+  delete item.waitMessageId;
+  if (!bus) return;
+  try { bus.store.patchMessage(threadId, messageId, { delegationWait: undefined }); } catch { /* the thread is gone */ }
+}
+
+/** Park an item on a busy target and show the waiting line with Stop. */
+function parkWaiting(bus: CommsBus, sourceThreadId: string, item: PendingDelegationItem, targetName: string): void {
+  item.waitingSince = Date.now();
+  clearWaitLine(bus, sourceThreadId, item);
+  const line = bus.store.appendMessage(sourceThreadId, {
+    role: "bot",
+    kind: "activity",
+    tool: { name: `Delegation to @${targetName} waiting: they're busy (retry ${item.attempts}/${MAX_BUSY_ATTEMPTS} when they finish)` },
+    delegationWait: { id: item.id },
+  });
+  item.waitMessageId = line.id;
+  savePending();
+}
+
 function savePending(strict = false): void {
   try {
     writeFileAtomic(DELEGATIONS_FILE, JSON.stringify(Object.fromEntries(pendingDelegations), null, 2), { mode: 0o600 });
@@ -264,7 +378,12 @@ export function _loadPending(): void {
         };
         if (item.approvalAlreadyGranted === true) loaded.approvalAlreadyGranted = true;
         if (item.fullAccessWaived === true) loaded.fullAccessWaived = true;
-        if (item.waitingOnBusy === true) loaded.waitingOnBusy = true;
+        if (item.waitingOnBusy === true) {
+          loaded.waitingOnBusy = true;
+          // A queue written before this field existed restarts its clock.
+          loaded.waitingSince = Number.isFinite(item.waitingSince) ? item.waitingSince! : Date.now();
+        }
+        if (typeof item.waitMessageId === "string" && item.waitMessageId) loaded.waitMessageId = item.waitMessageId;
         return [loaded];
       });
       if (items.length) pendingDelegations.set(threadId, items);
@@ -307,13 +426,15 @@ export function pendingThreads(): string[] {
 
 /** Read-only metadata for the local Team Map. Task prompts stay private;
  * the UI only needs to know who handed work to whom and the optional label. */
-export function pendingDelegationSnapshot(): Array<{
+export function pendingDelegationSnapshot(options: { activeOnly?: boolean } = {}): Array<{
   sourceThreadId: string;
   toBotId: string;
   reason?: string;
 }> {
   return [...pendingDelegations.entries()].flatMap(([sourceThreadId, items]) =>
-    items.map((item) => ({
+    items
+      .filter((item) => !options.activeOnly || drainingThreads.has(sourceThreadId) || !item.waitingOnBusy)
+      .map((item) => ({
       sourceThreadId,
       toBotId: item.toBotId,
       ...(item.reason ? { reason: item.reason } : {}),
@@ -414,7 +535,7 @@ export function drainDelegations(
       if (!from) {
         // The sender was deleted while this item waited. Nothing to run and
         // nobody to tell; drop it rather than retrying forever.
-        acknowledgeDelegation(threadId, item.id);
+        acknowledgeDelegation(threadId, item.id, bus);
         continue;
       }
       let outcome: "settled" | "requeued" = "settled";
@@ -442,7 +563,7 @@ export function drainDelegations(
       } finally {
         // A requeued item (busy target, retries left) stays for the drain
         // that the target's own settling turn will trigger.
-        if (outcome !== "requeued") acknowledgeDelegation(threadId, item.id);
+        if (outcome !== "requeued") acknowledgeDelegation(threadId, item.id, bus);
       }
     }
   })().finally(() => {
@@ -461,9 +582,11 @@ export function drainDelegations(
 }
 
 /** Remove one terminal handoff only after approval/dispatch has settled. */
-function acknowledgeDelegation(threadId: string, itemId: string): void {
+function acknowledgeDelegation(threadId: string, itemId: string, bus?: CommsBus): void {
   const current = pendingDelegations.get(threadId);
   if (!current) return;
+  const leaving = current.find((item) => item.id === itemId);
+  if (leaving) clearWaitLine(bus, threadId, leaving);
   const remaining = current.filter((item) => item.id !== itemId);
   if (remaining.length) pendingDelegations.set(threadId, remaining);
   else pendingDelegations.delete(threadId);
@@ -565,12 +688,7 @@ async function processOne(
     item.attempts += 1;
     item.waitingOnBusy = true;
     if (item.attempts < MAX_BUSY_ATTEMPTS) {
-      savePending();
-      bus.store.appendMessage(sourceThreadId, {
-        role: "bot",
-        kind: "activity",
-        tool: { name: `Delegation to @${target.name} waiting: they're busy (retry ${item.attempts}/${MAX_BUSY_ATTEMPTS} when they finish)` },
-      });
+      parkWaiting(bus, sourceThreadId, item, target.name);
       return "requeued";
     }
     recordDelegationReceipt({
@@ -661,12 +779,7 @@ async function processOne(
       item.attempts += 1;
       item.waitingOnBusy = true;
       if (item.attempts < MAX_BUSY_ATTEMPTS) {
-        savePending();
-        bus.store.appendMessage(sourceThreadId, {
-          role: "bot",
-          kind: "activity",
-          tool: { name: `Delegation to @${current.name} waiting: they're busy (retry ${item.attempts}/${MAX_BUSY_ATTEMPTS} when they finish)` },
-        });
+        parkWaiting(bus, sourceThreadId, item, current.name);
         return "requeued";
       }
       recordDelegationReceipt({
@@ -756,6 +869,7 @@ export function dropUnreachableDelegations(bus: CommsBus): number {
       const target = bus.store.bot(item.toBotId);
       if (!sender || !target) return true;
       if (!dropIfUnreachable(bus, sender, target, threadId, item)) return true;
+      clearWaitLine(bus, threadId, item);
       dropped += 1;
       return false;
     });

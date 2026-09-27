@@ -253,6 +253,10 @@ export interface Message {
   /** activity messages: a card answered after its routine run had ended.
    * The row offers Run again for this routine. Server-written only. */
   routineRunAgain?: { routineId: string };
+  /** activity messages: a delegation parked on a busy teammate. While it
+   * waits, the line offers Stop for this queued handoff (server/delegations.ts).
+   * Server-written only, and removed once the handoff leaves the queue. */
+  delegationWait?: { id: string };
 }
 
 export type GroupDefaultResponder =

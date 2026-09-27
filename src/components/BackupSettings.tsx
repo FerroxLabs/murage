@@ -178,7 +178,7 @@ export function useBackupSchedule() {
     if(mounted.current&&expected===version.current)setNotice("Backup requested. Murage will close and reopen this window to take it.");
   // Waiting on a person: the status (refreshed by run) names who, with the
   // ways out, just above; saying it here again would be the same line twice.
-  },cause=>String(cause instanceof Error?cause.message:cause).includes("BACKUP_WAITING_ON_YOU")?"":runNowError(cause));
+  },cause=>String(cause instanceof Error?cause.message:cause).includes("BACKUP_WAITING_ON_YOU")?"":runNowError(cause,{folderName:status?.refs?.destinationLabel}));
   const canClearReview=Boolean(bridge?.clearReview&&status?.phase==="needs-review"&&!status.pending);
   const clearReview=()=>void run("summary",async expected=>{
     if(!status||!bridge?.clearReview)return;
@@ -200,7 +200,7 @@ function ScheduleMessages({s,area}:{s:ScheduleController;area:ScheduleArea}) {
 function ScheduleState({s,attention}:{s:ScheduleController;attention:readonly string[]}) {
   const {status,bridge,unavailable,stale,closedStale}=s;
   const local=s.area==="schedule"?s.error:null;
-  const notice=scheduleCardNotice(local,status?.error,attention);
+  const notice=scheduleCardNotice(local,status?.error,attention,status?.refs?.destinationLabel);
   return <>
     <p role="status" className="text-[13px] font-medium text-ink">{status?`Daily backups are ${status.enabled?"on":"off"}. ${schedulePhase(status.phase)}`:bridge?"Checking schedule status…":"Scheduling unavailable in this window"}</p>
     {unavailable&&(!bridge||status)&&<p className="text-[13px] text-ink-secondary">Scheduled backup requires a supported packaged app with its verified backup tool.</p>}

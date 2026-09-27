@@ -220,6 +220,8 @@ export interface Message {
   queueId?: string;
   /** activity: a card answered after its routine run ended; offers Run again. */
   routineRunAgain?: { routineId: string };
+  /** activity: a delegation waiting on a busy teammate; offers Stop. */
+  delegationWait?: { id: string };
 }
 
 export type GroupDefaultResponder =
@@ -805,6 +807,7 @@ export type Action =
   | { type: "updateRoutine"; routineId: string; patch: Partial<RoutineInput> }
   | { type: "deleteRoutine"; routineId: string }
   | { type: "runRoutine"; routineId: string }
+  | { type: "stopDelegation"; delegationId: string }
   | { type: "cancelRoutineRun"; runId: string }
   | { type: "markRoutineRunSeen"; runId: string }
   | { type: "markAllRoutineRunsSeen" }
@@ -1896,6 +1899,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "updateRoutine":
     case "deleteRoutine":
     case "runRoutine":
+    case "stopDelegation":
     case "cancelRoutineRun":
     case "markRoutineRunSeen":
     case "markAllRoutineRunsSeen":
@@ -2310,6 +2314,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "runRoutine":
           api(`/api/routines/${action.routineId}/run`, { method: "POST" }).catch(showError);
+          break;
+        case "stopDelegation":
+          api(`/api/delegations/${action.delegationId}/stop`, { method: "POST" }).catch(showError);
           break;
         case "cancelRoutineRun":
           api(`/api/routine-runs/${action.runId}/cancel`, { method: "POST" }).catch(showError);

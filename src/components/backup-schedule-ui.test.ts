@@ -74,3 +74,14 @@ it("does not print the page's attention message a second time inside the schedul
   expect(scheduleCardNotice(null,undefined,[])).toBeNull();
   expect(scheduleCardNotice(null,null,[elevated])).toBeNull();
 });
+// "Murage couldn't find your backup folder" left the person to work out which
+// one, while the same page said "Backup folder: Backups" (0.1.60 Mac and
+// Linux re-tests). The sentence names it the same way: the folder's name,
+// never its full path.
+it("names the missing backup folder by the name the page shows",()=>{
+  expect(scheduleError("BACKUP_FOLDER_MISSING",{folderName:"Backups"})).toMatch(/^Murage couldn't find your backup folder "Backups"\. If it's on a drive, connect the drive;/);
+  expect(scheduleError("BACKUP_FOLDER_MISSING")).toMatch(/^Murage couldn't find your backup folder\. If it's on a drive/);
+  expect(scheduleError("BACKUP_FOLDER_MISSING",{folderName:" \u0007 "})).toMatch(/^Murage couldn't find your backup folder\. /);
+  expect(scheduleCardNotice(null,"BACKUP_FOLDER_MISSING",[],"Backups")).toContain('your backup folder "Backups".');
+  expect(scheduleError("BACKUP_FOLDER_MISSING",{folderName:"Backups"})).not.toMatch(/—/);
+});

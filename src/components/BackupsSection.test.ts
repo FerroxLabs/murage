@@ -53,6 +53,7 @@ describe("Backups settings section", () => {
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { vi } from "vitest";
+import { scheduleCardNotice } from "./backup-schedule-ui";
 import { CLOSED_JOB_MOVED_REASON, CLOSED_JOB_WONT_RUN_REASON, SETUP_FIRST_BACKUP_RUNNING, SETUP_NO_FIRST_BACKUP, backupSummary, closedAppFileSharedReason, closedJobNotice, completeBackupSetup, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
 import { BackupStatusCard, ScheduleCard, ScheduleSetup, type ScheduleController } from "./BackupSettings";
 import { scheduleError, schedulePhase } from "./backup-schedule-ui";
@@ -169,7 +170,7 @@ describe("backup summary", () => {
     const source = read("./BackupSettings.tsx");
     // The card's own line is decided by the shared helper, and it is handed
     // the very list the "Needs attention" block renders above it.
-    expect(source).toContain("scheduleCardNotice(local,status?.error,attention)");
+    expect(source).toContain("scheduleCardNotice(local,status?.error,attention,status?.refs?.destinationLabel)");
     expect(source).not.toContain("{local??scheduleError(status?.error)}");
     expect(source).toContain("<ScheduleCard s={s} attention={summary.attention}/>");
     expect(source).toContain("<ScheduleSetup s={s} attention={summary.attention}");
@@ -617,5 +618,29 @@ describe("backups while Murage is closed, from another volume", () => {
   it("a run that ended because of it says so too", () => {
     const summary = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, lastClosedResult: { status: "unavailable", reason: "volume-unreadable", at: 1, revision: 3 } } });
     expect(summary.attention.some(line => line.includes("Applications folder on this Mac's own disk"))).toBe(true);
+  });
+});
+
+// "your backup folder" without a name, beside "Backup folder: <name>" on the
+// same page (0.1.60 Mac and Linux re-tests). Named the same way, never by path.
+describe("a missing backup folder is named", () => {
+  const folder = healthy.schedule!.refs!.destinationLabel;
+  it("in the attention list, from the status error and from the stopped backup", () => {
+    const fromError = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, error: "BACKUP_FOLDER_MISSING" } }).attention.join(" ");
+    expect(fromError).toContain(`Murage couldn't find your backup folder "${folder}".`);
+    const fromFailure = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, phase: "needs-review", captureFailure: { stage: "references", code: "BACKUP_FOLDER_MISSING" } } }).attention.join(" ");
+    expect(fromFailure).toContain(`Murage couldn't find your backup folder "${folder}".`);
+ 
+    // Named the same way on the card, so the card still leaves it to the list.
+    const attention = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, error: "BACKUP_FOLDER_MISSING" } }).attention;
+    expect(scheduleCardNotice(null, "BACKUP_FOLDER_MISSING", attention, folder)).toBeNull();
+  });
+  it("after Back up now", () => {
+    expect(runNowError(new Error("BACKUP_FOLDER_MISSING"), { folderName: folder })).toContain(`your backup folder "${folder}".`);
+  });
+  it("in the page's own wiring, from the name it shows", () => {
+    const page = read("./BackupSettings.tsx");
+    expect(page).toContain("runNowError(cause,{folderName:status?.refs?.destinationLabel})");
+    expect(page).toContain("scheduleCardNotice(local,status?.error,attention,status?.refs?.destinationLabel)");
   });
 });

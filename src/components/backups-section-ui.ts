@@ -148,7 +148,7 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   // after its catch-up time passes, why it was skipped (0.1.60 Linux D6).
   const held = s?.enabled && s.heldBy?.occasion === "daily" && s.heldBy.bots.length ? s.heldBy : null;
   if (held) attention.push(backupWaitingSentence(held.bots, s?.phase === "skipped" ? "skipped" : "daily"));
-  else if (s?.error) attention.push(scheduleError(s.error));
+  else if (s?.error) attention.push(scheduleError(s.error, { folderName: s.refs?.destinationLabel }));
   // Said before anything is set up: where Murage can't reopen itself, no
   // backup can ever run, so the page says so instead of offering setup.
   if (s?.relaunchBlocked && s.relaunchBlocked !== s.error) attention.push(scheduleError(s.relaunchBlocked));
@@ -157,7 +157,7 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
     attention.push(schedulePhase(s.phase));
     // Say WHY. Without this the page only ever said a backup had not
     // finished, which left the person with nothing to act on.
-    if (s.captureFailure) attention.push(captureFailureSentence(s.captureFailure));
+    if (s.captureFailure) attention.push(captureFailureSentence(s.captureFailure, { folderName: s.refs?.destinationLabel }));
   }
   else if (s?.phase === "skipped" && !held) attention.push("Backup skipped. Murage was busy, so no backup was taken. Finish current work, then try again.");
   // The owner finished setup and the page still read "No verified backup on
@@ -320,7 +320,7 @@ export async function completeBackupSetup(bridge: BackupScheduleBridge, options:
 
 /** "Back up now" failures: the three named cases, then the existing schedule
  * messages, which stay generic for anything unrecognised. */
-export function runNowError(cause: unknown): string {
+export function runNowError(cause: unknown, options: { folderName?: string } = {}): string {
   const code = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
   if (code.includes("BACKUP_WORK_ACTIVE")) return "Finish or stop current work first.";
   if (code.includes("BACKUP_WAITING_ON_YOU")) return "A bot is waiting for your answer. Answer it, or end that run, then back up again.";
@@ -329,7 +329,7 @@ export function runNowError(cause: unknown): string {
   // daily backups once to allow Murage to close and reopen the window" — was
   // read as an instruction and Murage was quit during a live recovery.
   if (code.includes("BACKUP_SCHEDULE_CONSENT_REQUIRED")) return "Backups aren't switched on yet. Turn them on first: Murage takes a backup by closing and reopening its own window, and Murage does that itself, so you never need to quit it.";
-  return scheduleError(cause);
+  return scheduleError(cause, options);
 }
 
 /** Recovery-key failures (creating one, or saving a copy), named by the host's error code. Unknown
