@@ -685,3 +685,27 @@ test("a folder the backup can't use is refused at folder choice, before anything
     try{await assert.rejects(g.controller.selectReferences(),new RegExp(code));}finally{g.cleanup();}
   }
 });
+// D3 (0.1.60 Windows re-test 3): with the backup folder or the recovery key
+// gone, Back up now said only "Backup settings could not be updated" and a
+// due daily backup waited silently as "busy". Both now stop for review with
+// the named reason, which the Inbox and one notification carry.
+for(const [what,code] of [["folder","BACKUP_FOLDER_MISSING"],["key","BACKUP_RECOVERY_KEY_MISSING"]])test(`a missing backup ${what} is named, recorded for review and announced (daily and Back up now)`,async()=>{
+  for(const occasion of ["daily","manual"]){
+    let announced=0,controller;const f=fixture();
+    try{
+      controller=f.create({announceFailure:async()=>{announced++;}});
+      const status=await controller.selectReferences();
+      await controller.configure(0,{...choices,...Object.fromEntries(["installationRef","destinationRef","recoveryRef"].map(key=>[key,status.refs[key]])),allowIdleRestart:true});controller.stopPolling();
+      for(let attempt=0;attempt<100&&controller.isPreparing();attempt++)await new Promise(resolve=>setImmediate(resolve));f.calls.length=0;
+      const moved=`${what==="folder"?f.destination:f.keyFile}.moved`;renameSync(what==="folder"?f.destination:f.keyFile,moved);
+      if(occasion==="daily"){f.setNow(Date.parse("2026-09-13T09:01:00Z"));await controller.tick();}
+      else await assert.rejects(controller.runNow(f.coordinator().status().revision),new RegExp(`^Error: ${code}$`));
+      const s=f.coordinator().status();
+      assert.equal(s.phase,"needs-review",occasion);assert.equal(s.reviewReason,"references-unavailable");
+      assert.deepEqual(s.captureFailure,{stage:"references",code});
+      assert.equal(announced,1,occasion);assert.deepEqual(f.calls,[],"nothing was prepared or relaunched");
+      assert.match(captureFailureSentence(s.captureFailure),what==="folder"?/couldn't find your backup folder/:/couldn't find your recovery key/);
+      assert.equal((await controller.status()).lastError??code,code);
+    }finally{controller?.stopPolling?.();f.cleanup();}
+  }
+});

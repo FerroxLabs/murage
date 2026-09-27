@@ -67,7 +67,7 @@ import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserP
 import { openInstallationRecoveryWindow } from "./installation-recovery-window.mjs";
 import { runInstallationRecoveryWorker } from "./installation-recovery-runner.mjs";
 import { captureRecoveryCopy } from "./installation-recovery-snapshot.mjs";
-import { resolveInstallationSelection, planSeparateInstallation, allocateSeparateInstallation, publishInstallationSelection } from "./installation-selection.mjs";
+import { resolveInstallationSelection, retireUndoneInstallationSelection, planSeparateInstallation, allocateSeparateInstallation, publishInstallationSelection } from "./installation-selection.mjs";
 import { createServerChildLifecycle, awaitOwnedWork } from "./server-child-lifecycle.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import {
@@ -2426,7 +2426,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
   if (!desktopRecoveryMode || desktopShutdownStarted || (!separate && (owner !== desktopDataOwner || dataDirectory !== desktopDataDir))) throw Object.assign(new Error("Recovery ownership changed"), { code: "RECOVERY_OWNERSHIP_REQUIRED" });
   if(operation.includes("encrypted")&&(!ageTool||typeof parameters.readIdentity!=="function"))throw Object.assign(new Error("BACKUP_UNAVAILABLE"),{code:"BACKUP_UNAVAILABLE"});
   const args = operation === "backup-encrypted" ? ["backup-encrypted","--data-dir",dataDirectory,"--output",parameters.output,"--age-tool",ageTool,"--recipient",parameters.recipient,"--credential-policy","preserve-in-encrypted-fidelity"]
-    : operation === "inspect-encrypted" ? ["inspect-encrypted","--archive",parameters.archive,"--age-tool",ageTool]
+    : operation === "inspect-encrypted" ? ["inspect-encrypted","--archive",parameters.archive,"--age-tool",ageTool,...(process.platform==="win32"&&dataDirectory?["--data-dir",dataDirectory]:[])]
     : operation === "restore-encrypted-new" ? ["restore-encrypted-new","--data-dir",dataDirectory,"--archive",parameters.archive,"--sha256",parameters.sha256,"--age-tool",ageTool]
     : operation === "plan-restore" ? ["plan-restore", "--archive", parameters.archive]
     : operation === "review" ? ["review", "--data-dir", dataDirectory]
@@ -2454,13 +2454,21 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
   const env = {};
   for (const key of ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TMPDIR", "TEMP", "TMP"]) if (process.env[key] !== undefined) env[key] = process.env[key];
   if (operation !== "plan-restore") Object.assign(env, owner.utilityServerLeaseEnvironment());
-  try { return await runInstallationRecoveryWorker({
+  try { const result = await runInstallationRecoveryWorker({
     fork: (entry, argv, options) => utilityProcess.fork(entry, argv, options),
     entry: path.join(process.resourcesPath, "server", "installation-recovery-worker.js"),
     args, env, track: trackOwnedServerChild,
     ...(operation.includes("encrypted") ? {readIdentity:parameters.readIdentity} : {}),
     ...(operation==="backup-encrypted"&&parameters.maxDurationMs!==undefined?{timeoutMs:parameters.maxDurationMs+30_000}:{}),
-  }); } catch(error) {
+  });
+    // Undoing the restore of a separate installation leaves nothing for the
+    // selection to open: hand the next start back to the original (D2).
+    if (operation === "rollback" && !separate && desktopSelectionActive && result?.status === "rolled-back") {
+      retireUndoneInstallationSelection(app.getPath("userData"), desktopRequestedDataDir, dataDirectory);
+      desktopSelectionActive = false;
+    }
+    return result;
+  } catch(error) {
     if((process.platform==="win32"||error?.code==="AGE_PROCESS_CLOSE_UNCONFIRMED")&&typeof error?.retainedDirectory==="string"&&error.retainedDirectory.length<=8192)retainedSeparateDirectory=error.retainedDirectory;
     throw error;
   }
@@ -3459,11 +3467,18 @@ async function initializeBackupRemoteHost(){
     // desktop Murage runs on. A folder others can change (Ubuntu's ~/Documents
     // is group-writable) is refused right here, by name, with what to pick,
     // instead of after the download as "could not be confirmed" (Linux D8).
+    // The download waits on this dialog, so the page says so ("choosing"),
+    // and the window is brought forward first so the dialog is never left
+    // behind another window (0.1.60 Windows re-test 3 D1: the page read
+    // "Downloading and verifying…" while the folder dialog sat unanswered).
     chooseDownloadFolder:async()=>{
+      const phase=value=>{try{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("backup-remote:download-phase",value);}catch{/* the page keeps its busy label */}};
       for(;;){
+        phase("choosing");
+        try{if(mainWindow&&!mainWindow.isDestroyed()){if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();}}catch{/* the dialog still opens */}
         const result=await dialog.showOpenDialog(mainWindow,{title:"Save remote backup in a new subfolder",defaultPath:app.getPath("home"),properties:["openDirectory","createDirectory"]});
         const folder=result.canceled?null:result.filePaths[0]??null;
-        if(!folder||!downloadFolderShared(folder))return folder;
+        if(!folder||!downloadFolderShared(folder)){if(folder)phase("downloading");return folder;}
         const answer=await dialog.showMessageBox(mainWindow,{type:"warning",buttons:["Cancel","Choose another folder"],defaultId:1,cancelId:0,noLink:true,
           message:`Other accounts on this computer can change the folder "${path.basename(folder)||folder}", so Murage won't save a backup there.`,
           detail:`A backup is only saved where nobody else can swap the file while it is written. Folder: ${folder}\n\nChoose your home folder, or a folder only you can change. To keep using this one, remove the others' write access first, for example: chmod go-w "${folder}"`});
@@ -3576,6 +3591,9 @@ async function initializeBackupScheduleHost(){
     // The host supplies only its finite stage/code record; synchronously retain
     // that tiny line in this profile's existing log before generic refusal.
     traceClosed:stage=>closedTrace(`stage ${stage}`),
+    // A backup stopped before it could start (folder or key gone): the Inbox
+    // row and one notification, as after a failed capture (D3).
+    announceFailure:()=>announceLastBackupFailure(),
     reportCaptureFailure:failure=>{
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify(failure)}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },

@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { migrateMemorySchema } from "../server/memory/schema.ts";
 import { acquireDataDirLease, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
-import { allocateSeparateInstallation, planSeparateInstallation, publishInstallationSelection, resolveInstallationSelection } from "./installation-selection.mjs";
+import { allocateSeparateInstallation, planSeparateInstallation, publishInstallationSelection, resolveInstallationSelection, retireUndoneInstallationSelection } from "./installation-selection.mjs";
 import { assertRestoreReviewed } from "./restore-review.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
@@ -164,4 +164,41 @@ test("changed archive hash cannot publish startup selection", () => {
   assert.equal(existsSync(plan.selector), false);
   assert.equal(resolveInstallationSelection(userData, original).dataDirectory, dataDirLeasePaths(original).canonicalDataDir);
   evidence.push({ kind: "hash-mismatch", result: "PASS", selectorNotPublished: true });
+});
+
+// D2 (0.1.60 Windows re-test 3): "Undo a restore" of a separate installation
+// moved its data aside but left the selector naming it, so every start failed
+// with STARTUP_FAILED. The undo retires the selector (kept, renamed) and the
+// original opens; an install already stuck that way is repaired at startup.
+for (const via of ["undo", "startup"]) test(`undoing a separate restore hands startup back to the original (${via})`, () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "murage-separate-undo-"))); roots.push(root);
+  const original = path.join(root, "original"), userData = path.join(root, "desktop"), archive = path.join(root, "snapshot.zip"); mkdirSync(original); mkdirSync(userData);
+  const env = { PATH: path.dirname(process.execPath), HOME: root, USERPROFILE: root, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) };
+  const run = (args, delegated = {}) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { env: { ...env, ...delegated }, timeout: 30_000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  writeFileSync(path.join(original, "config.json"), JSON.stringify({ profile: { name: "Undo fixture" }, instances: {} }));
+  writeFileSync(path.join(original, "bots.json"), "[]"); writeFileSync(path.join(original, "groups.json"), "[]");
+  const db = new DatabaseSync(path.join(original, "messages.db"));
+  db.exec("CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id)); CREATE INDEX messages_thread ON messages(thread_id); CREATE TABLE thread_state(thread_id TEXT PRIMARY KEY, active_leaf_id TEXT);");
+  migrateMemorySchema(db, "active"); db.close();
+  const saved = run(["backup", "--data-dir", original, "--output", archive]);
+  const plan = allocateSeparateInstallation(planSeparateInstallation(userData, original, original));
+  let lease = acquireDataDirLease(plan.dataDirectory);
+  try { publishInstallationSelection(plan, run(["restore", "--data-dir", plan.dataDirectory, "--archive", archive, "--sha256", saved.sha256], lease.utilityServerLeaseEnvironment())); }
+  finally { lease.release(); }
+  const selected = resolveInstallationSelection(userData, original);
+  assert.equal(selected.dataDirectory, plan.dataDirectory);
+  // Refused while the selected installation is still there.
+  assert.throws(() => retireUndoneInstallationSelection(userData, original, selected.dataDirectory), { code: "INSTALLATION_SELECTION_INVALID" });
+  lease = acquireDataDirLease(selected.dataDirectory);
+  try { assert.equal(run(["rollback", "--data-dir", selected.dataDirectory], lease.utilityServerLeaseEnvironment()).status, "rolled-back"); }
+  finally { lease.release(); }
+  assert.equal(existsSync(selected.dataDirectory), false);
+  if (via === "undo") assert.equal(retireUndoneInstallationSelection(userData, original, selected.dataDirectory), true);
+  const next = resolveInstallationSelection(userData, original);
+  assert.deepEqual(next, { dataDirectory: dataDirLeasePaths(original).canonicalDataDir, selected: false });
+  const retired = readdirSync(userData).filter(name => name.endsWith(`.${plan.id}.retired`));
+  assert.equal(retired.length, 1);
+  assert.equal(readdirSync(userData).some(name => /^installation-selection-[a-f0-9]{64}\.json$/.test(name)), false);
+  // The original is untouched and opens.
+  assert.equal(JSON.parse(readFileSync(path.join(original, "config.json"), "utf8")).profile.name, "Undo fixture");
 });

@@ -32,7 +32,7 @@ export type BackupSkipped = z.infer<typeof skippedSchema>;
 const jobSchema = z.object({ id:z.string().regex(/^[a-f0-9]{64}$/), occurrence:z.string().max(200), revision:z.number().int().nonnegative(), scheduledAt:z.number().int().nonnegative(),
   phase:z.enum(["due","waiting-idle","waiting-backup-mode","claiming","capturing","local-verified","skipped","needs-review","handoff-prepared","handoff-armed","offline-claimed","return-pending","returned","install-requested","upgrade-complete","upgrade-cancelled"]),
   handoff:backupHandoffSchema.optional(),
-  attemptAt:z.number().int().nonnegative().optional(), error:z.enum(["interrupted","capture-unconfirmed","receipt-mismatch","cancelled","duration-exceeded","catchup-expired","idle-release-unconfirmed"]).optional(), receipt:backupReceiptSchema.optional(),
+  attemptAt:z.number().int().nonnegative().optional(), error:z.enum(["interrupted","capture-unconfirmed","receipt-mismatch","cancelled","duration-exceeded","catchup-expired","idle-release-unconfirmed","references-unavailable"]).optional(), receipt:backupReceiptSchema.optional(),
 }).strict();
 const stateSchema = z.object({ version:z.literal(1),revision:z.number().int().nonnegative(),configuredAt:z.number().int().nonnegative(),schedule:backupScheduleSchema,
   job:jobSchema.optional(),seen:z.array(z.string().max(200)).max(256),watermark:z.number().int().nonnegative(),lastVerified:backupReceiptSchema.optional(),lastClosedResult:backupClosedResultSchema.optional(),
@@ -221,6 +221,11 @@ export class BackupCoordinator {
   beginHandoffCapture(id:string){return this.transitionHandoff(id,"offline-claimed","capturing",s=>{s.job!.attemptAt=this.now();});}
   completeHandoff(id:string,input:BackupReceipt){return this.transitionHandoff(id,"capturing","return-pending",s=>{const r=backupReceiptSchema.parse(input),job=s.job!;if(r.jobId!==job.id||r.installationRef!==s.schedule.installationRef||r.destinationRef!==s.schedule.destinationRef||r.selectionHash!==hash(s.schedule.selection)||r.bytes>s.schedule.maxBytes!||r.verifiedAt<job.attemptAt!||r.verifiedAt>this.now()||r.candidateId!==job.handoff?.upgrade?.candidateId||(job.handoff?.upgrade&&r.artifactRef!==job.id))throw new Error("BACKUP_RECEIPT_MISMATCH");job.receipt=r;s.lastVerified=r;});}
   completeReturn(id:string){return this.transitionHandoff(id,"return-pending","returned",s=>{if(s.job!.handoff!.upgrade)throw Error("BACKUP_UPGRADE_PENDING");});}
+  /** A due or requested backup whose folder or recovery key can't be found
+   * never gets as far as a handoff. It stops here, for review, so the page,
+   * the Inbox and a notification say why instead of the job waiting silently
+   * (0.1.60 Windows re-test 3 D3). */
+  failWaiting(jobId:string){const lease=this.lease();try{const s=this.read();if(s.job?.id!==jobId||!waitingPhases.includes(s.job.phase))throw new Error("BACKUP_HANDOFF_CHANGED");s.job.phase="needs-review";s.job.error="references-unavailable";this.save(s);return this.status();}finally{lease.release();}}
   failHandoff(id:string){const lease=this.lease();try{const s=this.read();if(s.job?.handoff?.id!==id)throw new Error("BACKUP_HANDOFF_CHANGED");s.job.phase="needs-review";s.job.error="capture-unconfirmed";this.save(s);return this.status();}finally{lease.release();}}
   private async work(upgradeId?:string){
     const lease=this.lease();let claimed:{release:()=>Promise<void>}|undefined;let timer:ReturnType<typeof setTimeout>|undefined;

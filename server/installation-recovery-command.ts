@@ -1,3 +1,4 @@
+import { createBackupWork, removeBackupWork } from "./backup-local-work.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,15 +37,18 @@ export async function installationRecoveryCommand(args: string[], input: { readI
     const result=await writeEncryptedInstallationBackup(options.get("--data-dir")!,options.get("--output")!,{ageExecutable:options.get("--age-tool")!,recipient:options.get("--recipient")!,identity:await(input.readIdentity??identityFromStdin)(),selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"},...(maxBytes===undefined?{}:{maxBytes}),...(timeoutMs===undefined?{}:{timeoutMs,signal:AbortSignal.timeout(timeoutMs)})});
     return{ok:true,operation:command,...result};
   }
-  if(command==="inspect-encrypted"&&options.size===2&&options.has("--archive")&&options.has("--age-tool")){
+  if(command==="inspect-encrypted"&&options.has("--archive")&&options.has("--age-tool")&&(options.size===2||(options.size===3&&options.has("--data-dir")))){
     if(process.platform==="win32")await resolveWindowsBackupRuntime(options.get("--age-tool")!);
-    const scratch=process.platform==="win32"?tmpdir():mkdtempSync(join(tmpdir(),"murage-encrypted-inspect-command-"));
+    // Windows: the decrypted copy is made in the owner-only work folder
+    // beside the data folder when the desktop names it, never in %TEMP% (D5).
+    const work=process.platform==="win32"&&options.has("--data-dir")?createBackupWork(options.get("--data-dir")!):undefined;
+    const scratch=process.platform==="win32"?work??tmpdir():mkdtempSync(join(tmpdir(),"murage-encrypted-inspect-command-"));
     let completedDirectory:string|undefined;
     try{
       const result=await inspectEncryptedInstallationBackup(options.get("--archive")!,scratch,{ageExecutable:options.get("--age-tool")!,identity:await(input.readIdentity??identityFromStdin)()});
       completedDirectory=result.directory;
       return{ok:true,operation:command,sha256:result.sha256,snapshotId:result.manifest.snapshotId,coverage:result.manifest.coverage,restorePolicy:result.manifest.restorePolicy,activationAvailable:false};
-    }finally{if(process.platform!=="win32")rmSync(scratch,{recursive:true,force:true});else if(completedDirectory)rmSync(completedDirectory,{recursive:true,force:true});}
+    }finally{if(process.platform!=="win32")rmSync(scratch,{recursive:true,force:true});else{if(completedDirectory)rmSync(completedDirectory,{recursive:true,force:true});if(work)try{removeBackupWork(work);}catch{/* swept at the next start */}}}
   }
   if(command==="restore-encrypted-new"&&options.size===4&&["--data-dir","--archive","--sha256","--age-tool"].every(key=>options.has(key))){
     if(process.platform==="win32")await resolveWindowsBackupRuntime(options.get("--age-tool")!);

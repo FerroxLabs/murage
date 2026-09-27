@@ -83,8 +83,12 @@ export function createBackupScheduleHost(host) {
     if(b?.version!==1||![b.installationRef,b.destinationRef,b.recoveryRef].every(value=>typeof value==="string"&&/^[A-Za-z0-9_-]{1,120}$/.test(value))||![b.destination,b.keyFile].every(value=>typeof value==="string"&&value.length<8192&&path.isAbsolute(value))||typeof b.allowIdleRestart!=="boolean"||typeof b.recipient!=="string")throw Error("BACKUP_BINDINGS_INVALID");
     return b;
   };
+  // A backup folder or key that is simply gone (unplugged drive, renamed
+  // folder) is named, not folded into "settings could not be updated".
+  const present=(file,code)=>{try{lstatSync(file);}catch(error){if(["ENOENT","ENOTDIR"].includes(error?.code))throw Error(code);throw Error("BACKUP_REFERENCE_CHANGED");}};
   const checked=async()=>{
     const b=await read(),s=coordinator.status();
+    if(b){present(b.destination,"BACKUP_FOLDER_MISSING");present(b.keyFile,"BACKUP_RECOVERY_KEY_MISSING");}
     if(!b||!b.allowIdleRestart||b.installationIdentity!==installationIdentity(host.installation())||s.schedule.installationRef!==b.installationRef||s.schedule.destinationRef!==b.destinationRef||s.schedule.recoveryRef!==b.recoveryRef||hash(fingerprint(b.keyFile))!==b.keyFingerprint||!lstatSync(b.destination).isDirectory()||realpathSync(b.destination)!==b.destination||installationIdentity(b.destination)!==b.destinationIdentity)throw Error("BACKUP_REFERENCE_CHANGED");
     return b;
   };
@@ -149,6 +153,18 @@ export function createBackupScheduleHost(host) {
       }finally{running=false;}
     })().finally(()=>{upgradeRequest=null;upgradeCandidateId=null;});return upgradeRequest;
   }
+  const REFERENCE_FAILURES=new Set(["BACKUP_FOLDER_MISSING","BACKUP_RECOVERY_KEY_MISSING","BACKUP_REFERENCE_CHANGED"]);
+  /** Stops a job whose folder or key can't be used: needs review, the reason
+   * recorded, and the desktop told so it can post the Inbox row and one
+   * notification (D3). Returns the code, or null for any other error. */
+  function stopForReferences(jobId,error){
+    const code=error instanceof Error&&REFERENCE_FAILURES.has(error.message)?error.message:null;if(!code||!jobId)return code;
+    try{coordinator.failWaiting(jobId);}catch{return code;}
+    try{coordinator.recordCaptureFailure?.({stage:"references",code});}catch{/* the phase alone still says it needs review */}
+    try{host.reportCaptureFailure?.({stage:"references",code});}catch{/* log only */}
+    try{void Promise.resolve(host.announceFailure?.()).catch(()=>{});}catch{/* never worth a failed tick */}
+    return code;
+  }
   async function tick(upgradeId){
     if(running)return;
     if(!coordinator.status().enabled)return;
@@ -157,7 +173,7 @@ export function createBackupScheduleHost(host) {
       const s=await coordinator.tick(upgradeId);
       if(!["due","waiting-idle","waiting-backup-mode"].includes(s.phase)||!host.supported())return;
       const blocked=captureBlocked();if(blocked){lastError=blocked;return;}
-      const b=await checked();
+      let b;try{b=await checked();}catch(error){const code=stopForReferences(s.job?.id,error);if(code){lastError=code;return;}throw error;}
       release=await host.prepare("daily");heldBy=null;
       intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
       coordinator.prepareHandoff(s.job.id,intent);
@@ -190,7 +206,12 @@ export function createBackupScheduleHost(host) {
       if(current.revision!==expectedRevision)throw Error("BACKUP_SCHEDULE_CHANGED");
       const b=await read();
       if(!b||!b.allowIdleRestart||current.schedule.installationRef!==b.installationRef||current.schedule.destinationRef!==b.destinationRef||current.schedule.recoveryRef!==b.recoveryRef)throw Error("BACKUP_SCHEDULE_CONSENT_REQUIRED");
-      await checked();
+      try{await checked();}catch(error){
+        // Recorded like a failed backup (review, Inbox, notification), and
+        // the window gets the same plain reason.
+        if(["BACKUP_FOLDER_MISSING","BACKUP_RECOVERY_KEY_MISSING"].includes(error?.message)){lastError=error.message;try{const r=coordinator.requestManual(expectedRevision,randomUUID());stopForReferences(r.job?.id,error);}catch{/* the sentence below still names it */}}
+        throw error;
+      }
       const s=coordinator.requestManual(expectedRevision,randomUUID());
       if(s.job.occurrence.startsWith(s.revision+":manual:"))manual=s.job.id;
       try{release=await host.prepare("manual");}catch(error){holdFor(error,"manual");throw error;}

@@ -9,6 +9,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ transport: vi.fn(), resources: vi.fn(), verify: vi.fn(), spawn: vi.fn() }));
 vi.mock("./installation-windows-backup-transport.ts", () => ({ runWindowsBackupTransport: mocks.transport }));
 vi.mock("./windows-backup-resources.ts", () => ({ createWindowsBackupResourceResolver: mocks.resources }));
+// The work folder's owner-only ACL is Windows tooling (icacls, Get-Acl); the
+// source fixture records the call instead (D4, backup-local-work.ts).
+vi.mock("../electron/backup-windows-acl.mjs", () => ({ currentUserSid: () => "S-1-5-21-1-2-3-1001", readAcl: () => ({ owner: "S-1-5-21-1-2-3-1001", protected: true, rules: [{ allow: true, sid: "S-1-5-21-1-2-3-1001", mask: 0x1f01ff, inherited: false }] }), aclIsOwnerOnly: () => true, restrictToOwner: () => {} }));
 vi.mock("node:child_process", async original => ({ ...await original<typeof import("node:child_process")>(), spawn: mocks.spawn }));
 import * as encryption from "./installation-backup-encryption.ts";
 import * as archives from "./installation-archive.ts";
@@ -89,7 +92,10 @@ staged("writes only beneath a native private root and publishes after every stag
   const result = await writeEncryptedInstallationBackup(f.data, f.archive, options);
   expect(result.path).toBe(f.archive.toLowerCase()); expect(existsSync(f.archive)).toBe(true); expect(readFileSync(join(f.data, "config.json"))).toEqual(before);
   expect(events).toEqual(["private-stage:prepared", "encrypt:closed", "decrypt:prepared", "decrypt:authenticated", "decrypt:released", "private-stage:released"]);
-  expect(privateRoots[1].startsWith(privateRoots[0] + "/")).toBe(true); expect(privateRoots.every(path => !existsSync(path))).toBe(true);
+  // D4: the backup folder's private stage gets only the ciphertext; the
+  // readback decrypts in the owner-only work folder beside the data folder.
+  expect(dirname(privateRoots[0])).toBe(dirname(f.archive).toLowerCase()); expect(privateRoots[1].toLowerCase()).toContain(`${join(f.root, ".murage-backup-work")}/`.toLowerCase());
+  expect(privateRoots.every(path => !existsSync(path))).toBe(true); expect(existsSync(join(f.root, ".murage-backup-work"))).toBe(false);
   expect(readdirSync(f.root).some(name => name.startsWith(".murage-encrypted"))).toBe(false); expect(mocks.spawn).not.toHaveBeenCalled();
 });
 
@@ -102,11 +108,24 @@ staged("inspects through existing strict parser only after authenticated native 
   expect(inspect.mock.calls[0][1]).toBe(result.directory); expect(result.directory.includes(".murage-backup-")).toBe(true);
 });
 
-staged("retains all Windows failed-decrypt output and never inspects unauthenticated bytes", async () => {
+// D5 (0.1.60 Windows re-test 3): a refused restore of a damaged backup left
+// 2.9 MB of decrypted archive in %TEMP%. Once the helper has closed, its
+// folder (partial plaintext included) is removed; nothing is reported retained.
+staged("removes all Windows failed-decrypt output once the helper closed, and never inspects unauthenticated bytes", async () => {
   const f = fixture(); await writeEncryptedInstallationBackup(f.data, f.archive, options); failDecrypt = true;
-  const inspect = vi.spyOn(archives, "inspectArchiveEntries");
+  const inspect = vi.spyOn(archives, "inspectArchiveEntries"); privateRoots.length = 0;
   const caught = await inspectEncryptedInstallationBackup(f.archive, f.root, options).catch(error => error);
-  expect(caught.code).toBe("AGE_PROCESS_FAILED"); expect(existsSync(caught.retainedDirectory)).toBe(true); expect(inspect).not.toHaveBeenCalled();
+  expect(caught.code).toBe("AGE_PROCESS_FAILED"); expect(caught.retainedDirectory).toBeUndefined(); expect(inspect).not.toHaveBeenCalled();
+  expect(privateRoots.length).toBe(1); expect(existsSync(privateRoots[0])).toBe(false);
+});
+staged("keeps a failed decrypt's folder only while the helper's exit is unconfirmed", async () => {
+  const f = fixture(); await writeEncryptedInstallationBackup(f.data, f.archive, options);
+  mocks.transport.mockImplementationOnce(async (request: WindowsBackupRequest<unknown>) => {
+    const directory = join(request.parentDirectory, `.murage-backup-${randomUUID()}`); mkdirSync(directory); writeFileSync(join(directory, "authenticated.zip"), "partial");
+    throw Object.assign(new InstallationSnapshotError("AGE_PROCESS_CLOSE_UNCONFIRMED"), { retainedDirectory: directory, helperClosed: false });
+  });
+  const caught = await inspectEncryptedInstallationBackup(f.archive, f.root, options).catch(error => error);
+  expect(caught.code).toBe("AGE_PROCESS_CLOSE_UNCONFIRMED"); expect(existsSync(caught.retainedDirectory)).toBe(true);
 });
 
 staged("refuses publication after Windows readback failure and leaves no plaintext staging in the backup folder", async () => {
@@ -141,7 +160,8 @@ staged("waits for pending extraction to close after helper rejection before retu
     await began; controller.abort(); throw Object.assign(new InstallationSnapshotError("AGE_PROCESS_FAILED"), { retainedDirectory: directory });
   });
   const caught = await inspectEncryptedInstallationBackup(f.archive, f.root, options).catch(error => error);
-  expect(extractionClosed).toBe(true); expect(caught.code).toBe("AGE_PROCESS_FAILED"); expect(existsSync(caught.retainedDirectory)).toBe(true);
+  // The extraction closed first, then the helper's folder went (D5).
+  expect(extractionClosed).toBe(true); expect(caught.code).toBe("AGE_PROCESS_FAILED"); expect(caught.retainedDirectory).toBeUndefined();
 });
 
 staged("waits for an aborted encryption writer to finish teardown before reporting private-stage loss", async () => {

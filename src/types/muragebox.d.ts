@@ -204,6 +204,8 @@ type SkillRecordingPayload = {
         reconcileLatest(remoteRef:string,revision:number,jobId:string):Promise<{state:string;jobId:string;snapshotId?:string}>;
         listBackups(remoteRef:string,revision:number):Promise<{repositoryId:string;backups:{snapshotId:string;jobId:string;createdAt:number;verified:false}[];ignored:number}>;
         downloadBackup(remoteRef:string,revision:number,snapshotId:string):Promise<{cancelled?:boolean;saved?:boolean;archivePath?:string;directory?:string}>;
+        /** "choosing" while the folder dialog is open, "downloading" once a folder is chosen. Returns an unsubscribe. */
+        onDownloadPhase?(listener:(phase:"choosing"|"downloading")=>void):()=>void;
         setAutomaticUpload(remoteRef:string,revision:number,enabled:boolean):Promise<{saved:boolean}>;
         saveMaintenanceCredentials?(remoteRef:string,revision:number,credentials:{accessKeyId:string;secretAccessKey:string;sessionToken?:string}):Promise<{saved:boolean}>;
         previewRetention?(remoteRef:string,revision:number,policy:{keepLast?:number;keepDaily?:number;keepWeekly?:number;keepMonthly?:number;keepYearly?:number}):Promise<{previewId:string;remove:string[];keep:number;lockRelease?:"unconfirmed"}>;
