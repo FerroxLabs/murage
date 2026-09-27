@@ -251,6 +251,10 @@ const Transcript = memo(function Transcript({
         const user = m.role === "user";
         const attachments = user && m.text ? splitTranscriptAttachments(m.text) : null;
         const newCluster = !prev || prev.role !== m.role || prev.from?.botId !== m.from?.botId || newDay;
+        // An error always names the bot it belongs to, even mid-cluster: in a
+        // room several bots can fail in a row, and "error: ..." alone does not
+        // say whose turn stopped.
+        const errorRow = m.kind === "activity" && Boolean(m.tool) && (m.tool!.ok === false || m.tool!.name.startsWith("error:"));
         const routineOwner = m.kind === "routine.run" ? memberOf(m.from?.botId) : undefined;
         const routineExecutionThreadId = m.routineRun?.executionThreadId;
         const routineTarget = routineOwner && hasRoutineExecutionTask(routineOwner.tasks, routineExecutionThreadId)
@@ -447,7 +451,7 @@ const Transcript = memo(function Transcript({
                 {dayLabel(m.at)} {formatTime(m.at)}
               </div>
             )}
-            {!user && m.from && newCluster && (
+            {!user && m.from && (newCluster || errorRow) && (
               <ClusterLabel bot={memberOf(m.from.botId)} name={m.from.name} color={m.from.color} />
             )}
             {row}
@@ -1189,8 +1193,7 @@ export function GroupView({ group }: { group: Group }) {
   const streaming = stream.streaming[group.threadId];
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
-  const composerDockRef = useRef<HTMLDivElement>(null);
-  const composerDock = useComposerDockPad(composerDockRef);
+  const composerDock = useComposerDockPad();
   const [follow, setFollow] = useState(true);
   const followRef = useRef(true);
   const previousScrollTop = useRef(0);
@@ -1339,7 +1342,11 @@ export function GroupView({ group }: { group: Group }) {
   }, []);
 
   useEffect(() => setBottomFollow(true), [group.id, setBottomFollow]);
-  useBottomFollowResize(scrollRef, transcriptRef, followRef, setupPending ? null : transcriptKey);
+  // Observed only while the Chat tab's transcript is mounted: a project room
+  // opens on Overview, and a key that did not change on the switch to Chat
+  // left the new transcript unobserved, so a Thinking row or a streaming
+  // reply grew in under the composer.
+  useBottomFollowResize(scrollRef, transcriptRef, followRef, setupPending || !showChat ? null : transcriptKey);
 
   const appliedFocus = useRef<number | null>(null);
   useEffect(() => {
@@ -1378,7 +1385,7 @@ export function GroupView({ group }: { group: Group }) {
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [group.id, group.messages.length, streaming, group.busyBotId, group.working, composerDock.pad]);
+  }, [group.id, group.messages.length, streaming, group.busyBotId, group.working, composerDock.pad, showChat]);
 
   // Rows move in and out around the reader; a surviving row is kept where it
   // was (transcript-rows.ts, and see ChatView). The capture belongs to the
@@ -1887,7 +1894,7 @@ export function GroupView({ group }: { group: Group }) {
         </button>
       )}
 
-      <div ref={composerDockRef} className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2]">
+      <div ref={composerDock.ref} className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2]">
       <Composer
         key={group.threadId}
         group={group}

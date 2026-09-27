@@ -36,7 +36,9 @@ export function useBottomFollowResize(scrollRef: RefObject<HTMLElement | null>, 
     const scroller = scrollRef.current, transcript = transcriptRef.current;
     if (!scroller || !transcript || observeKey === null) return;
     const observer = new ResizeObserver(() => { followBottomGrowth(scroller, followingRef.current); });
-    observer.observe(transcript);
+    // border-box: the transcript's bottom inset is padding, so a composer
+    // that grows is a resize to follow too, not only new rows.
+    observer.observe(transcript, { box: "border-box" });
     return () => observer.disconnect();
   }, [followingRef, observeKey, scrollRef, transcriptRef]);
 }

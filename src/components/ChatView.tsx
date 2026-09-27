@@ -1213,8 +1213,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
-  const composerDockRef = useRef<HTMLDivElement>(null);
-  const composerDock = useComposerDockPad(composerDockRef);
+  const composerDock = useComposerDockPad();
 
   const stream = useStreaming();
   const streaming = stream.streaming[bot.threadId];
@@ -1766,7 +1765,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
           the transcript, so a dock that could exceed the pane would silently
           pad the transcript out of existence. */}
       <div
-        ref={composerDockRef}
+        ref={composerDock.ref}
         className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2] flex max-h-full flex-col"
       >
       <Composer
