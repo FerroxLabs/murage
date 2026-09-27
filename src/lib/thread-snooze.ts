@@ -46,6 +46,18 @@ function shortWhen(at: number, clock: SnoozeClock): string {
   return new Intl.DateTimeFormat(clock.locale, { timeZone: clock.timeZone, weekday: "short", hour: "numeric", minute: "2-digit" }).format(at);
 }
 
+/** "Mon 5 Oct, 9:00 AM" in the owner's locale: the weekday and time with
+ *  the date, for when the weekday alone would not say which day. */
+function datedWhen(at: number, clock: SnoozeClock): string {
+  return new Intl.DateTimeFormat(clock.locale, { timeZone: clock.timeZone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(at);
+}
+
+/** Calendar days from `now` to `at`, in the owner's zone. */
+function daysBetween(now: number, at: number, timeZone?: string): number {
+  const a = zoneParts(now, timeZone), b = zoneParts(at, timeZone);
+  return Math.round((Date.UTC(b.year, b.month - 1, b.day) - Date.UTC(a.year, a.month - 1, a.day)) / (24 * HOUR));
+}
+
 export interface SnoozePreset { id: "hour" | "tomorrow" | "next-week"; label: string; detail: string; until: number }
 
 /** 1 hour, tomorrow morning, next week (Monday morning; a week on if today
@@ -57,10 +69,15 @@ export function snoozePresets(now: number, clock: SnoozeClock = {}): SnoozePrese
   const comingMonday = ((8 - today.weekday) % 7) || 7;
   const toMonday = comingMonday === 1 ? 8 : comingMonday;
   const hour = now + HOUR, tomorrow = dayAtMorning(now, 1, clock.timeZone), nextWeek = dayAtMorning(now, toMonday, clock.timeZone);
+  // A weekday names a day only within the coming week, and two presets that
+  // would read alike ("Mon 9:00 AM" twice on a Sunday) each say their date.
+  const shortTomorrow = shortWhen(tomorrow, clock), shortNextWeek = shortWhen(nextWeek, clock);
+  const alike = shortTomorrow === shortNextWeek;
+  const detail = (at: number, short: string) => alike || daysBetween(now, at, clock.timeZone) > 6 ? datedWhen(at, clock) : short;
   return [
     { id: "hour", label: "1 hour", detail: new Intl.DateTimeFormat(clock.locale, { timeZone: clock.timeZone, hour: "numeric", minute: "2-digit" }).format(hour), until: hour },
-    { id: "tomorrow", label: "Tomorrow morning", detail: shortWhen(tomorrow, clock), until: tomorrow },
-    { id: "next-week", label: "Next week", detail: shortWhen(nextWeek, clock), until: nextWeek },
+    { id: "tomorrow", label: "Tomorrow morning", detail: detail(tomorrow, shortTomorrow), until: tomorrow },
+    { id: "next-week", label: "Next week", detail: detail(nextWeek, shortNextWeek), until: nextWeek },
   ];
 }
 
@@ -88,8 +105,7 @@ export const SNOOZE_MAX_MS = THREAD_SNOOZE_MAX_MS;
  *  "... Oct 14, 9:00 AM". Calendar days are the owner's. */
 export function formatSnoozedUntil(until: number, now: number, clock: SnoozeClock = {}): string {
   const time = new Intl.DateTimeFormat(clock.locale, { timeZone: clock.timeZone, hour: "numeric", minute: "2-digit" }).format(until);
-  const a = zoneParts(now, clock.timeZone), b = zoneParts(until, clock.timeZone);
-  const days = Math.round((Date.UTC(b.year, b.month - 1, b.day) - Date.UTC(a.year, a.month - 1, a.day)) / (24 * HOUR));
+  const days = daysBetween(now, until, clock.timeZone);
   if (days <= 0) return `Snoozed until ${time}`;
   if (days === 1) return `Snoozed until tomorrow, ${time}`;
   if (days < 7) return `Snoozed until ${shortWhen(until, clock)}`;

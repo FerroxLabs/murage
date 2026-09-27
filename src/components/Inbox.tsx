@@ -329,7 +329,8 @@ export function Inbox({ onOpen, onClose, onOpenBackups, refreshKey = 0, initialV
   // decisions are, beside the card it waits for; never counted.
   const backupWaiting = view === "decisions" || view === "approvals" || view === "questions" ? result?.backupWaiting ?? null : null;
   // The last backup stopped (0.1.60 Windows W-D7): news that needs a hand,
-  // shown with the decisions and the things to read; never counted.
+  // shown with the decisions and the things to read. Backups stay paused
+  // until it is cleared, so the server counts it in `decisions`.
   const backupFailed = view === "decisions" || view === "to-read" || view === "all" ? result?.backupFailed ?? null : null;
   const ownRows = [...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : [])];
   const dismissible = list.filter(item => item.dismissible);

@@ -67,6 +67,7 @@ import { assertBrowserProfilePrecondition } from "./browser-profile-precondition
 import { database } from "./database.ts";
 import { inboxRequest, owedThreads, type InboxRoutineRun } from "./inbox.ts";
 import { companionInboxRoute, inboxAccessFor, inboxDoor, inboxThreads } from "./inbox-access.ts";
+import { withBackupNotices } from "./inbox-backup-notices.ts";
 import { hasThreadSnooze, sweepThreadSnoozes, threadSnoozeRequest, unsnoozeThread, type ThreadSnoozeDeps } from "./thread-snooze.ts";
 import { TRAY_ITEM_LIMIT, traySummary } from "./tray-summary.ts";
 import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
@@ -11103,10 +11104,11 @@ const server = createServer(async (req, res) => {
       }, { ...inboxAccessFor(store, inboxDoor(req.headers, url.searchParams)), routineRuns: inboxRoutineRuns() });
       // A backup held up by a waiting card is said here too, on the desktop,
       // beside the card itself (0.1.60 Linux D6). Not counted: the card is.
+      // A backup that stopped is owed and counted (server/inbox-backup-notices.ts).
       const desktopInbox = method === "GET" && result.status === 200 && inboxDoor(req.headers, url.searchParams) === "desktop";
       const backupWaiting = desktopInbox ? backupWaits.current(backupWaitingNow()) : null;
       const backupFailed = desktopInbox ? backupFailedNotice : null;
-      return json(res, result.status, backupWaiting || backupFailed ? { ...(result.body as object), ...(backupWaiting ? { backupWaiting } : {}), ...(backupFailed ? { backupFailed } : {}) } : result.body);
+      return json(res, result.status, withBackupNotices(result.body as { decisions?: number }, { backupWaiting, backupFailed }));
     }
     // Conversation snooze (server/thread-snooze.ts). Desktop only, and the
     // module answers 404 to anything else, reads included.

@@ -109,8 +109,8 @@ export interface InboxPage {
   items: InboxItem[]; total: number; page: number; pageSize: number;
   unread: number;
   /** Everything owed, across all the owner can see, not just this page. This
-   *  is the number the sidebar badge shows, and it is the sum of `approvals`,
-   *  `questions` and `connections`. */
+   *  is the number the sidebar badge shows: the sum of `approvals`,
+   *  `questions` and `connections`, plus one while `backupFailed` shows. */
   decisions: number;
   /** Unread news, on the same basis. */
   toRead: number;
@@ -137,7 +137,9 @@ export interface InboxPage {
   /** The last backup stopped and backups are paused until the owner clears
    *  it (0.1.60 Windows W-D7). The desktop reports it after the restart that
    *  follows the failure; the sentence says what failed and what to do.
-   *  Desktop only, never counted, gone once the review is cleared. */
+   *  Desktop only, counted in `decisions` (backups stay paused until it is
+   *  cleared, so it is owed) and in no segment, gone once the review is
+   *  cleared. See server/inbox-backup-notices.ts. */
   backupFailed?: { sentence: string; at: number };
   /** ONE ROW PER ROUTINE, NOT PER RUN. Present only on `view=routines`.
    *  This is the promise the routines tab makes in words, kept in data:

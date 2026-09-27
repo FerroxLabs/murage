@@ -77,6 +77,10 @@ describe.skipIf(process.platform === "win32")("a backup that stopped is announce
     expect(reported.body.reported).toBe(true);
     // The desktop shows the notification itself, with these words.
     expect(reported.body.sentence).toMatch(/Another program was holding a file/);
+    // Owed, so counted in the Needs you number the badge and the tab read
+    // (rt4 L2), and gone from it once cleared.
+    expect((await request("GET", "/api/inbox?view=decisions")).body.decisions).toBe(1);
+    expect((await request("GET", "/api/inbox?view=routines")).body.decisions).toBe(1);
     for (const view of ["decisions", "to-read", "all"]) {
       const inbox = (await request("GET", `/api/inbox?view=${view}`)).body;
       expect(inbox.backupFailed.sentence).toMatch(/while copying your workspace/);
@@ -88,6 +92,8 @@ describe.skipIf(process.platform === "win32")("a backup that stopped is announce
     await request("POST", "/api/backup-failure-notice", { action: "report", stage: "capture", code: "SOMETHING_PRIVATE" });
     expect((await request("GET", "/api/inbox?view=decisions")).body.backupFailed.sentence).not.toContain("SOMETHING_PRIVATE");
     expect((await request("POST", "/api/backup-failure-notice", { action: "clear" })).body).toEqual({ cleared: true });
-    expect((await request("GET", "/api/inbox?view=decisions")).body.backupFailed).toBeUndefined();
+    const cleared = (await request("GET", "/api/inbox?view=decisions")).body;
+    expect(cleared.backupFailed).toBeUndefined();
+    expect(cleared.decisions).toBe(0);
   });
 });

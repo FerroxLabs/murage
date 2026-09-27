@@ -41,6 +41,23 @@ describe("snooze presets", () => {
     expect(presets[2]!.until).toBe(Date.UTC(2026, 9, 5, 13, 0)); // Mon 5 Oct 9:00
   });
 
+  it("gives each preset its date on a Sunday, so the two Mondays read apart", () => {
+    const sunday = Date.UTC(2026, 8, 27, 14, 0); // Sun 27 Sep 2026 10:00 EDT
+    const us = snoozePresets(sunday, { timeZone: NY, locale: "en-US" });
+    expect(us[1]!.detail).toBe("Mon, Sep 28, 9:00 AM");
+    expect(us[2]!.detail).toBe("Mon, Oct 5, 9:00 AM");
+    const uk = snoozePresets(sunday, { timeZone: NY, locale: "en-GB" });
+    expect(uk[2]!.detail).toMatch(/^Mon 5 Oct, 0?9:00$/);
+    expect(uk[1]!.detail).not.toBe(uk[2]!.detail);
+  });
+
+  it("dates next week when it is more than six days out, and leaves tomorrow as a weekday", () => {
+    const monday = Date.UTC(2026, 8, 28, 14, 0); // Mon 28 Sep 2026 10:00 EDT
+    const presets = snoozePresets(monday, { timeZone: NY, locale: "en-US" });
+    expect(presets[1]!.detail).toBe("Tue 9:00 AM");
+    expect(presets[2]!.detail).toBe("Mon, Oct 5, 9:00 AM");
+  });
+
   it("turns a wall clock time in a zone into the moment", () => {
     expect(zonedTime(2026, 9, 24, 9, 0, NY)).toBe(Date.UTC(2026, 8, 24, 13, 0));
     expect(zonedTime(2026, 9, 31, 9, 0, NY)).toBe(Date.UTC(2026, 9, 1, 13, 0));
