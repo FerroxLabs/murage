@@ -25,4 +25,11 @@ describe("room sender labels", () => {
     expect(transcript).toMatch(/if \(!row\) return null;\s*shownPrev = m;/);
     expect(transcript).toMatch(/if \(!showToolCalls\) return null;\s*const cluster/);
   });
+
+  it("an error row always names its bot, even inside that bot's cluster", () => {
+    expect(transcript).toContain(
+      'const errorRow = m.kind === "activity" && Boolean(m.tool) && (m.tool!.ok === false || m.tool!.name.startsWith("error:"));',
+    );
+    expect(transcript).toMatch(/\{!user && m\.from && \(newCluster \|\| errorRow\) && \(\s*<ClusterLabel/);
+  });
 });
