@@ -1,14 +1,13 @@
 ---
 title: What changed in Murage 0.1.60
-description: Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.
+description: Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.
 icon: Clock
 ---
 
 ## Please read in 0.1.60
 
-**Routines now have their own approval level.** Each routine runs at a level you choose: Ask, Auto, Full access or No limits. A routine you have not set follows its bot's level at the moment it runs, so a bot on No limits no longer stops its own routines to ask. The routine's conversation, its editor and its approval cards all show the level that actually applies.
-
-**A routine that needs you says so straight away.** When a routine run hits a question or an approval, you hear about it at once and the run ends as "waiting on you", instead of sitting until it times out.
+- **Routines now have their own approval level.** Each routine runs at a level you choose (routine editor, Advanced > Approvals for this routine): Ask, Auto, Full access or No limits. A routine you have not set follows its bot's level at the moment it runs, so a bot on No limits no longer stops its own routines to ask. The routine's conversation, its editor and its approval cards all show the level that actually applies.
+- **A routine that needs you says so straight away.** When a routine run hits a question or an approval, you hear about it at once and the run ends as "waiting on you", instead of sitting until it times out.
 
 ## Connected apps in 0.1.60
 
@@ -16,13 +15,14 @@ icon: Clock
 
 ## Routines in 0.1.60
 
+- **Long instructions arrive whole.** A routine's instructions can be up to 100,000 characters, and the editor tells you before you go over. Nothing is cut off.
 - **Always allow for this routine.** An approval card raised by a routine offers Always allow for this routine, which covers that same command or place for that routine only.
 - **One conversation per routine.** Each routine keeps one conversation, so runs no longer pile up as separate conversations.
 - **Fewer false stops on Auto.** Deleting inside a bot's own folders and temporary files is no longer treated as dangerous. Stopping other programs still asks.
 
 ## Approvals in 0.1.60
 
-- **Always allow this exact command.** A card for a command offers Always allow this exact command here: that command, in that folder, on that engine. Settings lists everything you have always allowed, and you can remove any of it.
+- **Always allow this exact command.** A card for a command offers Always allow this exact command here. Each bot lists what it always allows under Bot settings > Permissions > Always allowed, and you can remove any of it.
 - **Fewer false stops.** Text a command writes into a file, and scripts handed to Python or Node, are judged by what they actually delete, not by words that happen to appear in them.
 - **Pi asks first.** Bots on the Pi engine now ask Murage before running commands, editing outside their folder or using connected apps, like every other engine.
 - **Only you can say yes.** Only your own desktop app and paired devices can answer an approval card. A message whose sender Murage cannot confirm runs as an unattended turn.
@@ -30,19 +30,22 @@ icon: Clock
 
 ## Inbox in 0.1.60
 
-**A cleaner Inbox.** Don't use, Turn off and Dismiss all now take effect straight away, the list holds still while it refreshes, and sections are tidier. Sign-in commands have a copy button.
+**A cleaner Inbox.** I don't use, Turn it off and Dismiss all now take effect straight away, the list holds still while it refreshes, and sections are tidier. Sign-in commands have a copy button.
 
 ## Conversations and teams in 0.1.60
 
 - **Snooze.** Snooze a conversation from the sidebar or a conversation list. Conversations with a question waiting show a badge.
 - **Manage teams.** Rename a team, change its members and its lead, or delete it, from the sidebar or the channel details.
-- **Deleting conversations.** Deleting the last conversation in a channel leaves a fresh one, and channels now show errors instead of failing quietly.
+- **Deleting conversations.** Deleting the last conversation with a bot or in a channel leaves a fresh one, and errors are shown instead of failing quietly.
 - **Edit and rerun.** Editing a message and running it again no longer starts twice.
+- **Who said what.** In a channel with tool activity hidden, every bot reply is labelled with the bot that wrote it.
+- **Menus fit the window.** A bot's More actions menu and the other sidebar menus open above or scroll when the window is short, so Archive and Delete are always reachable.
+- **Handoffs between bots keep moving.** A handoff waiting for a busy teammate starts as soon as they are free, can be stopped from the conversation, and never holds up a backup.
 - **Queued messages.** A direct message sent while the bot is busy in a channel waits its turn instead of failing.
 
 ## About me in 0.1.60
 
-**About me.** **Settings → About me** holds a short profile of you. Your bots read it on your own turns and never on turns started by other people or webhooks. What shapes a bot has a switch for it.
+**About me.** **Settings → About me** holds a short profile of you. Your bots read it on your own turns and never on turns started by other people or webhooks. What shapes <bot> has a switch for it.
 
 ## Voice and notifications in 0.1.60
 
@@ -50,12 +53,48 @@ icon: Clock
 - **Notification sounds.** Turn off notification sounds on this computer.
 - **Voice notes.** A voice note is dropped cleanly when the turn ends while it is being made.
 
+## Off-site backups in 0.1.60
+
+- **Back up to your own server over SFTP.** Keep an encrypted off-site copy on a NAS, a home server or any server you can reach over SFTP. Murage makes its own key for the server, shows you what to add to the server, and asks you to confirm the server's identity once.
+- **Murage sets up the storage for you.** For SFTP and S3-compatible storage, Murage creates the backup store and its password itself. You can save a copy of the password wherever you like.
+- **Off-site copies on every computer.** Off-site copies now work on Intel Macs, Windows and Linux as well as Apple silicon Macs.
+
+## Privacy in 0.1.60
+
+**Deleting a conversation deletes it everywhere.** Its messages, files, attachments and the history each engine kept for it (Claude Code, Codex, Gemini, Qwen, OpenCode, Kimi, Cursor, Droid, Hermes, Antigravity and Fuigo) are removed. The approvals log keeps only the time, bot and verdict, and any unsent draft of it is cleared from the app. The confirmation says how many saved files go with it, and anything Murage could not remove is listed afterwards.
+
+## Web app in your phone's browser in 0.1.60
+
+**Photo uploads work again.** Uploading an image from the web app in your phone's browser no longer fails, and the web app loads faster.
+
+## Polish in 0.1.60
+
+- **Numbers stay numbers.** A reply of "391." shows as 391., and numbered lists keep their starting number.
+- **Plain names for app tools.** Approval cards, activity and the Inbox say "Connected app: Gmail send email" rather than internal tool names.
+- **Connected count.** The Connected apps tab counts only apps that are working, and names any that are not ready yet.
+- **Longer commands on cards.** Approval cards show commands of up to 4,000 characters, marked where they are cut.
+- **Team templates.** A team made from a template gets a one-line purpose as its channel instructions, and skills that failed to switch on for some templates now work.
+- **Help inside the app.** Ask a bot how Murage works. On most engines it answers from Murage's own help pages.
+
 ## Reliability in 0.1.60
 
+- **A backup that stops tells you.** If a backup can't finish, an Inbox item and a notification say what stopped it and what to do.
+- **Backups tell you what they wait for.** If a bot is waiting for your answer when a backup is due, the Backups page and the Inbox name the bot, and the backup starts as soon as you answer.
+- **Turning an engine off** stops only that engine's work, and says so in plain words. A routine waiting for your answer no longer holds up the bot's other conversations.
 - **Stalled turns.** A turn that stops making progress is noticed from the moment it starts, with allowances for waits that are expected.
 - **VPS turns.** A turn waits for a busy VPS instead of failing, and a command that times out stops everything it started.
 - **Usage totals.** Usage counts the tokens actually bought, not cached re-reads, and a missing count shows as unknown, not zero.
-- **Backups.** Backups and restores include snoozed conversations.
+- **Backups work from start to finish.** Turn on backups now opens setup, makes your recovery key, switches daily backups on and takes the first backup straight away. Before, it stopped at once with "Backup settings could not be updated". Backups no longer refuse data folders with newer settings or bots that have skills. The option to save a copy of your recovery key stays after setup, and restoring onto a new computer works. Backups and restores also include snoozed conversations. Reviewing a restored installation works the first time. Backups while Murage is closed are checked end to end, and every backup and restore message now says in plain words what to do next.
+- **Nothing in a bot's folder stops a backup.** Shortcuts, unusual file names and rebuildable folders such as node_modules and virtual environments no longer stop a backup. Anything left out is listed by name afterwards, so you know exactly what was skipped.
+- **USB sticks.** Backups work on USB sticks and drives formatted exFAT. On Windows, a network folder or USB stick is refused when you choose it, with a sentence saying why, because Windows can't lock those down to your account.
+- **Windows.** Backups and off-site copies work for standard accounts, names with spaces, deep folders and roaming profiles. A password file you choose is refused if other accounts can open it.
+- **Linux AppImage.** Backups while Murage is closed now work in the AppImage as well as the .deb.
+- **Restored routines.** A restored routine follows its bot's approval level, and any Always allow it had is cleared, until you set them again.
+- **Missing backup folder or recovery key.** If the backup folder or recovery key is moved or its drive is unplugged, Backups names which one is missing, adds an Inbox item and sends a notification, instead of waiting quietly.
+- **Undo a restore.** Undoing a restore into a separate folder takes you back to your original installation.
+- **Choosing a new backup folder** turns daily backups back on and takes the first backup straight away.
+- **Paired devices.** `murage devices` lists your paired phones and `murage devices remove` unpairs one. `murage pair` tells you straight away when all 20 device slots are in use.
 - **Plan checklist.** A to-do list a local model writes into its answer becomes the plan checklist.
 - **The date and time** now travel with each message rather than in the bot's standing instructions.
 - **Codex and Claude fixes.** Codex's own desktop browser and computer tools are off inside bots, Opus 5.5 reports its 1M context window, and a Stop during a Claude Code prompt settles as cancelled.
+- **Bigger download.** The app is a few MB larger because its web pages come pre-compressed, which makes them open faster.
