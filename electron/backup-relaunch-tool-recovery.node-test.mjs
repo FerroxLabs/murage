@@ -204,7 +204,8 @@ test("an answered card stops being named on the Backups page at once", async () 
 });
 
 // The wiring in main.mjs itself.
-const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
+// A Windows checkout has CRLF line endings; the patterns below are written with \n.
+const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 test("main.mjs: actions use the retried fresh check, the close before a backup restart is watched, and the host is told why", () => {
   const wrapper = main.slice(main.indexOf("async function requireDesktopBackupTool("), main.indexOf("\nconst backupMode"));
   assert.match(wrapper, /desktopBackupTool\.requireFresh\(\)/);
