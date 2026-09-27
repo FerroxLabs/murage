@@ -123,13 +123,29 @@ export function aclIsPrivateToOwner(acl,sid){
  if(!acl||!(acl.owner===sid||ROOT_LIKE.has(acl.owner)))return false;
  return acl.rules.every(rule=>!rule.allow||rule.sid===sid||ROOT_LIKE.has(rule.sid)||OWNER_ALIASES.has(rule.sid)||(rule.mask&~HARMLESS)===0);
 }
+// /inheritance:r drops inherited entries and /grant:r replaces only the
+// owner's own, so an entry written explicitly on the file or folder itself
+// survives both. Windows writes explicit entries whenever the parent passes
+// nothing down: a new file then gets the creating token's default ACL (for
+// an administrator: SYSTEM, Administrators and the user), which left the
+// result shared and every owner-only step failed. Those are removed by SID.
+const explicitOthers=(acl,sid)=>[...new Set(acl.rules.filter(rule=>!rule.inherited&&rule.sid!==sid).map(rule=>rule.sid))];
+/** icacls arguments that remove every entry (allow and deny) for `other`. */
+export function removeIcaclsArguments(target,other){
+ if(typeof target!=="string"||!/^[A-Za-z]:\\/.test(target)||/["\x00-\x1f]/.test(target))throw Error("BACKUP_WINDOWS_ACL_PATH_INVALID");
+ if(typeof other!=="string"||!/^S-1-\d+(?:-\d+)+$/.test(other))throw Error("BACKUP_WINDOWS_ACL_FAILED");
+ return [target,"/remove",`*${other}`,"/q"];
+}
 /** Restricts `target` to the owner and verifies the result. Windows only. */
 export function restrictToOwner(target,{directory=false,runTool=run,readSddl,readAcl:readListing}={}){
  if(process.platform!=="win32"&&!readSddl&&!readListing)return;
  const sid=currentUserSid({runTool}),icacls=`${system32()}\\icacls.exe`;
  const set=runTool(icacls,ownerOnlyIcaclsArguments(target,sid,{directory}));if(set?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");
- const owned=readSddl?sddlIsOwnerOnly(readSddl(target),sid):aclIsOwnerOnly((readListing??(file=>readAcl(file,{runTool})))(target),sid);
- if(!owned)throw Error("BACKUP_WINDOWS_ACL_FAILED");
+ if(readSddl){if(!sddlIsOwnerOnly(readSddl(target),sid))throw Error("BACKUP_WINDOWS_ACL_FAILED");return;}
+ const read=readListing??(file=>readAcl(file,{runTool}));
+ let acl=read(target);const others=explicitOthers(acl,sid);
+ if(others.length){for(const other of others)if(runTool(icacls,removeIcaclsArguments(target,other))?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");acl=read(target);}
+ if(!aclIsOwnerOnly(acl,sid))throw Error("BACKUP_WINDOWS_ACL_FAILED");
 }
 /** Refuses a file other accounts can read or change. Windows only. */
 export function assertPrivateToOwner(target,{runTool=run,readAcl:readListing}={}){
@@ -172,8 +188,12 @@ export async function readAclAsync(target,{runTool=runAsync}={}){
 export async function restrictToOwnerAsync(target,{directory=false,runTool=runAsync,readAcl:readListing}={}){
  if(process.platform!=="win32"&&!readListing)return;
  const sid=await currentUserSidAsync({runTool});
- const set=await runTool(`${system32()}\\icacls.exe`,ownerOnlyIcaclsArguments(target,sid,{directory}));if(set?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");
- if(!aclIsOwnerOnly(await (readListing??(file=>readAclAsync(file,{runTool})))(target),sid))throw Error("BACKUP_WINDOWS_ACL_FAILED");
+ const icacls=`${system32()}\\icacls.exe`;
+ const set=await runTool(icacls,ownerOnlyIcaclsArguments(target,sid,{directory}));if(set?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");
+ const read=readListing??(file=>readAclAsync(file,{runTool}));
+ let acl=await read(target);const others=explicitOthers(acl,sid);
+ if(others.length){for(const other of others)if((await runTool(icacls,removeIcaclsArguments(target,other)))?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");acl=await read(target);}
+ if(!aclIsOwnerOnly(acl,sid))throw Error("BACKUP_WINDOWS_ACL_FAILED");
 }
 export async function assertPrivateToOwnerAsync(target,{runTool=runAsync,readAcl:readListing}={}){
  if(process.platform!=="win32"&&!readListing)return;
