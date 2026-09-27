@@ -75,7 +75,16 @@ export function sddlIsOwnerOnly(sddl,sid){
 // two-letter aliases ("LA" for the built-in Administrator), which a SID
 // compare would misread. One line each: O:<owner sid>, P:<1 when inheritance
 // is removed>, then <0 allow|1 deny>;<sid>;<hex access mask>;<1 inherited>.
-const ACL_SCRIPT=["$p=$env:MURAGE_ACL_TARGET","$a=Get-Acl -LiteralPath $p","$s=[Security.Principal.SecurityIdentifier]",
+//
+// .NET reads the ACL directly, never the Get-Acl cmdlet. Get-Acl lives in a
+// module PowerShell has to find first, and with the stripped environment below
+// (no LOCALAPPDATA, so no module analysis cache) finding it meant reading every
+// module installed on the computer: on a machine with many modules (a GitHub
+// Windows runner) each read took over 20 s and hit the timeout, so every
+// owner-only step failed. The module path is pinned to PowerShell's own so no
+// installed module is ever searched or loaded.
+const ACL_SCRIPT=["$env:PSModulePath=$PSHOME+'\\Modules'","$p=$env:MURAGE_ACL_TARGET",
+ "$a=if([IO.Directory]::Exists($p)){[IO.Directory]::GetAccessControl($p)}else{[IO.File]::GetAccessControl($p)}","$s=[Security.Principal.SecurityIdentifier]",
  "'O:'+$a.GetOwner($s).Value","'P:'+[int]$a.AreAccessRulesProtected",
  "foreach($r in $a.GetAccessRules($true,$true,$s)){'{0};{1};{2};{3}' -f [int]$r.AccessControlType,$r.IdentityReference.Value,[Convert]::ToString([int]$r.FileSystemRights,16),[int]$r.IsInherited}"].join(";");
 /** Parses the lines ACL_SCRIPT prints. Anything unexpected fails closed. */

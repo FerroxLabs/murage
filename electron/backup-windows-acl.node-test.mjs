@@ -104,14 +104,27 @@ test("restrictToOwner verifies with the SID listing, not SDDL aliases (W-A1)",as
  assert.throws(()=>withSystemRoot(()=>restrictToOwner("C:\\Users\\SamLee\\Documents\\y.txt",{runTool,readAcl:()=>({owner:SIDS.entra,protected:false,rules:[{allow:true,sid:SIDS.entra,mask:0x1f01ff,inherited:true}]})})),/ACL_FAILED/);
  resetCurrentUserSid();
 });
-test("real Windows: this account's SID comes from the token and a new file is made owner-only (W-A1)",{skip:process.platform!=="win32"&&"real icacls and Get-Acl only"},async t=>{
+test("the ACL read uses .NET and PowerShell's own modules only, so no installed module is ever searched",async()=>{
+ const {readAcl}=await import("./backup-windows-acl.mjs");
+ const calls=[];const runTool=(file,args,options)=>{calls.push({file,args,options});return{status:0,stdout:`O:${sid}\r\nP:1\r\n0;${sid};1f01ff;0\r\n`};};
+ withSystemRoot(()=>assert.deepEqual(readAcl("C:\\Users\\Sam\\x.txt",{runTool}),{owner:sid,protected:true,rules:[{allow:true,sid,mask:0x1f01ff,inherited:false}]}));
+ const script=calls[0].args.at(-1);
+ assert.match(script,/^\$env:PSModulePath=\$PSHOME\+'\\Modules';/);
+ assert.match(script,/\[IO\.Directory\]::GetAccessControl\(\$p\)/);assert.match(script,/\[IO\.File\]::GetAccessControl\(\$p\)/);
+ assert.doesNotMatch(script,/Get-Acl/);
+ assert.deepEqual(Object.keys(calls[0].options.env).sort(),["MURAGE_ACL_TARGET","SystemRoot"]);
+});
+test("real Windows: this account's SID comes from the token and a new file is made owner-only (W-A1)",{skip:process.platform!=="win32"&&"real icacls and ACL read only"},async t=>{
  const {currentUserSid,readAcl,restrictToOwner,aclIsOwnerOnly,resetCurrentUserSid}=await import("./backup-windows-acl.mjs");
  const {mkdtempSync,writeFileSync}=await import("node:fs");const {tmpdir}=await import("node:os");const path=(await import("node:path")).default;
  const {safeWipeSync}=await import("../server/testing/safe-wipe.mjs");
  resetCurrentUserSid();const sid=currentUserSid();
  const root=mkdtempSync(path.join(tmpdir(),"murage-acl-"));t.after(()=>safeWipeSync(root));
- const file=path.join(root,"x.txt");writeFileSync(file,"x");restrictToOwner(file);
+ // A person waits on this (choosing a password file, starting off-site): it
+ // must finish in seconds, never at the tools' 20 s timeout.
+ const file=path.join(root,"x.txt");writeFileSync(file,"x");const started=Date.now();restrictToOwner(file);
  assert.equal(aclIsOwnerOnly(readAcl(file),sid),true);
+ assert.ok(Date.now()-started<10000,`owner-only took ${Date.now()-started} ms`);
 });
 test("a FAT32 or exFAT drive is known to hold no ACLs; anything unclear counts as NTFS (K-10 copies)",async()=>{
  const {volumeKeepsAcls}=await import("./backup-windows-acl.mjs");
