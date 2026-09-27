@@ -35,6 +35,8 @@ test("each sentence says where and what to do, in the copy rules", () => {
     assert.doesNotMatch(text, /—|\bsaf(?:e|ely)\b/i);
   }
 });
-test("the real stat of this computer's own folders passes", () => {
+// Models a Mac: one "/" volume. On Windows "/" is the current drive and HOME
+// is unset, so the real stat compares unrelated drives.
+test("the real stat of this computer's own folders passes", { skip: process.platform === "win32" && "real-stat volume check models a single-root Mac or Linux disk; Windows drives have no shared root" }, () => {
   assert.equal(closedVolumeProblem({ appPaths: [process.execPath], dataPaths: [process.env.HOME ?? "/"], platform: "darwin" }), process.execPath.startsWith("/Volumes/") ? "app" : null);
 });

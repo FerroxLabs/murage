@@ -90,16 +90,18 @@ function ageFailure(report,predicate,result){
   return false;
 }
 const nativeCodesign=args=>{const started=Date.now(),result=spawnSync("/usr/bin/codesign",args,{stdio:["ignore","pipe","pipe"],encoding:"utf8",timeout:10000,maxBuffer:65536});result.attestationElapsedMs=Date.now()-started;return result;};
-/** Injectable command runner is a test seam; production always uses codesign. */
-export function signedAgeOwnedByCurrentApp(file,bytes,{currentExecutable=process.execPath,run=nativeCodesign,report}={}){
-  const payload=backupAgePinForTarget("darwin",process.arch)?.payloadSha256;
+/** Injectable command runner is a test seam; production always uses codesign.
+ * `arch` is a test seam too: the pinned fixture is the darwin-arm64 payload,
+ * so a test on an x64 host names the arch the fixture was built for. */
+export function signedAgeOwnedByCurrentApp(file,bytes,{currentExecutable=process.execPath,run=nativeCodesign,report,arch=process.arch}={}){
+  const payload=backupAgePinForTarget("darwin",arch)?.payloadSha256;
   if(!payload||normalizedAgePayloadHash(bytes)!==payload)return ageFailure(report,"payload");
   let predicate="bundle-path";
   try{
     const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents);
     const executable=realpathSync(currentExecutable);
     if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app"))return ageFailure(report,"bundle-path");
-    if(resolved!==path.join(resources,"backup-tools",process.arch,"age"))return ageFailure(report,"tool-location");
+    if(resolved!==path.join(resources,"backup-tools",arch,"age"))return ageFailure(report,"tool-location");
     if(!executable.startsWith(app+path.sep))return ageFailure(report,"executable-binding");
     predicate="app-verify";const verified=run(["--verify","--strict","-R","=anchor apple generic",app]);if(verified.status!==0||verified.error)return ageFailure(report,predicate,verified);
     predicate="app-info";const info=run(["--display","--verbose=4",app]);if(info.status!==0||info.error)return ageFailure(report,predicate,info);
@@ -168,14 +170,14 @@ export async function readBackupToolBytes(file,{strictMode=false}={}){
     return same(await handle.stat({bigint:true}))&&same(lstatSync(file,{bigint:true}))?bytes:null;
   }catch{return null;}finally{await handle?.close();}
 }
-export async function signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal,timeoutMs}={}){
-  const payload=backupAgePinForTarget("darwin",process.arch)?.payloadSha256;
+export async function signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecutable=process.execPath,run=asyncBackupCodesign,signal,timeoutMs,arch=process.arch}={}){
+  const payload=backupAgePinForTarget("darwin",arch)?.payloadSha256;
   if(!payload||normalizedAgePayloadHash(bytes)!==payload)return false;
   try{
     const identity=backupToolIdentity(file,currentExecutable),unchanged=()=>identity!==null&&!signal?.aborted&&backupToolIdentity(file,currentExecutable)===identity;
     if(!unchanged())return false;
     const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents),executable=realpathSync(currentExecutable);
-    if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app")||resolved!==path.join(resources,"backup-tools",process.arch,"age")||!executable.startsWith(app+path.sep))return false;
+    if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app")||resolved!==path.join(resources,"backup-tools",arch,"age")||!executable.startsWith(app+path.sep))return false;
     const checked=async args=>{if(!unchanged())throw Error();const result=await run(args,{signal,...(timeoutMs?{timeoutMs}:{})});if(!unchanged()||result.status!==0||result.error)throw Error();return result;};
     await checked(["--verify","--strict","-R","=anchor apple generic",app]);
     const info=await checked(["--display","--verbose=4",app]),team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;

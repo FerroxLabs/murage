@@ -95,7 +95,9 @@ const waitFor = async (check, ms = 10000) => {
   return false;
 };
 
-test("a real AppImage-style restart: the file itself runs only after the old process exits, with the same arguments, outside the mount", async () => {
+// The AppImage restart is Linux-only: it runs /bin/sh and waits on a POSIX
+// pid, which Windows has neither of (Windows restarts use app.relaunch()).
+test("a real AppImage-style restart: the file itself runs only after the old process exits, with the same arguments, outside the mount", { skip: process.platform === "win32" && "AppImage restart runs /bin/sh and waits on a POSIX pid; Linux-only" }, async () => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "murage-appimage-relaunch-")));
   try {
     const mount = path.join(root, ".mount_Murage"), home = path.join(root, "home"), out = path.join(root, "relaunched.json");
