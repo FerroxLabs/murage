@@ -90,7 +90,9 @@ test("the old trigger argv really dies under AppRun on Ubuntu 24.04 (why the fla
   assert.doesNotMatch(r.stdout, /ran/);
 });
 
-test("the closed-app capture argv AppRun produces (--no-sandbox first) is accepted", () => {
+// AppImage and AppRun exist only on Linux, and these POSIX paths are not
+// absolute on Windows, where the parser rightly refuses them.
+test("the closed-app capture argv AppRun produces (--no-sandbox first) is accepted", { skip: process.platform === "win32" && "AppImage capture argv is Linux-only; POSIX paths are not absolute on Windows" }, () => {
   const descriptorPath = "/home/tester/.murage-backup-control/x/closed-y/descriptor.json";
   const capture = [CLOSED_DUE_FLAG, CLOSED_DESCRIPTOR_FLAG, descriptorPath, "--murage-data-dir", "/home/tester/.murage", "--murage-user-data", "/home/tester/.config/Murage"];
   const expected = { descriptorPath, requestedRoot: "/home/tester/.murage", userData: "/home/tester/.config/Murage" };

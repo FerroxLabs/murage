@@ -75,7 +75,16 @@ export function sddlIsOwnerOnly(sddl,sid){
 // two-letter aliases ("LA" for the built-in Administrator), which a SID
 // compare would misread. One line each: O:<owner sid>, P:<1 when inheritance
 // is removed>, then <0 allow|1 deny>;<sid>;<hex access mask>;<1 inherited>.
-const ACL_SCRIPT=["$p=$env:MURAGE_ACL_TARGET","$a=Get-Acl -LiteralPath $p","$s=[Security.Principal.SecurityIdentifier]",
+//
+// .NET reads the ACL directly, never the Get-Acl cmdlet. Get-Acl lives in a
+// module PowerShell has to find first, and with the stripped environment below
+// (no LOCALAPPDATA, so no module analysis cache) finding it meant reading every
+// module installed on the computer: on a machine with many modules (a GitHub
+// Windows runner) each read took over 20 s and hit the timeout, so every
+// owner-only step failed. The module path is pinned to PowerShell's own so no
+// installed module is ever searched or loaded.
+const ACL_SCRIPT=["$env:PSModulePath=$PSHOME+'\\Modules'","$p=$env:MURAGE_ACL_TARGET",
+ "$a=if([IO.Directory]::Exists($p)){[IO.Directory]::GetAccessControl($p)}else{[IO.File]::GetAccessControl($p)}","$s=[Security.Principal.SecurityIdentifier]",
  "'O:'+$a.GetOwner($s).Value","'P:'+[int]$a.AreAccessRulesProtected",
  "foreach($r in $a.GetAccessRules($true,$true,$s)){'{0};{1};{2};{3}' -f [int]$r.AccessControlType,$r.IdentityReference.Value,[Convert]::ToString([int]$r.FileSystemRights,16),[int]$r.IsInherited}"].join(";");
 /** Parses the lines ACL_SCRIPT prints. Anything unexpected fails closed. */
@@ -114,13 +123,29 @@ export function aclIsPrivateToOwner(acl,sid){
  if(!acl||!(acl.owner===sid||ROOT_LIKE.has(acl.owner)))return false;
  return acl.rules.every(rule=>!rule.allow||rule.sid===sid||ROOT_LIKE.has(rule.sid)||OWNER_ALIASES.has(rule.sid)||(rule.mask&~HARMLESS)===0);
 }
+// /inheritance:r drops inherited entries and /grant:r replaces only the
+// owner's own, so an entry written explicitly on the file or folder itself
+// survives both. Windows writes explicit entries whenever the parent passes
+// nothing down: a new file then gets the creating token's default ACL (for
+// an administrator: SYSTEM, Administrators and the user), which left the
+// result shared and every owner-only step failed. Those are removed by SID.
+const explicitOthers=(acl,sid)=>[...new Set(acl.rules.filter(rule=>!rule.inherited&&rule.sid!==sid).map(rule=>rule.sid))];
+/** icacls arguments that remove every entry (allow and deny) for `other`. */
+export function removeIcaclsArguments(target,other){
+ if(typeof target!=="string"||!/^[A-Za-z]:\\/.test(target)||/["\x00-\x1f]/.test(target))throw Error("BACKUP_WINDOWS_ACL_PATH_INVALID");
+ if(typeof other!=="string"||!/^S-1-\d+(?:-\d+)+$/.test(other))throw Error("BACKUP_WINDOWS_ACL_FAILED");
+ return [target,"/remove",`*${other}`,"/q"];
+}
 /** Restricts `target` to the owner and verifies the result. Windows only. */
 export function restrictToOwner(target,{directory=false,runTool=run,readSddl,readAcl:readListing}={}){
  if(process.platform!=="win32"&&!readSddl&&!readListing)return;
  const sid=currentUserSid({runTool}),icacls=`${system32()}\\icacls.exe`;
  const set=runTool(icacls,ownerOnlyIcaclsArguments(target,sid,{directory}));if(set?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");
- const owned=readSddl?sddlIsOwnerOnly(readSddl(target),sid):aclIsOwnerOnly((readListing??(file=>readAcl(file,{runTool})))(target),sid);
- if(!owned)throw Error("BACKUP_WINDOWS_ACL_FAILED");
+ if(readSddl){if(!sddlIsOwnerOnly(readSddl(target),sid))throw Error("BACKUP_WINDOWS_ACL_FAILED");return;}
+ const read=readListing??(file=>readAcl(file,{runTool}));
+ let acl=read(target);const others=explicitOthers(acl,sid);
+ if(others.length){for(const other of others)if(runTool(icacls,removeIcaclsArguments(target,other))?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");acl=read(target);}
+ if(!aclIsOwnerOnly(acl,sid))throw Error("BACKUP_WINDOWS_ACL_FAILED");
 }
 /** Refuses a file other accounts can read or change. Windows only. */
 export function assertPrivateToOwner(target,{runTool=run,readAcl:readListing}={}){
@@ -163,8 +188,12 @@ export async function readAclAsync(target,{runTool=runAsync}={}){
 export async function restrictToOwnerAsync(target,{directory=false,runTool=runAsync,readAcl:readListing}={}){
  if(process.platform!=="win32"&&!readListing)return;
  const sid=await currentUserSidAsync({runTool});
- const set=await runTool(`${system32()}\\icacls.exe`,ownerOnlyIcaclsArguments(target,sid,{directory}));if(set?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");
- if(!aclIsOwnerOnly(await (readListing??(file=>readAclAsync(file,{runTool})))(target),sid))throw Error("BACKUP_WINDOWS_ACL_FAILED");
+ const icacls=`${system32()}\\icacls.exe`;
+ const set=await runTool(icacls,ownerOnlyIcaclsArguments(target,sid,{directory}));if(set?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");
+ const read=readListing??(file=>readAclAsync(file,{runTool}));
+ let acl=await read(target);const others=explicitOthers(acl,sid);
+ if(others.length){for(const other of others)if((await runTool(icacls,removeIcaclsArguments(target,other)))?.status!==0)throw Error("BACKUP_WINDOWS_ACL_FAILED");acl=await read(target);}
+ if(!aclIsOwnerOnly(acl,sid))throw Error("BACKUP_WINDOWS_ACL_FAILED");
 }
 export async function assertPrivateToOwnerAsync(target,{runTool=runAsync,readAcl:readListing}={}){
  if(process.platform!=="win32"&&!readListing)return;
