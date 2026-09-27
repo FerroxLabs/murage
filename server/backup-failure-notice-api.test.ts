@@ -71,6 +71,35 @@ describe.skipIf(process.platform === "win32")("a backup that stopped is announce
     await request("POST", "/api/backup-failure-notice", { action: "clear" });
   });
 
+  // 0.1.60 Windows final L1: named as Settings names it.
+  it("names a missing backup folder by its own name", async () => {
+    const reported = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "references", code: "BACKUP_FOLDER_MISSING", folder: "Murage Backups" });
+    expect(reported.status).toBe(200);
+    expect(reported.body.sentence).toContain('Murage couldn\'t find your backup folder "Murage Backups".');
+    expect((await request("GET", "/api/inbox?view=decisions")).body.backupFailed.sentence).toContain('"Murage Backups"');
+    await request("POST", "/api/backup-failure-notice", { action: "clear" });
+  });
+
+  // 0.1.60 Windows final D1: backups that can't run say so, with what to do.
+  it("says plainly when backups can't run from this window, without a review to clear", async () => {
+    const tool = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "precondition", code: "BACKUP_TOOL_UNCHECKED", notify: true });
+    expect(tool.status).toBe(200);
+    expect(tool.body.sentence).toMatch(/^Backups can't run right now because Murage couldn't check its backup tool\. .*quit Murage and open it again/);
+    expect(tool.body.sentence).not.toContain("to clear it");
+    expect((await request("GET", "/api/inbox?view=decisions")).body.backupFailed.sentence).toBe(tool.body.sentence);
+    const closing = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "precondition", code: "BACKUP_WORKSPACE_CLOSING" });
+    expect(closing.body.sentence).toMatch(/Quit Murage and open it again, then back up\./);
+    await request("POST", "/api/backup-failure-notice", { action: "clear" });
+  });
+
+  // 0.1.60 Windows final L3: who a held-up backup still waits for.
+  it("says who a backup is waiting on right now, to the desktop only", async () => {
+    expect((await request("GET", "/api/backup-waiting", undefined, {})).status).toBe(404);
+    const now = await request("GET", "/api/backup-waiting");
+    expect(now.status).toBe(200);
+    expect(now.body).toEqual({ bots: [] });
+  });
+
   it("the Inbox says what failed and what to do until it is cleared", async () => {
     const reported = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "capture", code: "BACKUP_FILE_IN_USE", notify: true });
     expect(reported.status).toBe(200);

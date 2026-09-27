@@ -96,7 +96,8 @@ export function scheduleError(cause: unknown, { folderName }: { folderName?: str
 export function scheduleCardNotice(areaError: string | null, statusError: string | null | undefined, attention: readonly string[] = [], folderName?: string): string | null {
   const text = areaError ?? (statusError ? scheduleError(statusError, { folderName }) : null);
   if (!text) return null;
-  return attention.includes(text) ? null : text;
+  // Also when the list says it inside a longer sentence (0.1.60 Windows final L2).
+  return attention.some(line => line.includes(text)) ? null : text;
 }
 export function closedJobLabel(state:BackupClosedStatus["state"]|undefined){
  const labels:Record<BackupClosedStatus["state"],string>={unconfigured:"No closed-app job prepared",staged:"Job prepared, not registered",installed:"Job registration confirmed",disabled:"Closed-app job removed","disabled-removal-pending":"Closed-app job removal pending",unavailable:"Closed-app scheduling unavailable"};

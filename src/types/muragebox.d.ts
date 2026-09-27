@@ -128,6 +128,9 @@ type SkillRecordingPayload = {
     supported:boolean; pending:boolean; enabled:boolean; revision:number; phase:string;
     /** Unsupported only for now: the backup tool is still being checked. */
     checking?:boolean;
+    /** Unsupported, and why, when it is not just the check: the backup tool
+     * keeps failing its check, or a backup's close did not finish. */
+    unavailable?:"tool"|"closing";
     preUpgradeSupported?:boolean;
     schedule:import("../../shared/backup-schedule").BackupSchedule;
     lastVerified?:import("../../shared/backup-schedule").BackupReceipt;
@@ -165,7 +168,7 @@ type SkillRecordingPayload = {
     muragebox?: {
       platform: NodeJS.Platform;
       backup?: {
-        status(): Promise<{ supported:boolean; pending:boolean }>; restart(): Promise<{ restarting:boolean }>;
+        status(): Promise<{ supported:boolean; pending:boolean; unavailable?:"tool"|"closing" }>; restart(): Promise<{ restarting:boolean }>;
         /** Native save dialog; the private key never reaches the renderer. */
         createRecoveryKey(): Promise<{ cancelled:true }|{ saved:true; label:string; publicKey:string }>;
         /** A second copy of the key Murage made, saved where the person picks.

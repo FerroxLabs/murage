@@ -237,7 +237,7 @@ import {
 } from "./mcp-registry.ts";
 import { probeMcpServer } from "./mcp-probe.ts";
 import { buildNotification, turnFailureBuzzes, type Notification } from "./notify.ts";
-import { captureFailureSentence, normalizeCaptureFailure } from "../shared/backup-capture-failure.mjs";
+import { BACKUP_UNAVAILABLE_CODES, captureFailureSentence, normalizeCaptureFailure } from "../shared/backup-capture-failure.mjs";
 import { createBackupRestartAdmission } from "./backup-restart-admission.ts";
 import { backupWaitingBotsFrom, createBackupWaitTracker } from "./backup-waiting.ts";
 import {
@@ -11045,18 +11045,29 @@ const server = createServer(async (req, res) => {
       if(requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"no such route"});
       // `path`: the item inside the data folder the refusal was about (0.1.60
       // audit A-01), dropped by normalizeCaptureFailure unless it is one.
-      const input=z.object({action:z.enum(["report","clear"]),stage:z.string().max(40).optional(),code:z.string().max(80).optional(),path:z.string().max(1024).optional(),notify:z.boolean().optional()}).strict().safeParse(await readBody(req));
+      // `folder`: the backup folder's own name, never its path, so the Inbox
+      // names the missing folder the way Settings does (0.1.60 Windows final L1).
+      const input=z.object({action:z.enum(["report","clear"]),stage:z.string().max(40).optional(),code:z.string().max(80).optional(),path:z.string().max(1024).optional(),folder:z.string().max(120).optional(),notify:z.boolean().optional()}).strict().safeParse(await readBody(req));
       if(!input.success)return json(res,400,{error:"INVALID_BACKUP_FAILURE_NOTICE"});
       if(input.data.action==="clear"){backupFailedNotice=null;return json(res,200,{cleared:true});}
       const failure=normalizeCaptureFailure({stage:input.data.stage,code:input.data.code,path:input.data.path});
       if(!failure)return json(res,400,{error:"INVALID_BACKUP_FAILURE_NOTICE"});
-      const sentence=`${captureFailureSentence(failure)} Open Settings, then Backups, to clear it and back up again.`;
+      // Backups that can't run at all say what to do in their own words;
+      // there is nothing to clear (0.1.60 Windows final D1).
+      const sentence=BACKUP_UNAVAILABLE_CODES.includes(failure.code)?captureFailureSentence(failure):`${captureFailureSentence(failure,{folderName:input.data.folder})} Open Settings, then Backups, to clear it and back up again.`;
       backupFailedNotice={sentence,at:Date.now()};
       // The desktop shows the one notification itself (it owns the window
       // and knows it is the first report of this failure); a banner routed
       // through the window was dropped while the Chief's conversation was
       // on screen, and could arrive before the window was listening.
       return json(res,200,{reported:true,sentence});
+    }
+    // Who a held-up backup is waiting for right now. The Backups page asks,
+    // so an answered card stops being named at once, not at the next backup
+    // (0.1.60 Windows final L3).
+    if(path==="/api/backup-waiting"&&method==="GET"){
+      if(requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"no such route"});
+      return json(res,200,{bots:backupWaitingNow()});
     }
     if(path==="/api/backup-restart"&&method==="POST"){
       if(requestSurface(req.headers,url.searchParams)!=="desktop")return json(res,404,{error:"no such route"});

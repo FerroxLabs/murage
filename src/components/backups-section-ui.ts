@@ -3,7 +3,7 @@
 import type { BackupRemoteStatus } from "../../server/backup-remote-host";
 import { CLOSED_VOLUME_SENTENCES, closedVolumeSentence } from "../../shared/closed-volume-sentences.mjs";
 import { DEFAULT_BACKUP_TIME, enabledSchedule, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase } from "./backup-schedule-ui";
-import { captureFailureSentence } from "../../shared/backup-capture-failure.mjs";
+import { BACKUP_UNAVAILABLE_SENTENCES, captureFailureSentence } from "../../shared/backup-capture-failure.mjs";
 import { backupSkippedLines } from "../../shared/backup-skipped.mjs";
 import { backupWaitingSentence, type BackupWaitingBot } from "../../shared/backup-waiting";
 
@@ -121,6 +121,19 @@ export interface BackupSummaryInput {
 /** Murage attests its backup tool after it starts; on the first launch after
  * an install or update macOS can make that take a while. Not a failure. */
 export const SCHEDULE_CHECKING = "Getting ready…";
+/** The schedule line while backups can't run from this window; the attention
+ * list carries the full sentence with what to do. */
+export const SCHEDULE_UNAVAILABLE: Record<string, string> = {
+  tool: "Paused: Murage couldn't check its backup tool",
+  closing: "Paused: Murage didn't finish closing",
+};
+/** Each thing said once. A line already inside a longer one is dropped: a
+ * missing folder was named by the refusal and again by the stopped backup's
+ * sentence, which quotes it (0.1.60 Windows final L2). */
+export function withoutRepeats(lines: readonly string[]): string[] {
+  const unique = [...new Set(lines)];
+  return unique.filter((line, index) => !unique.some((other, at) => at !== index && other.length > line.length && other.includes(line)));
+}
 export interface BackupSummary { last: string; schedule: string; offsite: string; attention: string[]; skipped?: string[] }
 
 /** One plain summary for the "Your backups" card. `formatTime` is injected so
@@ -132,7 +145,7 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
     : !input.scheduleBridge ? "Not available in this window" : s ? "No verified backup on this computer yet" : "Checking…";
   const schedule = !input.scheduleBridge ? "Not available in this window"
     : !s ? "Checking…"
-    : !s.supported ? s.checking ? SCHEDULE_CHECKING : "Needs a supported desktop app"
+    : !s.supported ? s.checking ? SCHEDULE_CHECKING : s.unavailable ? SCHEDULE_UNAVAILABLE[s.unavailable] ?? "Needs a supported desktop app" : "Needs a supported desktop app"
     : s.enabled
       ? `On · daily at ${s.schedule.time ?? "?"} (${s.schedule.timezone ?? "?"})${s.schedule.closedApp === true ? ", also while Murage is closed" : ""}`
       : "Off";
@@ -142,6 +155,9 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
     if (r.automaticUpload?.enabled && r.automaticUpload.state === "enabled") offsite += " · automatic uploads on";
   }
   const attention: string[] = [];
+  // Why backups can't run from this window, and what to do (0.1.60 Windows final D1).
+  const unavailable = s && !s.supported && !s.checking && s.unavailable ? BACKUP_UNAVAILABLE_SENTENCES[s.unavailable] : undefined;
+  if (unavailable) attention.push(unavailable);
   if (input.scheduleStale) attention.push("Schedule status couldn't be refreshed.");
   if (input.scheduleFailure) attention.push(input.scheduleFailure);
   // A daily backup held up by a waiting card names who it waits for, and
@@ -159,7 +175,7 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
     // finished, which left the person with nothing to act on.
     if (s.captureFailure) attention.push(captureFailureSentence(s.captureFailure, { folderName: s.refs?.destinationLabel }));
   }
-  else if (s?.phase === "skipped" && !held) attention.push("Backup skipped. Murage was busy, so no backup was taken. Finish current work, then try again.");
+  else if (s?.phase === "skipped" && !held && !unavailable) attention.push("Backup skipped. Murage was busy, so no backup was taken. Finish current work, then try again.");
   // The owner finished setup and the page still read "No verified backup on
   // this computer yet", with nothing saying what to do about it. A schedule
   // with no backup behind it is the state that makes someone think they are
@@ -191,7 +207,7 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   if (r?.retention && r.retention.state !== "complete") attention.push("Cleaning up old off-site copies needs review.");
   // What the last verified backup left out: listed, never a failure.
   const skipped = s?.lastVerified ? backupSkippedLines(s.lastSkipped) : [];
-  return { last, schedule, offsite, attention: [...new Set(attention)], ...(skipped.length ? { skipped } : {}) };
+  return { last, schedule, offsite, attention: withoutRepeats(attention), ...(skipped.length ? { skipped } : {}) };
 }
 
 /** Optional bridge methods a newer desktop app may offer. Feature-detected:

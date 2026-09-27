@@ -51,3 +51,18 @@ test("the report carries the item inside the data folder the refusal named",()=>
  assert.equal(backupFailureNotice(status("routines.json"),null).body.path,"routines.json");
  assert.equal(backupFailureNotice(status("/Users/sam/secret"),null).body.path,undefined);
 });
+
+// 0.1.60 Windows final L1: the Inbox said "couldn't find your backup folder."
+// while Settings named it ("Murage Backups").
+test("a missing backup folder is reported with the folder's own name, and no other failure carries it",()=>{
+ const missing={phase:"needs-review",job:{id:"job-3"},captureFailure:{stage:"references",code:"BACKUP_FOLDER_MISSING"}};
+ assert.equal(backupFailureNotice(missing,null,"Murage Backups").body.folder,"Murage Backups");
+ const other={phase:"needs-review",job:{id:"job-3"},captureFailure:{stage:"capture",code:"BACKUP_FILE_IN_USE"}};
+ assert.equal(backupFailureNotice(other,null,"Murage Backups").body.folder,undefined);
+ assert.equal(backupFailureNotice(missing,null,"x".repeat(121)).body.folder,undefined);
+});
+test("main.mjs hands the folder's name to the announcement",()=>{
+ const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
+ assert.match(main,/folderName=await backupScheduleHost\.destinationLabel\(\)/);
+ assert.match(main,/announceBackupFailure\(\{status:backupScheduleHost\.internalStatus\(\),folderName,/);
+});

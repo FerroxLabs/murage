@@ -8,6 +8,7 @@ import { enabledSchedule, scheduleCardNotice, scheduleDraft, scheduleError, sche
 import { api, useStore } from "@/state/store";
 import { openInboxLink } from "@/lib/open-inbox-link";
 import { backupWaitingSentence, type BackupWaitingBot } from "../../shared/backup-waiting";
+import { BACKUP_UNAVAILABLE_SENTENCES } from "../../shared/backup-capture-failure.mjs";
 import { backupSummary, closedJobBlockedReason, closedJobCanSetUp, closedJobNotice, completeBackupSetup, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupModeBridge, type BackupScheduleBridge, type BackupSummary } from "./backups-section-ui";
 
 const card = "min-w-0 space-y-3 rounded-xl border border-hairline/40 bg-card p-4";
@@ -17,23 +18,23 @@ const primaryButton = "min-h-11 rounded-lg bg-accent px-3 py-2 text-[13px] font-
 const checkbox = "mt-1 size-4 shrink-0 accent-accent focus-visible:ring-2 focus-visible:ring-accent-border";
 
 /** Restore from a backup on this computer (Backup mode). */
-export function BackupSettingsView({supported,busy,error,onRestart}:{supported:boolean;busy:boolean;error?:string;onRestart:()=>void}) {
+export function BackupSettingsView({supported,busy,error,unavailable,onRestart}:{supported:boolean;busy:boolean;error?:string;unavailable?:"tool"|"closing";onRestart:()=>void}) {
   return <div className="space-y-3">
     <h4 className="text-[13px] font-medium text-ink">From a backup on this computer</h4>
     <p className="text-[13px] text-ink-secondary">Backup mode closes this window and opens a separate recovery screen. There you can restore an encrypted backup into a new installation that stays paused for review, or make a one-off backup. Finish current work first.</p>
     <p className="text-[13px] text-ink-secondary">Backups cover settings, conversations, files and channel history. Native sessions, VM homes and external folders are not included. Older recovery ZIPs still work and hold a reduced recovery copy.</p>
-    {!supported&&<p role="status" className="text-[13px] text-ink-secondary">Encrypted backup requires a supported packaged app with its verified backup tool.</p>}
+    {!supported&&<p role="status" className="text-[13px] text-ink-secondary">{unavailable?BACKUP_UNAVAILABLE_SENTENCES[unavailable]:"Encrypted backup requires a supported packaged app with its verified backup tool."}</p>}
     {error&&<p role="alert" className="text-[13px] text-danger">{error}</p>}
     <button type="button" disabled={!supported||busy} onClick={onRestart} className={scheduleButton}>{busy?"Preparing Backup mode…":"Restart into Backup mode"}</button>
   </div>;
 }
 
 function useBackupMode() {
-  const [supported,setSupported]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState<string>();
+  const [supported,setSupported]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState<string>(),[unavailable,setUnavailable]=useState<"tool"|"closing">();
   useEffect(()=>{
     let active=true,timer:number|undefined;
     // Backup mode needs the same checked tool; keep asking until it is ready.
-    const read=()=>void window.muragebox?.backup?.status().then(value=>{if(!active)return;setSupported(value.supported);if(!value.supported)timer=window.setTimeout(read,3000);}).catch(()=>{});
+    const read=()=>void window.muragebox?.backup?.status().then(value=>{if(!active)return;setSupported(value.supported);setUnavailable(value.unavailable);if(!value.supported)timer=window.setTimeout(read,3000);}).catch(()=>{});
     read();
     return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);};
   },[]);
@@ -43,7 +44,7 @@ function useBackupMode() {
     catch(cause){setError(cause instanceof Error&&cause.message.includes("BACKUP_WORK_ACTIVE")?"Work is still active. Finish or stop it before restarting into Backup mode.":"Backup mode could not open. Your data is preserved; check that work is idle and try again.");}
     finally{setBusy(false);}
   };
-  return {supported,busy,error,restart};
+  return {supported,busy,error,unavailable,restart};
 }
 
 export type ScheduleArea = "summary" | "schedule" | "advanced";
@@ -203,7 +204,7 @@ function ScheduleState({s,attention}:{s:ScheduleController;attention:readonly st
   const notice=scheduleCardNotice(local,status?.error,attention,status?.refs?.destinationLabel);
   return <>
     <p role="status" className="text-[13px] font-medium text-ink">{status?`Daily backups are ${status.enabled?"on":"off"}. ${schedulePhase(status.phase)}`:bridge?"Checking schedule status…":"Scheduling unavailable in this window"}</p>
-    {unavailable&&(!bridge||status)&&<p className="text-[13px] text-ink-secondary">Scheduled backup requires a supported packaged app with its verified backup tool.</p>}
+    {unavailable&&(!bridge||status)&&!status?.unavailable&&<p className="text-[13px] text-ink-secondary">Scheduled backup requires a supported packaged app with its verified backup tool.</p>}
     {status?.pending&&<p role="status" className="text-[13px] text-ink-secondary">Backup work is pending. Settings are locked; status updates automatically.</p>}
     {stale&&<p role="alert" className="text-[13px] text-warning">Status refresh failed. The last confirmed state is shown; changes are locked. Refresh schedule status to try again.</p>}
     {closedStale&&<p role="alert" className="text-[12px] text-warning">Background job status could not be refreshed. The last confirmed state is shown; backing up while Murage is closed is blocked. Refresh schedule status to try again.</p>}
@@ -485,7 +486,7 @@ export function BackupSettings() {
       <OffsiteDetails r={r}/>
     </Disclosure>
     <Disclosure id="backup-restore" title="Restore" open={restoreOpen} onToggle={()=>setRestoreOpen(value=>!value)}>
-      <BackupSettingsView supported={mode.supported} busy={mode.busy} error={mode.error} onRestart={()=>void mode.restart()}/>
+      <BackupSettingsView supported={mode.supported} busy={mode.busy} error={mode.error} unavailable={mode.unavailable} onRestart={()=>void mode.restart()}/>
       <div className="space-y-3 border-t border-hairline/40 pt-3">
         <h4 className="text-[13px] font-medium text-ink">From the off-site copy</h4>
         <OffsiteRecover r={r}/>

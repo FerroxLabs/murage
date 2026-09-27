@@ -6,9 +6,9 @@ import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs
 import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Notification, Tray, nativeImage, nativeTheme, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
 import { createApprovalNotifications } from "./approval-notification.mjs";
-import { BACKUP_MODE_ARGUMENT, createBackupModeController, createBackupToolCapability, createResticToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
+import { BACKUP_MODE_ARGUMENT, BACKUP_TOOL_STUCK_AFTER, createBackupModeController, createBackupToolCapability, createResticToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
-import { captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
+import { BACKUP_UNAVAILABLE_SENTENCES, backupUnavailableCode, captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 import { createRecoveryKeyFlow, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
@@ -322,19 +322,49 @@ async function prepareDesktopBackup(occasion="manual"){
     return response.json();
   },()=>cuaCleanedUp);
 }
+/** Why backups can't run from this window, or null: "closing" after a
+ * backup's close did not finish, "tool" once the backup tool has failed its
+ * check several times in a row. Never while the tool is merely being checked. */
+let desktopBackupCleanupFailed = false;
+function backupUnavailableReason() {
+  if (!app.isPackaged || desktopRecoveryMode) return null;
+  if (desktopShutdownStarted) return desktopBackupCleanupFailed ? "closing" : null;
+  if (!desktopDataOwner || desktopBackupTool.currentTool() || desktopBackupTool.status().checking) return null;
+  return "tool";
+}
+/** The close before a backup's restart. When it can't finish, this window can
+ * no longer back up: say so, instead of every later click just failing. */
+async function cleanupForBackupRestart() {
+  try { await cleanupDesktopForExit(); }
+  catch (error) {
+    desktopBackupCleanupFailed = true;
+    slog(`backup restart cleanup incomplete (${desktopCleanupStage}); installation ownership retained`);
+    void announceBackupUnavailable("closing").catch(() => {});
+    throw error;
+  }
+}
 const desktopBackupTool = createBackupToolCapability({
   resourcesPath: process.resourcesPath, currentExecutable: process.execPath,
   isUsable: () => Boolean(app.isPackaged && desktopDataOwner && !desktopShutdownStarted),
+  // A failed check used to leave no trace at all (0.1.60 Windows final D1).
+  // Log only: the step and a path-free reason, never a path.
+  onFailure: ({ error, failures }) => {
+    const word = value => typeof value === "string" ? value.replace(/[^\w-]/g, "").slice(0, 60) : undefined;
+    slog(`backup tool check failed ${JSON.stringify({ platform: process.platform, code: word(error?.code) ?? word(error?.message), step: word(error?.step), reason: word(error?.reason), failures })}`);
+    if (failures >= BACKUP_TOOL_STUCK_AFTER) void announceBackupUnavailable("tool").catch(() => {});
+  },
+  onReady: () => { slog("backup tool check passed again"); void backupAvailableAgain().catch(() => {}); },
 });
 async function requireDesktopBackupTool() {
   const owner = desktopDataOwner, installation = desktopDataDir;
-  const tool = await desktopBackupTool.requireTool();
+  const tool = await desktopBackupTool.requireFresh();
   if (!owner || owner !== desktopDataOwner || installation !== desktopDataDir || desktopShutdownStarted) throw Object.assign(new Error("BACKUP_UNAVAILABLE"), { code: "BACKUP_UNAVAILABLE" });
   return tool;
 }
 const backupMode = createBackupModeController({
   // Backup mode is a restart; where a restart would crash, it is not offered.
   supported: () => Boolean(app.isPackaged && !desktopShutdownStarted && !desktopRecoveryMode && !backupScheduleHost?.isPreparing() && desktopDataOwner && desktopBackupTool.currentTool() && !relaunchBlockedCode()),
+  unavailableReason: backupUnavailableReason,
   readActivity: readBackupActivity,
   confirm: async () => {
     const answer = await dialog.showMessageBox(mainWindow, { type:"question", buttons:["Cancel","Restart into Backup mode"], defaultId:0, cancelId:0, noLink:true,
@@ -343,7 +373,7 @@ const backupMode = createBackupModeController({
   },
   prepare:async()=>{await requireDesktopBackupTool();return prepareDesktopBackup();},
   restart: async () => {
-    await cleanupDesktopForExit();
+    await cleanupForBackupRestart();
     relaunchDesktop({ app, args:[...process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
     app.quit();
   },
@@ -3406,7 +3436,8 @@ const remoteBackupAttestation = new AbortController();
 async function announceLastBackupFailure(){
   for(let tries=0;tries<120&&!(serverReady&&desktopSurfaceSecret)&&!desktopShutdownStarted;tries++)await new Promise(resolve=>setTimeout(resolve,1000));
   if(!backupScheduleHost||desktopShutdownStarted||desktopRecoveryMode||!serverReady||!desktopSurfaceSecret)return;
-  await announceBackupFailure({status:backupScheduleHost.internalStatus(),userData:app.getPath("userData"),post:body=>harnessJson("/api/backup-failure-notice",body),
+  let folderName;try{folderName=await backupScheduleHost.destinationLabel();}catch{/* the sentence says "your backup folder" */}
+  await announceBackupFailure({status:backupScheduleHost.internalStatus(),folderName,userData:app.getPath("userData"),post:body=>harnessJson("/api/backup-failure-notice",body),
     showNotice:sentence=>{
       if(!Notification.isSupported())return;
       const notice=new Notification({title:"The last backup didn't finish",body:sentence});
@@ -3414,6 +3445,33 @@ async function announceLastBackupFailure(){
       notice.on("click",()=>{const win=mainWindow;if(win&&!win.isDestroyed()){if(win.isMinimized())win.restore();win.show();win.focus();}sendWhenLoaded("startup-background:open-inbox");});
       notice.show();
     }});
+}
+/** Backups can't run from this window (D1): the Inbox row when the harness
+ * can take it, one notification, once per episode. The Backups page says the
+ * same words from its own status. Daily backups never just stop. */
+let backupUnavailableAnnounced=null;
+async function announceBackupUnavailable(reason){
+  const code=backupUnavailableCode(reason);
+  if(!code||backupUnavailableAnnounced===code||!backupScheduleHost)return;
+  // The tool: only where daily backups are on; a closed window: always.
+  if(reason==="tool"&&(backupUnavailableReason()!=="tool"||!backupScheduleHost.internalStatus().enabled))return;
+  backupUnavailableAnnounced=code;
+  let sentence=BACKUP_UNAVAILABLE_SENTENCES[reason];
+  try{const answer=await harnessJson("/api/backup-failure-notice",{action:"report",stage:"precondition",code,notify:true});if(typeof answer?.sentence==="string"&&answer.sentence.length<=1000)sentence=answer.sentence;}catch{/* the notification still says it */}
+  slog(`backup unavailable announced (${code})`);
+  try{
+    if(!Notification.isSupported())return;
+    const notice=new Notification({title:"Backups can't run right now",body:sentence});
+    notice.on("click",()=>{const win=mainWindow;if(win&&!win.isDestroyed()){if(win.isMinimized())win.restore();win.show();win.focus();}sendWhenLoaded("startup-background:open-inbox");});
+    notice.show();
+  }catch{/* the page still says it */}
+}
+/** The tool passed its check again: take the row back down (or put up the
+ * last backup's own failure, if one is waiting to be cleared). */
+async function backupAvailableAgain(){
+  if(!backupUnavailableAnnounced)return;
+  backupUnavailableAnnounced=null;
+  await announceLastBackupFailure();
 }
 async function initializeBackupRemoteHost(){
   if(!app.isPackaged||!desktopDataOwner||desktopRecoveryMode||closedBackupRequested||!backupScheduleHost)return;
@@ -3551,6 +3609,10 @@ async function initializeBackupScheduleHost(){
     },
     supported:()=>Boolean(!desktopShutdownStarted&&desktopDataOwner&&desktopBackupTool.currentTool()),
     checking:()=>Boolean(desktopDataOwner&&desktopBackupTool.status().checking),
+    unavailableReason:backupUnavailableReason,
+    announceUnavailable:reason=>announceBackupUnavailable(reason),
+    // Who a held-up backup still waits for, so an answered card stops being named.
+    waitingNow:async()=>(await harnessJson("/api/backup-waiting"))?.bots,
     // A code, not a flag: an AppImage whose file was moved needs its own words.
     relaunchBlocked:()=>relaunchBlockedCode(),
     elevated:()=>windowsElevated(),
@@ -3586,7 +3648,7 @@ async function initializeBackupScheduleHost(){
       return answer.response===1;
     },
     prepare:async occasion=>{if(backupMode.isPreparing())throw new Error("BACKUP_BUSY");await requireDesktopBackupTool();await readBackupActivity();return prepareDesktopBackup(occasion==="daily"?"daily":"manual");},
-    cleanupIdle:cleanupDesktopForExit,
+    cleanupIdle:cleanupForBackupRestart,
     // Closed main has no harness logger and exits immediately after cleanup.
     // The host supplies only its finite stage/code record; synchronously retain
     // that tiny line in this profile's existing log before generic refusal.

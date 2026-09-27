@@ -96,11 +96,19 @@ export function createBackupScheduleHost(host) {
     const s=coordinator.status();let refs;try{const b=await read();if(b)refs={installationRef:b.installationRef,destinationRef:b.destinationRef,recoveryRef:b.recoveryRef,destinationLabel:path.basename(b.destination),recoveryLabel:path.basename(b.keyFile)};}catch{lastError="BACKUP_BINDINGS_UNAVAILABLE";}
     let preUpgradeSupported=false;try{await assertUpgradeAllowed();preUpgradeSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
     let closedAppSupported=false;try{await assertClosedAllowed();closedAppSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
-    const supported=host.supported();
+    const supported=host.supported(),checking=!supported&&Boolean(host.checking?.());
+    // Why backups can't run from this window, when it is not just the tool
+    // still being checked: the page says so in words, with what to do.
+    let unavailable=null;if(!supported&&!checking)try{const reason=host.unavailableReason?.();unavailable=["tool","closing"].includes(reason)?reason:null;}catch{/* a probe failure keeps the plain label */}
+    // An answered card stops being named now, not at the next backup.
+    if(heldBy&&typeof host.waitingNow==="function")try{
+      const now=await host.waitingNow();
+      if(Array.isArray(now)){const still=heldBy.bots.filter(bot=>now.some(other=>other?.botId===bot.botId&&other?.threadId===bot.threadId));heldBy=still.length?{...heldBy,bots:still}:null;}
+    }catch{/* keep the last known answer when the harness can't say */}
     // Said before setup starts, so daily backups are never switched on on a
     // computer where no backup could ever run.
     let restartBlocked=null;try{restartBlocked=captureBlocked();}catch{/* A probe failure is not a refusal. */}
-    return {supported,...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(heldBy?{heldBy}:{}),...(!supported&&host.checking?.()?{checking:true}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),...(s.lastSkipped?{lastSkipped:s.lastSkipped}:{}),refs,error:lastError};
+    return {supported,...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(heldBy?{heldBy}:{}),...(checking?{checking:true}:{}),...(unavailable?{unavailable}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),...(s.lastSkipped?{lastSkipped:s.lastSkipped}:{}),refs,error:lastError};
   };
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
   const start=()=>{stopPolling();if(!coordinator.status().enabled)return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
@@ -171,7 +179,14 @@ export function createBackupScheduleHost(host) {
     running=true;let release,intent;
     try{
       const s=await coordinator.tick(upgradeId);
-      if(!["due","waiting-idle","waiting-backup-mode"].includes(s.phase)||!host.supported())return;
+      if(!["due","waiting-idle","waiting-backup-mode"].includes(s.phase))return;
+      // A due backup that can't run used to wait here without a word, every
+      // day (0.1.60 Windows final D1). Say so: the Inbox row, one
+      // notification, and the page's sentence, each with what to do.
+      if(!host.supported()){
+        if(!host.checking?.())try{const reason=host.unavailableReason?.();if(reason)void Promise.resolve(host.announceUnavailable?.(reason)).catch(()=>{});}catch{/* never worth a failed tick */}
+        return;
+      }
       const blocked=captureBlocked();if(blocked){lastError=blocked;return;}
       let b;try{b=await checked();}catch(error){const code=stopForReferences(s.job?.id,error);if(code){lastError=code;return;}throw error;}
       release=await host.prepare("daily");heldBy=null;
@@ -316,6 +331,8 @@ export function createBackupScheduleHost(host) {
     status:publicStatus,internalStatus:()=>coordinator.status(),isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
     /** Folder the saved references back up into, for recovery-key placement checks. */
     async selectedDestination(){const b=await read();return b?b.destination:null;},
+    /** The backup folder's own name (never its path), for the Inbox sentence. */
+    async destinationLabel(){const b=await read();return b?path.basename(b.destination):null;},
     async latestVerifiedArtifact(){
       if(running||activePhases.has(coordinator.status().phase))throw Error("BACKUP_BUSY");
       const receipt=coordinator.status().lastVerified;if(!receipt)return null;
