@@ -30,6 +30,10 @@ export function verifiedBackupTool(resources) {
 // after a short and then growing delay, so nothing is trusted without a
 // fresh signature check and nothing needs a restart.
 export const BACKUP_TOOL_RETRY_DELAYS_MS = Object.freeze([1000, 5000, 15000, 30000, 60000, 120000, 300000]);
+/** Pauses between an action's own tries of the check (three tries in all). */
+export const BACKUP_TOOL_ACTION_RETRY_DELAYS_MS = Object.freeze([2000, 5000]);
+/** Checks failed in a row before the tool counts as stuck rather than getting ready. */
+export const BACKUP_TOOL_STUCK_AFTER = 3;
 export function createToolRecheck({ run, isUsable, delays = BACKUP_TOOL_RETRY_DELAYS_MS, setTimer = setTimeout, clearTimer = clearTimeout }) {
   let timer = null, attempt = 0, stopped = false;
   return {
@@ -59,10 +63,11 @@ async function waitForTool(capability, isUsable, timeoutMs, unavailable) {
 }
 /** Desktop-owned availability, not a renderer grant. Windows actions reverify
  * the fixed packaged resources before reading a recovery identity. */
-export function createBackupToolCapability({ resourcesPath, currentExecutable, isUsable, macToolName = "age", verifyMacTool = trustedBackupAgeExecutableAsync, recheckOptions }) {
-  const windows = process.platform === "win32", mac = process.platform === "darwin";
+export function createBackupToolCapability({ resourcesPath, currentExecutable, isUsable, macToolName = "age", verifyMacTool = trustedBackupAgeExecutableAsync, recheckOptions, actionRetryDelays = BACKUP_TOOL_ACTION_RETRY_DELAYS_MS, onFailure, onReady }) {
+  const windows = process.platform === "win32", mac = process.platform === "darwin", attested = windows || mac;
   let identity = null, controller = null;
-  let state = "pending", tool = null, pending = null, generation = 0;
+  let state = "pending", tool = null, pending = null, generation = 0, failures = 0;
+  const report = (callback, value) => { try { callback?.(value); } catch { /* A report never changes the check. */ } };
   // The message is the code: only the message crosses ipcRenderer.invoke
   // (audit IPC-L2), and the page maps codes to sentences.
   const unavailable = () => Object.assign(new Error("BACKUP_UNAVAILABLE"), { code: "BACKUP_UNAVAILABLE" });
@@ -93,28 +98,51 @@ export function createBackupToolCapability({ resourcesPath, currentExecutable, i
         const file = path.join(resourcesPath, "backup-tools", process.arch, macToolName);
         const before = backupToolIdentity(file, currentExecutable);
         if (!before || !await verifyMacTool(file, { currentExecutable, signal: controller.signal, ...(background ? { timeoutMs: BACKUP_CODESIGN_RETRY_MS } : {}) }) || !isUsable() || epoch !== generation || backupToolIdentity(file, currentExecutable) !== before) throw unavailable();
-        identity = before; tool = file; state = "ready"; recheck.succeeded(); return tool;
+        identity = before; tool = file; state = "ready"; ready(); return tool;
       }
       const { createWindowsBackupResourceResolver } = await import(pathToFileURL(path.join(resourcesPath, "server", "windows-backup-resources.js")).href);
       if (!isUsable() || epoch !== generation) throw unavailable();
       const verified = await createWindowsBackupResourceResolver({ resourcesPath, currentExecutable })();
       const helper = path.join(resourcesPath, "backup-tools", "x64", "murage-backup-age.exe");
       if (typeof verified?.executable !== "string" || verified.executable.toLowerCase() !== helper.toLowerCase() || !isUsable() || epoch !== generation) throw unavailable();
-      tool = path.join(resourcesPath, "backup-tools", "x64", "age.exe"); state = "ready";
+      tool = path.join(resourcesPath, "backup-tools", "x64", "age.exe"); state = "ready"; ready();
       return tool;
     })().catch(error => {
-      if (epoch === generation) { state = "failed"; tool = null; if (mac) recheck.schedule(); }
+      // Windows used to give up here for good: one check that failed (a
+      // signature check that ran past its bound while a freshly reopened
+      // Murage was still starting) left backups "Needs a supported desktop
+      // app" until a quit and reopen (0.1.60 Windows final D1). Every
+      // attested platform now checks again by itself, as macOS already did.
+      if (epoch === generation) { state = "failed"; tool = null; failures++; report(onFailure, { error, failures }); if (attested) recheck.schedule(); }
       throw error;
     });
     pending = work;
     try { return await work; } finally { if (pending === work) pending = null; }
   };
+  function ready() { const recovered = failures > 0; failures = 0; recheck.succeeded(); if (recovered) report(onReady); }
   const recheck = createToolRecheck({ run: () => currentTool() ? undefined : requireTool({ background: true }), isUsable, ...(recheckOptions ?? {}) });
+  /** An action's own fresh check, tried again after a short pause when it
+   * fails: one slow signature check must not turn Back up now into "Murage
+   * was busy". Every try is a full attestation; nothing is trusted from before. */
+  const requireFresh = async () => {
+    for (let attempt = 0; ; attempt++) {
+      try { return await requireTool(); }
+      catch (error) { if (attempt >= actionRetryDelays.length || !isUsable()) throw error; await pause(actionRetryDelays[attempt]); }
+    }
+  };
   return {
     currentTool,
-    /** `checking` is true while an attestation runs or is due again soon. */
-    status: () => { if (mac) currentTool(); const current = windows || mac ? state : currentTool() ? "ready" : "failed"; return { state: current, checking: mac && (current === "pending" || recheck.scheduled()) }; },
+    /** `checking` is true while an attestation runs or is due again soon.
+     * After BACKUP_TOOL_STUCK_AFTER checks in a row have failed it is false
+     * even though checks go on, so the page and the Inbox say so plainly
+     * instead of "Getting ready" for ever. */
+    status: () => {
+      if (mac) currentTool();
+      const current = attested ? state : currentTool() ? "ready" : "failed";
+      return { state: current, checking: attested && failures < BACKUP_TOOL_STUCK_AFTER && (current === "pending" || recheck.scheduled()), failures };
+    },
     requireTool,
+    requireFresh,
     waitReady: (timeoutMs = 180000) => waitForTool({ currentTool, requireTool }, isUsable, timeoutMs, unavailable),
     invalidate() { generation += 1; state = "failed"; tool = null; identity = null; recheck.stop(); controller?.abort(); },
     async settled() { await pending?.catch(() => {}); },
@@ -134,7 +162,13 @@ export async function prepareBackupRestart(send, stopped=()=>false) {
 export function createBackupModeController(host) {
   let pending = false;
   return {
-    status: () => ({ supported: host.supported(), pending }),
+    // Why it can't open, in the same words as the Backups page (D1).
+    status: () => {
+      const supported = host.supported();
+      let unavailable = null;
+      if (!supported) try { const reason = host.unavailableReason?.(); unavailable = ["tool", "closing"].includes(reason) ? reason : null; } catch { /* the plain line stays */ }
+      return { supported, pending, ...(unavailable ? { unavailable } : {}) };
+    },
     isPreparing: () => pending,
     async restart() {
       if (pending) throw new Error("BACKUP_BUSY");

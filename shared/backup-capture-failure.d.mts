@@ -15,3 +15,7 @@ export function redactCauseText(value: unknown, max?: number): string | undefine
 export function normalizeCaptureCause(input: unknown): BackupCaptureCause | null;
 export function describeCaptureError(error: unknown, step?: string): BackupCaptureCause | null;
 export function skippedDisplayPath(value: unknown): string | undefined;
+export type BackupUnavailableReason = "tool" | "closing";
+export const BACKUP_UNAVAILABLE_SENTENCES: Readonly<Record<BackupUnavailableReason, string>>;
+export const BACKUP_UNAVAILABLE_CODES: readonly string[];
+export function backupUnavailableCode(reason: unknown): string | null;

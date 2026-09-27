@@ -25,7 +25,7 @@ export const BACKUP_CAPTURE_STAGES = Object.freeze([
  * an engine's own error text is not ours to publish. */
 export const BACKUP_CAPTURE_CODES = Object.freeze([
   // handoff and references
-  "BACKUP_HANDOFF_REJECTED", "BACKUP_UNAVAILABLE", "BACKUP_REFERENCE_CHANGED", "BACKUP_FOLDER_MISSING", "BACKUP_RECOVERY_KEY_MISSING",
+  "BACKUP_HANDOFF_REJECTED", "BACKUP_UNAVAILABLE", "BACKUP_TOOL_UNCHECKED", "BACKUP_WORKSPACE_CLOSING", "BACKUP_REFERENCE_CHANGED", "BACKUP_FOLDER_MISSING", "BACKUP_RECOVERY_KEY_MISSING",
   "BACKUP_BINDINGS_INVALID", "BACKUP_BINDINGS_UNAVAILABLE", "BACKUP_RECEIPT_MISMATCH",
   // the recovery worker
   "RECOVERY_WORKER_TIMEOUT", "INVALID_RECOVERY_INPUT", "INVALID_RECOVERY_RESULT", "RECOVERY_INPUT_TIMEOUT",
@@ -62,6 +62,20 @@ export const BACKUP_CAPTURE_CODES = Object.freeze([
 
 const STAGES = new Set(BACKUP_CAPTURE_STAGES);
 const CODES = new Set(BACKUP_CAPTURE_CODES);
+
+/** Why backups can't run from this window right now, and what to do. Said
+ * on the Backups page, in the Inbox and in one notification, so daily
+ * backups never just stop (0.1.60 Windows final D1). */
+export const BACKUP_UNAVAILABLE_SENTENCES = Object.freeze({
+  tool: "Backups can't run right now because Murage couldn't check its backup tool. Murage keeps checking by itself. If this is still here in a few minutes, quit Murage and open it again, then back up. If it comes back after that, reinstall Murage.",
+  closing: "Backups can't run from this window because Murage started closing for a backup and couldn't finish. Quit Murage and open it again, then back up. Your data is preserved.",
+});
+/** The code the Inbox gets for an unavailable reason, or null. */
+export function backupUnavailableCode(reason) {
+  return reason === "tool" ? "BACKUP_TOOL_UNCHECKED" : reason === "closing" ? "BACKUP_WORKSPACE_CLOSING" : null;
+}
+/** Codes that say backups can't run now, rather than how one backup ended. */
+export const BACKUP_UNAVAILABLE_CODES = Object.freeze(["BACKUP_TOOL_UNCHECKED", "BACKUP_WORKSPACE_CLOSING"]);
 
 const STAGE_WORDS = {
   precondition: "before it started",
@@ -239,6 +253,8 @@ const REASONS = {
     "The backup request had already expired or been replaced by the time Murage reopened for it. Start the backup again.",
   BACKUP_UNAVAILABLE:
     "Backups aren't available in this copy of Murage. Reinstalling Murage usually fixes this.",
+  BACKUP_TOOL_UNCHECKED: BACKUP_UNAVAILABLE_SENTENCES.tool,
+  BACKUP_WORKSPACE_CLOSING: BACKUP_UNAVAILABLE_SENTENCES.closing,
   UNKNOWN_CAPTURE_FAILURE:
     "Murage couldn't say why. Nothing in your workspace was changed. Open the diagnostics folder from Backups if it happens again.",
 };
@@ -280,6 +296,7 @@ export function normalizeCaptureFailure(input) {
 export function captureFailureSentence(input, { folderName } = {}) {
   const failure = normalizeCaptureFailure(input);
   if (!failure) return "";
+  if (BACKUP_UNAVAILABLE_CODES.includes(failure.code)) return REASONS[failure.code];
   const where = STAGE_WORDS[failure.stage];
   const item = failure.path ? ` The item is ${failure.path} in Murage's data folder.` : "";
   const reason = failure.code === "BACKUP_FOLDER_MISSING" ? backupFolderMissingReason(folderName) : REASONS[failure.code] ?? REASONS.UNKNOWN_CAPTURE_FAILURE;

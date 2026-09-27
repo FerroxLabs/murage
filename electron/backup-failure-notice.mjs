@@ -17,13 +17,15 @@ const FILE="backup-failure-announced.json";
  * status and the failure last announced. Only the finite stage and code,
  * and the item inside the data folder it named, leave this function; `key`
  * stays on this computer. */
-export function backupFailureNotice(status,announcedKey){
+export function backupFailureNotice(status,announcedKey,folderName){
  const failure=status?.phase==="needs-review"?normalizeCaptureFailure(status.captureFailure):null;
  if(!failure)return{body:{action:"clear"},key:null};
  const job=typeof status.job?.id==="string"?status.job.id.slice(0,200):"";
  const key=`${job}:${failure.stage}:${failure.code}`;
  // The item inside the data folder, when the refusal names one (audit A-01).
- return{body:{action:"report",stage:failure.stage,code:failure.code,...(failure.path?{path:failure.path}:{}),notify:key!==announcedKey},key};
+ // The missing folder by its own name, as Settings says it (0.1.60 Windows final L1).
+ const folder=failure.code==="BACKUP_FOLDER_MISSING"&&typeof folderName==="string"&&folderName.length<=120?folderName:null;
+ return{body:{action:"report",stage:failure.stage,code:failure.code,...(failure.path?{path:failure.path}:{}),...(folder?{folder}:{}),notify:key!==announcedKey},key};
 }
 
 export function readAnnouncedFailure(userData){
@@ -36,9 +38,9 @@ export function writeAnnouncedFailure(userData,key){
 
 /** Tell the server once it is up. Never throws: an announcement is never
  * worth a failed start. */
-export async function announceBackupFailure({status,userData,post,showNotice=()=>{}}){
+export async function announceBackupFailure({status,folderName,userData,post,showNotice=()=>{}}){
  try{
-  const {body,key}=backupFailureNotice(status,readAnnouncedFailure(userData));
+  const {body,key}=backupFailureNotice(status,readAnnouncedFailure(userData),folderName);
   const answer=await post(body);
   if(body.action==="report"&&body.notify&&answer?.reported===true&&typeof answer.sentence==="string"&&answer.sentence.length<=1000){
    writeAnnouncedFailure(userData,key);

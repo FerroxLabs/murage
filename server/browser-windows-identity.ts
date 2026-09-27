@@ -38,7 +38,11 @@ export function verifyWindowsBrowserImage(bytes: Buffer, pin: UnsignedPePin): { 
 
 export function requireBrowserSignature(result: unknown): void {
   if (!result || typeof result !== "object" || !("status" in result) || !("publisher" in result)
-    || result.status !== "Valid" || result.publisher !== WINDOWS_BROWSER_PUBLISHER) throw new Error("Windows browser requires a valid Ferrox Labs signature");
+    || result.status !== "Valid" || result.publisher !== WINDOWS_BROWSER_PUBLISHER) {
+    // What Windows answered (Valid, UnknownError, NotSigned...), for the log.
+    const status = result && typeof result === "object" && "status" in result && typeof result.status === "string" ? result.status.slice(0, 40) : "unreadable";
+    throw Object.assign(new Error("Windows browser requires a valid Ferrox Labs signature"), { signatureStatus: status === "Valid" ? "publisher" : status });
+  }
 }
 export function windowsBrowserSignatureScript(files: string[]): string {
   const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
@@ -46,7 +50,7 @@ export function windowsBrowserSignatureScript(files: string[]): string {
 }
 export async function verifyWindowsBrowserSignatures(files: string[], systemRoot = "C:\\Windows"): Promise<void> {
   const script = windowsBrowserSignatureScript(files);
-  const output = await new Promise<string>((done, fail) => execFile(join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, timeout: 20_000, maxBuffer: 8192 }, (error, stdout, stderr) => error ? fail(new Error(`Windows browser signature verification failed (code ${error.code ?? "unknown"}, signal ${error.signal ?? "none"}): ${stderr.trim().slice(0, 2048)}`)) : done(stdout)));
+  const output = await new Promise<string>((done, fail) => execFile(join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, timeout: 20_000, maxBuffer: 8192 }, (error, stdout, stderr) => error ? fail(Object.assign(new Error(`Windows browser signature verification failed (code ${error.code ?? "unknown"}, signal ${error.signal ?? "none"}): ${stderr.trim().slice(0, 2048)}`), { code: error.code, signal: error.signal, killed: error.killed })) : done(stdout)));
   const results: unknown = JSON.parse(output.replace(/^\uFEFF/, ""));
   if (!Array.isArray(results) || results.length !== files.length) throw new Error("Windows browser signature receipt is incomplete");
   for (const result of results) requireBrowserSignature(result);

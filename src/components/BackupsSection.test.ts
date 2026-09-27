@@ -54,8 +54,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { vi } from "vitest";
 import { scheduleCardNotice } from "./backup-schedule-ui";
-import { CLOSED_JOB_MOVED_REASON, CLOSED_JOB_WONT_RUN_REASON, SETUP_FIRST_BACKUP_RUNNING, SETUP_NO_FIRST_BACKUP, backupSummary, closedAppFileSharedReason, closedJobNotice, completeBackupSetup, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
+import { CLOSED_JOB_MOVED_REASON, CLOSED_JOB_WONT_RUN_REASON, SETUP_FIRST_BACKUP_RUNNING, SETUP_NO_FIRST_BACKUP, SCHEDULE_CHECKING, backupSummary, closedAppFileSharedReason, withoutRepeats, closedJobNotice, completeBackupSetup, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
 import { BackupStatusCard, ScheduleCard, ScheduleSetup, type ScheduleController } from "./BackupSettings";
+import { BACKUP_UNAVAILABLE_SENTENCES } from "../../shared/backup-capture-failure.mjs";
 import { scheduleError, schedulePhase } from "./backup-schedule-ui";
 import { remoteBackupStatus, type RemoteController } from "./BackupRemoteSettings";
 
@@ -642,5 +643,51 @@ describe("a missing backup folder is named", () => {
     const page = read("./BackupSettings.tsx");
     expect(page).toContain("runNowError(cause,{folderName:status?.refs?.destinationLabel})");
     expect(page).toContain("scheduleCardNotice(local,status?.error,attention,status?.refs?.destinationLabel)");
+  });
+});
+
+// 0.1.60 Windows final L2: "Needs attention" named the missing folder twice,
+// once from the refusal and again inside the stopped backup's own sentence.
+describe("a missing folder is said once", () => {
+  const folder = healthy.schedule!.refs!.destinationLabel;
+  const both = { ...healthy, schedule: { ...healthy.schedule!, error: "BACKUP_FOLDER_MISSING", phase: "needs-review", captureFailure: { stage: "references", code: "BACKUP_FOLDER_MISSING" } } };
+  it("in the attention list", () => {
+    const { attention } = backupSummary(both);
+    expect(attention.filter(line => line.includes(`Murage couldn't find your backup folder "${folder}".`))).toHaveLength(1);
+    expect(attention.join(" ")).toContain("The last backup stopped while checking your backup folder and recovery key.");
+  });
+  it("and the card leaves it to the list", () => {
+    expect(scheduleCardNotice(null, "BACKUP_FOLDER_MISSING", backupSummary(both).attention, folder)).toBeNull();
+  });
+  it("lines that differ are all kept", () => {
+    expect(withoutRepeats(["a b", "a", "c", "c"])).toEqual(["a b", "c"]);
+  });
+});
+
+// 0.1.60 Windows final D1: "Needs a supported desktop app" with every button
+// greyed out and nothing saying what to do.
+describe("backups that can't run from this window say why and what to do", () => {
+  it("a backup tool that keeps failing its check", () => {
+    const summary = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, supported: false, unavailable: "tool", phase: "skipped" } });
+    expect(summary.schedule).toBe("Paused: Murage couldn't check its backup tool");
+    expect(summary.attention).toContain(BACKUP_UNAVAILABLE_SENTENCES.tool);
+    expect(summary.attention.join(" ")).toMatch(/quit Murage and open it again/);
+    // Not "Murage was busy": it wasn't.
+    expect(summary.attention.join(" ")).not.toContain("Murage was busy");
+  });
+  it("a backup restart whose close didn't finish", () => {
+    const summary = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, supported: false, unavailable: "closing" } });
+    expect(summary.schedule).toBe("Paused: Murage didn't finish closing");
+    expect(summary.attention).toContain(BACKUP_UNAVAILABLE_SENTENCES.closing);
+  });
+  it("still getting ready is not a problem to report", () => {
+    const summary = backupSummary({ ...healthy, schedule: { ...healthy.schedule!, supported: false, checking: true } });
+    expect(summary.schedule).toBe(SCHEDULE_CHECKING);
+    expect(summary.attention.some(line => line.startsWith("Backups can't run"))).toBe(false);
+  });
+  it("Backup mode says the same words", () => {
+    const page = read("./BackupSettings.tsx");
+    expect(page).toContain("unavailable?BACKUP_UNAVAILABLE_SENTENCES[unavailable]");
+    expect(page).toContain("unavailable={mode.unavailable}");
   });
 });

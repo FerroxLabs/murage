@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, rmdirSync, writeFileSync, readFileSync, realpat
 import { tmpdir } from "node:os";
 import path from "node:path";
 import vm from "node:vm";
-import { createBackupToolCapability, createResticToolCapability, createToolRecheck } from "./backup-mode.mjs";
+import { BACKUP_TOOL_STUCK_AFTER, createBackupToolCapability, createResticToolCapability, createToolRecheck } from "./backup-mode.mjs";
 import { asyncBackupCodesign, BACKUP_CODESIGN_RETRY_MS } from "./backup-age-attestation.mjs";
 import { EventEmitter } from "node:events";
 
@@ -77,7 +77,7 @@ function mainFunction(name, end) {
 test("actual desktop verifier wrapper refuses owner changes after await", async () => {
   let release;
   const context = { desktopDataOwner: {}, desktopDataDir: "fixture", desktopShutdownStarted: false,
-    desktopBackupTool: { requireTool: () => new Promise(resolve => { release = resolve; }) } };
+    desktopBackupTool: { requireFresh: () => new Promise(resolve => { release = resolve; }) } };
   const run = vm.runInNewContext(`(${mainFunction("requireDesktopBackupTool", "\nconst backupMode")})`, context);
   const pending = run(); context.desktopDataOwner = {}; release("fixed-age.exe");
   await assert.rejects(pending, error => error.code === "BACKUP_UNAVAILABLE");
@@ -136,11 +136,11 @@ test("macOS observational status never verifies; actions refresh and replacement
 test("macOS: the bundle changing under a ready tool re-attests it instead of disabling backups until a restart",()=>macFixture(async({state,capability,file,app})=>{
  assert.equal(await capability.requireTool(),file);assert.equal(state.calls,1);
  touchBundle(app);
- assert.equal(capability.currentTool(),null);assert.deepEqual(capability.status(),{state:"pending",checking:true});
+ assert.equal(capability.currentTool(),null);assert.deepEqual(capability.status(),{state:"pending",checking:true,failures:0});
  await until(()=>capability.currentTool()===file);
  assert.equal(state.calls,2,"re-attested in full, not trusted by identity alone");
  assert.equal(state.options[1].timeoutMs,BACKUP_CODESIGN_RETRY_MS,"a background re-check allows a slow first launch");
- assert.deepEqual(capability.status(),{state:"ready",checking:false});
+ assert.deepEqual(capability.status(),{state:"ready",checking:false,failures:0});
 }));
 test("macOS: the bundle changing during the startup attestation is retried until it holds still",()=>macFixture(async({state,capability,file,app})=>{
  state.during=()=>touchBundle(app);
@@ -150,7 +150,12 @@ test("macOS: the bundle changing during the startup attestation is retried until
 }));
 test("macOS: a failed first check (a codesign run that timed out) keeps retrying with growing delays",()=>macFixture(async({state,capability,file})=>{
  state.fail=true;await assert.rejects(capability.requireTool());
- await until(()=>state.calls>=3);assert.equal(capability.currentTool(),null);assert.equal(capability.status().checking,true);
+ assert.equal(capability.status().checking,true,"still getting ready after one failure");
+ // After BACKUP_TOOL_STUCK_AFTER failures in a row it is no longer "getting
+ // ready": the page and the Inbox say why (0.1.60 Windows final D1). The
+ // checks themselves go on.
+ await until(()=>state.calls>=BACKUP_TOOL_STUCK_AFTER);assert.equal(capability.currentTool(),null);
+ await until(()=>capability.status().checking===false);assert.equal(capability.status().failures>=BACKUP_TOOL_STUCK_AFTER,true);
  state.fail=false;await until(()=>capability.currentTool()===file,3000);
  const calls=state.calls;await new Promise(r=>setTimeout(r,60));assert.equal(state.calls,calls,"no more checks once ready");
 }));
