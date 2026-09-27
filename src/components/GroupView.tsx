@@ -21,6 +21,7 @@ import {
 import { BotAvatar } from "./Avatar";
 import { roomAuthor } from "@/lib/room-author";
 import { TurnPresence } from "./TurnPresence";
+import { useReplyPop } from "./use-reply-pop";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { normalizeState } from "@/lib/mascot";
 import { effectiveDefaultResponder, groupResponseHint } from "@/lib/group-routing";
@@ -1265,32 +1266,7 @@ export function GroupView({ group }: { group: Group }) {
   const waiting = Boolean(
     speaker && showWorkingDots(true, group.messages.at(-1), speaker.id),
   );
-  const wasWaiting = useRef(false);
-  const [popping, setPopping] = useState<{ id: string; text: string; botId?: string } | null>(null);
-  useEffect(() => {
-    wasWaiting.current = false;
-    setPopping(null);
-  }, [group.id, group.threadId]);
-  useEffect(() => {
-    if (waiting) wasWaiting.current = true;
-  }, [waiting]);
-  useEffect(() => {
-    if (lastGroupMessage?.role !== "bot" || lastGroupMessage.kind !== "text" || !wasWaiting.current) return;
-    wasWaiting.current = false;
-    setPopping({
-      id: lastGroupMessage.id,
-      text: lastGroupMessage.text ?? "",
-      botId: lastGroupMessage.from?.botId,
-    });
-    const timer = setTimeout(() => setPopping(null), 520);
-    return () => clearTimeout(timer);
-  }, [
-    lastGroupMessage?.id,
-    lastGroupMessage?.role,
-    lastGroupMessage?.kind,
-    lastGroupMessage?.text,
-    lastGroupMessage?.from?.botId,
-  ]);
+  const popping = useReplyPop(`${group.id}:${group.threadId}`, lastGroupMessage, waiting);
   const presenceVisible = waiting || popping !== null;
   const poppingMessage = popping ? group.messages.find((message) => message.id === popping.id) : undefined;
   const presenceSpeaker = speaker ?? members.find((member) => member.id === popping?.botId) ?? members[0];
