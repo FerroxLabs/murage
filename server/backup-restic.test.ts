@@ -65,7 +65,7 @@ function restoredFixture(afterRestore?:(path:string)=>void){
 function trackRestoredReads(onRead?:(path:string)=>void,onOpen?:(path:string)=>void){
  let fd=-1,path="",mutated=false;const reads:{length:number;buffer:unknown}[]=[];
  vi.mocked(openSync).mockImplementation((file,flags,mode)=>{
-  const restored=typeof file==="string"&&file.includes("/restore-")&&file.endsWith("/backup.age");if(restored){path=file;onOpen?.(path);expect(Number(flags)&constants.O_NOFOLLOW).toBe(constants.O_NOFOLLOW);}
+  const slash=typeof file==="string"?file.replace(/\\/g,"/"):"";const restored=slash.includes("/restore-")&&slash.endsWith("/backup.age");if(restored){path=file as string;onOpen?.(path);if(constants.O_NOFOLLOW!==undefined)expect(Number(flags)&constants.O_NOFOLLOW).toBe(constants.O_NOFOLLOW);}
   const opened=actualFs.openSync(file,flags,mode);if(restored)fd=opened;return opened;
  });
  vi.mocked(readSync).mockImplementation((...args:any[])=>{
@@ -73,7 +73,7 @@ function trackRestoredReads(onRead?:(path:string)=>void,onOpen?:(path:string)=>v
   if(args[0]===fd){reads.push({length:args[3],buffer:args[1]});if(!mutated){mutated=true;onRead?.(path);}}
   return length;
  });
- vi.mocked(readFileSync).mockImplementation((...args:any[])=>{if(typeof args[0]==="string"&&args[0].includes("/restore-")&&args[0].endsWith("/backup.age"))throw Error("Whole restored archive read is forbidden");return Reflect.apply(actualFs.readFileSync,actualFs,args);});
+ vi.mocked(readFileSync).mockImplementation((...args:any[])=>{const slash=typeof args[0]==="string"?args[0].replace(/\\/g,"/"):"";if(slash.includes("/restore-")&&slash.endsWith("/backup.age"))throw Error("Whole restored archive read is forbidden");return Reflect.apply(actualFs.readFileSync,actualFs,args);});
  return{reads,fd:()=>fd};
 }
 it("restored archive hash uses one 64KiB buffer and bounded reads, never a whole-file read",async()=>{
