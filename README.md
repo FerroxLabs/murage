@@ -4,11 +4,11 @@
 
 **You have the vision. Put an AI workforce behind it.**
 
-Brief your AI Chief of Staff. It assembles specialists, coordinates their work, and brings the results back to you—with shared tools, durable memory and you in control.
+Brief your AI Chief of Staff. It assembles specialists, coordinates their work, and brings the results back to you, with shared tools, durable memory and you in control.
 
 *For founders, creators and operators with more ideas than hands.*
 
-[Build your first AI team →](#download) · [See it in action](#a-real-brief-a-working-team) · [Web & mobile](#your-workspace-on-the-device-in-your-hand) · [Memory](#memory-that-you-can-inspect-and-control) · [Telegram](#stay-in-the-conversation-from-telegram)
+[Build your first AI team →](#download) · [About](#about-murage) · [See it in action](#a-real-brief-a-working-team) · [Web & mobile](#your-workspace-on-the-device-in-your-hand) · [Memory](#memory-that-you-can-inspect-and-control) · [Telegram](#stay-in-the-conversation-from-telegram)
 
 </div>
 
@@ -35,6 +35,23 @@ Mac downloads are signed and notarized. Windows downloads are signed. See the re
 
 If an official desktop build says “Fuigo CLI not found” or asks you to install Fuigo through npm, that is a bundled-engine detection or installation problem, not a normal prerequisite. Report your Murage version, operating system and installer type. Do not include API keys.
 
+## About Murage
+
+**Everyone should have a team.** Most people with more ideas than hours have no one to hand work to, and most businesses have good people buried in busywork. Murage gives both a Chief of Staff and a team of AI agents that work on your own computer, with the AI you already use.
+
+You brief your Chief of Staff the way you would brief a person. It works out who is needed, sets up specialist bots or whole teams, hands out the work, keeps track of it and brings the results back to you. Every bot has its own role, instructions, memory, folders and tools, and nothing risky happens without your say: you choose how much each bot may do on its own, and you can see and change what it remembers.
+
+Two rules shape everything we build:
+
+- **Easy to start.** Download it, connect the AI you already have (Claude Code, Codex, Gemini, Hermes, a local model or your own API key) and tell your Chief of Staff what needs doing.
+- **Grows with you.** Start with one bot clearing an inbox. Grow into teams that run whole parts of a business, with routines on a schedule, shared projects, connected apps, your phone and your chat apps.
+
+AI changes every month, so Murage changes with it. New engines, tools and abilities land in each release, and the [changelog](https://murage.ai/changelog) lists every one.
+
+> "Murage grew out of the harness we already ran our own work on inside Ferrox Labs. It worked, and I wanted everyone to have it: a real team in your hands, whatever AI you use underneath."
+>
+> Sean Donahoe, founder, Ferrox Labs
+
 ## A real brief. A working team.
 
 A 14-day launch. A $3,000 budget. No paid ads. The strategist proposes priorities; the reviewer challenges the assumption that could make the plan fail.
@@ -55,7 +72,7 @@ Custom avatars, named teams and group portraits make that structure easy to reco
 
 ## Start with a team. Or let your Chief assemble one.
 
-You do not have to invent every role and workflow yourself. Browse **prebuilt teams** for an outcome, inspect their members and playbooks, and choose what to import. Agents—called **Embers**—can also work individually, with their own instructions, model and task history.
+You do not have to invent every role and workflow yourself. Browse **prebuilt teams** for an outcome, inspect their members and playbooks, and choose what to import. Bots can also work on their own, with their own instructions, model and task history.
 
 With a delegation-compatible engine, your Chief can use the live roster, create useful specialists when you ask for a team, and assign them work. The Chief stays your central point of contact. Nested Chief-to-lead-to-specialist delegation has a known tool-availability limitation; improvements are in development and are not part of this release.
 
@@ -87,7 +104,7 @@ Choose the destination per bot. Browser, local control, VM and remote access hav
 
 A useful process should become something your team can reuse. A correction should become context for the next attempt.
 
-Ask an agent to **`/learn`** a workflow, a source, or what you just worked through. It can distill the steps into a reusable skill—or revise an existing learned skill when you explicitly request it. Murage stages the change for review; **you approve it before it becomes active**.
+Ask an agent to **`/learn`** a workflow, a source, or what you just worked through. It can distill the steps into a reusable skill, or revise an existing learned skill when you explicitly request it. Murage stages the change for review; **you approve it before it becomes active**.
 
 Combined with managed memory, this gives the team an evolving working playbook: relevant context for the current task, reusable procedures for recurring work, and corrections you can inspect and carry forward. The team can adapt its plan and specialist mix to the workload while permanent skill changes stay under your control.
 
@@ -136,7 +153,7 @@ Set it up in **Settings → Channels → Telegram** using your own bot token and
 | Service | What you can do today |
 |---|---|
 | **Telegram** | Continue the Chief’s conversation and answer supported one-time approval requests from a paired private chat. |
-| **Slack** | Connect Slack through Composio so capable agents can read channels and post updates, subject to the connected account and permissions. Inbound Slack control is not yet shipped. |
+| **Slack** | Connect Slack as a connected app so capable agents can read channels and post updates, subject to the connected account and permissions. Inbound Slack control is not yet shipped. |
 | **Discord** | Control-channel support is coming soon. |
 
 Telegram group routing and additional inbound messaging channels remain future work. [Telegram setup and boundaries](docs/telegram.md).
@@ -149,7 +166,7 @@ Multi-vendor choice is part of the product, not an add-on. Use Fuigo, installed 
 
 ## Connect the tools your team uses
 
-Connect tools through **Composio** or your own **MCP servers**. Search can use an engine's native capability, Murage's free backup search mode, or an explicitly selected Tavily, Exa or Firecrawl account. Browser and computer tools are available in supported configurations with their required permissions.
+Connect tools as **connected apps** (Gmail, Slack, GitHub, Notion and many more) or through your own **MCP servers**. Search can use an engine's native capability, Murage's built-in backup search mode, or an explicitly selected Tavily, Exa or Firecrawl account. Browser and computer tools are available in supported configurations with their required permissions.
 
 Murage also includes a local MCP server for other clients to list the team, send work, read bounded transcripts and wait for results. This coordination interface does not grant those clients permission to approve actions or change credentials.
 
@@ -191,8 +208,20 @@ Run `pnpm dev:server` and `pnpm dev` in separate terminals, then `pnpm dev:deskt
 
 Further guides: [custom engines](docs/custom-engines.md), [custom MCP servers](docs/custom-mcp-servers.md), [Murage MCP server](docs/mcp-server.md), [connected apps](docs/composio.md), [Ubuntu](docs/linux-desktop.md), [recovery](docs/verification/installation-recovery.md), and [releasing](docs/releasing.md).
 
+## About Ferrox Labs
+
+Murage is made by **Ferrox Labs, LLC** in Austin, Texas, founded by Sean Donahoe. We build tools that put AI to work for real people and real businesses: Murage, the Fuigo coding engine and Flux Router, our service for AI models, connected apps, voice and web search.
+
+| | |
+|---|---|
+| Website | [murage.ai](https://murage.ai) |
+| About us | [murage.ai/about](https://murage.ai/about) |
+| Releases | [Every installer](https://github.com/FerroxLabs/murage-releases/releases) · [What changed](https://murage.ai/changelog) |
+| Security | [How we handle data, and how to report a problem](SECURITY.md) |
+| Contributing | [How to contribute](CONTRIBUTING.md) |
+
 ## Credits and license
 
-Murage is developed by **Ferrox Labs** and is a fork of [OpenMausBot](https://github.com/milind-soni/OpenMausBot), created by Milind Soni and its contributors. Murage is independently maintained and is not affiliated with or endorsed by the upstream project.
+Murage is developed and maintained by **Ferrox Labs**. It started from [OpenMausBot](https://github.com/milind-soni/OpenMausBot), created by Milind Soni and its contributors. Murage is independently maintained and is not affiliated with or endorsed by the upstream project.
 
 Licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). See [LICENSE](LICENSE) and [NOTICE](NOTICE). Murage builds on OpenMausBot; those portions remain under the Apache License 2.0 ([LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)). Bundled third-party components retain their own licenses and attribution.
