@@ -153,7 +153,7 @@ export function reconcileMemoryRoster(roster: MemoryRoster) {
 }
 
 /** notOwnerAudience: the turn's words were not proven to be the owner's
- * (0.1.61 lane T2). It reads like a stranger in the owner's own thread: the
+ * (0.1.61 room privacy fix). It reads like a stranger in the owner's own thread: the
  * conversation and room it runs in, never the bot's or team's memory, the
  * owner's preferences or anything the owner shared. */
 function eligibleScopes(botId: string, threadId: string, roster: MemoryRoster, notOwnerAudience = false): string[] {

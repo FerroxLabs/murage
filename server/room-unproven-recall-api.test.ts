@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.61 lane T2, gap 3, through the real server and a fake engine that
+// 0.1.61 room privacy fix, gap 3, through the real server and a fake engine that
 // records every prompt: a room message from a caller that proved nothing
 // (no desktop or phone proof) starts a member turn whose recall carries none
 // of the member's own memory. The owner's own message still does.

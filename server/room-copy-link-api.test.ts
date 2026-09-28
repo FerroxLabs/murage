@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.61 lane T2, gap 2: a teammate's delegated reply is copied into the
+// 0.1.61 room privacy fix, gap 2: a teammate's delegated reply is copied into the
 // room that asked and into the pair room. Each copy names the original
 // reply (Message.copyOf), so forgetting what the original used withholds
 // the copies from bots too (room-withheld-recall.test.ts covers the rule).

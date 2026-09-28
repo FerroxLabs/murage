@@ -33,7 +33,7 @@ export interface RoomTranscript {
 /** A room past this many messages, or past the receipt limit a thread is
  * read whole under, checks only the lines a member prompt can show (the
  * newest window, the pin, each quoted line): bounded work, and a line it
- * did not check is never shown (0.1.61 lane T2, replay limit). */
+ * did not check is never shown (0.1.61 room privacy fix, replay limit). */
 const WHOLE_ROOM_MESSAGES = 10000;
 
 export function roomTranscriptForTurn(threadId: string, messages: readonly Message[], ownerAudience: boolean, access: MemoryAccess, pinnedMessageId?: string): RoomTranscript {

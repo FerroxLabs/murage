@@ -1,8 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Which generated messages a memory receipt still vouches for (0.1.61 lane T
-// and T2).
+// Which generated messages a memory receipt still vouches for (0.1.61 room fixes).
 //
 // A bot reply made with recalled memory is linked to the receipt of that
 // recall (memory_disclosures.output_message_ids). When what the receipt used

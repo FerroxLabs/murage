@@ -38,7 +38,7 @@ export interface DelegationItem {
    * Full access then. Never set for a webhook, channel or routine turn. */
   fullAccessWaived?: boolean;
   /** Queued by a turn whose words were not proven to be the owner's: the
-   * target turn reads memory as a non-owner audience too (0.1.61 lane T2).
+   * target turn reads memory as a non-owner audience too (0.1.61 room privacy fix).
    * Server-issued, never model-supplied. */
   notOwnerAudience?: true;
   /** Trusted originating event identity. Survives handoff/retry/restart so

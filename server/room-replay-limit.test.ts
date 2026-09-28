@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.61 lane T2, gap 4: a room with more than 2048 memory receipts failed
+// 0.1.61 room privacy fix, gap 4: a room with more than 2048 memory receipts failed
 // every memory-on turn (MEMORY_REPLAY_LIMIT), because the replay check read
 // every receipt of the room before it looked at a single line. A busy room
 // now checks only the lines a member prompt can show, reads receipts per

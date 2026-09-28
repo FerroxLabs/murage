@@ -138,7 +138,7 @@ export function roomReplayWithheld(threadId: string, messages: readonly (ReplayM
 /** A room turn whose audience is not the owner (a channel person's room,
  * words nobody proved are the owner's) reads the room through
  * filterMemoryReplay. What that filter removes from the transcript is not
- * handed back by recall or memory search either (0.1.61 lane T2). Undefined
+ * handed back by recall or memory search either (0.1.61 room privacy fix). Undefined
  * for every other turn, whose rule is the content rule alone
  * (replay-lineage.ts). */
 export function readerWithheldMessage(access: MemoryAccess): ((threadId: string, messageId: string) => boolean) | undefined {

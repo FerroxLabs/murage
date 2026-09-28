@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.61 lane T2, gaps 1 and 2: a room reply withheld from the transcript
+// 0.1.61 room privacy fix, gaps 1 and 2: a room reply withheld from the transcript
 // (what it used was forgotten, deleted or changed) is withheld everywhere
 // else it lives too: its captured chunk in recall and memory search, the
 // room checkpoint built from it, and every copy of it mirrored into a pair

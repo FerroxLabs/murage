@@ -4254,7 +4254,7 @@ describe("harness HTTP API", () => {
       // the asker learns about it the way it is supposed to: in its own reply
       expect(JSON.stringify(await asked.json())).toMatch(/couldn't start that bot/i);
       // the pair channel says so as Murage, never as the target's own words
-      // (0.1.61 lane T, O3)
+      // (0.1.61 room transcript fix, O3)
       const pair = (await desktopApi("GET", "/api/bots?messages=50")).body.groups.find((group: { dm?: boolean; memberIds: string[] }) =>
         group.dm && group.memberIds.includes(asker.id) && group.memberIds.includes(target.id));
       expect(pair.messages.some((message: { kind: string; text?: string; from?: { botId: string } }) =>

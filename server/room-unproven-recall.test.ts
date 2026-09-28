@@ -1,9 +1,9 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.61 lane T2, gap 3: a room turn started by words nobody proved are the
-// owner's (a script, a bot's own shell) is not an owner audience. Lane T
-// gated its transcript; its recall still carried the member's bot and team
+// 0.1.61 room privacy fix, gap 3: a room turn started by words nobody proved are the
+// owner's (a script, a bot's own shell) is not an owner audience. The transcript fix
+// gated the transcript; its recall still carried the member's bot and team
 // memory. Memory now reads such a turn like a stranger in the owner's room:
 // the room and its conversation, nothing private, and none of the replies
 // its transcript leaves out.

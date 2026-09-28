@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.61 lane T, F9: a room member whose turn fails used to leave only a tool
+// 0.1.61 room transcript fix, F9: a room member whose turn fails used to leave only a tool
 // row under its own name, which a room with tool calls hidden could fold
 // away, so the owner saw silence. The room now gets one line from Murage
 // (no sender) saying who could not answer and why.

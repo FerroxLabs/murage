@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.61 lane T2, gap 3 (Astra audit finding 1): a room turn started by
+// 0.1.61 room privacy fix, gap 3 (Astra audit finding 1): a room turn started by
 // words nobody proved are the owner's hands work to a teammate. The
 // teammate's delegated turn answers that same chain, so its recall carries
 // none of its own memory either. The owner's own message still does.

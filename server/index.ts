@@ -5150,7 +5150,7 @@ const delegationWatch = new Map<string, {
   sourceThreadId?: string;
   /** when the delegated turn was dispatched — elapsed time for status checks */
   startedAtMs?: number;
-  /** the delegated turn reads memory as a non-owner audience (lane T2) */
+  /** the delegated turn reads memory as a non-owner audience (0.1.61 room privacy fix) */
   notOwnerAudience?: boolean;
 }>();
 
@@ -5544,7 +5544,7 @@ function drainQueuedSends() {
   drainSteeredMessages(store, (botId, threadId, _queuedPrompt, userMessage, excludeIds) => {
     // Quotes are rendered now, not when each line was queued: under this
     // batch's audience (one unproven line makes the whole turn one) and
-    // today's withholding (0.1.61 lane T2).
+    // today's withholding (0.1.61 room privacy fix).
     const drained = store.messagesFor(threadId).filter((message) => excludeIds.includes(message.id));
     const unproven = drained.some((message) => message.origin === "unproven");
     const byId = new Map(store.messagesFor(threadId).map((message) => [message.id, message] as const));
@@ -5558,7 +5558,7 @@ function drainQueuedSends() {
     // ...unless a drained line came from an unproven caller: then the whole
     // turn runs unattended, like a webhook turn.
     startTurn(botId, prompt, { threadId, userMessage, excludeMessageIds: excludeIds,
-      // and its memory reads as a non-owner audience (0.1.61 lane T2)
+      // and its memory reads as a non-owner audience (0.1.61 room privacy fix)
       ...(unproven ? { unattended: true, notOwnerAudience: true } : {}),
     }).then(() => undefined).catch((err) => {
       store.appendMessage(threadId, {
@@ -5817,7 +5817,7 @@ async function startTurn(
   // Words nobody proved are the owner's (or a peer turn such words started,
   // an ask or a delegation) in the owner's own thread: memory, the owner's
   // standing material, quoted replies and owed copies read it as a non-owner
-  // audience (0.1.61 lane T2). A channel person's thread is one already.
+  // audience (0.1.61 room privacy fix). A channel person's thread is one already.
   const memoryNotOwner = humanIsOwner && (opts?.notOwnerAudience === true || opts?.origin === "unproven");
   if(!humanIsOwner){
     if(!opts?.automationSource&&!opts?.commsDepth&&!opts?.cardContinuation&&!opts?.memoryRedispatch)throw Object.assign(new Error("This conversation belongs to a channel person. Start a new owner task to chat."),{status:403});
@@ -5993,7 +5993,7 @@ async function startTurn(
     pending: (task.externalUpdates ?? []).map((id) => {
       const message = messagesById.get(id);
       // A teammate's copied reply whose original is now withheld from bots
-      // is handed over as the withheld line, never its words (0.1.61 lane T2).
+      // is handed over as the withheld line, never its words (0.1.61 room privacy fix).
       // A turn that is not the owner's gets no teammate's copied reply at all:
       // its reader check needs the memory access this turn has not built yet.
       if (message?.copyOf && (memoryNotOwner || capturedMessageWithheld(threadId, id))) return { id, text: withheldRoomLine(message) };
@@ -6042,7 +6042,7 @@ async function startTurn(
   const dispatchClaimId = run.generation;
   // Memory reads a turn whose words nobody proved are the owner's (or a
   // peer turn such a turn asked or delegated) as a non-owner audience, in the
-  // owner's own thread too (0.1.61 lane T2). A channel person's thread is one
+  // owner's own thread too (0.1.61 room privacy fix). A channel person's thread is one
   // already, and keeps its own receipt handling.
   beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination, memoryNotOwner);
   if(opts?.memorySkillSource)internalTurnOwners.get(threadId)!.memorySkillSource=opts.memorySkillSource;
@@ -7734,7 +7734,7 @@ const groupQueues = new Map<string, Promise<void>>();
 /** The chat round running on a room thread. A round holds each responder
  * until that responder's own turn ends (runGroupMemberTurn), not until the
  * whole round ends: a teammate that has already answered can take a handoff
- * or a direct message while the others are still speaking (0.1.61 lane T,
+ * or a direct message while the others are still speaking (0.1.61 room transcript fix,
  * O2). One still waiting its turn stays held, so a handoff never makes it
  * miss its own room reply. */
 const roomRounds = new Map<string, GroupTurnOperation>();
@@ -7923,7 +7923,7 @@ async function runGroupMemberTurn(
   };
   // Why this member could not answer, said once in the room by Murage (no
   // sender, never folded with tool calls), whatever the tool-call setting
-  // (0.1.61 lane T, F9). The engine's own error row stays for its detail.
+  // (0.1.61 room transcript fix, F9). The engine's own error row stays for its detail.
   let failureLine = false;
   const murageFailureLine = (reason: string, partial = false) => {
     if (failureLine || orchestration) return;
@@ -7983,7 +7983,7 @@ async function runGroupMemberTurn(
   // Is everyone this turn answers to the owner: the room's human, and words
   // proven to be the owner's. The same answer decides the transcript
   // (room-transcript.ts), the owner's standing material and memory: a turn
-  // that is not the owner's recalls nothing private (0.1.61 lane T2).
+  // that is not the owner's recalls nothing private (0.1.61 room privacy fix).
   const roomOwnerAudience = isWorkspaceOwner(threadHumanPrincipal(threadId)) && latestUser?.origin !== "unproven";
   const internalGeneration = randomUUID();
   beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring, undefined, undefined, !roomOwnerAudience);
@@ -8002,7 +8002,7 @@ async function runGroupMemberTurn(
   const skills = pinnedProcedures.catalogue;
   // Without memory's own transcript (prepareRoomMemory runs only when memory
   // is active): what the owner forgot stays withheld even when memory is
-  // not active, and skill choice reads the same lines (0.1.61 lane T2).
+  // not active, and skill choice reads the same lines (0.1.61 room privacy fix).
   const roomFloor = memoryState().mode === "active" ? undefined : roomTranscriptWithoutMemory(threadId, store.messagesFor(threadId), roomOwnerAudience, roomPinnedMessageId(threadId), !roomOwnerAudience && isWorkspaceOwner(threadHumanPrincipal(threadId)));
   const roomContextText = () => roomFloor ? serializeRoomContext(threadId, userName, roomFloor.messages, roomFloor.withheld) : serializeRoomContext(threadId, userName);
   const selectedSkills = mergeSkills(
@@ -8268,7 +8268,7 @@ async function runGroupMemberTurn(
   }
   let replyText = "";
   // Why this member's turn failed, if it did: the room gets one line from
-  // Murage saying so, whatever the tool-call setting (0.1.61 lane T, F9).
+  // Murage saying so, whatever the tool-call setting (0.1.61 room transcript fix, F9).
   let turnFailure: string | undefined;
   // This attempt's internal generation can be revoked between the claim and
   // the dispatch: the bot's model or connected-app access changed, its thread
@@ -9313,7 +9313,7 @@ function roomSetupPending(group: GroupRecord): boolean {
 /** The reply a message quotes, as the prompt may carry it: a reply withheld
  * from bots (or, for words nobody proved are the owner's, any reply made with
  * memory) is quoted as the withheld line, like the transcript shows it
- * (0.1.61 lane T2). */
+ * (0.1.61 room privacy fix). */
 function replyForPrompt(threadId: string, target: Message | undefined, notOwnerAudience: boolean): Message | undefined {
   if (!target || target.role !== "bot" || !target.text) return target;
   const withheld = capturedMessageWithheld(threadId, target.id) || (notOwnerAudience && messageMadeWithMemory(threadId, target.id));
@@ -12242,7 +12242,7 @@ const server = createServer(async (req, res) => {
             }
             // a result whose original reply is now withheld from bots is
             // read back as the withheld line; so is one a turn made as the
-            // owner's audience, asked for by a turn that is not (0.1.61 lane T2)
+            // owner's audience, asked for by a turn that is not (0.1.61 room privacy fix)
             // A receipt written before results carried their origin (legacy,
             // kept up to 48 hours) cannot be checked, so its text is withheld.
             const withheld = (internalClaim.notOwnerAudience === true && receipt.notOwnerAudience !== true) || (receipt.copyOf && copyOriginWithheld(receipt.copyOf))
