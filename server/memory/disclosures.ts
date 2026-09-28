@@ -1,6 +1,6 @@
 import { database, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
-import { accessIncludesRoom, assertMemoryAccess, memoryAccessIsOwnerAudience, type MemoryAccess } from "./policy.ts";
+import { accessIncludesRoom, assertMemoryAccess, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { assertMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
 import { messageCopy, messageSourceForgotten, replayExclusions, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
@@ -55,8 +55,9 @@ export function continuationMemoryRevoked(threadId: string, driverInstance: stri
   const rows = database().prepare("SELECT * FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=?").all(threadId,driverInstance,nativeSession);
   if (!rows.length) return true;
   let invalid = false;
+  const persist = !memoryAccessNotOwnerAudience(access);
   for (const row of rows) if (revoked(row,access)) {
-    database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(row.bundle_id);
+    if (persist) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(row.bundle_id);
     invalid = true;
   }
   return invalid;
@@ -95,7 +96,9 @@ export function filterMemoryReplay<T extends ReplayMessage>(threadId: string, me
   // room does not (persist: false, room-transcript.ts): there one reader's
   // access must never revoke a receipt for every later reader, the author
   // included (0.1.61 transcript fix, R-A).
-  if (options.persist !== false) for (const id of invalidBundles) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(id);
+  // A reader whose words were not proven to be the owner's never persists:
+  // what it may not see says nothing about the receipt for anyone else.
+  if (options.persist !== false && !memoryAccessNotOwnerAudience(access)) for (const id of invalidBundles) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(id);
   return messages.filter(message=>!excluded.has(message.id));
 }
 

@@ -17,7 +17,8 @@ import { captureWork } from "./memory/chunks.ts";
 import { consolidateMemorySource } from "./memory/consolidate.ts";
 import { ownerMemoryTicket, saveMemoryCandidate } from "./memory/authority.ts";
 import { forgetMemory } from "./memory/forget.ts";
-import { filterMemoryReplay, roomReplayWithheld } from "./memory/disclosures.ts";
+import { continuationMemoryRevoked, filterMemoryReplay, roomReplayWithheld } from "./memory/disclosures.ts";
+import { roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import { copyOriginWithheld, recordRestsOnWithheldMessage, replayExclusions } from "./memory/replay-lineage.ts";
 import { insertMessage } from "./message-db.ts";
 import type { Message } from "./store.ts";
@@ -165,4 +166,42 @@ it("finding 9: a thread whose receipts are too heavy to read whole falls back to
   const withheld = replayExclusions("closing-chat", messages, null, { failClosed: true });
   expect(withheld.has("owner-1")).toBe(false);
   expect(withheld.has("owner-2")).toBe(false);
+});
+
+// Kimi K3 round 1
+
+it("Kimi M3: a reader whose words were not proven never marks the owner's receipts revoked", () => {
+  const record = daxMemory(true);
+  disclose("b-direct", "dax-direct", [{ id: record, version: version(record) }], ["m-answer"]);
+  const lines = [{ id: "m-ask", role: "user" }, { id: "m-answer", role: "bot" }];
+  expect(filterMemoryReplay("dax-direct", lines, access("dax", "dax-direct", true)).map(m => m.id)).toEqual(["m-ask"]);
+  expect(continuationMemoryRevoked("dax-direct", "fake", "none", access("dax", "dax-direct", true))).toBe(true);
+  expect((database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id='b-direct'").get() as { state: string }).state).toBe("delivered");
+  // the owner's own turn still reads its reply
+  expect(filterMemoryReplay("dax-direct", lines, access("dax", "dax-direct")).map(m => m.id)).toEqual(["m-ask", "m-answer"]);
+});
+
+it("Kimi M4: one oversized receipt no longer fails a room turn", () => {
+  const a = access("dax", "closing-chat");
+  const huge = JSON.stringify(Array.from({ length: 12000 }, (_, i) => `bulk-output-${i}-padding-padding`));
+  database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('huge','closing-chat','d',NULL,'[]','[]',?,?,?,0,'delivered',1)").run(huge, a.policyRevision, a.deletionEpoch);
+  const lines = [{ id: "owner-1", role: "user" }, ...Array.from({ length: 10 }, (_, i) => ({ id: `r-${i}`, role: "bot" })), { id: "owner-2", role: "user" }];
+  expect(() => replayExclusions("closing-chat", lines, null)).toThrow("MEMORY_REPLAY_LIMIT");
+  const withheld = replayExclusions("closing-chat", lines, null, { failClosed: true });
+  expect(withheld.has("owner-1") || withheld.has("owner-2")).toBe(false);
+});
+
+it("Kimi M5: with memory no longer active, a forgotten reply stays withheld in the room", () => {
+  const record = daxMemory();
+  disclose("b-room", "closing-chat", [{ id: record, version: version(record) }], ["m-dax"]);
+  const lines = [{ id: "m-owner", role: "user", kind: "text", text: "rows?", at: 1 } as Message, bot("m-dax", REPLY), { id: "m-next", role: "user", kind: "text", text: "thanks", at: 3 } as Message];
+  setMemoryMode("capture");
+  expect(roomTranscriptWithoutMemory("closing-chat", lines, true)?.withheld.size).toBe(0);
+  forget(record);
+  const owner = roomTranscriptWithoutMemory("closing-chat", lines, true)!;
+  expect([...owner.withheld]).toEqual(["m-dax"]);
+  expect(owner.messages.find(m => m.id === "m-dax")?.text).toContain("Reply withheld");
+  expect(roomTranscriptWithoutMemory("closing-chat", lines, false)!.messages.map(m => m.id)).toEqual(["m-owner", "m-next"]);
+  // a room that never used memory is read as it is
+  expect(roomTranscriptWithoutMemory("pair-chat", [bot("m-plain", "hello")], true)).toBeUndefined();
 });

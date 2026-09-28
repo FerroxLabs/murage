@@ -210,6 +210,12 @@ export function memoryAccessIsOwnerAudience(access: MemoryAccess): boolean {
   return Boolean(trusted) && trusted!.claim.notOwnerAudience !== true && isWorkspaceOwner(access.humanPrincipal);
 }
 
+/** The turn's words were not proven to be the owner's (the claim flag). Its
+ * verdicts are about this reader, never about the receipts themselves. */
+export function memoryAccessNotOwnerAudience(access: MemoryAccess): boolean {
+  return contexts.get(access)?.claim.notOwnerAudience === true;
+}
+
 /** True when this access is a room member's. Owner-private identity records
  * (continuity, canon, reveal state) are never read in a room. */
 export function accessIncludesRoom(access: Pick<MemoryAccess, "scopeIds">): boolean {

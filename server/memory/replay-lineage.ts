@@ -24,6 +24,16 @@ import { database } from "../database.ts";
 import { supersededThreadCheckpoint } from "./checkpoints.ts";
 
 export type Disclosure = Record<string,string|number|bigint|Uint8Array|null>;
+
+// A check that cannot finish withholds the line; say so once per reason, so
+// a real fault does not pass as quiet withholding.
+const warned = new Set<string>();
+function noteWithheldOnError(error: unknown) {
+  const reason = error instanceof Error ? error.message.split(":")[0].slice(0, 80) : "unknown";
+  if (warned.has(reason) || warned.size > 32) return;
+  warned.add(reason);
+  console.warn(`[memory] a replay check could not finish (${reason}); the line is withheld from bots`);
+}
 /** Where a message was copied from: the original thread and its message ids. */
 export interface MessageCopy { threadId: string; messageIds: string[] }
 /** role "user": the owner's or a person's own words. Only bot output is ever
@@ -229,12 +239,12 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
     if(!pending.length)return;
     let bad:boolean;
     try { bad=invalid(row); }
-    catch (error) { if(!failClosed)throw error; visiting.clear(); bad=true; }
+    catch (error) { if(!failClosed)throw error; noteWithheldOnError(error); visiting.clear(); bad=true; }
     if(bad)for(const id of pending)excluded.add(id);
   };
   const receiptsOf = (thread:string, messageId:string, whole:boolean, forId:string): Disclosure[] => {
     try { return producing(thread,messageId,whole); }
-    catch (error) { if(!failClosed)throw error; excluded.add(forId); return []; }
+    catch (error) { if(!failClosed)throw error; noteWithheldOnError(error); excluded.add(forId); return []; }
   };
   const wanted=new Set(messages.filter(message=>message.role!=="user").map(message=>message.id));
   const perMessage = () => {
@@ -252,6 +262,7 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
     try { rows=loadThread(threadId); }
     catch (error) {
       if(!failClosed)throw error;
+      noteWithheldOnError(error);
       // The whole thread is past the read budget: check line by line instead.
       threadReceipts.clear();outputs.clear();memo.clear();visiting.clear();receiptCount=0;nodes=0;
     }
@@ -268,7 +279,7 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
   for(const message of messages){
     if(!message.copyOf||excluded.has(message.id))continue;
     try { if(originBad(message.copyOf,1,0,true))excluded.add(message.id); }
-    catch (error) { if(!failClosed)throw error; visiting.clear(); excluded.add(message.id); }
+    catch (error) { if(!failClosed)throw error; noteWithheldOnError(error); visiting.clear(); excluded.add(message.id); }
   }
   return excluded;
 }
@@ -285,7 +296,9 @@ function generatedSpeaker(speaker: unknown): boolean {
 // on every commit by another one.
 const verdicts = new Map<string,boolean>();
 let verdictStamp = "";
-function verdictCache(): Map<string,boolean> {
+function verdictCache(): Map<string,boolean> | undefined {
+  // Inside a transaction a verdict may rest on writes that roll back: no cache.
+  if (database().isTransaction) return undefined;
   const row = database().prepare("SELECT total_changes() AS changes, (SELECT data_version FROM pragma_data_version) AS version").get();
   const stamp = `${row?.changes}:${row?.version}`;
   if (stamp !== verdictStamp || verdicts.size > 4096) { verdicts.clear(); verdictStamp = stamp; }
@@ -297,14 +310,14 @@ function verdictCache(): Map<string,boolean> {
  * is. Checks it cannot finish withhold it. */
 export function capturedMessageWithheld(threadId: string, messageId: string): boolean {
   const cache = verdictCache(), key = JSON.stringify([threadId, messageId]);
-  const known = cache.get(key);
+  const known = cache?.get(key);
   if (known !== undefined) return known;
   let withheld: boolean;
   try {
     const copy = messageCopy(threadId, messageId);
     withheld = replayExclusions(threadId, [{ id: messageId, ...(copy ? { copyOf: copy } : {}) }], null, { failClosed: true }).size > 0;
-  } catch { withheld = true; }
-  cache.set(key, withheld);
+  } catch (error) { noteWithheldOnError(error); withheld = true; }
+  cache?.set(key, withheld);
   return withheld;
 }
 

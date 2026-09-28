@@ -45,7 +45,7 @@ import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfte
 import { memoryAccess, backgroundMemoryAudience, type MemoryAccess } from "./memory/policy.ts";
 import { memoryState } from "./memory/repository.ts";
 import { continuationMemoryRevoked, filterMemoryReplay, readerWithheldMessage } from "./memory/disclosures.ts";
-import { roomTranscriptForTurn } from "./room-transcript.ts";
+import { roomTranscriptForTurn, roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import { memoryAgentRoute } from "./memory/routes.ts";
 import { MemoryWorkerController } from "./memory/worker-controller.ts";
 import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./memory/settlement.ts";
@@ -7947,9 +7947,14 @@ async function runGroupMemberTurn(
       ...(procedureHolder.pinnedCwd !== undefined ? {legacyRoomWorkspace:true as const} : {})});
   const pinnedProcedures = preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
   const skills = pinnedProcedures.catalogue;
+  // Without memory's own transcript (prepareRoomMemory runs only when memory
+  // is active): what the owner forgot stays withheld even when memory is
+  // not active, and skill choice reads the same lines (0.1.61 lane T2).
+  const roomFloor = memoryState().mode === "active" ? undefined : roomTranscriptWithoutMemory(threadId, store.messagesFor(threadId), roomOwnerAudience, roomPinnedMessageId(threadId));
+  const roomContextText = () => roomFloor ? serializeRoomContext(threadId, userName, roomFloor.messages, roomFloor.withheld) : serializeRoomContext(threadId, userName);
   const selectedSkills = mergeSkills(
     selectBundledSkills(
-      serializeRoomContext(threadId, userName),
+      roomContextText(),
       instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : [],
       skills,
     ),
@@ -8131,7 +8136,7 @@ async function runGroupMemberTurn(
 
   const learnTurn = skillAuthoring && latestUser?.text ? expandLearnTurnText(latestUser.text) : "";
   const learnBlock = learnTurn && learnTurn !== latestUser?.text ? `\n\n${learnTurn}` : "";
-  let text = `${serializeRoomContext(threadId, userName)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation ? `\n\n${cardContinuation}` : ""
+  let text = `${roomContextText()}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation ? `\n\n${cardContinuation}` : ""
   }`;
 
   // same workspace + memory as a 1:1 turn — the room is a different
