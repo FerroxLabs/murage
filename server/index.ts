@@ -7633,6 +7633,11 @@ const webhookIngressStatus = () => ({
 // fresh session with recent room context. A member's reply may @mention
 // teammates; those get one chained turn (hop 1), never deeper.
 const groupQueues = new Map<string, Promise<void>>();
+/** The chat round running on a room thread. A round holds a member only
+ * while that member speaks (runGroupMemberTurn), never for the whole round:
+ * a teammate still waiting its turn can take a handoff or a direct message
+ * (0.1.61 lane T, O2). */
+const roomRounds = new Map<string, GroupTurnOperation>();
 const MAX_GROUP_HOPS = 1;
 
 type GroupMemberTurnOutcome =
@@ -7844,6 +7849,17 @@ async function runGroupMemberTurn(
     instance.adapter.capabilities.agentsMcp === true;
   const internalGeneration = randomUUID();
   beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring);
+  // Speaker-only locking: this member joins the round's held set when it
+  // claims its turn and leaves it when its own turn ends (or fails to start),
+  // before any teammate it @mentions speaks. Goal runs hold members through
+  // orchestration.onClaimed instead.
+  const round = orchestration ? undefined : roomRounds.get(threadId);
+  let holdsRound = false;
+  const leaveRound = () => {
+    if (!holdsRound) return;
+    holdsRound = false;
+    round!.botIds.delete(bot.id);
+  };
   // Upstream 0b2694a4: the setup latch for a stall during room setup.
   let setupStalled = false;
   let unregisterSetupStall = () => {};
@@ -7925,6 +7941,10 @@ async function runGroupMemberTurn(
   }
   store.setActivity(bot.id, "working");
   orchestration?.onClaimed?.();
+  if (round && !round.cancelled) {
+    round.botIds.add(bot.id);
+    holdsRound = true;
+  }
 
   // Connected-app discovery above can yield for a network round trip. A
   // profile may be removed, or the browser feature switched off, during that
@@ -8428,6 +8448,10 @@ async function runGroupMemberTurn(
         finish("dispatch_failed");
       });
   });
+  // This member's own turn is over. A still-closing provider keeps the room
+  // through busyBotId; a revoked-context attempt keeps its hold for the
+  // re-dispatch, which claims again.
+  if (outcome !== "memory_revoked") leaveRound();
   // A revoked-context attempt is re-dispatched below; its result is the
   // re-dispatch's, never this attempt's.
   if (orchestration && outcome !== "memory_revoked") {
@@ -8554,6 +8578,7 @@ async function runGroupMemberTurn(
     unregisterSetupStall();
     watchdog.settleSetup(threadId, internalGeneration);
     revokeInternalGeneration(threadId, internalGeneration);
+    leaveRound();
   }
 }
 
@@ -8970,11 +8995,9 @@ function startGroupTurn(
     return message;
   }
 
-  const operation = beginGroupTurnOperation(
-    groupId,
-    threadId,
-    goalCoordinator ? [] : responders.map((responder) => responder.id),
-  );
+  // Nobody is held yet: each responder is held only while it speaks
+  // (roomRounds, runGroupMemberTurn).
+  const operation = beginGroupTurnOperation(groupId, threadId, []);
   if (goalCoordinator) {
     const runId = options.goalRunId?.trim() || `goal-${Date.now().toString(36)}-${randomUUID()}`;
     const startedAt = Date.now();
@@ -9026,6 +9049,8 @@ function startGroupTurn(
     } else {
       const spoken = new Set<string>();
       const skillAuthoringClaim = { claimed: false };
+      roomRounds.set(threadId, operation);
+      try {
       for (const responder of responders) {
         if (operation.cancelled) break;
         if (spoken.has(responder.id)) continue;
@@ -9042,6 +9067,9 @@ function startGroupTurn(
           () => groupProviderHandshakeSettled(operation),
           skillAuthoringClaim,
         ))) break;
+      }
+      } finally {
+        if (roomRounds.get(threadId) === operation) roomRounds.delete(threadId);
       }
     }
   });
