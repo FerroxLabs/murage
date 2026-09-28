@@ -113,6 +113,15 @@ export function mirrorReply(
   bus.store.patchGroup(channel.id, { unread: true });
 }
 
+/** A line from Murage itself in the channel: no sender, so it never reads
+ * as a bot's own words, and never folded away with tool calls (0.1.61 lane
+ * T, O3). For what went wrong around a bot, not what the bot said. */
+export function mirrorNotice(bus: CommsBus, channel: GroupRecord | undefined, name: string): void {
+  if (!channel) return;
+  bus.store.appendMessage(channel.threadId, { role: "bot", kind: "activity", tool: { name, ok: false } });
+  bus.store.patchGroup(channel.id, { unread: true });
+}
+
 /** Mirror a terminal activity note into the channel — for async handoffs
  * whose terminal state is not a reply (turn failed, was stopped, or never
  * started). Prior art (A2A, MCP Tasks) is unanimous that every terminal

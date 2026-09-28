@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
-import { getOrCreateChannel } from "./comms-visibility.ts";
+import { getOrCreateChannel, mirrorNotice } from "./comms-visibility.ts";
 import { closeMessageDb } from "./message-db.ts";
 import { Store } from "./store.ts";
 
@@ -42,5 +42,19 @@ describe("bot-to-bot channel context", () => {
     expect(channel.id).toBe(existing.id);
     expect(channel.section).toBe("Agents");
     expect(channel.section).not.toBe("Bot Chats");
+  });
+
+  it("posts a Murage notice with no sender, so it never reads as a bot's own words", () => {
+    const store = new Store(selection);
+    const from = store.createBot({ name: "Moss", section: "Agents" });
+    const target = store.createBot({ name: "Sable", section: "Agents" });
+    const channel = getOrCreateChannel(store, from, target);
+
+    mirrorNotice({ store, broadcast: () => {} }, channel, "Sable could not start: this thread or its group is already working");
+
+    const posted = store.messagesFor(channel.threadId).at(-1)!;
+    expect(posted).toMatchObject({ role: "bot", kind: "activity", tool: { name: "Sable could not start: this thread or its group is already working", ok: false } });
+    expect(posted.from).toBeUndefined();
+    expect(posted.text).toBeUndefined();
   });
 });

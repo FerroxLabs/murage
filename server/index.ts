@@ -269,7 +269,7 @@ import type { ChannelProject } from "../shared/project.ts";
 import { channelProjectSystemLine, nextChannelProject } from "./project-channel.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
-import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
+import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorNotice, mirrorReply, type CommsBus } from "./comms-visibility.ts";
 import { closeMessageDb, deleteThread as deleteThreadRows, openApprovalCardMessages, openQuestionCardMessages, searchMessages } from "./message-db.ts";
 import {
   QUESTION_NOTES,
@@ -1576,6 +1576,8 @@ type AskBotOutcome = {
   text: string;
   /** Provider's stop reason when the turn completed not-ok. */
   stopReason?: string | null;
+  /** "error": why the target's turn could not start. */
+  reason?: string;
 };
 
 function askBotAndWait(targetBotId: string, message: string, depth: number, _fromBotId?: string, eventId?: string, coordination?: CoordinationTrace, sourceThreadId?:string): Promise<AskBotOutcome> {
@@ -1618,9 +1620,10 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
       eventId,
       coordination,
       unattended: isUnattended(sourceThreadId),
-      onDispatchError: (reason) => { releaseSlot(); finish({ status: "error", text: `(couldn't start that bot: ${reason})` }); },
+      onDispatchError: (reason) => { releaseSlot(); finish({ status: "error", text: `(couldn't start that bot: ${reason})`, reason }); },
     }).catch((err) => {
-      releaseSlot(); finish({ status: "error", text: `(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})` });
+      const reason = err instanceof Error ? err.message : String(err);
+      releaseSlot(); finish({ status: "error", text: `(couldn't start that bot: ${reason})`, reason });
     });
   });
 }
@@ -8142,6 +8145,9 @@ async function runGroupMemberTurn(
     return false;
   }
   let replyText = "";
+  // Why this member's turn failed, if it did: the room gets one line from
+  // Murage saying so, whatever the tool-call setting (0.1.61 lane T, F9).
+  let turnFailure: string | undefined;
   // This attempt's internal generation can be revoked between the claim and
   // the dispatch: the bot's model or connected-app access changed, its thread
   // was stopped or deleted, or the provider fleet reloaded. No provider turn
@@ -8288,7 +8294,9 @@ async function runGroupMemberTurn(
       if (e.threadId !== threadId) return;
       if (providerTurnId && e.turnId && e.turnId !== providerTurnId) return;
       if (e.type === "item.completed" && e.itemType === "assistant_text" && !isMemoryProvenanceEcho(e.text)) replyText += `\n${e.text}`;
+      else if (e.type === "runtime.error") turnFailure = e.message;
       else if (e.type === "turn.completed") {
+        if (!turnSucceeded(e) && !turnStopped(e)) turnFailure ??= e.stopReason ?? "the engine reported an error";
         if (orchestration && !turnSucceeded(e)) {
           orchestration.result.stopReason = e.stopReason ?? null;
           finish("provider_failed");
@@ -8448,6 +8456,14 @@ async function runGroupMemberTurn(
         finish("dispatch_failed");
       });
   });
+  if (!orchestration && (outcome === "settled" || outcome === "provider_failed") && turnFailure && !replyText.trim()) {
+    // Murage's line, not the member's: no sender, never folded away.
+    store.appendMessage(threadId, {
+      role: "bot",
+      kind: "activity",
+      tool: { name: `${bot.name} could not answer: ${redactSecretsInText(turnFailure).split("\n")[0].slice(0, 160)}`, ok: false },
+    });
+  }
   // This member's own turn is over. A still-closing provider keeps the room
   // through busyBotId; a revoked-context attempt keeps its hold for the
   // re-dispatch, which claims again.
@@ -12043,6 +12059,12 @@ const server = createServer(async (req, res) => {
           const why = outcome.stopReason?.trim() ? `: ${outcome.stopReason.trim().slice(0, 120)}` : "";
           mirrorActivity(commsBus, currentTarget, channel, `Turn failed${why}`, false);
           return json(res, 200, { botName: currentTarget.name, text: `(the bot's turn failed${why})` });
+        }
+        if (outcome.status === "error") {
+          // The target never ran: this is Murage's to say, never the
+          // target's own words (O3). The asking bot still gets the reason.
+          mirrorNotice(commsBus, channel, `${currentTarget.name} could not start: ${(outcome.reason ?? "").slice(0, 160)}`);
+          return json(res, 200, { botName: currentTarget.name, text: outcome.text });
         }
         const reply = outcome.status === "timeout"
           ? outcome.text || "(timed out waiting for the bot to reply)"
