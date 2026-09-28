@@ -109,17 +109,17 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-60#please-read-in-0-1-60",
     "title": "What changed in Murage 0.1.60",
-    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
     "heading": "Please read in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "url": "https://murage.app/docs/changelog/v0-1-60#please-read-in-0-1-60",
-    "text": "Routines now have their own approval level. Each routine runs at a level you choose: Ask, Auto, Full access or No limits. A routine you have not set follows its bot's level at the moment it runs, so a bot on No limits no longer stops its own routines to ask. The routine's conversation, its editor and its approval cards all show the level that actually applies.\n\nA routine that needs you says so straight away. When a routine run hits a question or an approval, you hear about it at once and the run ends as \"waiting on you\", instead of sitting until it times out."
+    "text": "- Routines now have their own approval level. Each routine runs at a level you choose (routine editor, Advanced > Approvals for this routine): Ask, Auto, Full access or No limits. A routine you have not set follows its bot's level at the moment it runs, so a bot on No limits no longer stops its own routines to ask. The routine's conversation, its editor and its approval cards all show the level that actually applies.\n- A routine that needs you says so straight away. When a routine run hits a question or an approval, you hear about it at once and the run ends as \"waiting on you\", instead of sitting until it times out."
   },
   {
     "id": "changelog/v0-1-60#connected-apps-in-0-1-60",
     "title": "What changed in Murage 0.1.60",
-    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
     "heading": "Connected apps in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
@@ -129,47 +129,47 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-60#routines-in-0-1-60",
     "title": "What changed in Murage 0.1.60",
-    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
     "heading": "Routines in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "url": "https://murage.app/docs/changelog/v0-1-60#routines-in-0-1-60",
-    "text": "- Always allow for this routine. An approval card raised by a routine offers Always allow for this routine, which covers that same command or place for that routine only.\n- One conversation per routine. Each routine keeps one conversation, so runs no longer pile up as separate conversations.\n- Fewer false stops on Auto. Deleting inside a bot's own folders and temporary files is no longer treated as dangerous. Stopping other programs still asks."
+    "text": "- Long instructions arrive whole. A routine's instructions can be up to 100,000 characters, and the editor tells you before you go over. Nothing is cut off.\n- Always allow for this routine. An approval card raised by a routine offers Always allow for this routine, which covers that same command or place for that routine only.\n- One conversation per routine. Each routine keeps one conversation, so runs no longer pile up as separate conversations.\n- Fewer false stops on Auto. Deleting inside a bot's own folders and temporary files is no longer treated as dangerous. Stopping other programs still asks."
   },
   {
     "id": "changelog/v0-1-60#approvals-in-0-1-60",
     "title": "What changed in Murage 0.1.60",
-    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
     "heading": "Approvals in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "url": "https://murage.app/docs/changelog/v0-1-60#approvals-in-0-1-60",
-    "text": "- Always allow this exact command. A card for a command offers Always allow this exact command here: that command, in that folder, on that engine. Settings lists everything you have always allowed, and you can remove any of it.\n- Fewer false stops. Text a command writes into a file, and scripts handed to Python or Node, are judged by what they actually delete, not by words that happen to appear in them.\n- Pi asks first. Bots on the Pi engine now ask Murage before running commands, editing outside their folder or using connected apps, like every other engine.\n- Only you can say yes. Only your own desktop app and paired devices can answer an approval card.…"
+    "text": "- Always allow this exact command. A card for a command offers Always allow this exact command here. Each bot lists what it always allows under Bot settings > Permissions > Always allowed, and you can remove any of it.\n- Fewer false stops. Text a command writes into a file, and scripts handed to Python or Node, are judged by what they actually delete, not by words that happen to appear in them.\n- Pi asks first. Bots on the Pi engine now ask Murage before running commands, editing outside their folder or using connected apps, like every other engine.\n- Only you can say yes. Only your own desktop app and paired devices can answer an approval card.…"
   },
   {
     "id": "changelog/v0-1-60#inbox-in-0-1-60",
     "title": "What changed in Murage 0.1.60",
-    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
     "heading": "Inbox in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "url": "https://murage.app/docs/changelog/v0-1-60#inbox-in-0-1-60",
-    "text": "A cleaner Inbox. Don't use, Turn off and Dismiss all now take effect straight away, the list holds still while it refreshes, and sections are tidier. Sign-in commands have a copy button."
+    "text": "A cleaner Inbox. I don't use, Turn it off and Dismiss all now take effect straight away, the list holds still while it refreshes, and sections are tidier. Sign-in commands have a copy button."
   },
   {
     "id": "changelog/v0-1-60#conversations-and-teams-in-0-1-60",
     "title": "What changed in Murage 0.1.60",
-    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
     "heading": "Conversations and teams in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "url": "https://murage.app/docs/changelog/v0-1-60#conversations-and-teams-in-0-1-60",
-    "text": "- Snooze. Snooze a conversation from the sidebar or a conversation list. Conversations with a question waiting show a badge.\n- Manage teams. Rename a team, change its members and its lead, or delete it, from the sidebar or the channel details.\n- Deleting conversations. Deleting the last conversation in a channel leaves a fresh one, and channels now show errors instead of failing quietly.\n- Edit and rerun. Editing a message and running it again no longer starts twice.\n- Queued messages. A direct message sent while the bot is busy in a channel waits its turn instead of failing."
+    "text": "- Snooze. Snooze a conversation from the sidebar or a conversation list. Conversations with a question waiting show a badge.\n- Manage teams. Rename a team, change its members and its lead, or delete it, from the sidebar or the channel details.\n- Deleting conversations. Deleting the last conversation with a bot or in a channel leaves a fresh one, and errors are shown instead of failing quietly.\n- Edit and rerun. Editing a message and running it again no longer starts twice.\n- Who said what. In a channel with tool activity hidden, every bot reply is labelled with the bot that wrote it.\n- Menus fit the window.…"
   },
   {
     "id": "changelog/v0-1-60#about-me-in-0-1-60",
     "title": "What changed in Murage 0.1.60",
-    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
     "heading": "About me in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Settings → About me",
@@ -179,7 +179,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-60#voice-and-notifications-in-0-1-60",
     "title": "What changed in Murage 0.1.60",
-    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
     "heading": "Voice and notifications in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
@@ -187,14 +187,74 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Voice picker. Every voice in the list has its own play button.\n- Notification sounds. Turn off notification sounds on this computer.\n- Voice notes. A voice note is dropped cleanly when the turn ends while it is being made."
   },
   {
+    "id": "changelog/v0-1-60#off-site-backups-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Off-site backups in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#off-site-backups-in-0-1-60",
+    "text": "- Back up to your own server over SFTP. Keep an encrypted off-site copy on a NAS, a home server or any server you can reach over SFTP. Murage makes its own key for the server, shows you what to add to the server, and asks you to confirm the server's identity once.\n- Murage sets up the storage for you. For SFTP and S3-compatible storage, Murage creates the backup store and its password itself. You can save a copy of the password wherever you like.\n- Off-site copies on every computer. Off-site copies now work on Intel Macs, Windows and Linux as well as Apple silicon Macs."
+  },
+  {
+    "id": "changelog/v0-1-60#privacy-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Privacy in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#privacy-in-0-1-60",
+    "text": "Deleting a conversation deletes it everywhere. Its messages, files, attachments and the history each engine kept for it (Claude Code, Codex, Gemini, Qwen, OpenCode, Kimi, Cursor, Droid, Hermes, Antigravity and Fuigo) are removed. The approvals log keeps only the time, bot and verdict, and any unsent draft of it is cleared from the app. The confirmation says how many saved files go with it, and anything Murage could not remove is listed afterwards."
+  },
+  {
+    "id": "changelog/v0-1-60#web-app-in-your-phone-s-browser-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Web app in your phone's browser in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#web-app-in-your-phone-s-browser-in-0-1-60",
+    "text": "Photo uploads work again. Uploading an image from the web app in your phone's browser no longer fails, and the web app loads faster."
+  },
+  {
+    "id": "changelog/v0-1-60#polish-in-0-1-60",
+    "title": "What changed in Murage 0.1.60",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "heading": "Polish in 0.1.60",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
+    "url": "https://murage.app/docs/changelog/v0-1-60#polish-in-0-1-60",
+    "text": "- Numbers stay numbers. A reply of \"391.\" shows as 391., and numbered lists keep their starting number.\n- Plain names for app tools. Approval cards, activity and the Inbox say \"Connected app: Gmail send email\" rather than internal tool names.\n- Connected count. The Connected apps tab counts only apps that are working, and names any that are not ready yet.\n- Longer commands on cards. Approval cards show commands of up to 4,000 characters, marked where they are cut.\n- Team templates. A team made from a template gets a one-line purpose as its channel instructions, and skills that failed to switch on for some templates now work.\n- Help inside the app. Ask a bot how Murage works.…"
+  },
+  {
     "id": "changelog/v0-1-60#reliability-in-0-1-60",
     "title": "What changed in Murage 0.1.60",
-    "description": "Routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
+    "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
     "heading": "Reliability in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.60",
     "url": "https://murage.app/docs/changelog/v0-1-60#reliability-in-0-1-60",
-    "text": "- Stalled turns. A turn that stops making progress is noticed from the moment it starts, with allowances for waits that are expected.\n- VPS turns. A turn waits for a busy VPS instead of failing, and a command that times out stops everything it started.\n- Usage totals. Usage counts the tokens actually bought, not cached re-reads, and a missing count shows as unknown, not zero.\n- Backups. Backups and restores include snoozed conversations.\n- Plan checklist. A to-do list a local model writes into its answer becomes the plan checklist.\n- The date and time now travel with each message rather than in the bot's standing instructions.\n- Codex and Claude fixes.…"
+    "text": "- A backup that stops tells you. If a backup can't finish, an Inbox item and a notification say what stopped it and what to do.\n- Backups tell you what they wait for. If a bot is waiting for your answer when a backup is due, the Backups page and the Inbox name the bot, and the backup starts as soon as you answer.\n- Turning an engine off stops only that engine's work, and says so in plain words. A routine waiting for your answer no longer holds up the bot's other conversations.\n- Stalled turns. A turn that stops making progress is noticed from the moment it starts, with allowances for waits that are expected.\n- VPS turns.…"
+  },
+  {
+    "id": "changelog/v0-1-61#rooms-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Bots in a room always see each other's replies, withheld replies stay withheld, long rooms keep working, and every image-capable key appears in Image generation.",
+    "heading": "Rooms in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#rooms-in-0-1-61",
+    "text": "- Bots in a room always see each other's replies. Every member of a room now reads what its teammates said there, also after you add or remove a member or change a setting. Before, a change like that could hide earlier replies from the bots, so a teammate would redo work that was already done.\n- A reply that used something you deleted is shown as withheld. When a room reply drew on something you have since deleted or changed, bots see a short note that the reply was withheld instead of its text, and you see \"Bots no longer see this reply\" under it. The same holds when that reply would come back through memory, through a copy of it in another conversation or through a delegated result.…"
+  },
+  {
+    "id": "changelog/v0-1-61#image-generation-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Bots in a room always see each other's replies, withheld replies stay withheld, long rooms keep working, and every image-capable key appears in Image generation.",
+    "heading": "Image generation in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Settings → Models",
+    "url": "https://murage.app/docs/changelog/v0-1-61#image-generation-in-0-1-61",
+    "text": "Every saved image-capable key appears in Image generation. A key you saved under Settings → Models for a provider that makes images now also shows in Image generation, including xAI keys and keys saved with a slash at the end of their address."
   },
   {
     "id": "computers/cloud-and-vps#box-cloud-computer",

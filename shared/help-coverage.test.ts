@@ -53,6 +53,13 @@ const RELEASE_KEYWORDS: Readonly<Record<string, readonly string[]>> = {
     "play button",
     "connected apps",
   ],
+  "0.1.61": [
+    "reply withheld",
+    "teammate replies",
+    "long history",
+    "could not answer",
+    "image generation",
+  ],
 };
 
 function changelogPage(release: string): string {
