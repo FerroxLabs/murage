@@ -3397,29 +3397,50 @@ const imageOperations = new ImageOperations({ store, routineCard: routineCardHoo
     store.setActivity(ownerId, "working");
   }
 } });
+/** Providers whose keys can make images here. */
+const IMAGE_PRESETS: readonly string[] = ["flux", "openai", "openrouter", "xai"];
+/** The fixed image ids older settings saved, each standing for one existing
+ * key. Kept so a saved choice still resolves; listing only offers each key
+ * once (imageConnectionIds). */
+const LEGACY_IMAGE_IDS: Readonly<Record<string, string>> = { flux: "legacy-flux", openai: "legacy-openai-image", xai: "legacy-xai" };
 function imageConnection(id: string): ImageConnection | null {
-  if (id.startsWith("model:")) {
-    const connection = providerConnections.resolve(id.slice(6));
-    if (!connection?.enabled || !["flux", "openai", "openrouter", "xai"].includes(connection.preset)) return null;
-    return { id, provider: connection.preset as ImageConnection["provider"], apiKey: connection.key, revision: connection.revision };
+  // Every image connection resolves through the SAME rows Settings → Models
+  // lists (named connections plus the existing default keys), so a key the
+  // person can see there can never be missing here. Until 0.1.61 the legacy
+  // ids re-read the config with their own, stricter rules: an existing
+  // compatible key on an endpoint written with a trailing slash, or on xAI,
+  // showed in Models and never in Image generation.
+  if (id === "flux") {
+    const key = fluxKey() ?? "";
+    return key ? { id, provider: "flux", apiKey: key, revision: createHash("sha256").update(JSON.stringify(["flux", key])).digest("hex") } : null;
   }
-  let key = "", provider: ImageConnection["provider"];
-  if (id === "flux") { provider = "flux"; key = fluxKey() ?? ""; }
-  else if (id === "openai") { provider = "openai"; key = cfg.imageGen?.key ?? ""; }
-  else if (id === "xai") { provider = "xai"; key = cfg.xai?.key ?? ""; }
-  else if (id === "openai-compatible") {
-    provider = "openai";
-    if (cfg.openaiCompat?.url !== "https://api.openai.com/v1") return null;
-    key = cfg.openaiCompat?.key ?? "";
-  } else if (id === "openrouter") {
-    provider = "openrouter";
-    if (cfg.openaiCompat?.url !== "https://openrouter.ai/api/v1" && !(cfg.openaiCompat?.url === undefined && cfg.openaiCompat?.key?.startsWith("sk-or-"))) return null;
-    key = cfg.openaiCompat?.key ?? "";
-  } else return null;
-  return key ? { id, provider, apiKey: key, revision: createHash("sha256").update(JSON.stringify([provider, key, cfg.openaiCompat?.url])).digest("hex") } : null;
+  const rowId = id.startsWith("model:") ? id.slice(6)
+    : id === "openai-compatible" || id === "openrouter" ? "legacy-openai-compatible"
+    : Object.hasOwn(LEGACY_IMAGE_IDS, id) ? LEGACY_IMAGE_IDS[id] : undefined;
+  const connection = rowId ? providerConnections.resolve(rowId) : null;
+  if (!connection?.enabled || !connection.key || !IMAGE_PRESETS.includes(connection.preset)) return null;
+  // The two compatible-key ids name the provider they stand for.
+  if (id === "openai-compatible" && connection.preset !== "openai") return null;
+  if (id === "openrouter" && connection.preset !== "openrouter") return null;
+  return { id, provider: connection.preset as ImageConnection["provider"], apiKey: connection.key, revision: connection.revision };
 }
-const imageService = new ImageGenerationService({ resolveConnection: imageConnection,
-  connectionIds: () => [...providerConnections.list().filter(connection => connection.enabled && !connection.legacy).map(connection => `model:${connection.id}`), "flux", "openai", "openai-compatible", "openrouter", "xai"] });
+/** One entry per stored key a person can use for images: every enabled
+ * named connection, plus each existing default key under the id older
+ * settings saved for it. Reads local rows only; never the network. */
+function imageConnectionIds(): string[] {
+  const ids: string[] = [];
+  for (const connection of providerConnections.list()) {
+    if (!connection.enabled || !IMAGE_PRESETS.includes(connection.preset)) continue;
+    if (!connection.legacy) { ids.push(`model:${connection.id}`); continue; }
+    const fixed = Object.keys(LEGACY_IMAGE_IDS).find(key => LEGACY_IMAGE_IDS[key] === connection.id);
+    if (fixed) ids.push(fixed);
+    else if (connection.id === "legacy-openai-compatible") ids.push(connection.preset === "openai" ? "openai-compatible" : connection.preset === "openrouter" ? "openrouter" : `model:${connection.id}`);
+  }
+  // A Flux key held only as a connection alias still has the fixed id.
+  if (fluxKey() && !ids.includes("flux")) ids.push("flux");
+  return ids;
+}
+const imageService = new ImageGenerationService({ resolveConnection: imageConnection, connectionIds: imageConnectionIds });
 async function imageSettings(connectionId = cfg.imageGen?.connectionId) {
   const connections = imageService.listConnections().map(connection => ({ ...connection, label: connection.id.startsWith("model:")
     ? providerConnections.resolve(connection.id.slice(6))?.label ?? connection.provider

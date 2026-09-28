@@ -290,7 +290,8 @@ export class ImageGenerationService {
     } catch { return fail("catalog-unavailable", "Could not verify this image model’s endpoint capabilities."); }
   }
   listConnections(): Array<{ id: string; provider: ImageProvider; defaultModel: string | null }> {
-    return [...new Set(this.options.connectionIds())].slice(0, 32).flatMap(id => {
+    // 32 named connections plus the existing default keys.
+    return [...new Set(this.options.connectionIds())].slice(0, 40).flatMap(id => {
       try { const connection = this.connection(id); return [{ id, provider: connection.provider, defaultModel: staticCatalog(connection).defaultModel }]; }
       catch { return []; }
     });
