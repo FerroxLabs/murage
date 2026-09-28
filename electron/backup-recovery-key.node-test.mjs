@@ -363,6 +363,8 @@ test("folders that sync to the cloud are recognized by name on every platform",(
   assert.equal(win("C:\\Users\\Seani\\Dropbox\\Keys"),"Dropbox");
   assert.equal(win("C:\\Users\\Seani\\Dropbox (Ferrox)"),"Dropbox");
   assert.equal(win("G:\\My Drive\\Keys"),"Google Drive");
+  // Astra: a Google shared drive on the mounted G: drive.
+  assert.equal(win("G:\\Shared drives\\Finance"),"Google Drive");
   assert.equal(win("C:\\Users\\Seani"),null);
   assert.equal(win("C:\\Users\\Seani\\Documents"),null);
   assert.equal(win("C:\\Users\\Seani\\AppData\\Local\\Murage"),null);
@@ -431,6 +433,12 @@ test("the desktop app names a cloud folder in plain words and keeps a local defa
   const flow=main.slice(main.indexOf("const backupRecoveryKeys=createRecoveryKeyFlow({"),main.indexOf("ipcMain.handle(\"backup-mode:create-recovery-key\""));
   assert.match(flow,/confirmCloudFolder:async provider=>/);
   assert.match(flow,/defaultFolders:\(\)=>[^\n]*process\.env\.LOCALAPPDATA/);
+  // Astra: Documents is what sync clients take over (OneDrive, iCloud Desktop
+  // and Documents, a Google Drive computer folder), often under its usual name,
+  // so the key made without asking never goes there; home is first.
+  const defaults=flow.slice(flow.indexOf("defaultFolders:"),flow.indexOf("\n",flow.indexOf("defaultFolders:")));
+  assert.equal(defaults.includes("documents"),false);
+  assert.match(defaults,/\["home"\]/);
   const confirm=flow.slice(flow.indexOf("confirmCloudFolder:"));
   assert.match(confirm,/syncs to \$\{provider\}/);
   assert.match(confirm,/buttons:\["Choose another place","Save here"\]/);

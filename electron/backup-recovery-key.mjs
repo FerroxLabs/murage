@@ -208,7 +208,7 @@ const CLOUD_FOLDER_NAMES = [
   [/^onedrive(?: - .+|-.+)?$/i, "OneDrive"],
   [/^icloud ?drive$/i, "iCloud Drive"],
   [/^dropbox(?: \(.+\)|-.+)?$/i, "Dropbox"],
-  [/^(?:google ?drive|my drive|googledrive-.+)$/i, "Google Drive"],
+  [/^(?:google ?drive|my drive|shared drives|googledrive-.+)$/i, "Google Drive"],
 ];
 const windowsSpelling = value => value.replace(/[\\/]+/g, "\\").replace(/\\$/, "").toLowerCase();
 /** The cloud service `folder` syncs to ("OneDrive", "iCloud Drive", "Dropbox",

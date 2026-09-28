@@ -394,12 +394,14 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   // Only the folder of the last key saved or picked is remembered, never the key.
   folderStore:recoveryKeyFolderStore(path.join(app.getPath("userData"),"backup-key-folder.json")),
   defaultFolder:()=>app.getPath("documents"),
-  // Where a key is written when nobody is asked: the person's own Documents
-  // folder first, then their home folder, then (Windows) the local app data
-  // folder. createRecoveryKeyIn refuses any of them that sits inside the
-  // installation or inside the chosen backup folder, and the flow skips any
-  // that syncs to the cloud (OneDrive can hold Documents on Windows).
-  defaultFolders:()=>{const folders=[];for(const name of ["documents","home"]){try{folders.push(app.getPath(name));}catch{/* Not every platform has every folder. */}}if(process.platform==="win32"&&process.env.LOCALAPPDATA)folders.push(process.env.LOCALAPPDATA);return folders;},
+  // Where a key is written when nobody is asked: the person's home folder,
+  // then (Windows) the local app data folder. Never Documents: that is the
+  // folder sync clients take over (OneDrive on Windows, iCloud Desktop and
+  // Documents on a Mac, a Google Drive computer folder), often under its
+  // usual name, so it cannot be told apart. createRecoveryKeyIn refuses any
+  // folder inside the installation or inside the chosen backup folder, and
+  // the flow skips any whose name says it syncs to the cloud.
+  defaultFolders:()=>{const folders=[];for(const name of ["home"]){try{folders.push(app.getPath(name));}catch{/* Not every platform has every folder. */}}if(process.platform==="win32"&&process.env.LOCALAPPDATA)folders.push(process.env.LOCALAPPDATA);return folders;},
   // A picked folder that syncs to the cloud is named before the key goes there.
   confirmCloudFolder:async provider=>{
     const answer=await dialog.showMessageBox(mainWindow??undefined,{type:"warning",buttons:["Choose another place","Save here"],defaultId:0,cancelId:0,noLink:true,
