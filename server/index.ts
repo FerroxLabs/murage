@@ -6476,7 +6476,9 @@ async function startTurn(
         const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;
         // The just-appended user message is already captured; keep its own
         // chunk out of this turn's recall (MEMJSON2).
-        const memoryOptions={availableContextTokens,excludeMessageIds:[...skipTranscript],excludeSourceIds:standingContextSourceIds(bot,humanIsOwner && !memoryNotOwner),
+        // The notebook and brief stay out of recall by the thread's audience
+        // (never the turn's): a turn not shown them cannot recall them either.
+        const memoryOptions={availableContextTokens,excludeMessageIds:[...skipTranscript],excludeSourceIds:standingContextSourceIds(bot,humanIsOwner),
           // a turn that is not the owner's does not recall what its replay leaves out
           withheldMessage:readerWithheldMessage(access)};
         let bundle=await buildMemoryBundle(query,access,memoryWorker,memoryOptions);
@@ -8284,7 +8286,7 @@ async function runGroupMemberTurn(
     const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
       if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
       else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
-    },{availableContextTokens,excludeMessageIds,excludeSourceIds:standingContextSourceIds(bot,roomOwnerAudience),
+    },{availableContextTokens,excludeMessageIds,excludeSourceIds:standingContextSourceIds(bot,isWorkspaceOwner(threadHumanPrincipal(threadId))),
       // a room turn that is not the owner's does not recall what its
       // transcript leaves out (disclosures.ts)
       withheldMessage:readerWithheldMessage(access)});

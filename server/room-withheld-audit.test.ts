@@ -276,5 +276,10 @@ it("R2-1/9/10: a turn that is not the owner's gets no standing material, no owed
   expect(source).toContain("const standing = standingContextParts(bot, { ownerAudience: humanIsOwner && !memoryNotOwner,");
   expect(source).toContain("if (message?.copyOf && (memoryNotOwner || capturedMessageWithheld(threadId, id))) return { id, text: withheldRoomLine(message) };");
   expect(source).toContain("replyForPrompt(threadId, opts?.replyTo, memoryNotOwner),");
+  // recall leaves the notebook and brief out by the thread's audience, never
+  // the turn's: a turn not shown them cannot recall them (next's authz rule)
+  expect(source.split("standingContextSourceIds(bot,").length - 1).toBe(2);
+  expect(source).toContain("excludeSourceIds:standingContextSourceIds(bot,humanIsOwner),");
+  expect(source).toContain("excludeSourceIds:standingContextSourceIds(bot,isWorkspaceOwner(threadHumanPrincipal(threadId))),");
   expect(source).toContain("const withheld = (internalClaim.notOwnerAudience === true && receipt.notOwnerAudience !== true) || (receipt.copyOf && copyOriginWithheld(receipt.copyOf));");
 });
