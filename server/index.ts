@@ -8247,10 +8247,13 @@ async function runGroupMemberTurn(
     // turn reads every teammate reply, with a withheld line where a reply
     // used something the owner forgot, deleted or changed. The owner sees a
     // note under that reply saying bots no longer see it.
-    const roomTranscript=roomTranscriptForTurn(threadId,store.messagesFor(threadId),roomTranscriptOwner,access);
+    const roomTranscript=roomTranscriptForTurn(threadId,store.messagesFor(threadId),roomTranscriptOwner,access,roomPinnedMessageId(threadId));
     // The owner's note follows what bots are shown now: set where a reply is
     // withheld, cleared where one no longer is (a restore can bring it back).
+    // A very large room checks only what the prompt can show; the rest keep
+    // their note as it was.
     if(roomTranscriptOwner)for(const shown of store.messagesFor(threadId)){
+      if(!roomTranscript.checked.has(shown.id))continue;
       const withheld=roomTranscript.withheld.has(shown.id);
       if(withheld&&!shown.withheldFromBots)store.patchMessage(threadId,shown.id,{withheldFromBots:true});
       else if(!withheld&&shown.withheldFromBots)store.patchMessage(threadId,shown.id,{withheldFromBots:undefined});
