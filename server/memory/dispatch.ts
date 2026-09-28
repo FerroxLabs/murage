@@ -60,3 +60,14 @@ export async function buildMemoryBundleAfterReset(
   assertMemoryAccess(access);
   return buildMemoryBundle(query, access, bridge, options);
 }
+
+/** The owner-facing reason a turn was refused over its pinned memory, in plain
+ * words (0.1.61 final check D3: the raw code reached the room twice per bot).
+ * `subject` names whose pins they are ("its", "Moss's"). Undefined for any
+ * other failure, which keeps its own message. */
+export function pinnedMemoryFailure(error: unknown, subject: string): string | undefined {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith("MEMORY_PIN_OVERFLOW")) return `${subject} pinned memories are too long for this model. Unpin some in Memory, or choose a model that takes more context.`;
+  if (message.startsWith("MEMORY_PIN_UNAVAILABLE")) return `${subject} pinned memory rests on something that was deleted or changed. Unpin it or fix it in Memory.`;
+  return undefined;
+}

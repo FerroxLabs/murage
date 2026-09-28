@@ -41,7 +41,7 @@ import { EngineManager } from "./engine-management.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { TeamChangeError, changeTeamMembers, deleteTeam, describeTeam, renameTeam, type TeamDeps } from "./team-sections.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
-import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfterReset } from "./memory/dispatch.ts";
+import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfterReset, pinnedMemoryFailure } from "./memory/dispatch.ts";
 import { memoryAccess, backgroundMemoryAudience, type MemoryAccess } from "./memory/policy.ts";
 import { memoryState } from "./memory/repository.ts";
 import { continuationMemoryRevoked, filterMemoryReplay, readerWithheldMessage } from "./memory/disclosures.ts";
@@ -6802,9 +6802,9 @@ async function startTurn(
           return;
         } catch (redispatchError) { failure = redispatchError; }
       }
-      const message = isMemoryContextRevoked(failure) && !submissionBoundary.canRetry
+      const message = pinnedMemoryFailure(failure, `${bot.name}'s`) ?? (isMemoryContextRevoked(failure) && !submissionBoundary.canRetry
         ? "Context changed; previous attempt may have started. Review its output before trying again."
-        : failure instanceof Error ? failure.message : String(failure);
+        : failure instanceof Error ? failure.message : String(failure));
       // A failure of this device's browser, computer or working folder says
       // so, so the card does not send the person to Provider settings.
       const localFailure = localSetupFailureOf(failure);
@@ -8576,10 +8576,13 @@ async function runGroupMemberTurn(
           finish("memory_revoked");
           return;
         }
-        const message = isMemoryContextRevoked(err) && !submissionBoundary.canRetry
+        // A refused pin is Murage's refusal, not the engine's: the room says
+        // why once, in plain words, from Murage (0.1.61 final check D3).
+        const pinFailure = pinnedMemoryFailure(err, "its");
+        const message = pinFailure ?? (isMemoryContextRevoked(err) && !submissionBoundary.canRetry
           ? "Context changed; previous attempt may have started. Review its output before trying again."
-          : err instanceof Error ? err.message : "turn failed";
-        store.appendMessage(threadId, {
+          : err instanceof Error ? err.message : "turn failed");
+        if (!pinFailure) store.appendMessage(threadId, {
           role: "bot",
           kind: "activity",
           from: { botId: bot.id, name: bot.name, color: bot.color },
