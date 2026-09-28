@@ -7772,6 +7772,18 @@ function roomPinnedMessageId(threadId: string): string | undefined {
   return task ? task.pinnedMessageId : group.threadId === threadId ? group.pinnedMessageId : undefined;
 }
 
+/** The owner's "bots no longer see this reply" note follows what the member
+ * turn just checked: set where a reply is withheld ("forgotten" when the owner
+ * forgot that reply itself), cleared where it no longer is. A reply the turn
+ * did not check keeps its note as it was. */
+function syncOwnerWithheldNotes(threadId: string, transcript: { withheld: ReadonlySet<string>; forgotten: ReadonlySet<string>; checked: ReadonlySet<string> }) {
+  for (const shown of store.messagesFor(threadId)) {
+    if (!transcript.checked.has(shown.id)) continue;
+    const withheld = transcript.withheld.has(shown.id) ? (transcript.forgotten.has(shown.id) ? "forgotten" as const : true) : undefined;
+    if (withheld !== shown.withheldFromBots) store.patchMessage(threadId, shown.id, { withheldFromBots: withheld });
+  }
+}
+
 function serializeRoomContext(threadId: string, userName: string, permitted?: Message[], withheld?: ReadonlySet<string>): string {
   const messages = permitted ?? store.messagesFor(threadId);
   const messagesById = new Map(messages.map((message) => [message.id, message]));
@@ -8004,6 +8016,8 @@ async function runGroupMemberTurn(
   // is active): what the owner forgot stays withheld even when memory is
   // not active, and skill choice reads the same lines (0.1.61 room privacy fix).
   const roomFloor = memoryState().mode === "active" ? undefined : roomTranscriptWithoutMemory(threadId, store.messagesFor(threadId), roomOwnerAudience, roomPinnedMessageId(threadId), !roomOwnerAudience && isWorkspaceOwner(threadHumanPrincipal(threadId)));
+  // The owner's note follows it too, as with memory on (prepareRoomMemory).
+  if (roomFloor && roomOwnerAudience) syncOwnerWithheldNotes(threadId, roomFloor);
   const roomContextText = () => roomFloor ? serializeRoomContext(threadId, userName, roomFloor.messages, roomFloor.withheld) : serializeRoomContext(threadId, userName);
   const selectedSkills = mergeSkills(
     selectBundledSkills(
@@ -8330,12 +8344,7 @@ async function runGroupMemberTurn(
     // withheld, cleared where one no longer is (a restore can bring it back).
     // A very large room checks only what the prompt can show; the rest keep
     // their note as it was.
-    if(roomTranscriptOwner)for(const shown of store.messagesFor(threadId)){
-      if(!roomTranscript.checked.has(shown.id))continue;
-      // "forgotten": the owner forgot this reply itself, and the note says so.
-      const withheld=roomTranscript.withheld.has(shown.id)?(roomTranscript.forgotten.has(shown.id)?"forgotten" as const:true):undefined;
-      if(withheld!==shown.withheldFromBots)store.patchMessage(threadId,shown.id,{withheldFromBots:withheld});
-    }
+    if(roomTranscriptOwner)syncOwnerWithheldNotes(threadId,roomTranscript);
     text=`${serializeRoomContext(threadId,userName,roomTranscript.messages,roomTranscript.withheld)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
     memoryDispatches.set(threadId,memoryReceipt);

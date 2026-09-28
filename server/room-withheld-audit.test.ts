@@ -20,6 +20,7 @@ import { forgetMemory } from "./memory/forget.ts";
 import { continuationMemoryRevoked, filterMemoryReplay, readerWithheldMessage, roomReplayWithheld } from "./memory/disclosures.ts";
 import { _loadPending, findDelegationReceipt, recordDelegationReceipt, summarizeDelegatedActivity } from "./delegations.ts";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import { copyOriginWithheld, messageMadeWithMemory, recordRestsOnWithheldMessage, replayExclusions } from "./memory/replay-lineage.ts";
 import { insertMessage } from "./message-db.ts";
@@ -191,6 +192,26 @@ it("Kimi M4: one oversized receipt no longer fails a room turn", () => {
   expect(() => replayExclusions("closing-chat", lines, null)).toThrow("MEMORY_REPLAY_LIMIT");
   const withheld = replayExclusions("closing-chat", lines, null, { failClosed: true });
   expect(withheld.has("owner-1") || withheld.has("owner-2")).toBe(false);
+});
+
+// Astra audit of D4: with memory not active the owner's note was never
+// updated. The floor names what it checked and why each reply is withheld,
+// and the room turn sets the owner's note from it as it does with memory on.
+it("with memory not active, the room turn sets the owner's note from what it checked, with the forgotten reason", () => {
+  reconcileMemoryRoster(roster);
+  const record = daxMemory();
+  disclose("b-room", "closing-chat", [{ id: record, version: version(record) }], ["m-dax"]);
+  const lines = [{ id: "m-owner", role: "user", kind: "text", text: "rows?", at: 1 } as Message, bot("m-dax", REPLY), bot("m-finch", "the forgotten line")];
+  captureSource(database(), { id: "message:closing-chat:m-finch", threadId: "closing-chat", messageId: "m-finch", kind: "text", speaker: "finch", outcome: "recorded", text: "the forgotten line" });
+  setMemoryMode("capture");
+  forget(record);
+  forgetMemory(ownerMemoryTicket(), { kind: "source", id: "message:closing-chat:m-finch" });
+  const owner = roomTranscriptWithoutMemory("closing-chat", lines, true)!;
+  expect([...owner.withheld].sort()).toEqual(["m-dax", "m-finch"]);
+  expect([...owner.forgotten]).toEqual(["m-finch"]);
+  expect([...owner.checked]).toEqual(["m-owner", "m-dax", "m-finch"]);
+  const index = readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
+  expect(index).toContain("if (roomFloor && roomOwnerAudience) syncOwnerWithheldNotes(threadId, roomFloor);");
 });
 
 it("Kimi M5: with memory no longer active, a forgotten reply stays withheld in the room", () => {

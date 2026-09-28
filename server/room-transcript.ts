@@ -62,7 +62,7 @@ function forgottenReplies(threadId: string, messages: readonly Message[], withhe
  * memory stopped: the content rule still applies, as a withheld line for the
  * owner's turn and as a dropped line for anyone else. A room that never used
  * memory is read as it is. */
-export function roomTranscriptWithoutMemory(threadId: string, messages: readonly Message[], ownerAudience: boolean, pinnedMessageId?: string, unprovenInOwnerRoom = false): { messages: Message[]; withheld: Set<string>; forgotten: Set<string> } | undefined {
+export function roomTranscriptWithoutMemory(threadId: string, messages: readonly Message[], ownerAudience: boolean, pinnedMessageId?: string, unprovenInOwnerRoom = false): { messages: Message[]; withheld: Set<string>; forgotten: Set<string>; checked: Set<string> } | undefined {
   if (!database().prepare("SELECT 1 FROM memory_disclosures WHERE thread_id=? LIMIT 1").get(threadId) && !messages.some(m => m.copyOf)) return undefined;
   const bounded = messages.length > WHOLE_ROOM_MESSAGES || largeReceiptThread(threadId);
   const candidates = bounded ? promptCandidates(messages, pinnedMessageId, GROUP_CONTEXT_MESSAGES) : [...messages];
@@ -71,9 +71,10 @@ export function roomTranscriptWithoutMemory(threadId: string, messages: readonly
   // Words nobody proved are the owner's, in the owner's room, with no memory
   // access to check a reply against: no reply made with memory is shown.
   if (unprovenInOwnerRoom) for (const m of candidates) if (m.role !== "user" && !withheld.has(m.id) && messageMadeWithMemory(threadId, m.id)) withheld.add(m.id);
-  if (!ownerAudience) return { messages: candidates.filter(m => !withheld.has(m.id)), withheld: new Set(), forgotten: new Set() };
+  const checked = new Set(candidates.map(m => m.id));
+  if (!ownerAudience) return { messages: candidates.filter(m => !withheld.has(m.id)), withheld: new Set(), forgotten: new Set(), checked };
   const forgotten = forgottenReplies(threadId, candidates, withheld);
-  return { messages: withholdRoomReplies(candidates, withheld, forgotten), withheld, forgotten };
+  return { messages: withholdRoomReplies(candidates, withheld, forgotten), withheld, forgotten, checked };
 }
 
 /** The newest `limit` text lines, the pin and every line they quote, in
