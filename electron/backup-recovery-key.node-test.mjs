@@ -442,5 +442,6 @@ test("the desktop app names a cloud folder in plain words and keeps a local defa
   const confirm=flow.slice(flow.indexOf("confirmCloudFolder:"));
   assert.match(confirm,/syncs to \$\{provider\}/);
   assert.match(confirm,/buttons:\["Choose another place","Save here"\]/);
+  assert.match(confirm,/title:"Murage"/);
   assert.equal(/—|\bsafe(ly|ty)?\b|unsafe/i.test(confirm.slice(0,confirm.indexOf("\n  },"))),false);
 });

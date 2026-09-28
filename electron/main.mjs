@@ -404,7 +404,7 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   defaultFolders:()=>{const folders=[];for(const name of ["home"]){try{folders.push(app.getPath(name));}catch{/* Not every platform has every folder. */}}if(process.platform==="win32"&&process.env.LOCALAPPDATA)folders.push(process.env.LOCALAPPDATA);return folders;},
   // A picked folder that syncs to the cloud is named before the key goes there.
   confirmCloudFolder:async provider=>{
-    const answer=await dialog.showMessageBox(mainWindow??undefined,{type:"warning",buttons:["Choose another place","Save here"],defaultId:0,cancelId:0,noLink:true,
+    const answer=await dialog.showMessageBox(mainWindow??undefined,{title:"Murage",type:"warning",buttons:["Choose another place","Save here"],defaultId:0,cancelId:0,noLink:true,
       message:`This folder syncs to ${provider}.`,
       detail:`Your recovery key would be stored in ${provider} as well as on this computer. Choose another place to keep it only on this computer or on a USB drive, or save it here if you want it there.`});
     return answer.response===1;
