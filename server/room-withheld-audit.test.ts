@@ -26,6 +26,9 @@ import { copyOriginWithheld, messageMadeWithMemory, recordRestsOnWithheldMessage
 import { insertMessage } from "./message-db.ts";
 import type { Message } from "./store.ts";
 
+// A Windows checkout has CRLF line endings; the wiring checks read LF.
+const indexSource = () => readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8").replace(/\r\n/g, "\n");
+
 const roster: MemoryRoster = {
   bots: [
     { id: "finch", threadId: "finch-direct", section: "Dev Shop" },
@@ -210,7 +213,7 @@ it("with memory not active, the room turn sets the owner's note from what it che
   expect([...owner.withheld].sort()).toEqual(["m-dax", "m-finch"]);
   expect([...owner.forgotten]).toEqual(["m-finch"]);
   expect([...owner.checked]).toEqual(["m-owner", "m-dax", "m-finch"]);
-  const index = readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
+  const index = indexSource();
   expect(index).toContain("if (roomFloor && roomOwnerAudience) syncOwnerWithheldNotes(threadId, roomFloor);");
 });
 
@@ -293,7 +296,7 @@ it("R2-1/9/10: a turn that is not the owner's gets no standing material, no owed
   disclose("b-answer", "dax-direct", [{ id: record, version: version(record) }], ["m-answer"]);
   expect(messageMadeWithMemory("dax-direct", "m-answer")).toBe(true);
   expect(messageMadeWithMemory("dax-direct", "m-plain")).toBe(false);
-  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const source = indexSource();
   expect(source).toContain("const standing = standingContextParts(bot, { ownerAudience: humanIsOwner && !memoryNotOwner,");
   expect(source).toContain("if (message?.copyOf && (memoryNotOwner || capturedMessageWithheld(threadId, id))) return { id, text: withheldRoomLine(message) };");
   expect(source).toContain("replyForPrompt(threadId, opts?.replyTo, memoryNotOwner),");
@@ -323,12 +326,12 @@ it("R3-9: a legacy delegation result with no recorded origin is not handed back"
   _loadPending();
   expect(findDelegationReceipt("task-legacy")!.lineage).toBeUndefined();
   expect(findDelegationReceipt("task-new")!.lineage).toBe(true);
-  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const source = indexSource();
   expect(source).toContain(`|| (receipt.status === "done" && receipt.lineage !== true);`);
 });
 
 it("R3-1/6/10: queued quotes are rendered at drain, running excerpts follow withholding, a converted ask keeps its audience (wiring)", () => {
-  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const source = indexSource();
   expect(source).toContain("replyForPrompt(threadId, message.replyToId ? byId.get(message.replyToId) : undefined, unproven && isWorkspaceOwner(threadHumanPrincipal(threadId)))");
   expect(source).toContain(`!capturedMessageWithheld(runningEntry[0], message.id)`);
   expect(source).toMatch(/startedAtMs: Date\.now\(\) - ASK_BOT_TIMEOUT_MS,\n\s+\.\.\.\(internalClaim\.notOwnerAudience === true \? \{ notOwnerAudience: true \} : \{\}\),/);
