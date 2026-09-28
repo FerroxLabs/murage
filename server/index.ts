@@ -5995,7 +5995,11 @@ async function startTurn(
   // hang the HTTP request
   const run=directRuns.admit(bot.id,threadId,bot,[],{queueForSlot:opts?.waitForThreadSlot===true});
   const dispatchClaimId = run.generation;
-  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination, opts?.notOwnerAudience === true || opts?.origin === "unproven");
+  // Memory reads a turn whose words nobody proved are the owner's (or a
+  // peer turn such a turn asked or delegated) as a non-owner audience, in the
+  // owner's own thread too (0.1.61 lane T2). A channel person's thread is one
+  // already, and keeps its own receipt handling.
+  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination, humanIsOwner && (opts?.notOwnerAudience === true || opts?.origin === "unproven"));
   if(opts?.memorySkillSource)internalTurnOwners.get(threadId)!.memorySkillSource=opts.memorySkillSource;
   directTurnDispatchClaims.set(threadId, { id: dispatchClaimId, botId:bot.id, threadId, phase: "setup" });
   store.setTaskActivity(bot.id, threadId, "working");
