@@ -16,6 +16,8 @@ const bank = JSON.stringify([
   { id: "c-mistral", preset: "mistral", label: "Boot Mistral", enabled: true, key: "FAKE_IMG_MISTRAL_KEY", revision: "r4" },
   // Saved before labels were checked: the owner pasted the key as its name.
   { id: "c-leaky", preset: "xai", label: "xai-FAKE_IMG_LABEL_KEY_0", enabled: true, key: "xai-FAKE_IMG_LABEL_KEY_0", revision: "r5" },
+  // Saved before every door checked the issuer: a Google key filed as OpenAI.
+  { id: "c-mismatch", preset: "openai", label: "Filed wrong", enabled: true, key: `AIza${"FAKE_IMG_MISFILED_".padEnd(35, "0")}`, revision: "r6" },
 ]);
 const GOOGLE = "AIza" + "FAKE_IMG_GOOGLE_000000000000000000000".slice(0, 35);
 let fixture: VerificationServer;
@@ -27,8 +29,7 @@ async function api(method: string, path: string, body?: unknown) {
 async function images() {
   const settings = await api("GET", "/api/images/settings");
   expect(settings.status).toBe(200);
-  // The one key here is the owner's own label for c-leaky, which Settings shows back to the owner.
-  expect(JSON.stringify(settings.body).replaceAll("xai-FAKE_IMG_LABEL_KEY_0", "")).not.toMatch(/FAKE_IMG|AIzaFAKE/);
+  expect(JSON.stringify(settings.body)).not.toMatch(/FAKE_IMG|AIzaFAKE/);
   return settings.body.connections as Array<{ id: string; label: string; provider: string }>;
 }
 // The harness refreshes chat model catalogs in the background on its own
@@ -39,7 +40,8 @@ let expected = 0;
 const network = () => imageRequests().slice(expected).join("\n");
 beforeAll(async () => {
   // The packaged app hands the encrypted bank to the harness as env at spawn.
-  const env = { MURAGE_MODEL_PROVIDER_CONNECTIONS: bank } as Record<string, string>;
+  // The avatar key restored with it is a Google key, saved before its slot checked.
+  const env = { MURAGE_MODEL_PROVIDER_CONNECTIONS: bank, MURAGE_OPENAI_IMAGE_KEY: `AIza${"FAKE_IMG_AVATAR_".padEnd(35, "0")}` } as Record<string, string>;
   fixture = await launchVerificationServer(process.env, undefined, { env, instrumentationSource: `
  process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
  import { appendFileSync } from 'node:fs';
@@ -53,7 +55,18 @@ afterAll(async () => { await fixture?.close(); });
 
 it("path 1: keys the packaged app restores from its encrypted store at boot", async () => {
   const listed = await images();
-  expect(listed.map(row => [row.id, row.provider])).toEqual([["model:c-openai", "openai"], ["model:c-xai", "xai"], ["model:c-openrouter", "openrouter"], ["model:c-leaky", "xai"]]);
+  expect(listed.map(row => [row.id, row.provider, row.label])).toEqual([["model:c-openai", "openai", "Boot OpenAI"], ["model:c-xai", "xai", "Boot xAI"], ["model:c-openrouter", "openrouter", "Boot OpenRouter"], ["model:c-leaky", "xai", "xai"]]);
+  // Misfiled keys are listed in Models for review, never enabled, offered or sent.
+  const rows = (await api("GET", "/api/provider-connections")).body.connections as Array<{ id: string; enabled: boolean; catalog: { error?: { message: string } } }>;
+  for (const id of ["c-mismatch", "legacy-openai-image"]) expect(rows.find(row => row.id === id)).toMatchObject({ enabled: false, catalog: { error: { message: expect.stringContaining("different provider") } } });
+  const refused = await api("POST", "/api/provider-connections/c-mismatch/refresh", {});
+  expect(refused.status).toBe(409);
+  const model = (await api("GET", "/api/instances")).body.instances.find((engine: any) => engine.instanceId === "verification").models.options[0].id;
+  const bot = (await api("POST", "/api/bots", { name: "Avatar", modelSelection: { instanceId: "verification", model } })).body.bot;
+  const avatar = await api("POST", `/api/bots/${bot.id}/avatar/generate`, { prompt: "a fox" });
+  expect(avatar.status).toBe(409);
+  expect(avatar.body.error).toContain("different provider");
+  expect(imageRequests()).toEqual([]);
   expect(network()).toBe("");
 });
 

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PROVIDER_PRESETS, parseProviderBank } from "../electron/provider-connections.mjs";
+import { PROVIDER_PRESETS, keyIssuer, parseProviderBank } from "../electron/provider-connections.mjs";
 import { MODEL_CATALOG_REFRESH_MS } from "./model-catalog-refresh.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { resolveModelLabel } from "../shared/model-label.ts";
@@ -121,7 +121,10 @@ export class ProviderConnectionsService {
  subscribe(callback:(changedIds:string[])=>void|Promise<void>){this.listeners.add(callback);return()=>{this.listeners.delete(callback);};}
  async changed(previousBank:string|undefined,nextBank:string){const before=parseProviderBank(previousBank),after=parseProviderBank(nextBank);const ids=[...new Set([...before.map(row=>row.id),...after.map(row=>row.id)])].filter(id=>before.find(row=>row.id===id)?.revision!==after.find(row=>row.id===id)?.revision);for(const id of ids)this.cache.delete(id);await Promise.all([...this.listeners].map(listener=>listener(ids)));}
  private now(){return this.options.now?.()??Date.now();}
- private records():Array<ProviderConnectionRecord|LegacyProviderConnection>{return [...(this.options.legacyConnections?.()??[]),...parseProviderBank(this.options.readBank())];}
+ // A saved row whose key names another provider (saved before every door
+ // checked it, or restored from such a backup) is listed for review and never
+ // enabled, refreshed or sent. Replacing its key through Models clears it.
+ private records():Array<ProviderConnectionRecord|LegacyProviderConnection|(ProviderConnectionRecord&{legacyError:string})>{return [...(this.options.legacyConnections?.()??[]),...parseProviderBank(this.options.readBank()).map(row=>{const issuer=keyIssuer(row.key);return issuer&&issuer!==row.preset?{...row,enabled:false,legacyError:"This saved key belongs to a different provider. Replace it with the right key before using it."}:row;})];}
  resolve(id:string){const found=this.records().find(row=>row.id===id)??this.options.resolveAlias?.(id);return found?{...PROVIDER_PRESETS[found.preset],...found}:null;}
  private readCache(connection:ProviderConnectionRecord):ProviderCatalog {
   if("legacyError" in connection && connection.legacyError)return{connectionId:connection.id,models:[],stale:false,assurance:"catalog-only",error:{code:"unavailable",message:String(connection.legacyError)}};
