@@ -7928,6 +7928,7 @@ async function runGroupMemberTurn(
       from: { botId: bot.id, name: bot.name, color: bot.color },
       tool: { name: `error: ${message}`, ok: false },
     });
+    murageFailureLine(message);
     onDispatchError?.(message);
     return true;
   }
@@ -8219,9 +8220,12 @@ async function runGroupMemberTurn(
     // used something the owner forgot, deleted or changed. The owner sees a
     // note under that reply saying bots no longer see it.
     const roomTranscript=roomTranscriptForTurn(threadId,store.messagesFor(threadId),roomTranscriptOwner,access);
-    for(const id of roomTranscript.withheld){
-      const shown=store.messagesFor(threadId).find(message=>message.id===id);
-      if(shown&&!shown.withheldFromBots)store.patchMessage(threadId,id,{withheldFromBots:true});
+    // The owner's note follows what bots are shown now: set where a reply is
+    // withheld, cleared where one no longer is (a restore can bring it back).
+    if(roomTranscriptOwner)for(const shown of store.messagesFor(threadId)){
+      const withheld=roomTranscript.withheld.has(shown.id);
+      if(withheld&&!shown.withheldFromBots)store.patchMessage(threadId,shown.id,{withheldFromBots:true});
+      else if(!withheld&&shown.withheldFromBots)store.patchMessage(threadId,shown.id,{withheldFromBots:undefined});
     }
     text=`${serializeRoomContext(threadId,userName,roomTranscript.messages,roomTranscript.withheld)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
@@ -12082,7 +12086,7 @@ const server = createServer(async (req, res) => {
         if (outcome.status === "error") {
           // The target never ran: this is Murage's to say, never the
           // target's own words (O3). The asking bot still gets the reason.
-          mirrorNotice(commsBus, channel, `${currentTarget.name} could not start: ${(outcome.reason ?? "").slice(0, 160)}`);
+          mirrorNotice(commsBus, channel, `${currentTarget.name} could not start: ${redactSecretsInText(outcome.reason ?? "").split("\n")[0].slice(0, 160)}`);
           return json(res, 200, { botName: currentTarget.name, text: outcome.text });
         }
         const reply = outcome.status === "timeout"

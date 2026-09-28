@@ -107,9 +107,10 @@ posixOnly("a group member's turn survives its own capture rolling the group chec
       expect(disclosure.state).toBe("delivered");
 
       // The reply's capture rolls the checkpoint again; the next member turn
-      // still replays that reply: filterMemoryReplay marks a disclosure it
-      // drops as revoked, so the second turn's receipt staying delivered with
-      // the reply among its outputs is the replay proof.
+      // still replays that reply. An owner room reads its transcript by
+      // content (room-transcript.ts) and never marks a receipt revoked, so the
+      // receipt staying delivered only shows nothing revoked it; the reply's
+      // presence in the next prompt is what room-transcript-api.test.ts checks.
       await expect.poll(() => pendingJobs(), { timeout: 20000 }).toBe(0);
       expect(checkpoint()!.version).toBeGreaterThan(selected.version + 1);
       const secondReply = (await replies())[1];

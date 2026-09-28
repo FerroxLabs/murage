@@ -245,3 +245,17 @@ it("withholds a reply that used a projection whose original the owner corrected,
   disclose("b-finch", "closing-chat", [{ id: original, version: v + 1 }], [], ["m-finch"]);
   expect(roomReplayWithheld("closing-chat", transcript).has("m-finch")).toBe(false);
 });
+
+it("keeps a reply whose record descends from a record corrected earlier in the same chain", () => {
+  // P, corrected by P2 (P2 supersedes P); C is a projection of P2; the reply used C.
+  const p = daxMemory("the vendor is Acme", "src-p");
+  const v = version(p);
+  const db = database();
+  db.prepare("UPDATE memory_records SET state='superseded' WHERE id=? AND version=?").run(p, v);
+  db.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,owner_pinned,valid_from,supersedes_id,created_at) SELECT id,version+1,scope_id,kind,'the vendor is Bolt',assertion,'active',0,1,id,1 FROM memory_records WHERE id=? AND version=?").run(p, v);
+  db.prepare("INSERT INTO memory_derivations(parent_id,parent_version,child_id,child_version) VALUES(?,?,?,?)").run(p, v, p, v + 1);
+  const c = daxMemory("the vendor is Bolt (room copy)", "src-c");
+  db.prepare("INSERT INTO memory_derivations(parent_id,parent_version,child_id,child_version) VALUES(?,?,?,?)").run(p, v + 1, c, version(c));
+  disclose("b-dax", "closing-chat", [{ id: c, version: version(c) }], [], ["m-dax"]);
+  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+});

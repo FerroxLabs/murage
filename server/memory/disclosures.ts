@@ -224,9 +224,13 @@ function replayExclusions(threadId: string, messages: readonly {id:string}[], ac
             LEFT JOIN memory_records p ON p.id=e.parent_id AND p.version=e.parent_version
             LEFT JOIN memory_records c ON c.id=e.child_id AND c.version=e.child_version`).all(ref.id,ref.version);
           if(edges.length>1024)throw new Error("MEMORY_REPLAY_LIMIT");charge(edges.length);
+          // A parent replaced by a record in this same chain is history, not a
+          // dependency, however many corrections and projections lie between.
+          const replacing=new Set(edges.map(edge=>String(edge.supersedes_id??"")));
+          const own=db.prepare("SELECT supersedes_id FROM memory_records WHERE id=? AND version=?").get(ref.id,ref.version);
+          if(own?.supersedes_id)replacing.add(String(own.supersedes_id));
           for(const edge of edges){
-            // replaced by this very child: history, not a dependency
-            const history=edge.supersedes_id===edge.parent_id&&(edge.state==="superseded"||edge.state==="archived");
+            const history=replacing.has(String(edge.parent_id))&&(edge.state==="superseded"||edge.state==="archived");
             if(!edge.state||(edge.state!=="active"&&!history)||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(edge.parent_id,edge.parent_version)){bad=true;break;}
           }
         }
