@@ -224,6 +224,7 @@ describe("extraction is a suggestion, never an action", () => {
     expect(rowTarget(row(`my key is ${BARE}`))).toBeNull();
     expect(rowTarget(row(`my key is ${BARE}`, { chosen: "flux" as ProviderId }))).toBe("flux");
     expect(rowTarget(row(`ANTHROPIC_API_KEY=${ANTHROPIC}`))).toBe("anthropic");
+    expect(rowTarget(row(`GOOGLE_API_KEY=${GOOGLE}`))).toBe("google");
   });
 });
 
