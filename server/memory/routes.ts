@@ -4,6 +4,8 @@ import { database,transaction } from "../database.ts";
 import { assertMemoryAccess,type MemoryAccess } from "./policy.ts";
 import { searchMemory,type MemorySearchBridge } from "./search.ts";
 import { hydrateDisclosedMemoryRecord, hydrateMemoryRecord } from "./bundle.ts";
+import { readerWithheldMessage } from "./disclosures.ts";
+import { recordRestsOnWithheldMessage } from "./replay-lineage.ts";
 import { memoryState } from "./repository.ts";
 import { groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
 import { activateGroundedMemory } from "./automatic-learning.ts";
@@ -50,14 +52,21 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
   try {
     if(path==="/api/internal/memory/search"){
       const input=search.parse(body);
-      return bounded(await searchMemory(input.query,access,bridge,input));
+      return bounded(await searchMemory(input.query,access,bridge,{...input,withheldMessage:readerWithheldMessage(access)}));
     }
     if(path==="/api/internal/memory/get"){
       const input=get.parse(body);
+      // A room reader that is not the owner is not handed a line its
+      // transcript leaves out (disclosures.ts readerWithheldMessage).
+      const withheld=readerWithheldMessage(access);
+      const unless=<T extends {id:string;version:number;pinned:boolean}>(record:T):T=>{
+        if(withheld&&!record.pinned&&recordRestsOnWithheldMessage(record.id,record.version,withheld))throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+        return record;
+      };
       const records=input.handles.map(item=>{
-        if(!("handle" in item))return hydrateMemoryRecord(item.id,item.version,access);
+        if(!("handle" in item))return unless(hydrateMemoryRecord(item.id,item.version,access));
         const {id:recordId,version:recordVersion}=resolve(item.handle);
-        return {handle:item.handle,...hydrateDisclosedMemoryRecord(recordId,recordVersion,access)};
+        return {handle:item.handle,...unless(hydrateDisclosedMemoryRecord(recordId,recordVersion,access))};
       });
       assertMemoryAccess(access);return bounded({records});
     }

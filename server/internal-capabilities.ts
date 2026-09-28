@@ -11,6 +11,9 @@ export type InternalCapability = Readonly<{
   skillAuthoring: boolean;
   expiresAt: number;
   humanPrincipal?: HumanPrincipal;
+  /** The turn's words were not proven to be the owner's: memory reads it as
+   * a non-owner audience (server/memory/policy.ts). */
+  notOwnerAudience?: true;
 }>;
 type Budget = { committed: number; pending: number };
 type Generation = {

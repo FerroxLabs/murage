@@ -44,7 +44,7 @@ import { buildMemoryBundle } from "./memory/bundle.ts";
 import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfterReset } from "./memory/dispatch.ts";
 import { memoryAccess, backgroundMemoryAudience, type MemoryAccess } from "./memory/policy.ts";
 import { memoryState } from "./memory/repository.ts";
-import { continuationMemoryRevoked, filterMemoryReplay } from "./memory/disclosures.ts";
+import { continuationMemoryRevoked, filterMemoryReplay, readerWithheldMessage } from "./memory/disclosures.ts";
 import { roomTranscriptForTurn } from "./room-transcript.ts";
 import { memoryAgentRoute } from "./memory/routes.ts";
 import { MemoryWorkerController } from "./memory/worker-controller.ts";
@@ -888,16 +888,19 @@ const hostComputerThreads = new Map<string, { botId: string; ownerId: string; co
 const internalTurnOwners = new Map<string, {
   botId: string; generation: string; depth: number; skillAuthoring: boolean;
   eventId?: string;
+  /** The turn's words were not proven to be the owner's: its memory claim
+   * reads as a non-owner audience (server/memory/policy.ts). */
+  notOwnerAudience?: boolean;
   memorySkillSource?: string;
   coordination?: CoordinationTrace;
   tokens: Partial<Record<InternalCapabilityKind, string>>;
 }>();
-function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean, eventId?: string, coordination?: CoordinationTrace): void {
+function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean, eventId?: string, coordination?: CoordinationTrace, notOwnerAudience = false): void {
   const humanPrincipal=threadHumanPrincipal(threadId);
   assertHumanPrincipal(humanPrincipal);
   internalCapabilities.begin(botId, threadId, generation,humanPrincipal);
   memoryDispatches.delete(threadId);
-  internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, eventId,
+  internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, eventId, notOwnerAudience,
     coordination: coordination ?? (depth === 0 ? coordinationBudget.begin(botId, generation) : undefined), tokens: {} });
 }
 function internalToken(botId: string, threadId: string, generation: string, kind: InternalCapabilityKind): string {
@@ -909,7 +912,8 @@ function internalToken(botId: string, threadId: string, generation: string, kind
     return previous;
   }
   const token = internalCapabilities.mint({ botId, threadId, generation: owner.generation,
-    depth: owner.depth, skillAuthoring: owner.skillAuthoring, kind, humanPrincipal:threadHumanPrincipal(threadId) });
+    depth: owner.depth, skillAuthoring: owner.skillAuthoring, kind, humanPrincipal:threadHumanPrincipal(threadId),
+    ...(owner.notOwnerAudience ? { notOwnerAudience: true as const } : {}) });
   owner.tokens[kind] = token;
   return token;
 }
@@ -1578,6 +1582,8 @@ type AskBotOutcome = {
   stopReason?: string | null;
   /** "error": why the target's turn could not start. */
   reason?: string;
+  /** The target's reply rows, for the copy mirrored into the pair room. */
+  copyOf?: Message["copyOf"];
 };
 
 function askBotAndWait(targetBotId: string, message: string, depth: number, _fromBotId?: string, eventId?: string, coordination?: CoordinationTrace, sourceThreadId?:string): Promise<AskBotOutcome> {
@@ -1589,6 +1595,7 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
   const releaseSlot = holdCoordinationSlot(threadId);
   return new Promise((resolve) => {
     let text = "";
+    let turnId: string | undefined;
     let done = false;
     const finish = (out: AskBotOutcome) => {
       if (done) return;
@@ -1603,17 +1610,18 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
       // newer ask_bot waiter with the old partial reply.
       if (shouldIgnoreProviderEvent(e)) return;
       if (e.threadId !== threadId) return;
+      if (e.turnId) turnId = e.turnId;
       if (e.type === "item.completed" && e.itemType === "assistant_text" && !isMemoryProvenanceEcho(e.text)) {
         text += (text ? "\n" : "") + e.text;
       } else if (e.type === "turn.completed") {
-        if (turnSucceeded(e)) finish({ status: "reply", text: text || "(the bot finished without a text reply)" });
+        if (turnSucceeded(e)) finish({ status: "reply", text: text || "(the bot finished without a text reply)", copyOf: turnReplyCopy(threadId, turnId) });
         else if (turnStopped(e)) finish({ status: "stopped", text, stopReason: e.stopReason ?? null });
         else finish({ status: "failed", text, stopReason: e.stopReason ?? null });
       }
     });
     // Timing out does NOT stop the peer's turn — the caller decides whether
     // the still-running work becomes a delegation claim ticket instead.
-    const timer = setTimeout(() => finish({ status: "timeout", text }), ASK_BOT_TIMEOUT_MS);
+    const timer = setTimeout(() => finish({ status: "timeout", text, copyOf: turnReplyCopy(threadId, turnId) }), ASK_BOT_TIMEOUT_MS);
     startTurn(targetBotId, message, {
       threadId,
       commsDepth: depth + 1,
@@ -5094,7 +5102,7 @@ bus.subscribe((event: RuntimeEvent) => {
         : !event.ok && event.stopReason?.trim()
           ? `Delegated turn did not finish: ${event.stopReason.trim().slice(0, 120)}`
           : undefined;
-      finalizeDelegationWatch(event.threadId, turnSucceeded(event), reply, delegationFailureName, delegationStopped);
+      finalizeDelegationWatch(event.threadId, turnSucceeded(event), reply, delegationFailureName, delegationStopped, turnReplyCopy(event.threadId, event.turnId));
       // group busy/unread settle in the group turn engine, which knows
       // whether more member turns are queued behind this one
       break;
@@ -5156,6 +5164,18 @@ function delegationSource(
   return null;
 }
 
+/** The stored reply of one provider turn, as the link a copy of it carries
+ * (Message.copyOf): a copy is withheld from bots whenever its original is
+ * (server/memory/replay-lineage.ts). Without the turn's own rows, the
+ * thread's latest bot reply is the original. */
+function turnReplyCopy(threadId: string, turnId: string | undefined): Message["copyOf"] {
+  const texts = store.messagesFor(threadId).filter((m) => m.role === "bot" && m.kind === "text" && !m.copyOf);
+  const ids = turnId ? texts.filter((m) => m.turnId === turnId).map((m) => m.id) : [];
+  const latest = texts.at(-1);
+  if (!ids.length && latest) ids.push(latest.id);
+  return ids.length ? { threadId, messageIds: ids } : undefined;
+}
+
 /** Consume one delegated-turn watch and mirror exactly one terminal state.
  * Some harness paths settle a busy bot without a provider turn.completed
  * event, so they call this same finalizer explicitly. */
@@ -5167,6 +5187,7 @@ function finalizeDelegationWatch(
   reply = "",
   failureName = "Delegated turn did not finish",
   stopped = false,
+  copyOf?: Message["copyOf"],
 ): boolean {
   const watched = delegationWatch.get(threadId);
   if (!watched) return false;
@@ -5194,6 +5215,7 @@ function finalizeDelegationWatch(
         role: "bot",
         kind: "text",
         text: `@${targetName} replied to the delegated task:\n\n${reply.trim()}`,
+        ...(copyOf ? { copyOf } : {}),
       };
       if (target) sourceReply.from = { botId: target.id, name: target.name, color: target.color };
       appended = store.appendMessage(watched.sourceThreadId, sourceReply);
@@ -5220,7 +5242,7 @@ function finalizeDelegationWatch(
   }
   const channel = watched.channelId ? store.group(watched.channelId) : undefined;
   if (!target || !channel) return true;
-  if (ok && reply.trim()) mirrorReply(commsBus, target, reply, channel);
+  if (ok && reply.trim()) mirrorReply(commsBus, target, reply, channel, copyOf);
   else if (ok) mirrorActivity(commsBus, target, channel, "Delegated turn completed", true);
   else mirrorActivity(commsBus, target, channel, failureName, false);
   return true;
@@ -7882,8 +7904,16 @@ async function runGroupMemberTurn(
     !skillAuthoringClaim.claimed &&
     !cardContinuation &&
     instance.adapter.capabilities.agentsMcp === true;
+  const latestUser = [...store.activePath(threadId)].reverse().find(
+    (message) => message.role === "user" && message.kind === "text" && message.text,
+  );
+  // Is everyone this turn answers to the owner: the room's human, and words
+  // proven to be the owner's. The same answer decides the transcript
+  // (room-transcript.ts), the owner's standing material and memory: a turn
+  // that is not the owner's recalls nothing private (0.1.61 lane T2).
+  const roomOwnerAudience = isWorkspaceOwner(threadHumanPrincipal(threadId)) && latestUser?.origin !== "unproven";
   const internalGeneration = randomUUID();
-  beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring);
+  beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring, undefined, undefined, !roomOwnerAudience);
   // Upstream 0b2694a4: the setup latch for a stall during room setup.
   let setupStalled = false;
   let unregisterSetupStall = () => {};
@@ -7891,9 +7921,6 @@ async function runGroupMemberTurn(
   if (instance.adapter.capabilities.agentsMcp === true) {
     integrations.agents = agentsIntegration(bot.id, threadId, hop, skillAuthoring, internalGeneration);
   }
-  const latestUser = [...store.activePath(threadId)].reverse().find(
-    (message) => message.role === "user" && message.kind === "text" && message.text,
-  );
   const procedureHolder = group.dm ? group : store.groupTaskByThread(group.id, threadId)!;
   const procedurePin = procedureHolder.procedurePins?.[bot.id] ?? store.pinGroupProcedures(group.id, threadId, bot.id,
     {...createProcedurePin(bot.id, threadId, availableSkills(), bot.playbooks ?? [], procedureRoutineSnapshot(threadId), procedureContext(bot.id,threadId)),
@@ -8102,9 +8129,7 @@ async function runGroupMemberTurn(
   // but must not decide the pin: the room's desk is a property of the
   // room, not of whichever member happened to speak first.
   let cwd = groupTurnCwd(workspace, () => store.pinGroupCwd(group.id, threadId));
-  const roomOwnerAudience = isWorkspaceOwner(threadHumanPrincipal(threadId));
-  // Words nobody proved are the owner's do not read the room as the owner.
-  const roomTranscriptOwner = roomOwnerAudience && latestUser?.origin !== "unproven";
+  const roomTranscriptOwner = roomOwnerAudience;
   const roomStanding = standingContextParts(bot, { ownerAudience: roomOwnerAudience, fileTools: Boolean(workspace), unattended: Boolean(orchestration) || isUnattended(threadId) });
   const roomLayers: ShapeLayer[] = [
     // The owner's House Rules open every bot's prompt, rooms included
@@ -8214,7 +8239,10 @@ async function runGroupMemberTurn(
     const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
       if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
       else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
-    },{availableContextTokens,excludeMessageIds,excludeSourceIds:standingContextSourceIds(bot,roomOwnerAudience)});
+    },{availableContextTokens,excludeMessageIds,excludeSourceIds:standingContextSourceIds(bot,roomOwnerAudience),
+      // a room turn that is not the owner's does not recall what its
+      // transcript leaves out (disclosures.ts)
+      withheldMessage:readerWithheldMessage(access)});
     // The room transcript is a room record (room-transcript.ts): an owner
     // turn reads every teammate reply, with a withheld line where a reply
     // used something the owner forgot, deleted or changed. The owner sees a
@@ -12092,7 +12120,7 @@ const server = createServer(async (req, res) => {
         const reply = outcome.status === "timeout"
           ? outcome.text || "(timed out waiting for the bot to reply)"
           : outcome.text;
-        mirrorReply(commsBus, currentTarget, reply, channel);
+        mirrorReply(commsBus, currentTarget, reply, channel, outcome.copyOf);
         return json(res, 200, { botName: currentTarget.name, text: reply });
         } finally { handoffSlot.release(); }
       }

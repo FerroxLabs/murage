@@ -6,7 +6,11 @@ import type { MemoryBundle, MemoryEvidenceHandle } from "../../shared/memory.ts"
 import { MEMORY_HANDLE_LIMIT, MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, memoryHandle, memoryHandlePosition, memoryRequestPrefix } from "../../shared/memory.ts";
 import { accessIncludesRoom, assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import { searchMemory, type MemorySearchBridge } from "./search.ts";
-import { threadCheckpointId, unsettledIntention } from "./checkpoints.ts";
+import { supersededThreadCheckpoint, unsettledIntention } from "./checkpoints.ts";
+import { recordRestsOnWithheldMessage } from "./replay-lineage.ts";
+
+// Moved to checkpoints.ts (replay-lineage.ts reads it without importing this module).
+export { supersededThreadCheckpoint };
 
 export interface BundleRecord {
   id: string; version: number; scopeId: string; text: string; assertion: string;
@@ -21,30 +25,6 @@ const bundles = new WeakMap<MemoryBundle, {access: MemoryAccess; records: Bundle
 /** Hydrate authoritative bytes only; an approved projection does not expose its private parents. */
 export function hydrateMemoryRecord(id: string, version: number, access: MemoryAccess): BundleRecord {
   return hydrate(id,version,access,false);
-}
-
-/** A thread's own checkpoint rolls on every captured message in that thread, the
- * turn's own prompt and reply included, so the version selected for a dispatch
- * is routinely archived inside the dispatch window. That supersession forgets
- * nothing: the archived version is a bounded index of evidence that is still
- * active at the same revisions, under the same policy revision and deletion
- * epoch (an owner forget, archive or policy change moves one of those and is
- * refused on its own). A disclosed version in that state is stale, not
- * revoked. Everything else stays fail-closed: the record must be the current
- * thread's checkpoint, unpinned, untombstoned, with a newer active version and
- * every evidence source intact.
- *
- * "The current thread" is the thread the turn is dispatched for
- * (access.threadId), never the bot's own thread: a room member's turn is
- * claimed for the room thread (server/index.ts runGroupMemberTurn), so the
- * room checkpoint — which rolls on every member's prompt and reply — is that
- * turn's own, while the member's own-thread checkpoint and other rooms'
- * checkpoints are not (dispatch-preparation.test.ts, RED2E). */
-export function supersededThreadCheckpoint(id: string, version: number, access: Pick<MemoryAccess,"threadId">): boolean {
-  const db = database();
-  const row = db.prepare("SELECT scope_id,kind,state,owner_pinned FROM memory_records WHERE id=? AND version=?").get(id,version);
-  if (!row || row.kind !== "checkpoint" || row.state !== "archived" || row.owner_pinned === 1 || id !== threadCheckpointId(String(row.scope_id),access.threadId)) return false;
-  return Boolean(db.prepare("SELECT 1 FROM memory_records WHERE id=? AND version>? AND state='active' LIMIT 1").get(id,version));
 }
 
 /** Hydrate a version that was disclosed to a turn: identical to hydrateMemoryRecord
@@ -80,6 +60,11 @@ function hydrate(id: string, version: number, access: MemoryAccess, allowSuperse
     const text = JSON.parse(String(source.payload)).text;
     if (typeof text !== "string" || !Number.isSafeInteger(handle.startByte) || !Number.isSafeInteger(handle.endByte) || handle.startByte < 0 || handle.endByte <= handle.startByte || handle.endByte > Buffer.byteLength(text)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
   }
+  // A record resting on a generated message that is withheld (what its reply
+  // used was forgotten, deleted or changed, replay-lineage.ts) does not bring
+  // that reply back as a remembered line. An owner pin is the owner's own
+  // say-so and stays.
+  if (row.owner_pinned !== 1 && recordRestsOnWithheldMessage(id,version)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
   // A captured chunk keeps its source's settlement (checkpoints.ts): an unsettled
   // intention is not current evidence; a failed tool output is only a failure.
   let sourceOutcome: "failed" | undefined;
@@ -128,7 +113,10 @@ export function memoryHandleRecord(bundle: MemoryBundle, handle: unknown): {id: 
 function tokens(text: string) { return Buffer.byteLength(memoryRequestPrefix(text),"utf8"); }
 
 /** No tokenizer dependency: UTF-8 bytes conservatively bound tokens, including metadata. */
-export async function buildMemoryBundle(query: string, access: MemoryAccess, bridge: MemorySearchBridge, options: {availableContextTokens?: number; signal?: AbortSignal; excludeMessageIds?: readonly string[]; excludeSourceIds?: readonly string[]; evolutionPolicy?:MemoryEvolutionPolicy} = {}): Promise<BoundedMemoryBundle> {
+export async function buildMemoryBundle(query: string, access: MemoryAccess, bridge: MemorySearchBridge, options: {availableContextTokens?: number; signal?: AbortSignal; excludeMessageIds?: readonly string[]; excludeSourceIds?: readonly string[]; evolutionPolicy?:MemoryEvolutionPolicy;
+  /** The reader's own transcript rule: a message it may not be shown is not
+   * recalled either (a room turn whose audience is not the owner). */
+  withheldMessage?: (threadId: string, messageId: string) => boolean} = {}): Promise<BoundedMemoryBundle> {
   const evolutionPolicy=options.evolutionPolicy??readMemoryEvolutionPolicy();
   assertMemoryAccess(access);
   options.signal?.throwIfAborted();
@@ -182,6 +170,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   for (const row of checkpoints) {
     try {
       const record = hydrateMemoryRecord(String(row.id),Number(row.version),access);
+      if (options.withheldMessage && recordRestsOnWithheldMessage(record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
       if (tokens(render([...selected,record])) <= checkpointCeiling) add(record,checkpoint);
       else deferredCheckpoints.push(record);
     } catch { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }
@@ -197,11 +186,12 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     // MEMORY.md, its team brief) is not recalled again as imported chunks.
     const ownSources = new Set([...ownMessageSources(db,access.threadId,options.excludeMessageIds),...(options.excludeSourceIds ?? [])]);
     try {
-      const result = await searchMemory(query,access,bridge,{limit:20,signal:options.signal,evolutionPolicy});
+      const result = await searchMemory(query,access,bridge,{limit:20,signal:options.signal,evolutionPolicy,withheldMessage:options.withheldMessage});
       degradedReason = result.degradedReason ?? degradedReason;
       for (const hit of result.hits) {
         try {
           const record = hydrateMemoryRecord(hit.id,hit.version,access);
+          if (!record.pinned && options.withheldMessage && recordRestsOnWithheldMessage(record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
           if (!citesOnly(record,ownSources)) add(record,evidence);
         }
         catch { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }

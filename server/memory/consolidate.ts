@@ -6,6 +6,7 @@ import { redactSecretsInText } from "../redact.ts";
 import { activateGroundedMemory } from "./automatic-learning.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { threadCheckpointId, unsettledIntention } from "./checkpoints.ts";
+import { sourceIsWithheldMessage } from "./replay-lineage.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 
 type Handle={sourceId:string;revision:number;startByte:number;endByte:number};
@@ -29,6 +30,9 @@ function checkpointEvidence(handle:Handle,scopeId:string){
   if(!source||source.kind==="turn"||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(handle.sourceId,handle.revision))return null;
   // A cancelled intention is not a completed effect; the same rule governs current recall.
   if(unsettledIntention(db,source))return null;
+  // A reply withheld from bots (replay-lineage.ts) is not carried forward
+  // either: the next checkpoint is rebuilt without it.
+  if(sourceIsWithheldMessage(source))return null;
   const bytes=source.excerpt as Uint8Array;
   if(bytes.length!==handle.endByte-handle.startByte||bytes.length===0)return null;
   let text:string;try{text=new TextDecoder("utf-8",{fatal:true}).decode(bytes);}catch{return null;}

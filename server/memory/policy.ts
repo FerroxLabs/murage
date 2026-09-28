@@ -152,7 +152,11 @@ export function reconcileMemoryRoster(roster: MemoryRoster) {
   });
 }
 
-function eligibleScopes(botId: string, threadId: string, roster: MemoryRoster): string[] {
+/** notOwnerAudience: the turn's words were not proven to be the owner's
+ * (0.1.61 lane T2). It reads like a stranger in the owner's own thread: the
+ * conversation and room it runs in, never the bot's or team's memory, the
+ * owner's preferences or anything the owner shared. */
+function eligibleScopes(botId: string, threadId: string, roster: MemoryRoster, notOwnerAudience = false): string[] {
   const bot = roster.bots.find(b => b.id === botId);
   if (!bot) return [];
   const group = roster.groups.find(g => g.threadId === threadId || g.tasks?.some(t => t.threadId === threadId));
@@ -161,6 +165,7 @@ function eligibleScopes(botId: string, threadId: string, roster: MemoryRoster): 
   const db = database();
   const principal=threadHumanPrincipal(threadId);
   assertHumanPrincipal(principal);
+  const owner=isWorkspaceOwner(principal) && !notOwnerAudience;
   const scopes: string[] = [];
   const add = (kind: string, owner: string) => {
     const row = db.prepare("SELECT id FROM memory_scopes WHERE kind=? AND owner_key=?").get(kind,owner);
@@ -181,18 +186,28 @@ function eligibleScopes(botId: string, threadId: string, roster: MemoryRoster): 
     // team's memory (adapted from OpenMausBot). A room whose audience is a
     // channel person keeps the room-only boundary; owner shares still apply
     // through the person bindings below. Never another member's scopes.
-    if(isWorkspaceOwner(principal)){add("bot",botId); add("team",bot.section?.trim() || "");}
+    if(owner){add("bot",botId); add("team",bot.section?.trim() || "");}
   } else {
-    if(isWorkspaceOwner(principal)){add("bot",botId); add("team",bot.section?.trim() || "");}
+    if(owner){add("bot",botId); add("team",bot.section?.trim() || "");}
+    // Words nobody proved are the owner's get none of the owner's own memory.
+    if(notOwnerAudience && isWorkspaceOwner(principal))return [...new Set(scopes)];
     add("preferences","person:"+principal.personId);
     const excluded = new Set(db.prepare("SELECT e.value FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings'").all().map(row=>String(row.value)));
     for (const owned of new Set([bot.threadId,...(bot.tasks??[]).map(task=>task.threadId)])) {
       if (!foreignThreads.has(owned) && !excluded.has(owned) && sameHumanAudience(principal,threadHumanPrincipal(owned))) add("conversation",owned);
     }
   }
+  if (notOwnerAudience && isWorkspaceOwner(principal)) return [...new Set(scopes)];
   const subjectType = isWorkspaceOwner(principal) ? (group ? "room" : "bot") : "person", subjectId = isWorkspaceOwner(principal) ? (group?.id ?? botId) : principal.personId;
   for (const row of db.prepare("SELECT scope_id FROM memory_scope_bindings WHERE subject_type=? AND subject_id=? AND state='granted'").all(subjectType,subjectId)) scopes.push(String(row.scope_id));
   return [...new Set(scopes)];
+}
+
+/** Is everyone this access answers to the workspace owner: the thread's human
+ * and, for this turn, words proven to be the owner's. */
+export function memoryAccessIsOwnerAudience(access: MemoryAccess): boolean {
+  const trusted = contexts.get(access);
+  return Boolean(trusted) && trusted!.claim.notOwnerAudience !== true && isWorkspaceOwner(access.humanPrincipal);
 }
 
 /** True when this access is a room member's. Owner-private identity records
@@ -209,7 +224,7 @@ export function memoryAccess(registry: InternalCapabilities, claim: InternalCapa
   if(!claim.humanPrincipal && !isWorkspaceOwner(principal))throw new Error("MEMORY_UNAUTHORIZED");
   const state = memoryState();
   if (policyRow()?.state !== "granted") throw new Error("MEMORY_POLICY_PENDING");
-  const scopeIds = eligibleScopes(claim.botId,claim.threadId,roster());
+  const scopeIds = eligibleScopes(claim.botId,claim.threadId,roster(),claim.notOwnerAudience===true);
   if (!scopeIds.length) throw new Error("MEMORY_UNAUTHORIZED");
   const access = Object.freeze({botId:claim.botId,threadId:claim.threadId,generation:claim.generation,policyRevision:state.policyRevision,deletionEpoch:state.deletionEpoch,humanPrincipal:principal,scopeIds:Object.freeze(scopeIds)});
   contexts.set(access,{claim,registry,roster}); return access;
@@ -245,6 +260,6 @@ export function assertMemoryAccess(access: MemoryAccess, scope?: string) {
   const trusted = contexts.get(access), state = memoryState();
   if (!trusted || !trusted.registry.isActive(trusted.claim)) throw new Error("MEMORY_UNAUTHORIZED");
   if (state.policyRevision !== access.policyRevision || state.deletionEpoch !== access.deletionEpoch || policyRow()?.state !== "granted") throw new Error("MEMORY_CONTEXT_REVOKED");
-  const current = eligibleScopes(access.botId,access.threadId,trusted.roster());
+  const current = eligibleScopes(access.botId,access.threadId,trusted.roster(),trusted.claim.notOwnerAudience===true);
   if (!current.length || scope && (!current.includes(scope) || !access.scopeIds.includes(scope))) throw new Error("MEMORY_SCOPE_DENIED");
 }

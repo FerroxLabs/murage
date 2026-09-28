@@ -254,6 +254,11 @@ export interface Message {
    * used something the owner forgot, deleted or changed (room-transcript.ts).
    * The owner still sees it. Server-written only. */
   withheldFromBots?: boolean;
+  /** A bot reply the harness copied here from another thread (a delegated
+   * or asked teammate's answer, mirrored into the pair room or back into the
+   * conversation that asked). The copy is withheld from bots whenever the
+   * original is (server/memory/replay-lineage.ts). Server-written only. */
+  copyOf?: { threadId: string; messageIds: string[] };
   /** activity messages: a card answered after its routine run had ended.
    * The row offers Run again for this routine. Server-written only. */
   routineRunAgain?: { routineId: string };

@@ -9,6 +9,7 @@ import { selectMemoryEvidence } from "./relevance.ts";
 import { materializeRecentMemory, recentMemoryHits } from "./recent.ts";
 import { recordMemoryRetrieval } from "./health.ts";
 import { unsettledIntention } from "./checkpoints.ts";
+import { recordRestsOnWithheldMessage } from "./replay-lineage.ts";
 const queryCache=new MemoryQueryCache<{hits:IndexHit[];degradedReason?:string;vectorRows:number;nextCursor?:string;coverageComplete?:boolean}>();
 
 import { CURRENT_MEMORY,HISTORICAL_MEMORY } from "./eligibility.ts";
@@ -18,7 +19,7 @@ export interface MemorySearchBridge {
   search(input:MemorySearchInput,signal:AbortSignal):Promise<{hits:IndexHit[];degradedReason?:string;vectorRows:number;nextCursor?:string;coverageComplete?:boolean}>;
   completedSource?(jobId:string):void;
 }
-export async function searchMemory(query:string,access:MemoryAccess,bridge:MemorySearchBridge,options:{limit?:number;historical?:boolean;cursor?:string;signal?:AbortSignal;profile?:boolean;evolutionPolicy?:MemoryEvolutionPolicy}={}){
+export async function searchMemory(query:string,access:MemoryAccess,bridge:MemorySearchBridge,options:{limit?:number;historical?:boolean;cursor?:string;signal?:AbortSignal;profile?:boolean;evolutionPolicy?:MemoryEvolutionPolicy;withheldMessage?:(threadId:string,messageId:string)=>boolean}={}){
   const evolutionPolicy=options.evolutionPolicy??readMemoryEvolutionPolicy();
   const serviceStarted=performance.now();
   assertMemoryAccess(access);
@@ -51,6 +52,9 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     if(room && database().prepare("SELECT 1 FROM memory_record_details WHERE record_id=? AND record_version=? AND partition='identity'").get(hit.id,hit.version))return null;
     const scopeId=String(record.scope_id);
     if(!checkedScopes.has(scopeId)){assertMemoryAccess(access,scopeId);checkedScopes.add(scopeId);}
+    // A withheld reply is not found again through search (replay-lineage.ts);
+    // an owner pin stays.
+    if(record.owner_pinned!==1&&recordRestsOnWithheldMessage(hit.id,hit.version,options.withheldMessage))return null;
     // A captured chunk keeps its source's settlement: an unsettled intention is not
     // current evidence, and a failed tool output is recallable only as a failure.
     const outcome:{sourceOutcome?:"failed"}={};

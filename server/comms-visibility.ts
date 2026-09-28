@@ -96,12 +96,14 @@ export function mirrorExchange(
 
 /** Mirror `target`'s reply into the channel so the channel stays the
  * single authoritative record of the exchange. The 1:1 threads already
- * carry their own chips from `mirrorExchange`. */
+ * carry their own chips from `mirrorExchange`. `copyOf` names the original
+ * reply, so the copy is withheld from bots whenever the original is. */
 export function mirrorReply(
   bus: CommsBus,
   target: BotRecord,
   reply: string,
   channel: GroupRecord | undefined,
+  copyOf?: Message["copyOf"],
 ): void {
   if (!channel || !reply.trim()) return;
   bus.store.appendMessage(channel.threadId, {
@@ -109,6 +111,7 @@ export function mirrorReply(
     kind: "text",
     text: reply,
     from: { botId: target.id, name: target.name, color: target.color },
+    ...(copyOf?.messageIds.length ? { copyOf } : {}),
   });
   bus.store.patchGroup(channel.id, { unread: true });
 }
