@@ -175,7 +175,7 @@ import { parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
 import { RoomPendingStop, RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
 import { GROUP_CONTEXT_MESSAGES, ROOM_CONTEXT_PINNED_LABEL, roomContextMessageIds, roomContextMessages, ROOM_REPLY_WITHHELD, withheldRoomLine } from "./room-context.ts";
-import { capturedMessageWithheld, copyOriginWithheld } from "./memory/replay-lineage.ts";
+import { capturedMessageWithheld, copyOriginWithheld, messageMadeWithMemory } from "./memory/replay-lineage.ts";
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
@@ -5129,6 +5129,8 @@ const delegationWatch = new Map<string, {
   sourceThreadId?: string;
   /** when the delegated turn was dispatched — elapsed time for status checks */
   startedAtMs?: number;
+  /** the delegated turn reads memory as a non-owner audience (lane T2) */
+  notOwnerAudience?: boolean;
 }>();
 
 // Provider-native sessions only know about messages produced inside their
@@ -5181,8 +5183,11 @@ function turnReplyCopy(threadId: string, turnId: string | undefined, since?: num
   // handoff started, else its latest one. Linking more than the original
   // only withholds the copy more often, never less.
   if (!ids.length && since !== undefined) ids.push(...texts.filter((m) => m.at >= since).map((m) => m.id));
+  // Only with neither: the thread's latest reply. A turn that wrote nothing
+  // since the handoff began has no original, and its copy (a placeholder)
+  // needs no link.
   const latest = texts.at(-1);
-  if (!ids.length && latest) ids.push(latest.id);
+  if (!ids.length && since === undefined && !turnId && latest) ids.push(latest.id);
   return ids.length ? { threadId, messageIds: ids } : undefined;
 }
 
@@ -5214,6 +5219,7 @@ function finalizeDelegationWatch(
       status: ok ? "done" : "failed",
       result: ok ? reply : failureName,
       ...(ok && copyOf ? { copyOf } : {}),
+      ...(watched.notOwnerAudience ? { notOwnerAudience: true as const } : {}),
     });
   }
   const target = store.bot(watched.toBotId);
@@ -5310,6 +5316,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
         taskId,
         sourceThreadId,
         startedAtMs: Date.now(),
+        ...(notOwnerAudience ? { notOwnerAudience: true } : {}),
       });
     }
     let failureReported = false;
@@ -5776,6 +5783,11 @@ async function startTurn(
   const humanPrincipal=threadHumanPrincipal(threadId);
   assertHumanPrincipal(humanPrincipal);
   const humanIsOwner=isWorkspaceOwner(humanPrincipal);
+  // Words nobody proved are the owner's (or a peer turn such words started,
+  // an ask or a delegation) in the owner's own thread: memory, the owner's
+  // standing material, quoted replies and owed copies read it as a non-owner
+  // audience (0.1.61 lane T2). A channel person's thread is one already.
+  const memoryNotOwner = humanIsOwner && (opts?.notOwnerAudience === true || opts?.origin === "unproven");
   if(!humanIsOwner){
     if(!opts?.automationSource&&!opts?.commsDepth&&!opts?.cardContinuation&&!opts?.memoryRedispatch)throw Object.assign(new Error("This conversation belongs to a channel person. Start a new owner task to chat."),{status:403});
     bot.autoApprove=false;bot.fullAccess=false;bot.noLimits=false;bot.alwaysAllow=[];bot.computer="off";bot.browser=false;bot.composio=false;
@@ -5951,7 +5963,9 @@ async function startTurn(
       const message = messagesById.get(id);
       // A teammate's copied reply whose original is now withheld from bots
       // is handed over as the withheld line, never its words (0.1.61 lane T2).
-      if (message?.copyOf && capturedMessageWithheld(threadId, id)) return { id, text: withheldRoomLine(message) };
+      // A turn that is not the owner's gets no teammate's copied reply at all:
+      // its reader check needs the memory access this turn has not built yet.
+      if (message?.copyOf && (memoryNotOwner || capturedMessageWithheld(threadId, id))) return { id, text: withheldRoomLine(message) };
       return { id, text: message?.kind === "activity" ? message.tool?.name ?? "" : message?.text ?? "" };
     }),
   });
@@ -5962,7 +5976,7 @@ async function startTurn(
   const turnPrompt = withExternalDelivery(
     promptWithReply(
       routineRunPrompt ? `${routineRunPromptNote(routineRunPrompt.trigger, routineRunPrompt.routineName)}\n\n${text}` : skillAuthoring ? expandLearnTurnText(text) : text,
-      opts?.replyTo,
+      replyForPrompt(threadId, opts?.replyTo, memoryNotOwner),
       cfg.profile?.name?.trim() || "User",
     ),
     externalDelivery,
@@ -5999,7 +6013,7 @@ async function startTurn(
   // peer turn such a turn asked or delegated) as a non-owner audience, in the
   // owner's own thread too (0.1.61 lane T2). A channel person's thread is one
   // already, and keeps its own receipt handling.
-  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination, humanIsOwner && (opts?.notOwnerAudience === true || opts?.origin === "unproven"));
+  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination, memoryNotOwner);
   if(opts?.memorySkillSource)internalTurnOwners.get(threadId)!.memorySkillSource=opts.memorySkillSource;
   directTurnDispatchClaims.set(threadId, { id: dispatchClaimId, botId:bot.id, threadId, phase: "setup" });
   store.setTaskActivity(bot.id, threadId, "working");
@@ -6462,7 +6476,9 @@ async function startTurn(
         const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;
         // The just-appended user message is already captured; keep its own
         // chunk out of this turn's recall (MEMJSON2).
-        const memoryOptions={availableContextTokens,excludeMessageIds:[...skipTranscript],excludeSourceIds:standingContextSourceIds(bot,humanIsOwner)};
+        const memoryOptions={availableContextTokens,excludeMessageIds:[...skipTranscript],excludeSourceIds:standingContextSourceIds(bot,humanIsOwner && !memoryNotOwner),
+          // a turn that is not the owner's does not recall what its replay leaves out
+          withheldMessage:readerWithheldMessage(access)};
         let bundle=await buildMemoryBundle(query,access,memoryWorker,memoryOptions);
         let memoryRefreshed=revoked;
         if(resumeCursor && memoryContinuationChanged(bundle,threadId,instanceId,String(resumeCursor))) {
@@ -6555,7 +6571,7 @@ async function startTurn(
       // inline concatenation sent (bot-shapes.test.ts), and kept as this
       // bot's last turn for "What shapes <bot>". Built in the same tick as
       // the dispatch, so every value is the one the engine receives.
-      const standing = standingContextParts(bot, { ownerAudience: humanIsOwner, fileTools: worksInWorkspace && opts?.runOn !== "cloud", unattended: fullAccessOrigin === "other" || fullAccessOrigin === "routine", webhook: opts?.automationSource === "webhook" });
+      const standing = standingContextParts(bot, { ownerAudience: humanIsOwner && !memoryNotOwner, fileTools: worksInWorkspace && opts?.runOn !== "cloud", unattended: fullAccessOrigin === "other" || fullAccessOrigin === "routine", webhook: opts?.automationSource === "webhook" });
       const systemLayers = directTurnLayers({
         // The owner's House Rules open every bot's prompt (house-rules.ts).
         houseRules: houseRulesPrompt(),
@@ -7954,7 +7970,7 @@ async function runGroupMemberTurn(
   // Without memory's own transcript (prepareRoomMemory runs only when memory
   // is active): what the owner forgot stays withheld even when memory is
   // not active, and skill choice reads the same lines (0.1.61 lane T2).
-  const roomFloor = memoryState().mode === "active" ? undefined : roomTranscriptWithoutMemory(threadId, store.messagesFor(threadId), roomOwnerAudience, roomPinnedMessageId(threadId));
+  const roomFloor = memoryState().mode === "active" ? undefined : roomTranscriptWithoutMemory(threadId, store.messagesFor(threadId), roomOwnerAudience, roomPinnedMessageId(threadId), !roomOwnerAudience && isWorkspaceOwner(threadHumanPrincipal(threadId)));
   const roomContextText = () => roomFloor ? serializeRoomContext(threadId, userName, roomFloor.messages, roomFloor.withheld) : serializeRoomContext(threadId, userName);
   const selectedSkills = mergeSkills(
     selectBundledSkills(
@@ -9259,6 +9275,16 @@ function roomSetupPending(group: GroupRecord): boolean {
     group.setupSkippedAt == null &&
     store.messagesFor(group.threadId).length === 0
   );
+}
+
+/** The reply a message quotes, as the prompt may carry it: a reply withheld
+ * from bots (or, for words nobody proved are the owner's, any reply made with
+ * memory) is quoted as the withheld line, like the transcript shows it
+ * (0.1.61 lane T2). */
+function replyForPrompt(threadId: string, target: Message | undefined, notOwnerAudience: boolean): Message | undefined {
+  if (!target || target.role !== "bot" || !target.text) return target;
+  const withheld = capturedMessageWithheld(threadId, target.id) || (notOwnerAudience && messageMadeWithMemory(threadId, target.id));
+  return withheld ? { ...target, text: withheldRoomLine(target) } : target;
 }
 
 function resolveReplyTarget(threadId: string, value: unknown): Message | undefined {
@@ -12181,8 +12207,9 @@ const server = createServer(async (req, res) => {
               return json(res, 403, { error: "that task belongs to a different conversation" });
             }
             // a result whose original reply is now withheld from bots is
-            // read back as the withheld line (0.1.61 lane T2)
-            const withheld = receipt.copyOf && copyOriginWithheld(receipt.copyOf);
+            // read back as the withheld line; so is one a turn made as the
+            // owner's audience, asked for by a turn that is not (0.1.61 lane T2)
+            const withheld = (internalClaim.notOwnerAudience === true && receipt.notOwnerAudience !== true) || (receipt.copyOf && copyOriginWithheld(receipt.copyOf));
             return json(res, 200, { status: receipt.status, toBotName: receipt.toBotName, result: withheld ? `[${ROOM_REPLY_WITHHELD}]` : receipt.result ?? "" });
           }
           const stillQueued = pendingDelegationInfo(taskId);
@@ -12208,7 +12235,9 @@ const server = createServer(async (req, res) => {
                 toBotName: store.bot(toBotId)?.name ?? toBotId,
                 elapsedMs,
                 elapsed: formatDelegationElapsed(elapsedMs),
-                recentActivity: summarizeDelegatedActivity(store.messagesFor(runningEntry[0]), startedAtMs),
+                // no excerpt of what an owner-audience turn wrote reaches a
+                // turn that is not the owner's
+                recentActivity: summarizeDelegatedActivity(store.messagesFor(runningEntry[0]), startedAtMs, 5, !(internalClaim.notOwnerAudience === true && running.notOwnerAudience !== true)),
               });
             }
             return json(res, 200, {
@@ -16011,7 +16040,7 @@ const server = createServer(async (req, res) => {
             // waits in the queue and runs as its own unattended turn.
             if (!isEngineCommand && !unprovenSend && instance?.adapter.capabilities.queueing && instance.adapter.steer) {
               steered = await instance.adapter
-                .steer(threadId, promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"))
+                .steer(threadId, promptWithReply(text, replyForPrompt(threadId, replyTo, false), cfg.profile?.name?.trim() || "User"))
                 .catch(() => false);
             }
             // steer() is awaited adapter work. The turn can settle, the task can
@@ -16057,7 +16086,7 @@ const server = createServer(async (req, res) => {
               replyToId: replyTo?.id,
               sendId,
               origin,
-              prompt: promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"),
+              prompt: promptWithReply(text, replyForPrompt(threadId, replyTo, unprovenSend && isWorkspaceOwner(threadHumanPrincipal(threadId))), cfg.profile?.name?.trim() || "User"),
             });
             return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
           }
@@ -16070,7 +16099,7 @@ const server = createServer(async (req, res) => {
               replyToId: replyTo?.id,
               sendId,
               origin,
-              prompt: promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"),
+              prompt: promptWithReply(text, replyForPrompt(threadId, replyTo, unprovenSend && isWorkspaceOwner(threadHumanPrincipal(threadId))), cfg.profile?.name?.trim() || "User"),
             });
             return { ok: true as const, queued: true as const, queueId: queued.id, threadId };
           }

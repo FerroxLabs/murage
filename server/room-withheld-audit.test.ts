@@ -17,9 +17,11 @@ import { captureWork } from "./memory/chunks.ts";
 import { consolidateMemorySource } from "./memory/consolidate.ts";
 import { ownerMemoryTicket, saveMemoryCandidate } from "./memory/authority.ts";
 import { forgetMemory } from "./memory/forget.ts";
-import { continuationMemoryRevoked, filterMemoryReplay, roomReplayWithheld } from "./memory/disclosures.ts";
+import { continuationMemoryRevoked, filterMemoryReplay, readerWithheldMessage, roomReplayWithheld } from "./memory/disclosures.ts";
+import { _loadPending, findDelegationReceipt, recordDelegationReceipt, summarizeDelegatedActivity } from "./delegations.ts";
+import { readFileSync } from "node:fs";
 import { roomTranscriptWithoutMemory } from "./room-transcript.ts";
-import { copyOriginWithheld, recordRestsOnWithheldMessage, replayExclusions } from "./memory/replay-lineage.ts";
+import { copyOriginWithheld, messageMadeWithMemory, recordRestsOnWithheldMessage, replayExclusions } from "./memory/replay-lineage.ts";
 import { insertMessage } from "./message-db.ts";
 import type { Message } from "./store.ts";
 
@@ -204,4 +206,75 @@ it("Kimi M5: with memory no longer active, a forgotten reply stays withheld in t
   expect(roomTranscriptWithoutMemory("closing-chat", lines, false)!.messages.map(m => m.id)).toEqual(["m-owner", "m-next"]);
   // a room that never used memory is read as it is
   expect(roomTranscriptWithoutMemory("pair-chat", [bot("m-plain", "hello")], true)).toBeUndefined();
+});
+
+// Astra round 2
+
+it("R2-3: the reader check follows a copy through the evidence of a later reply", () => {
+  const record = daxMemory(true);
+  copied(record);
+  const chunk = database().prepare("SELECT r.id,r.version FROM memory_evidence e JOIN memory_records r ON r.id=e.record_id AND r.version=e.record_version WHERE e.source_id='message:pair-chat:m-copy' AND r.kind='source'").get() as { id: string; version: number };
+  disclose("b-finch", "pair-chat", [chunk], ["m-finch"]);
+  const later = [{ id: "m-ask", role: "user" }, bot("m-finch", "Per Dax, rows 83-86 went out on the 26th.")];
+  expect([...roomReplayWithheld("pair-chat", later)]).toEqual([]);
+  expect(filterMemoryReplay("pair-chat", later, access("finch", "pair-chat", true), { persist: false }).map(m => m.id)).toEqual(["m-ask"]);
+});
+
+it("R2-2: a direct turn whose words were not proven gets the reader rule for recall too", () => {
+  const record = daxMemory(true);
+  disclose("b-answer", "dax-direct", [{ id: record, version: version(record) }], ["m-answer"]);
+  expect(readerWithheldMessage(access("dax", "dax-direct"))).toBeUndefined();
+  const rule = readerWithheldMessage(access("dax", "dax-direct", true))!;
+  expect(rule("dax-direct", "m-answer")).toBe(true);
+  expect(rule("dax-direct", "m-other")).toBe(false);
+});
+
+it("R2-4/5/6: delegation receipts keep the audience and the whole link, and running excerpts can be left out", () => {
+  const record = daxMemory();
+  copied(record);
+  recordDelegationReceipt({ id: "task-wide", sourceThreadId: "finch-direct", toBotId: "dax", toBotName: "Dax", status: "done", result: REPLY, notOwnerAudience: true,
+    copyOf: { threadId: "dax-direct", messageIds: ["m-original", ...Array.from({ length: 69 }, (_, i) => `m-extra-${i}`)] } });
+  _loadPending();
+  const loaded = findDelegationReceipt("task-wide")!;
+  expect(loaded.notOwnerAudience).toBe(true);
+  expect(loaded.copyOf!.messageIds.length).toBe(65);
+  expect(copyOriginWithheld(loaded.copyOf!)).toBe(true);
+  const activity = [{ at: 2, kind: "text", text: REPLY }, { at: 3, kind: "activity", tool: { name: "Read notes" } }] as never[];
+  expect(summarizeDelegatedActivity(activity, 1)).toEqual([`text: ${REPLY}`, "tool: Read notes"]);
+  expect(summarizeDelegatedActivity(activity, 1, 5, false)).toEqual(["tool: Read notes"]);
+});
+
+it("R2-7: a derivation chain past the budget counts as withheld even when its first records carry no evidence", () => {
+  const record = daxMemory();
+  copied(record);
+  const saved = saveMemoryCandidate("The vendor confirmed rows 83-86.", [{ sourceId: "message:dax-direct:m-original", revision: 1, startByte: 0, endByte: Buffer.byteLength(REPLY) }], "k-chain", access("dax", "dax-direct"));
+  let parent = { id: saved, version: version(saved) };
+  for (let i = 0; i < 66; i++) {
+    database().prepare("INSERT INTO memory_records VALUES(?,1,?,'fact','projection','owner-statement','active',0,?,NULL,NULL,?)").run(`p-${i}`, scopeOf("team", "Operations"), Date.now(), Date.now());
+    database().prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(parent.id, parent.version, `p-${i}`);
+    parent = { id: `p-${i}`, version: 1 };
+  }
+  expect(recordRestsOnWithheldMessage("p-65", 1)).toBe(true);
+  expect(recordRestsOnWithheldMessage("p-10", 1)).toBe(false);
+});
+
+it("R2-8: with memory not active, words nobody proved in the owner's room see no reply made with memory", () => {
+  const record = daxMemory(true);
+  disclose("b-room", "closing-chat", [{ id: record, version: version(record) }], ["m-dax"]);
+  setMemoryMode("capture");
+  const lines = [{ id: "m-owner", role: "user", kind: "text", text: "rows?", at: 1 } as Message, bot("m-dax", REPLY), bot("m-plain", "Good morning.")];
+  expect(roomTranscriptWithoutMemory("closing-chat", lines, true)!.messages.map(m => m.id)).toEqual(["m-owner", "m-dax", "m-plain"]);
+  expect(roomTranscriptWithoutMemory("closing-chat", lines, false, undefined, true)!.messages.map(m => m.id)).toEqual(["m-owner", "m-plain"]);
+});
+
+it("R2-1/9/10: a turn that is not the owner's gets no standing material, no owed copy and no quoted memory reply (wiring)", () => {
+  const record = daxMemory();
+  disclose("b-answer", "dax-direct", [{ id: record, version: version(record) }], ["m-answer"]);
+  expect(messageMadeWithMemory("dax-direct", "m-answer")).toBe(true);
+  expect(messageMadeWithMemory("dax-direct", "m-plain")).toBe(false);
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).toContain("const standing = standingContextParts(bot, { ownerAudience: humanIsOwner && !memoryNotOwner,");
+  expect(source).toContain("if (message?.copyOf && (memoryNotOwner || capturedMessageWithheld(threadId, id))) return { id, text: withheldRoomLine(message) };");
+  expect(source).toContain("replyForPrompt(threadId, opts?.replyTo, memoryNotOwner),");
+  expect(source).toContain("const withheld = (internalClaim.notOwnerAudience === true && receipt.notOwnerAudience !== true) || (receipt.copyOf && copyOriginWithheld(receipt.copyOf));");
 });

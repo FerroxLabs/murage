@@ -16,7 +16,7 @@
 import { filterMemoryReplay, roomReplayWithheld } from "./memory/disclosures.ts";
 import type { MemoryAccess } from "./memory/policy.ts";
 import { database } from "./database.ts";
-import { largeReceiptThread, messageSourceForgotten, replayExclusions } from "./memory/replay-lineage.ts";
+import { largeReceiptThread, messageMadeWithMemory, messageSourceForgotten, replayExclusions } from "./memory/replay-lineage.ts";
 import { GROUP_CONTEXT_MESSAGES, roomContextMessages, withholdRoomReplies } from "./room-context.ts";
 import type { Message } from "./store.ts";
 
@@ -53,12 +53,15 @@ export function roomTranscriptForTurn(threadId: string, messages: readonly Messa
  * memory stopped: the content rule still applies, as a withheld line for the
  * owner's turn and as a dropped line for anyone else. A room that never used
  * memory is read as it is. */
-export function roomTranscriptWithoutMemory(threadId: string, messages: readonly Message[], ownerAudience: boolean, pinnedMessageId?: string): { messages: Message[]; withheld: Set<string> } | undefined {
+export function roomTranscriptWithoutMemory(threadId: string, messages: readonly Message[], ownerAudience: boolean, pinnedMessageId?: string, unprovenInOwnerRoom = false): { messages: Message[]; withheld: Set<string> } | undefined {
   if (!database().prepare("SELECT 1 FROM memory_disclosures WHERE thread_id=? LIMIT 1").get(threadId) && !messages.some(m => m.copyOf)) return undefined;
   const bounded = messages.length > WHOLE_ROOM_MESSAGES || largeReceiptThread(threadId);
   const candidates = bounded ? promptCandidates(messages, pinnedMessageId, GROUP_CONTEXT_MESSAGES) : [...messages];
   const withheld = replayExclusions(threadId, candidates, null, { failClosed: true });
   for (const m of candidates) if (m.role !== "user" && !withheld.has(m.id) && messageSourceForgotten(threadId, m.id)) withheld.add(m.id);
+  // Words nobody proved are the owner's, in the owner's room, with no memory
+  // access to check a reply against: no reply made with memory is shown.
+  if (unprovenInOwnerRoom) for (const m of candidates) if (m.role !== "user" && !withheld.has(m.id) && messageMadeWithMemory(threadId, m.id)) withheld.add(m.id);
   if (!ownerAudience) return { messages: candidates.filter(m => !withheld.has(m.id)), withheld: new Set() };
   return { messages: withholdRoomReplies(candidates, withheld), withheld };
 }

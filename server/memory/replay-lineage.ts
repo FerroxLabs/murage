@@ -208,8 +208,9 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
         for(const parent of producing(String(source.thread_id),String(source.message_id),true))if(invalid(parent,depth+1)){bad=true;break;}
         if(bad)break;
         // a copy used as evidence carries its original's lineage
+        // (the reader's own check too: a harness copy is not an approved projection)
         const copy=messageCopy(String(source.thread_id),String(source.message_id));
-        if(copy&&originBad(copy,1,depth+1,false)){bad=true;break;}
+        if(copy&&originBad(copy,1,depth+1,true)){bad=true;break;}
       }
     }
     visiting.delete(id);memo.set(id,bad);if(bad)invalidBundles?.add(id);return bad;
@@ -329,12 +330,22 @@ export function recordRestsOnWithheldMessage(recordId: string, version: number, 
   // The record and every record it was derived from (an approved projection
   // carries no evidence of its own): a line resting on a withheld reply
   // anywhere up that chain rests on it.
-  const rows = database().prepare(`WITH RECURSIVE chain(id,version) AS (
-      SELECT ?,? UNION SELECT d.parent_id,d.parent_version FROM memory_derivations d JOIN chain c ON d.child_id=c.id AND d.child_version=c.version LIMIT 65)
-    SELECT DISTINCT s.thread_id,s.message_id,s.speaker,(SELECT count(*) FROM chain) AS chained FROM chain c JOIN memory_evidence e ON e.record_id=c.id AND e.record_version=c.version
+  const db = database();
+  const chain = `WITH RECURSIVE chain(id,version) AS (
+      SELECT ?,? UNION SELECT d.parent_id,d.parent_version FROM memory_derivations d JOIN chain c ON d.child_id=c.id AND d.child_version=c.version LIMIT 66)`;
+  // A chain longer than the budget is not established: it counts as resting
+  // on a withheld reply, whether or not its first records carry evidence.
+  if (Number(db.prepare(`${chain} SELECT count(*) AS n FROM chain`).get(recordId, version)?.n ?? 0) > 64) return true;
+  const rows = db.prepare(`${chain} SELECT DISTINCT s.thread_id,s.message_id,s.speaker FROM chain c JOIN memory_evidence e ON e.record_id=c.id AND e.record_version=c.version
     JOIN memory_sources s ON s.id=e.source_id WHERE s.thread_id IS NOT NULL AND s.message_id IS NOT NULL LIMIT 257`).all(recordId, version);
-  if (rows.length > 256 || rows.some(row => Number(row.chained) > 64)) return true;
+  if (rows.length > 256) return true;
   return rows.some(row => generatedSpeaker(row.speaker) && (capturedMessageWithheld(String(row.thread_id), String(row.message_id)) || Boolean(alsoWithheld?.(String(row.thread_id), String(row.message_id)))));
+}
+
+/** A reply made under a memory receipt, or a copy of one: what a reader
+ * whose words were not proven may not be quoted. */
+export function messageMadeWithMemory(threadId: string, messageId: string): boolean {
+  return Boolean(messageCopy(threadId, messageId)) || Boolean(database().prepare("SELECT 1 FROM memory_disclosures WHERE thread_id=? AND instr(output_message_ids,?)>0 LIMIT 1").get(threadId, JSON.stringify(messageId)));
 }
 
 /** A copy link whose original is withheld, on content (a delegation result

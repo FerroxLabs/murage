@@ -93,6 +93,8 @@ export interface DelegationReceipt {
   /** Where the reply came from, so reading it back follows the original:
    * withheld when it is (server/memory/replay-lineage.ts). */
   copyOf?: { threadId: string; messageIds: string[] };
+  /** The delegated turn itself read memory as a non-owner audience. */
+  notOwnerAudience?: true;
   finishedAt: number;
 }
 
@@ -175,7 +177,9 @@ export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finish
     finishedAt: receipt.finishedAt ?? now,
   };
   if (receipt.result !== undefined) bounded.result = receipt.result.slice(0, RESULT_MAX_CHARS);
-  if (receipt.copyOf) bounded.copyOf = { threadId: receipt.copyOf.threadId, messageIds: receipt.copyOf.messageIds.slice(0, 64) };
+  // one past the check's width budget, so a longer link reads as unestablished
+  if (receipt.copyOf) bounded.copyOf = { threadId: receipt.copyOf.threadId, messageIds: receipt.copyOf.messageIds.slice(0, 65) };
+  if (receipt.notOwnerAudience === true) bounded.notOwnerAudience = true;
   receipts = [bounded, ...receipts.filter((existing) => existing.id !== bounded.id)]
     .filter((existing) => now - existing.finishedAt <= RECEIPT_MAX_AGE_MS)
     .slice(0, MAX_RECEIPTS);
@@ -420,8 +424,9 @@ export function _loadPending(): void {
         const receipt: DelegationReceipt = { id, sourceThreadId, toBotId, toBotName, status, finishedAt: finishedAt! };
         if (typeof result === "string") receipt.result = result;
         if (copyOf && typeof copyOf === "object" && typeof copyOf.threadId === "string" && Array.isArray(copyOf.messageIds) && copyOf.messageIds.every((m) => typeof m === "string")) {
-          receipt.copyOf = { threadId: copyOf.threadId, messageIds: copyOf.messageIds.slice(0, 64) };
+          receipt.copyOf = { threadId: copyOf.threadId, messageIds: copyOf.messageIds.slice(0, 65) };
         }
+        if (candidate.notOwnerAudience === true) receipt.notOwnerAudience = true;
         loaded.push(receipt);
       }
       receipts = loaded.slice(0, MAX_RECEIPTS);
@@ -936,6 +941,8 @@ export function summarizeDelegatedActivity(
   messages: readonly DelegatedActivityMessage[],
   startedAtMs: number,
   limit = 5,
+  /** false: tool lines only, no excerpt of what the peer wrote */
+  withText = true,
 ): string[] {
   const lines: string[] = [];
   for (const message of messages) {
@@ -949,7 +956,7 @@ export function summarizeDelegatedActivity(
       else if (name) lines.push(`tool: ${name}`);
       continue;
     }
-    if (message.kind === "text" && message.text?.trim()) {
+    if (withText && message.kind === "text" && message.text?.trim()) {
       const text = message.text.trim().replace(/\s+/g, " ");
       lines.push(`text: ${text.slice(0, 140)}${text.length > 140 ? "…" : ""}`);
     }

@@ -181,5 +181,5 @@ it("gap 2: a copy owed to the asking bot's next turn is known withheld (external
   expect(capturedMessageWithheld("pair-chat", "m-copy")).toBe(true);
   // the delivery path reads it this way (server/index.ts, planExternalDelivery input)
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  expect(source).toContain("if (message?.copyOf && capturedMessageWithheld(threadId, id)) return { id, text: withheldRoomLine(message) };");
+  expect(source).toContain("if (message?.copyOf && (memoryNotOwner || capturedMessageWithheld(threadId, id))) return { id, text: withheldRoomLine(message) };");
 });

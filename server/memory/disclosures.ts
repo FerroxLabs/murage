@@ -142,7 +142,9 @@ export function roomReplayWithheld(threadId: string, messages: readonly (ReplayM
  * for every other turn, whose rule is the content rule alone
  * (replay-lineage.ts). */
 export function readerWithheldMessage(access: MemoryAccess): ((threadId: string, messageId: string) => boolean) | undefined {
-  if (memoryAccessIsOwnerAudience(access) || !accessIncludesRoom(access)) return undefined;
+  // a room turn that is not the owner's, or any turn whose words were not
+  // proven (a direct one included)
+  if (memoryAccessIsOwnerAudience(access) || (!accessIncludesRoom(access) && !memoryAccessNotOwnerAudience(access))) return undefined;
   const verdicts = new Map<string, boolean>();
   return (threadId, messageId) => {
     if (threadId !== access.threadId) return false;
