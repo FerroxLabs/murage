@@ -45,6 +45,7 @@ import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfte
 import { memoryAccess, backgroundMemoryAudience, type MemoryAccess } from "./memory/policy.ts";
 import { memoryState } from "./memory/repository.ts";
 import { continuationMemoryRevoked, filterMemoryReplay } from "./memory/disclosures.ts";
+import { roomTranscriptForTurn } from "./room-transcript.ts";
 import { memoryAgentRoute } from "./memory/routes.ts";
 import { MemoryWorkerController } from "./memory/worker-controller.ts";
 import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./memory/settlement.ts";
@@ -7666,7 +7667,7 @@ function roomPinnedMessageId(threadId: string): string | undefined {
   return task ? task.pinnedMessageId : group.threadId === threadId ? group.pinnedMessageId : undefined;
 }
 
-function serializeRoomContext(threadId: string, userName: string, permitted?: Message[]): string {
+function serializeRoomContext(threadId: string, userName: string, permitted?: Message[], withheld?: ReadonlySet<string>): string {
   const messages = permitted ?? store.messagesFor(threadId);
   const messagesById = new Map(messages.map((message) => [message.id, message]));
   // A pin the person set is the one thing they asked the room to keep in
@@ -7676,7 +7677,8 @@ function serializeRoomContext(threadId: string, userName: string, permitted?: Me
   const pinnedMessageId = roomPinnedMessageId(threadId);
   return roomContextMessages(messages, GROUP_CONTEXT_MESSAGES, pinnedMessageId)
     .map((m) => {
-      const line = `${m.role === "user" ? userName : (m.from?.name ?? "Bot")}: ${transcriptText(m, messagesById, userName)}`;
+      // a withheld reply's line already names who said it and when
+      const line = withheld?.has(m.id) ? m.text! : `${m.role === "user" ? userName : (m.from?.name ?? "Bot")}: ${transcriptText(m, messagesById, userName)}`;
       return m.id === pinnedMessageId ? `[${ROOM_CONTEXT_PINNED_LABEL}] ${line}` : line;
     })
     .join("\n");
@@ -8059,6 +8061,8 @@ async function runGroupMemberTurn(
   // room, not of whichever member happened to speak first.
   let cwd = groupTurnCwd(workspace, () => store.pinGroupCwd(group.id, threadId));
   const roomOwnerAudience = isWorkspaceOwner(threadHumanPrincipal(threadId));
+  // Words nobody proved are the owner's do not read the room as the owner.
+  const roomTranscriptOwner = roomOwnerAudience && latestUser?.origin !== "unproven";
   const roomStanding = standingContextParts(bot, { ownerAudience: roomOwnerAudience, fileTools: Boolean(workspace), unattended: Boolean(orchestration) || isUnattended(threadId) });
   const roomLayers: ShapeLayer[] = [
     // The owner's House Rules open every bot's prompt, rooms included
@@ -8165,8 +8169,16 @@ async function runGroupMemberTurn(
       if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
       else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
     },{availableContextTokens,excludeMessageIds,excludeSourceIds:standingContextSourceIds(bot,roomOwnerAudience)});
-    const allowed=filterMemoryReplay(threadId,store.messagesFor(threadId),access);
-    text=`${serializeRoomContext(threadId,userName,allowed)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
+    // The room transcript is a room record (room-transcript.ts): an owner
+    // turn reads every teammate reply, with a withheld line where a reply
+    // used something the owner forgot, deleted or changed. The owner sees a
+    // note under that reply saying bots no longer see it.
+    const roomTranscript=roomTranscriptForTurn(threadId,store.messagesFor(threadId),roomTranscriptOwner,access);
+    for(const id of roomTranscript.withheld){
+      const shown=store.messagesFor(threadId).find(message=>message.id===id);
+      if(shown&&!shown.withheldFromBots)store.patchMessage(threadId,id,{withheldFromBots:true});
+    }
+    text=`${serializeRoomContext(threadId,userName,roomTranscript.messages,roomTranscript.withheld)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
     memoryDispatches.set(threadId,memoryReceipt);
     if(instance.adapter.capabilities.memoryMcp)integrations.memory=memoryIntegration(bot.id,threadId,internalGeneration);

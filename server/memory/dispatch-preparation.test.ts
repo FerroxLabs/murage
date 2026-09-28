@@ -279,7 +279,9 @@ it("uses post-reset bundle preparation in both real dispatch paths before receip
   for(const block of [direct,room]){
     const reset=block.indexOf("buildMemoryBundleAfterReset(");
     expect(reset).toBeGreaterThan(-1);
-    expect(block.lastIndexOf("filterMemoryReplay(")).toBeGreaterThan(reset);
+    // the room path reads its transcript through room-transcript.ts, which
+    // keeps filterMemoryReplay for every turn that is not an owner audience
+    expect(Math.max(block.lastIndexOf("filterMemoryReplay("),block.lastIndexOf("roomTranscriptForTurn("))).toBeGreaterThan(reset);
     expect(block.indexOf("new MemoryDispatchReceipt(")).toBeGreaterThan(reset);
   }
 });

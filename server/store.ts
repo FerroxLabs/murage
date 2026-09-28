@@ -250,6 +250,10 @@ export interface Message {
    * run started with (shared/routine-run-marker.ts). A replayed history
    * labels it as that run. Server-written only. */
   routineRunPrompt?: { trigger: RoutineRunMarkerTrigger; routineName: string };
+  /** rooms, bot replies: bots are no longer shown this reply because it
+   * used something the owner forgot, deleted or changed (room-transcript.ts).
+   * The owner still sees it. Server-written only. */
+  withheldFromBots?: boolean;
   /** activity messages: a card answered after its routine run had ended.
    * The row offers Run again for this routine. Server-written only. */
   routineRunAgain?: { routineId: string };

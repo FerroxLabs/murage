@@ -40,7 +40,7 @@ export function hydrateMemoryRecord(id: string, version: number, access: MemoryA
  * room checkpoint — which rolls on every member's prompt and reply — is that
  * turn's own, while the member's own-thread checkpoint and other rooms'
  * checkpoints are not (dispatch-preparation.test.ts, RED2E). */
-export function supersededThreadCheckpoint(id: string, version: number, access: MemoryAccess): boolean {
+export function supersededThreadCheckpoint(id: string, version: number, access: Pick<MemoryAccess,"threadId">): boolean {
   const db = database();
   const row = db.prepare("SELECT scope_id,kind,state,owner_pinned FROM memory_records WHERE id=? AND version=?").get(id,version);
   if (!row || row.kind !== "checkpoint" || row.state !== "archived" || row.owner_pinned === 1 || id !== threadCheckpointId(String(row.scope_id),access.threadId)) return false;

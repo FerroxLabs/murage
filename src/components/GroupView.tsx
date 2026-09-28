@@ -408,6 +408,9 @@ const Transcript = memo(function Transcript({
                         // plain Save a copy link.
                         <ChatMarkdown text={m.text} scope={m.from?.botId ? { botId: m.from.botId, threadId: group.threadId } : undefined} />
                       ) : null}
+                      {m.withheldFromBots && (
+                        <div className="mt-1 text-[11px] text-ink-secondary/70">Bots no longer see this reply: it used something you deleted or changed.</div>
+                      )}
                     </>
                   )}
                 </div>

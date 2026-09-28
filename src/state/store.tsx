@@ -222,6 +222,9 @@ export interface Message {
   routineRunAgain?: { routineId: string };
   /** activity: a delegation waiting on a busy teammate; offers Stop. */
   delegationWait?: { id: string };
+  /** rooms: bots no longer see this reply; it used something the owner
+   * forgot, deleted or changed. The owner still does. */
+  withheldFromBots?: boolean;
 }
 
 export type GroupDefaultResponder =

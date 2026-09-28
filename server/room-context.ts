@@ -49,3 +49,22 @@ export function roomContextMessageIds(
 ): string[] {
   return roomContextMessages(messages, limit, pinnedMessageId).map((m) => m.id);
 }
+
+/** What a member reads in place of a room reply it may no longer be shown
+ * (server/room-transcript.ts). The line keeps who said it and when, so a
+ * withheld reply never reads as a teammate who stayed silent. */
+export const ROOM_REPLY_WITHHELD = "Reply withheld: it used something you deleted or changed";
+
+export function withheldRoomLine(message: Pick<Message, "from" | "at">): string {
+  const at = new Date(message.at).toISOString().slice(0, 16).replace("T", " ");
+  return `[${ROOM_REPLY_WITHHELD}] (${message.from?.name ?? "Bot"}, ${at} UTC)`;
+}
+
+/** The room as a member turn may read it: each withheld reply stays in its
+ * place as its withheld line, with nothing of the original left to quote. */
+export function withholdRoomReplies(messages: readonly Message[], withheld: ReadonlySet<string>): Message[] {
+  if (!withheld.size) return [...messages];
+  return messages.map((message) => withheld.has(message.id)
+    ? { ...message, text: withheldRoomLine(message), replyToId: undefined, routineRunPrompt: undefined, attachments: undefined, artifactIds: undefined }
+    : message);
+}

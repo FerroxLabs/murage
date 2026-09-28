@@ -2,6 +2,7 @@ import { database, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import { assertMemoryBundle, hydrateDisclosedMemoryRecord, supersededThreadCheckpoint } from "./bundle.ts";
+import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 
 /** Persist before dispatch; records contain references, never duplicated memory text. */
 export function prepareMemoryDisclosure(bundle: MemoryBundle, access: MemoryAccess, driverInstance: string) {
@@ -47,6 +48,29 @@ function revoked(row: Disclosure, access: MemoryAccess): boolean {
   } catch { return true; }
 }
 
+/** The content half of revoked(): every record and source the receipt cites
+ * still exists at the version disclosed, and nothing of it was forgotten. No
+ * reader access and no global counter is consulted: whether a reply can still
+ * be shown depends on what it used, not on who reads it or on a roster or
+ * settings change somewhere else in the install. */
+function contentRevoked(row: Disclosure, threadId: string): boolean {
+  try {
+    const db = database();
+    const records: Array<{id:string;version:number}> = JSON.parse(String(row.record_versions));
+    for (const record of records) {
+      const current = db.prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(record.id,record.version);
+      if (!current || (current.state!=="active" && !supersededThreadCheckpoint(record.id,record.version,{threadId}))) return true;
+      if (db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(record.id,record.version)) return true;
+    }
+    const sources: Array<{id:string;revision:number}> = JSON.parse(String(row.source_versions));
+    for (const source of sources) {
+      const current = db.prepare("SELECT state,revision FROM memory_sources WHERE id=?").get(source.id);
+      if (!current || current.state!=="active" || current.revision!==source.revision || db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision)) return true;
+    }
+    return false;
+  } catch { return true; }
+}
+
 /** Unknown historical sessions also require a fresh replay: legacy disclosure is unproven. */
 export function continuationMemoryRevoked(threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess): boolean {
   assertMemoryAccess(access);
@@ -85,8 +109,40 @@ export function linkMemoryDisclosureOutput(bundleId: string, messageId: string) 
 export function filterMemoryReplay<T extends {id:string}>(threadId: string, messages: readonly T[], access: MemoryAccess): T[] {
   assertMemoryAccess(access);
   if (threadId !== access.threadId) throw new Error("MEMORY_SCOPE_DENIED");
+  const excluded = replayExclusions(threadId, messages, access);
+  assertMemoryAccess(access);
+  // Read-only. Marking a receipt revoked here once revoked it for every later
+  // reader, the author included, because of what one reader could see
+  // (0.1.61 transcript fix, R-A). Explicit revokers (forget, roster, restore)
+  // still write it; this filter only answers for its own reader.
+  return messages.filter(message=>!excluded.has(message.id));
+}
+
+/** The ids of a room's generated replies that bots may no longer be shown,
+ * for an owner-audience room turn. A room message is a room record: every
+ * member reads it, and it is not removed because of what the reader could
+ * recall, or because a roster, settings or policy change revoked receipts
+ * across the install. Privacy there was enforced when the reply was made:
+ * room recall carries a bot's private scopes only for an owner audience, so a
+ * reply can only have told the room what the owner could already see.
+ *
+ * What still withholds a reply is its content: a record or source it used
+ * (directly, through derivation lineage, or through an earlier reply it
+ * quoted from memory) was forgotten, deleted or changed. The caller shows a
+ * visible "Reply withheld" line in its place, never a silent gap.
+ *
+ * Every other room turn (a channel person's pair room, a chain a channel
+ * person started, words nobody proved are the owner's) keeps
+ * filterMemoryReplay. */
+export function roomReplayWithheld(threadId: string, messages: readonly {id:string}[]): Set<string> {
+  if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) throw new Error("MEMORY_SCOPE_DENIED");
+  return replayExclusions(threadId, messages, null);
+}
+
+/** `access` null: content checks only (roomReplayWithheld). */
+function replayExclusions(threadId: string, messages: readonly {id:string}[], access: MemoryAccess | null): Set<string> {
   if (messages.length > 10000) throw new Error("MEMORY_REPLAY_LIMIT");
-  if (!messages.length) return [];
+  if (!messages.length) return new Set();
   const db = database();
   const threadReceipts = new Map<string,Disclosure[]>();
   const outputs = new Map<string,string[]>();
@@ -112,17 +168,16 @@ export function filterMemoryReplay<T extends {id:string}>(threadId: string, mess
     threadReceipts.set(id,rows);return rows;
   };
   const excluded = new Set<string>();
-  const invalidBundles = new Set<string>();
   const visiting = new Set<string>();
   const invalid = (row:Disclosure,depth=0):boolean => {
     const id=String(row.bundle_id),known=memo.get(id);if(known!==undefined)return known;
     if(depth>64)throw new Error("MEMORY_REPLAY_LIMIT");
     if(visiting.has(id))throw new Error("MEMORY_REPLAY_LINEAGE_CYCLE");
     visiting.add(id);charge();
-    let bad=row.state==="revoked" || row.policy_revision!==access.policyRevision || row.deletion_epoch!==access.deletionEpoch;
+    let bad=access!==null && (row.state==="revoked" || row.policy_revision!==access.policyRevision || row.deletion_epoch!==access.deletionEpoch);
     // Only this replay's receipts are hydrated under its audience. An explicitly
     // approved shared projection does not require access to a private ancestor.
-    if(!bad && row.thread_id===threadId)bad=revoked(row,access);
+    if(!bad && row.thread_id===threadId)bad=access?revoked(row,access):contentRevoked(row,threadId);
     if(!bad){
       const refs:Array<{id:string;version:number}>=JSON.parse(String(row.record_versions));
       const direct:Array<{id:string;revision:number}>=JSON.parse(String(row.source_versions));
@@ -136,7 +191,7 @@ export function filterMemoryReplay<T extends {id:string}>(threadId: string, mess
         if(bad)break;
         const current=db.prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(ref.id,ref.version);
         // The thread's own superseded checkpoint is stale, not revoked (bundle.ts).
-        if(!current||(current.state!=="active"&&!supersededThreadCheckpoint(ref.id,ref.version,access))||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(ref.id,ref.version)){bad=true;break;}
+        if(!current||(current.state!=="active"&&!supersededThreadCheckpoint(ref.id,ref.version,{threadId}))||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(ref.id,ref.version)){bad=true;break;}
         const parents=db.prepare(`WITH RECURSIVE parents(id,version) AS (
           SELECT ?,? UNION SELECT d.parent_id,d.parent_version FROM memory_derivations d
           JOIN parents p ON d.child_id=p.id AND d.child_version=p.version LIMIT 1025)
@@ -163,14 +218,12 @@ export function filterMemoryReplay<T extends {id:string}>(threadId: string, mess
         if(bad)break;
       }
     }
-    visiting.delete(id);memo.set(id,bad);if(bad)invalidBundles.add(id);return bad;
+    visiting.delete(id);memo.set(id,bad);return bad;
   };
   const wanted=new Set(messages.map(message=>message.id));
   for(const row of loadThread(threadId)){
     const relevant=outputs.get(String(row.bundle_id))!.filter(id=>wanted.has(id));
     if(relevant.length && invalid(row))for(const id of relevant)excluded.add(id);
   }
-  assertMemoryAccess(access);
-  for(const id of invalidBundles)db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(id);
-  return messages.filter(message=>!excluded.has(message.id));
+  return excluded;
 }
