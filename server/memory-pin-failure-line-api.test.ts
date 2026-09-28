@@ -45,7 +45,7 @@ posixOnly("a turn refused because of a pinned memory", () => {
 
   it("says why once, in plain words from Murage, with no raw code in the room", async () => {
     await api("POST", `/api/groups/${room.id}/messages`, { text: "How is the greenhouse?" });
-    await expect.poll(async () => (await messages(room.threadId)).some(message => message.kind === "activity" && !message.from && /^Moss could not answer: /.test(message.tool?.name ?? "")), { timeout: 20000 }).toBe(true);
+    await expect.poll(async () => (await messages(room.threadId)).some(message => message.kind === "activity" && !message.from && (message.tool?.name ?? "").startsWith("Moss could not answer: ")), { timeout: 20000 }).toBe(true);
     await expect.poll(idle, { timeout: 20000 }).toBe(true);
     const failures = (await messages(room.threadId)).filter(message => message.kind === "activity" && message.tool?.ok === false);
     expect(failures).toHaveLength(1);

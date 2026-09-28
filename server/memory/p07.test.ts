@@ -5,6 +5,7 @@ import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { buildMemoryBundle, assertMemoryBundle, MEMORY_FRAME_TOKENS } from "./bundle.ts";
+import { threadCheckpointId } from "./checkpoints.ts";
 import { bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDisclosure, filterMemoryReplay, linkMemoryDisclosureOutput, prepareMemoryDisclosure } from "./disclosures.ts";
 import type { MemorySearchBridge } from "./search.ts";
 import { memoryRequestPrefix } from "../../shared/memory.ts";
@@ -236,15 +237,15 @@ function roomRecord(id:string,kind:string,text:string,pinned:boolean){
   db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,1,0,?)").run(id,`source-${id}`,Buffer.byteLength(text));
 }
 it("carries one small pinned room checkpoint for a room member on a large context",async()=>{
-  const f=fixture("room-thread");roomRecord("checkpoint","checkpoint",HARBOR_CHECKPOINT,true);
+  const f=fixture("room-thread"),checkpoint=threadCheckpointId(ensureScope("conversation","room-thread"),"room-thread");roomRecord(checkpoint,"checkpoint",HARBOR_CHECKPOINT,true);
   const bundle=await buildMemoryBundle("Round 6: which date and budget are we planning for?",f.renew(),empty,{availableContextTokens:200000});
-  expect(bundle.pinned.map(r=>r.id)).toEqual(["checkpoint"]);
+  expect(bundle.pinned.map(r=>r.id)).toEqual([checkpoint]);
 });
 it("recalls a relevant room reply beside the room checkpoint for a room member",async()=>{
-  const f=fixture("room-thread");roomRecord("checkpoint","checkpoint",HARBOR_CHECKPOINT,false);
+  const f=fixture("room-thread"),checkpoint=threadCheckpointId(ensureScope("conversation","room-thread"),"room-thread");roomRecord(checkpoint,"checkpoint",HARBOR_CHECKPOINT,false);
   roomRecord("reply","source","Round 3: a seal-themed face-painting stall where kids get whiskers and nose designs fits the 900 dollar budget for Saturday the 14th, with paint, brushes and two helpers.",false);
   const bridge:MemorySearchBridge={search:async()=>({hits:[{id:"reply",version:1,score:100}],vectorRows:0})};
   const bundle=await buildMemoryBundle("Round 6: which date and budget are we planning for?",f.renew(),bridge,{availableContextTokens:200000});
-  expect(bundle.checkpoint.map(r=>r.id)).toEqual(["checkpoint"]);
+  expect(bundle.checkpoint.map(r=>r.id)).toEqual([checkpoint]);
   expect(bundle.evidence.map(r=>r.id)).toEqual(["reply"]);
 });
