@@ -1,0 +1,18 @@
+---
+title: What changed in Murage 0.1.61
+description: Bots in a room always see each other's replies, withheld replies stay withheld, long rooms keep working, and every image-capable key appears in Image generation.
+icon: Clock
+---
+
+## Rooms in 0.1.61
+
+- **Bots in a room always see each other's replies.** Every member of a room now reads what its teammates said there, also after you add or remove a member or change a setting. Before, a change like that could hide earlier replies from the bots, so a teammate would redo work that was already done.
+- **A reply that used something you deleted is shown as withheld.** When a room reply drew on something you have since deleted or changed, bots see a short note that the reply was withheld instead of its text, and you see "Bots no longer see this reply" under it. The same holds when that reply would come back through memory, through a copy of it in another conversation or through a delegated result.
+- **Rooms with long histories keep working.** A room with a very long history no longer stops answering.
+- **Messages Murage cannot confirm stay outside your memory.** A room message whose sender Murage cannot confirm no longer gives bots what they remember about you, your preferences or your teams, and the same goes for the handoffs it starts.
+- **Each teammate gets its turn.** A handoff to a teammate starts right after that teammate's own room reply, instead of after the whole round, and a teammate that is still waiting for its turn keeps its place.
+- **Murage says when a bot could not answer.** When a bot in a room could not answer or stopped part way, Murage says so in its own line with the reason, so it never reads as the bot's own words.
+
+## Image generation in 0.1.61
+
+**Every saved image-capable key appears in Image generation.** A key you saved under **Settings → Models** for a provider that makes images now also shows in Image generation, including xAI keys and keys saved with a slash at the end of their address.
