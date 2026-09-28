@@ -213,6 +213,25 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   options.signal?.throwIfAborted();
   assertMemoryAccess(access);
   // The optional await may have invalidated source revisions without changing policy.
+  // The thread's own checkpoint rolls on every captured message in the thread
+  // (checkpoints.ts). The memory worker answers in order, so a capture it was
+  // holding (the owner's new room message, a teammate's reply of the round)
+  // publishes and rolls the checkpoint before recall's answer arrives, and the
+  // version selected above is routinely superseded here. Dropping it left
+  // every un-pinned room turn without the room's notes (0.1.61 final check 2,
+  // N1). The current version is taken instead, under the same checks as any
+  // record here: hydrated now, the reader's withheld rule, the budget.
+  const successor = (record: BundleRecord): BundleRecord | undefined => {
+    if (record.pinned || record.kind !== "checkpoint" || !supersededThreadCheckpoint(record.id,record.version,access)) return undefined;
+    const row = db.prepare("SELECT version FROM memory_records WHERE id=? AND state='active' AND owner_pinned=0 ORDER BY version DESC LIMIT 1").get(record.id);
+    if (!row || selected.some(r => r.id===record.id && r.version===Number(row.version))) return undefined;
+    try {
+      const next = hydrateMemoryRecord(record.id,Number(row.version),access);
+      if (options.withheldMessage && recordRestsOnWithheldMessage(next.id,next.version,options.withheldMessage)) return undefined;
+      const index = selected.indexOf(record);
+      return tokens(render([...selected.slice(0,index),next,...selected.slice(index+1)])) <= budget ? next : undefined;
+    } catch { assertMemoryAccess(access); return undefined; }
+  };
   for (const record of [...selected]) {
     try {
       const current = hydrateMemoryRecord(record.id,record.version,access);
@@ -220,6 +239,12 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     } catch {
       assertMemoryAccess(access);
       if (record.pinned) throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch");
+      const next = successor(record);
+      if (next) {
+        selected[selected.indexOf(record)] = next;
+        for (const list of [identity,checkpoint,evidence]) { const index=list.indexOf(record); if (index>=0) list[index] = next; }
+        continue;
+      }
       selected.splice(selected.indexOf(record),1);
       for (const list of [identity,checkpoint,evidence]) { const index=list.indexOf(record); if (index>=0) list.splice(index,1); }
       degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE";

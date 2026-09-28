@@ -95,7 +95,13 @@ posixOnly("a group member's turn survives its own capture rolling the group chec
       await expect.poll(() => checkpoint()?.version, { timeout: 20000 }).toBeGreaterThan(selected.version);
       expect(db.prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(selected.id, selected.version)).toMatchObject({ state: "archived" });
       const disclosed = db.prepare("SELECT record_versions FROM memory_disclosures WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").get(room.threadId) as { record_versions: string };
-      expect(JSON.parse(disclosed.record_versions)).toContainEqual({ id: selected.id, version: selected.version });
+      // The member got the room checkpoint. When its own prompt's capture
+      // lands while recall awaits the worker, that is the version the capture
+      // made, not none (0.1.61 final check 2, N1: the receipt was [] and room
+      // recall was empty on every OS).
+      const carried = (JSON.parse(disclosed.record_versions) as Array<{ id: string; version: number }>).filter(row => row.id === selected.id);
+      expect(carried).toHaveLength(1);
+      expect(carried[0].version).toBeGreaterThanOrEqual(selected.version);
       writeFileSync(gate, "");
 
       // Accepted and run to a reply; nothing revoked.
