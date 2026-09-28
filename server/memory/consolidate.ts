@@ -142,6 +142,12 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
       persist(source.scope_id,{...state,status:"deferred",reason,retryAfter:nextRetry});
       return {done:{status:"deferred" as const,reason,candidateIds:[],cursor:state.cursor,candidateCount:state.candidateCount,retryAfter:nextRetry}};
     }
+    // A reply withheld from bots (replay-lineage.ts) is not learned from: its
+    // words never go to the extractor and nothing new rests on it.
+    if(sourceIsWithheldMessage(source)){
+      persist(source.scope_id,{...state,status:"deferred",reason:"reply-withheld",retryAfter:null});
+      return {done:{status:"deferred" as const,reason:"reply-withheld",candidateIds:[],cursor:state.cursor,candidateCount:state.candidateCount,retryAfter:null}};
+    }
     const raw=db.prepare("SELECT substr(CAST(json_extract(payload,'$.text') AS BLOB),?,?) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?").get(state.cursor+1,CONSOLIDATION_CHUNK_BYTES,source.id,source.revision)!.bytes as Uint8Array;
     let text:string|undefined,length=raw.length;
     for(let trim=0;trim<=3&&trim<=raw.length;trim++){try{length=raw.length-trim;text=new TextDecoder("utf-8",{fatal:true}).decode(raw.subarray(0,length));break;}catch{/* split code point at the chunk end */}}
@@ -171,7 +177,7 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     const current=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
     completedSource(completedJobId);
     const intent=JSON.parse(String(db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id)!.intent));
-    if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch)throw new Error("MEMORY_CONSOLIDATION_REVOKED");
+    if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch||sourceIsWithheldMessage(source!))throw new Error("MEMORY_CONSOLIDATION_REVOKED");
     if(result.status!=="complete"||signal.aborted){
       const reason=result.status!=="complete"?result.reason:"extraction-incomplete";
       const nextRetry=retryAfter(reason,text!,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision));

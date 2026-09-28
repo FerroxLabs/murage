@@ -26,13 +26,15 @@ import { supersededThreadCheckpoint } from "./checkpoints.ts";
 export type Disclosure = Record<string,string|number|bigint|Uint8Array|null>;
 /** Where a message was copied from: the original thread and its message ids. */
 export interface MessageCopy { threadId: string; messageIds: string[] }
-export interface ReplayMessage { id: string; copyOf?: MessageCopy }
+/** role "user": the owner's or a person's own words. Only bot output is ever
+ * linked to a receipt (dispatch.ts), so those are never looked up. */
+export interface ReplayMessage { id: string; role?: string; copyOf?: MessageCopy }
 /** The reader's side of a replay check. Null means content checks only. */
 export interface ReplayAudience { policyRevision: number; deletionEpoch: number; revoked(row: Disclosure): boolean }
 
 /** A thread is read whole up to this many receipts, per message past it. */
 export const THREAD_RECEIPT_LIMIT = 2048;
-const COPY_HOPS = 4;
+const COPY_HOPS = 4, COPY_ORIGINS = 64;
 const RECEIPT_COLUMNS = `bundle_id,thread_id,policy_revision,deletion_epoch,state,
   CASE WHEN length(record_versions)<=262144 THEN record_versions END AS record_versions,
   CASE WHEN length(source_versions)<=262144 THEN source_versions END AS source_versions,
@@ -195,9 +197,30 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
         if(!source.thread_id||!source.message_id)continue;
         for(const parent of producing(String(source.thread_id),String(source.message_id),true))if(invalid(parent,depth+1)){bad=true;break;}
         if(bad)break;
+        // a copy used as evidence carries its original's lineage
+        const copy=messageCopy(String(source.thread_id),String(source.message_id));
+        if(copy&&originBad(copy,1,depth+1,false)){bad=true;break;}
       }
     }
     visiting.delete(id);memo.set(id,bad);if(bad)invalidBundles?.add(id);return bad;
+  };
+  /** A copy's originals: forgotten, or made under a receipt that no longer
+   * holds, and for the reader's own copies also one the reader may not see
+   * (a harness copy is not an owner-approved projection). A lineage longer
+   * or wider than the budget is not established, so it counts as bad. */
+  const originBad = (copy:MessageCopy, hops:number, depth:number, asReader:boolean):boolean => {
+    if(hops>COPY_HOPS||copy.messageIds.length>COPY_ORIGINS||depth>64)return true;
+    for(const original of copy.messageIds){
+      charge();
+      if(messageSourceForgotten(copy.threadId,original))return true;
+      for(const row of producing(copy.threadId,original,true)){
+        if(asReader&&audience?.revoked(row))return true;
+        if(invalid(row,depth+1))return true;
+      }
+      const further=messageCopy(copy.threadId,original);
+      if(further&&originBad(further,hops+1,depth,asReader))return true;
+    }
+    return false;
   };
   const excluded = new Set<string>();
   /** Judge one receipt for the given messages; past the budget, fail closed. */
@@ -213,37 +236,40 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
     try { return producing(thread,messageId,whole); }
     catch (error) { if(!failClosed)throw error; excluded.add(forId); return []; }
   };
-  const wanted=new Set(messages.map(message=>message.id));
-  if(messages.length>8 && !isLarge(threadId)){
-    for(const row of loadThread(threadId)){
-      const relevant=outputs.get(String(row.bundle_id))!.filter(id=>wanted.has(id));
-      if(relevant.length)judge(row,relevant);
-    }
-  } else {
+  const wanted=new Set(messages.filter(message=>message.role!=="user").map(message=>message.id));
+  const perMessage = () => {
     // Per message, newest first: the lines a prompt shows are checked first.
-    if(messages.length>8 && !failClosed)throw new Error("MEMORY_REPLAY_LIMIT");
     for(const message of [...messages].reverse()){
+      if(message.role==="user")continue;
       for(const row of receiptsOf(threadId,message.id,false,message.id)){
         if(excluded.has(message.id))break;
         judge(row,[message.id]);
       }
     }
-  }
-  // A copy is withheld with its original: a forgotten original, or one whose
-  // receipt no longer holds, withholds every copy of it.
-  const copyWithheld = (message:ReplayMessage, copy:MessageCopy, hops:number) => {
-    for(const original of copy.messageIds.slice(0,64)){
-      if(excluded.has(message.id))return;
-      if(messageSourceForgotten(copy.threadId,original)){excluded.add(message.id);return;}
-      for(const row of receiptsOf(copy.threadId,original,false,message.id)){
-        if(excluded.has(message.id))return;
-        judge(row,[message.id]);
-      }
-      const further=hops<COPY_HOPS?messageCopy(copy.threadId,original):undefined;
-      if(further)copyWithheld(message,further,hops+1);
-    }
   };
-  for(const message of messages)if(message.copyOf&&!excluded.has(message.id))copyWithheld(message,message.copyOf,1);
+  if(messages.length>8 && !isLarge(threadId)){
+    let rows:Disclosure[]|undefined;
+    try { rows=loadThread(threadId); }
+    catch (error) {
+      if(!failClosed)throw error;
+      // The whole thread is past the read budget: check line by line instead.
+      threadReceipts.clear();outputs.clear();memo.clear();visiting.clear();receiptCount=0;nodes=0;
+    }
+    if(rows)for(const row of rows){
+      const relevant=outputs.get(String(row.bundle_id))!.filter(id=>wanted.has(id));
+      if(relevant.length)judge(row,relevant);
+    }
+    else perMessage();
+  } else {
+    if(messages.length>8 && !failClosed)throw new Error("MEMORY_REPLAY_LIMIT");
+    perMessage();
+  }
+  // A copy is withheld with its original.
+  for(const message of messages){
+    if(!message.copyOf||excluded.has(message.id))continue;
+    try { if(originBad(message.copyOf,1,0,true))excluded.add(message.id); }
+    catch (error) { if(!failClosed)throw error; visiting.clear(); excluded.add(message.id); }
+  }
   return excluded;
 }
 
@@ -287,10 +313,22 @@ export function capturedMessageWithheld(threadId: string, messageId: string): bo
  * does not come back as a remembered line. `alsoWithheld` adds a reader's
  * own transcript rule (a room turn that is not the owner's). */
 export function recordRestsOnWithheldMessage(recordId: string, version: number, alsoWithheld?: (threadId: string, messageId: string) => boolean): boolean {
-  const rows = database().prepare(`SELECT DISTINCT s.thread_id,s.message_id,s.speaker FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id
-    WHERE e.record_id=? AND e.record_version=? AND s.thread_id IS NOT NULL AND s.message_id IS NOT NULL LIMIT 257`).all(recordId, version);
-  if (rows.length > 256) return true;
+  // The record and every record it was derived from (an approved projection
+  // carries no evidence of its own): a line resting on a withheld reply
+  // anywhere up that chain rests on it.
+  const rows = database().prepare(`WITH RECURSIVE chain(id,version) AS (
+      SELECT ?,? UNION SELECT d.parent_id,d.parent_version FROM memory_derivations d JOIN chain c ON d.child_id=c.id AND d.child_version=c.version LIMIT 65)
+    SELECT DISTINCT s.thread_id,s.message_id,s.speaker,(SELECT count(*) FROM chain) AS chained FROM chain c JOIN memory_evidence e ON e.record_id=c.id AND e.record_version=c.version
+    JOIN memory_sources s ON s.id=e.source_id WHERE s.thread_id IS NOT NULL AND s.message_id IS NOT NULL LIMIT 257`).all(recordId, version);
+  if (rows.length > 256 || rows.some(row => Number(row.chained) > 64)) return true;
   return rows.some(row => generatedSpeaker(row.speaker) && (capturedMessageWithheld(String(row.thread_id), String(row.message_id)) || Boolean(alsoWithheld?.(String(row.thread_id), String(row.message_id)))));
+}
+
+/** A copy link whose original is withheld, on content (a delegation result
+ * read back later). Checks it cannot finish withhold it. */
+export function copyOriginWithheld(copy: MessageCopy): boolean {
+  try { return replayExclusions(copy.threadId, [{ id: "copy-origin-probe", role: "user", copyOf: copy }], null, { failClosed: true }).size > 0; }
+  catch { return true; }
 }
 
 /** The same rule for one captured source (checkpoint maintenance). */

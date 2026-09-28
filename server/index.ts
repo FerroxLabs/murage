@@ -174,8 +174,8 @@ import {
 import { parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
 import { RoomPendingStop, RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
-import { GROUP_CONTEXT_MESSAGES, ROOM_CONTEXT_PINNED_LABEL, roomContextMessageIds, roomContextMessages, withheldRoomLine } from "./room-context.ts";
-import { capturedMessageWithheld } from "./memory/replay-lineage.ts";
+import { GROUP_CONTEXT_MESSAGES, ROOM_CONTEXT_PINNED_LABEL, roomContextMessageIds, roomContextMessages, ROOM_REPLY_WITHHELD, withheldRoomLine } from "./room-context.ts";
+import { capturedMessageWithheld, copyOriginWithheld } from "./memory/replay-lineage.ts";
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
@@ -1587,7 +1587,7 @@ type AskBotOutcome = {
   copyOf?: Message["copyOf"];
 };
 
-function askBotAndWait(targetBotId: string, message: string, depth: number, _fromBotId?: string, eventId?: string, coordination?: CoordinationTrace, sourceThreadId?:string): Promise<AskBotOutcome> {
+function askBotAndWait(targetBotId: string, message: string, depth: number, _fromBotId?: string, eventId?: string, coordination?: CoordinationTrace, sourceThreadId?:string, notOwnerAudience = false): Promise<AskBotOutcome> {
   const target = store.bot(targetBotId);
   if (!target) return Promise.resolve({ status: "error", text: "(no such bot)" });
   const task=humanTask(store,targetBotId,threadHumanPrincipal(sourceThreadId??target.threadId));
@@ -1597,6 +1597,7 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
   return new Promise((resolve) => {
     let text = "";
     let turnId: string | undefined;
+    const since = Date.now();
     let done = false;
     const finish = (out: AskBotOutcome) => {
       if (done) return;
@@ -1615,20 +1616,24 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
       if (e.type === "item.completed" && e.itemType === "assistant_text" && !isMemoryProvenanceEcho(e.text)) {
         text += (text ? "\n" : "") + e.text;
       } else if (e.type === "turn.completed") {
-        if (turnSucceeded(e)) finish({ status: "reply", text: text || "(the bot finished without a text reply)", copyOf: turnReplyCopy(threadId, turnId) });
-        else if (turnStopped(e)) finish({ status: "stopped", text, stopReason: e.stopReason ?? null });
-        else finish({ status: "failed", text, stopReason: e.stopReason ?? null });
+        // every outcome that carries text carries its link: a failed turn's
+        // partial reply is mirrored too
+        const copyOf = turnReplyCopy(threadId, turnId, since);
+        if (turnSucceeded(e)) finish({ status: "reply", text: text || "(the bot finished without a text reply)", copyOf });
+        else if (turnStopped(e)) finish({ status: "stopped", text, stopReason: e.stopReason ?? null, copyOf });
+        else finish({ status: "failed", text, stopReason: e.stopReason ?? null, copyOf });
       }
     });
     // Timing out does NOT stop the peer's turn — the caller decides whether
     // the still-running work becomes a delegation claim ticket instead.
-    const timer = setTimeout(() => finish({ status: "timeout", text, copyOf: turnReplyCopy(threadId, turnId) }), ASK_BOT_TIMEOUT_MS);
+    const timer = setTimeout(() => finish({ status: "timeout", text, copyOf: turnReplyCopy(threadId, turnId, since) }), ASK_BOT_TIMEOUT_MS);
     startTurn(targetBotId, message, {
       threadId,
       commsDepth: depth + 1,
       eventId,
       coordination,
       unattended: isUnattended(sourceThreadId),
+      ...(notOwnerAudience ? { notOwnerAudience: true } : {}),
       onDispatchError: (reason) => { releaseSlot(); finish({ status: "error", text: `(couldn't start that bot: ${reason})`, reason }); },
     }).catch((err) => {
       const reason = err instanceof Error ? err.message : String(err);
@@ -5103,7 +5108,7 @@ bus.subscribe((event: RuntimeEvent) => {
         : !event.ok && event.stopReason?.trim()
           ? `Delegated turn did not finish: ${event.stopReason.trim().slice(0, 120)}`
           : undefined;
-      finalizeDelegationWatch(event.threadId, turnSucceeded(event), reply, delegationFailureName, delegationStopped, turnReplyCopy(event.threadId, event.turnId));
+      finalizeDelegationWatch(event.threadId, turnSucceeded(event), reply, delegationFailureName, delegationStopped, turnReplyCopy(event.threadId, event.turnId, delegationWatch.get(event.threadId)?.startedAtMs));
       // group busy/unread settle in the group turn engine, which knows
       // whether more member turns are queued behind this one
       break;
@@ -5169,9 +5174,13 @@ function delegationSource(
  * (Message.copyOf): a copy is withheld from bots whenever its original is
  * (server/memory/replay-lineage.ts). Without the turn's own rows, the
  * thread's latest bot reply is the original. */
-function turnReplyCopy(threadId: string, turnId: string | undefined): Message["copyOf"] {
+function turnReplyCopy(threadId: string, turnId: string | undefined, since?: number): Message["copyOf"] {
   const texts = store.messagesFor(threadId).filter((m) => m.role === "bot" && m.kind === "text" && !m.copyOf);
   const ids = turnId ? texts.filter((m) => m.turnId === turnId).map((m) => m.id) : [];
+  // Without the turn's own rows: every reply the thread made since the
+  // handoff started, else its latest one. Linking more than the original
+  // only withholds the copy more often, never less.
+  if (!ids.length && since !== undefined) ids.push(...texts.filter((m) => m.at >= since).map((m) => m.id));
   const latest = texts.at(-1);
   if (!ids.length && latest) ids.push(latest.id);
   return ids.length ? { threadId, messageIds: ids } : undefined;
@@ -5204,6 +5213,7 @@ function finalizeDelegationWatch(
       toBotName: store.bot(watched.toBotId)?.name ?? watched.toBotId,
       status: ok ? "done" : "failed",
       result: ok ? reply : failureName,
+      ...(ok && copyOf ? { copyOf } : {}),
     });
   }
   const target = store.bot(watched.toBotId);
@@ -5284,7 +5294,7 @@ bus.subscribe((event: RuntimeEvent) => {
 /** How a drained delegation becomes a real turn on the target. Shared by
  * the settle-time drain and the boot-time drain of what a previous process
  * left queued. */
-const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel, taskId, fromBotId, eventId, coordination) => {
+const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text, commsDepth, sourceThreadId, channel, taskId, fromBotId, eventId, coordination, notOwnerAudience) => {
     // startTurn REJECTS on an ordinary condition — busy target, deleted bot,
     // unavailable provider. Unhandled, that rejection is fatal to the
     // harness (Node's default), which in the packaged app kills the server
@@ -5337,6 +5347,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
       commsDepth,
       eventId,
       coordination,
+      ...(notOwnerAudience ? { notOwnerAudience: true } : {}),
       // The delegating bot is the one whose unattended state matters, and a
       // room thread has no owner to look it up from.
       unattended: isUnattended(sourceThreadId),
@@ -5510,7 +5521,8 @@ function drainQueuedSends() {
     // ...unless a drained line came from an unproven caller: then the whole
     // turn runs unattended, like a webhook turn.
     startTurn(botId, prompt, { threadId, userMessage, excludeMessageIds: excludeIds,
-      ...(store.messagesFor(threadId).some((message) => excludeIds.includes(message.id) && message.origin === "unproven") ? { unattended: true } : {}),
+      // and its memory reads as a non-owner audience (0.1.61 lane T2)
+      ...(store.messagesFor(threadId).some((message) => excludeIds.includes(message.id) && message.origin === "unproven") ? { unattended: true, notOwnerAudience: true } : {}),
     }).then(() => undefined).catch((err) => {
       store.appendMessage(threadId, {
         role: "bot",
@@ -5741,6 +5753,10 @@ async function startTurn(
     editedMessageId?: string;
     /** Server-owned: the surface the sending request proved (MessageOrigin). */
     origin?: MessageOrigin;
+    /** The turn answers to words nobody proved are the owner's (an unproven
+     * room turn, or a peer turn such a turn asked or delegated): memory reads
+     * it as a non-owner audience (server/memory/policy.ts). */
+    notOwnerAudience?: boolean;
     /** Server-owned: this is the single re-dispatch of a turn whose prepared
      * memory context was revoked before the provider accepted it (see the
      * catch below). Never taken from a request body. */
@@ -5979,7 +5995,7 @@ async function startTurn(
   // hang the HTTP request
   const run=directRuns.admit(bot.id,threadId,bot,[],{queueForSlot:opts?.waitForThreadSlot===true});
   const dispatchClaimId = run.generation;
-  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination);
+  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, opts?.coordination, opts?.notOwnerAudience === true || opts?.origin === "unproven");
   if(opts?.memorySkillSource)internalTurnOwners.get(threadId)!.memorySkillSource=opts.memorySkillSource;
   directTurnDispatchClaims.set(threadId, { id: dispatchClaimId, botId:bot.id, threadId, phase: "setup" });
   store.setTaskActivity(bot.id, threadId, "working");
@@ -12016,7 +12032,7 @@ const server = createServer(async (req, res) => {
           const queued = queueDelegation(
             commsBus,
             from,
-            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, ...(peerCardWaived ? { fullAccessWaived: true } : {}), eventId: internalEventId, coordination: nextCoordination() },
+            { toBotId, message, reason: "asked while busy", depth, approvalAlreadyGranted, ...(peerCardWaived ? { fullAccessWaived: true } : {}), ...(internalClaim.notOwnerAudience ? { notOwnerAudience: true as const } : {}), eventId: internalEventId, coordination: nextCoordination() },
             MAX_COMMS_DEPTH,
             fromThreadId,
           );
@@ -12073,7 +12089,7 @@ const server = createServer(async (req, res) => {
         mirrorExchange(commsBus, currentFrom, currentTarget, message, channel, fromThreadId);
         const prefixed = `[Message from @${currentFrom.name}, another bot in this Murage workspace. Reply to them.]\n\n${message}`;
         admitEventAction("handoff", eventAdmissionId);
-        const waiting = askBotAndWait(toBotId, prefixed, depth, fromBotId, internalEventId, nextCoordination(),fromThreadId);
+        const waiting = askBotAndWait(toBotId, prefixed, depth, fromBotId, internalEventId, nextCoordination(),fromThreadId,internalClaim.notOwnerAudience === true);
         if (store.bot(toBotId)?.busy) handoffSlot.commit();
         const outcome = await waiting;
         requireActiveInternal();
@@ -12155,7 +12171,10 @@ const server = createServer(async (req, res) => {
             if (receipt.sourceThreadId !== fromThreadId) {
               return json(res, 403, { error: "that task belongs to a different conversation" });
             }
-            return json(res, 200, { status: receipt.status, toBotName: receipt.toBotName, result: receipt.result ?? "" });
+            // a result whose original reply is now withheld from bots is
+            // read back as the withheld line (0.1.61 lane T2)
+            const withheld = receipt.copyOf && copyOriginWithheld(receipt.copyOf);
+            return json(res, 200, { status: receipt.status, toBotName: receipt.toBotName, result: withheld ? `[${ROOM_REPLY_WITHHELD}]` : receipt.result ?? "" });
           }
           const stillQueued = pendingDelegationInfo(taskId);
           const runningEntry = [...delegationWatch.entries()].find(([, watch]) => watch.taskId === taskId);
@@ -12220,7 +12239,7 @@ const server = createServer(async (req, res) => {
         const queued = queueDelegation(
           commsBus,
           from,
-          { toBotId, message, reason, depth, ...(peerCardWaived ? { fullAccessWaived: true } : {}), eventId: internalEventId, coordination: coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId) },
+          { toBotId, message, reason, depth, ...(peerCardWaived ? { fullAccessWaived: true } : {}), ...(internalClaim.notOwnerAudience ? { notOwnerAudience: true as const } : {}), eventId: internalEventId, coordination: coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId) },
           MAX_COMMS_DEPTH,
           fromThreadId,
         );

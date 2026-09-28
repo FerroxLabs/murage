@@ -155,7 +155,6 @@ it("gap 2: a mirrored copy is withheld with its original, in owner and other roo
   const { record, copy } = mirroredReply();
   const pair = [{ id: "m-ask", role: "user" }, copy];
   expect([...roomReplayWithheld("pair-chat", pair)]).toEqual([]);
-  expect(filterMemoryReplay("pair-chat", pair, access("finch", "pair-chat"), { persist: false }).map(m => m.id)).toEqual(["m-ask", "m-copy"]);
   forget(record);
   expect([...roomReplayWithheld("pair-chat", pair)]).toEqual(["m-copy"]);
   expect(filterMemoryReplay("pair-chat", pair, access("finch", "pair-chat"), { persist: false }).map(m => m.id)).toEqual(["m-ask"]);

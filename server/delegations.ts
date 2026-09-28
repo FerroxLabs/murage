@@ -37,6 +37,10 @@ export interface DelegationItem {
    * is skipped at drain time — if the sender's conversation is still on
    * Full access then. Never set for a webhook, channel or routine turn. */
   fullAccessWaived?: boolean;
+  /** Queued by a turn whose words were not proven to be the owner's: the
+   * target turn reads memory as a non-owner audience too (0.1.61 lane T2).
+   * Server-issued, never model-supplied. */
+  notOwnerAudience?: true;
   /** Trusted originating event identity. Survives handoff/retry/restart so
    * the harness can retain the event's budget and provenance boundary. */
   eventId?: string;
@@ -86,6 +90,9 @@ export interface DelegationReceipt {
   status: DelegationOutcome;
   /** the peer's reply on success; the failure name otherwise (bounded) */
   result?: string;
+  /** Where the reply came from, so reading it back follows the original:
+   * withheld when it is (server/memory/replay-lineage.ts). */
+  copyOf?: { threadId: string; messageIds: string[] };
   finishedAt: number;
 }
 
@@ -168,6 +175,7 @@ export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finish
     finishedAt: receipt.finishedAt ?? now,
   };
   if (receipt.result !== undefined) bounded.result = receipt.result.slice(0, RESULT_MAX_CHARS);
+  if (receipt.copyOf) bounded.copyOf = { threadId: receipt.copyOf.threadId, messageIds: receipt.copyOf.messageIds.slice(0, 64) };
   receipts = [bounded, ...receipts.filter((existing) => existing.id !== bounded.id)]
     .filter((existing) => now - existing.finishedAt <= RECEIPT_MAX_AGE_MS)
     .slice(0, MAX_RECEIPTS);
@@ -378,6 +386,7 @@ export function _loadPending(): void {
         };
         if (item.approvalAlreadyGranted === true) loaded.approvalAlreadyGranted = true;
         if (item.fullAccessWaived === true) loaded.fullAccessWaived = true;
+        if (item.notOwnerAudience === true) loaded.notOwnerAudience = true;
         if (item.waitingOnBusy === true) {
           loaded.waitingOnBusy = true;
           // A queue written before this field existed restarts its clock.
@@ -403,13 +412,16 @@ export function _loadPending(): void {
         // narrowed below before a receipt is constructed from the narrowed
         // locals, so nothing unvalidated survives into `receipts`.
         const candidate = value as Partial<DelegationReceipt>;
-        const { id, sourceThreadId, toBotId, toBotName, status, result, finishedAt } = candidate;
+        const { id, sourceThreadId, toBotId, toBotName, status, result, finishedAt, copyOf } = candidate;
         if (typeof id !== "string" || !id) continue;
         if (typeof sourceThreadId !== "string" || typeof toBotId !== "string") continue;
         if (typeof toBotName !== "string" || typeof status !== "string") continue;
         if (!Number.isFinite(finishedAt) || now - finishedAt! > RECEIPT_MAX_AGE_MS) continue;
         const receipt: DelegationReceipt = { id, sourceThreadId, toBotId, toBotName, status, finishedAt: finishedAt! };
         if (typeof result === "string") receipt.result = result;
+        if (copyOf && typeof copyOf === "object" && typeof copyOf.threadId === "string" && Array.isArray(copyOf.messageIds) && copyOf.messageIds.every((m) => typeof m === "string")) {
+          receipt.copyOf = { threadId: copyOf.threadId, messageIds: copyOf.messageIds.slice(0, 64) };
+        }
         loaded.push(receipt);
       }
       receipts = loaded.slice(0, MAX_RECEIPTS);
@@ -503,6 +515,7 @@ export function drainDelegations(
     fromBotId: string,
     eventId?: string,
     coordination?: CoordinationTrace,
+    notOwnerAudience?: boolean,
   ) => void | Promise<void>,
 ): void {
   if (drainingThreads.has(threadId)) {
@@ -660,6 +673,7 @@ async function processOne(
     fromBotId: string,
     eventId?: string,
     coordination?: CoordinationTrace,
+    notOwnerAudience?: boolean,
   ) => void | Promise<void>,
 ): Promise<"settled" | "requeued"> {
   let sender = from;
@@ -807,7 +821,7 @@ async function processOne(
   mirrorExchange(bus, sender, target, item.message, channel, sourceThreadId);
   const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
   const prefixed = `[Delegated by @${sender.name}, another bot in this Murage workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;
-  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id, sender.id, item.eventId, item.coordination);
+  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id, sender.id, item.eventId, item.coordination, item.notOwnerAudience === true);
   return "settled";
 }
 
