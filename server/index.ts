@@ -8332,9 +8332,9 @@ async function runGroupMemberTurn(
     // their note as it was.
     if(roomTranscriptOwner)for(const shown of store.messagesFor(threadId)){
       if(!roomTranscript.checked.has(shown.id))continue;
-      const withheld=roomTranscript.withheld.has(shown.id);
-      if(withheld&&!shown.withheldFromBots)store.patchMessage(threadId,shown.id,{withheldFromBots:true});
-      else if(!withheld&&shown.withheldFromBots)store.patchMessage(threadId,shown.id,{withheldFromBots:undefined});
+      // "forgotten": the owner forgot this reply itself, and the note says so.
+      const withheld=roomTranscript.withheld.has(shown.id)?(roomTranscript.forgotten.has(shown.id)?"forgotten" as const:true):undefined;
+      if(withheld!==shown.withheldFromBots)store.patchMessage(threadId,shown.id,{withheldFromBots:withheld});
     }
     text=`${serializeRoomContext(threadId,userName,roomTranscript.messages,roomTranscript.withheld)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);

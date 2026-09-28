@@ -20,3 +20,13 @@ it("shows the owner that bots no longer see a withheld reply, under the reply it
   expect(GROUP_VIEW.lastIndexOf("<ChatMarkdown text={m.text}", flag)).toBeGreaterThan(-1);
   expect(line).not.toMatch(/—|\bsafe/i);
 });
+
+// 0.1.61 final check D4: the reply the owner forgot itself says so, rather
+// than that it used something deleted or changed.
+it("tells the owner a reply they forgot is withheld because they forgot it", () => {
+  const flag = GROUP_VIEW.indexOf("{m.withheldFromBots && (");
+  const forgotten = "Bots no longer see this reply: you chose to forget it.";
+  expect(GROUP_VIEW.indexOf('m.withheldFromBots === "forgotten"', flag)).toBeGreaterThan(flag);
+  expect(GROUP_VIEW.indexOf(forgotten, flag)).toBeGreaterThan(flag);
+  expect(forgotten).not.toMatch(/—|\bsafe/i);
+});

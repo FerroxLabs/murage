@@ -19,7 +19,7 @@ import { pauseRestoredMemory } from "./memory/restore.ts";
 import { threadCheckpointId } from "./memory/checkpoints.ts";
 import { filterMemoryReplay, roomReplayWithheld } from "./memory/disclosures.ts";
 import { roomTranscriptForTurn } from "./room-transcript.ts";
-import { ROOM_REPLY_WITHHELD, withheldRoomLine, withholdRoomReplies } from "./room-context.ts";
+import { ROOM_REPLY_FORGOTTEN, ROOM_REPLY_WITHHELD, withheldRoomLine, withholdRoomReplies } from "./room-context.ts";
 import type { Message } from "./store.ts";
 
 const roster: MemoryRoster = {
@@ -195,6 +195,28 @@ it("a room's per-reader filter drops what that reader may not see and marks noth
   // but one reader's filter no longer revokes it for everyone after it
   expect(stateOf("b-dax")).toBe("delivered");
   expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+});
+
+// 0.1.61 final check D4: a reply the owner forgot itself read "it used
+// something you deleted or changed", to the owner and to bots. It says so.
+it("gives a reply the owner forgot itself that reason, and keeps the other reason for a reply that used something forgotten", () => {
+  const at = Date.UTC(2026, 8, 28, 15, 1);
+  const from = (name: string) => ({ botId: name.toLowerCase(), name, color: "amber" }) as Message["from"];
+  const room: Message[] = [
+    { id: "m-owner", role: "user", kind: "text", text: "Round 1", at },
+    { id: "m-dax", role: "bot", kind: "text", text: "the used line", at: at + 1, from: from("Dax") },
+    { id: "m-finch", role: "bot", kind: "text", text: "the forgotten line", at: at + 2, from: from("Finch") },
+  ];
+  const record = daxReplyWithOwnRecall();
+  forgetMemory(ownerMemoryTicket(), { kind: "record", id: record });
+  captureSource(database(), { id: "message:closing-chat:m-finch", threadId: "closing-chat", messageId: "m-finch", kind: "text", speaker: "finch", outcome: "recorded", text: "the forgotten line" });
+  forgetMemory(ownerMemoryTicket(), { kind: "source", id: "message:closing-chat:m-finch" });
+  const turn = roomTranscriptForTurn("closing-chat", room, true, access("finch", "closing-chat"));
+  expect([...turn.withheld].sort()).toEqual(["m-dax", "m-finch"]);
+  expect([...turn.forgotten]).toEqual(["m-finch"]);
+  expect(turn.messages[1].text).toBe(`[${ROOM_REPLY_WITHHELD}] (Dax, 2026-09-28 15:01 UTC)`);
+  expect(turn.messages[2].text).toBe(`[${ROOM_REPLY_FORGOTTEN}] (Finch, 2026-09-28 15:01 UTC)`);
+  expect(ROOM_REPLY_FORGOTTEN).not.toMatch(/—|\bsafe/i);
 });
 
 it("renders a withheld reply as a line with author and time, with nothing of it left to quote", () => {

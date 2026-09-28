@@ -25,6 +25,9 @@ export interface RoomTranscript {
   /** Replies shown as a withheld line. Empty for a filtered transcript,
    * whose removed messages are not shown at all. */
   withheld: Set<string>;
+  /** Of those, the replies the owner forgot themselves, rather than ones
+   * that used something forgotten, deleted or changed. */
+  forgotten: Set<string>;
   /** The messages checked for this turn. The owner's "bots no longer see
    * this reply" note follows only these. */
   checked: Set<string>;
@@ -39,12 +42,18 @@ const WHOLE_ROOM_MESSAGES = 10000;
 export function roomTranscriptForTurn(threadId: string, messages: readonly Message[], ownerAudience: boolean, access: MemoryAccess, pinnedMessageId?: string): RoomTranscript {
   const bounded = messages.length > WHOLE_ROOM_MESSAGES || largeReceiptThread(threadId);
   if (!ownerAudience) {
-    if (!bounded) return { messages: filterMemoryReplay(threadId, messages, access, { persist: false, failClosed: true }), withheld: new Set(), checked: new Set(messages.map(m => m.id)) };
+    if (!bounded) return { messages: filterMemoryReplay(threadId, messages, access, { persist: false, failClosed: true }), withheld: new Set(), forgotten: new Set(), checked: new Set(messages.map(m => m.id)) };
     return boundedFilter(threadId, messages, access, pinnedMessageId);
   }
   const candidates = bounded ? promptCandidates(messages, pinnedMessageId, GROUP_CONTEXT_MESSAGES) : messages;
   const withheld = roomReplayWithheld(threadId, candidates);
-  return { messages: withholdRoomReplies(candidates, withheld), withheld, checked: new Set(candidates.map(m => m.id)) };
+  const forgotten = forgottenReplies(threadId, candidates, withheld);
+  return { messages: withholdRoomReplies(candidates, withheld, forgotten), withheld, forgotten, checked: new Set(candidates.map(m => m.id)) };
+}
+
+/** The withheld replies whose own source the owner forgot. */
+function forgottenReplies(threadId: string, messages: readonly Message[], withheld: ReadonlySet<string>): Set<string> {
+  return new Set(messages.filter(m => m.role !== "user" && withheld.has(m.id) && messageSourceForgotten(threadId, m.id)).map(m => m.id));
 }
 
 /** The transcript a member reads when memory is not active (capture only,
@@ -53,7 +62,7 @@ export function roomTranscriptForTurn(threadId: string, messages: readonly Messa
  * memory stopped: the content rule still applies, as a withheld line for the
  * owner's turn and as a dropped line for anyone else. A room that never used
  * memory is read as it is. */
-export function roomTranscriptWithoutMemory(threadId: string, messages: readonly Message[], ownerAudience: boolean, pinnedMessageId?: string, unprovenInOwnerRoom = false): { messages: Message[]; withheld: Set<string> } | undefined {
+export function roomTranscriptWithoutMemory(threadId: string, messages: readonly Message[], ownerAudience: boolean, pinnedMessageId?: string, unprovenInOwnerRoom = false): { messages: Message[]; withheld: Set<string>; forgotten: Set<string> } | undefined {
   if (!database().prepare("SELECT 1 FROM memory_disclosures WHERE thread_id=? LIMIT 1").get(threadId) && !messages.some(m => m.copyOf)) return undefined;
   const bounded = messages.length > WHOLE_ROOM_MESSAGES || largeReceiptThread(threadId);
   const candidates = bounded ? promptCandidates(messages, pinnedMessageId, GROUP_CONTEXT_MESSAGES) : [...messages];
@@ -62,8 +71,9 @@ export function roomTranscriptWithoutMemory(threadId: string, messages: readonly
   // Words nobody proved are the owner's, in the owner's room, with no memory
   // access to check a reply against: no reply made with memory is shown.
   if (unprovenInOwnerRoom) for (const m of candidates) if (m.role !== "user" && !withheld.has(m.id) && messageMadeWithMemory(threadId, m.id)) withheld.add(m.id);
-  if (!ownerAudience) return { messages: candidates.filter(m => !withheld.has(m.id)), withheld: new Set() };
-  return { messages: withholdRoomReplies(candidates, withheld), withheld };
+  if (!ownerAudience) return { messages: candidates.filter(m => !withheld.has(m.id)), withheld: new Set(), forgotten: new Set() };
+  const forgotten = forgottenReplies(threadId, candidates, withheld);
+  return { messages: withholdRoomReplies(candidates, withheld, forgotten), withheld, forgotten };
 }
 
 /** The newest `limit` text lines, the pin and every line they quote, in
@@ -86,5 +96,5 @@ function boundedFilter(threadId: string, messages: readonly Message[], access: M
     kept = filterMemoryReplay(threadId, candidates, access, { persist: false, failClosed: true });
     if (kept.filter(m => m.kind === "text" && m.text).length >= GROUP_CONTEXT_MESSAGES || limit >= texts) break;
   }
-  return { messages: kept, withheld: new Set(), checked: new Set(candidates.map(m => m.id)) };
+  return { messages: kept, withheld: new Set(), forgotten: new Set(), checked: new Set(candidates.map(m => m.id)) };
 }

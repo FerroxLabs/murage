@@ -224,7 +224,7 @@ export interface Message {
   delegationWait?: { id: string };
   /** rooms: bots no longer see this reply; it used something the owner
    * forgot, deleted or changed. The owner still does. */
-  withheldFromBots?: boolean;
+  withheldFromBots?: boolean | "forgotten";
 }
 
 export type GroupDefaultResponder =

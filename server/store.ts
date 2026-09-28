@@ -251,9 +251,10 @@ export interface Message {
    * labels it as that run. Server-written only. */
   routineRunPrompt?: { trigger: RoutineRunMarkerTrigger; routineName: string };
   /** rooms, bot replies: bots are no longer shown this reply because it
-   * used something the owner forgot, deleted or changed (room-transcript.ts).
-   * The owner still sees it. Server-written only. */
-  withheldFromBots?: boolean;
+   * used something the owner forgot, deleted or changed (room-transcript.ts),
+   * or "forgotten" when the owner forgot this reply itself. The owner still
+   * sees it. Server-written only. */
+  withheldFromBots?: boolean | "forgotten";
   /** A bot reply the harness copied here from another thread (a delegated
    * or asked teammate's answer, mirrored into the pair room or back into the
    * conversation that asked). The copy is withheld from bots whenever the
