@@ -54,6 +54,18 @@ posixOnly("a turn refused because of a pinned memory", () => {
     expect(JSON.stringify(await messages(room.threadId))).not.toMatch(/MEMORY_|—|\bsafe/);
   }, 60000);
 
+  it("gives a goal run the same plain reason, with no raw code", async () => {
+    await api("POST", `/api/groups/${room.id}/messages`, { text: "Plan the greenhouse week", mode: "goal" });
+    let run: any;
+    await expect.poll(async () => {
+      run = (await messages(room.threadId)).find(message => message.kind === "goal.run")?.goalRun;
+      return run?.status;
+    }, { timeout: 20000 }).toBe("failed");
+    await expect.poll(idle, { timeout: 20000 }).toBe(true);
+    expect(JSON.stringify(run)).toContain("its pinned memories are too long for this model.");
+    expect(JSON.stringify(await messages(room.threadId))).not.toMatch(/MEMORY_/);
+  }, 60000);
+
   it("says the same in plain words in a direct chat", async () => {
     await api("POST", `/api/bots/${moss.id}/messages`, { threadId: moss.threadId, text: "How is the greenhouse?" });
     await expect.poll(async () => (await messages(moss.threadId)).some(message => message.kind === "activity" && message.tool?.ok === false), { timeout: 20000 }).toBe(true);

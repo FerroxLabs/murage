@@ -8589,6 +8589,8 @@ async function runGroupMemberTurn(
           tool: { name: `error: ${message.slice(0, 140)}`, ok: false },
         });
         turnFailure ??= message;
+        // A goal run posts no failure line of its own: its card says why.
+        if (pinFailure && orchestration) orchestration.result.stopReason ??= pinFailure;
         onDispatchError?.(message);
         watchdog.settle(threadId);
         finish("dispatch_failed");
