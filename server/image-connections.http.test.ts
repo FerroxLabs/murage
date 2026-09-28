@@ -14,6 +14,8 @@ const bank = JSON.stringify([
   { id: "c-xai", preset: "xai", label: "Boot xAI", enabled: true, key: "xai-FAKE_IMG_XAI_0000", revision: "r2" },
   { id: "c-openrouter", preset: "openrouter", label: "Boot OpenRouter", enabled: true, key: "sk-or-v1-FAKE_IMG_OR", revision: "r3" },
   { id: "c-mistral", preset: "mistral", label: "Boot Mistral", enabled: true, key: "FAKE_IMG_MISTRAL_KEY", revision: "r4" },
+  // Saved before labels were checked: the owner pasted the key as its name.
+  { id: "c-leaky", preset: "xai", label: "xai-FAKE_IMG_LABEL_KEY_0", enabled: true, key: "xai-FAKE_IMG_LABEL_KEY_0", revision: "r5" },
 ]);
 const GOOGLE = "AIza" + "FAKE_IMG_GOOGLE_000000000000000000000".slice(0, 35);
 let fixture: VerificationServer;
@@ -25,12 +27,16 @@ async function api(method: string, path: string, body?: unknown) {
 async function images() {
   const settings = await api("GET", "/api/images/settings");
   expect(settings.status).toBe(200);
-  expect(JSON.stringify(settings.body)).not.toMatch(/FAKE_IMG|AIzaFAKE/);
+  // The one key here is the owner's own label for c-leaky, which Settings shows back to the owner.
+  expect(JSON.stringify(settings.body).replaceAll("xai-FAKE_IMG_LABEL_KEY_0", "")).not.toMatch(/FAKE_IMG|AIzaFAKE/);
   return settings.body.connections as Array<{ id: string; label: string; provider: string }>;
 }
 // The harness refreshes chat model catalogs in the background on its own
 // schedule; only an image endpoint would mean listing reached the network.
-const network = () => { const file = join(fixture.info.dataDir, "network.log"); return (existsSync(file) ? readFileSync(file, "utf8") : "").split("\n").filter(url => /\/images|:generateContent/.test(url)).join("\n"); };
+const imageRequests = () => { const file = join(fixture.info.dataDir, "network.log"); return (existsSync(file) ? readFileSync(file, "utf8") : "").split("\n").filter(url => /\/images|:generateContent/.test(url)); };
+// Image requests since the one test that asks OpenRouter on purpose.
+let expected = 0;
+const network = () => imageRequests().slice(expected).join("\n");
 beforeAll(async () => {
   // The packaged app hands the encrypted bank to the harness as env at spawn.
   const env = { MURAGE_MODEL_PROVIDER_CONNECTIONS: bank } as Record<string, string>;
@@ -47,7 +53,7 @@ afterAll(async () => { await fixture?.close(); });
 
 it("path 1: keys the packaged app restores from its encrypted store at boot", async () => {
   const listed = await images();
-  expect(listed.map(row => [row.id, row.provider, row.label])).toEqual([["model:c-openai", "openai", "Boot OpenAI"], ["model:c-xai", "xai", "Boot xAI"], ["model:c-openrouter", "openrouter", "Boot OpenRouter"]]);
+  expect(listed.map(row => [row.id, row.provider])).toEqual([["model:c-openai", "openai"], ["model:c-xai", "xai"], ["model:c-openrouter", "openrouter"], ["model:c-leaky", "xai"]]);
   expect(network()).toBe("");
 });
 
@@ -83,7 +89,28 @@ it("path 4: an existing compatible-engine key shows wherever Models shows it", a
   const listed = await images();
   expect(listed).toContainEqual(expect.objectContaining({ id: "model:legacy-openai-compatible", provider: "xai" }));
   expect(listed.some(row => row.id === "openrouter")).toBe(false);
+  // A Google key saved on another provider's endpoint is held for review, never offered or sent.
+  expect((await api("PUT", "/api/config", { openaiCompat: { key: `AIza${"FAKE_IMG_GOOGLE_ON_OPENAI_".padEnd(35, "0")}`, url: "https://api.openai.com/v1" } })).status).toBe(200);
+  const rows = (await api("GET", "/api/provider-connections")).body.connections as Array<{ id: string; enabled: boolean; catalog: { error?: { message: string } } }>;
+  expect(rows.find(row => row.id === "legacy-openai-compatible")).toMatchObject({ enabled: false });
+  expect((await images()).some(row => row.id === "openai-compatible" || row.id === "model:legacy-openai-compatible")).toBe(false);
   expect(network()).toBe("");
+});
+
+it("keeps listing every connection when the chosen catalog cannot be read", async () => {
+  // OpenRouter's image list lives with OpenRouter, and the fixture is offline.
+  const saved = await api("POST", "/api/images/settings", { connectionId: "model:c-openrouter" });
+  expect(saved.status).toBe(409);
+  expect(saved.body.error).toMatch(/image model/);
+  expect((await api("PUT", "/api/config", { imageGen: { connectionId: "model:c-openrouter" } })).status).toBe(200);
+  const settings = await api("GET", "/api/images/settings");
+  expect(settings.status).toBe(200);
+  expect(settings.body.catalog).toBeNull();
+  expect(settings.body.catalogError).toMatch(/image model/);
+  expect(settings.body.connections.length).toBeGreaterThan(5);
+  expect(imageRequests().every(url => url.startsWith("https://openrouter.ai/api/v1/images/models"))).toBe(true);
+  expected = imageRequests().length;
+  expect((await api("PUT", "/api/config", { imageGen: { connectionId: "" } })).status).toBe(200);
 });
 
 it("selects a Google connection and reads its model list locally", async () => {
@@ -108,6 +135,8 @@ it("tells a bot the real image connections and which one is in use", async () =>
   expect(line).toBeDefined();
   for (const label of ["Boot OpenAI", "Boot xAI", "Boot OpenRouter", "Google (in use, model gemini-3.1-flash-image)", "xAI"]) expect(line).toContain(label);
   expect(line).not.toContain("Boot Mistral");
+  // The label that held a key is named by its provider instead.
+  expect(line).not.toContain("xai-FAKE_IMG_LABEL_KEY_0");
   expect(prompt).toContain("create and edit images");
   expect(prompt).not.toMatch(/FAKE_IMG|AIzaFAKE/);
 }, 60000);

@@ -250,9 +250,10 @@ const NAMES: Readonly<Record<string, Target>> = {
   ANTHROPIC_API_KEY: ["anthropic"],
   ANTHROPIC_AUTH_TOKEN: ["anthropic"],
   CLAUDE_API_KEY: ["anthropic"],
-  // Gemini API keys are saved as a named Google connection. Engines still do
-  // not inherit them: the harness keeps deleting GEMINI_API_KEY and
-  // GOOGLE_API_KEY from every engine it starts.
+  // Gemini API keys are saved as a named Google connection in the model bank,
+  // never as GEMINI_API_KEY or GOOGLE_API_KEY in any engine's environment. A
+  // turn carries the key only when its bot runs on a Google model; the Gemini
+  // CLI engine keeps its own sign-in.
   GEMINI_API_KEY: ["google"],
   GOOGLE_API_KEY: ["google"],
   GOOGLE_GENERATIVE_AI_API_KEY: ["google"],
@@ -458,6 +459,10 @@ function resolve(found: Found): KeyCandidate {
   } else {
     providers = [...(byName ?? byShape ?? [])];
   }
+  // The avatar slot is OpenAI's and takes no provider check of its own, so a
+  // value whose prefix names another issuer (IMAGEGEN_KEY holding a Google or
+  // xAI key) is never offered for it.
+  if (byShape?.length === 1 && byShape[0] !== "openai") providers = providers.filter((id) => id !== "imageGen");
 
   return {
     value: found.value,

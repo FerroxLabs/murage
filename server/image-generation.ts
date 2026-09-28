@@ -333,6 +333,12 @@ export class ImageGenerationService {
       catch { return []; }
     });
   }
+  /** The models a connection offers without asking its provider, or null
+   * when only the live catalog knows them (OpenRouter). Never the network. */
+  localModelIds(connectionId: string): string[] | null {
+    const connection = this.connection(connectionId);
+    return connection.provider === "openrouter" ? null : staticCatalog(connection).models.filter(model => model.generate && !model.disabledReason).map(model => model.id);
+  }
   /**
    * `discoverEdits` (default true) checks each admitted OpenRouter edit model's
    * pinned endpoint. A failed check keeps generation and shows editing unavailable.

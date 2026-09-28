@@ -208,3 +208,13 @@ it("reads Google's OpenAI-compatible catalog as bare ids and keeps only its chat
  expect(models.filter(model=>model.chatEligible).map(model=>model.id)).toEqual(["gemini-3.8-flash","gemini-3.1-pro-preview","gemma-4-26b-it"]);
  expect(models.every(model=>!model.id.startsWith("models/"))).toBe(true);
 });
+it("checks the trimmed key against its provider at every door, and never takes a key as a label",()=>{
+ const google=`AIza${"k".repeat(35)}`;
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:`  ${google}  `},()=>"fixture")).toThrow("different provider");
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:" sk-admin-fixture-key-private"},()=>"fixture")).toThrow("inference API key");
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"google",label:`Mine ${google}`,key:google},()=>"fixture")).toThrow("not its key");
+ const bank=JSON.stringify(mutateProviderBank("[]",{action:"create",preset:"google",key:google},()=>"fixture"));
+ expect(()=>mutateProviderBank(bank,{action:"update",id:"fixture",revision:"fixture",label:google},()=>"next")).toThrow("not its key");
+ for(const patch of [{imageGen:{key:google}},{imageGen:{key:"xai-fixture-key-private-000"}},{xai:{key:"sk-proj-fixture-key-private"}},{xai:{key:` ${google}`}}] as Parameters<typeof parseConfigPatch>[0][])expect(()=>parseConfigPatch(patch)).toThrow("different provider");
+ expect(parseConfigPatch({imageGen:{key:"sk-proj-fixture-key-private"},xai:{key:"xai-fixture-key-private-000"}})).toBeTruthy();
+});

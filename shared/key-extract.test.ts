@@ -141,6 +141,10 @@ describe("keys Murage cannot store", () => {
       expect(found.unsupported).toBeUndefined();
     }
     expect(PROVIDERS.google.modelPreset).toBe("google");
+    // The avatar slot is OpenAI's: a Google or xAI key under its name is
+    // offered only to its own provider.
+    expect(only(`IMAGEGEN_KEY=${GOOGLE}`).providers).toEqual(["google"]);
+    expect(only(`MURAGE_OPENAI_IMAGE_KEY=${XAI}`).providers).toEqual(["xai"]);
   });
 
   it("refuses on either channel alone, so a disagreement resolves safely", () => {

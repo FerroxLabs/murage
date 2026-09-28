@@ -15,7 +15,7 @@ import { providerEngineProtocol } from "../shared/provider-engine.ts";
 import { ERROR_MESSAGE_MAX } from "../shared/provider-error.ts";
 import { startModelCatalogRefresh } from "./model-catalog-refresh.ts";
 import { ProviderConnectionsService, type LegacyProviderConnection } from "./provider-connections.ts";
-import { PROVIDER_PRESETS, assertProviderKey, mutateProviderBank, parseProviderBank, providerBankRevision } from "../electron/provider-connections.mjs";
+import { PROVIDER_PRESETS, assertProviderKey, keyIssuer, mutateProviderBank, parseProviderBank, providerBankRevision } from "../electron/provider-connections.mjs";
 import { PROVIDER_BANK_FENCE_ERROR, applyProviderBankFenceMessage, modelProviderCommitAuthorized, providerBankDispatchFenced } from "./provider-bank-fence.ts";
 import { fluxCredentialStatus, resolveFluxAlias, type FluxCredentialState } from "../electron/flux-credential-policy.mjs";
 import { FluxConnectionTransaction } from "./flux-connection-transaction.ts";
@@ -440,7 +440,7 @@ import {
 } from "./browser-connection.ts";
 import { captureOutsideHumanControl } from "./private-screen-capture.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
-import { ImageGenerationService, type ImageConnection } from "./image-generation.ts";
+import { ImageGenerationError, ImageGenerationService, type ImageConnection } from "./image-generation.ts";
 import { ImageOperations, imageReferences } from "./image-operations.ts";
 import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
@@ -622,7 +622,9 @@ const providerConnections = new ProviderConnectionsService({ readBank: () => cfg
     const configuredUrl = (cfg.openaiCompat.url ?? "https://openrouter.ai/api/v1").replace(/\/+$/, "");
     const preset = Object.keys(PROVIDER_PRESETS).find(id => PROVIDER_PRESETS[id as keyof typeof PROVIDER_PRESETS].baseUrl === configuredUrl) as keyof typeof PROVIDER_PRESETS | undefined;
     let problem = preset ? undefined : "This existing compatible endpoint is not a named provider preset. Manage it in existing engine settings; no key has been copied.";
-    if (preset && /^(sk-ant-|sk-flux-|sk-(?:proj|svcacct|admin)-|xai-|gsk_)/.test(cfg.openaiCompat.key)) {
+    // Every recognised prefix, Google's included: a key on the wrong
+    // endpoint stays listed for review but is never enabled or sent.
+    if (preset && (keyIssuer(cfg.openaiCompat.key) || cfg.openaiCompat.key.trim().startsWith("sk-admin-"))) {
       try { assertProviderKey(preset, cfg.openaiCompat.key); } catch { problem = "This saved key does not match its configured endpoint. Choose the correct provider before using it."; }
     }
     add("legacy-openai-compatible", preset ?? "openrouter", problem ? "Existing compatible key · needs review" : `${PROVIDER_PRESETS[preset!].label} · existing compatible key`, cfg.openaiCompat.key, "engines", problem);
@@ -3462,17 +3464,33 @@ function imageConnectionFacts(): ImageConnectionFact[] {
   const connections = labelledImageConnections(), chosen = defaultImageConnection(connections);
   return connections.map(connection => {
     const inUse = connection.id === chosen;
-    const model = inUse ? (cfg.imageGen?.connectionId === chosen ? cfg.imageGen?.model : undefined) ?? connection.defaultModel ?? undefined : undefined;
-    return { label: connection.label, inUse, ...(model ? { model } : {}) };
+    // Only a model this connection is known to offer is named. OpenRouter's
+    // list lives with OpenRouter, so its model is left for list_image_models.
+    const saved = inUse ? (cfg.imageGen?.connectionId === chosen ? cfg.imageGen?.model : undefined) ?? connection.defaultModel ?? undefined : undefined;
+    let known: string[] | null = null;
+    try { known = imageService.localModelIds(connection.id); } catch { known = null; }
+    const model = saved && known?.includes(saved) ? saved : undefined;
+    // A label is the owner's own name for an account; one that holds the key
+    // itself (or any recognisable key) never reaches a prompt.
+    const key = imageConnection(connection.id)?.apiKey;
+    const label = key && connection.label.includes(key) ? connection.provider : redactSecretsInText(connection.label);
+    return { label, inUse, ...(model ? { model } : {}) };
   });
 }
 async function imageSettings(connectionId = cfg.imageGen?.connectionId) {
   const connections = labelledImageConnections();
   const chosen = defaultImageConnection(connections, connectionId);
-  const catalog = chosen && imageConnection(chosen) ? await imageService.getCatalog(chosen) : null;
+  // The connection list is local; only the chosen catalog may need its
+  // provider (OpenRouter). When that read fails, Settings still lists every
+  // connection and says why the models are missing.
+  let catalog: Awaited<ReturnType<typeof imageService.getCatalog>> | null = null, catalogError: string | undefined;
+  if (chosen && imageConnection(chosen)) {
+    try { catalog = await imageService.getCatalog(chosen); }
+    catch (error) { catalogError = error instanceof ImageGenerationError ? error.message : "Could not load this connection's image models. Try again later."; }
+  }
   const model = cfg.imageGen?.connectionId === chosen ? cfg.imageGen?.model ?? catalog?.defaultModel : catalog?.defaultModel;
   const selected = chosen && model && catalog?.models.some(item => item.id === model && item.generate && !item.disabledReason) ? { connectionId: chosen, model } : null;
-  return { enabled: cfg.imageGen?.enabled !== false && !!selected, connections, selected, catalog };
+  return { enabled: cfg.imageGen?.enabled !== false && !!selected, connections, selected, catalog, ...(catalogError ? { catalogError } : {}) };
 }
 
 /** The one per-MODEL image fact Murage holds: a BYOK provider catalog's
@@ -11489,7 +11507,7 @@ const server = createServer(async (req, res) => {
       if (patch.connectionId && patch.connectionId !== cfg.imageGen?.connectionId) delete next.model;
       if (patch.connectionId || patch.model || patch.enabled === true) {
         const state = await imageSettings(next.connectionId);
-        if (!state.catalog) return json(res, 409, { error: "Connect an image provider first." });
+        if (!state.catalog) return json(res, 409, { error: state.catalogError ?? "Connect an image provider first." });
         const model = patch.model ?? next.model ?? state.catalog.defaultModel;
         if (model && !state.catalog.models.some(item => item.id === model && item.generate && !item.disabledReason)) return json(res, 400, { error: "Choose a supported image model from this connection." });
         if (model) next.model = model; else { delete next.model; next.enabled = false; }

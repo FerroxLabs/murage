@@ -335,3 +335,8 @@ it("GOOG-4 refuses a text-only reply, a quality setting and a model outside the 
  expect(quality.fetcher).not.toHaveBeenCalled();expect(model.fetcher).not.toHaveBeenCalled();
  expect(()=>assertCredentialOrigin("google","https://api.openai.com/v1/images/generations")).toThrow();
 });
+it("GOOG-5 names local models without the network, and leaves OpenRouter's to its live list",()=>{
+ const google=fixture("google",CANARY.google);expect(google.service.localModelIds("google")).toEqual(["gemini-3.1-flash-image","gemini-3.1-flash-lite-image","gemini-3-pro-image"]);
+ const router=fixture("openrouter");expect(router.service.localModelIds("openrouter")).toBeNull();
+ expect(google.fetcher).not.toHaveBeenCalled();expect(router.fetcher).not.toHaveBeenCalled();
+});

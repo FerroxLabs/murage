@@ -198,7 +198,7 @@ function imageConnectionsLine(facts: PrimerFacts): string {
     ? `${connection.label} (in use${connection.model ? `, model ${connection.model}` : ""})`
     : connection.label);
   const more = connections.length > 12 ? `, and ${connections.length - 12} more` : "";
-  return `Image connections set up in this workspace: ${names.join("; ")}${more}. These are the only ones: list_image_models gives each one's id and models, and generate_image takes connection_id to use another. Never tell the owner to set up a connection listed here; a new provider needs ${IMAGE_KEY_PROVIDERS}, and the default is chosen in ${IMAGE_SETTINGS}.`;
+  return `Image connections set up in this workspace: ${names.join("; ")}${more}. These are the only ones: list_image_models gives their ids and the models of the one in use, and generate_image takes connection_id to use another. Never tell the owner to set up a connection listed here; a new provider needs ${IMAGE_KEY_PROVIDERS}, and the default is chosen in ${IMAGE_SETTINGS}.`;
 }
 
 function sentence(text: string): string {
