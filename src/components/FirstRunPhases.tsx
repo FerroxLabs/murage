@@ -33,7 +33,7 @@
 //   actually earned, which is the property that made the old checklist
 //   trustworthy and is worth keeping.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { X } from "lucide-react";
 
 import {
@@ -44,6 +44,7 @@ import {
   useFirstRunPhaseLatch,
 } from "@/lib/first-run";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { useStore } from "@/state/store";
 import type { SetupView } from "../../shared/setup";
 import { useSetupView } from "./FirstRunChrome";
@@ -70,6 +71,7 @@ export function FirstRunPhases() {
   // desktop either: the unknown answer withholds, which is the whole reason
   // the original welcome screen leaked onto a paired phone.
   const desktop = useDesktopSurface();
+  const { capabilities } = useDesktopCapabilities();
   const chiefBotId = view?.chiefBotId;
   const handled = useRef(0);
 
@@ -85,7 +87,7 @@ export function FirstRunPhases() {
   }, [bar.requests, chiefBotId, dispatch]);
 
   if (desktop !== true || !view || !firstRunPhasesVisible(view, bar)) return null;
-  return <FirstRunPhasesBody view={view} onClose={closeFirstRun} />;
+  return <FirstRunPhasesBody view={view} onClose={closeFirstRun} macInset={capabilities.windowChrome === "mac-inset"} />;
 }
 
 // A finished phase should LOOK finished at a glance, without reading it, and
@@ -106,15 +108,25 @@ const DESCRIPTION_ID = "first-run-phases-description";
  * The bar with nothing wired to it, so a test can hand it a view and read
  * what a person would read. Same split as the rest of this app's panels.
  */
-export function FirstRunPhasesBody({ view, onClose }: { view: SetupView; onClose: () => void }) {
+export function FirstRunPhasesBody({ view, onClose, macInset = false }: { view: SetupView; onClose: () => void; macInset?: boolean }) {
   const rows = firstRunPhaseRows(view);
+  // On a Mac this bar is the top of the window, and the window's own buttons
+  // sit inset over its left edge (the sidebar header clears them the same
+  // way). Leave their width free and let the bar move the window; the pills
+  // and the close control opt out so they still take clicks.
+  // SAFETY: -webkit-app-region is Electron's documented CSS property, not in
+  // React's CSSProperties type; the renderer accepts it as an inline style.
+  const drag = macInset ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined;
+  const noDrag = macInset ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined;
   return (
     <nav
       aria-label={FIRST_RUN_PHASES.title}
       aria-describedby={DESCRIPTION_ID}
       data-first-run-phases=""
       className="flex w-full shrink-0 flex-wrap items-center gap-2 border-b border-hairline/40 bg-panel px-3 py-2"
+      style={drag}
     >
+      {macInset ? <div data-window-buttons-space="" aria-hidden="true" className="w-[68px] shrink-0 self-stretch" /> : null}
       {/* The promise, in the words the rail printed across its foot. Not
           shown: a strip this size is plainly not blocking anything, and a
           sentence of reassurance beside five pills is noise. It is still
@@ -124,7 +136,7 @@ export function FirstRunPhasesBody({ view, onClose }: { view: SetupView; onClose
         {FIRST_RUN_PHASES.footer}
       </p>
 
-      <ol className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      <ol className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" style={noDrag}>
         {rows.map((row) => (
           <li
             key={row.id}
@@ -142,6 +154,7 @@ export function FirstRunPhasesBody({ view, onClose }: { view: SetupView; onClose
       <button
         type="button"
         onClick={onClose}
+        style={noDrag}
         aria-label={FIRST_RUN_PHASES.close}
         className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
       >

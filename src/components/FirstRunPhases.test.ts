@@ -38,6 +38,7 @@ const storeState: Record<string, unknown> = {
 };
 const dispatched: Array<Record<string, unknown>> = [];
 
+vi.mock("./DesktopCapabilities", () => ({ useDesktopCapabilities: () => ({ capabilities: { windowChrome: "native" } }) }));
 vi.mock("@/state/store", () => ({
   api: async () => ({}),
   useStore: () => ({ state: storeState, dispatch: (action: Record<string, unknown>) => { dispatched.push(action); } }),
@@ -263,5 +264,27 @@ describe("the wired bar", () => {
     expect(wired(), "closing the bar left it on screen").toBe("");
     openFirstRun();
     expect(wired(), "asking for the first run did not bring the bar back").toContain(labelFor("hello"));
+  });
+});
+
+// ON A MAC THE BAR IS THE TOP OF THE WINDOW. The window's close, minimise and
+// zoom buttons sit inset over its left edge, so the first pill was drawn under
+// them (0.1.61 final check). The bar leaves their width free there, and it is
+// the window's drag handle like the sidebar's header, with its controls
+// excluded so they still take clicks.
+describe("the bar under macOS window buttons", () => {
+  const renderMac = (macInset: boolean) =>
+    renderToStaticMarkup(createElement(FirstRunPhasesBody, { view: view(), onClose: vi.fn(), macInset }));
+  it("keeps the first pill clear of the window buttons on a Mac", () => {
+    const html = renderMac(true);
+    expect(html).toContain('data-window-buttons-space=""');
+    expect(html.indexOf("data-window-buttons-space")).toBeLessThan(html.indexOf(labelFor("hello")));
+    expect(html).toContain("-webkit-app-region:drag");
+    expect(html).toContain("-webkit-app-region:no-drag");
+  });
+  it("adds nothing where the system draws its own title bar", () => {
+    const html = renderMac(false);
+    expect(html).not.toContain("data-window-buttons-space");
+    expect(html).not.toContain("-webkit-app-region");
   });
 });
