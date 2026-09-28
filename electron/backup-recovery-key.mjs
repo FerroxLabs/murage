@@ -197,6 +197,48 @@ export function copyRecoveryKeyFile({ from, to, installation, destination = null
   }
 }
 
+// ---- Folders that sync to the cloud.
+// The key is the one thing that opens the backups. A folder that syncs puts a
+// copy of it in someone's cloud account, which the person may not know: on
+// Windows, OneDrive can quietly hold Documents (0.1.61 final check 2, N3). So
+// the key made without a dialog skips such folders, and a picked one is named
+// before anything is saved there. Recognized by the names the sync clients
+// give their folders; anything else reads as a folder on this computer.
+const CLOUD_FOLDER_NAMES = [
+  [/^onedrive(?: - .+|-.+)?$/i, "OneDrive"],
+  [/^icloud ?drive$/i, "iCloud Drive"],
+  [/^dropbox(?: \(.+\)|-.+)?$/i, "Dropbox"],
+  [/^(?:google ?drive|my drive|googledrive-.+)$/i, "Google Drive"],
+];
+const windowsSpelling = value => value.replace(/[\\/]+/g, "\\").replace(/\\$/, "").toLowerCase();
+/** The cloud service `folder` syncs to ("OneDrive", "iCloud Drive", "Dropbox",
+ * "Google Drive", or "cloud storage" for another macOS provider), or null. */
+export function cloudSyncedFolder(folder, { platform = process.platform, env = process.env } = {}) {
+  if (typeof folder !== "string" || !folder) return null;
+  if (platform === "win32") {
+    const spelled = windowsSpelling(folder);
+    for (const name of ["OneDrive", "OneDriveConsumer", "OneDriveCommercial"]) {
+      const root = typeof env?.[name] === "string" && env[name] ? windowsSpelling(env[name]) : null;
+      if (root && (spelled === root || spelled.startsWith(`${root}\\`))) return "OneDrive";
+    }
+  }
+  const parts = folder.split(/[\\/]+/).filter(Boolean);
+  for (let i = 0; i < parts.length; i++) {
+    const [, provider] = CLOUD_FOLDER_NAMES.find(([pattern]) => pattern.test(parts[i])) ?? [];
+    if (provider) return provider;
+    if (/^library$/i.test(parts[i]) && /^mobile documents$/i.test(parts[i + 1] ?? "")) return "iCloud Drive";
+    if (/^library$/i.test(parts[i]) && /^cloudstorage$/i.test(parts[i + 1] ?? "") && parts[i + 2]) return CLOUD_FOLDER_NAMES.find(([pattern]) => pattern.test(parts[i + 2]))?.[1] ?? "cloud storage";
+  }
+  return null;
+}
+/** The same, for a folder on this host: judged where it really is, so a link
+ * into a synced folder counts as that folder. */
+function hostCloudFolder(folder) {
+  let resolved = folder;
+  try { resolved = realpathSync.native(folder); } catch { /* Judge the spelling it was given. */ }
+  return cloudSyncedFolder(resolved);
+}
+
 // ---- Where the save dialog starts.
 const KEY_NAME = "murage-recovery-key", KEY_EXTENSION = ".txt";
 /** `murage-recovery-key.txt` in `folder`, or the first `-2`, `-3`, … name not
@@ -300,8 +342,18 @@ const COPY_TARGET_REFUSALS = new Set(["BACKUP_RECOVERY_KEY_EXISTS", "BACKUP_RECO
 
 /** Native-dialog orchestration. The secret never leaves this process: the
  * caller receives only the chosen file's name and the public recipient. */
-export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestination, isUsable = () => true, now = () => Date.now(), folderStore = null, defaultFolder = () => null, chooseCopyFile = null, defaultFolders = null, isUsableDuringSetup = null }) {
+export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestination, isUsable = () => true, now = () => Date.now(), folderStore = null, defaultFolder = () => null, chooseCopyFile = null, defaultFolders = null, isUsableDuringSetup = null, confirmCloudFolder = null, cloudFolder = hostCloudFolder }) {
   let pending = false, folder = null, keyFile = null;
+  /** A picker answer, asked about first when its folder syncs to the cloud:
+   * the person either saves there knowing it, or picks again. */
+  const pick = async (chooser, suggested) => {
+    for (;;) {
+      const file = await chooser(suggested);
+      if (!file) return null;
+      const provider = confirmCloudFolder && typeof file === "string" && path.isAbsolute(file) ? cloudFolder(path.dirname(file)) : null;
+      if (!provider || await confirmCloudFolder(provider)) return file;
+    }
+  };
   const made = new Map();
   const remember = file => { folder = path.dirname(file); keyFile = file; folderStore?.write(folder, file); };
   const remembered = () => folderStore?.read() ?? null;
@@ -322,7 +374,8 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
       // used here must not count that setup as work in progress; everything
       // else it checks still applies.
       if (!(isUsableDuringSetup ?? isUsable)()) throw new Error("BACKUP_UNAVAILABLE");
-      const folders = [lastFolder(), ...(defaultFolders?.() ?? [defaultFolder()])].filter(value => typeof value === "string" && value);
+      // Made where nobody is asked, so never in a folder that syncs to the cloud.
+      const folders = [lastFolder(), ...(defaultFolders?.() ?? [defaultFolder()])].filter(value => typeof value === "string" && value && !cloudFolder(value));
       const created = createRecoveryKeyIn(folders, { installation: installation(), destination, now: now() });
       const stat = lstatSync(created.file);
       made.set(created.file, { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, previous: keyFile });
@@ -361,7 +414,7 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
       const fromMemory = keyFile === file;
       pending = true;
       try {
-        const to = await (chooseCopyFile ?? chooseFile)(suggestRecoveryKeyPath(lastFolder() ?? defaultFolder()));
+        const to = await pick(chooseCopyFile ?? chooseFile, suggestRecoveryKeyPath(lastFolder() ?? defaultFolder()));
         if (!to) return { cancelled: true };
         if (!isUsable()) throw new Error("BACKUP_UNAVAILABLE");
         let destination;
@@ -385,7 +438,7 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
       if (!isUsable()) throw new Error("BACKUP_UNAVAILABLE");
       pending = true;
       try {
-        const file = await chooseFile(suggestRecoveryKeyPath(lastFolder() ?? defaultFolder()));
+        const file = await pick(chooseFile, suggestRecoveryKeyPath(lastFolder() ?? defaultFolder()));
         if (!file) return { cancelled: true };
         if (!isUsable()) throw new Error("BACKUP_UNAVAILABLE");
         let destination;

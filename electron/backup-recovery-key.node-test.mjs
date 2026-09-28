@@ -8,7 +8,7 @@ import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 import { testAgeKeys } from "../server/testing/backup-fixture.ts";
 import { readBackupIdentity } from "./backup-mode.mjs";
-import { ageIdentityRecipient, bech32Decode, bech32Encode, copyRecoveryKeyFile, createRecoveryKeyFile, createRecoveryKeyFlow, createRecoveryKeyIn, generateAgeIdentity, recoveryKeyFolderStore, settleRecoveryKeyRequest, suggestRecoveryKeyPath } from "./backup-recovery-key.mjs";
+import { ageIdentityRecipient, bech32Decode, bech32Encode, cloudSyncedFolder, copyRecoveryKeyFile, createRecoveryKeyFile, createRecoveryKeyFlow, createRecoveryKeyIn, generateAgeIdentity, recoveryKeyFolderStore, settleRecoveryKeyRequest, suggestRecoveryKeyPath } from "./backup-recovery-key.mjs";
 
 // BIP-173 test vectors.
 const valid=["A12UEL5L","a12uel5l","an83characterlonghumanreadablepartthatcontainsthenumber1andtheexcludedcharactersbio1tt5tgs",
@@ -345,4 +345,94 @@ test("without a setup guard the flow falls back to the ordinary one",async()=>{
     assert.throws(()=>flow.createFor(p.destination),/BACKUP_UNAVAILABLE/);
     assert.deepEqual(readdirSync(p.safe),[]);
   }finally{p.cleanup();}
+});
+
+// ---- 0.1.61 final check 2, N3: on a Windows profile whose Documents folder
+// is moved into OneDrive, the key was written to OneDrive\Documents, so the
+// only thing that opens the backups went to the cloud with nobody told. The
+// key is now made on this computer, and a folder the person picks that syncs
+// to the cloud is named before anything is saved there.
+test("folders that sync to the cloud are recognized by name on every platform",()=>{
+  const env={OneDrive:"C:\\Users\\Seani\\OneDrive",OneDriveCommercial:"C:\\Users\\Seani\\OneDrive - Ferrox Labs"};
+  const win=folder=>cloudSyncedFolder(folder,{platform:"win32",env});
+  assert.equal(win("C:\\Users\\Seani\\OneDrive\\Documents"),"OneDrive");
+  assert.equal(win("c:\\users\\seani\\onedrive\\documents"),"OneDrive");
+  assert.equal(win("C:\\Users\\Seani\\OneDrive - Ferrox Labs\\Keys"),"OneDrive");
+  assert.equal(win("D:\\Sync\\OneDrive\\Keys"),"OneDrive");
+  assert.equal(win("C:\\Users\\Seani\\iCloudDrive"),"iCloud Drive");
+  assert.equal(win("C:\\Users\\Seani\\Dropbox\\Keys"),"Dropbox");
+  assert.equal(win("C:\\Users\\Seani\\Dropbox (Ferrox)"),"Dropbox");
+  assert.equal(win("G:\\My Drive\\Keys"),"Google Drive");
+  assert.equal(win("C:\\Users\\Seani"),null);
+  assert.equal(win("C:\\Users\\Seani\\Documents"),null);
+  assert.equal(win("C:\\Users\\Seani\\AppData\\Local\\Murage"),null);
+  const mac=folder=>cloudSyncedFolder(folder,{platform:"darwin",env:{}});
+  assert.equal(mac("/Users/sean/Library/Mobile Documents/com~apple~CloudDocs/Keys"),"iCloud Drive");
+  assert.equal(mac("/Users/sean/Library/CloudStorage/GoogleDrive-sean@example.com/My Drive"),"Google Drive");
+  assert.equal(mac("/Users/sean/Library/CloudStorage/OneDrive-Personal"),"OneDrive");
+  assert.equal(mac("/Users/sean/Library/CloudStorage/Dropbox"),"Dropbox");
+  assert.equal(mac("/Users/sean/Dropbox/Keys"),"Dropbox");
+  assert.equal(mac("/Users/sean/Documents"),null);
+  assert.equal(mac("/Users/sean"),null);
+  assert.equal(cloudSyncedFolder("/home/sean/Dropbox",{platform:"linux",env:{}}),"Dropbox");
+  assert.equal(cloudSyncedFolder("/home/sean",{platform:"linux",env:{}}),null);
+  assert.equal(cloudSyncedFolder(null),null);
+});
+
+test("the key made without a dialog skips folders that sync to the cloud, a remembered one included",()=>{
+  const p=place();try{
+    const synced=path.join(p.root,"OneDrive","Documents");mkdirSync(synced,{recursive:true});
+    const flow=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,
+      defaultFolders:()=>[synced,p.safe],chooseFile:async()=>null});
+    const created=flow.createFor(p.destination);
+    assert.equal(path.dirname(created.file),p.safe);
+    assert.deepEqual(readdirSync(synced),[]);
+    // A folder remembered from an earlier key (0.1.60 wrote them to OneDrive) is skipped too.
+    const store=recoveryKeyFolderStore(path.join(p.root,"remembered.json"));store.write(synced);
+    const later=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,folderStore:store,
+      defaultFolders:()=>[p.safe],chooseFile:async()=>null});
+    assert.equal(path.dirname(later.createFor(p.destination).file),p.safe);
+    assert.deepEqual(readdirSync(synced),[]);
+    // With nowhere local to put it, nothing is written to the cloud folder.
+    const none=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,defaultFolders:()=>[synced],chooseFile:async()=>null});
+    assert.throws(()=>none.createFor(p.destination),/BACKUP_RECOVERY_KEY_LOCATION_INVALID/);
+    assert.deepEqual(readdirSync(synced),[]);
+  }finally{p.cleanup();}
+});
+
+test("a picked folder that syncs to the cloud is named before the key or its copy is saved there",async()=>{
+  const p=place();try{
+    const synced=path.join(p.root,"Dropbox");mkdirSync(synced);
+    const asked=[];let answer=false;const picks=[];
+    const flow=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,
+      chooseFile:async()=>picks.shift()??null,chooseCopyFile:async()=>picks.shift()??null,
+      confirmCloudFolder:async provider=>{asked.push(provider);return answer;}});
+    // "Choose another place" opens the picker again; nothing was written.
+    picks.push(path.join(synced,"key.txt"),path.join(p.safe,"key.txt"));
+    const saved=await flow.create();
+    assert.deepEqual(asked,["Dropbox"]);assert.equal(saved.saved,true);
+    assert.deepEqual(readdirSync(synced),[]);assert.deepEqual(readdirSync(p.safe),["key.txt"]);
+    // Closing the picker after declining saves nothing.
+    picks.push(path.join(synced,"key.txt"));
+    assert.deepEqual(await flow.create(),{cancelled:true});assert.deepEqual(readdirSync(synced),[]);
+    // "Save here" saves there, told.
+    answer=true;picks.push(path.join(synced,"copy.txt"));
+    assert.equal((await flow.saveCopy()).saved,true);
+    assert.deepEqual(asked,["Dropbox","Dropbox","Dropbox"]);
+    assert.deepEqual(readdirSync(synced),["copy.txt"]);
+    // A folder on this computer is not asked about.
+    picks.push(path.join(p.safe,"copy-2.txt"));await flow.saveCopy();
+    assert.equal(asked.length,3);
+  }finally{p.cleanup();}
+});
+
+test("the desktop app names a cloud folder in plain words and keeps a local default key folder",()=>{
+  const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
+  const flow=main.slice(main.indexOf("const backupRecoveryKeys=createRecoveryKeyFlow({"),main.indexOf("ipcMain.handle(\"backup-mode:create-recovery-key\""));
+  assert.match(flow,/confirmCloudFolder:async provider=>/);
+  assert.match(flow,/defaultFolders:\(\)=>[^\n]*process\.env\.LOCALAPPDATA/);
+  const confirm=flow.slice(flow.indexOf("confirmCloudFolder:"));
+  assert.match(confirm,/syncs to \$\{provider\}/);
+  assert.match(confirm,/buttons:\["Choose another place","Save here"\]/);
+  assert.equal(/—|\bsafe(ly|ty)?\b|unsafe/i.test(confirm.slice(0,confirm.indexOf("\n  },"))),false);
 });
