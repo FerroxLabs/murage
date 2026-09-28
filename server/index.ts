@@ -3456,12 +3456,15 @@ const imageService = new ImageGenerationService({ resolveConnection: imageConnec
  * This list also reaches bots (list_image_models and the primer), so a saved
  * label that holds its own key, or any recognisable key, is replaced here. */
 function labelledImageConnections() {
+  // Every stored model key, not only this connection's own: a name may hold
+  // another account's key too.
+  const savedKeys = providerConnections.list().flatMap(row => { const key = providerConnections.resolve(row.id)?.key.trim(); return key && key.length >= 8 ? [key] : []; });
+  const flux = fluxKey()?.trim(); if (flux && flux.length >= 8) savedKeys.push(flux);
   return imageService.listConnections().map(connection => {
     const label = connection.id.startsWith("model:")
       ? providerConnections.resolve(connection.id.slice(6))?.label ?? connection.provider
       : ({ flux: "Flux Router", openai: "OpenAI image key", "openai-compatible": "OpenAI", openrouter: "OpenRouter", xai: "xAI" } as Record<string,string>)[connection.id] ?? connection.provider;
-    const key = imageConnection(connection.id)?.apiKey;
-    return { ...connection, label: key && label.includes(key) ? connection.provider : redactSecretsInText(label) };
+    return { ...connection, label: savedKeys.some(key => label.includes(key)) ? connection.provider : redactSecretsInText(label) };
   });
 }
 function defaultImageConnection(connections: ReturnType<typeof labelledImageConnections>, connectionId = cfg.imageGen?.connectionId) {
@@ -14816,9 +14819,10 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: `prompt must be at most 400 characters` });
       }
       if (providerConfigBusy) return json(res, 409, { error: "Credentials are being changed. Try again shortly." });
-      // The avatar key is OpenAI's; one that names another provider is never sent.
-      const avatarKey = cfg.imageGen?.key ?? "";
-      if (avatarKey && keyIssuer(avatarKey) && keyIssuer(avatarKey) !== "openai") return json(res, 409, { error: "The saved avatar key belongs to a different provider. Replace it with an OpenAI key." });
+      // The avatar key is OpenAI's; one that names another provider is left
+      // out, so Flux (when connected) still draws and nothing is sent to OpenAI.
+      const savedAvatarKey = cfg.imageGen?.key ?? "";
+      const avatarKey = keyIssuer(savedAvatarKey) && keyIssuer(savedAvatarKey) !== "openai" ? "" : savedAvatarKey;
       fluxMediaRequests++;
       let generated: Awaited<ReturnType<typeof generateAvatarImage>>;
       try { generated = await generateAvatarImage(avatarKey, existing, parsed.data.prompt); }

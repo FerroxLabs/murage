@@ -16,6 +16,8 @@ const bank = JSON.stringify([
   { id: "c-mistral", preset: "mistral", label: "Boot Mistral", enabled: true, key: "FAKE_IMG_MISTRAL_KEY", revision: "r4" },
   // Saved before labels were checked: the owner pasted the key as its name.
   { id: "c-leaky", preset: "xai", label: "xai-FAKE_IMG_LABEL_KEY_0", enabled: true, key: "xai-FAKE_IMG_LABEL_KEY_0", revision: "r5" },
+  // A name holding ANOTHER account's opaque key (c-mistral's).
+  { id: "c-other", preset: "openrouter", label: "Team FAKE_IMG_MISTRAL_KEY", enabled: true, key: "sk-or-v1-FAKE_IMG_OTHER_OR", revision: "r7" },
   // Saved before every door checked the issuer: a Google key filed as OpenAI.
   { id: "c-mismatch", preset: "openai", label: "Filed wrong", enabled: true, key: `AIza${"FAKE_IMG_MISFILED_".padEnd(35, "0")}`, revision: "r6" },
 ]);
@@ -55,7 +57,7 @@ afterAll(async () => { await fixture?.close(); });
 
 it("path 1: keys the packaged app restores from its encrypted store at boot", async () => {
   const listed = await images();
-  expect(listed.map(row => [row.id, row.provider, row.label])).toEqual([["model:c-openai", "openai", "Boot OpenAI"], ["model:c-xai", "xai", "Boot xAI"], ["model:c-openrouter", "openrouter", "Boot OpenRouter"], ["model:c-leaky", "xai", "xai"]]);
+  expect(listed.map(row => [row.id, row.provider, row.label])).toEqual([["model:c-openai", "openai", "Boot OpenAI"], ["model:c-xai", "xai", "Boot xAI"], ["model:c-openrouter", "openrouter", "Boot OpenRouter"], ["model:c-leaky", "xai", "xai"], ["model:c-other", "openrouter", "openrouter"]]);
   // Misfiled keys are listed in Models for review, never enabled, offered or sent.
   const rows = (await api("GET", "/api/provider-connections")).body.connections as Array<{ id: string; enabled: boolean; catalog: { error?: { message: string } } }>;
   for (const id of ["c-mismatch", "legacy-openai-image"]) expect(rows.find(row => row.id === id)).toMatchObject({ enabled: false, catalog: { error: { message: expect.stringContaining("different provider") } } });
@@ -64,8 +66,9 @@ it("path 1: keys the packaged app restores from its encrypted store at boot", as
   const model = (await api("GET", "/api/instances")).body.instances.find((engine: any) => engine.instanceId === "verification").models.options[0].id;
   const bot = (await api("POST", "/api/bots", { name: "Avatar", modelSelection: { instanceId: "verification", model } })).body.bot;
   const avatar = await api("POST", `/api/bots/${bot.id}/avatar/generate`, { prompt: "a fox" });
+  // Left out, not sent: with no Flux key here, nothing can draw.
   expect(avatar.status).toBe(409);
-  expect(avatar.body.error).toContain("different provider");
+  expect(avatar.body.error).toContain("Avatar generation is unavailable");
   expect(imageRequests()).toEqual([]);
   expect(network()).toBe("");
 });
