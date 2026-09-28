@@ -179,7 +179,7 @@ import { capturedMessageWithheld, copyOriginWithheld, messageMadeWithMemory } fr
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
-import { capabilitiesPrimer, roomToolAccessLine, turnCapabilityFacts } from "./capabilities-primer.ts";
+import { capabilitiesPrimer, roomToolAccessLine, turnCapabilityFacts, type ImageConnectionFact } from "./capabilities-primer.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
 import { browserRefusal, isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
@@ -3447,11 +3447,28 @@ function imageConnectionIds(): string[] {
   return ids;
 }
 const imageService = new ImageGenerationService({ resolveConnection: imageConnection, connectionIds: imageConnectionIds });
-async function imageSettings(connectionId = cfg.imageGen?.connectionId) {
-  const connections = imageService.listConnections().map(connection => ({ ...connection, label: connection.id.startsWith("model:")
+/** The image connections as Settings shows them, labelled. Local rows only. */
+function labelledImageConnections() {
+  return imageService.listConnections().map(connection => ({ ...connection, label: connection.id.startsWith("model:")
     ? providerConnections.resolve(connection.id.slice(6))?.label ?? connection.provider
     : ({ flux: "Flux Router", openai: "OpenAI image key", "openai-compatible": "OpenAI", openrouter: "OpenRouter", xai: "xAI" } as Record<string,string>)[connection.id] ?? connection.provider }));
-  const chosen = connectionId ?? connections.find(connection => connection.provider === "flux")?.id ?? connections.find(connection => connection.provider === "openai")?.id;
+}
+function defaultImageConnection(connections: ReturnType<typeof labelledImageConnections>, connectionId = cfg.imageGen?.connectionId) {
+  return connectionId ?? connections.find(connection => connection.provider === "flux")?.id ?? connections.find(connection => connection.provider === "openai")?.id;
+}
+/** What a bot is told about images: the same connections Settings lists, and
+ * which one its requests use by default. No catalog read, so no network. */
+function imageConnectionFacts(): ImageConnectionFact[] {
+  const connections = labelledImageConnections(), chosen = defaultImageConnection(connections);
+  return connections.map(connection => {
+    const inUse = connection.id === chosen;
+    const model = inUse ? (cfg.imageGen?.connectionId === chosen ? cfg.imageGen?.model : undefined) ?? connection.defaultModel ?? undefined : undefined;
+    return { label: connection.label, inUse, ...(model ? { model } : {}) };
+  });
+}
+async function imageSettings(connectionId = cfg.imageGen?.connectionId) {
+  const connections = labelledImageConnections();
+  const chosen = defaultImageConnection(connections, connectionId);
   const catalog = chosen && imageConnection(chosen) ? await imageService.getCatalog(chosen) : null;
   const model = cfg.imageGen?.connectionId === chosen ? cfg.imageGen?.model ?? catalog?.defaultModel : catalog?.defaultModel;
   const selected = chosen && model && catalog?.models.some(item => item.id === model && item.generate && !item.disabledReason) ? { connectionId: chosen, model } : null;
@@ -6603,6 +6620,7 @@ async function startTurn(
         // behind it, which is the case where a bot promises a picture it
         // cannot make.
         imageProvider: cfg.imageGen?.enabled !== false && imageService.listConnections().length > 0,
+        imageConnections: imageConnectionFacts(),
         voice: tts.voiceReady(cfg, bot.voice, bot.voiceProvider),
         canAskOwner: humanIsOwner && opts?.automationSource === undefined,
         browserLock: integrations.browser ? unifiedBrowserProtection(threadId) ?? undefined : undefined,

@@ -35,6 +35,7 @@ beforeAll(async () => {
   // The packaged app hands the encrypted bank to the harness as env at spawn.
   const env = { MURAGE_MODEL_PROVIDER_CONNECTIONS: bank } as Record<string, string>;
   fixture = await launchVerificationServer(process.env, undefined, { env, instrumentationSource: `
+ process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
  import { appendFileSync } from 'node:fs';
  import { join } from 'node:path';
  const originalFetch=globalThis.fetch;
@@ -93,3 +94,20 @@ it("selects a Google connection and reads its model list locally", async () => {
   expect(saved.body.catalog.models.map((model: { id: string }) => model.id)).toEqual(["gemini-3.1-flash-image", "gemini-3.1-flash-lite-image", "gemini-3-pro-image"]);
   expect(network()).toBe("");
 });
+
+it("tells a bot the real image connections and which one is in use", async () => {
+  const model = (await api("GET", "/api/instances")).body.instances.find((engine: any) => engine.instanceId === "verification").models.options[0].id;
+  const bot = (await api("POST", "/api/bots", { name: "Petra", modelSelection: { instanceId: "verification", model } })).body.bot;
+  await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false });
+  const tag = "IMAGE_OPTIONS_TURN";
+  expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: `Which image options do I have? ${tag}` })).status).toBeLessThan(300);
+  let dump: { systemPrompt?: string | null; prompt?: unknown } | null = null;
+  await expect.poll(() => { try { dump = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")); } catch { dump = null; } return JSON.stringify(dump?.prompt ?? null).includes(tag); }, { timeout: 20000 }).toBe(true);
+  const prompt = String(dump!.systemPrompt);
+  const line = prompt.split("\n").find(text => text.startsWith("Image connections set up in this workspace:"));
+  expect(line).toBeDefined();
+  for (const label of ["Boot OpenAI", "Boot xAI", "Boot OpenRouter", "Google (in use, model gemini-3.1-flash-image)", "xAI"]) expect(line).toContain(label);
+  expect(line).not.toContain("Boot Mistral");
+  expect(prompt).toContain("create and edit images");
+  expect(prompt).not.toMatch(/FAKE_IMG|AIzaFAKE/);
+}, 60000);

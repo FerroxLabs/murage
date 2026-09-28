@@ -156,6 +156,11 @@ export interface PrimerFacts {
    * from `mounted.agents`: the generate_image tool can be present with no
    * provider behind it, which is exactly the case a bot promises and fails. */
   readonly imageProvider: boolean;
+  /** The image connections the owner has set up, from the same list Settings →
+   *  Tools & Connections → Image generation shows. Without it a bot asked
+   *  about images guesses at setup steps (it told the owner to add Grok as an
+   *  image connection when xAI already was one). Absent means not reported. */
+  readonly imageConnections?: readonly ImageConnectionFact[];
   /** This bot's voice can speak (send_voice_note has something to say it
    *  with). Absent is the same as false. */
   readonly voice?: boolean;
@@ -177,6 +182,23 @@ export interface PrimerFacts {
   /** The mounted browser starts this turn protected. Persisted profile state,
    * not turn state: it holds until the page is left or the owner reopens it. */
   readonly browserLock?: BrowserProtection;
+}
+
+export interface ImageConnectionFact { readonly label: string; readonly inUse: boolean; readonly model?: string }
+
+/** Where image connections come from and where the choice is made. */
+const IMAGE_SETTINGS = "Settings → Tools & Connections → Image generation";
+const IMAGE_KEY_PROVIDERS = "an OpenAI, xAI, OpenRouter, Google or Flux Router key saved in Settings → Models";
+
+/** The image connections as one plain sentence, or "" when not reported. */
+function imageConnectionsLine(facts: PrimerFacts): string {
+  const connections = facts.imageConnections;
+  if (!facts.mounted.agents || !connections?.length) return "";
+  const names = connections.slice(0, 12).map(connection => connection.inUse
+    ? `${connection.label} (in use${connection.model ? `, model ${connection.model}` : ""})`
+    : connection.label);
+  const more = connections.length > 12 ? `, and ${connections.length - 12} more` : "";
+  return `Image connections set up in this workspace: ${names.join("; ")}${more}. These are the only ones: list_image_models gives each one's id and models, and generate_image takes connection_id to use another. Never tell the owner to set up a connection listed here; a new provider needs ${IMAGE_KEY_PROVIDERS}, and the default is chosen in ${IMAGE_SETTINGS}.`;
 }
 
 function sentence(text: string): string {
@@ -269,7 +291,10 @@ export function capabilitiesPrimer(facts: PrimerFacts): string {
   // two separate problems.
   if (facts.mounted.agents) {
     if (facts.imageProvider) can.push("create and edit images");
-    else cannot.push("image generation (no image provider is connected in this workspace)");
+    // Connections exist but the owner switched image requests off: saying
+    // "none is connected" sent people hunting for a key they already had.
+    else if (facts.imageConnections?.length) cannot.push(`image generation (image requests are switched off in ${IMAGE_SETTINGS})`);
+    else cannot.push(`image generation (no image provider is connected in this workspace; ${IMAGE_KEY_PROVIDERS} adds one)`);
     if (facts.voice) can.push("send the owner a voice note in your own voice (send_voice_note), when they ask for one or would rather hear it");
   }
   if (facts.mounted.agents && facts.peers === 0) {
@@ -288,6 +313,7 @@ export function capabilitiesPrimer(facts: PrimerFacts): string {
     // mounts; they say nothing about the engine's own shell, file reader or
     // native search, and a bot told "nothing beyond this list" denies work it
     // can plainly do.
+    facts.imageProvider ? imageConnectionsLine(facts) : "",
     "That is what Murage mounts for you; your engine's own built-in tools are separate. Never promise a Murage capability this block does not list: say plainly that you do not have it and name the setting that would change it.",
     IMAGE_INPUT_LINE[facts.imageInput],
     MEMORY_LINE[facts.memory],
@@ -382,6 +408,7 @@ export function turnCapabilityFacts(input: {
   peers: number;
   memory: MemoryMode;
   imageProvider: boolean;
+  imageConnections?: readonly ImageConnectionFact[];
   voice?: boolean;
   canAskOwner: boolean;
   browserLock?: BrowserProtection;
@@ -415,6 +442,7 @@ export function turnCapabilityFacts(input: {
     mounted,
     memory: input.memory,
     imageProvider: input.imageProvider,
+    ...(input.imageConnections ? { imageConnections: input.imageConnections } : {}),
     ...(input.voice ? { voice: true } : {}),
     // `folderTrustForTurn` returns undefined whenever the engine does not
     // carry the gate (index.ts:1486), which is most of the fleet. That is NOT
