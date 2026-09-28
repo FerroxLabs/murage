@@ -134,16 +134,21 @@ describe("keys Murage cannot store", () => {
     expect(found.unsupported).toBeUndefined();
   });
 
-  it("names a Google key and offers nowhere to put it", () => {
-    const found = only(`GEMINI_API_KEY=${GOOGLE}`);
-    expect(found.providers).toEqual([]);
-    expect(found.unsupported?.id).toBe("google");
+  it("files a Google AI Studio key as a Google model connection, by name or by shape", () => {
+    for (const blob of [`GEMINI_API_KEY=${GOOGLE}`, `GOOGLE_API_KEY=${GOOGLE}`, `my key is ${GOOGLE}`]) {
+      const found = only(blob);
+      expect(found.providers).toEqual(["google"]);
+      expect(found.unsupported).toBeUndefined();
+    }
+    expect(PROVIDERS.google.modelPreset).toBe("google");
   });
 
   it("refuses on either channel alone, so a disagreement resolves safely", () => {
     // A supported name over an unstorable value, and the reverse. Both refuse.
-    expect(only(`FLUX_API_KEY=${GOOGLE}`).providers).toEqual([]);
-    expect(only(`GOOGLE_API_KEY=${FLUX}`).providers).toEqual([]);
+    expect(only(`FLUX_API_KEY=${STRIPE}`).providers).toEqual([]);
+    expect(only(`STRIPE_SECRET_KEY=${FLUX}`).providers).toEqual([]);
+    // Two storable destinations that disagree make the person choose.
+    expect(only(`FLUX_API_KEY=${GOOGLE}`).providers).toEqual(["flux", "google"]);
   });
 });
 

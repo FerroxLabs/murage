@@ -57,6 +57,10 @@ function knownChat(preset: ProviderPreset, id: string, capabilities: Record<stri
  if (preset === "mistral") return capabilities.completion_chat === true;
  if (preset === "xai") return /^grok-/.test(id);
  if (preset === "groq") return /(?:^|\/)(llama|gemma|qwen|deepseek|gpt-oss|compound)/.test(id);
+ // Gemini API: chat is the gemini/gemma families, minus the Live, robotics,
+ // video and computer-use rows that share the prefix (MEDIA already drops
+ // image, TTS, embedding and transcription ids).
+ if (preset === "google") return /^(gemini|gemma)-/.test(id) && !/(?:^|-)(live|robotics|omni|computer-use)(?:-|$)/.test(id);
  if (preset === "flux") return /^flux-(auto|fast|standard|reasoning|pinned-)/.test(id) || /^(claude-|gpt-|grok-|deepseek-|qwen-|gemini-)/.test(id);
  return false;
 }
@@ -64,6 +68,9 @@ export function normalizeProviderModels(connection: ProviderConnectionRecord, pa
  if (!object(payload) || !Array.isArray(payload.data) || payload.data.length > MAX_MODELS) throw new CatalogFailure("invalid-catalog");
  const models: ProviderModel[] = [], seen = new Set<string>();
  for (const row of payload.data) {
+  // Google's OpenAI-compatible list names models `models/<id>`; its chat
+  // endpoint takes the bare id, which is the id Murage stores and sends.
+  if (connection.preset === "google" && object(row) && typeof row.id === "string" && row.id.startsWith("models/")) row.id = row.id.slice(7);
   if (!object(row) || typeof row.id !== "string" || !row.id || row.id.length > 200 || /[\x00-\x1f]/.test(row.id) || seen.has(row.id)) continue;
   if ([row.id,row.name,row.display_name].some(value=>typeof value==="string"&&value.includes(connection.key)))throw new CatalogFailure("invalid-catalog");
   seen.add(row.id);const capabilities=object(row.capabilities)?row.capabilities:{};

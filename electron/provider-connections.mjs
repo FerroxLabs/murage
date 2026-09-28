@@ -8,6 +8,9 @@ export const PROVIDER_PRESETS = Object.freeze({
   flux: { label: "Flux Router", baseUrl: "https://api.fluxrouter.ai/v1", catalogUrl: "https://api.fluxrouter.ai/v1/models", protocol: "openai" },
   groq: { label: "Groq", baseUrl: "https://api.groq.com/openai/v1", catalogUrl: "https://api.groq.com/openai/v1/models", protocol: "openai" },
   xai: { label: "xAI", baseUrl: "https://api.x.ai/v1", catalogUrl: "https://api.x.ai/v1/models", protocol: "openai" },
+  // Gemini API (Google AI Studio key), through Google's OpenAI-compatible
+  // endpoint: https://ai.google.dev/gemini-api/docs/openai (checked 2026-09-28).
+  google: { label: "Google", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", catalogUrl: "https://generativelanguage.googleapis.com/v1beta/openai/models", protocol: "openai" },
 });
 const plain = value => value && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 const id = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value);
@@ -29,7 +32,7 @@ export function parseProviderBank(raw) {
 export function assertProviderKey(preset, key) {
   if (!Object.hasOwn(PROVIDER_PRESETS, preset) || !secret(key)) fail("Choose a provider and paste a valid model API key.");
   if (key.startsWith("sk-admin-")) fail("Use an inference API key, not an OpenAI admin key.");
-  const known = key.startsWith("sk-ant-") ? "anthropic" : key.startsWith("sk-flux-") ? "flux" : key.startsWith("sk-or-") ? "openrouter" : /^sk-(?:proj|svcacct)-/.test(key) ? "openai" : key.startsWith("xai-") ? "xai" : key.startsWith("gsk_") ? "groq" : null;
+  const known = key.startsWith("sk-ant-") ? "anthropic" : key.startsWith("sk-flux-") ? "flux" : key.startsWith("sk-or-") ? "openrouter" : /^sk-(?:proj|svcacct)-/.test(key) ? "openai" : key.startsWith("xai-") ? "xai" : key.startsWith("gsk_") ? "groq" : /^AIza[A-Za-z0-9_-]{35}$/.test(key) ? "google" : null;
   if (known && known !== preset) fail("This key appears to belong to a different provider. Choose its provider before saving.");
 }
 /** Caller supplies fresh opaque IDs; create/update never sends a key anywhere. */

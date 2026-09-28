@@ -15,6 +15,7 @@ const bank = JSON.stringify([
   { id: "c-openrouter", preset: "openrouter", label: "Boot OpenRouter", enabled: true, key: "sk-or-v1-FAKE_IMG_OR", revision: "r3" },
   { id: "c-mistral", preset: "mistral", label: "Boot Mistral", enabled: true, key: "FAKE_IMG_MISTRAL_KEY", revision: "r4" },
 ]);
+const GOOGLE = "AIza" + "FAKE_IMG_GOOGLE_000000000000000000000".slice(0, 35);
 let fixture: VerificationServer;
 let headers: Record<string, string>;
 async function api(method: string, path: string, body?: unknown) {
@@ -24,7 +25,7 @@ async function api(method: string, path: string, body?: unknown) {
 async function images() {
   const settings = await api("GET", "/api/images/settings");
   expect(settings.status).toBe(200);
-  expect(JSON.stringify(settings.body)).not.toMatch(/FAKE_IMG/);
+  expect(JSON.stringify(settings.body)).not.toMatch(/FAKE_IMG|AIzaFAKE/);
   return settings.body.connections as Array<{ id: string; label: string; provider: string }>;
 }
 // The harness refreshes chat model catalogs in the background on its own
@@ -49,8 +50,8 @@ it("path 1: keys the packaged app restores from its encrypted store at boot", as
   expect(network()).toBe("");
 });
 
-it("path 2: Settings → Models and the paste box add named connections", async () => {
-  for (const [preset, key] of [["openai", "sk-proj-FAKE_IMG_MODELS_OPENAI"], ["xai", "xai-FAKE_IMG_MODELS_XAI_00"], ["openrouter", "sk-or-v1-FAKE_IMG_MODELS_OR"]]) {
+it("path 2: Settings → Models and the paste box add named connections, Google included", async () => {
+  for (const [preset, key] of [["openai", "sk-proj-FAKE_IMG_MODELS_OPENAI"], ["xai", "xai-FAKE_IMG_MODELS_XAI_00"], ["openrouter", "sk-or-v1-FAKE_IMG_MODELS_OR"], ["google", GOOGLE]]) {
     const created = await api("POST", "/api/provider-connections/mutate", { action: "create", preset, key });
     expect(created.status, JSON.stringify(created.body)).toBe(200);
   }
@@ -58,6 +59,7 @@ it("path 2: Settings → Models and the paste box add named connections", async 
   const added = connections.filter(row => !row.legacy && !row.id.startsWith("c-"));
   const listed = await images();
   for (const row of added) expect(listed).toContainEqual(expect.objectContaining({ id: `model:${row.id}`, provider: row.preset }));
+  expect(listed.find(row => row.provider === "google")?.label).toBe("Google");
   expect(network()).toBe("");
 });
 
@@ -80,5 +82,14 @@ it("path 4: an existing compatible-engine key shows wherever Models shows it", a
   const listed = await images();
   expect(listed).toContainEqual(expect.objectContaining({ id: "model:legacy-openai-compatible", provider: "xai" }));
   expect(listed.some(row => row.id === "openrouter")).toBe(false);
+  expect(network()).toBe("");
+});
+
+it("selects a Google connection and reads its model list locally", async () => {
+  const google = (await images()).find(row => row.provider === "google")!;
+  const saved = await api("POST", "/api/images/settings", { connectionId: google.id, enabled: true });
+  expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+  expect(saved.body.selected).toEqual({ connectionId: google.id, model: "gemini-3.1-flash-image" });
+  expect(saved.body.catalog.models.map((model: { id: string }) => model.id)).toEqual(["gemini-3.1-flash-image", "gemini-3.1-flash-lite-image", "gemini-3-pro-image"]);
   expect(network()).toBe("");
 });

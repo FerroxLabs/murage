@@ -3404,7 +3404,7 @@ const imageOperations = new ImageOperations({ store, routineCard: routineCardHoo
   }
 } });
 /** Providers whose keys can make images here. */
-const IMAGE_PRESETS: readonly string[] = ["flux", "openai", "openrouter", "xai"];
+const IMAGE_PRESETS: readonly string[] = ["flux", "openai", "openrouter", "xai", "google"];
 /** The fixed image ids older settings saved, each standing for one existing
  * key. Kept so a saved choice still resolves; listing only offers each key
  * once (imageConnectionIds). */

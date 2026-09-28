@@ -33,10 +33,10 @@ export type ProviderId =
   | "tts"
   | "imageGen"
   | "openaiCompat"
-  | "anthropic" | "openai" | "openrouter" | "deepseek" | "mistral" | "groq";
+  | "anthropic" | "openai" | "openrouter" | "deepseek" | "mistral" | "groq" | "google";
 
 /** Something we can name but cannot store. Row explains, offers no save. */
-export type UnsupportedId = "google" | "stripe" | "openai-admin";
+export type UnsupportedId = "stripe" | "openai-admin";
 
 /** Names accepted by `window.muragebox.setCredential` (src/types/muragebox.d.ts),
  * which is the packaged app's door into the OS-encrypted store. `null` means
@@ -67,7 +67,7 @@ export interface ProviderRow {
 export const PROVIDER_ORDER: readonly ProviderId[] = [
   "flux",
   "xai",
-  "anthropic", "openai", "openrouter", "deepseek", "mistral", "groq",
+  "anthropic", "openai", "openrouter", "deepseek", "mistral", "groq", "google",
   "openaiCompat",
   "imageGen",
   "tts",
@@ -88,6 +88,7 @@ export const PROVIDERS: Readonly<Record<ProviderId, ProviderRow>> = {
   deepseek: modelRow("deepseek", "DeepSeek key"),
   mistral: modelRow("mistral", "Mistral key"),
   groq: modelRow("groq", "Groq key"),
+  google: modelRow("google", "Google AI key"),
   xai: {
     id: "xai",
     modelPreset: "xai",
@@ -162,12 +163,6 @@ export interface UnsupportedRow {
 
 export const UNSUPPORTED: Readonly<Record<UnsupportedId, UnsupportedRow>> = {
   "openai-admin": { id: "openai-admin", label: "OpenAI admin key", reason: "Use an inference API key for models; organization admin keys are not supported here." },
-  google: {
-    id: "google",
-    label: "Google AI key",
-    reason:
-      "Murage has nowhere to keep this. Gemini bots run on the Google CLI's own login, and the harness deletes GEMINI_API_KEY and GOOGLE_API_KEY from every engine it starts.",
-  },
   stripe: {
     id: "stripe",
     label: "Stripe secret key",
@@ -252,13 +247,16 @@ const NAMES: Readonly<Record<string, Target>> = {
   DEEPSEEK_API_KEY: ["deepseek"],
   MISTRAL_API_KEY: ["mistral"],
   GROQ_API_KEY: ["groq"],
-  // Recognisable, unstorable.
   ANTHROPIC_API_KEY: ["anthropic"],
   ANTHROPIC_AUTH_TOKEN: ["anthropic"],
   CLAUDE_API_KEY: ["anthropic"],
-  GEMINI_API_KEY: "google",
-  GOOGLE_API_KEY: "google",
-  GOOGLE_GENERATIVE_AI_API_KEY: "google",
+  // Gemini API keys are saved as a named Google connection. Engines still do
+  // not inherit them: the harness keeps deleting GEMINI_API_KEY and
+  // GOOGLE_API_KEY from every engine it starts.
+  GEMINI_API_KEY: ["google"],
+  GOOGLE_API_KEY: ["google"],
+  GOOGLE_GENERATIVE_AI_API_KEY: ["google"],
+  // Recognisable, unstorable.
   STRIPE_SECRET_KEY: "stripe",
   STRIPE_API_KEY: "stripe",
 };
@@ -294,7 +292,7 @@ const SHAPES: ReadonlyArray<readonly [RegExp, Target]> = [
   // xAI.
   [/^xai-[A-Za-z0-9_-]{16,}$/, ["xai"]],
   // Google AI Studio: AIza + exactly 35.
-  [/^AIza[A-Za-z0-9_-]{35}$/, "google"],
+  [/^AIza[A-Za-z0-9_-]{35}$/, ["google"]],
   // Composio project key.
   [/^ak_[A-Za-z0-9_-]{16,}$/, ["composio"]],
   // Stripe. BEFORE the ElevenLabs `sk_` rule, so a payment key is never filed

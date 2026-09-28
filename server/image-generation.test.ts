@@ -167,8 +167,8 @@ it("enforces streamed response and reference byte limits without trusting conten
 const PNG_B="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=";
 const ref=(b64:string)=>({bytes:Buffer.from(b64,"base64"),mime:"image/png" as const});
 const dataUrl=(b64:string)=>`data:image/png;base64,${b64}`;
-const CANARY:Record<ImageProvider,string>={openai:"FAKE_OPENAI_CANARY",xai:"FAKE_XAI_CANARY",openrouter:"FAKE_OPENROUTER_CANARY",flux:"FAKE_FLUX_CANARY"};
-const ORIGIN:Record<ImageProvider,string>={openai:"https://api.openai.com",xai:"https://api.x.ai",openrouter:"https://openrouter.ai",flux:"https://api.fluxrouter.ai"};
+const CANARY:Record<ImageProvider,string>={openai:"FAKE_OPENAI_CANARY",xai:"FAKE_XAI_CANARY",openrouter:"FAKE_OPENROUTER_CANARY",flux:"FAKE_FLUX_CANARY",google:"FAKE_GOOGLE_CANARY"};
+const ORIGIN:Record<ImageProvider,string>={openai:"https://api.openai.com",xai:"https://api.x.ai",openrouter:"https://openrouter.ai",flux:"https://api.fluxrouter.ai",google:"https://generativelanguage.googleapis.com"};
 // Shape of the observed public record: no output_format key, a reference range.
 const gpt2Endpoint={quality:parameters.quality,input_references:{type:"range",min:0,max:16},n:{type:"range",min:1,max:10}};
 /** Fails the call unless a key goes only to its own provider origin and catalog reads carry none. */
@@ -296,4 +296,42 @@ it("B16 reports Flux usage and cost only when the provider supplied valid number
    if(expected?.costUsd===undefined)expect(JSON.stringify(metadata)).not.toContain("costUsd");
   }
  }
+});
+
+// ── Google (Gemini API) images ───────────────────────────────────────────
+const googleImage=(data:string[]=[PNG])=>new Response(JSON.stringify({candidates:[{content:{role:"model",parts:[{text:"Here it is."},...data.map(item=>({inlineData:{mimeType:"image/png",data:item}}))]}}]}));
+it("GOOG-1 lists Google with its Gemini image models and no network read",async()=>{
+ const f=fixture("google",CANARY.google);
+ expect(f.service.listConnections()).toEqual([{id:"google",provider:"google",defaultModel:"gemini-3.1-flash-image"}]);
+ const catalog=await f.service.getCatalog("google");
+ expect(catalog.models.map(model=>model.id)).toEqual(["gemini-3.1-flash-image","gemini-3.1-flash-lite-image","gemini-3-pro-image"]);
+ expect(catalog.models.every(model=>model.generate&&model.edit&&model.maxReferences===4&&model.qualities.length===0)).toBe(true);
+ expect(f.fetcher).not.toHaveBeenCalled();expect(JSON.stringify(catalog)).not.toContain("CANARY");
+});
+it("GOOG-2 generates through generateContent on Google's origin with the key only in x-goog-api-key",async()=>{
+ const f=fixture("google",CANARY.google);f.fetcher.mockResolvedValueOnce(googleImage());
+ const result=await f.service.generate({...f.request,size:"1536x1024"},f.hooks);
+ expect(f.fetcher).toHaveBeenCalledOnce();const[url,init]=f.fetcher.mock.calls[0]!;
+ expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent");
+ const headers=new Headers(init?.headers);expect(headers.get("x-goog-api-key")).toBe(CANARY.google);expect(headers.get("authorization")).toBeNull();
+ expect(String(url)).not.toContain(CANARY.google);expect(init?.redirect).toBe("error");
+ expect(JSON.parse(String(init?.body))).toEqual({contents:[{role:"user",parts:[{text:"A watercolor mountain"}]}],generationConfig:{responseModalities:["IMAGE"],imageConfig:{aspectRatio:"3:2",imageSize:"1K"}}});
+ expect(result.metadata).toMatchObject({connectionId:"google",provider:"google",model:"gemini-3.1-flash-image",size:"1536x1024"});
+ expect(JSON.stringify(f.reserve.mock.calls)).not.toContain(CANARY.google);expect(f.finish).toHaveBeenCalledWith("published");
+});
+it("GOOG-3 edits with reference images as inline parts of the same request",async()=>{
+ const f=fixture("google",CANARY.google);f.fetcher.mockResolvedValueOnce(googleImage([PNG_B]));
+ await f.service.generate({...f.request,operation:"edit",model:"gemini-3-pro-image"},f.hooks,[ref(PNG),ref(PNG_B)]);
+ const[url,init]=f.fetcher.mock.calls[0]!;expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image:generateContent");
+ const body=JSON.parse(String(init?.body));expect(body.contents[0].parts).toEqual([{text:"A watercolor mountain"},{inline_data:{mime_type:"image/png",data:PNG}},{inline_data:{mime_type:"image/png",data:PNG_B}}]);
+ expect(body.generationConfig.imageConfig).toEqual({imageSize:"1K"});
+ expect(Buffer.from(((f.publish.mock.calls[0] as unknown[])[0] as {bytes:Buffer}).bytes).equals(Buffer.from(PNG_B,"base64"))).toBe(true);
+});
+it("GOOG-4 refuses a text-only reply, a quality setting and a model outside the catalog",async()=>{
+ const refusal=fixture("google",CANARY.google);refusal.fetcher.mockResolvedValueOnce(googleImage([]));
+ await expect(refusal.service.generate(refusal.request,refusal.hooks)).rejects.toMatchObject({code:"invalid-image"});
+ const quality=fixture("google",CANARY.google);await expect(quality.service.generate({...quality.request,quality:"high"},quality.hooks)).rejects.toMatchObject({code:"unsupported-quality"});
+ const model=fixture("google",CANARY.google);await expect(model.service.generate({...model.request,model:"imagen-4.0-generate"},model.hooks)).rejects.toMatchObject({code:"unsupported-model"});
+ expect(quality.fetcher).not.toHaveBeenCalled();expect(model.fetcher).not.toHaveBeenCalled();
+ expect(()=>assertCredentialOrigin("google","https://api.openai.com/v1/images/generations")).toThrow();
 });

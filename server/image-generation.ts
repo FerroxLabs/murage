@@ -3,7 +3,7 @@ import { redactSecretsInText } from "./redact.ts";
 import { IMAGE_REFERENCE_LIMITS } from "../shared/media-assets.ts";
 import { decodeGeneratedImage, type DecodedGeneratedImage } from "./generated-image.ts";
 
-export type ImageProvider = "openai" | "flux" | "openrouter" | "xai";
+export type ImageProvider = "openai" | "flux" | "openrouter" | "xai" | "google";
 /** Only the server connection resolver constructs this object. Never serialize it. */
 export interface ImageConnection { id: string; provider: ImageProvider; apiKey: string; revision: string }
 export interface ImageReference { bytes: Buffer; mime: "image/png" | "image/jpeg" | "image/webp" }
@@ -76,18 +76,33 @@ const FLUX_MODELS = [
   { id: "flux-image-gpt2", quality: "medium", size: "1024x1024" },
   { id: "flux-image-gpt2-low", quality: "low", size: "1024x1024" },
 ];
+/** Gemini API image models (Nano Banana), checked 2026-09-28 against
+ * https://ai.google.dev/gemini-api/docs/image-generation and
+ * https://ai.google.dev/gemini-api/docs/models. All three take text plus
+ * reference images in one request, so all three edit. Imagen 4 is shut down
+ * on the Gemini API and is not offered. */
+const GOOGLE_MODELS = [
+  { id: "gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image" },
+  { id: "gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite Image" },
+  { id: "gemini-3-pro-image", label: "Gemini 3 Pro Image" },
+];
+/** Murage's three sizes as Gemini aspect ratios, at the 1K image size. */
+const GOOGLE_ASPECT: Readonly<Record<string, string>> = { "1024x1024": "1:1", "1536x1024": "3:2", "1024x1536": "2:3" };
+const GOOGLE_API = "https://generativelanguage.googleapis.com/v1beta/models";
 /** The only origin each provider's key may be sent to. */
 const PROVIDER_ORIGINS: Record<ImageProvider, string> = {
   openai: "https://api.openai.com", flux: "https://api.fluxrouter.ai", openrouter: "https://openrouter.ai", xai: "https://api.x.ai",
+  google: "https://generativelanguage.googleapis.com",
 };
+/** Google's URL names the model, so it is built per request in serializeImageRequest. */
 const URLS: Record<ImageProvider, string> = {
   openai: "https://api.openai.com/v1/images/generations", flux: "https://api.fluxrouter.ai/v1/images/generations",
-  openrouter: "https://openrouter.ai/api/v1/images", xai: "https://api.x.ai/v1/images/generations",
+  openrouter: "https://openrouter.ai/api/v1/images", xai: "https://api.x.ai/v1/images/generations", google: GOOGLE_API,
 };
 /** Providers with an implemented reference-edit transport. */
 const EDIT_URLS: Partial<Record<ImageProvider, string>> = {
   openai: "https://api.openai.com/v1/images/edits", xai: "https://api.x.ai/v1/images/edits", openrouter: "https://openrouter.ai/api/v1/images",
-  flux: "https://api.fluxrouter.ai/v1/images/edits",
+  flux: "https://api.fluxrouter.ai/v1/images/edits", google: GOOGLE_API,
 };
 /** OpenRouter models admitted for reference edits, each pinned to one upstream endpoint. */
 const OPENROUTER_EDIT_ENDPOINTS: Readonly<Record<string, string>> = { "openai/gpt-image-2": "openai" };
@@ -231,6 +246,7 @@ function staticCatalog(connection: ImageConnection): ImageCatalog {
   const base = { connectionId: connection.id, provider: connection.provider };
   if (connection.provider === "openai") return { ...base, defaultModel: "gpt-image-2", models: OPENAI_MODELS.map(id => ({ id, label: id, generate: true, edit: true, maxReferences: IMAGE_REFERENCE_LIMITS.maxCount, availability: "unverified", qualities: ["low", "medium", "high"], sizes: ["1024x1024", "1536x1024", "1024x1536"], outputFormat: "png" })) };
   if (connection.provider === "flux") return { ...base, defaultModel: "flux-image", models: FLUX_MODELS.map(model => ({ id: model.id, label: model.id, generate: true, edit: true, maxReferences: IMAGE_REFERENCE_LIMITS.maxCount, availability: "unverified", qualities: [model.quality], sizes: [model.size], outputFormat: "png" })) };
+  if (connection.provider === "google") return { ...base, defaultModel: GOOGLE_MODELS[0]!.id, models: GOOGLE_MODELS.map(model => ({ id: model.id, label: model.label, generate: true, edit: true, maxReferences: IMAGE_REFERENCE_LIMITS.maxCount, availability: "unverified", qualities: [], sizes: Object.keys(GOOGLE_ASPECT) })) };
   if (connection.provider === "xai") return { ...base, defaultModel: null, models: [{ id: "grok-imagine-image-2.0", label: "Grok Imagine Image 2.0", generate: true, edit: true, maxReferences: IMAGE_REFERENCE_LIMITS.maxCount, availability: "unverified", qualities: ["low", "medium"], editQualities: [], sizes: [] }] };
   return { ...base, defaultModel: "openai/gpt-image-2", models: [] };
 }
@@ -241,6 +257,15 @@ const dataUrl = (reference: ImageReference) => `data:${reference.mime};base64,${
  * assertCredentialOrigin has accepted this URL.
  */
 function serializeImageRequest(provider: ImageProvider, operation: "generate" | "edit", payload: Record<string, unknown>, references: readonly ImageReference[]): { url: string; body: string | FormData; headers: Record<string, string> } {
+  if (provider === "google") {
+    // generateContent: the prompt and any references as parts of one user
+    // turn, asking for an image back. The model id was matched against the
+    // static catalog before this point, so it is safe in the path.
+    const parts: unknown[] = [{ text: payload.prompt }, ...references.map(reference => ({ inline_data: { mime_type: reference.mime, data: reference.bytes.toString("base64") } }))];
+    const aspectRatio = typeof payload.size === "string" ? GOOGLE_ASPECT[payload.size] : undefined;
+    const body = { contents: [{ role: "user", parts }], generationConfig: { responseModalities: ["IMAGE"], imageConfig: { ...(aspectRatio ? { aspectRatio } : {}), imageSize: "1K" } } };
+    return { url: `${GOOGLE_API}/${encodeURIComponent(String(payload.model))}:generateContent`, body: JSON.stringify(body), headers: { "content-type": "application/json" } };
+  }
   if (operation === "generate") return { url: URLS[provider], body: JSON.stringify(payload), headers: { "content-type": "application/json" } };
   const url = EDIT_URLS[provider];
   if (!url) return fail("unsupported-edit", "Editing is not supported on this image connection.");
@@ -255,6 +280,18 @@ function serializeImageRequest(provider: ImageProvider, operation: "generate" | 
     ? { ...payload, ...(references.length === 1 ? { image: { type: "image_url", url: dataUrl(references[0]!) } } : { images: references.map(reference => ({ type: "image_url", url: dataUrl(reference) })) }) }
     : { ...payload, input_references: references.map(reference => ({ type: "image_url", image_url: { url: dataUrl(reference) } })) };
   return { url, body: JSON.stringify(body), headers: { "content-type": "application/json" } };
+}
+/** The one image a Gemini generateContent reply carries, as base64. More
+ * than one image, or none (a refusal comes back as text only), is not a
+ * supported result. */
+function googleImageData(result: unknown): string | undefined {
+  if (!record(result) || !Array.isArray(result.candidates) || !record(result.candidates[0]) || !record(result.candidates[0].content)) return undefined;
+  const parts = Array.isArray(result.candidates[0].content.parts) ? result.candidates[0].content.parts : [];
+  const images = parts.flatMap(part => {
+    const inline = record(part) ? part.inlineData ?? part.inline_data : undefined;
+    return record(inline) && typeof inline.data === "string" ? [inline.data] : [];
+  });
+  return images.length === 1 ? images[0] : undefined;
 }
 function safeUsage(payload: Record<string, unknown>): GeneratedImageMetadata["usage"] {
   if (!record(payload.usage)) return undefined;
@@ -378,6 +415,7 @@ export class ImageGenerationService {
         Object.assign(payload, { output_format: model!.outputFormat, provider: { only: [endpointTag], allow_fallbacks: false }, ...(quality ? { quality } : {}), ...(size ? { size } : {}) });
       } else if (connection.provider === "openai") Object.assign(payload, { quality, size, output_format: "png" });
       else if (connection.provider === "flux") { Object.assign(payload, { size, response_format: "b64_json" }); if (edit) delete payload.n; }
+      else if (connection.provider === "google") { if (size) payload.size = size; }
       else Object.assign(payload, { ...(quality ? { quality } : {}), response_format: "b64_json" });
       const details: ImageOperationDetails = { connectionId: connection.id, provider: connection.provider, model: modelId!, operation: request.operation, count: 1, referenceCount: references.length, ...(quality ? { quality } : {}), ...(size ? { size } : {}), ...(endpointTag ? { endpointTag } : {}) };
       const outbound = serializeImageRequest(connection.provider, request.operation, payload, references);
@@ -401,7 +439,7 @@ export class ImageGenerationService {
       }
       active();
       outcome = "uncertain";
-      const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, authorization: `Bearer ${connection.apiKey}` }, body: outbound.body, signal, redirect: "error" });
+      const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, ...(connection.provider === "google" ? { "x-goog-api-key": connection.apiKey } : { authorization: `Bearer ${connection.apiKey}` }) }, body: outbound.body, signal, redirect: "error" });
       if (!response.ok) {
         outcome = response.status >= 400 && response.status < 500 ? "failed" : "uncertain";
         // A 4xx body from the provider says why (Flux: error.code such as
@@ -411,9 +449,10 @@ export class ImageGenerationService {
         fail("provider-error", `The selected image provider rejected the request (HTTP ${response.status})${detail}. No fallback or automatic retry was attempted.`, outcome);
       }
       const result = await boundedJson(response, MAX_RESPONSE_BYTES);
-      if (!record(result) || !Array.isArray(result.data) || result.data.length !== 1 || !record(result.data[0]) || typeof result.data[0].b64_json !== "string") fail("invalid-image", "The image provider did not return one supported image.", outcome);
+      const encoded = connection.provider === "google" ? googleImageData(result) : record(result) && Array.isArray(result.data) && result.data.length === 1 && record(result.data[0]) && typeof result.data[0].b64_json === "string" ? result.data[0].b64_json : undefined;
+      if (!record(result) || encoded === undefined) fail("invalid-image", "The image provider did not return one supported image.", outcome);
       let image: DecodedGeneratedImage;
-      try { image = decodeGeneratedImage(result.data[0].b64_json); } catch { return fail("invalid-image", "The image provider returned invalid or oversized raster bytes.", outcome); }
+      try { image = decodeGeneratedImage(encoded!); } catch { return fail("invalid-image", "The image provider returned invalid or oversized raster bytes.", outcome); }
       if (connection.provider === "flux" && edit && image.mime !== "image/png") fail("invalid-image", "Flux did not return the PNG required by its edit contract.", outcome);
       const metadata: GeneratedImageMetadata = { ...details, ...(typeof result.model === "string" && result.model.length <= 180 ? { reportedModel: result.model } : {}), ...(endpointTag ? { upstreamProvider: endpointTag } : {}), ...(safeUsage(result) ? { usage: safeUsage(result) } : {}) };
       active(); const artifact = await hooks.publish(image, metadata); outcome = "published";

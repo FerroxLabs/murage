@@ -7,7 +7,7 @@ import { FluxRouterConnection } from "./FluxRouterConnection";
 import { LocalModelsSettings } from "./LocalModelsSettings";
 
 type Snapshot = { connections: PublicProviderConnection[]; storage: "encrypted" | "local-config" };
-const labels: Record<ProviderPreset, string> = { anthropic: "Anthropic", openai: "OpenAI", openrouter: "OpenRouter", deepseek: "DeepSeek", mistral: "Mistral", flux: "Flux Router", groq: "Groq", xai: "xAI" };
+const labels: Record<ProviderPreset, string> = { anthropic: "Anthropic", openai: "OpenAI", openrouter: "OpenRouter", deepseek: "DeepSeek", mistral: "Mistral", flux: "Flux Router", groq: "Groq", xai: "xAI", google: "Google" };
 const presets = (Object.keys(labels) as ProviderPreset[]).filter(preset => preset !== "flux");
 const focus = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 const button = `min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`;
