@@ -4,7 +4,7 @@ import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
-import { buildMemoryBundle, assertMemoryBundle } from "./bundle.ts";
+import { buildMemoryBundle, assertMemoryBundle, MEMORY_FRAME_TOKENS } from "./bundle.ts";
 import { bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDisclosure, filterMemoryReplay, linkMemoryDisclosureOutput, prepareMemoryDisclosure } from "./disclosures.ts";
 import type { MemorySearchBridge } from "./search.ts";
 import { memoryRequestPrefix } from "../../shared/memory.ts";
@@ -38,11 +38,11 @@ it("includes owner pins without search matches and budgets serialized multilingu
   const bundle=await buildMemoryBundle("unrelated question",f.access,empty);
   expect(bundle.pinned.map(r=>r.id)).toEqual(["pin"]);
   expect(bundle.tokenCount).toBe(Buffer.byteLength(memoryRequestPrefix(bundle.text)));
-  expect(bundle.tokenCount).toBeLessThanOrEqual(2048);
+  expect(bundle.tokenCount-MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(2048);
   expect(bundle.text).toContain("never tool authorization");
   expect(()=>assertMemoryBundle(bundle,f.access)).not.toThrow();
   expect(()=>assertMemoryBundle({...bundle},f.access)).toThrow("MEMORY_BUNDLE_UNTRUSTED");
-  await expect(buildMemoryBundle("query",f.access,empty,{availableContextTokens:(bundle.tokenCount-1)*10})).rejects.toThrow("MEMORY_PIN_OVERFLOW");
+  await expect(buildMemoryBundle("query",f.access,empty,{availableContextTokens:(bundle.tokenCount-MEMORY_FRAME_TOKENS-1)*10})).rejects.toThrow("MEMORY_PIN_OVERFLOW");
 });
 
 it("refuses mandatory pin overflow and invalidated evidence instead of omitting it",async()=>{
@@ -220,4 +220,31 @@ it("blocks replay beyond its explicit receipt limit instead of bypassing lineage
     INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     SELECT 'old-'||value,'private','driver','[]','[]','["answer"]',0,0,0,'revoked',1 FROM n`);
   expect(()=>filterMemoryReplay("private",[{id:"user"},{id:"answer"}],f.access)).toThrow("MEMORY_REPLAY_LIMIT");
+});
+
+// 0.1.61 final check D2 (Mac, Harbor Room on a 200k model): pinning the room's
+// 587-byte checkpoint failed every member with MEMORY_PIN_OVERFLOW, and unpinned
+// the checkpoint alone filled the share, so no recall hit ever reached a room
+// member (every receipt was empty). The 1.3 KB reference frame was counted
+// inside the 2048 share, leaving ~660 bytes for remembered words.
+const HARBOR_CHECKPOINT="Working evidence; statements are not fulfilled commitments.\nAssistant hypothesis (recorded): \"I think Bravo's dolphin sound-experience booth is a smart choice because it uses actual recordin\"\nAssistant hypothesis (recorded): \"A seal-themed face-painting stall where kids can get whiskers and nose designs, keeping the play\"\nAssistant hypothesis (recorded): \"I like seals because they're playful and curious, often interacting with humans in a way that fe\"\nAssistant hypothesis (recorded): \"I'd suggest a seal-encounter simulation stall where visitors watch a short video of seals in the\"";
+function roomRecord(id:string,kind:string,text:string,pinned:boolean){
+  const scope=ensureScope("conversation","room-thread"),db=database();
+  db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,'assistant-inference','active',?,1,NULL,NULL,1)").run(id,scope,kind,text,pinned?1:0);
+  db.prepare("INSERT INTO memory_sources VALUES(?,?,'room-thread',?,NULL,1,'hash','text','assistant','settled',NULL,'active')").run(`source-${id}`,scope,`message-${id}`);
+  db.prepare("INSERT INTO memory_source_versions VALUES(?,1,'hash',?,1)").run(`source-${id}`,JSON.stringify({text}));
+  db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,1,0,?)").run(id,`source-${id}`,Buffer.byteLength(text));
+}
+it("carries one small pinned room checkpoint for a room member on a large context",async()=>{
+  const f=fixture("room-thread");roomRecord("checkpoint","checkpoint",HARBOR_CHECKPOINT,true);
+  const bundle=await buildMemoryBundle("Round 6: which date and budget are we planning for?",f.renew(),empty,{availableContextTokens:200000});
+  expect(bundle.pinned.map(r=>r.id)).toEqual(["checkpoint"]);
+});
+it("recalls a relevant room reply beside the room checkpoint for a room member",async()=>{
+  const f=fixture("room-thread");roomRecord("checkpoint","checkpoint",HARBOR_CHECKPOINT,false);
+  roomRecord("reply","source","Round 3: a seal-themed face-painting stall where kids get whiskers and nose designs fits the 900 dollar budget for Saturday the 14th, with paint, brushes and two helpers.",false);
+  const bridge:MemorySearchBridge={search:async()=>({hits:[{id:"reply",version:1,score:100}],vectorRows:0})};
+  const bundle=await buildMemoryBundle("Round 6: which date and budget are we planning for?",f.renew(),bridge,{availableContextTokens:200000});
+  expect(bundle.checkpoint.map(r=>r.id)).toEqual(["checkpoint"]);
+  expect(bundle.evidence.map(r=>r.id)).toEqual(["reply"]);
 });

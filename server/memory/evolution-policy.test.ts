@@ -15,7 +15,7 @@ import { admitMemoryEvolutionCorpus, resumeMemoryEvolutionAdmission, publishMemo
 import { extractCandidates, memoryExtractionMessages, type MemoryExtractionDispatch } from "./extract.ts";
 import { selectMemoryEvidence } from "./relevance.ts";
 import { searchMemory } from "./search.ts";
-import { buildMemoryBundle } from "./bundle.ts";
+import { buildMemoryBundle, MEMORY_FRAME_TOKENS } from "./bundle.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 const roster={bots:[{id:"policy-bot",threadId:"policy-thread"}],groups:[]};
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);setMemoryMode("capture");});
@@ -74,7 +74,7 @@ it("objective held-out recall distinguishes the ratio and affects actual search-
   expect(selectMemoryEvidence(query,rows,candidate).map(row=>row.id)).toEqual(["direct","synonym"]);
   expect((await searchMemory(query,access,bridge,{evolutionPolicy:baseline})).hits.map(row=>row.id)).toEqual(["direct"]);
   const bundle=await buildMemoryBundle(query,access,bridge,{evolutionPolicy:candidate});expect(bundle.evidence.map(row=>row.id)).toEqual(["direct","synonym"]);expect(bundle.evolutionPolicyRevision).toBe(candidate.revision);
-  expect(bundle.tokenCount).toBeLessThanOrEqual(2048);expect(bundle.text).not.toContain("walls blue");
+  expect(bundle.tokenCount-MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(2048);expect(bundle.text).not.toContain("walls blue");
   expect(selectMemoryEvidence("Find ticket INC-431",[{text:"INC-432 is closed",similarity:1}],candidate)).toEqual([]);
 });
 

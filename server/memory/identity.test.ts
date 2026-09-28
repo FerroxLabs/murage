@@ -6,7 +6,7 @@ import { InternalCapabilities } from "../internal-capabilities.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
 import { writeBotIdentity, readBotIdentity, type IdentityWrite } from "./identity.ts";
-import { buildMemoryBundle, assertMemoryBundle, hydrateMemoryRecord } from "./bundle.ts";
+import { buildMemoryBundle, assertMemoryBundle, hydrateMemoryRecord, MEMORY_FRAME_TOKENS } from "./bundle.ts";
 import { forgetMemory } from "./forget.ts";
 import { memoryOwnerRoute } from "./settings.ts";
 import { personalityImprint } from "../../shared/bot-identity.ts";
@@ -60,9 +60,14 @@ it("prioritizes compact continuity after owner pins within the existing total bo
   database().prepare("UPDATE memory_records SET owner_pinned=1 WHERE id=?").run(fact.id);
   const bundle=await buildMemoryBundle("",access(),bridge);
   expect(bundle.recordVersions).toEqual([{id:fact.id,version:1},{id:brief.id,version:1}]);
-  expect(bundle.tokenCount).toBeLessThanOrEqual(2048);
+  expect(bundle.tokenCount-MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(2048);
   expect(bundle.text).toContain("fictional character canon; not model autobiography or world truth");
-  expect((await buildMemoryBundle("",access(),bridge,{availableContextTokens:12000})).tokenCount).toBeLessThanOrEqual(1200);
+  // The fixed frame is paid once above the share: a 12k context still carries
+  // the pin and the brief within a tenth of it (1200), and so does an 8k one.
+  const smaller=await buildMemoryBundle("",access(),bridge,{availableContextTokens:12000});
+  expect(smaller.recordVersions).toEqual([{id:fact.id,version:1},{id:brief.id,version:1}]);
+  expect(smaller.tokenCount-MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(1200);
+  expect((await buildMemoryBundle("",access(),bridge,{availableContextTokens:8192})).pinned.map(record=>record.id)).toEqual([fact.id]);
 });
 it("persists canonical audience reveal state, deduplicates event keys, and forgets derived reveals with canon",async()=>{
   const fact=canon();

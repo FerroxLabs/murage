@@ -111,6 +111,9 @@ export function memoryHandleRecord(bundle: MemoryBundle, handle: unknown): {id: 
   return row ? {id: row.id, version: row.version} : undefined;
 }
 function tokens(text: string) { return Buffer.byteLength(memoryRequestPrefix(text),"utf8"); }
+/** The fixed frame (preamble, tags, request boundary) every non-empty bundle
+ * pays once. It is not memory: the share records may use sits above it. */
+export const MEMORY_FRAME_TOKENS = tokens([MEMORY_REFERENCE_PREAMBLE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_CLOSE].join("\n"));
 
 /** No tokenizer dependency: UTF-8 bytes conservatively bound tokens, including metadata. */
 export async function buildMemoryBundle(query: string, access: MemoryAccess, bridge: MemorySearchBridge, options: {availableContextTokens?: number; signal?: AbortSignal; excludeMessageIds?: readonly string[]; excludeSourceIds?: readonly string[]; evolutionPolicy?:MemoryEvolutionPolicy;
@@ -122,7 +125,11 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   options.signal?.throwIfAborted();
   const available = options.availableContextTokens ?? 20480;
   if (!Number.isSafeInteger(available) || available < 0) throw new Error("INVALID_MEMORY_CONTEXT_BUDGET");
-  const budget = Math.min(2048,Math.floor(available/10));
+  // Remembered words may take a tenth of the context, at most 2048, above the
+  // fixed frame. The frame grew past 1.3 KB (MEMJSON2, 90891899); counted in
+  // the share it left ~600 bytes at best and none below a ~14k context, where
+  // any owner pin refused every turn with MEMORY_PIN_OVERFLOW.
+  const budget = MEMORY_FRAME_TOKENS + Math.min(2048,Math.floor(available/10));
   const db = database();
   // Do not prefilter stale pins: losing their evidence is a mandatory dispatch failure.
   // A room member reaches its own bot scope, but never its owner-private
@@ -163,7 +170,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   // non-empty bundle and is not a record's share: the ceiling sits above it,
   // or a preamble longer than the share would defer every checkpoint behind
   // recall (p09.test.ts, group-member-checkpoint-roll-api.test.ts).
-  const frame = tokens([MEMORY_REFERENCE_PREAMBLE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_CLOSE].join("\n"));
+  const frame = MEMORY_FRAME_TOKENS;
   const checkpointCeiling = Math.min(budget,Math.max(frame+896,tokens(render(pinned))+384));
   const deferredCheckpoints: BundleRecord[] = [];
   const checkpoints = db.prepare("SELECT id,version FROM memory_records WHERE state='active' AND owner_pinned=0 AND kind='checkpoint' AND scope_id IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC LIMIT 10").all(JSON.stringify(access.scopeIds));

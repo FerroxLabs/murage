@@ -12,7 +12,7 @@ import { ownerMemoryTicket } from "./authority.ts";
 import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { buildMemoryBundle } from "./bundle.ts";
+import { buildMemoryBundle, MEMORY_FRAME_TOKENS } from "./bundle.ts";
 import { searchMemory } from "./search.ts";
 import { prepareMemorySkillReview, stageSkillWrite, applyStagedSkillWrite, listSkills } from "../skills.ts";
 import { memoryOwnerRoute } from "./settings.ts";
@@ -44,12 +44,12 @@ it("delivers the actual source-linked checkpoint through the canonical bounded m
   const bundle=await buildMemoryBundle("task checkpoint",access(),{search:async()=>({hits:[],vectorRows:0})});
   expect(bundle.checkpoint.map(record=>record.id)).toContain(checkpoint.checkpointId);
   expect(bundle.sourceVersions).toContainEqual({id:source.id,revision:source.revision});
-  expect(bundle.tokenCount).toBeLessThanOrEqual(2048);
+  expect(bundle.tokenCount-MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(2048);
   const sourceRecord=database().prepare("SELECT id,version FROM memory_records WHERE kind='source'").get()!;
   const withRecall=await buildMemoryBundle("verified recovery",access(),{search:async()=>({hits:[{id:String(sourceRecord.id),version:Number(sourceRecord.version),score:1}],vectorRows:0})});
   expect(withRecall.checkpoint.map(record=>record.id)).toContain(checkpoint.checkpointId);
   expect(withRecall.evidence.map(record=>record.id)).toContain(sourceRecord.id);
-  expect(withRecall.tokenCount).toBeLessThanOrEqual(2048);
+  expect(withRecall.tokenCount-MEMORY_FRAME_TOKENS).toBeLessThanOrEqual(2048);
 });
 
 it("never recursively summarizes summaries or spends again for an already consolidated source",async()=>{
