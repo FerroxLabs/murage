@@ -95,6 +95,9 @@ export interface DelegationReceipt {
   copyOf?: { threadId: string; messageIds: string[] };
   /** The delegated turn itself read memory as a non-owner audience. */
   notOwnerAudience?: true;
+  /** Written by a build whose results carry their origin (copyOf when there
+   * is text). Without it the result cannot be checked and is withheld. */
+  lineage?: boolean;
   finishedAt: number;
 }
 
@@ -180,6 +183,7 @@ export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finish
   // one past the check's width budget, so a longer link reads as unestablished
   if (receipt.copyOf) bounded.copyOf = { threadId: receipt.copyOf.threadId, messageIds: receipt.copyOf.messageIds.slice(0, 65) };
   if (receipt.notOwnerAudience === true) bounded.notOwnerAudience = true;
+  if (receipt.lineage === true) bounded.lineage = true;
   receipts = [bounded, ...receipts.filter((existing) => existing.id !== bounded.id)]
     .filter((existing) => now - existing.finishedAt <= RECEIPT_MAX_AGE_MS)
     .slice(0, MAX_RECEIPTS);
@@ -427,6 +431,7 @@ export function _loadPending(): void {
           receipt.copyOf = { threadId: copyOf.threadId, messageIds: copyOf.messageIds.slice(0, 65) };
         }
         if (candidate.notOwnerAudience === true) receipt.notOwnerAudience = true;
+        if (candidate.lineage === true) receipt.lineage = true;
         loaded.push(receipt);
       }
       receipts = loaded.slice(0, MAX_RECEIPTS);

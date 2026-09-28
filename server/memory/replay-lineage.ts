@@ -258,6 +258,9 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
       }
     }
   };
+  // A caller that does not fail closed (a direct chat) keeps the whole-thread
+  // receipt cap, however few lines it replays.
+  if(!failClosed && isLarge(threadId))throw new Error("MEMORY_REPLAY_LIMIT");
   if(messages.length>8 && !isLarge(threadId)){
     let rows:Disclosure[]|undefined;
     try { rows=loadThread(threadId); }
@@ -273,7 +276,6 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
     }
     else perMessage();
   } else {
-    if(messages.length>8 && !failClosed)throw new Error("MEMORY_REPLAY_LIMIT");
     perMessage();
   }
   // A copy is withheld with its original.

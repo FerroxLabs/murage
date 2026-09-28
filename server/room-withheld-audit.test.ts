@@ -281,5 +281,34 @@ it("R2-1/9/10: a turn that is not the owner's gets no standing material, no owed
   expect(source.split("standingContextSourceIds(bot,").length - 1).toBe(2);
   expect(source).toContain("excludeSourceIds:standingContextSourceIds(bot,humanIsOwner),");
   expect(source).toContain("excludeSourceIds:standingContextSourceIds(bot,isWorkspaceOwner(threadHumanPrincipal(threadId))),");
-  expect(source).toContain("const withheld = (internalClaim.notOwnerAudience === true && receipt.notOwnerAudience !== true) || (receipt.copyOf && copyOriginWithheld(receipt.copyOf));");
+  expect(source).toContain("const withheld = (internalClaim.notOwnerAudience === true && receipt.notOwnerAudience !== true) || (receipt.copyOf && copyOriginWithheld(receipt.copyOf))");
+});
+
+// Astra round 3
+
+it("R3-12: a direct chat keeps its whole-thread receipt cap however few lines it replays", () => {
+  const a = access("dax", "dax-direct");
+  database().prepare(`WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<2049)
+    INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
+    SELECT 'other-'||value,'dax-direct','driver','[]','[]',json_array('other-output-'||value),?,?,0,'delivered',value FROM n`).run(a.policyRevision, a.deletionEpoch);
+  expect(() => filterMemoryReplay("dax-direct", [{ id: "m-ask", role: "user" }, { id: "m-answer", role: "bot" }], a)).toThrow("MEMORY_REPLAY_LIMIT");
+  // a room's check fails closed instead
+  expect([...replayExclusions("dax-direct", [{ id: "m-answer", role: "bot" }], null, { failClosed: true })]).toEqual([]);
+});
+
+it("R3-9: a legacy delegation result with no recorded origin is not handed back", () => {
+  recordDelegationReceipt({ id: "task-legacy", sourceThreadId: "finch-direct", toBotId: "dax", toBotName: "Dax", status: "done", result: REPLY });
+  recordDelegationReceipt({ id: "task-new", sourceThreadId: "finch-direct", toBotId: "dax", toBotName: "Dax", status: "done", result: "(no text)", lineage: true });
+  _loadPending();
+  expect(findDelegationReceipt("task-legacy")!.lineage).toBeUndefined();
+  expect(findDelegationReceipt("task-new")!.lineage).toBe(true);
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).toContain(`|| (receipt.status === "done" && receipt.lineage !== true);`);
+});
+
+it("R3-1/6/10: queued quotes are rendered at drain, running excerpts follow withholding, a converted ask keeps its audience (wiring)", () => {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).toContain("replyForPrompt(threadId, message.replyToId ? byId.get(message.replyToId) : undefined, unproven && isWorkspaceOwner(threadHumanPrincipal(threadId)))");
+  expect(source).toContain(`!capturedMessageWithheld(runningEntry[0], message.id)`);
+  expect(source).toMatch(/startedAtMs: Date\.now\(\) - ASK_BOT_TIMEOUT_MS,\n\s+\.\.\.\(internalClaim\.notOwnerAudience === true \? \{ notOwnerAudience: true \} : \{\}\),/);
 });

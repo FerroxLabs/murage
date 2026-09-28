@@ -5219,6 +5219,7 @@ function finalizeDelegationWatch(
       status: ok ? "done" : "failed",
       result: ok ? reply : failureName,
       ...(ok && copyOf ? { copyOf } : {}),
+      lineage: true,
       ...(watched.notOwnerAudience ? { notOwnerAudience: true as const } : {}),
     });
   }
@@ -5519,7 +5520,15 @@ const unstartedRoomTurnReleaseDeps = {
 };
 
 function drainQueuedSends() {
-  drainSteeredMessages(store, (botId, threadId, prompt, userMessage, excludeIds) =>
+  drainSteeredMessages(store, (botId, threadId, _queuedPrompt, userMessage, excludeIds) => {
+    // Quotes are rendered now, not when each line was queued: under this
+    // batch's audience (one unproven line makes the whole turn one) and
+    // today's withholding (0.1.61 lane T2).
+    const drained = store.messagesFor(threadId).filter((message) => excludeIds.includes(message.id));
+    const unproven = drained.some((message) => message.origin === "unproven");
+    const byId = new Map(store.messagesFor(threadId).map((message) => [message.id, message] as const));
+    const prompt = drained.map((message) => promptWithReply(message.text ?? "", replyForPrompt(threadId, message.replyToId ? byId.get(message.replyToId) : undefined, unproven && isWorkspaceOwner(threadHumanPrincipal(threadId))), cfg.profile?.name?.trim() || "User")).join("\n");
+    return (
     // A plain attended turn — no automationSource, no unattended, no comms
     // depth: exactly what typing the same words into an idle bot would run.
     // Drain just appended the held lines; userMessage keeps startTurn
@@ -5529,7 +5538,7 @@ function drainQueuedSends() {
     // turn runs unattended, like a webhook turn.
     startTurn(botId, prompt, { threadId, userMessage, excludeMessageIds: excludeIds,
       // and its memory reads as a non-owner audience (0.1.61 lane T2)
-      ...(store.messagesFor(threadId).some((message) => excludeIds.includes(message.id) && message.origin === "unproven") ? { unattended: true, notOwnerAudience: true } : {}),
+      ...(unproven ? { unattended: true, notOwnerAudience: true } : {}),
     }).then(() => undefined).catch((err) => {
       store.appendMessage(threadId, {
         role: "bot",
@@ -5539,7 +5548,8 @@ function drainQueuedSends() {
           ok: false,
         },
       });
-    }),
+    }));
+  },
     // a bot idle in this thread can still be speaking in a room
     (botId) => Boolean(activeGroupTurnForBot(botId)),
   );
@@ -12147,6 +12157,7 @@ const server = createServer(async (req, res) => {
             sourceThreadId: fromThreadId,
             // the peer's turn began when the ask was dispatched, not now
             startedAtMs: Date.now() - ASK_BOT_TIMEOUT_MS,
+            ...(internalClaim.notOwnerAudience === true ? { notOwnerAudience: true } : {}),
           });
           store.appendMessage(fromThreadId, {
             role: "bot",
@@ -12211,7 +12222,10 @@ const server = createServer(async (req, res) => {
             // a result whose original reply is now withheld from bots is
             // read back as the withheld line; so is one a turn made as the
             // owner's audience, asked for by a turn that is not (0.1.61 lane T2)
-            const withheld = (internalClaim.notOwnerAudience === true && receipt.notOwnerAudience !== true) || (receipt.copyOf && copyOriginWithheld(receipt.copyOf));
+            // A receipt written before results carried their origin (legacy,
+            // kept up to 48 hours) cannot be checked, so its text is withheld.
+            const withheld = (internalClaim.notOwnerAudience === true && receipt.notOwnerAudience !== true) || (receipt.copyOf && copyOriginWithheld(receipt.copyOf))
+              || (receipt.status === "done" && receipt.lineage !== true);
             return json(res, 200, { status: receipt.status, toBotName: receipt.toBotName, result: withheld ? `[${ROOM_REPLY_WITHHELD}]` : receipt.result ?? "" });
           }
           const stillQueued = pendingDelegationInfo(taskId);
@@ -12239,7 +12253,10 @@ const server = createServer(async (req, res) => {
                 elapsed: formatDelegationElapsed(elapsedMs),
                 // no excerpt of what an owner-audience turn wrote reaches a
                 // turn that is not the owner's
-                recentActivity: summarizeDelegatedActivity(store.messagesFor(runningEntry[0]), startedAtMs, 5, !(internalClaim.notOwnerAudience === true && running.notOwnerAudience !== true)),
+                recentActivity: summarizeDelegatedActivity(
+                  // and never an excerpt of a line withheld from bots
+                  store.messagesFor(runningEntry[0]).filter((message) => message.role !== "bot" || message.kind !== "text" || !capturedMessageWithheld(runningEntry[0], message.id)),
+                  startedAtMs, 5, !(internalClaim.notOwnerAudience === true && running.notOwnerAudience !== true)),
               });
             }
             return json(res, 200, {
