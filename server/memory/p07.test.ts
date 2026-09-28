@@ -188,10 +188,7 @@ it("omits dependent paraphrases across fresh sessions and preserves independent 
   prepareMemoryDisclosure(second,f.access,"driver");deliverMemoryDisclosure(second.bundleId,f.access,"session-two");linkMemoryDisclosureOutput(second.bundleId,"answer-two");
   database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(first.bundleId);
   expect(filterMemoryReplay("private",[{id:"user"},{id:"answer-one"},{id:"answer-two"},{id:"independent"}],f.access)).toEqual([{id:"user"},{id:"independent"}]);
-  // Read-only: the dependent receipt is left as it was, and the next replay
-  // still omits it through the same lineage (0.1.61 transcript fix).
-  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(second.bundleId)?.state).toBe("delivered");
-  expect(filterMemoryReplay("private",[{id:"user"},{id:"answer-two"}],f.access)).toEqual([{id:"user"}]);
+  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(second.bundleId)?.state).toBe("revoked");
 });
 
 it("links later continuation outputs to prior disclosures even without repeated recall",async()=>{

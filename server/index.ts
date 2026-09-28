@@ -7813,6 +7813,33 @@ async function runGroupMemberTurn(
     : Boolean(group && store.groupTaskByThread(group.id, threadId));
   if (!group || !bot || !ownsThread) return false;
   spoken.add(botId);
+  // This member leaves the round's held set when its own turn ends (or it
+  // never starts), before any teammate it @mentions speaks, and whatever
+  // waited on it (a parked handoff, a queued direct message) is tried again
+  // at once. A teammate it @mentions joins the set when it claims. Goal runs
+  // hold members through orchestration.onClaimed instead.
+  const round = orchestration ? undefined : roomRounds.get(threadId);
+  let leftRound = false;
+  const leaveRound = () => {
+    if (!round || leftRound) return;
+    leftRound = true;
+    if (!round.botIds.delete(bot.id)) return;
+    queueMicrotask(() => { drainQueuedSends(); retryParkedDelegations(); });
+  };
+  // Why this member could not answer, said once in the room by Murage (no
+  // sender, never folded with tool calls), whatever the tool-call setting
+  // (0.1.61 lane T, F9). The engine's own error row stays for its detail.
+  let failureLine = false;
+  const murageFailureLine = (reason: string, partial = false) => {
+    if (failureLine || orchestration) return;
+    failureLine = true;
+    const why = redactSecretsInText(reason).split("\n")[0].slice(0, 160);
+    store.appendMessage(threadId, {
+      role: "bot",
+      kind: "activity",
+      tool: { name: partial ? `${bot.name} stopped before finishing: ${why}` : `${bot.name} could not answer: ${why}`, ok: false },
+    });
+  };
   const instance = registry.get(bot.modelSelection.instanceId);
   const userName = cfg.profile?.name?.trim() || "User";
   if (!instance) {
@@ -7823,7 +7850,9 @@ async function runGroupMemberTurn(
       from: { botId: bot.id, name: bot.name, color: bot.color },
       tool: { name: `error: ${message}`, ok: false },
     });
+    murageFailureLine(message);
     onDispatchError?.(message);
+    leaveRound();
     return true;
   }
   // One turn per bot at a time, across BOTH engines. Without this a bot
@@ -7843,6 +7872,7 @@ async function runGroupMemberTurn(
       tool: { name: message, ok: false },
     });
     onDispatchError?.(message);
+    leaveRound();
     return true;
   }
   const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
@@ -7854,19 +7884,6 @@ async function runGroupMemberTurn(
     instance.adapter.capabilities.agentsMcp === true;
   const internalGeneration = randomUUID();
   beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring);
-  // This member leaves the round's held set when its own turn ends (or it
-  // never starts), before any teammate it @mentions speaks, and whatever
-  // waited on it (a parked handoff, a queued direct message) is tried again
-  // at once. A teammate it @mentions joins the set when it claims. Goal runs
-  // hold members through orchestration.onClaimed instead.
-  const round = orchestration ? undefined : roomRounds.get(threadId);
-  let leftRound = false;
-  const leaveRound = () => {
-    if (!round || leftRound) return;
-    leftRound = true;
-    if (!round.botIds.delete(bot.id)) return;
-    queueMicrotask(() => { drainQueuedSends(); retryParkedDelegations(); });
-  };
   // Upstream 0b2694a4: the setup latch for a stall during room setup.
   let setupStalled = false;
   let unregisterSetupStall = () => {};
@@ -8171,6 +8188,7 @@ async function runGroupMemberTurn(
       const message = "This project's files are being restored. Wait for the restore to finish before running this task.";
       store.appendMessage(threadId, { role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, tool: { name: `error: ${message}`, ok: false } });
       await releaseUnstartedRoomTurn();
+      murageFailureLine(message);
       onDispatchError?.(message);
       return true;
     }
@@ -8297,7 +8315,9 @@ async function runGroupMemberTurn(
       if (e.type === "item.completed" && e.itemType === "assistant_text" && !isMemoryProvenanceEcho(e.text)) replyText += `\n${e.text}`;
       else if (e.type === "runtime.error") turnFailure = e.message;
       else if (e.type === "turn.completed") {
-        if (!turnSucceeded(e) && !turnStopped(e)) turnFailure ??= e.stopReason ?? "the engine reported an error";
+        // an error the engine recovered from, or a Stop, is no failure line
+        if (turnSucceeded(e) || turnStopped(e)) turnFailure = undefined;
+        else turnFailure ??= e.stopReason ?? "the engine reported an error";
         if (orchestration && !turnSucceeded(e)) {
           orchestration.result.stopReason = e.stopReason ?? null;
           finish("provider_failed");
@@ -8452,19 +8472,13 @@ async function runGroupMemberTurn(
           from: { botId: bot.id, name: bot.name, color: bot.color },
           tool: { name: `error: ${message.slice(0, 140)}`, ok: false },
         });
+        turnFailure ??= message;
         onDispatchError?.(message);
         watchdog.settle(threadId);
         finish("dispatch_failed");
       });
   });
-  if (!orchestration && (outcome === "settled" || outcome === "provider_failed") && turnFailure && !replyText.trim()) {
-    // Murage's line, not the member's: no sender, never folded away.
-    store.appendMessage(threadId, {
-      role: "bot",
-      kind: "activity",
-      tool: { name: `${bot.name} could not answer: ${redactSecretsInText(turnFailure).split("\n")[0].slice(0, 160)}`, ok: false },
-    });
-  }
+  if ((outcome === "settled" || outcome === "provider_failed" || outcome === "dispatch_failed") && turnFailure) murageFailureLine(turnFailure, Boolean(replyText.trim()));
   // This member's own turn is over. A still-closing provider keeps the room
   // through busyBotId; a revoked-context attempt keeps its hold for the
   // re-dispatch.

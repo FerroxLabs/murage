@@ -188,10 +188,10 @@ it("a turn that is not an owner audience keeps filterMemoryReplay: the revoked r
   expect(turn.withheld.size).toBe(0);
 });
 
-it("filterMemoryReplay answers for its own reader only: it drops what that reader may not see and marks nothing revoked", () => {
+it("a room's per-reader filter drops what that reader may not see and marks nothing revoked", () => {
   daxReplyWithOwnRecall();
   // Finch may not read Dax's own-chat memory: the per-reader filter drops it
-  expect(filterMemoryReplay("closing-chat", transcript, access("finch", "closing-chat")).map(m => m.id)).toEqual(["m-owner", "m-finch"]);
+  expect(filterMemoryReplay("closing-chat", transcript, access("finch", "closing-chat"), { persist: false }).map(m => m.id)).toEqual(["m-owner", "m-finch"]);
   // but one reader's filter no longer revokes it for everyone after it
   expect(stateOf("b-dax")).toBe("delivered");
   expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
@@ -210,4 +210,38 @@ it("renders a withheld reply as a line with author and time, with nothing of it 
   expect(JSON.stringify(shown)).not.toContain("the secret line");
   expect(shown[1]).toBe(messages[1]);
   expect(ROOM_REPLY_WITHHELD).not.toMatch(/—|safe/i);
+});
+
+it("a direct chat's replay still persists what it found invalid, so a resumed session sees lineage-only invalidation", () => {
+  daxReplyWithOwnRecall();
+  expect(filterMemoryReplay("closing-chat", transcript, access("finch", "closing-chat")).map(m => m.id)).toEqual(["m-owner", "m-finch"]);
+  expect(stateOf("b-dax")).toBe("revoked");
+});
+
+it("withholds a generated reply whose own captured source the owner forgot, never the owner's words", () => {
+  reconcileMemoryRoster(roster);
+  captureSource(database(), { id: "message:closing-chat:m-dax", threadId: "closing-chat", messageId: "m-dax", kind: "text", speaker: "dax", outcome: "recorded", text: "the pin is 4471" });
+  captureSource(database(), { id: "message:closing-chat:m-owner", threadId: "closing-chat", messageId: "m-owner", kind: "text", speaker: "owner", outcome: "recorded", text: "what is the pin?" });
+  const roles = [{ id: "m-owner", role: "user" }, { id: "m-dax", role: "bot" }, { id: "m-finch", role: "bot" }];
+  expect([...roomReplayWithheld("closing-chat", roles)]).toEqual([]);
+  forgetMemory(ownerMemoryTicket(), { kind: "source", id: "message:closing-chat:m-dax" });
+  forgetMemory(ownerMemoryTicket(), { kind: "source", id: "message:closing-chat:m-owner" });
+  expect([...roomReplayWithheld("closing-chat", roles)]).toEqual(["m-dax"]);
+});
+
+it("withholds a reply that used a projection whose original the owner corrected, but not one that used the correction", () => {
+  const original = daxMemory("the vendor is Acme", "src-original");
+  const projection = daxMemory("the vendor is Acme (room copy)", "src-projection");
+  database().prepare("INSERT INTO memory_derivations(parent_id,parent_version,child_id,child_version) VALUES(?,?,?,?)").run(original, version(original), projection, version(projection));
+  disclose("b-dax", "closing-chat", [{ id: projection, version: version(projection) }], [], ["m-dax"]);
+  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual([]);
+  // the owner corrects the original: a new version that supersedes it
+  const v = version(original);
+  database().prepare("UPDATE memory_records SET state='superseded' WHERE id=? AND version=?").run(original, v);
+  database().prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,owner_pinned,valid_from,supersedes_id,created_at) SELECT id,version+1,scope_id,kind,'the vendor is Bolt',assertion,'active',0,1,id,1 FROM memory_records WHERE id=? AND version=?").run(original, v);
+  database().prepare("INSERT INTO memory_derivations(parent_id,parent_version,child_id,child_version) VALUES(?,?,?,?)").run(original, v, original, v + 1);
+  expect([...roomReplayWithheld("closing-chat", transcript)]).toEqual(["m-dax"]);
+  // a reply that used the corrected version itself stays
+  disclose("b-finch", "closing-chat", [{ id: original, version: v + 1 }], [], ["m-finch"]);
+  expect(roomReplayWithheld("closing-chat", transcript).has("m-finch")).toBe(false);
 });

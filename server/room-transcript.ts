@@ -26,7 +26,7 @@ export interface RoomTranscript {
 }
 
 export function roomTranscriptForTurn(threadId: string, messages: readonly Message[], ownerAudience: boolean, access: MemoryAccess): RoomTranscript {
-  if (!ownerAudience) return { messages: filterMemoryReplay(threadId, messages, access), withheld: new Set() };
+  if (!ownerAudience) return { messages: filterMemoryReplay(threadId, messages, access, { persist: false }), withheld: new Set() };
   const withheld = roomReplayWithheld(threadId, messages);
   return { messages: withholdRoomReplies(messages, withheld), withheld };
 }

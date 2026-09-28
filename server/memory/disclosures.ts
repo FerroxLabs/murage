@@ -106,15 +106,18 @@ export function linkMemoryDisclosureOutput(bundleId: string, messageId: string) 
 /** Conservatively omit complete generated messages and downstream paraphrases. Owner text
  * is never inferred dependent: only explicitly linked generated output IDs enter the set.
  */
-export function filterMemoryReplay<T extends {id:string}>(threadId: string, messages: readonly T[], access: MemoryAccess): T[] {
+export function filterMemoryReplay<T extends {id:string}>(threadId: string, messages: readonly T[], access: MemoryAccess, options: {persist?: boolean} = {}): T[] {
   assertMemoryAccess(access);
   if (threadId !== access.threadId) throw new Error("MEMORY_SCOPE_DENIED");
-  const excluded = replayExclusions(threadId, messages, access);
+  const invalidBundles = new Set<string>();
+  const excluded = replayExclusions(threadId, messages, access, invalidBundles);
   assertMemoryAccess(access);
-  // Read-only. Marking a receipt revoked here once revoked it for every later
-  // reader, the author included, because of what one reader could see
-  // (0.1.61 transcript fix, R-A). Explicit revokers (forget, roster, restore)
-  // still write it; this filter only answers for its own reader.
+  // A direct chat persists what it found invalid, so a resumed session's
+  // continuation and acceptance checks see lineage-only invalidation too. A
+  // room does not (persist: false, room-transcript.ts): there one reader's
+  // access must never revoke a receipt for every later reader, the author
+  // included (0.1.61 transcript fix, R-A).
+  if (options.persist !== false) for (const id of invalidBundles) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(id);
   return messages.filter(message=>!excluded.has(message.id));
 }
 
@@ -134,13 +137,23 @@ export function filterMemoryReplay<T extends {id:string}>(threadId: string, mess
  * Every other room turn (a channel person's pair room, a chain a channel
  * person started, words nobody proved are the owner's) keeps
  * filterMemoryReplay. */
-export function roomReplayWithheld(threadId: string, messages: readonly {id:string}[]): Set<string> {
+export function roomReplayWithheld(threadId: string, messages: readonly {id:string; role?: string}[]): Set<string> {
   if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) throw new Error("MEMORY_SCOPE_DENIED");
-  return replayExclusions(threadId, messages, null);
+  const withheld = replayExclusions(threadId, messages, null);
+  // A generated reply the owner forgot from memory is withheld itself, receipt
+  // or not. The owner's own words never are.
+  const db = database();
+  for (const message of messages) {
+    if (message.role === "user" || withheld.has(message.id)) continue;
+    const sourceId = `message:${threadId}:${message.id}`;
+    const source = db.prepare("SELECT state FROM memory_sources WHERE id=?").get(sourceId);
+    if (source?.state === "deleted" || db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? LIMIT 1").get(sourceId)) withheld.add(message.id);
+  }
+  return withheld;
 }
 
 /** `access` null: content checks only (roomReplayWithheld). */
-function replayExclusions(threadId: string, messages: readonly {id:string}[], access: MemoryAccess | null): Set<string> {
+function replayExclusions(threadId: string, messages: readonly {id:string}[], access: MemoryAccess | null, invalidBundles?: Set<string>): Set<string> {
   if (messages.length > 10000) throw new Error("MEMORY_REPLAY_LIMIT");
   if (!messages.length) return new Set();
   const db = database();
@@ -197,6 +210,27 @@ function replayExclusions(threadId: string, messages: readonly {id:string}[], ac
           JOIN parents p ON d.child_id=p.id AND d.child_version=p.version LIMIT 1025)
           SELECT id,version FROM parents`).all(ref.id,ref.version);
         if(parents.length>1024)throw new Error("MEMORY_REPLAY_LIMIT");charge(parents.length);
+        // Content checks cannot lean on the global policy revision a correction
+        // moves, so every record the ref was derived from must still be current:
+        // a projection whose original the owner corrected carries the old words.
+        // A correction's own history edge (the child supersedes that parent) is
+        // not a dependency.
+        if(!access){
+          const edges=db.prepare(`WITH RECURSIVE edges(parent_id,parent_version,child_id,child_version) AS (
+            SELECT parent_id,parent_version,child_id,child_version FROM memory_derivations WHERE child_id=? AND child_version=?
+            UNION SELECT d.parent_id,d.parent_version,d.child_id,d.child_version FROM memory_derivations d
+            JOIN edges e ON d.child_id=e.parent_id AND d.child_version=e.parent_version LIMIT 1025)
+            SELECT e.parent_id,e.parent_version,p.state,c.supersedes_id FROM edges e
+            LEFT JOIN memory_records p ON p.id=e.parent_id AND p.version=e.parent_version
+            LEFT JOIN memory_records c ON c.id=e.child_id AND c.version=e.child_version`).all(ref.id,ref.version);
+          if(edges.length>1024)throw new Error("MEMORY_REPLAY_LIMIT");charge(edges.length);
+          for(const edge of edges){
+            // replaced by this very child: history, not a dependency
+            const history=edge.supersedes_id===edge.parent_id&&(edge.state==="superseded"||edge.state==="archived");
+            if(!edge.state||(edge.state!=="active"&&!history)||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(edge.parent_id,edge.parent_version)){bad=true;break;}
+          }
+        }
+        if(bad)break;
         for(const parent of parents){
           const evidence=db.prepare("SELECT e.source_id,e.source_revision,s.revision,s.state FROM memory_evidence e LEFT JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=? LIMIT 1025").all(parent.id,parent.version);
           if(evidence.length>1024)throw new Error("MEMORY_REPLAY_LIMIT");charge(evidence.length);
@@ -218,7 +252,7 @@ function replayExclusions(threadId: string, messages: readonly {id:string}[], ac
         if(bad)break;
       }
     }
-    visiting.delete(id);memo.set(id,bad);return bad;
+    visiting.delete(id);memo.set(id,bad);if(bad)invalidBundles?.add(id);return bad;
   };
   const wanted=new Set(messages.map(message=>message.id));
   for(const row of loadThread(threadId)){
