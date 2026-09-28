@@ -7636,10 +7636,12 @@ const webhookIngressStatus = () => ({
 // fresh session with recent room context. A member's reply may @mention
 // teammates; those get one chained turn (hop 1), never deeper.
 const groupQueues = new Map<string, Promise<void>>();
-/** The chat round running on a room thread. A round holds a member only
- * while that member speaks (runGroupMemberTurn), never for the whole round:
- * a teammate still waiting its turn can take a handoff or a direct message
- * (0.1.61 lane T, O2). */
+/** The chat round running on a room thread. A round holds each responder
+ * until that responder's own turn ends (runGroupMemberTurn), not until the
+ * whole round ends: a teammate that has already answered can take a handoff
+ * or a direct message while the others are still speaking (0.1.61 lane T,
+ * O2). One still waiting its turn stays held, so a handoff never makes it
+ * miss its own room reply. */
 const roomRounds = new Map<string, GroupTurnOperation>();
 const MAX_GROUP_HOPS = 1;
 
@@ -7852,16 +7854,18 @@ async function runGroupMemberTurn(
     instance.adapter.capabilities.agentsMcp === true;
   const internalGeneration = randomUUID();
   beginInternalTurn(bot.id, threadId, internalGeneration, hop, skillAuthoring);
-  // Speaker-only locking: this member joins the round's held set when it
-  // claims its turn and leaves it when its own turn ends (or fails to start),
-  // before any teammate it @mentions speaks. Goal runs hold members through
-  // orchestration.onClaimed instead.
+  // This member leaves the round's held set when its own turn ends (or it
+  // never starts), before any teammate it @mentions speaks, and whatever
+  // waited on it (a parked handoff, a queued direct message) is tried again
+  // at once. A teammate it @mentions joins the set when it claims. Goal runs
+  // hold members through orchestration.onClaimed instead.
   const round = orchestration ? undefined : roomRounds.get(threadId);
-  let holdsRound = false;
+  let leftRound = false;
   const leaveRound = () => {
-    if (!holdsRound) return;
-    holdsRound = false;
-    round!.botIds.delete(bot.id);
+    if (!round || leftRound) return;
+    leftRound = true;
+    if (!round.botIds.delete(bot.id)) return;
+    queueMicrotask(() => { drainQueuedSends(); retryParkedDelegations(); });
   };
   // Upstream 0b2694a4: the setup latch for a stall during room setup.
   let setupStalled = false;
@@ -7944,10 +7948,7 @@ async function runGroupMemberTurn(
   }
   store.setActivity(bot.id, "working");
   orchestration?.onClaimed?.();
-  if (round && !round.cancelled) {
-    round.botIds.add(bot.id);
-    holdsRound = true;
-  }
+  if (round && !round.cancelled) round.botIds.add(bot.id);
 
   // Connected-app discovery above can yield for a network round trip. A
   // profile may be removed, or the browser feature switched off, during that
@@ -8466,7 +8467,7 @@ async function runGroupMemberTurn(
   }
   // This member's own turn is over. A still-closing provider keeps the room
   // through busyBotId; a revoked-context attempt keeps its hold for the
-  // re-dispatch, which claims again.
+  // re-dispatch.
   if (outcome !== "memory_revoked") leaveRound();
   // A revoked-context attempt is re-dispatched below; its result is the
   // re-dispatch's, never this attempt's.
@@ -9011,9 +9012,13 @@ function startGroupTurn(
     return message;
   }
 
-  // Nobody is held yet: each responder is held only while it speaks
-  // (roomRounds, runGroupMemberTurn).
-  const operation = beginGroupTurnOperation(groupId, threadId, []);
+  // Every responder is held from here until its own turn ends (roomRounds,
+  // runGroupMemberTurn), not until the whole round ends.
+  const operation = beginGroupTurnOperation(
+    groupId,
+    threadId,
+    goalCoordinator ? [] : responders.map((responder) => responder.id),
+  );
   if (goalCoordinator) {
     const runId = options.goalRunId?.trim() || `goal-${Date.now().toString(36)}-${randomUUID()}`;
     const startedAt = Date.now();
