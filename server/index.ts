@@ -174,7 +174,8 @@ import {
 import { parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
 import { RoomPendingStop, RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
-import { GROUP_CONTEXT_MESSAGES, ROOM_CONTEXT_PINNED_LABEL, roomContextMessageIds, roomContextMessages } from "./room-context.ts";
+import { GROUP_CONTEXT_MESSAGES, ROOM_CONTEXT_PINNED_LABEL, roomContextMessageIds, roomContextMessages, withheldRoomLine } from "./room-context.ts";
+import { capturedMessageWithheld } from "./memory/replay-lineage.ts";
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
@@ -5932,6 +5933,9 @@ async function startTurn(
     branchReplay: rewound || fresh ? { carriedIds: replayedMessages.map((m) => m.id) } : null,
     pending: (task.externalUpdates ?? []).map((id) => {
       const message = messagesById.get(id);
+      // A teammate's copied reply whose original is now withheld from bots
+      // is handed over as the withheld line, never its words (0.1.61 lane T2).
+      if (message?.copyOf && capturedMessageWithheld(threadId, id)) return { id, text: withheldRoomLine(message) };
       return { id, text: message?.kind === "activity" ? message.tool?.name ?? "" : message?.text ?? "" };
     }),
   });

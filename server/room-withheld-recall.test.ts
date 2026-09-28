@@ -22,6 +22,8 @@ import { buildMemoryBundle, hydrateMemoryRecord } from "./memory/bundle.ts";
 import { searchMemory, type MemorySearchBridge } from "./memory/search.ts";
 import { filterMemoryReplay, roomReplayWithheld } from "./memory/disclosures.ts";
 import { insertMessage } from "./message-db.ts";
+import { capturedMessageWithheld } from "./memory/replay-lineage.ts";
+import { readFileSync } from "node:fs";
 import type { Message } from "./store.ts";
 
 const roster: MemoryRoster = {
@@ -171,4 +173,14 @@ it("gap 2: the copy's own captured chunk leaves recall with the original", () =>
   expect(hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "pair-chat")).text).toContain("83-86");
   forget(record);
   expect(() => hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "pair-chat"))).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
+});
+
+it("gap 2: a copy owed to the asking bot's next turn is known withheld (external delivery hands over the withheld line)", () => {
+  const { record } = mirroredReply();
+  expect(capturedMessageWithheld("pair-chat", "m-copy")).toBe(false);
+  forget(record);
+  expect(capturedMessageWithheld("pair-chat", "m-copy")).toBe(true);
+  // the delivery path reads it this way (server/index.ts, planExternalDelivery input)
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).toContain("if (message?.copyOf && capturedMessageWithheld(threadId, id)) return { id, text: withheldRoomLine(message) };");
 });
