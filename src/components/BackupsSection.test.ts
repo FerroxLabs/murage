@@ -54,7 +54,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { vi } from "vitest";
 import { scheduleCardNotice } from "./backup-schedule-ui";
-import { CLOSED_JOB_MOVED_REASON, CLOSED_JOB_WONT_RUN_REASON, SETUP_FIRST_BACKUP_RUNNING, SETUP_NO_FIRST_BACKUP, SCHEDULE_CHECKING, backupSummary, closedAppFileSharedReason, withoutRepeats, closedJobNotice, completeBackupSetup, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
+import { CLOSED_JOB_MOVED_REASON, CLOSED_JOB_WONT_RUN_REASON, SETUP_FIRST_BACKUP_RUNNING, SETUP_NO_FIRST_BACKUP, SETUP_NO_PRE_UPGRADE, SCHEDULE_CHECKING, backupSummary, closedAppFileSharedReason, withoutRepeats, closedJobNotice, completeBackupSetup, formatBackupSize, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupSummaryInput } from "./backups-section-ui";
 import { BackupStatusCard, ScheduleCard, ScheduleSetup, type ScheduleController } from "./BackupSettings";
 import { BACKUP_UNAVAILABLE_SENTENCES } from "../../shared/backup-capture-failure.mjs";
 import { scheduleError, schedulePhase } from "./backup-schedule-ui";
@@ -541,6 +541,34 @@ describe("setup ends with a verified backup, not a to-do", () => {
     expect(host.calls).toEqual(["setUp", "configure:true", "runNow:2"]);
     expect(keys).toEqual([{ label: "murage-recovery-key.txt", publicKey: "age1" + "q".repeat(58), folder: "Documents" }]);
     expect(notices).toContain(SETUP_FIRST_BACKUP_RUNNING);
+  });
+
+  // 0.1.61 final check D5 (Linux L1): ticking "Back up before installing an
+  // in-app update" under Advanced before the first Turn on backups was
+  // silently dropped: setup turned the schedule on from the saved one.
+  it("keeps a pre-update backup ticked before setup", async () => {
+    const host = hostBridge();
+    const bridge = host.bridge as unknown as { status: () => Promise<BackupScheduleStatus> };
+    const base = await bridge.status();
+    Object.assign(base, { preUpgradeSupported: true });
+    const notices: string[] = [];
+    const outcome = await completeBackupSetup(host.bridge!, undefined, { applyStatus: () => {}, createdKey: () => {}, notice: (text) => notices.push(text) }, { preUpgrade: true });
+    expect(outcome).toEqual({ state: "capturing" });
+    expect(host.latest().schedule.preUpgrade).toBe(true);
+    expect(host.calls).toEqual(["setUp", "configure:true", "runNow:2"]);
+  });
+  it("says so when a pre-update backup ticked before setup is not available in this app", async () => {
+    const host = hostBridge();
+    const notices: string[] = [];
+    const outcome = await completeBackupSetup(host.bridge!, undefined, { applyStatus: () => {}, createdKey: () => {}, notice: (text) => notices.push(text) }, { preUpgrade: true });
+    expect(outcome).toEqual({ state: "capturing" });
+    expect(host.latest().schedule.preUpgrade).toBe(false);
+    expect(notices.at(-1)).toBe(`${SETUP_FIRST_BACKUP_RUNNING} ${SETUP_NO_PRE_UPGRADE}`);
+    expect(SETUP_NO_PRE_UPGRADE).not.toMatch(/—|\bsafe/i);
+  });
+  it("hands the page's unsaved pre-update choice to setup", () => {
+    const page = readFileSync(fileURLToPath(new URL("./BackupSettings.tsx", import.meta.url)), "utf8");
+    expect(page).toContain("dirty.current?{preUpgrade:draft.preUpgrade}:undefined");
   });
 
   it("a first backup that cannot start is said plainly, and never reads as one that happened", async () => {

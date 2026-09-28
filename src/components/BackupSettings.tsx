@@ -146,11 +146,13 @@ export function useBackupSchedule() {
    * without a browser. */
   const setUp=bridge?.setUp?(options?:{existingKey?:boolean})=>void run("schedule",async expected=>{
     const guard=<T,>(apply:(value:T)=>void)=>(value:T)=>{if(mounted.current&&expected===version.current)apply(value);};
+    // A pre-update backup ticked under Advanced before setup is kept.
+    const pending=dirty.current?{preUpgrade:draft.preUpgrade}:undefined;
     const outcome=await completeBackupSetup(bridge!,options,{
       applyStatus:next=>{dirty.current=false;apply(next,expected);setConsent(false);},
       createdKey:guard(setCreatedKey),
       notice:guard(setNotice),
-    });
+    },pending);
     if(!mounted.current||expected!==version.current)return;
     if(outcome.state==="first-backup-failed"){setNotice(null);setError(outcome.message);}
   },cause=>recoveryKeyError(cause,scheduleError(cause))):undefined;

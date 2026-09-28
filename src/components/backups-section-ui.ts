@@ -251,6 +251,8 @@ export function recoveryKeyResult(value: unknown): { cancelled: true } | { saved
 }
 
 export const SETUP_FIRST_BACKUP_RUNNING = "Taking your first backup now. Murage closes and reopens its own window to do it, and comes back by itself.";
+/** A pre-update backup ticked before setup, in an app that cannot take one. */
+export const SETUP_NO_PRE_UPGRADE = "Backing up before an in-app update is not available in this app, so daily backups are on without it.";
 export const SETUP_NO_FIRST_BACKUP = "Daily backups are on, but this desktop app can't take the first one for you. Use Back up now so you actually have a backup, and keep a copy of your recovery key.";
 /** A first backup that could not start. Never phrased so it reads as though a
  * backup exists: the whole point of taking one during setup is that "backups
@@ -288,7 +290,7 @@ export interface BackupSetupSteps {
  *
  * Hard failures throw, so the page shows them where every other schedule
  * failure appears. */
-export async function completeBackupSetup(bridge: BackupScheduleBridge, options: { existingKey?: boolean } | undefined, steps: BackupSetupSteps): Promise<BackupSetupOutcome> {
+export async function completeBackupSetup(bridge: BackupScheduleBridge, options: { existingKey?: boolean } | undefined, steps: BackupSetupSteps, pending?: { preUpgrade?: boolean }): Promise<BackupSetupOutcome> {
   if (!bridge.setUp) throw Error("BACKUP_UNAVAILABLE");
   const answer = await bridge.setUp(options);
   // The desktop app answers an expected refusal (a name already taken, a
@@ -315,13 +317,20 @@ export async function completeBackupSetup(bridge: BackupScheduleBridge, options:
   // daily backups stayed off. Setup is always a first setup: closed-app
   // backups start off, and the person ticks them again, with their own
   // permission, if they want them.
-  const choice = enabledSchedule({ ...saved, closedApp: false, time: saved.time.trim() || DEFAULT_BACKUP_TIME }, next, true);
+  // "Back up before installing an in-app update", ticked under Advanced before
+  // this first setup, is the person's choice and is kept (0.1.61 final check
+  // D5: it was dropped). Where this app cannot take one, setup says so.
+  const preUpgradeRefused = pending?.preUpgrade === true && next.preUpgradeSupported !== true;
+  const preUpgrade = pending?.preUpgrade !== undefined && !preUpgradeRefused ? pending.preUpgrade : saved.preUpgrade;
+  const choice = enabledSchedule({ ...saved, preUpgrade, closedApp: false, time: saved.time.trim() || DEFAULT_BACKUP_TIME }, next, true);
   if (!choice) { steps.notice("Backup folder and recovery key saved. Choose a time below, then turn on daily backups."); return { state: "needs-schedule" }; }
   const enabled = await bridge.configure(next.revision, { ...choice, allowIdleRestart: true });
   steps.applyStatus(enabled);
   if (!enabled.enabled) { steps.notice("Settings saved; daily backups are still off."); return { state: "needs-schedule" }; }
-  if (!bridge.runNow) { steps.notice(SETUP_NO_FIRST_BACKUP); return { state: "no-first-backup" }; }
-  steps.notice(SETUP_FIRST_BACKUP_RUNNING);
+  // The page shows the latest notice: the refused choice rides on each.
+  const refusedNote = preUpgradeRefused ? ` ${SETUP_NO_PRE_UPGRADE}` : "";
+  if (!bridge.runNow) { steps.notice(SETUP_NO_FIRST_BACKUP + refusedNote); return { state: "no-first-backup" }; }
+  steps.notice(SETUP_FIRST_BACKUP_RUNNING + refusedNote);
   try { steps.applyStatus(await bridge.runNow(enabled.revision)); }
   // The schedule stays on — it is correctly configured — but nothing here may
   // claim a backup exists.
@@ -329,7 +338,7 @@ export async function completeBackupSetup(bridge: BackupScheduleBridge, options:
     // Name who the first backup is waiting for; the status carries it.
     let waiting: readonly BackupWaitingBot[] | undefined;
     if (waitingOnYou(cause)) try { const now = await bridge.status(); steps.applyStatus(now); waiting = now.heldBy?.bots; } catch { /* the plain sentence below still says what to do */ }
-    return { state: "first-backup-failed", message: firstBackupError(cause, waiting) };
+    return { state: "first-backup-failed", message: firstBackupError(cause, waiting) + refusedNote };
   }
   return { state: "capturing" };
 }
