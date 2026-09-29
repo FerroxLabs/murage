@@ -5,7 +5,7 @@ import type { Message, Store } from "./store.ts";
 import type { RoutineCardHooks } from "./peer-approval.ts";
 import { database } from "./database.ts";
 import { initializeImageOperations } from "./image-operations-schema.ts";
-import { ATTACHMENTS_DIR, IMAGE_MAX_BYTES } from "./attachments.ts";
+import { ATTACHMENTS_DIR, GENERATED_IMAGE_MAX_BYTES } from "./attachments.ts";
 import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES } from "../shared/media-assets.ts";
 import { DATA_DIR } from "./config.ts";
 import type { ImageOperationDetails, ImageAttemptOutcome, ImageReference, GeneratedImageMetadata, ImageApprovalCardInput } from "./image-generation.ts";
@@ -43,8 +43,9 @@ export function imageReferences(store: Store, threadId: string, names: unknown):
   return names.map(name => {
     const file = join(ATTACHMENTS_DIR, name), root = realpathSync(ATTACHMENTS_DIR);
     const stat = lstatSync(file);
-    if (!allowed.has(file) || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !inside(root, realpathSync(file)) || stat.size > IMAGE_MAX_BYTES) throw error(403, "Image reference is unavailable in this conversation.");
-    const decoded = decodeGeneratedImage(readFileSync(file).toString("base64")); total += decoded.bytes.length;
+    if (!allowed.has(file) || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !inside(root, realpathSync(file)) || stat.size > GENERATED_IMAGE_MAX_BYTES) throw error(403, "Image reference is unavailable in this conversation.");
+    // A generated image is a reference up to its own cap; the model's limit is checked before the card.
+    const decoded = decodeGeneratedImage(readFileSync(file).toString("base64"), GENERATED_IMAGE_MAX_BYTES); total += decoded.bytes.length;
     if (total > IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES || decoded.mime === "image/gif") throw error(400, `References must be PNG, JPEG or WebP and total at most ${IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES / (1024 * 1024)} MB.`);
     return { bytes: decoded.bytes, mime: decoded.mime };
   });
@@ -67,11 +68,15 @@ export interface PublishImageOptions {
 }
 /** Retained images waiting to be published. `receiptId` is the first (older
  * rows hold only it); `receiptIds` lists every image of a multi-image render. */
-interface PendingPublication { receiptId: string; receiptIds?: string[]; metadata: GeneratedImageMetadata }
+interface PendingPublication { receiptId: string; receiptIds?: string[]; metadata: GeneratedImageMetadata;
+  /** Each retained image's own metadata, aligned with receiptIds (absent on older rows). */
+  items?: GeneratedImageMetadata[] }
 interface ImageOperationResult { artifact: ImageArtifact; artifacts?: ImageArtifact[]; metadata: GeneratedImageMetadata }
 /** What an operation row's `result` holds while it runs: the retained
  * images, and the provider job it waits on (kept before the first poll). */
-interface OperationProgress { pending?: PendingPublication; job?: { id: string } }
+interface OperationProgress { pending?: PendingPublication; job?: { id: string };
+  /** bot, thread and request_id: finds a provider job again from a later turn. */
+  resumeKey?: string }
 
 const outputDeps = (store: Store) => ({ db: database(), dataDir: DATA_DIR, store });
 /** The conversation line under each image: the real delivered pixels, read
@@ -96,11 +101,12 @@ function parsePending(result: string | null): PendingPublication | undefined {
   const pending = progressOf(result).pending;
   if (!pending || typeof pending.receiptId !== "string" || !pending.metadata || typeof pending.metadata !== "object") return undefined;
   const ids = Array.isArray(pending.receiptIds) && pending.receiptIds.every(id => typeof id === "string") && pending.receiptIds[0] === pending.receiptId ? pending.receiptIds : [pending.receiptId];
-  return { ...pending, receiptIds: ids };
+  const items = Array.isArray(pending.items) && pending.items.length === ids.length && pending.items.every(item => item && typeof item === "object") ? pending.items : undefined;
+  return { ...pending, receiptIds: ids, ...(items ? { items } : { items: undefined }) };
 }
 function parseJob(result: string | null): { id: string } | undefined {
   const job = progressOf(result).job;
-  return job && typeof job.id === "string" && /^[A-Za-z0-9_.-]{1,160}$/.test(job.id) ? { id: job.id } : undefined;
+  return job && typeof job.id === "string" && /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,159}$/.test(job.id) ? { id: job.id } : undefined;
 }
 const isOperationResult = (value: unknown): value is ImageOperationResult =>
   Boolean(value && typeof value === "object" && "artifact" in value && "metadata" in value && typeof (value as ImageOperationResult).artifact?.id === "string");
@@ -163,8 +169,17 @@ export class ImageOperations {
   execute<T>(actor: ImageActor, requestId: string, request: unknown, work: (reserve: ImageReserve, publish: PublishOperationImage, context: ImageWorkContext) => Promise<T>): Promise<T> {
     actor.assertActive();
     if (!/^[\w-]{1,80}$/.test(requestId)) throw error(400, "A stable request_id is required for image generation.");
-    const id = hash(`${actor.botId}:${actor.threadId}:${actor.generation}:${requestId}`), requestHash = hash(JSON.stringify(request));
-    const prior = this.db().prepare("SELECT request_hash,state,result FROM image_operations WHERE id=?").get(id) as { request_hash: string; state: string; result: string | null } | undefined;
+    const requestHash = hash(JSON.stringify(request)), resumeKey = hash(`${actor.botId}:${actor.threadId}:${requestId}`);
+    let id = hash(`${actor.botId}:${actor.threadId}:${actor.generation}:${requestId}`);
+    type Prior = { id: string; request_hash: string; state: string; result: string | null };
+    let prior = this.db().prepare("SELECT id,request_hash,state,result FROM image_operations WHERE id=?").get(id) as Prior | undefined;
+    if (!prior) {
+      // A provider job started in an earlier turn (or before a restart) is
+      // found again by bot, thread and request_id: the same request polls
+      // the same job under its first operation id, never a second render.
+      const carried = this.db().prepare("SELECT id,request_hash,state,result FROM image_operations WHERE state IN ('running','uncertain') AND json_valid(result) AND json_extract(result,'$.resumeKey')=? ORDER BY updated_at DESC LIMIT 1").get(resumeKey) as Prior | undefined;
+      if (carried && carried.request_hash === requestHash && parseJob(carried.result) && !parsePending(carried.result)) { id = carried.id; prior = carried; }
+    }
     if (prior?.request_hash !== undefined && prior.request_hash !== requestHash) throw error(409, "This image request ID was already used for a different request.");
     if (this.jobs.has(id)) return this.jobs.get(id) as Promise<T>;
     if (prior?.state === "published" && prior.result) return Promise.resolve(this.refreshPublished(actor, id, JSON.parse(prior.result) as T));
@@ -187,9 +202,14 @@ export class ImageOperations {
       const current = patch ? progressOf((this.db().prepare("SELECT result FROM image_operations WHERE id=?").get(id) as { result: string | null } | undefined)?.result ?? null) : undefined;
       this.db().prepare("UPDATE image_operations SET state=?,result=COALESCE(?,result),updated_at=? WHERE id=?").run(state, patch ? JSON.stringify({ ...current, ...patch }) : null, Date.now(), id);
     };
-    const retained: string[] = [];
+    const retained: string[] = [], items: GeneratedImageMetadata[] = [];
     const publish: PublishOperationImage = async (image, metadata) => publishImage(this.store, actor, image, metadata, { operationId: id,
-      onRetained: receipt => { retained.push(receipt.id); record("running", { pending: { receiptId: retained[0]!, receiptIds: [...retained], metadata } }); } });
+      onRetained: receipt => {
+        retained.push(receipt.id); items.push(metadata);
+        // The whole render's facts (every image's delivered pixels) plus each image's own.
+        const whole: GeneratedImageMetadata = { ...items[0]!, delivered: items.flatMap(item => item.delivered ?? []) }; delete whole.imageIndex; delete whole.summary;
+        record("running", { pending: { receiptId: retained[0]!, receiptIds: [...retained], metadata: whole, items: [...items] } });
+      } });
     const reserve: ImageReserve = async (details, card) => {
       approvalStarted = true;
       actor.assertActive();
@@ -203,7 +223,7 @@ export class ImageOperations {
       record("running");
       return { finish: (outcome: ImageAttemptOutcome) => record(outcome) };
     };
-    const context: ImageWorkContext = { operationId: id, ...(priorJob ? { resumeJob: priorJob } : {}), jobStarted: job => record("running", { job }) };
+    const context: ImageWorkContext = { operationId: id, ...(priorJob ? { resumeJob: priorJob } : {}), jobStarted: job => record("running", { job, resumeKey }) };
     const job = Promise.resolve().then(() => work(reserve, publish, context)).then(result => {
       this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=?").run(JSON.stringify(result), Date.now(), id);
       return result;
@@ -230,9 +250,9 @@ export class ImageOperations {
     this.jobs.set(id, job); return job;
   }
   /** Completes every retained image of one operation from its receipts. */
-  private completeAll(receipts: Array<{ id: string }>, metadata: GeneratedImageMetadata): ImageOperationResult {
+  private completeAll(receipts: Array<{ id: string }>, metadata: GeneratedImageMetadata, items?: GeneratedImageMetadata[]): ImageOperationResult {
     const artifacts = receipts.map((receipt, index) => {
-      const each: GeneratedImageMetadata = receipts.length > 1 ? { ...metadata, imageIndex: index, delivered: metadata.delivered?.[index] ? [metadata.delivered[index]!] : metadata.delivered } : metadata;
+      const each: GeneratedImageMetadata = items?.[index] ?? (receipts.length > 1 ? { ...metadata, imageIndex: index, delivered: metadata.delivered?.[index] ? [metadata.delivered[index]!] : metadata.delivered } : metadata);
       return imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: transcriptText(each), artifactName: artifactName(each) }));
     });
     return { artifact: artifacts[0]!, artifacts, metadata };
@@ -247,7 +267,7 @@ export class ImageOperations {
     const job = Promise.resolve().then(() => {
       actor.assertActive();
       if (actor.signal.aborted) throw error(409, "Image operation was cancelled.");
-      const value = this.completeAll(receipts, pending.metadata);
+      const value = this.completeAll(receipts, pending.metadata, pending.items);
       this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=? AND state='publish-pending'").run(JSON.stringify(value), Date.now(), id);
       return value as T;
     }).catch(e => {
@@ -285,7 +305,7 @@ export class ImageOperations {
       const receipts = pending ? pending.receiptIds!.map(receiptId => outputReceipt(database(), receiptId)) : [];
       if (!pending || !receipts.length || receipts.some(receipt => !receipt || receipt.producer !== "image-operation" || receipt.runId !== row.id)) continue;
       try {
-        const value = this.completeAll(receipts as Array<{ id: string }>, pending.metadata);
+        const value = this.completeAll(receipts as Array<{ id: string }>, pending.metadata, pending.items);
         this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=? AND state=?").run(JSON.stringify(value), Date.now(), row.id, row.state);
         completed++;
       } catch { /* stays pending with the receipt's recorded category */ }
@@ -318,7 +338,8 @@ export class ImageOperations {
     if (this.lateAllows.delete(actor.threadId)) return Promise.resolve(true);
     const requestId = `image-${randomUUID()}`;
     // `held` is the full assembled prompt: exactly what the provider is sent.
-    const prompt = input?.prompt ?? (request && typeof request === "object" && "prompt" in request ? String(request.prompt) : "");
+    const prompt = (input?.prompt ?? (request && typeof request === "object" && "prompt" in request ? String(request.prompt) : ""))
+      + (input?.negativePrompt ? `\n\nNegative prompt (sent in its own field): ${input.negativePrompt}` : "");
     const from = this.speaker?.(actor.threadId, actor.botId);
     const card = this.store.appendMessage(actor.threadId, { role: "bot", kind: "options", ...(from ? { from } : {}), card: {
       title: details.operation === "edit" ? "Approve image edit" : "Approve image generation",

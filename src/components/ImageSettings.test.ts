@@ -38,7 +38,7 @@ describe("imageModelCapability", () => {
   });
   it("states a model's prompt budget, sizes and where the details came from", () => {
     expect(imageModelLimits(builtInImageCapabilities("flux", "flux-image-fast")!, "built-in")).toBe("Prompt budget: 2,000 characters. Sizes: Any width and height in multiples of 32, ratio 1:3 to 3:1, 65,536 to 4,194,304 pixels, longest side at most 4096. Model details: built in.");
-    expect(imageModelLimits(builtInImageCapabilities("xai", "grok-imagine-image-2.0")!)).toBe("Prompt budget: 4,000 characters (Limit not published, Murage uses 4,000). Sizes: Only these sizes: 1024x1024.");
+    expect(imageModelLimits(builtInImageCapabilities("xai", "grok-imagine-image-2.0")!)).toBe("Prompt budget: 4,000 characters (Limit not published, Murage uses 4,000). Sizes: The provider's default size only.");
     const html = render(snapshot("flux", "flux", [{ ...openai, id: "flux-image", capabilities: builtInImageCapabilities("flux", "flux-image")! }], "flux-image"));
     expect(html).toContain("Prompt budget: 32,000 characters.");
   });

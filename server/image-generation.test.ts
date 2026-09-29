@@ -38,7 +38,7 @@ it("B15 rechecks authority after post-approval capability reads",async()=>{
 it("posts one OpenAI GPT Image 2 generation after reservation and returns decoded artifact metadata",async()=>{
  const f=fixture();const result=await f.service.generate(f.request,f.hooks);
  expect(f.fetcher).toHaveBeenCalledOnce();const[url,init]=f.fetcher.mock.calls[0]!;expect(url).toBe("https://api.openai.com/v1/images/generations");expect(init?.redirect).toBe("error");
- expect(JSON.parse(String(init?.body))).toEqual({model:"gpt-image-2",prompt:f.request.prompt,n:1,quality:"medium",size:"1024x1024",output_format:"png",stream:true});
+ expect(JSON.parse(String(init?.body))).toEqual({model:"gpt-image-2",prompt:f.request.prompt,n:1,quality:"medium",size:"1024x1024",output_format:"png",stream:true,partial_images:1});
  expect(f.reserve.mock.invocationCallOrder[0]).toBeLessThan(f.fetcher.mock.invocationCallOrder[0]!);
  expect(f.publish.mock.calls[0]).toEqual([expect.objectContaining({mime:"image/png",bytes:Buffer.from(PNG,"base64")}),expect.objectContaining({model:"gpt-image-2",reportedModel:"reported-image-model",usage:{inputTokens:12,outputTokens:23,costUsd:0.04}})]);
  expect(f.finish).toHaveBeenCalledWith("published");expect(result.artifact.id).toBe("owned-artifact");
@@ -159,7 +159,7 @@ it("propagates cancellation to an in-flight provider request without retry or pu
 it("enforces streamed response and reference byte limits without trusting content length",async()=>{
  const f=fixture();f.fetcher.mockResolvedValueOnce(new Response(new ReadableStream({start(controller){controller.enqueue(new Uint8Array(60*1024*1024));controller.close();}})));
  await expect(f.service.generate(f.request,f.hooks)).rejects.toMatchObject({code:"oversized-response"});expect(f.publish).not.toHaveBeenCalled();
- const reference=fixture();await expect(reference.service.generate({...reference.request,operation:"edit"},reference.hooks,[{bytes:Buffer.alloc(10*1024*1024+1),mime:"image/png"}])).rejects.toThrow("bounded PNG");expect(reference.fetcher).not.toHaveBeenCalled();
+ const reference=fixture();await expect(reference.service.generate({...reference.request,operation:"edit"},reference.hooks,[{bytes:Buffer.alloc(25*1024*1024+1),mime:"image/png"}])).rejects.toThrow("bounded PNG");expect(reference.fetcher).not.toHaveBeenCalled();
 });
 
 // ── F1: per-provider reference edits ─────────────────────────────────────
@@ -317,8 +317,8 @@ it("GOOG-2 generates through generateContent on Google's origin with the key onl
  expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent");
  const headers=new Headers(init?.headers);expect(headers.get("x-goog-api-key")).toBe(CANARY.google);expect(headers.get("authorization")).toBeNull();
  expect(String(url)).not.toContain(CANARY.google);expect(init?.redirect).toBe("error");
- expect(JSON.parse(String(init?.body))).toEqual({contents:[{role:"user",parts:[{text:"A watercolor mountain"}]}],generationConfig:{responseModalities:["IMAGE"],imageConfig:{aspectRatio:"3:2",imageSize:"2K"}}});
- expect(result.metadata).toMatchObject({connectionId:"google",provider:"google",model:"gemini-3.1-flash-image",sizeAsked:"1536x1024",sizeRendered:"3:2 at 2K"});
+ expect(JSON.parse(String(init?.body))).toEqual({contents:[{role:"user",parts:[{text:"A watercolor mountain"}]}],generationConfig:{responseModalities:["IMAGE"],imageConfig:{aspectRatio:"3:2",imageSize:"1K"}}});
+ expect(result.metadata).toMatchObject({connectionId:"google",provider:"google",model:"gemini-3.1-flash-image",sizeAsked:"1536x1024",sizeRendered:"3:2 at 1K"});
  expect(JSON.stringify(f.reserve.mock.calls)).not.toContain(CANARY.google);expect(f.finish).toHaveBeenCalledWith("published");
 });
 it("GOOG-3 edits with reference images as inline parts of the same request",async()=>{
@@ -341,4 +341,11 @@ it("GOOG-5 names local models without the network, and leaves OpenRouter's to it
  const google=fixture("google",CANARY.google);expect(google.service.localModelIds("google")).toEqual(["gemini-3.1-flash-image","gemini-3.1-flash-lite-image","gemini-3-pro-image"]);
  const router=fixture("openrouter");expect(router.service.localModelIds("openrouter")).toBeNull();
  expect(google.fetcher).not.toHaveBeenCalled();expect(router.fetcher).not.toHaveBeenCalled();
+});
+it("review: an OpenRouter prompt over the budget is refused after the free catalogue read and stays correctable",async()=>{
+ const f=fixture("openrouter");const error=await f.service.generate({...f.request,model:"vendor/other",prompt:"p".repeat(4_001)},f.hooks).catch(reason=>reason as {code:string;correctablePreflight:boolean});
+ expect(error).toMatchObject({code:"unsupported-model"});
+ f.fetcher.mockImplementation(async input=>String(input).endsWith("/images/models")?new Response(JSON.stringify({data:[{id:"vendor/model",architecture:{output_modalities:["image"]},supported_parameters:parameters}]})):image());
+ await expect(f.service.generate({...f.request,model:"vendor/model",prompt:"p".repeat(4_001)},f.hooks)).rejects.toMatchObject({code:"prompt-too-long",correctablePreflight:true});
+ expect(f.reserve).not.toHaveBeenCalled();
 });

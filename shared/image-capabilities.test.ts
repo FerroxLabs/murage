@@ -161,3 +161,41 @@ describe("prompt budget", () => {
     expect(promptTooLongMessage(200000, "m", 2000, [])).toContain("No other model on this connection takes that many.");
   });
 });
+
+describe("review fixes", () => {
+  it("strips control, format and markup characters from catalogue labels", () => {
+    const row = (label: unknown) => parseFluxImageCatalogue({ contract: 1, kind: "image-catalogue", data: [{ id: "flux-image-x", label }] })!.entries[0]!.label;
+    expect(row("Nice‮gnp.exe\u0000 <b>Model</b>\n\n[link](http://x)")).toBe("Nice gnp.exe b Model /b link (http://x)");
+    expect(row("​\u0007")).toBe("flux-image-x");
+    expect(row("A".repeat(200))).toHaveLength(80);
+  });
+  it("refuses fit exact pixels larger than the model renders", () => {
+    const free: SizeRule = { kind: "free", multiple: 16, minRatio: 1 / 3, maxRatio: 3, maxPixels: 8_294_400, maxEdge: 3840, minPixels: 655_360 };
+    const result = resolveImageSize(free, { width: 8192, height: 8192, fit: "exact" }, "1024x1024");
+    expect(result).toMatchObject({ ok: false, message: expect.stringContaining("at most 8,294,400 pixels") });
+    expect(resolveImageSize({ kind: "list", sizes: ["1024x1024", "1536x1024"] }, { width: 2048, height: 2048, fit: "exact" }, "1024x1024")).toMatchObject({ ok: false });
+    expect(resolveImageSize({ kind: "ratioTier", ratios: ["1:1"], tiers: ["1K"] }, { width: 4096, height: 4096, fit: "exact" }, "1024x1024")).toMatchObject({ ok: false });
+    expect(resolveImageSize(free, { width: 1080, height: 1350, fit: "exact" }, "1024x1024")).toMatchObject({ ok: true });
+  });
+});
+
+describe("review fixes: sizes and qualities", () => {
+  const FLUX2: SizeRule = { kind: "free", multiple: 32, minRatio: 1 / 3, maxRatio: 3, maxPixels: 4_194_304, maxEdge: 4096, minPixels: 65_536 };
+  it("walks a snapped size back onto the legal grid", () => {
+    const size = ok(resolveImageSize(FLUX2, { aspectRatio: "1:3" }, "1024x1024"));
+    expect(size.width! % 32).toBe(0); expect(size.height! % 32).toBe(0); expect(size.width! / size.height!).toBeGreaterThanOrEqual(1 / 3 - 1e-4);
+  });
+  it("keeps the older size field at 1K on Gemini", () => {
+    expect(ok(resolveImageSize(GEMINI, { size: "1536x1024" }, "1024x1024"))).toMatchObject({ aspectRatio: "3:2", tier: "1K" });
+  });
+  it("never crops when nothing was asked, even with fit exact, on a one-size list", () => {
+    expect(ok(resolveImageSize({ kind: "list", sizes: ["1536x1024"] }, { fit: "exact" }, "1536x1024")).exact).toBeUndefined();
+  });
+  it("keeps the built-in default quality when the catalogue states none", () => {
+    const entry = parseFluxImageCatalogue({ contract: 1, kind: "image-catalogue", data: [{ id: "flux-image-gpt25-sunburst", qualities: ["low", "medium", "high", "xhigh"], qualityMode: "param" }] })!.entries[0]!;
+    expect(entry.capabilities.defaultQuality).toBe("high");
+  });
+  it("sends no size to xAI", () => {
+    expect(builtInImageCapabilities("xai", "grok-imagine-image-2.0")!.sizeRule).toEqual({ kind: "list", sizes: [] });
+  });
+});

@@ -92,3 +92,38 @@ it("stores a provider job id before polling and resumes the same job on the same
   expect(resumed.metadata.jobId).toBe("imgjob_42");
   expect(posts()).toBe(1); expect(f.cards()).toHaveLength(1); expect(f.images()).toHaveLength(1); expect(f.row().state).toBe("published");
 });
+
+it("review: a provider job started in an earlier turn is found again by request_id in a later turn, with no second render or card", async () => {
+  const catalogue = { contract: 1, kind: "image-catalogue", data: [{ id: "flux-image-gpt25-sunburst", operations: ["generate"], maxPromptChars: 32000,
+    sizeRule: { kind: "list", sizes: ["1024x1024"] }, qualities: ["high", "xhigh"], qualityMode: "param", maxReferences: 4, supports: { n: 1 }, delivery: { jobs: true }, expectedSeconds: { xhigh: 120 } }] };
+  let pollsWork = false;
+  const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+    if (String(input).endsWith("/v1/images/models")) return json(catalogue);
+    if (init?.method === "POST") return json({ contract: 1, kind: "image-job", id: "imgjob_77", status: "queued", poll_after_s: 5 }, { status: 202 });
+    if (!pollsWork) throw new Error("ECONNRESET");
+    return json({ contract: 1, kind: "image-job", id: "imgjob_77", status: "succeeded", data: [{ b64_json: PNG }] });
+  });
+  const f = fixture("flux", fetcher, { fluxCatalogue: true });
+  const request = { connectionId: "flux", model: "flux-image-gpt25-sunburst", quality: "xhigh", prompt: "A slow render" };
+  const first = f.run("later", request), refusal = expect(first).rejects.toMatchObject({ code: "job-uncertain" });
+  await f.approve(); await refusal;
+  pollsWork = true;
+  (f.actor as { generation: string }).generation = randomUUID();
+  const resumed = await f.run("later", request) as { metadata: { jobId: string } };
+  expect(resumed.metadata.jobId).toBe("imgjob_77");
+  expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  expect(f.cards()).toHaveLength(1); expect(f.images()).toHaveLength(1);
+});
+
+it("review: a resumed multi-image render keeps each image's own facts and the whole render's", async () => {
+  const fetcher = vi.fn<typeof fetch>(async () => json({ data: [{ b64_json: PNG }, { b64_json: PNG_B }] }));
+  const f = fixture("openai", fetcher);
+  faults.saveImage = 1;
+  const job = f.run("facts", { connectionId: "openai", prompt: "Two versions", n: 2 }), refusal = expect(job).rejects.toThrow("kept locally");
+  await f.approve(); await refusal;
+  const pending = JSON.parse(f.row().result!).pending;
+  expect(pending.items).toHaveLength(2); expect(pending.items[1].imageIndex).toBe(1); expect(pending.metadata.delivered).toHaveLength(2);
+  const resumed = await f.run("facts", { connectionId: "openai", prompt: "Two versions", n: 2 }) as { metadata: { delivered: unknown[] } };
+  expect(resumed.metadata.delivered).toHaveLength(2);
+  expect(f.images().map(message => message.text).sort()).toEqual([expect.stringContaining("(image 1 of 2)"), expect.stringContaining("(image 2 of 2)")]);
+});

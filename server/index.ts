@@ -3498,7 +3498,7 @@ function imageConnectionFacts(): ImageConnectionFact[] {
 }
 /** `availability`: the list and Settings paths also read Flux's free model
  * list for this key and mark each model with its last check. A render never does. */
-async function imageSettings(connectionId = cfg.imageGen?.connectionId, options: { availability?: boolean } = {}) {
+async function imageSettings(connectionId = cfg.imageGen?.connectionId, options: { availability?: boolean; refresh?: boolean } = {}) {
   const connections = labelledImageConnections();
   const chosen = defaultImageConnection(connections, connectionId);
   // The connection list is local; only the chosen catalog may need its
@@ -3507,7 +3507,8 @@ async function imageSettings(connectionId = cfg.imageGen?.connectionId, options:
   let catalog: Awaited<ReturnType<typeof imageService.getCatalog>> | null = null, catalogError: string | undefined;
   if (chosen && imageConnection(chosen)) {
     try {
-      catalog = await imageService.getCatalog(chosen, { offered: options.availability });
+      // The owner's Refresh rereads the provider's lists now, not from cache.
+      catalog = await imageService.getCatalog(chosen, { offered: options.availability, refresh: options.refresh });
       if (options.availability) catalog = { ...catalog, models: applyImageAvailability(catalog.models, imageProbes(database(), chosen)) };
     }
     catch (error) { catalogError = error instanceof ImageGenerationError ? error.message : "Could not load this connection's image models. Try again later."; }
@@ -11551,7 +11552,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === "/api/images/settings" && (method === "GET" || method === "POST")) {
-      if (method === "GET") return json(res, 200, await imageSettings(undefined, { availability: true }));
+      if (method === "GET") return json(res, 200, await imageSettings(undefined, { availability: true, refresh: url.searchParams.get("refresh") === "1" }));
       const patch = z.object({ enabled: z.boolean().optional(), connectionId: z.string().max(160).optional(), model: z.string().max(180).optional(), dailyProbe: z.boolean().optional() }).strict().parse(await readBody(req));
       const next = { ...cfg.imageGen, ...patch };
       if (patch.connectionId && patch.connectionId !== cfg.imageGen?.connectionId) delete next.model;

@@ -87,3 +87,50 @@ describe("jobs", () => {
     await expect(pollImageJob({ id: "j", get, signal: new AbortController().signal, ...clock() })).rejects.toMatchObject({ code: "job-uncertain", message: expect.stringContaining("30 minutes") });
   });
 });
+
+describe("stream and job bounds (review)", () => {
+  const SECRET = "sk-proj-" + "A".repeat(24);
+  it("refuses a completed frame whose image_index is past the images asked for", async () => {
+    await expect(readImageEventStream(stream([frame({ type: "image_generation.completed", image_index: 5, b64_json: "QQ==" })]), { maxEventBytes: 1024, expected: 1 }))
+      .rejects.toMatchObject({ code: "invalid-response", outcome: "uncertain" });
+    await expect(readImageEventStream(stream([frame({ type: "image_generation.completed", data: [{ b64_json: "QQ==" }, { b64_json: "Qg==" }, { b64_json: "Qw==" }] })]), { maxEventBytes: 1024, expected: 2 }))
+      .rejects.toMatchObject({ code: "invalid-response" });
+  });
+  it("caps the whole stream, not only one event", async () => {
+    const frames = Array.from({ length: 50 }, () => frame({ type: "image_generation.partial_image", b64_json: "x".repeat(100) }));
+    await expect(readImageEventStream(stream(frames), { maxEventBytes: 1024, maxTotalBytes: 2048, expected: 1 })).rejects.toMatchObject({ code: "oversized-response" });
+  });
+  it("redacts a key in a stream error frame and in a failed job", async () => {
+    const error = await readImageEventStream(stream([frame({ type: "error", error: { code: "bad", message: `key ${SECRET} rejected` } })]), { maxEventBytes: 1024, expected: 1 }).then(() => null, (reason: unknown) => reason as Error);
+    expect(error!.message).not.toContain(SECRET);
+    const job = await pollImageJob({ id: "j1", signal: new AbortController().signal, sleep: async () => {}, now: () => 0,
+      get: async () => ({ status: 200, body: { contract: 1, kind: "image-job", id: "j1", status: "failed", error: { message: `upstream said ${SECRET}` } } }) }).then(() => null, (reason: unknown) => reason as Error);
+    expect(job!.message).toContain("could not finish"); expect(job!.message).not.toContain(SECRET);
+  });
+  it("accepts only plain job ids", () => {
+    const job = (id: string) => parseImageJob({ contract: 1, kind: "image-job", id, status: "queued" });
+    expect(job("imgjob_7.a-b")).toMatchObject({ id: "imgjob_7.a-b" });
+    for (const bad of ["..", ".hidden", "../x", "a/b", "", "a".repeat(161)]) expect(job(bad)).toBeNull();
+  });
+});
+
+describe("review: idle clock and job timeouts", () => {
+  it("starts an unarmed idle clock only at the first touch", () => {
+    vi.useFakeTimers();
+    try {
+      const watch = idleWatch(1000, false);
+      vi.advanceTimersByTime(5000); expect(watch.fired()).toBe(false);
+      watch.touch(); vi.advanceTimersByTime(1001); expect(watch.fired()).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+  it("names the job and the way back when the render clock stops polling", async () => {
+    const controller = new AbortController();
+    const error = await pollImageJob({ id: "imgjob_5", signal: controller.signal, now: () => 0, get: async () => ({ status: 200, body: {} }),
+      sleep: async () => { controller.abort(new DOMException("t", "TimeoutError")); throw controller.signal.reason; } }).then(() => null, (reason: unknown) => reason as { code: string; message: string });
+    expect(error).toMatchObject({ code: "job-uncertain" }); expect(error!.message).toContain("imgjob_5"); expect(error!.message).toContain("same request_id");
+  });
+  it("stops at once on a fatal error from a poll", async () => {
+    const fatal = new Error("connection changed");
+    await expect(pollImageJob({ id: "j", signal: new AbortController().signal, now: () => 0, sleep: async () => {}, get: async () => { throw fatal; }, fatal: error => error === fatal })).rejects.toBe(fatal);
+  });
+});

@@ -1,6 +1,6 @@
 import { IMAGE_MAX_BYTES, humanBytes } from "./attachments.ts";
 
-export { GENERATED_IMAGE_MAX_BYTES } from "./attachments.ts";
+export { GENERATED_IMAGE_MAX_BYTES, GENERATED_IMAGE_RECEIVE_MAX_BYTES } from "./attachments.ts";
 
 export interface DecodedGeneratedImage {
   bytes: Buffer;

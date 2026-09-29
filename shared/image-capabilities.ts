@@ -154,11 +154,22 @@ function freePixels(rule: Extract<SizeRule, { kind: "free" }>, ratio: number, ar
   let w = snap(width, rule.multiple, "round"), h = snap(height, rule.multiple, "round");
   if (w * h > rule.maxPixels || w > rule.maxEdge || h > rule.maxEdge) { w = snap(width, rule.multiple, "floor"); h = snap(height, rule.multiple, "floor"); }
   if (w * h < rule.minPixels) { w = snap(width, rule.multiple, "ceil"); h = snap(height, rule.multiple, "ceil"); }
-  return { width: w, height: h };
+  if (freeLegal(rule, w, h)) return { width: w, height: h };
+  // Snapping can land just outside the rule (a ratio or pixel edge): walk
+  // the grid around it to the legal point nearest the asked ratio, then area.
+  let best: { width: number; height: number } | undefined, bestScore = Infinity;
+  for (let dw = -8; dw <= 8; dw++) for (let dh = -8; dh <= 8; dh++) {
+    const cw = w + dw * rule.multiple, ch = h + dh * rule.multiple;
+    if (cw <= 0 || ch <= 0 || !freeLegal(rule, cw, ch)) continue;
+    const score = ratioDistance(cw / ch, ratio) * 1e6 + ratioDistance(cw * ch, target);
+    if (score < bestScore) { best = { width: cw, height: ch }; bestScore = score; }
+  }
+  return best ?? { width: w, height: h };
 }
-const freeLegal = (rule: Extract<SizeRule, { kind: "free" }>, width: number, height: number) =>
-  width % rule.multiple === 0 && height % rule.multiple === 0 && width * height <= rule.maxPixels && width * height >= rule.minPixels
-  && Math.max(width, height) <= rule.maxEdge && width / height >= rule.minRatio - 1e-4 && width / height <= rule.maxRatio + 1e-4;
+function freeLegal(rule: Extract<SizeRule, { kind: "free" }>, width: number, height: number): boolean {
+  return width % rule.multiple === 0 && height % rule.multiple === 0 && width * height <= rule.maxPixels && width * height >= rule.minPixels
+    && Math.max(width, height) <= rule.maxEdge && width / height >= rule.minRatio - 1e-4 && width / height <= rule.maxRatio + 1e-4;
+}
 
 /**
  * Resolves what a bot asked for against one model's size rule. Never widens
@@ -183,6 +194,11 @@ export function resolveImageSize(rule: SizeRule, request: ImageSizeRequest, defa
   const ratio = pixels ? pixels.width / pixels.height : aspect ? aspect.ratio : 1;
   const area = pixels ? pixels.width * pixels.height : RESOLUTION_PIXELS[request.resolution ?? "standard"];
   const asked = pixels ? `${pixels.width}x${pixels.height}` : aspect ? `${ratioLabel(aspect.ratio)}${request.resolution ? ` ${request.resolution}` : ""}` : request.resolution ? `${request.resolution} square` : "default";
+  // fit exact never enlarges past what the model itself renders at most.
+  if (pixels && fit === "exact") {
+    const most = largestRender(rule);
+    if (most !== undefined && pixels.width * pixels.height > most) return { ok: false, message: `${pixels.width}x${pixels.height} is larger than this model renders (at most ${fmt(most)} pixels). Nothing was sent. Ask for a smaller size.` };
+  }
   const exactFor = (renderedRatio: number, renderedPixels?: { width: number; height: number }): ResolvedImageSize["exact"] => {
     if (fit !== "exact") return undefined;
     if (pixels) return renderedPixels && renderedPixels.width === pixels.width && renderedPixels.height === pixels.height ? undefined : { ...pixels, ratio };
@@ -213,7 +229,8 @@ export function resolveImageSize(rule: SizeRule, request: ImageSizeRequest, defa
   if (rule.kind === "ratioTier") {
     const named = rule.ratios.flatMap(label => { const parsed = parseAspectRatio(label); return parsed ? [{ label, ratio: parsed.ratio }] : []; });
     if (!named.length || !rule.tiers.length) return { ok: false, message: "This model has no size choices Murage can send." };
-    const wantedTier = pixels ? tierForEdge(rule.tiers, Math.max(pixels.width, pixels.height)) : RESOLUTION_TIER[request.resolution ?? "standard"];
+    // The older size field always rendered at 1K here; it keeps doing so.
+    const wantedTier = legacy ? "1K" : pixels ? tierForEdge(rule.tiers, Math.max(pixels.width, pixels.height)) : RESOLUTION_TIER[request.resolution ?? "standard"];
     const tier = rule.tiers.includes(wantedTier) ? wantedTier : nearestTier(rule.tiers, wantedTier);
     // Nothing asked: no ratio is sent, so the model keeps its own default (an
     // edit keeps its reference's shape).
@@ -238,8 +255,16 @@ export function resolveImageSize(rule: SizeRule, request: ImageSizeRequest, defa
     });
   const pickRatio = pick.width / pick.height;
   if (fit === "nearest" && !asksNothing && !ratioWithin(pickRatio, ratio)) return tooFar(`${pick.width}x${pick.height}`, ` (it offers ${rule.sizes.join(", ")})`);
-  const exact = exactFor(pickRatio, pick);
+  // Nothing asked: the model's own size, never a crop (even with fit exact).
+  const exact = asksNothing ? undefined : exactFor(pickRatio, pick);
   return { ok: true, size: { asked, width: pick.width, height: pick.height, rendered: `${pick.width}x${pick.height}`, sendsSize: true, ...(exact ? { exact } : {}) } };
+}
+/** The most pixels one render of this rule can have (a tier renders about its edge squared). */
+function largestRender(rule: SizeRule): number | undefined {
+  if (rule.kind === "free") return rule.maxPixels;
+  if (rule.kind === "ratioTier") { const edges = rule.tiers.map(tier => TIER_EDGE[tier] ?? 0); const edge = Math.max(0, ...edges); return edge ? edge * edge : undefined; }
+  const areas = rule.sizes.flatMap(item => { const parsed = parsePixels(item); return parsed ? [parsed.width * parsed.height] : []; });
+  return areas.length ? Math.max(...areas) : undefined;
 }
 function tierForEdge(tiers: string[], edge: number): string {
   const known = tiers.filter(tier => TIER_EDGE[tier]).sort((a, b) => TIER_EDGE[a]! - TIER_EDGE[b]!);
@@ -319,7 +344,8 @@ function google(id: string): ImageModelCapabilities | null {
 function xai(id: string): ImageModelCapabilities | null {
   if (id !== "grok-imagine-image-2.0") return null;
   return finish({ maxPromptChars: IMAGE_DEFAULT_PROMPT_CHARS, promptBudgetSource: "default", promptBudgetNote: NOT_PUBLISHED,
-    sizeRule: { kind: "list", sizes: ["1024x1024"] }, defaultSize: "1024x1024", qualities: ["low", "medium"], defaultQuality: "low", qualityMode: "param", formats: ["png"],
+    // xAI takes no size today: it renders its own default, and the card says so.
+    sizeRule: { kind: "list", sizes: [] }, defaultSize: "1024x1024", qualities: ["low", "medium"], defaultQuality: "low", qualityMode: "param", formats: ["png"],
     maxReferences: 4, maxReferenceBytes: IMAGE_REFERENCE_BYTES_DEFAULT, maxReferenceBytesTotal: IMAGE_REFERENCE_TOTAL_DEFAULT,
     supports: { ...NO_SUPPORTS, edit: true }, delivery: BUFFERED });
 }
@@ -336,6 +362,8 @@ const FLUX_FAMILIES: readonly FluxFamily[] = [
     sizeAliases: { "1536x1024": { high: "flux-image-gpt25-sunburst-xl" } } },
   { id: "flux-image-gpt2", label: "GPT Image 2", qualities: ["low", "medium"], defaultQuality: "medium", aliases: { low: "flux-image-gpt2-low", medium: "flux-image-gpt2" } },
 ];
+/** The Flux family base ids (each keeps its own full statement). */
+export const FLUX_FAMILY_IDS: ReadonlySet<string> = new Set(FLUX_FAMILIES.map(family => family.id));
 /** Each older Flux id: its family and the quality and size it has always
  * meant. Every one keeps working unchanged. */
 export const FLUX_LEGACY_IDS: Readonly<Record<string, { base: string; quality: string; size: string }>> = Object.fromEntries(FLUX_FAMILIES.flatMap(family => [
@@ -466,7 +494,12 @@ function parseEntry(row: unknown, fallbackFor: (id: string) => ImageModelCapabil
   const aliasMap = rec(row.qualityAliases) ? Object.fromEntries(Object.entries(row.qualityAliases).filter(([quality, alias]) => qualities.includes(quality) && typeof alias === "string" && ID.test(alias))) as Record<string, string> : undefined;
   const hasAliases = Boolean(aliasMap && Object.keys(aliasMap).length);
   const qualityMode = row.qualityMode === "param" || row.qualityMode === "alias" ? row.qualityMode : hasAliases ? "alias" : "param";
-  const defaultQuality = typeof row.defaultQuality === "string" && qualities.includes(row.defaultQuality) ? row.defaultQuality : qualities[0];
+  // No stated default never downgrades: the built-in default when it is
+  // still offered, else the quality the id itself names, else none (param).
+  const selfQuality = aliasMap ? Object.entries(aliasMap).find(([, alias]) => alias === id)?.[0] : undefined;
+  const defaultQuality = typeof row.defaultQuality === "string" && qualities.includes(row.defaultQuality) ? row.defaultQuality
+    : base.defaultQuality && qualities.includes(base.defaultQuality) ? base.defaultQuality
+    : selfQuality ?? (qualityMode === "alias" ? qualities[0] : undefined);
   const formats = Array.isArray(row.formats) ? row.formats.filter((item): item is ImageFormat => (IMAGE_FORMATS as readonly string[]).includes(item as string)) : [];
   const supports = rec(row.supports) ? row.supports : {};
   const delivery = rec(row.delivery) ? row.delivery : {};
@@ -492,8 +525,16 @@ function parseEntry(row: unknown, fallbackFor: (id: string) => ImageModelCapabil
   const statusRaw = rec(row.status) ? row.status : undefined;
   const state = statusRaw && (statusRaw.state === "ok" || statusRaw.state === "degraded" || statusRaw.state === "down") ? statusRaw.state : undefined;
   const checkedAt = iso(statusRaw?.checked_at), lastGoodAt = iso(statusRaw?.last_good_at);
-  return { id, label: typeof row.label === "string" && row.label.trim() ? row.label.trim().slice(0, 120) : id, aliases, operations, capabilities,
+  return { id, label: catalogueLabel(row.label) ?? id, aliases, operations, capabilities,
     ...(state ? { status: { state, ...(checkedAt ? { checkedAt } : {}), ...(lastGoodAt ? { lastGoodAt } : {}) } } : {}) };
+}
+
+/** A router label shown in Settings and to bots: control, format (bidi,
+ * zero-width) and markup characters removed, one line, at most 80. */
+function catalogueLabel(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const label = value.replace(/[\p{Cc}\p{Cf}<>\[\]`]/gu, " ").replace(/\s+/g, " ").trim().slice(0, 80).trim();
+  return label || undefined;
 }
 
 /** The contract body, or null for anything else ("old router"). A malformed

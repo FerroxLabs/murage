@@ -4,7 +4,7 @@
 // before the card with numbers, size by intent, quality aliases, n, formats,
 // the Flux catalogue, streaming and jobs. No real key, no network.
 import { describe, expect, it, vi } from "vitest";
-import { ImageGenerationService, imageApprovalSubtitle, imageModelsForBots, imageResultSummary, type ImageConnection, type ImageProvider, type ImageOperationDetails } from "./image-generation.ts";
+import { IMAGE_RESPONSE_MAX_BYTES, ImageGenerationService, imageApprovalSubtitle, imageModelsForBots, imageResultSummary, imageResponseCap, type ImageConnection, type ImageProvider, type ImageOperationDetails } from "./image-generation.ts";
 
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 /** A PNG whose header says `width` x `height` (enough for the header reader). */
@@ -267,3 +267,78 @@ describe("coordinator additions", () => {
   });
 });
 
+
+describe("review fixes", () => {
+  it("bounds the whole response at a fixed cap, whatever n is", () => {
+    expect(IMAGE_RESPONSE_MAX_BYTES).toBe(128 * 1024 * 1024);
+    expect(imageResponseCap(10)).toBe(IMAGE_RESPONSE_MAX_BYTES);
+    expect(imageResponseCap(1)).toBeLessThanOrEqual(IMAGE_RESPONSE_MAX_BYTES);
+  });
+  it("shows a native negative prompt on the card, in full, beside the prompt", async () => {
+    const catalogue = { contract: 1, kind: "image-catalogue", data: [{ id: "flux-image-fast", operations: ["generate"], maxPromptChars: 2000,
+      sizeRule: { kind: "list", sizes: ["1024x1024"] }, qualities: ["low"], supports: { negative: true, n: 1 }, delivery: { stream: false } }] };
+    const f = fixture("flux", { fluxCatalogue: true });
+    f.fetcher.mockImplementation(async input => String(input).endsWith("/v1/images/models") ? json(catalogue) : json(imageBody()));
+    await f.service.generate({ ...f.request, model: "flux-image-fast", negativePrompt: "blurry hands" }, f.hooks);
+    expect(f.body()).toMatchObject({ negative_prompt: "blurry hands" }); expect(f.body().prompt).toBe("A watercolor mountain");
+    const [details, card] = f.reserve.mock.calls[0]!;
+    expect(card).toEqual({ prompt: "A watercolor mountain", negativePrompt: "blurry hands" });
+    expect(imageApprovalSubtitle(details)).toContain("Negative prompt sent in its own field: 12 characters.");
+  });
+  it("follows a 202 job answer only from Flux", async () => {
+    const f = fixture("openai");
+    f.fetcher.mockResolvedValueOnce(json({ contract: 1, kind: "image-job", id: "imgjob_9", status: "queued" }, { status: 202 }));
+    await expect(f.service.generate(f.request, f.hooks)).rejects.toMatchObject({ code: "invalid-image" });
+    expect(f.fetcher.mock.calls.some(([input]) => String(input).includes("/v1/images/jobs/"))).toBe(false);
+    expect(f.jobStarted).not.toHaveBeenCalled();
+  });
+  it("refuses fit exact pixels past the model's largest render before the card", async () => {
+    await refused(fixture(), { width: 8192, height: 8192, fit: "exact" }, "unsupported-size", "at most 8,294,400 pixels");
+  });
+  it("keeps the paid render when the crop here fails or returns something unreadable, and says so", async () => {
+    const f = fixture(); f.crop.mockResolvedValueOnce(Buffer.from("not an image"));
+    const result = await f.service.generate({ ...f.request, width: 1080, height: 1350, fit: "exact" }, f.hooks);
+    expect(f.publish).toHaveBeenCalledOnce(); expect(result.metadata.delivered![0]).toMatchObject({ cropFailed: true });
+    expect(result.metadata.summary).toContain("could not be cropped here to 1080x1350, so it is delivered as rendered.");
+  });
+});
+
+describe("review fixes: delivery and sizes", () => {
+  it("always asks a direct OpenAI stream for one preview frame", async () => {
+    const f = fixture(); await f.service.generate(f.request, f.hooks);
+    expect(f.body()).toMatchObject({ stream: true, partial_images: 1 });
+  });
+  it("refuses a render over the kept image cap with its size, publishing nothing", async () => {
+    const f = fixture(); const big = Buffer.concat([pngOf(1024, 1024), Buffer.alloc(26 * 1024 * 1024)]);
+    f.fetcher.mockResolvedValueOnce(json({ data: [{ b64_json: big.toString("base64") }] }));
+    await expect(f.service.generate(f.request, f.hooks)).rejects.toMatchObject({ code: "image-too-large", message: expect.stringContaining("keeps images up to 25 MB") });
+    expect(f.publish).not.toHaveBeenCalled();
+  });
+  it("keeps generated images inside what Files, the viewer and Save accept", async () => {
+    const [{ GENERATED_IMAGE_MAX_BYTES }, { ARTIFACT_MAX_BYTES }, { MEDIA_IMAGE_MAX_BYTES }, { OUTPUT_PUBLICATION_LIMITS }] = await Promise.all([
+      import("./attachments.ts"), import("./artifacts.ts"), import("./media-assets.ts"), import("../shared/output-publication.ts")]);
+    for (const cap of [ARTIFACT_MAX_BYTES, MEDIA_IMAGE_MAX_BYTES, OUTPUT_PUBLICATION_LIMITS.maxFileBytes]) expect(GENERATED_IMAGE_MAX_BYTES).toBeLessThanOrEqual(cap);
+  });
+  it("sends no size to xAI and says the provider's default size", async () => {
+    const f = fixture("xai"); await f.service.generate({ ...f.request, model: "grok-imagine-image-2.0" }, f.hooks);
+    expect(f.body()).not.toHaveProperty("size");
+    const text = imageApprovalSubtitle(f.reserve.mock.calls[0]![0]);
+    expect(text).not.toContain("1024x1024");
+  });
+  it("stops polling at once when the connection changes, naming the change", async () => {
+    const catalogue = { contract: 1, kind: "image-catalogue", data: [{ id: "flux-image-gpt25-sunburst", operations: ["generate"], maxPromptChars: 32000,
+      sizeRule: { kind: "list", sizes: ["1024x1024"] }, qualities: ["xhigh"], qualityMode: "param", supports: { n: 1 }, delivery: { jobs: true }, expectedSeconds: { xhigh: 120 } }] };
+    let revision = "r1"; const connection = () => ({ id: "flux", provider: "flux" as const, apiKey: "FAKE_V2_CANARY", revision });
+    let polls = 0;
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).endsWith("/v1/images/models")) return json(catalogue);
+      if (init?.method === "POST") { revision = "r2"; return json({ contract: 1, kind: "image-job", id: "imgjob_1", status: "queued", poll_after_s: 2 }, { status: 202 }); }
+      polls++; return json({ contract: 1, kind: "image-job", id: "imgjob_1", status: "running" });
+    });
+    let now = 0;
+    const service = new ImageGenerationService({ resolveConnection: () => connection(), connectionIds: () => ["flux"], fetch: fetcher, fluxCatalogue: true, sleep: async ms => { now += ms; }, now: () => now });
+    const hooks = { assertActive: () => {}, reserve: vi.fn(async () => ({ finish: async () => {} })), publish: vi.fn(), jobStarted: vi.fn(), operationId: "op" };
+    await expect(service.generate({ connectionId: "flux", prompt: "x", model: "flux-image-gpt25-sunburst", quality: "xhigh" }, hooks)).rejects.toMatchObject({ code: "connection-changed" });
+    expect(polls).toBe(0); expect(now).toBeLessThan(60_000);
+  });
+});

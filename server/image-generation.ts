@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { redactSecretsInText } from "./redact.ts";
-import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES, IMAGE_REFERENCE_LIMITS } from "../shared/media-assets.ts";
-import { GENERATED_IMAGE_MAX_BYTES, decodeGeneratedImage, type DecodedGeneratedImage } from "./generated-image.ts";
+import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES } from "../shared/media-assets.ts";
+import { GENERATED_IMAGE_MAX_BYTES, GENERATED_IMAGE_RECEIVE_MAX_BYTES, decodeGeneratedImage, type DecodedGeneratedImage } from "./generated-image.ts";
 import {
-  FLUX_LEGACY_IDS, IMAGE_FORMATS, IMAGE_NEGATIVE_PROMPT_MAX, IMAGE_PROMPT_HARD_MAX, IMAGE_QUALITIES, IMAGE_RESOLUTIONS, OPENAI_IMAGE_MODELS,
+  FLUX_FAMILY_IDS, FLUX_LEGACY_IDS, IMAGE_FORMATS, IMAGE_NEGATIVE_PROMPT_MAX, IMAGE_PROMPT_HARD_MAX, IMAGE_QUALITIES, IMAGE_RESOLUTIONS, OPENAI_IMAGE_MODELS,
   assembleImagePrompt, builtInImageCapabilities, exactTarget, fluxBuiltInModels, openRouterCapabilities, parseFluxImageCatalogue, promptTooLongMessage,
   resolveImageSize, sentModelFor, type FluxCatalogue, type ImageModelCapabilities, type ImageSizeRequest, type ResolvedImageSize,
 } from "../shared/image-capabilities.ts";
@@ -89,6 +89,8 @@ export interface ImageOperationDetails {
   condensedFromChars?: number;
   /** The negative prompt went in as an "Avoid:" line. */
   avoidLine?: boolean;
+  /** A native negative prompt sent in its own field: its length. */
+  negativeChars?: number;
   outputFormat?: string; outputCompression?: number; background?: "transparent"; seed?: number;
   /** The model's reference cap, stated on the card. */
   referenceCap?: number;
@@ -103,7 +105,9 @@ export interface ImageOperationDetails {
   /** A job this attempt is waiting on (contract section 4). */
   jobId?: string;
 }
-export interface DeliveredImage { width?: number; height?: number; mime: string; bytes: number; cropped?: boolean }
+export interface DeliveredImage { width?: number; height?: number; mime: string; bytes: number; cropped?: boolean;
+  /** fit exact: the crop here failed, so the render is delivered as it came. */
+  cropFailed?: boolean }
 export interface GeneratedImageMetadata extends ImageOperationDetails {
   reportedModel?: string; upstreamProvider?: string;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number; costUsd?: number };
@@ -115,7 +119,7 @@ export interface GeneratedImageMetadata extends ImageOperationDetails {
   summary?: string;
 }
 /** What the approval card holds: the full assembled prompt, exactly as sent. */
-export interface ImageApprovalCardInput { prompt: string }
+export interface ImageApprovalCardInput { prompt: string; negativePrompt?: string }
 export interface ImageGenerationHooks<T> {
   signal?: AbortSignal;
   /** Must check current bot/thread/generation/owner authorization synchronously. */
@@ -146,8 +150,13 @@ export class ImageGenerationError extends Error {
   constructor(code: string, message: string, outcome: ImageAttemptOutcome = "not-dispatched", correctablePreflight = false) { super(message); this.code = code; this.outcome = outcome; this.correctablePreflight = correctablePreflight; }
 }
 const LOCAL_PREFLIGHT_CODES = new Set(["invalid-request", "invalid-references", "model-required", "unsupported-model", "unsupported-edit", "unsupported-quality", "unsupported-size", "unsupported-parameter", "prompt-too-long", "connection-unavailable"]);
-/** Every image as base64 at the generated-image cap, plus room for the JSON around it. */
-const maxResponseBytes = (count: number) => count * (Math.ceil(GENERATED_IMAGE_MAX_BYTES / 3) * 4 + 64 * 1024) + 1024 * 1024;
+/** Refusals decided from the model's own statement once its catalogue is read. */
+const CATALOGUE_CHECK_CODES = new Set(["prompt-too-long", "unsupported-parameter", "unsupported-size", "unsupported-quality"]);
+/** One provider answer is never held past this, whatever n is. */
+export const IMAGE_RESPONSE_MAX_BYTES = 128 * 1024 * 1024;
+/** Every image as base64 at the generated-image cap, plus room for the JSON
+ * around it, within the fixed whole-answer cap. */
+export const imageResponseCap = (count: number) => Math.min(IMAGE_RESPONSE_MAX_BYTES, count * (Math.ceil(GENERATED_IMAGE_RECEIVE_MAX_BYTES / 3) * 4 + 64 * 1024) + 1024 * 1024);
 const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
 /** Bounds the checks before the owner's approval; the render has its own limits after it. */
 const PREFLIGHT_TIMEOUT_MS = 180_000;
@@ -356,16 +365,21 @@ function staticCatalog(connection: ImageConnection): ImageCatalog {
 function fluxCatalogFrom(connection: ImageConnection, catalogue: FluxCatalogue): ImageCatalog {
   const rows: ImageModelOption[] = [];
   const seen = new Set<string>();
+  // An older id always keeps the one quality and size it has always meant;
+  // the catalogue can only tell Murage about its references and delivery.
+  const pinned = (id: string, from: ImageModelCapabilities): ImageModelCapabilities | null => {
+    const legacy = FLUX_LEGACY_IDS[id] && !FLUX_FAMILY_IDS.has(id) ? builtInImageCapabilities("flux", id) : null;
+    return legacy ? { ...legacy, maxReferences: from.maxReferences, maxReferenceBytes: from.maxReferenceBytes, maxReferenceBytesTotal: from.maxReferenceBytesTotal, delivery: from.delivery, source: "catalogue" } : null;
+  };
   for (const entry of catalogue.entries) {
     const status = entry.status ? { status: entry.status } : {};
-    rows.push(modelOption(entry.id, entry.label, entry.capabilities, { availability: "catalog-listed", ...status }));
+    const legacy = pinned(entry.id, entry.capabilities);
+    rows.push(modelOption(entry.id, entry.label, legacy ?? entry.capabilities, { availability: "catalog-listed", ...status, ...(legacy ? { aliasOf: FLUX_LEGACY_IDS[entry.id]!.base } : {}) }));
     seen.add(entry.id);
   }
   for (const entry of catalogue.entries) for (const alias of entry.aliases) {
     if (seen.has(alias)) continue;
-    const legacy = FLUX_LEGACY_IDS[alias]?.base === entry.id ? builtInImageCapabilities("flux", alias) : null;
-    const capabilities = legacy ? { ...legacy, maxReferences: entry.capabilities.maxReferences, maxReferenceBytes: entry.capabilities.maxReferenceBytes, maxReferenceBytesTotal: entry.capabilities.maxReferenceBytesTotal, delivery: entry.capabilities.delivery, source: "catalogue" as const } : entry.capabilities;
-    rows.push(modelOption(alias, alias, capabilities, { availability: "catalog-listed", aliasOf: entry.id }));
+    rows.push(modelOption(alias, alias, pinned(alias, entry.capabilities) ?? entry.capabilities, { availability: "catalog-listed", aliasOf: entry.id }));
     seen.add(alias);
   }
   for (const model of staticCatalog(connection).models) if (!seen.has(model.id)) rows.push(model);
@@ -476,6 +490,7 @@ export function imageApprovalSubtitle(details: ImageOperationDetails): string {
   }
   if (details.condensedFromChars !== undefined && details.promptChars !== undefined) lines.push(`Condensed from ${fmt(details.condensedFromChars)} to ${fmt(details.promptChars)} characters for ${details.model}.`);
   if (details.avoidLine) lines.push("Negative prompt added as an Avoid: line.");
+  if (details.negativeChars) lines.push(`Negative prompt sent in its own field: ${fmt(details.negativeChars)} characters.`);
   if (details.outputFormat) lines.push(`Format: ${details.outputFormat}${details.outputCompression !== undefined ? `, compression ${details.outputCompression}` : ""}.`);
   if (details.background) lines.push("Transparent background.");
   if (details.seed !== undefined) lines.push(`Seed ${details.seed}.`);
@@ -489,6 +504,10 @@ export function imageDeliveredSentence(metadata: GeneratedImageMetadata): string
   const unique = [...new Set(delivered.map(pixelsOf).filter(Boolean) as string[])];
   if (unique.length !== 1) return unique.length ? `${unique.join(", ")} delivered.` : "";
   const cropped = delivered.some(image => image.cropped);
+  if (delivered.some(image => image.cropFailed)) {
+    const asked = metadata.sizeAsked && metadata.sizeAsked !== "default" ? `${metadata.sizeAsked} asked, ` : "";
+    return `${asked}${unique[0]} rendered. It could not be cropped here to ${metadata.cropTo ?? "the exact size"}, so it is delivered as rendered.`;
+  }
   // A crop's delivered pixels are the crop; the render is the size sent.
   return cropped ? sizeSentence({ ...metadata, cropTo: unique[0] }) : sizeSentence(metadata, unique[0]);
 }
@@ -715,7 +734,7 @@ export class ImageGenerationService {
       if (references.length > IMAGE_GENERATION_REFERENCE_MAX) fail("invalid-references", `${references.length} reference images; Murage takes at most ${IMAGE_GENERATION_REFERENCE_MAX}. Nothing was sent.`);
       if (totalBytes > IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES) fail("invalid-references", `Reference images must total at most ${mib(IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES)}. Nothing was sent.`);
       for (const reference of references) {
-        if (!Buffer.isBuffer(reference.bytes) || !reference.bytes.length || reference.bytes.length > IMAGE_REFERENCE_LIMITS.maxBytesEach || !REFERENCE_MIMES.includes(reference.mime)) fail("invalid-references", "Reference images must be bounded PNG, JPEG or WebP files.");
+        if (!Buffer.isBuffer(reference.bytes) || !reference.bytes.length || reference.bytes.length > GENERATED_IMAGE_MAX_BYTES || !REFERENCE_MIMES.includes(reference.mime)) fail("invalid-references", "Reference images must be bounded PNG, JPEG or WebP files.");
         try { if (decodeGeneratedImage(reference.bytes.toString("base64")).mime !== reference.mime) throw new Error("format mismatch"); }
         catch { fail("invalid-references", "A reference image has an invalid format."); }
       }
@@ -783,6 +802,8 @@ export class ImageGenerationService {
       const streams = ["openai", "flux"].includes(connection.provider) && (edit ? caps.delivery.streamEdits : caps.delivery.stream) && (connection.provider !== "openai" || count === 1);
       const delivery: ImageDelivery = connection.provider === "flux" && caps.delivery.jobs && longRender ? "job" : streams ? "stream" : "buffered";
       const payload: Record<string, unknown> = { model: sent.model, prompt: assembled.prompt, n: count };
+      // A native negative prompt is its own field: the card shows it beside the prompt.
+      const nativeNegative = connection.provider === "flux" && caps.supports.negative ? request.negativePrompt?.trim() || undefined : undefined;
       let endpointTag: string | undefined;
       if (connection.provider === "openrouter") {
         let info: unknown;
@@ -811,7 +832,7 @@ export class ImageGenerationService {
         if (request.outputCompression !== undefined) payload.output_compression = request.outputCompression;
         if (request.background) payload.background = request.background;
         if (request.seed !== undefined) payload.seed = request.seed;
-        if (request.negativePrompt && caps.supports.negative) payload.negative_prompt = request.negativePrompt;
+        if (nativeNegative) payload.negative_prompt = nativeNegative;
         if (edit) delete payload.n;
       } else if (connection.provider === "google") {
         if (resolved.aspectRatio) payload.aspect_ratio = resolved.aspectRatio;
@@ -820,8 +841,10 @@ export class ImageGenerationService {
       } else Object.assign(payload, { ...(quality ? { quality } : {}), response_format: "b64_json" });
       if (delivery === "stream") {
         payload.stream = true;
-        // No router keepalive: one preview frame keeps bytes moving past the edge's ~100 s cut.
-        if (longRender && !caps.delivery.keepaliveSeconds) payload.partial_images = 1;
+        // No router keepalive: one preview frame keeps bytes moving past the
+        // edge's ~100 s cut. OpenAI sends nothing else until the image is
+        // done, so a direct OpenAI stream always asks for one.
+        if (connection.provider === "openai" || (longRender && !caps.delivery.keepaliveSeconds)) payload.partial_images = 1;
       }
       const promptBlocks = assembly.blocks?.map(block => ({ name: block.name, version: block.version, scope: block.scope, chars: block.text.trim().length }));
       const details: ImageOperationDetails = { connectionId: connection.id, provider: connection.provider, model: modelId!, operation: request.operation, count, referenceCount: references.length,
@@ -831,7 +854,7 @@ export class ImageGenerationService {
         ...(resolved.exact ? { cropTo: resolved.exact.width ? `${resolved.exact.width}x${resolved.exact.height}` : `${resolved.asked} (centre crop)` } : {}),
         ...(resolved.experimental ? { experimentalSize: true } : {}),
         promptChars, promptSha256: sha256(assembled.prompt), ...(request.condensedFromChars !== undefined ? { condensedFromChars: request.condensedFromChars } : {}),
-        ...(assembled.avoidLine ? { avoidLine: true } : {}), ...(request.outputFormat ? { outputFormat: request.outputFormat } : {}),
+        ...(assembled.avoidLine ? { avoidLine: true } : {}), ...(nativeNegative ? { negativeChars: nativeNegative.length } : {}), ...(request.outputFormat ? { outputFormat: request.outputFormat } : {}),
         ...(request.outputCompression !== undefined ? { outputCompression: request.outputCompression } : {}), ...(request.background ? { background: request.background } : {}),
         ...(request.seed !== undefined ? { seed: request.seed } : {}), ...(edit || references.length ? { referenceCap: model!.maxReferences } : {}),
         ...(assembly.referencePack ? { referencePack: assembly.referencePack } : {}), ...(promptBlocks?.length ? { promptBlocks, promptScene: Boolean(request.prompt) } : {}),
@@ -846,7 +869,8 @@ export class ImageGenerationService {
       }
       active();
       reservationStarted = true;
-      try { reservation = await hooks.reserve(details, { prompt: assembled.prompt }); } catch { fail("permission-denied", "Image generation was not approved."); }
+      const card: ImageApprovalCardInput = { prompt: assembled.prompt, ...(nativeNegative ? { negativePrompt: nativeNegative } : {}) };
+      try { reservation = await hooks.reserve(details, card); } catch { fail("permission-denied", "Image generation was not approved."); }
       // The render's own limits start after the separately bounded owner review.
       const renderSignal = () => AbortSignal.timeout(delivery === "buffered" ? BUFFERED_DEADLINE_MS : RENDER_CEILING_MS);
       signal = hooks.signal ? AbortSignal.any([hooks.signal, renderSignal()]) : renderSignal();
@@ -870,15 +894,20 @@ export class ImageGenerationService {
         const url = `${FLUX_JOBS_URL}/${encodeURIComponent(id)}`;
         assertCredentialOrigin(connection.provider, url);
         return pollImageJob({ id, firstDelaySeconds, signal, sleep: this.options.sleep ?? defaultSleep, now: this.options.now ?? Date.now,
-          get: async pollSignal => { active(); const response = await this.fetcher(url, { headers: auth, signal: pollSignal, redirect: "error" }); return { status: response.status, body: response.ok ? await boundedJson(response, maxResponseBytes(count)) : (void response.body?.cancel(), null) }; } });
+          // A changed connection, a lost authorization or a cancel stops at once with its own reason.
+          fatal: error => error instanceof ImageGenerationError,
+          get: async pollSignal => { active(); const response = await this.fetcher(url, { headers: auth, signal: pollSignal, redirect: "error" }); return { status: response.status, body: response.ok ? await boundedJson(response, imageResponseCap(count)) : (void response.body?.cancel(), null) }; } });
       };
       let result: unknown;
       if (hooks.resumeJob) result = await pollJob(hooks.resumeJob.id, 2);
       else {
         const idleMs = idleTimeoutMs(caps.delivery.keepaliveSeconds);
-        const idle = delivery === "stream" ? idleWatch(idleMs) : null;
+        // The idle clock starts at the response headers: until then only the
+        // render ceiling applies (a provider may hold headers while it works).
+        const idle = delivery === "stream" ? idleWatch(idleMs, false) : null;
         try {
           const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, ...auth }, body: outbound.body, signal: idle ? AbortSignal.any([signal, idle.signal]) : signal, redirect: "error" });
+          idle?.touch();
           if (!response.ok) {
             outcome = response.status >= 400 && response.status < 500 ? "failed" : "uncertain";
             // A 4xx body from the provider says why (Flux: error.code such as
@@ -888,11 +917,12 @@ export class ImageGenerationService {
             fail("provider-error", `The selected image provider rejected the request (HTTP ${response.status})${detail}. No fallback or automatic retry was attempted.`, outcome);
           }
           const type = response.headers.get("content-type") ?? "";
-          if (type.includes("text/event-stream") && response.body) result = await readImageEventStream(response.body, { onActivity: idle?.touch, maxEventBytes: maxResponseBytes(count), expected: count });
+          if (type.includes("text/event-stream") && response.body) result = await readImageEventStream(response.body, { onActivity: idle?.touch, maxEventBytes: imageResponseCap(count), maxTotalBytes: IMAGE_RESPONSE_MAX_BYTES, expected: count });
           else {
-            result = await boundedJson(response, maxResponseBytes(count));
-            const job = response.status === 202 || delivery === "job" ? parseImageJob(result) : null;
-            if (response.status === 202 && !job) fail("invalid-response", "The image provider accepted the request but returned no job to follow.", "uncertain");
+            result = await boundedJson(response, imageResponseCap(count));
+            // Only Flux runs jobs (contract section 4); any other 202 is read as an answer.
+            const job = connection.provider === "flux" && (response.status === 202 || delivery === "job") ? parseImageJob(result) : null;
+            if (connection.provider === "flux" && response.status === 202 && !job) fail("invalid-response", "The image provider accepted the request but returned no job to follow.", "uncertain");
             if (job) {
               // Durable before the first poll: the same request_id resumes this job.
               hooks.jobStarted?.({ id: job.id });
@@ -914,19 +944,25 @@ export class ImageGenerationService {
       const images: Array<{ image: DecodedGeneratedImage; delivered: DeliveredImage }> = [];
       for (const encoded of encodedList) {
         let image: DecodedGeneratedImage;
-        try { image = decodeGeneratedImage(encoded, GENERATED_IMAGE_MAX_BYTES); } catch { return fail("invalid-image", "The image provider returned invalid or oversized raster bytes.", outcome); }
+        try { image = decodeGeneratedImage(encoded, GENERATED_IMAGE_RECEIVE_MAX_BYTES); } catch { return fail("invalid-image", "The image provider returned invalid or oversized raster bytes.", outcome); }
         if (connection.provider === "flux" && edit && image.mime !== "image/png") fail("invalid-image", "Flux did not return the PNG required by its edit contract.", outcome);
-        let rendered = pixelsIn(image.bytes), cropped = false;
+        let rendered = pixelsIn(image.bytes), cropped = false, cropFailed = false;
         if (resolved.exact && crop && rendered) {
           const target = exactTarget(resolved.exact, rendered);
           if (target.width !== rendered.width || target.height !== rendered.height) {
-            let bytes: Buffer;
-            try { bytes = await crop(image.bytes, target.width, target.height); } catch { return fail("crop-failed", "The image arrived but could not be cropped to the exact size here. Nothing was published; check the provider before trying again.", outcome); }
-            image = decodeGeneratedImage(bytes.toString("base64"), GENERATED_IMAGE_MAX_BYTES);
-            rendered = pixelsIn(image.bytes); cropped = true;
+            // The paid render is kept either way: a crop that fails or returns
+            // something unreadable delivers the render as it came, stated.
+            try {
+              const croppedImage = decodeGeneratedImage((await crop(image.bytes, target.width, target.height)).toString("base64"), GENERATED_IMAGE_RECEIVE_MAX_BYTES);
+              const croppedPixels = pixelsIn(croppedImage.bytes);
+              if (!croppedPixels || croppedPixels.width !== target.width || croppedPixels.height !== target.height) throw new Error("crop size");
+              image = croppedImage; rendered = croppedPixels; cropped = true;
+            } catch { cropFailed = true; }
           }
         }
-        images.push({ image, delivered: { ...(rendered ? rendered : {}), mime: image.mime, bytes: image.bytes.length, ...(cropped ? { cropped } : {}) } });
+        // Kept images match what Files, the viewer and Save accept: a larger render is named, not cut.
+        if (image.bytes.length > GENERATED_IMAGE_MAX_BYTES) fail("image-too-large", `The render arrived at ${mib(image.bytes.length)}; Murage keeps images up to ${mib(GENERATED_IMAGE_MAX_BYTES)}. Nothing was published. Ask for output_format jpeg or webp, or a smaller resolution.`, outcome);
+        images.push({ image, delivered: { ...(rendered ? rendered : {}), mime: image.mime, bytes: image.bytes.length, ...(cropped ? { cropped } : {}), ...(cropFailed ? { cropFailed } : {}) } });
       }
       const base: GeneratedImageMetadata = { ...details, ...(typeof result.model === "string" && result.model.length <= 180 ? { reportedModel: result.model } : {}), ...(endpointTag ? { upstreamProvider: endpointTag } : {}), ...(safeUsage(result) ? { usage: safeUsage(result) } : {}) };
       const artifacts: T[] = [];
@@ -948,7 +984,9 @@ export class ImageGenerationService {
       if (error instanceof ImageGenerationError) {
         // Only deterministic local validation, before any external read or
         // approval, can release the turn slot. Unknown failures stay fenced.
-        if (!reservationStarted && !externalReadStarted && LOCAL_PREFLIGHT_CODES.has(error.code)) {
+        // The prompt, parameter and size checks after a free catalogue read
+        // are just as local: nothing was sent, so they stay correctable too.
+        if (!reservationStarted && LOCAL_PREFLIGHT_CODES.has(error.code) && (!externalReadStarted || CATALOGUE_CHECK_CODES.has(error.code))) {
           active();
           throw new ImageGenerationError(error.code, error.message, error.outcome, true);
         }

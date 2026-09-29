@@ -25,6 +25,6 @@ describe("decodeGeneratedImage", () => {
     const big = Buffer.concat([Buffer.from(ONE_PIXEL_PNG, "base64"), Buffer.alloc(IMAGE_MAX_BYTES)]).toString("base64");
     expect(() => decodeGeneratedImage(big)).toThrow();
     expect(decodeGeneratedImage(big, GENERATED_IMAGE_MAX_BYTES).bytes.length).toBeGreaterThan(IMAGE_MAX_BYTES);
-    expect(GENERATED_IMAGE_MAX_BYTES).toBe(40 * 1024 * 1024);
+    expect(GENERATED_IMAGE_MAX_BYTES).toBe(25 * 1024 * 1024);
   });
 });

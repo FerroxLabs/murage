@@ -47,12 +47,12 @@ export interface ImageSettingsPatch { enabled?: boolean; connectionId?: string; 
 /** "5 minutes ago", "2 hours ago", "3 days ago". Pure, for tests. */
 export function relativeTime(at: number, now: number): string {
   const minutes = Math.max(0, Math.round((now - at) / 60_000));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return minutes === 1 ? "1 minute ago" : `${minutes} minutes ago`;
+  if (minutes < 1) return t("imageSettings.time.now");
+  if (minutes < 60) return minutes === 1 ? t("imageSettings.time.minute") : t("imageSettings.time.minutes", { count: minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+  if (hours < 24) return hours === 1 ? t("imageSettings.time.hour") : t("imageSettings.time.hours", { count: hours });
   const days = Math.round(hours / 24);
-  return days === 1 ? "1 day ago" : `${days} days ago`;
+  return days === 1 ? t("imageSettings.time.day") : t("imageSettings.time.days", { count: days });
 }
 
 /** What Murage knows about whether this model works for this key: its own
@@ -60,11 +60,11 @@ export function relativeTime(at: number, now: number): string {
  * never hidden. Pure, for tests. */
 export function imageModelCheckLines(model: ImageModel, now = Date.now()): string[] {
   const lines: string[] = [];
-  if (model.availability === "failed" && model.lastFailedAt !== undefined) lines.push(t("imageSettings.check.failed", { when: relativeTime(model.lastFailedAt, now), reason: model.lastError || "no reason given" }));
+  if (model.availability === "failed" && model.lastFailedAt !== undefined) lines.push(t("imageSettings.check.failed", { when: relativeTime(model.lastFailedAt, now), reason: model.lastError || t("imageSettings.check.noReason") }));
   if (model.lastGoodAt !== undefined) lines.push(t("imageSettings.check.lastWorked", { when: relativeTime(model.lastGoodAt, now) }));
   if (model.offeredToKey === false) lines.push(t("imageSettings.check.notOffered"));
   if (model.status?.state) lines.push(t("imageSettings.check.fluxStatus", { state: model.status.state }));
-  if (!lines.length) lines.push(model.availability === "catalog-listed" ? "Listed by the provider. Account access is checked when a request runs." : t("imageSettings.check.notChecked"));
+  if (!lines.length) lines.push(model.availability === "catalog-listed" ? t("imageSettings.check.listed") : t("imageSettings.check.notChecked"));
   return lines;
 }
 
@@ -99,9 +99,10 @@ export function imageModelCapability(model: ImageModel): ImageModelCapability {
 /** A model's own limits in plain words, and for Flux whether they came from
  * the router or Murage's built-in table. Pure, for tests. */
 export function imageModelLimits(capabilities: ImageModelCapabilities, source?: "catalogue" | "built-in"): string {
-  const budget = `Prompt budget: ${capabilities.maxPromptChars.toLocaleString("en-US")} characters${capabilities.promptBudgetNote ? ` (${capabilities.promptBudgetNote.replace(/\.$/, "")})` : ""}.`;
-  const details = source === "catalogue" ? " Model details: from Flux." : source === "built-in" ? " Model details: built in." : "";
-  return `${budget} Sizes: ${capabilities.sizeRuleText}${details}`;
+  const count = capabilities.maxPromptChars.toLocaleString("en-US");
+  const budget = capabilities.promptBudgetNote ? t("imageSettings.limits.budgetNote", { count, note: capabilities.promptBudgetNote.replace(/\.$/, "") }) : t("imageSettings.limits.budget", { count });
+  const details = source === "catalogue" ? ` ${t("imageSettings.limits.fromFlux")}` : source === "built-in" ? ` ${t("imageSettings.limits.builtIn")}` : "";
+  return `${budget} ${t("imageSettings.limits.sizes", { rule: capabilities.sizeRuleText })}${details}`;
 }
 
 /** The dropdown suffix for one model: what it can do here, at a glance. */
@@ -125,14 +126,14 @@ export function ImageSettings() {
   const [probing, setProbing] = useState(false);
   const inFlight = useRef(false);
   const mounted = useRef(true);
-  const request = async (patch?: ImageSettingsPatch) => {
+  const request = async (patch?: ImageSettingsPatch, refresh = false) => {
     if (inFlight.current) return;
     inFlight.current = true; setBusy(patch ? "save" : "load"); setError(""); setNotice("");
     try {
-      const next: ImageSettingsSnapshot = await api("/api/images/settings", patch ? { method: "POST", body: JSON.stringify(patch) } : undefined);
-      if (mounted.current) { setSnapshot(next); if (patch) setNotice("Image settings saved."); }
+      const next: ImageSettingsSnapshot = await api(refresh ? "/api/images/settings?refresh=1" : "/api/images/settings", patch ? { method: "POST", body: JSON.stringify(patch) } : undefined);
+      if (mounted.current) { setSnapshot(next); if (patch) setNotice(t("imageSettings.saved")); }
     } catch (cause) {
-      if (mounted.current) setError(cause instanceof Error ? cause.message : "Could not load or save image settings.");
+      if (mounted.current) setError(cause instanceof Error ? cause.message : t("imageSettings.loadFailed"));
     } finally {
       inFlight.current = false; if (mounted.current) setBusy(null);
     }
@@ -144,12 +145,12 @@ export function ImageSettings() {
     inFlight.current = true; setProbing(true); setError(""); setNotice("");
     try {
       const result: { probe: { ok: boolean; errorMessage?: string }; settings: ImageSettingsSnapshot } = await api("/api/images/probe", { method: "POST", body: JSON.stringify({ connectionId, model }) });
-      if (mounted.current) { setSnapshot(result.settings); if (result.probe.ok) setNotice(t("imageSettings.check.passed")); else setError(result.probe.errorMessage ?? "The check failed."); }
+      if (mounted.current) { setSnapshot(result.settings); if (result.probe.ok) setNotice(t("imageSettings.check.passed")); else setError(result.probe.errorMessage ?? t("imageSettings.check.failedPlain")); }
     } catch (cause) {
-      if (mounted.current) setError(cause instanceof Error ? cause.message : "The check could not run.");
+      if (mounted.current) setError(cause instanceof Error ? cause.message : t("imageSettings.check.couldNotRun"));
     } finally { inFlight.current = false; if (mounted.current) setProbing(false); }
   };
-  return <ImageSettingsView snapshot={snapshot} busy={busy} error={error} notice={notice} onChange={patch => void request(patch)} onRefresh={() => void request()}
+  return <ImageSettingsView snapshot={snapshot} busy={busy} error={error} notice={notice} onChange={patch => void request(patch)} onRefresh={() => void request(undefined, true)}
     probing={probing} onProbe={(connectionId, model) => void probe(connectionId, model)} />;
 }
 
@@ -178,29 +179,29 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
   const usable = Boolean(model?.generate && !model.disabledReason);
 
   return <section aria-labelledby="image-settings-heading" className="min-w-0 rounded-xl border border-hairline/40 p-4">
-    <h3 id="image-settings-heading" className="text-[14px] font-medium text-ink">Image generation</h3>
-    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Let bots create or edit images using an existing connection. Flux defaults to GPT Image 2.5 Flare high.</p>
+    <h3 id="image-settings-heading" className="text-[14px] font-medium text-ink">{t("imageSettings.heading")}</h3>
+    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.intro")}</p>
     <label className="mt-3 flex min-h-11 items-center gap-3 text-[13px] text-ink">
       <input type="checkbox" checked={snapshot?.enabled ?? false} disabled={!snapshot || Boolean(busy) || (!snapshot.enabled && !usable)}
         onChange={event => onChange({ enabled: event.target.checked })} className={`size-4 shrink-0 accent-accent ${focus}`} />
-      Allow image requests
+      {t("imageSettings.allow")}
     </label>
-    {snapshot?.connections.length === 0 ? <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">No supported image connections are available. Set up an image provider in Murage, then refresh this list.</p> : <>
-      <label className="mt-3 block text-[13px] text-ink">Connection
-        <select aria-label="Image connection" value={connectionId} disabled={!snapshot || Boolean(busy)} onChange={event => onChange({ connectionId: event.target.value })} className={select}>
-          <option value="" disabled>Choose a connection</option>
+    {snapshot?.connections.length === 0 ? <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.noConnections")}</p> : <>
+      <label className="mt-3 block text-[13px] text-ink">{t("imageSettings.connection")}
+        <select aria-label={t("imageSettings.connectionAria")} value={connectionId} disabled={!snapshot || Boolean(busy)} onChange={event => onChange({ connectionId: event.target.value })} className={select}>
+          <option value="" disabled>{t("imageSettings.chooseConnection")}</option>
           {snapshot?.connections.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
       </label>
-      <label className="mt-3 block text-[13px] text-ink">Image model
-        <select aria-label="Image model" value={modelId} disabled={!catalog || Boolean(busy)} onChange={event => onChange({ connectionId, model: event.target.value })} className={select}>
-          <option value="" disabled>Choose an image model</option>
-          {modelId && !model && <option value={modelId} disabled>{modelId}: unavailable</option>}
+      <label className="mt-3 block text-[13px] text-ink">{t("imageSettings.model")}
+        <select aria-label={t("imageSettings.model")} value={modelId} disabled={!catalog || Boolean(busy)} onChange={event => onChange({ connectionId, model: event.target.value })} className={select}>
+          <option value="" disabled>{t("imageSettings.chooseModel")}</option>
+          {modelId && !model && <option value={modelId} disabled>{t("imageSettings.modelUnavailable", { model: modelId })}</option>}
           {catalog?.models.map(item => <option key={item.id} value={item.id} disabled={!item.generate || Boolean(item.disabledReason)}>{imageModelOptionLabel(item, catalog.defaultModel)}</option>)}
         </select>
       </label>
       {snapshot?.catalogError && <p role="alert" className="mt-2 text-[12px] text-danger">{snapshot.catalogError}</p>}
-      {catalog?.provider === "xai" && !modelId && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">GPT Image 2 is not available on this connection. Choose an Imagine model to use xAI.</p>}
+      {catalog?.provider === "xai" && !modelId && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.xaiNoDefault")}</p>}
       {model && capability && <p data-image-capability={capability.kind} className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{capability.sentences.join(" ")}</p>}
       {model && usable && model.capabilities && <p data-image-limits className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{imageModelLimits(model.capabilities, catalog?.provider === "flux" ? catalog.capabilitySource : undefined)}</p>}
       {model && <p data-image-check={model.availability} className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{imageModelCheckLines(model).join(" ")}</p>}
@@ -215,16 +216,16 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
         <input type="checkbox" checked={snapshot.dailyProbe === true} disabled={Boolean(busy)} onChange={event => onChange({ dailyProbe: event.target.checked })} className={`size-4 shrink-0 accent-accent ${focus}`} />
         <span>{t("imageSettings.check.daily")}<span className="block text-[12px] text-ink-secondary">{t("imageSettings.check.dailyNote")}</span></span>
       </label>}
-      {catalog && !usable && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">Choose an available model before enabling image requests.</p>}
-      {connection && <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">Images use {connection.label}, with that connection’s account. Murage will not switch providers if a request fails.</p>}
+      {catalog && !usable && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.chooseAvailable")}</p>}
+      {connection && <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.usesConnection", { label: connection.label })}</p>}
     </>}
-    <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">One image request per bot turn. You review and approve each image request before it runs. Editing is offered only when the selected model supports it.</p>
+    <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.oneRequest")}</p>
     {onProbe && (libraryOpen ? <LazyBoundary inline onRetry={Library.retry} onDismiss={() => setLibraryOpen(false)}>
       <Suspense fallback={<p role="status" className="mt-3 text-[12px] text-ink-secondary">{t("imageLibrary.busy")}</p>}><Library.Component /></Suspense>
     </LazyBoundary> : <button type="button" onClick={() => setLibraryOpen(true)} className={`mt-3 block min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink ${focus}`}>{t("imageSettings.library.open")}</button>)}
-    <button type="button" onClick={onRefresh} disabled={Boolean(busy)} className={`mt-3 min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`}>{busy === "load" ? "Loading connections…" : "Refresh connections"}</button>
-    {busy === "save" && <p role="status" className="mt-2 text-[12px] text-ink-secondary">Saving image settings…</p>}
+    <button type="button" onClick={onRefresh} disabled={Boolean(busy)} className={`mt-3 min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`}>{busy === "load" ? t("imageSettings.loading") : t("imageSettings.refresh")}</button>
+    {busy === "save" && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{t("imageSettings.saving")}</p>}
     {notice && <p role="status" className="mt-2 text-[12px] text-success">{notice}</p>}
-    {error && <p role="alert" className="mt-2 break-words text-[12px] text-danger">{error} Refresh to check the saved settings, then try again.</p>}
+    {error && <p role="alert" className="mt-2 break-words text-[12px] text-danger">{error} {t("imageSettings.errorHint")}</p>}
   </section>;
 }

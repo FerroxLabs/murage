@@ -27,9 +27,13 @@ export const ATTACHMENTS_DIR = join(DATA_DIR, "attachments");
  * is ever buffered, matching the composer's existing size discipline. */
 export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 /** Images a generation provider returns: a 4K PNG can pass 10 MB, so the
- * generated-image path (provider response, retained receipt, conversation
- * attachment) has its own larger cap. Uploads keep IMAGE_MAX_BYTES. */
-export const GENERATED_IMAGE_MAX_BYTES = 40 * 1024 * 1024;
+ * generated-image path (retained receipt, conversation attachment, Files,
+ * the media viewer, Save, and use as a reference) has its own larger cap,
+ * the same 25 MiB every one of those accepts. Uploads keep IMAGE_MAX_BYTES. */
+export const GENERATED_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
+/** One image as the provider sends it may be larger; a render over the kept
+ * cap is refused with its size, never cut. */
+export const GENERATED_IMAGE_RECEIVE_MAX_BYTES = 40 * 1024 * 1024;
 
 /** Shared documents are deliberately smaller than Cloudflare's transport
  * ceiling. This is a local inbox, not unbounded remote storage. */
