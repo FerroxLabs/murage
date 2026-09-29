@@ -314,7 +314,7 @@ test("one approved generation is one attachment, one receipt and one saved versi
   expect(attached[0].attachments).toHaveLength(1);
   const attachmentPath = attached[0].attachments[0].path as string;
   expect(attachmentPath.split(/[\\/]/).at(-1)).toBe(referenceId);
-  expect(attached[0].text).toBe("Image created with gpt-image-2 through openai.");
+  expect(attached[0].text).toBe("Image created with gpt-image-2 through OpenAI.");
   expect(pngsOnDisk(attachmentsDir())).toEqual([referenceId]);
   expect(sha256(readFileSync(attachmentPath))).toBe(FIXTURE_SHA);
   const managedRoot = join(dataRoot, "workspaces", imageBot.id, "generated-images", imageBot.threadId);
@@ -375,7 +375,7 @@ test("one approved generation is one attachment, one receipt and one saved versi
   const thumbs = page.getByRole("button", { name: `Preview attached image ${referenceId}` });
   await expect(thumbs).toHaveCount(1);
   await expect(page.getByRole("button", { name: /^Preview attached image/ })).toHaveCount(1);
-  await expect(page.getByText("Image created with gpt-image-2 through openai.")).toBeVisible();
+  await expect(page.getByText("Image created with gpt-image-2 through OpenAI.")).toBeVisible();
   await thumbs.click();
   await expect(lightbox(page)).toBeVisible();
   await expect(lightbox(page)).toHaveAccessibleName(`Preview ${referenceId}`);
@@ -474,7 +474,7 @@ test("a received image whose attachment cannot be written is retained, shown as 
   const attached = (await messagesOf(imageBot)).filter(message => message.attachments?.length);
   expect(attached).toHaveLength(2);
   expect(attached.map(message => message.id)).toContain(recovered.message_id);
-  expect(attached.every(message => message.text === "Image created with gpt-image-2 through openai.")).toBe(true);
+  expect(attached.every(message => message.text === "Image created with gpt-image-2 through OpenAI.")).toBe(true);
   expect(pngsOnDisk(attachmentsDir()).sort()).toEqual([first.referenceId, recovered.attachment_id].sort());
   const artifacts = await imageArtifactsOf(imageBot);
   expect(artifacts.map(item => item.id).sort()).toEqual([first.artifactId, recovered.artifact_id].sort());
