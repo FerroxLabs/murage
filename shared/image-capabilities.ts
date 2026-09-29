@@ -393,7 +393,7 @@ export function builtInImageCapabilities(provider: ImageCapabilityProvider, id: 
 /** OpenRouter: the live catalogue's sizes and qualities; the budget is
  * OpenAI's for `openai/gpt-image-*`, else the unpublished default. */
 export function openRouterCapabilities(id: string, sizes: string[], qualities: string[], maxReferences: number, format: ImageFormat | undefined): ImageModelCapabilities {
-  const gpt = /^openai\/gpt-image-/.test(id);
+  const gpt = id.startsWith("openai/gpt-image-");
   const legal = sizes.filter(size => parsePixels(size));
   return finish({ maxPromptChars: gpt ? 32_000 : IMAGE_DEFAULT_PROMPT_CHARS, promptBudgetSource: gpt ? "built-in" : "default", ...(gpt ? {} : { promptBudgetNote: NOT_PUBLISHED }),
     sizeRule: { kind: "list", sizes: legal }, defaultSize: legal[0] ?? "1024x1024",

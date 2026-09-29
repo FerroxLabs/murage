@@ -1999,7 +1999,7 @@ describe("harness HTTP API", () => {
       // OpenRouter: editing is offered only after the pinned endpoint check.
       const openRouterSettings = await desktopApi("POST","/api/images/settings",{enabled:true,connectionId:"openrouter",model:"openai/gpt-image-2"});
       expect(openRouterSettings.status).toBe(200);
-      expect(openRouterSettings.body.catalog.models).toEqual([expect.objectContaining({id:"openai/gpt-image-2",generate:true,edit:true,maxReferences:4})]);
+      expect(openRouterSettings.body.catalog.models).toEqual([expect.objectContaining({id:"openai/gpt-image-2",generate:true,edit:true,maxReferences:16})]);
       turn = await startInternalFixtureTurn(bot.id);
       const openRouterArgs = {request_id:"openrouter-edit",prompt:"Combine the synthetic sources",operation:"edit",connection_id:"openrouter",model:"openai/gpt-image-2",reference_ids:[source.payload.artifact.referenceId,xaiEdit.payload.artifact.referenceId]};
       const openRouterEdit = await approved(imageCall(turn.env,openRouterArgs));

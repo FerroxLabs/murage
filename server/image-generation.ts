@@ -465,6 +465,19 @@ export function imageResultSummary(metadata: GeneratedImageMetadata): string {
   return facts.filter(Boolean).join(" ");
 }
 
+/** What list_image_models hands a bot: every model's own limits, compact.
+ * An older alias id is one line naming its base, quality and size (the bot
+ * passes quality on the base instead); the router's alias maps stay here. */
+export function imageModelsForBots(catalog: ImageCatalog): unknown[] {
+  return catalog.models.map(model => {
+    const { qualityAliases: _aliases, sizeAliases: _sizes, sizeRule, ...capabilities } = model.capabilities;
+    const common = { id: model.id, label: model.label, generate: model.generate, edit: model.edit, availability: model.availability,
+      ...(model.status ? { status: model.status } : {}), ...(model.disabledReason ? { disabledReason: model.disabledReason } : {}), ...(model.editUnavailableReason ? { editUnavailableReason: model.editUnavailableReason } : {}) };
+    if (model.aliasOf) return { ...common, aliasOf: model.aliasOf, quality: model.qualities[0], sizes: model.sizes };
+    return { ...common, capabilities: { ...capabilities, sizeRule, ...(model.editQualities ? { editQualities: model.editQualities } : {}) } };
+  });
+}
+
 export interface ImageGenerationServiceOptions {
   resolveConnection: (id: string) => ImageConnection | null; connectionIds: () => string[]; fetch?: typeof fetch;
   /** Read Flux's image catalogue (contract section 1). Off unless asked, so a

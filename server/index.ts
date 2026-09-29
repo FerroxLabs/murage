@@ -440,7 +440,7 @@ import {
 } from "./browser-connection.ts";
 import { captureOutsideHumanControl } from "./private-screen-capture.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
-import { ImageGenerationError, ImageGenerationService, type ImageConnection } from "./image-generation.ts";
+import { ImageGenerationError, ImageGenerationService, imageModelsForBots, type ImageConnection } from "./image-generation.ts";
 import { IMAGE_NEGATIVE_PROMPT_MAX, IMAGE_PROMPT_HARD_MAX } from "../shared/image-capabilities.ts";
 import { ImageOperations, imageReferences } from "./image-operations.ts";
 import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
@@ -11668,7 +11668,11 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { allowed: true, note: decided.note, until: "the end of this task, at most 12 hours" });
       }
 
-      if (path === "/api/internal/image-models" && method === "GET") { const settings = await imageSettings(); requireActiveInternal(); return json(res, 200, settings); }
+      if (path === "/api/internal/image-models" && method === "GET") {
+        // The bot's view: each model's own limits, with alias ids as one line each.
+        const settings = await imageSettings(); requireActiveInternal();
+        return json(res, 200, { ...settings, catalog: settings.catalog ? { ...settings.catalog, models: imageModelsForBots(settings.catalog) } : settings.catalog });
+      }
       if (path === "/api/internal/generate-image" && method === "POST") {
         // Shapes only: every limit that depends on the model (prompt budget,
         // sizes, references, n, formats) is checked by imageService.generate

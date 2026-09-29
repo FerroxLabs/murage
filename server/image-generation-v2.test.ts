@@ -4,7 +4,7 @@
 // before the card with numbers, size by intent, quality aliases, n, formats,
 // the Flux catalogue, streaming and jobs. No real key, no network.
 import { describe, expect, it, vi } from "vitest";
-import { ImageGenerationService, imageApprovalSubtitle, imageResultSummary, type ImageConnection, type ImageProvider, type ImageOperationDetails } from "./image-generation.ts";
+import { ImageGenerationService, imageApprovalSubtitle, imageModelsForBots, imageResultSummary, type ImageConnection, type ImageProvider, type ImageOperationDetails } from "./image-generation.ts";
 
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 /** A PNG whose header says `width` x `height` (enough for the header reader). */
@@ -227,5 +227,18 @@ describe("streaming", () => {
     const f = fixture("flux"); f.fetcher.mockResolvedValueOnce(sse([{ type: "error", error: { code: "moderation_blocked", message: "Blocked." } }]));
     await expect(f.service.generate(f.request, f.hooks)).rejects.toMatchObject({ code: "provider-error", outcome: "failed" });
     expect(f.finish).toHaveBeenCalledWith("failed"); expect(f.publish).not.toHaveBeenCalled();
+  });
+});
+
+describe("list_image_models for bots", () => {
+  it("states every model's limits compactly, well under the tool result cap", async () => {
+    for (const provider of ["flux", "openai", "google", "xai"] as const) {
+      const models = imageModelsForBots(await fixture(provider).service.getCatalog(provider)) as Array<Record<string, unknown>>;
+      expect(JSON.stringify(models).length).toBeLessThan(16_000);
+      for (const model of models) expect(model.aliasOf ? model.quality : (model.capabilities as { maxPromptChars: number }).maxPromptChars).toBeTruthy();
+    }
+    const flux = imageModelsForBots(await fixture("flux").service.getCatalog("flux")) as Array<Record<string, unknown>>;
+    expect(flux.find(model => model.id === "flux-image-gpt25-sunburst-med")).toEqual(expect.objectContaining({ aliasOf: "flux-image-gpt25-sunburst", quality: "medium", sizes: ["1024x1024"] }));
+    expect(flux.find(model => model.id === "flux-image-fast")).toMatchObject({ capabilities: { maxPromptChars: 2000, sizeRuleText: expect.stringContaining("multiples of 32"), supports: { n: 1 } } });
   });
 });
