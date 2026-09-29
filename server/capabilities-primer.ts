@@ -118,11 +118,6 @@ export const INTEGRATION_FACTS = {
  * this MCP contract; search_tool supplies the input schema. */
 export type ToolAccess = "direct" | "use-tool" | "none";
 
-/** ACP supplies the actual mount name, including Fuigo's per-turn nonce. */
-export function memoryToolAccessLine(serverName: string): string {
-  return `Murage's memory tools use the prefix "${serverName}__" this turn. Call use_tool with tool_name "${serverName}__memory_search" (or the other memory tool name). search_tool shows the tool's inputs.`;
-}
-
 /** How an image reaches this bot. Engine and model are different facts and
  * Murage knows them separately:
  *  - `inline`: the image is delivered as an image part to the model. Every

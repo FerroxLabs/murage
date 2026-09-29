@@ -13,7 +13,7 @@
 // is never a security contract). session/load REPLAYS history as ordinary
 // session/update notifications, so updates are double-gated: nothing emits
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
-import { memoryToolAccessLine } from "../../capabilities-primer.ts";
+import { reachesMcpThroughUseTool } from "../../capabilities-primer.ts";
 import { applyProviderRoute, grokResumeBinding, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
 import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
@@ -2481,14 +2481,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // persona that every other turn carries in front of the message
             // would turn the command into chat. Nothing is lost: the persona
             // rides in front of every ordinary turn, including the next one.
-            // The native Fuigo memory alias is minted per turn. Add its call
-            // instruction only here, from the exact name sent to ACP, including
-            // after a session replay. Never put the nonce in the cached primer.
-            const memoryInstruction = turn.integrations?.memory &&
-              (support.driverKind === "fuigoAgent" || support.driverKind === "grokAgent")
-              ? memoryToolAccessLine(memoryName) : "";
-            const instructedTurn = memoryInstruction
-              ? { ...promptTurn, system: [promptTurn.system, memoryInstruction].filter(Boolean).join("\n") }
+            // Use the exact mounts sent to ACP, including the fresh memory
+            // alias after session/load fallback. Never cache these names.
+            const serverNames = mcpServers.map(server => server.name);
+            const example = serverNames.includes("browser") ? "browser__browser_snapshot"
+              : serverNames.includes(memoryName) ? `${memoryName}__memory_search`
+              : serverNames.includes("agents") ? "agents__ask_bot"
+              : `${serverNames[0]}__<tool>`;
+            const toolInstruction = reachesMcpThroughUseTool(support.driverKind) && serverNames.length
+              ? `MCP servers this turn: ${serverNames.join(", ")}. Call a tool on one of them with use_tool and tool_name "<server>__<tool>", for example tool_name "${example}". search_tool shows a tool's inputs.`
+              : "";
+            const instructedTurn = toolInstruction
+              ? { ...promptTurn, system: [promptTurn.system, toolInstruction].filter(Boolean).join("\n") }
               : promptTurn;
             const text = turn.engineCommand
               ? engineCommandText(turn.engineCommand)

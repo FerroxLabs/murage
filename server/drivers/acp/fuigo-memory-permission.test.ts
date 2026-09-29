@@ -54,7 +54,7 @@ async function fixture(scenario: string, tool = "memory_search", wrapped = false
 `;
     cli=join(root,"wrapped-memory-peer.mjs");writeFileSync(cli,source.replace(anchor,envelope+anchor));
   }
-  const driver = createAcpDriver({ driverKind: scenario === "other-engine" ? "other-fixture" : scenario === "grok" ? "grokAgent" : "fuigoAgent", displayName: "Memory wire fixture", defaultCli: process.execPath,
+  const driver = createAcpDriver({ driverKind: scenario === "other-engine" ? "other-fixture" : scenario.startsWith("grok") ? "grokAgent" : "fuigoAgent", displayName: "Memory wire fixture", defaultCli: process.execPath,
     nativeSource: "fuigo.acp", models: { default: "fixture", options: [{ id: "fixture", label: "Fixture" }] }, loginNote: "unused", isAuthenticated: () => true, pickAuthMethod: () => null, authFailure: "continue",
     spawnArgs: () => [cli, scenario, dump, tool], transformEnv: env => { env.HOME = home; env.USERPROFILE = home; env.FUIGO_HOME = home; } });
   const instance = await driver.create({ instanceId: "memory-wire", displayName: "Memory wire", environment: {}, enabled: true, config: { cli: process.execPath, fullAuto: false } }); instances.push(instance);
@@ -62,7 +62,7 @@ async function fixture(scenario: string, tool = "memory_search", wrapped = false
   const memory = { command: process.execPath, args: ["unused-fixture-proxy"], env: { MURAGE_MEMORY_TOKEN: "synthetic-memory-capability" } };
   const turn: SendTurnInput = { threadId, text: "Use scoped memory", cwd: root, ...(scenario === "no-integration" ? {} : { integrations: { memory } }),
     ...scenario.startsWith("load") ? { resumeCursor: "old-session" } : {},
-    ...scenario === "routed" ? { providerRoute: { connectionId: "fixture", preset: "openai", protocol: "openai", baseUrl: "http://127.0.0.1:49999/v1", apiKey: "synthetic-unused-key", model: "fixture", revision: "1" } as const } : {} };
+    ...["routed", "grok-routed"].includes(scenario) ? { providerRoute: { connectionId: "fixture", preset: "openai", protocol: "openai", baseUrl: "http://127.0.0.1:49999/v1", apiKey: "synthetic-unused-key", model: "fixture", revision: "1" } as const } : {} };
   return { root, home, dump, instance, recorder, threadId, turn, memory };
 }
 
@@ -102,14 +102,24 @@ it(`${wrapped?"wrapped ":""}a resumed turn gets a fresh alias and cannot reuse t
   await f.instance.adapter.respondToRequest(f.threadId, opened.requestId, { behavior: "deny" });
   await f.recorder.until(event => event.type === "turn.completed" && event.turnId === second.turnId);
   const turns = JSON.parse(readFileSync(f.dump, "utf8"));
+  for (const turn of turns) expectCurrentInstruction(turn);
+  expect(promptText(turns[1])).not.toContain(turns[0].alias);
   expect(turns).toHaveLength(2);expect(turns[0].alias).not.toBe(turns[1].alias);
   expect(turns[0].decisions[0].outcome.optionId).toBe("once");expect(turns[1].decisions[0].outcome.optionId).toBe("deny");
 });
 
 it(`${wrapped?"wrapped ":""}uses the same fresh alias through session/load then session/new fallback`, async () => {
-  const f = await fixture("load-fallback", "memory_search", wrapped), sent = await f.instance.adapter.sendTurn(f.turn);
+  const f = await fixture("load-fallback", "memory_search", wrapped);
+  const first = await f.instance.adapter.sendTurn({ ...f.turn, resumeCursor: undefined });
+  await f.recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
+  const sent = await f.instance.adapter.sendTurn(f.turn);
   await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
-  const observed = JSON.parse(readFileSync(f.dump, "utf8"))[0];
+  const turns = JSON.parse(readFileSync(f.dump, "utf8"));
+  expect(turns).toHaveLength(2);
+  const observed = turns[1];
+  expectCurrentInstruction(observed);
+  expect(observed.alias).not.toBe(turns[0].alias);
+  expect(promptText(observed)).not.toContain(turns[0].alias);
   expect(observed.definitions.map((item: { method: string }) => item.method)).toEqual(["session/load", "session/new"]);
   expect(observed.definitions[0].servers).toEqual(observed.definitions[1].servers);
   expect(observed.decisions[0].outcome.optionId).toBe("once");
@@ -126,3 +136,58 @@ it.each(["after-result", "after-cancel"])(`${wrapped?"wrapped ":""}never automat
 });
 
 }
+
+function promptText(observed: { prompt: Array<{ text?: string }> }): string {
+  return observed.prompt.map(part => part.text ?? "").join("\n");
+}
+function expectCurrentInstruction(observed: { alias: string; prompt: Array<{ text?: string }> }) {
+  const lines = promptText(observed).split("\n").filter(line => line.includes("use_tool") && line.includes(observed.alias));
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain("MCP servers this turn:");
+  expect(lines[0]).toContain(`tool_name "${observed.alias}__memory_search"`);
+}
+
+it("Grok with a provider route instructs the memory name actually mounted", async () => {
+  const f = await fixture("grok-routed"), sent = await f.instance.adapter.sendTurn(f.turn);
+  const opened = await f.recorder.until(event => event.type === "request.opened");
+  if (opened.type !== "request.opened" || typeof opened.requestId !== "string") throw Error("missing request");
+  await f.instance.adapter.respondToRequest(f.threadId, opened.requestId, { behavior: "deny" });
+  await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
+  const observed = JSON.parse(readFileSync(f.dump, "utf8"))[0];
+  expect(observed.alias).toBe("murage-memory");
+  expectCurrentInstruction(observed);
+});
+
+it("a command with memory mounted remains only the command", async () => {
+  const f = await fixture("valid"), sent = await f.instance.adapter.sendTurn({ ...f.turn, system: "Persona", engineCommand: { name: "compact", args: "" } });
+  await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
+  const observed = JSON.parse(readFileSync(f.dump, "utf8"))[0];
+  expect(observed.alias).toMatch(/^murage-memory-/);
+  expect(promptText(observed)).toBe("/compact");
+});
+
+it.each([
+  { scenario: "valid", memory: true }, { scenario: "grok", memory: true },
+  { scenario: "valid", memory: false }, { scenario: "grok", memory: false },
+])("$scenario lists exactly the mounted browser and custom servers (memory: $memory)", async ({ scenario, memory }) => {
+  const f = await fixture(scenario);
+  const stub = { command: process.execPath, args: ["unused-fixture-proxy"], env: {} };
+  const sent = await f.instance.adapter.sendTurn({ ...f.turn, integrations: {
+    agents: stub, ...(memory ? { memory: f.memory } : {}), browser: stub, localComputer: stub,
+    custom: { browser: stub, research: stub, "murage-memory": stub },
+  } });
+  if (scenario === "grok" || !memory) {
+    const opened = await f.recorder.until(event => event.type === "request.opened");
+    if (opened.type !== "request.opened" || typeof opened.requestId !== "string") throw Error("missing request");
+    await f.instance.adapter.respondToRequest(f.threadId, opened.requestId, { behavior: "deny" });
+  }
+  await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
+  const observed = JSON.parse(readFileSync(f.dump, "utf8"))[0];
+  const mounted = observed.definitions[0].servers.map((server: { name: string }) => server.name);
+  expect(mounted).toEqual(["agents", ...(memory ? [observed.alias] : []), "browser", "computer", "research"]);
+  const lines = promptText(observed).split("\n").filter(line => line.startsWith("MCP servers this turn:"));
+  expect(lines).toHaveLength(1);
+  expect(lines[0].split(". Call")[0]).toBe(`MCP servers this turn: ${mounted.join(", ")}`);
+  expect(lines[0]).toContain('"browser__browser_snapshot"');
+  expect(promptText(observed)).not.toContain("memory tools use the prefix");
+});
