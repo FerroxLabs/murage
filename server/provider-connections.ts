@@ -123,8 +123,9 @@ export class ProviderConnectionsService {
  private now(){return this.options.now?.()??Date.now();}
  // A saved row whose key names another provider (saved before every door
  // checked it, or restored from such a backup) is listed for review and never
- // enabled, refreshed or sent. Replacing its key through Models clears it.
- private records():Array<ProviderConnectionRecord|LegacyProviderConnection|(ProviderConnectionRecord&{legacyError:string})>{return [...(this.options.legacyConnections?.()??[]),...parseProviderBank(this.options.readBank()).map(row=>{const issuer=keyIssuer(row.key);return issuer&&issuer!==row.preset?{...row,enabled:false,legacyError:"This saved key belongs to a different provider. Replace it with the right key before using it."}:row;})];}
+ // enabled, refreshed or sent. Removing it and adding the key under its own
+ // provider clears it.
+ private records():Array<ProviderConnectionRecord|LegacyProviderConnection|(ProviderConnectionRecord&{legacyError:string})>{return [...(this.options.legacyConnections?.()??[]),...parseProviderBank(this.options.readBank()).map(row=>{const issuer=keyIssuer(row.key);return issuer&&issuer!==row.preset?{...row,enabled:false,legacyError:"This saved key belongs to a different provider. Remove it, then add the key under its own provider."}:row;})];}
  resolve(id:string){const found=this.records().find(row=>row.id===id)??this.options.resolveAlias?.(id);return found?{...PROVIDER_PRESETS[found.preset],...found}:null;}
  private readCache(connection:ProviderConnectionRecord):ProviderCatalog {
   if("legacyError" in connection && connection.legacyError)return{connectionId:connection.id,models:[],stale:false,assurance:"catalog-only",error:{code:"unavailable",message:String(connection.legacyError)}};
