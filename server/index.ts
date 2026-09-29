@@ -182,7 +182,7 @@ import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts
 import * as composio from "./composio.ts";
 import { capabilitiesPrimer, roomToolAccessLine, turnCapabilityFacts, type ImageConnectionFact } from "./capabilities-primer.ts";
 import { murageTool, setToolCallStyle, withToolCallScope } from "./tool-call-context.ts";
-import { TOOL_CALL_STYLE_HEADER, murageToolText, parseToolCallStyle, toolCallStyleFor } from "../shared/murage-tool-names.ts";
+import { TOOL_CALL_STYLE_HEADER, murageToolText, parseToolCallStyle, toolCallStyleFor, type ToolCallStyle } from "../shared/murage-tool-names.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
 import { browserRefusal, isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
@@ -751,6 +751,10 @@ const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
 const bundledSkills = loadBundledSkills();
 const availableSkills = () => mergeSkills(bundledSkills, loadUserSkills(join(DATA_DIR, "skills")));
+/** The skills Murage ships (skills/), by folder: only their text is Murage's
+ * own to name tools in for an engine. An owner's or learned skill is theirs. */
+const bundledSkillFolders = new Set(bundledSkills.map(skill => skill.directory));
+const murageSkill = (skill: { directory: string }) => bundledSkillFolders.has(skill.directory);
 
 /** GET /api/bots/:id/shapes: what goes into this bot's instructions, in the
  *  order the model reads it (bot-shapes.ts). What is known now is read now;
@@ -6302,7 +6306,7 @@ async function startTurn(
       // One layer per skill, so "What shapes <bot>" lists each (bot-shapes.ts).
       const skillShapes = skillLayers(selectedSkills, {
         includeRoot: worksInWorkspace && opts?.runOn !== "cloud",
-        toolCallStyle: toolCallStyleFor(instance.driverKind),
+        toolCallStyle: toolCallStyleFor(instance.driverKind), murageSkill,
       });
       const packagePlaybooks = installedPlaybookInstructions(text, pinnedProcedures.playbooks);
       // An explicit working folder wins for new tasks; otherwise they use
@@ -6783,7 +6787,7 @@ async function startTurn(
         recordImagesNotSentAfterTurn(threadId, [...(userMessage ? [userMessage.id] : []), ...(opts?.excludeMessageIds ?? [])], leftOut.paths);
         noteImagesNotSent(threadId, userMessage?.id, leftOut.note, bot);
       }
-      const outputInstructions = prepareOutputDestination(bot.id, threadId, dispatchClaimId, worksInWorkspace && opts?.runOn !== "cloud", Boolean(integrations.agents));
+      const outputInstructions = prepareOutputDestination(bot.id, threadId, dispatchClaimId, worksInWorkspace && opts?.runOn !== "cloud", Boolean(integrations.agents), toolCallStyleFor(instance.driverKind));
       projectTurnLeases.markDispatched(dispatchClaimId);
       submissionBoundary.started();
       preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
@@ -8477,7 +8481,7 @@ async function runGroupMemberTurn(
     shapeLayer("team-brief", roomStanding.teamBrief),
     shapeLayer("memory", roomStanding.memory),
     shapeLayer("skills-index", workspace ? pinnedProcedures.importedPrompt : ""),
-    ...skillLayers(selectedSkills, { includeRoot: Boolean(workspace), toolCallStyle: roomToolStyle }),
+    ...skillLayers(selectedSkills, { includeRoot: Boolean(workspace), toolCallStyle: roomToolStyle, murageSkill }),
     shapeLayer("playbooks", installedPlaybookInstructions(text, pinnedProcedures.playbooks)),
   ];
 
@@ -10526,7 +10530,7 @@ async function reloadScopedProviders(scope: ReadonlySet<string>) {
 // another's changes or dispose a fleet while another reload is creating it.
 /** Admit a file desk without repinning the provider's retained CWD. Both
  * leases belong to the existing generation lifecycle. */
-function prepareOutputDestination(botId: string, threadId: string, generation: string, localFilesystem: boolean, canRegister: boolean): string {
+function prepareOutputDestination(botId: string, threadId: string, generation: string, localFilesystem: boolean, canRegister: boolean, toolCallStyle?: ToolCallStyle): string {
   if (!localFilesystem) return "";
   const selected = selectFileWorkspace(DATA_DIR, store, botId, threadId, true);
   if (!selected) throw new Error("Output conversation is unavailable");
@@ -10537,7 +10541,7 @@ function prepareOutputDestination(botId: string, threadId: string, generation: s
   root = projectTurnLeases.acquireOutput(threadId, generation, root).canonicalPath;
   if (selected.managed) store.admitLocalOutputs(botId, threadId);
   const context = { botId, threadId, runId: generation, workspaceRoot: root, managed: selected.managed };
-  return outputDestinationInstructions(context, outputPublisher.beforeDispatch(context), canRegister);
+  return outputDestinationInstructions(context, outputPublisher.beforeDispatch(context), canRegister, toolCallStyle);
 }
 
 function artifactScopes(): ArtifactScope[] {

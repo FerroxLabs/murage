@@ -107,12 +107,15 @@ export function lineLayers(groups: ReadonlyArray<{ id: string; lines: readonly u
 
 /** One layer per selected skill; renderSkillInstructions of the whole list
  *  is exactly these joined. The Chief of Staff guide is its own row. */
-export function skillLayers(selected: readonly BundledSkill[], options: { includeRoot?: boolean; toolCallStyle?: ToolCallStyle } = {}): ShapeLayer[] {
+export function skillLayers(selected: readonly BundledSkill[], options: { includeRoot?: boolean; toolCallStyle?: ToolCallStyle; murageSkill?: (skill: BundledSkill) => boolean } = {}): ShapeLayer[] {
   return selected.map((skill) => {
     const id = skill.manifest.id === "chief-of-staff" ? "chief-guide" : `skill:${skill.manifest.id}`;
-    // These are the skills Murage ships (the owner's imported skills ride
-    // skills-index), so their tool names are ours to spell for this engine.
-    return shapeLayer(id, engineToolText(renderSkillInstructions([skill], options), options.toolCallStyle), id === "chief-guide" ? undefined : skill.manifest.name);
+    // Only a skill Murage ships has its tool names spelled for this engine,
+    // and only in its instructions: an owner's or learned skill, its id and
+    // its folder are theirs, word for word.
+    const shown = options.toolCallStyle === "use-tool" && options.murageSkill?.(skill)
+      ? { ...skill, instructions: engineToolText(skill.instructions, options.toolCallStyle) } : skill;
+    return shapeLayer(id, renderSkillInstructions([shown], options), id === "chief-guide" ? undefined : skill.manifest.name);
   });
 }
 
@@ -254,7 +257,7 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
     shapeLayer("capabilities", v.primer),
     ...v.skills,
     shapeLayer("playbooks", v.playbooks),
-    shapeLayer("output-folder", named(v.outputFolder)),
+    shapeLayer("output-folder", v.outputFolder),
     shapeLayer("automation", automationPrompt(v.automationSource)),
     shapeLayer("tagged", v.tagged.length
       ? ` The user tagged ${v.tagged.map((t) => `@${t.name} (bot_id ${t.id})`).join(" and ")} in their message.${named(" If they assigned independent work, use delegate_bot and finish your turn without waiting; use ask_bot only if their short reply is required in this answer.")}`

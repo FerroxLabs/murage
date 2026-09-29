@@ -29,6 +29,7 @@ import { GENERATED_IMAGE_MAX_BYTES, IMAGE_MAX_BYTES, saveImage, type SavedAttach
 import type { RuntimeEvent } from "./contracts.ts";
 import type { Store } from "./store.ts";
 import { turnSucceeded } from "./turn-outcome.ts";
+import { murageToolName, type ToolCallStyle } from "../shared/murage-tool-names.ts";
 
 export type TerminalTurnEvent = Extract<RuntimeEvent, { type: "turn.completed" }>;
 
@@ -66,14 +67,15 @@ export interface OutputPublisher {
 }
 
 /** Host facts only. Prose directs creation but never authorizes publication. */
-export function outputDestinationInstructions(context: Pick<DispatchOutputContext, "workspaceRoot" | "managed"> | undefined, snapshotAdmitted: boolean, canRegister: boolean): string {
+/** `toolCallStyle`: how this turn's engine calls Murage's tools (shared/murage-tool-names.ts). */
+export function outputDestinationInstructions(context: Pick<DispatchOutputContext, "workspaceRoot" | "managed"> | undefined, snapshotAdmitted: boolean, canRegister: boolean, toolCallStyle?: ToolCallStyle): string {
   if (!context?.workspaceRoot) return "";
   const destination = context.managed ? join(context.workspaceRoot, OUTPUT_NAMESPACE) : context.workspaceRoot;
   return `\n\nFile deliverables for this turn: save completed HTML, Markdown, text and other requested files in this server-selected folder, even when the request does not name a folder. This replaces earlier scratch-folder advice.\nMurage file destination: ${JSON.stringify(destination)}\n`
     + (context.managed && snapshotAdmitted
       ? "Create real files there. After successful completion Murage checks new or changed files for publication to Files and conversation cards; writing a path in prose is not proof that a file was saved."
       : canRegister
-        ? "After creating each file, call register_artifact with its path relative to the file workspace; wait for its verified result before saying it is saved to Files."
+        ? `After creating each file, call ${murageToolName("register_artifact", toolCallStyle)} with its path relative to the file workspace; wait for its verified result before saying it is saved to Files.`
         : "Automatic publication is unavailable for this turn and no registration tool is mounted. Report the actual file location without claiming a Files card was created.");
 }
 

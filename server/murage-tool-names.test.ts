@@ -22,6 +22,7 @@ import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt } from "./chi
 import { expandLearnTurnText } from "./skill-learn.ts";
 import { capabilitiesPrimer, turnCapabilityFacts } from "./capabilities-primer.ts";
 import { loadBundledSkills } from "./skill-library.ts";
+import { outputDestinationInstructions } from "./output-publication.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const AGENTS_PROXY = join(here, "drivers", "agents-proxy.ts");
@@ -191,7 +192,7 @@ describe("Murage-written prompt text names tools the turn's engine can call", ()
     primer: "", skills: [], playbooks: "", outputFolder: "\nAfter creating each file, call register_artifact with its path relative to the file workspace.",
     tagged: [{ name: "Reed", id: "bot-reed" }],
   });
-  const authored = ["computer", "browser", "credential", "images", "web-search", "routines", "learn", "output-folder", "tagged"];
+  const authored = ["computer", "browser", "credential", "images", "web-search", "routines", "learn", "tagged"];
   it.each(ENGINES.map(engine => engine.kind))("%s: the direct turn's own layers", kind => {
     const all = layers(kind, "box");
     const own = all.filter(layer => authored.includes(layer.id) && layer.text);
@@ -201,6 +202,18 @@ describe("Murage-written prompt text names tools the turn's engine can call", ()
     expect(all.find(layer => layer.id === "house-rules")!.text).toBe("Owner rule: never call list_bots on Sundays.");
     expect(all.find(layer => layer.id === "persona")!.text).toBe("You are Nova. Owner says: ask_bot is my favourite word.");
     expect(all.find(layer => layer.id === "memory")!.text).toBe("Remember: delegate_bot is how Sam works.");
+    expect(all.find(layer => layer.id === "output-folder")!.text).toBe("\nAfter creating each file, call register_artifact with its path relative to the file workspace.");
+  });
+  it.each(ENGINES.map(engine => engine.kind))("%s: the file destination line, with the owner's folder word for word", kind => {
+    const text = outputDestinationInstructions({ workspaceRoot: "/Users/o/web_search/generate_image", managed: false }, false, true, toolCallStyleFor(kind));
+    expect(text).toContain('Murage file destination: "/Users/o/web_search/generate_image"');
+    expectCallableOn(kind, text.replace('"/Users/o/web_search/generate_image"', ""), MURAGE_MCP_TOOLS.agents);
+  });
+  it("an owner's or learned skill is never rewritten, even on Fuigo", () => {
+    const own = { manifest: { id: "web_search", name: "web_search", description: "x", requiredCapabilities: [] }, instructions: "Call generate_image with care.", directory: "/data/skills/web_search" } as never;
+    const fuigo = skillLayers([own], { toolCallStyle: "use-tool", murageSkill: () => false })[0]!.text;
+    expect(fuigo).toBe(skillLayers([own])[0]!.text);
+    expect(fuigo).toContain("Call generate_image with care.");
   });
   it("names the cloud computer's own tools on its own server, and leaves Claude's line as it was", () => {
     const box = (kind: string) => layers(kind, "box").find(layer => layer.id === "computer")!.text;
@@ -234,7 +247,7 @@ describe("Murage-written prompt text names tools the turn's engine can call", ()
   });
   it.each(ENGINES.map(engine => engine.kind))("%s: the bundled image-generation skill as the turn carries it", kind => {
     const skill = loadBundledSkills(join(here, "..", "skills")).find(item => item.manifest.id === "image-generation")!;
-    const text = skillLayers([skill], { toolCallStyle: toolCallStyleFor(kind) })[0]!.text;
+    const text = skillLayers([skill], { toolCallStyle: toolCallStyleFor(kind), murageSkill: item => item === skill })[0]!.text;
     for (const tool of ["list_image_models", "generate_image", "save_prompt_block", "list_prompt_blocks", "get_prompt_block", "resolve_image_reference", "save_reference_pack", "list_reference_packs"])
       expect(text).toContain(toolCallStyleFor(kind) === "use-tool" ? `tool_name "agents__${tool}"` : `\`${tool}\``);
     expectCallableOn(kind, text, MURAGE_MCP_TOOLS.agents);

@@ -64,7 +64,8 @@ export type ObservedElement = z.infer<typeof elementSchema>;
 export type ObservedPage = Omit<z.infer<typeof pageSchema>, "notes" | "yaml"> & { notes?: string[]; yaml?: string | null };
 
 // ── what the model sends ─────────────────────────────────────────────────
-const refSchema = z.string().trim().min(1, "a ref from browser_snapshot is required");
+const REF_REQUIRED = "a ref from browser_snapshot is required";
+const refSchema = z.string().trim().min(1, REF_REQUIRED);
 const navigateArgs = z.object({ url: z.string().trim().min(1, "a url is required") });
 const clickArgs = z.object({ ref: refSchema, double: z.boolean().optional() });
 const fillArgs = z.object({ ref: refSchema, text: z.string().max(4_000).default("") });
@@ -351,7 +352,10 @@ function textResult(text: string, isError = false): ToolResult {
 function argumentError(tool: string, error: z.ZodError): ToolResult {
   const issue = error.issues[0];
   const where = issue?.path.length ? ` (${issue.path.join(".")})` : "";
-  return textResult(engineText(`${tool}: ${issue?.message ?? "invalid arguments"}${where}`), true);
+  // Only this file's own words are named for the engine; a validation
+  // message can quote what the bot sent.
+  const message = issue?.message === REF_REQUIRED ? engineText(REF_REQUIRED) : issue?.message ?? "invalid arguments";
+  return textResult(`${engineText(tool)}: ${message}${where}`, true);
 }
 
 const TAKEOVER_WAIT_MS = 10 * 60_000;
