@@ -43,12 +43,16 @@ For anything recurring (a character, a product, a brand look), keep two parts:
 - **Scene**, new every image: place, moment, action, expression, clothing,
   camera relationship, framing, light, one or two candid details.
 
-Send the lock first, then the scene. If your tools include
-`save_prompt_block`, save the lock once with it and pass its name in
-`generate_image` `prompt_blocks` (for example `["character-lock"]`) with the
-scene as `prompt`; read a saved block back with `get_prompt_block`. Otherwise
-keep the lock in a file and paste it unchanged. Never rewrite a lock from
-memory.
+Send the lock first, then the scene. Save the lock once with
+`save_prompt_block` (`name`, `text`) and pass its name in `generate_image`
+`prompt_blocks` (for example `["character-lock"]`, up to 8 blocks, in order)
+with the scene as `prompt`. Murage joins them with a blank line and counts
+the whole assembled prompt against the model's budget. Pin a version with
+`name@3`; without it the latest version is used. `list_prompt_blocks` shows
+your own blocks and the workspace's (your own wins on a shared name), and
+`get_prompt_block` (`name`, optional `version`) reads one back in full.
+Saving changed text makes a new version; saving the same text again changes
+nothing. Never rewrite a lock from memory.
 
 For a feed, vary on purpose: camera relationship, head position, awareness of
 the camera, distance, activity. Lock the identity; loosen everything else.
@@ -98,9 +102,13 @@ you asked, and says so. Never hand back a different shape without saying so.
   clean character sheet, then the best few renders showing the face at
   different angles.
 - Prepare images from this conversation or workspace with
-  `resolve_image_reference` and pass the ids in `reference_ids`. If your tools
-  include `save_reference_pack`, save a set you reuse once and pass its name
-  as `reference_pack`; pack images come first and count against the cap.
+  `resolve_image_reference` and pass the ids in `reference_ids`.
+- Save a set you reuse with `save_reference_pack` (`name`, `reference_ids`,
+  up to 16) and pass its name as `reference_pack` (`name` or `name@2`);
+  `list_reference_packs` shows the ones you can use. Pack images come first,
+  then `reference_ids`, and together they count against the cap. Murage
+  checks every pack image against its saved copy; a changed or missing one
+  refuses the whole request.
 - Say which reference is which in the prompt ("image 1 is the character;
   image 2 is lighting reference only").
 - Drop weak references. A bad reference teaches drift.

@@ -256,8 +256,11 @@ const TOOLS = [
       revision: { type: "string", maxLength: 256, description: "Optional workspace revision; a changed file is then refused." },
     } } },
   } } },
-  { name: "generate_image", description: "Create images, or edit reference images from this exact conversation. Murage shows the owner an approval card with the connection, model, size, image count, references and prompt length before any provider request. A request the chosen model cannot take (a prompt over its budget, or a size, quality, reference count or setting it does not support) is refused with the reason and the numbers before the card; nothing is ever cut or quietly changed. Limits differ per model: read them with list_image_models first. Ask for a shape with aspect_ratio and resolution, or exact width and height; fit exact renders the nearest size the model supports and crops it here to what you asked. When a prompt is over a model's budget, condense it yourself and pass condensed_from_chars. Flux defaults to GPT Image 2.5 Flare high. Never pass keys, provider URLs, local paths or remote reference URLs. Keep request_id stable for the same logical request: repeating it resumes the same render and never starts a second one. Do not retry or switch connections after a timeout or uncertain result. Generated images are saved in this bot's private generated-images workspace, attached to this conversation and saved to Files. One image request per turn.", inputSchema: { type: "object", properties: {
-    request_id: {type:"string",minLength:1,maxLength:80}, prompt:{type:"string",minLength:1,maxLength:100000,description:"The prompt, sent whole. Its budget is the model's maxPromptChars."}, operation:{type:"string",enum:["generate","edit"]},
+  { name: "generate_image", description: "Create images, or edit reference images from this exact conversation. Murage shows the owner an approval card with the connection, model, size, image count, references and prompt length before any provider request. A request the chosen model cannot take (a prompt over its budget, or a size, quality, reference count or setting it does not support) is refused with the reason and the numbers before the card; nothing is ever cut or quietly changed. Limits differ per model: read them with list_image_models first. Ask for a shape with aspect_ratio and resolution, or exact width and height; fit exact renders the nearest size the model supports and crops it here to what you asked. When a prompt is over a model's budget, condense it yourself and pass condensed_from_chars. Saved prompt blocks (prompt_blocks) go first, in order, then the scene prompt; saved reference-pack images (reference_pack) come before reference_ids and count against the model's cap. Flux defaults to GPT Image 2.5 Flare high. Never pass keys, provider URLs, local paths or remote reference URLs. Keep request_id stable for the same logical request: repeating it resumes the same render and never starts a second one. Do not retry or switch connections after a timeout or uncertain result. Generated images are saved in this bot's private generated-images workspace, attached to this conversation and saved to Files. One image request per turn.", inputSchema: { type: "object", properties: {
+    request_id: {type:"string",minLength:1,maxLength:80}, prompt:{type:"string",minLength:1,maxLength:100000,description:"The scene prompt, sent whole after any prompt_blocks. Optional when prompt_blocks are given. The whole assembled prompt must fit the model's maxPromptChars."},
+    prompt_blocks:{type:"array",maxItems:8,items:{type:"string",maxLength:80,pattern:"^[a-z0-9][a-z0-9-]{0,63}(@[1-9][0-9]{0,8})?$"},description:"Saved prompt blocks, by name or name@version (see list_prompt_blocks), sent first in this order, each separated by a blank line."},
+    reference_pack:{type:"string",maxLength:80,pattern:"^[a-z0-9][a-z0-9-]{0,63}(@[1-9][0-9]{0,8})?$",description:"A saved reference pack, by name or name@version (see list_reference_packs). Its images come first, then reference_ids."},
+    operation:{type:"string",enum:["generate","edit"]},
     connection_id:{type:"string"},model:{type:"string"},quality:{type:"string",enum:["low","medium","high","xhigh","max"],description:"Checked against the model's qualities."},
     aspect_ratio:{type:"string",pattern:"^[0-9]{1,2}:[0-9]{1,2}$",description:"W:H with whole numbers 1 to 64, e.g. 9:16, 4:5, 1:1, 16:9."},
     resolution:{type:"string",enum:["small","standard","large","max"],description:"About 0.5K, 1K, 2K or 4K. Defaults to standard."},
@@ -271,7 +274,20 @@ const TOOLS = [
     negative_prompt:{type:"string",minLength:1,maxLength:2000,description:"What to keep out. Sent natively where the model supports it, otherwise added as an Avoid: line and counted in the prompt."},
     condensed_from_chars:{type:"integer",minimum:1,description:"When you condensed a longer prompt to fit this model: the original length. The card and result say so."},
     reference_ids:{type:"array",maxItems:16,items:{type:"string"},description:"Image attachment ids already in this conversation (uploaded or generated) or ids returned by resolve_image_reference; never file paths. At most the model's maxReferences."}
-  },required:["request_id","prompt"],additionalProperties:false } },
+  },required:["request_id"],additionalProperties:false } },
+  { name: "save_prompt_block", description: "Save a reusable part of an image prompt (a character, product or brand lock) under a name, in your own saved blocks. Each save is a new version; saving the same text again returns the version that already holds it. Use it in generate_image prompt_blocks. Nothing is generated.", inputSchema: { type: "object", required: ["name", "text"], additionalProperties: false, properties: {
+    name: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,63}$", description: "Lowercase letters, digits and hyphens, e.g. brand-lock." },
+    text: { type: "string", minLength: 1, maxLength: 100000, description: "The block, saved exactly as given (trimmed)." },
+  } } },
+  { name: "list_prompt_blocks", description: "List the saved prompt blocks you can use: your own and the workspace's, each with its latest version, length in characters, scope and first 160 characters. Your own block is used when both have the same name.", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "get_prompt_block", description: "Read a saved prompt block in full, the latest version or a given one, for example to condense it for a model with a smaller budget.", annotations: { readOnlyHint: true }, inputSchema: { type: "object", required: ["name"], additionalProperties: false, properties: {
+    name: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,63}$" }, version: { type: "integer", minimum: 1 },
+  } } },
+  { name: "save_reference_pack", description: "Save reference images already in this conversation (ids as generate_image reference_ids takes them) as a named, versioned pack of up to 16, in your own saved packs. Murage keeps a copy of each image and checks it is unchanged every time the pack is used. Use it in generate_image reference_pack. Nothing is generated.", inputSchema: { type: "object", required: ["name", "reference_ids"], additionalProperties: false, properties: {
+    name: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,63}$" },
+    reference_ids: { type: "array", minItems: 1, maxItems: 16, items: { type: "string" }, description: "Image attachment ids from this conversation or from resolve_image_reference, in the order the model should see them." },
+  } } },
+  { name: "list_reference_packs", description: "List the saved reference packs you can use: your own and the workspace's, with the latest version, image count and scope.", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: {}, additionalProperties: false } },
 
   {
     name: "web_search",
@@ -680,7 +696,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     // and then while the provider renders. Giving up here first would close the
     // request, which cancels the card under the owner as "not answered".
     const result = await api("/api/internal/generate-image", { method: "POST", signal: AbortSignal.timeout(GENERATE_IMAGE_TIMEOUT_MS), body: JSON.stringify({
-      requestId: args.request_id, prompt: args.prompt, operation: args.operation, connectionId: args.connection_id,
+      requestId: args.request_id, prompt: args.prompt, promptBlocks: args.prompt_blocks, referencePack: args.reference_pack, operation: args.operation, connectionId: args.connection_id,
       model: args.model, quality: args.quality, size: args.size, aspectRatio: args.aspect_ratio, resolution: args.resolution,
       width: args.width, height: args.height, fit: args.fit, n: args.n, outputFormat: args.output_format, outputCompression: args.output_compression,
       background: args.background, seed: args.seed, negativePrompt: args.negative_prompt, condensedFromChars: args.condensed_from_chars,
@@ -688,6 +704,15 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     }) });
     return jsonToolResult(result);
   }
+
+  if (name === "save_prompt_block") return jsonToolResult(await api("/api/internal/image-prompt-blocks", { method: "POST", body: JSON.stringify({ name: args.name, text: args.text }) }));
+  if (name === "list_prompt_blocks") return jsonToolResult(await api("/api/internal/image-prompt-blocks"));
+  if (name === "get_prompt_block") {
+    const query = new URLSearchParams({ name: String(args.name ?? ""), ...(args.version === undefined ? {} : { version: String(args.version) }) });
+    return jsonToolResult(await api(`/api/internal/image-prompt-block?${query}`));
+  }
+  if (name === "save_reference_pack") return jsonToolResult(await api("/api/internal/image-reference-packs", { method: "POST", body: JSON.stringify({ name: args.name, referenceIds: args.reference_ids }) }));
+  if (name === "list_reference_packs") return jsonToolResult(await api("/api/internal/image-reference-packs"));
 
   if (name === "allow_for_task") {
     const result = await api("/api/internal/stop-line-allowance", { method: "POST", body: JSON.stringify({

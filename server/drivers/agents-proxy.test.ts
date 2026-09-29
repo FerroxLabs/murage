@@ -61,6 +61,8 @@ let savedToolResultBodies: any[] = [];
 /** What the stub returns from /api/internal/image-models — a JSON-returning
  * tool, so an oversized one can be driven through jsonToolResult. */
 let imageModelsResponse: unknown = { connections: [], models: [] };
+/** What the saved prompt block and reference pack tools sent. */
+const imageLibraryCalls: Array<{ method: string; url: string; body: unknown }> = [];
 let skillsResponse: unknown = {
   skills: [
     {
@@ -207,6 +209,16 @@ beforeAll(async () => {
       });
       return;
     }
+    if (req.url?.startsWith("/api/internal/image-prompt-block") || req.url?.startsWith("/api/internal/image-reference-packs")) {
+      let data = "";
+      req.on("data", (c) => (data += c));
+      req.on("end", () => {
+        imageLibraryCalls.push({ method: req.method!, url: req.url!, body: data ? JSON.parse(data) : undefined });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ name: "brand-lock", version: 2 }));
+      });
+      return;
+    }
     if (req.method === "GET" && req.url === "/api/internal/image-models") {
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify(imageModelsResponse));
@@ -283,6 +295,11 @@ describe("agents-proxy MCP surface", () => {
       "list_image_models",
       "resolve_image_reference",
       "generate_image",
+      "save_prompt_block",
+      "list_prompt_blocks",
+      "get_prompt_block",
+      "save_reference_pack",
+      "list_reference_packs",
       "web_search",
       "tool_result_read",
       "allow_for_task",
@@ -487,6 +504,26 @@ describe("agents-proxy MCP surface", () => {
   // RECOVERABLE IN FULL: preview + pages reassembles the retained bytes
   // exactly, and the reassembly parses. That last property is the contract
   // this test holds; if it ever breaks, the fragment really is a loss.
+  it("sends the saved prompt block and reference pack tools to their internal routes", async () => {
+    imageLibraryCalls.length = 0;
+    await callTool("save_prompt_block", { name: "brand-lock", text: "Identity" });
+    await callTool("list_prompt_blocks", {});
+    await callTool("get_prompt_block", { name: "brand-lock", version: 2 });
+    await callTool("save_reference_pack", { name: "hero-refs", reference_ids: ["a.png", "b.png"] });
+    await callTool("list_reference_packs", {});
+    expect(imageLibraryCalls).toEqual([
+      { method: "POST", url: "/api/internal/image-prompt-blocks", body: { name: "brand-lock", text: "Identity" } },
+      { method: "GET", url: "/api/internal/image-prompt-blocks", body: undefined },
+      { method: "GET", url: "/api/internal/image-prompt-block?name=brand-lock&version=2", body: undefined },
+      { method: "POST", url: "/api/internal/image-reference-packs", body: { name: "hero-refs", referenceIds: ["a.png", "b.png"] } },
+      { method: "GET", url: "/api/internal/image-reference-packs", body: undefined },
+    ]);
+    const tools = (await rpc("tools/list")).result.tools as Array<{ name: string; inputSchema: { required?: string[]; properties: Record<string, unknown> } }>;
+    const generate = tools.find(tool => tool.name === "generate_image")!;
+    expect(generate.inputSchema.required).toEqual(["request_id"]);
+    expect(Object.keys(generate.inputSchema.properties)).toEqual(expect.arrayContaining(["prompt_blocks", "reference_pack", "reference_ids"]));
+  });
+
   it("pins what an oversized JSON result looks like: invalid alone, exact when reassembled", async () => {
     toolResultCache = new ToolResults();
     savedToolResultBodies = [];

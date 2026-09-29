@@ -107,7 +107,7 @@ describe("bundled verification skill", () => {
     const image = skills.find((skill) => skill.manifest.id === "image-generation");
     expect(image?.manifest).toMatchObject({ requiredCapabilities: ["imageGeneration"], defaultEnabled: true });
     expect(image?.instructions).toMatch(/^---\nname: image-generation\n/);
-    for (const name of ["list_image_models", "generate_image", "resolve_image_reference", "condensed_from_chars", "aspect_ratio", "prompt_blocks", "save_prompt_block", "get_prompt_block", "reference_pack", "save_reference_pack"]) expect(image?.instructions).toContain(name);
+    for (const name of ["list_image_models", "generate_image", "resolve_image_reference", "condensed_from_chars", "aspect_ratio", "prompt_blocks", "save_prompt_block", "get_prompt_block", "reference_pack", "save_reference_pack", "list_prompt_blocks", "list_reference_packs"]) expect(image?.instructions).toContain(name);
     // No fixed limits: they come from list_image_models per model.
     expect(image?.instructions).not.toMatch(/4,000|three sizes|4 references/);
     expect(image?.instructions).not.toMatch(/\u2014|\bsaf(e|ely|ety)\b|\$\d/i);

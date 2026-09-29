@@ -2108,6 +2108,77 @@ describe("harness HTTP API", () => {
     }
   }, 40_000);
 
+  // Image generation v2 A.2 / A.6: a bot saves a prompt block and a reference
+  // pack in its own scope, generates from them with no scene, and the card
+  // names the block version, the assembled length and the pack. The owner
+  // sees both in the library, with the bot's name, and deletes them.
+  it("saves prompt blocks and reference packs for a bot and generates from them", async () => {
+    const bot = (await api("POST", "/api/bots", { name: "Library fixture" })).body.bot;
+    const proxies: ChildProcess[] = [];
+    const mcp = (env: Record<string, string>, name: string, args: Record<string, unknown>) => {
+      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+      proxies.push(proxy);
+      let stdout = "", stderr = "";
+      const result = new Promise<any>((resolve, reject) => {
+        const timer = setTimeout(() => { proxy.kill(); reject(new Error(`${name} timed out: ${stderr}`)); }, 15_000);
+        proxy.stderr.on("data", chunk => { stderr += chunk; });
+        proxy.stdout.on("data", chunk => {
+          stdout += chunk;
+          for (const line of stdout.split("\n")) { try { const value = JSON.parse(line); if (value.id === 42) { clearTimeout(timer); proxy.stdin.end(); resolve(value.result); return; } } catch {} }
+        });
+        proxy.on("error", reject);
+      });
+      proxy.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: { name, arguments: args } }) + "\n");
+      return result;
+    };
+    const messages = async () => (await api("GET", "/api/bots?messages=100")).body.bots.find((item: { id: string }) => item.id === bot.id).messages as any[];
+    const pendingCard = async () => { let card: any; await expect.poll(async () => { card = (await messages()).find(m => m.card?.tool === "generate_image" && !m.card.answered); return Boolean(card); }).toBe(true); return card; };
+    const lock = "Identity: a red fox mascot with a blue scarf, flat colour.";
+    try {
+      expect((await desktopApi("PATCH", "/api/config?secretStorage=external", { imageGen: { key: "fixture-image-key" } })).status).toBe(200);
+      expect((await desktopApi("POST", "/api/images/settings", { enabled: true, connectionId: "openai", model: "gpt-image-2" })).status).toBe(200);
+      let turn = await startInternalFixtureTurn(bot.id);
+      const saved = JSON.parse((await mcp(turn.env, "save_prompt_block", { name: "brand-lock", text: lock })).content[0].text);
+      expect(saved).toMatchObject({ name: "brand-lock", version: 1, chars: lock.length, scope: "bot" });
+      const listed = JSON.parse((await mcp(turn.env, "list_prompt_blocks", {})).content[0].text);
+      expect(listed.blocks).toEqual([expect.objectContaining({ name: "brand-lock", version: 1, preview: lock })]);
+      const generated = mcp(turn.env, "generate_image", { request_id: "from-block", prompt_blocks: ["brand-lock"], connection_id: "openai", model: "gpt-image-2" });
+      const card = await pendingCard();
+      expect(card.card.subtitle).toContain(`Prompt: ${lock.length} characters: brand-lock v1.`);
+      expect(card.card.held).toBe(lock);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(200);
+      const result = await generated; expect(result.isError, result.content?.[0]?.text).not.toBe(true);
+      const payload = JSON.parse(result.content[0].text);
+      expect(payload.metadata).toMatchObject({ promptChars: lock.length, promptBlocks: [{ name: "brand-lock", version: 1, scope: "bot" }] });
+      expect(result.content[0].text).not.toContain("red fox");
+      const pack = JSON.parse((await mcp(turn.env, "save_reference_pack", { name: "hero-refs", reference_ids: [payload.artifact.referenceId] })).content[0].text);
+      expect(pack).toMatchObject({ name: "hero-refs", version: 1, count: 1, scope: "bot" });
+      const missing = await mcp(turn.env, "get_prompt_block", { name: "not-saved" });
+      expect(missing.isError).toBe(true);
+      await stopFixtureTurn(bot.id, turn);
+      turn = await startInternalFixtureTurn(bot.id);
+      const edit = mcp(turn.env, "generate_image", { request_id: "from-pack", prompt: "Same mascot, waving.", reference_pack: "hero-refs", connection_id: "openai", model: "gpt-image-2" });
+      const editCard = await pendingCard();
+      expect(editCard.card.title).toBe("Approve image edit");
+      expect(editCard.card.subtitle).toContain("References: 1 from pack hero-refs v1 + 0 attached = 1 of 16.");
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId: editCard.card.requestId, behavior: "deny" })).status).toBe(200);
+      expect((await edit).isError).toBe(true);
+      const library = await desktopApi("GET", "/api/images/library");
+      expect(library.body.blocks).toEqual([expect.objectContaining({ name: "brand-lock", version: 1, chars: lock.length, scope: "bot", botName: "Library fixture" })]);
+      expect(library.body.packs).toEqual([expect.objectContaining({ name: "hero-refs", count: 1, botName: "Library fixture" })]);
+      const read = await desktopApi("GET", `/api/images/prompt-blocks/${library.body.blocks[0].id}`);
+      expect(read.body.block.text).toBe(lock);
+      const newer = await desktopApi("POST", "/api/images/prompt-blocks", { name: "brand-lock", text: `${lock} Always smiling.`, botId: bot.id });
+      expect(newer.status).toBe(201); expect(newer.body.block).toMatchObject({ version: 2, scope: "bot" });
+      expect((await desktopApi("DELETE", `/api/images/prompt-blocks/${newer.body.block.id}`)).body.deleted).toEqual({ name: "brand-lock", versions: 2 });
+      expect((await desktopApi("DELETE", `/api/images/reference-packs/${library.body.packs[0].id}`)).status).toBe(200);
+      expect((await desktopApi("GET", "/api/images/library")).body).toEqual({ blocks: [], packs: [] });
+    } finally {
+      await api("POST", `/api/bots/${bot.id}/interrupt`); for (const proxy of proxies) if (proxy.exitCode === null) await waitForExit(proxy, { signal: "SIGTERM" });
+      await desktopApi("PATCH", "/api/config", { imageGen: { key: "", enabled: false } }); await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 40_000);
+
   // An <attached-image path> the conversation never bound — the legacy upload
   // the composer makes without a thread — must not lose the turn on an engine
   // that inlines. Nothing is inlined for it (the tag never grants a read), the

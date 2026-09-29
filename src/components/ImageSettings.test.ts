@@ -5,7 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { IMAGE_GENERATION_REFERENCE_MAX } from "../../shared/media-assets";
 import { builtInImageCapabilities } from "../../shared/image-capabilities";
-import { ImageSettingsView, imageModelCapability, imageModelLimits, imageModelOptionLabel, type ImageModel, type ImageSettingsSnapshot } from "./ImageSettings";
+import { ImageSettingsView, imageModelCapability, imageModelCheckLines, imageModelLimits, imageModelOptionLabel, relativeTime, type ImageModel, type ImageSettingsSnapshot } from "./ImageSettings";
+import { ImageLibraryView, libraryBlockLine, libraryPackLine } from "./ImageLibrary";
 
 const base = { availability: "unverified" as const, qualities: ["low", "medium", "high"], sizes: ["1024x1024"] };
 const openai: ImageModel = { ...base, id: "gpt-image-2", label: "gpt-image-2", generate: true, edit: true, maxReferences: 4 };
@@ -87,7 +88,7 @@ describe("ImageSettingsView", () => {
     expect(capabilityLine(html)[1]).toBe("edits");
     expect(html).toContain("Creates and edits images. Up to 4 reference images per edit.");
     expect(html).toContain("gpt-image-2 · default · edits");
-    expect(html).toContain("Account access has not been verified for this model.");
+    expect(html).toContain("Not checked yet.");
     expect(html).toContain("Editing is offered only when the selected model supports it.");
   });
   it("keeps Flux usable for generation while naming why editing is unavailable", () => {
@@ -157,5 +158,40 @@ describe("ImageSettingsView", () => {
     expect(html).toMatch(/<input type="checkbox" [^>]*disabled=""/);
     expect(html).toMatch(/<button type="button"[^>]*>Refresh connections<\/button>/);
     expect(html).not.toMatch(/<button type="button"[^>]*disabled=""[^>]*>Refresh connections/);
+  });
+});
+
+describe("model checks and the library (image generation v2 A.2, A.6, A.8)", () => {
+  const hour = 60 * 60_000, now = 100 * 24 * hour;
+  it("states the last check, marks a failed model and a model the key is not offered, never hiding either", () => {
+    expect(relativeTime(now - 2 * hour, now)).toBe("2 hours ago");
+    expect(imageModelCheckLines({ ...openai, availability: "verified", lastGoodAt: now - 2 * hour }, now)).toEqual(["Last worked 2 hours ago."]);
+    expect(imageModelCheckLines({ ...openai, availability: "failed", lastGoodAt: now - 48 * hour, lastFailedAt: now - 5 * 60_000, lastError: "provider-error: HTTP 500" }, now))
+      .toEqual(["Last check failed 5 minutes ago: provider-error: HTTP 500", "Last worked 2 days ago."]);
+    expect(imageModelCheckLines({ ...flux, offeredToKey: false, status: { state: "degraded" } }, now)).toEqual(["Not offered to this key: Flux does not list it for this account.", "Flux reports: degraded."]);
+    const failed = { ...openai, availability: "failed" as const, lastFailedAt: now, lastError: "down" };
+    const html = renderToStaticMarkup(createElement(ImageSettingsView, { snapshot: snapshot("openai", "openai", [failed], "gpt-image-2"), busy: null, error: "", notice: "", onChange: () => {}, onRefresh: () => {}, onProbe: () => {} }));
+    expect(html).toContain("gpt-image-2 · default · edits");
+    expect(html).toContain('data-image-check="failed"');
+  });
+  it("offers the owner a check and the daily check, off by default, and the library behind a button", () => {
+    const html = renderToStaticMarkup(createElement(ImageSettingsView, { snapshot: snapshot("openai", "openai", [openai], "gpt-image-2"), busy: null, error: "", notice: "", onChange: () => {}, onRefresh: () => {}, onProbe: () => {} }));
+    expect(html).toContain("Check this model now");
+    expect(html).toContain("Check the default model once a day");
+    expect(html).not.toMatch(/checked=""[^>]*>\s*<span>Check the default model/);
+    expect(html).toContain("Saved prompt blocks and reference packs");
+    const older = renderToStaticMarkup(createElement(ImageSettingsView, { snapshot: snapshot("openai", "openai", [openai], "gpt-image-2"), busy: null, error: "", notice: "", onChange: () => {}, onRefresh: () => {} }));
+    expect(older).not.toContain("Check this model now");
+  });
+  it("lists blocks and packs with scope, version and size", () => {
+    expect(libraryBlockLine({ id: "b", name: "brand-lock", version: 3, chars: 14336, scope: "bot", botId: "x", botName: "Ada" })).toBe("Ada · v3 · 14,336 characters");
+    expect(libraryPackLine({ id: "p", name: "hero-refs", version: 1, count: 10, scope: "workspace" })).toBe("Workspace · v1 · 10 images");
+    const noop = () => {};
+    const html = renderToStaticMarkup(createElement(ImageLibraryView, { snapshot: { blocks: [{ id: "b", name: "brand-lock", version: 2, chars: 40, scope: "workspace" }], packs: [] },
+      open: { id: "b", text: "Identity" }, draft: { name: "", text: "" }, busy: false, error: "", notice: "",
+      onView: noop, onClose: noop, onEdit: noop, onSaveVersion: noop, onDraft: noop, onAdd: noop, onDeleteBlock: noop, onDeletePack: noop }));
+    expect(html).toContain("brand-lock"); expect(html).toContain("Workspace · v2 · 40 characters");
+    expect(html).toContain("Save as a new version"); expect(html).toContain("Identity");
+    expect(html).toContain("No saved reference packs yet.");
   });
 });

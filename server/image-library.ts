@@ -62,7 +62,6 @@ export interface PromptBlockSummary { id: string; name: string; version: number;
 export interface PromptBlock extends PromptBlockSummary { text: string; sha256: string }
 const blockSummary = (row: BlockRow): PromptBlockSummary => ({ id: row.id, name: row.name, version: row.version, chars: row.chars, scope: row.scope, ...(row.bot_id ? { botId: row.bot_id } : {}), createdBy: row.created_by, createdAt: row.created_at });
 const blockOf = (row: BlockRow): PromptBlock => ({ ...blockSummary(row), text: row.text, sha256: row.sha256 });
-const scopeKey = (actor: ImageLibraryActor): { scope: ImageLibraryScope; botId: string } => actor.kind === "bot" ? { scope: "bot", botId: actor.botId } : { scope: "workspace", botId: "" };
 
 /** Saves a new version, or returns the latest when it already holds this text. */
 export function savePromptBlock(db: DatabaseSync, input: { scope: ImageLibraryScope; botId?: string; name: string; text: string; createdBy: string; now?: number }): PromptBlock & { created: boolean } {
