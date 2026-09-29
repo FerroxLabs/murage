@@ -35,6 +35,9 @@ const MODELS = {
   ],
 };
 
+/** Fields that name or time an event rather than say what happened. */
+const EVENT_IDENTITY_KEYS = new Set(["id", "eventId", "ts", "timestamp", "time", "createdAt", "created_at"]);
+
 const providerFor = (model: string) => (model.startsWith("gpt") ? "codex" : "claude-code");
 
 export interface BoxAgentConfig {
@@ -142,15 +145,24 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
           emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
         };
         /** Stream a full-text snapshot as a delta and accumulate it for flush. */
-        const ingest = (text: string): boolean => {
+        const ingest = (text: string) => {
           const delta = text.startsWith(lastText) ? text.slice(lastText.length) : text;
           lastText = text;
-          if (!delta) return false;
+          if (!delta) return;
           pendingText += delta;
           emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta });
-          return true;
         };
-        const working = () => emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
+        // Only an event that says something new is work. A heartbeat (a
+        // fresh id or time around the same content) or a resent snapshot is
+        // not, so a box stuck sending them still goes quiet for the watch.
+        const shownContents = new Set<string>();
+        const working = (ev: Record<string, unknown>) => {
+          const key = JSON.stringify(Object.entries(ev).filter(([name]) => !EVENT_IDENTITY_KEYS.has(name)));
+          if (shownContents.has(key)) return;
+          if (shownContents.size >= 1_000) shownContents.clear();
+          shownContents.add(key);
+          emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
+        };
         try {
           for (;;) {
             if (cancelled) break;
@@ -170,7 +182,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               // stream anyway.
               const text = ev.text ?? ev.message ?? ev.data?.text ?? ev.data?.content ?? null;
               if (/assistant|message|output|response/i.test(kind) && typeof text === "string" && text.trim()) {
-                if (!ingest(text)) working();
+                ingest(text);
               } else if (/tool|command|exec|browse/i.test(kind)) {
                 flushAssistantText();
                 emit({
@@ -182,7 +194,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                 });
               } else {
                 // work the chat does not show is still work
-                working();
+                working(ev);
               }
               // shape-drift backstop: without a promptId the status poll
               // below can never see a terminal state, so settle off the

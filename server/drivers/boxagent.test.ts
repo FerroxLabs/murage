@@ -241,12 +241,19 @@ describe("BoxAgentDriver turns (fake API)", () => {
     restoreFetch = installFakeBox([
       { events: [{ id: "s1", type: "status", data: { phase: "thinking" } }], status: { promptRun: { status: "running" } } },
       { events: [{ id: "s1", type: "status", data: { phase: "thinking" } }], status: { promptRun: { status: "running" } } },
-      { events: [{ id: "s2", type: "progress" }], status: { promptRun: { status: "finished", result: "ok" } } },
+      // a heartbeat: a fresh id and time, nothing else new
+      { events: [{ id: "s2", type: "status", ts: 2, data: { phase: "thinking" } }], status: { promptRun: { status: "running" } } },
+      { events: [{ id: "r1", type: "response", text: "half" }], status: { promptRun: { status: "running" } } },
+      // the same text again under a new id
+      { events: [{ id: "r2", type: "response", text: "half" }], status: { promptRun: { status: "running" } } },
+      { events: [{ id: "s3", type: "progress" }], status: { promptRun: { status: "finished", result: "half" } } },
     ]);
     await create();
     await instance.adapter.sendTurn({ threadId: "t-live", text: "go", integrations: { computer } });
     await recorder.until((e) => e.type === "turn.completed");
-    // one per new event, none for a repeat
+    // one per event that says something new; a repeat, a heartbeat or a
+    // resent snapshot is not work, so a box stuck sending them still goes
+    // quiet for the silence watch
     expect(recorder.events.filter((e) => e.type === "item.updated")).toEqual([
       expect.objectContaining({ itemType: "reasoning", tokens: null }),
       expect.objectContaining({ itemType: "reasoning", tokens: null }),
