@@ -11905,6 +11905,7 @@ const server = createServer(async (req, res) => {
           // changed since, and the kept prompt is what was approved.
           const earlier = imageOperations.resumable(actor, body.requestId);
           const kept = earlier?.kind === "job" ? renderPrompt(database(), earlier.operationId) : undefined;
+          if (earlier?.kind === "job" && !kept) return json(res, 409, { error: "The prompt kept for this render is missing, so its provider job cannot be collected here. Check the provider before trying again; no new image request was sent." });
           const blocks = earlier ? [] : resolvePromptBlocks(database(), { kind: "bot", botId: actor.botId }, body.promptBlocks ?? []);
           const pack = !earlier && body.referencePack ? resolveReferencePack(database(), DATA_DIR, { kind: "bot", botId: actor.botId }, body.referencePack) : null;
           const attached = earlier ? [] : imageReferences(store, actor.threadId, body.referenceIds);
@@ -11916,7 +11917,8 @@ const server = createServer(async (req, res) => {
           // The job being collected is sent nothing: it is described by the prompt kept at approval.
           const sent = kept ? { ...request, prompt: kept.prompt, negativePrompt: undefined, condensedFromChars: undefined } : request;
           const assembly = { blocks: blocks.map(block => ({ name: block.name, version: block.version, scope: block.scope, text: block.text })),
-            ...(pack ? { referencePack: { name: pack.name, version: pack.version, count: pack.references.length } } : {}) };
+            ...(pack ? { referencePack: { name: pack.name, version: pack.version, count: pack.references.length } } : {}),
+            ...(kept?.blocks.length ? { keptBlocks: kept.blocks } : {}) };
           const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds, promptBlocks: body.promptBlocks, referencePack: body.referencePack }, (reserve, publish, context) =>
             imageService.generate(sent, { signal: controller.signal, assertActive: active, reserve, publish, operationId: context.operationId, resumeJob: context.resumeJob, jobStarted: context.jobStarted,
               connectionLabel: labelledImageConnections().find(connection => connection.id === chosen)?.label }, refs, assembly));

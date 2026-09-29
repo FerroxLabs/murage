@@ -378,3 +378,22 @@ describe("review round 2: one image over the cap", () => {
     expect(result.metadata.summary).toContain("Image 2 arrived at 26 MB, over the 25 MB Murage keeps, so it was not kept.");
   });
 });
+
+describe("review round 3", () => {
+  it("keeps each kept image's own position when one in the middle is not kept", async () => {
+    const f = fixture(); const big = Buffer.concat([pngOf(1024, 1024), Buffer.alloc(26 * 1024 * 1024)]);
+    f.fetcher.mockResolvedValueOnce(json({ data: [{ b64_json: PNG }, { b64_json: big.toString("base64") }, { b64_json: PNG }] }));
+    await f.service.generate({ ...f.request, n: 3 }, f.hooks);
+    expect(f.publish.mock.calls.map(([, metadata]) => (metadata as { imageIndex?: number }).imageIndex)).toEqual([0, 2]);
+  });
+  it("names the kept block versions on a collected job", async () => {
+    const catalogue = { contract: 1, kind: "image-catalogue", data: [{ id: "flux-image-gpt25-sunburst", operations: ["generate"], maxPromptChars: 32000,
+      sizeRule: { kind: "list", sizes: ["1024x1024"] }, qualities: ["xhigh"], qualityMode: "param", supports: { n: 1 }, delivery: { jobs: true }, expectedSeconds: { xhigh: 120 } }] };
+    const f = fixture("flux", { fluxCatalogue: true });
+    f.fetcher.mockImplementation(async input => String(input).endsWith("/v1/images/models") ? json(catalogue) : json({ contract: 1, kind: "image-job", id: "imgjob_9", status: "succeeded", data: [{ b64_json: PNG }] }));
+    const result = await f.service.generate({ ...f.request, model: "flux-image-gpt25-sunburst", quality: "xhigh", prompt: "kept prompt" }, { ...f.hooks, resumeJob: { id: "imgjob_9" } }, [],
+      { keptBlocks: [{ name: "brand-lock", version: 3, scope: "bot", chars: 900 }] });
+    expect(result.metadata.promptBlocks).toEqual([{ name: "brand-lock", version: 3, scope: "bot", chars: 900 }]);
+    expect(f.posts()).toHaveLength(0);
+  });
+});

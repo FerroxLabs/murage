@@ -144,6 +144,8 @@ export interface ImageGenerationHooks<T> {
 export interface ImagePromptAssembly {
   blocks?: Array<{ name: string; version: number; scope: string; text: string }>;
   referencePack?: { name: string; version: number; count: number };
+  /** A job being collected: the block versions its kept prompt was built from, for the result. */
+  keptBlocks?: Array<{ name: string; version: number; scope: string; chars: number }>;
 }
 export class ImageGenerationError extends Error {
   readonly code: string;
@@ -857,7 +859,7 @@ export class ImageGenerationService {
         // done, so a direct OpenAI stream always asks for one.
         if (connection.provider === "openai" || (longRender && !caps.delivery.keepaliveSeconds)) payload.partial_images = 1;
       }
-      const promptBlocks = assembly.blocks?.map(block => ({ name: block.name, version: block.version, scope: block.scope, chars: block.text.trim().length }));
+      const promptBlocks = assembly.blocks?.length ? assembly.blocks.map(block => ({ name: block.name, version: block.version, scope: block.scope, chars: block.text.trim().length })) : assembly.keptBlocks;
       const details: ImageOperationDetails = { connectionId: connection.id, provider: connection.provider, model: modelId!, operation: request.operation, count, referenceCount: references.length,
         ...(hooks.connectionLabel ? { connectionLabel: hooks.connectionLabel.slice(0, 120) } : {}),
         ...(quality ? { quality } : {}), ...(pixelSize ? { size: pixelSize } : {}), ...(endpointTag ? { endpointTag } : {}),
@@ -955,7 +957,7 @@ export class ImageGenerationService {
       // More images than asked is not a result Murage asked for: nothing is published.
       if (connection.provider === "google" && !encodedList.length) fail("invalid-image", googleNoImageReason(result), outcome);
       if (!record(result) || !encodedList.length || encodedList.length > count) fail("invalid-image", count === 1 ? "The image provider did not return one supported image." : `The image provider did not return up to ${count} supported images.`, outcome);
-      const images: Array<{ image: DecodedGeneratedImage; delivered: DeliveredImage }> = [];
+      const images: Array<{ image: DecodedGeneratedImage; delivered: DeliveredImage; index: number }> = [];
       const notKept: Array<{ index: number; bytes: number }> = [];
       for (const [encodedIndex, encoded] of encodedList.entries()) {
         let image: DecodedGeneratedImage;
@@ -978,7 +980,7 @@ export class ImageGenerationService {
         // Kept images match what Files, the viewer and Save accept: a larger render is named, not cut.
         // Of several, the ones that fit are kept and the rest are named.
         if (image.bytes.length > GENERATED_IMAGE_MAX_BYTES) { notKept.push({ index: encodedIndex, bytes: image.bytes.length }); continue; }
-        images.push({ image, delivered: { ...(rendered ? rendered : {}), mime: image.mime, bytes: image.bytes.length, ...(cropped ? { cropped } : {}), ...(cropFailed ? { cropFailed } : {}) } });
+        images.push({ image, index: encodedIndex, delivered: { ...(rendered ? rendered : {}), mime: image.mime, bytes: image.bytes.length, ...(cropped ? { cropped } : {}), ...(cropFailed ? { cropFailed } : {}) } });
       }
       if (!images.length) {
         const largest = Math.max(...notKept.map(item => item.bytes));
@@ -990,8 +992,8 @@ export class ImageGenerationService {
       // so each is retained with its receipt and the same request_id can
       // finish them all. The first failure is reported after the last image.
       let publishFailure: { error: unknown } | undefined;
-      for (const [index, item] of images.entries()) {
-        const metadata: GeneratedImageMetadata = { ...base, delivered: [item.delivered], ...(images.length > 1 ? { imageIndex: index } : {}) };
+      for (const item of images) {
+        const metadata: GeneratedImageMetadata = { ...base, delivered: [item.delivered], ...(images.length > 1 || notKept.length ? { imageIndex: item.index } : {}) };
         try { active(); artifacts.push(await hooks.publish(item.image, { ...metadata, summary: imageResultSummary(metadata) })); }
         catch (error) { publishFailure ??= { error }; }
       }

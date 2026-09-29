@@ -615,6 +615,8 @@ function apiLong(path: string, body: string, signal: AbortSignal): Promise<Json>
       const chunks: Buffer[] = []; let size = 0;
       res.on("data", (chunk: Buffer) => { size += chunk.length; if (size > 32 * 1024 * 1024) { req.destroy(); reject(unavailable()); return; } chunks.push(chunk); });
       res.on("error", () => reject(unavailable()));
+      // A connection that drops mid-answer without an error still ends the call now.
+      res.on("close", () => { if (!res.complete) reject(unavailable()); });
       res.on("end", () => {
         let parsed: Json = {};
         try { parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Json; } catch { /* not JSON */ }
