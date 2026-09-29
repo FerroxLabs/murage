@@ -208,7 +208,15 @@ export class ImageOperations {
       if (carried && carried.request_hash === requestHash && parseJob(carried.result) && !parsePending(carried.result)) { id = carried.id; prior = carried; }
     }
     if (prior?.request_hash !== undefined && prior.request_hash !== requestHash) throw error(409, "This image request ID was already used for a different request.");
-    if (this.jobs.has(id)) return this.jobs.get(id) as Promise<T>;
+    if (this.jobs.has(id)) {
+      // Joining a render still running: this turn waits on Murage too.
+      let release: () => void = () => {};
+      try { release = this.rendering?.(actor) ?? release; } catch { /* the watch never changes the operation */ }
+      const joined = this.jobs.get(id) as Promise<T>;
+      const settle = () => { try { release(); } catch { /* as above */ } };
+      void joined.then(settle, settle);
+      return joined;
+    }
     if (prior?.state === "published" && prior.result) return Promise.resolve(this.refreshPublished(actor, id, JSON.parse(prior.result) as T));
     if (prior?.state === "publish-pending") return this.resume<T>(actor, id, prior.result);
     // A provider job this request already started (contract section 4): the

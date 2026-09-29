@@ -583,3 +583,21 @@ it("an image operation holds the turn's silence watch while it runs, and lets go
   fail(new Error("render failed")); await expect(failed).rejects.toThrow("render failed");
   expect(released).toHaveBeenCalledTimes(2);
 });
+// A later turn that repeats the request_id of a render still running joins
+// that render; its own silence watch is held until the render ends too.
+it("a later turn joining a running image operation holds its own silence watch", async () => {
+  const store = new Store(() => ({instanceId:"fixture",model:"fixture"})); const bot = store.createBot();
+  const first = { botId:bot.id,threadId:bot.threadId,generation:randomUUID(),signal:new AbortController().signal,assertActive:()=>{} };
+  const releases: Array<ReturnType<typeof vi.fn>> = [];
+  const rendering = vi.fn(() => { const release = vi.fn(); releases.push(release); return release; });
+  const operations = new ImageOperations({ store, waiting: () => {}, rendering });
+  let finish!: (value: unknown) => void;
+  const running = operations.execute(first, "shared-id", { prompt: "a" }, () => new Promise(resolve => { finish = resolve; }));
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  // the same bot, thread and request in the same generation is the same operation
+  const joined = operations.execute({ ...first, signal: new AbortController().signal }, "shared-id", { prompt: "a" }, () => Promise.reject(new Error("never runs")));
+  expect(rendering).toHaveBeenCalledTimes(2);
+  expect(releases.every(release => release.mock.calls.length === 0)).toBe(true);
+  finish({ ok: true }); await running; await joined;
+  expect(releases.map(release => release.mock.calls.length)).toEqual([1, 1]);
+});
