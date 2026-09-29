@@ -14,6 +14,7 @@ import {
 import { loadCrop, type CropImage } from "./image-fit.ts";
 import { sniffMedia } from "./media-assets.ts";
 import { IMAGE_PROMPT_BLOCKS_MAX } from "./image-library.ts";
+import { providerDispatcher } from "./provider-dispatcher.ts";
 
 export type ImageProvider = "openai" | "flux" | "openrouter" | "xai" | "google";
 /** Only the server connection resolver constructs this object. Never serialize it. */
@@ -924,7 +925,9 @@ export class ImageGenerationService {
         // render ceiling applies (a provider may hold headers while it works).
         const idle = delivery === "stream" ? idleWatch(idleMs, false) : null;
         try {
-          const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, ...auth }, body: outbound.body, signal: idle ? AbortSignal.any([signal, idle.signal]) : signal, redirect: "error" });
+          // No transport clock of its own: the render ceiling, the stream's
+          // idle watch and Stop bound it (server/provider-dispatcher.ts).
+          const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, ...auth }, body: outbound.body, signal: idle ? AbortSignal.any([signal, idle.signal]) : signal, redirect: "error", dispatcher: providerDispatcher() } as RequestInit);
           idle?.touch();
           if (!response.ok) {
             outcome = response.status >= 400 && response.status < 500 ? "failed" : "uncertain";

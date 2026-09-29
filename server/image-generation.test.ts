@@ -349,3 +349,20 @@ it("review: an OpenRouter prompt over the budget is refused after the free catal
  await expect(f.service.generate({...f.request,model:"vendor/model",prompt:"p".repeat(4_001)},f.hooks)).rejects.toMatchObject({code:"prompt-too-long",correctablePreflight:true});
  expect(f.reserve).not.toHaveBeenCalled();
 });
+// 0.1.61: a render may take longer than 300 s before its answer starts (a
+// buffered render has ten minutes). Node's fetch would cut it at 300 s on its
+// own transport clock and call it a failed fetch; the render goes through the
+// clockless provider dispatcher and keeps only its own ceiling and Stop.
+it("sends the render through the provider dispatcher with no transport clock", async () => {
+ const { providerDispatcher } = await import("./provider-dispatcher.ts");
+ const f = fixture(); await f.service.generate(f.request, f.hooks);
+ const render = f.fetcher.mock.calls.find(([, init]) => init?.method === "POST")!;
+ expect((render[1] as RequestInit & { dispatcher?: unknown }).dispatcher).toBe(providerDispatcher());
+});
+// The owner's own refusal reaches the bot in the reservation's words.
+it("passes the reservation's refusal through as the tool's words", async () => {
+ const f = fixture(); f.reserve.mockRejectedValueOnce(Object.assign(new Error("Image generation was not approved by the owner, so nothing was sent."), { status: 403 }));
+ await expect(f.service.generate(f.request, f.hooks)).rejects.toMatchObject({ code: "permission-denied", message: "Image generation was not approved by the owner, so nothing was sent." });
+ const other = fixture(); other.reserve.mockRejectedValueOnce(new Error("internal detail"));
+ await expect(other.service.generate(other.request, other.hooks)).rejects.toMatchObject({ code: "permission-denied", message: "Image generation was not approved." });
+});

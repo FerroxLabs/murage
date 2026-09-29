@@ -13,7 +13,7 @@ import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { classifyProviderError, isEndpointUnreachable, unreachableEndpointMessage } from "../../shared/provider-error.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
-import { Agent } from "undici";
+import { providerDispatcher } from "../provider-dispatcher.ts";
 import { createTodoBlockFilter, extractTodoBlocks } from "../../shared/todo-block.ts";
 
 export interface OpenAIChatMessage {
@@ -249,14 +249,6 @@ interface IdleBudget {
   clear(): void;
 }
 
-/** Provider requests carry no transport clock of their own. Node's fetch
- * otherwise ends a response whose headers or next bytes take longer than
- * 300 seconds (undici's headersTimeout and bodyTimeout), which is a fixed
- * silence cut under the owner's setting: a local model reading a long prompt
- * was stopped at five minutes and told the connection dropped. Silence is
- * judged by the thread's watch, whose stop aborts the request. */
-export const providerDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
-
 function createIdleBudget(ms: number | undefined): IdleBudget {
   const controller = new AbortController();
   if (!ms || ms <= 0) {
@@ -443,7 +435,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
       body: JSON.stringify(options.requestBody(model, messages, stream)),
       signal: requestSignal,
-      dispatcher: providerDispatcher,
+      // No transport clock of its own (server/provider-dispatcher.ts).
+      dispatcher: providerDispatcher(),
     } as RequestInit);
     // Headers are back: something is listening at that address. Everything
     // after this point is a server that answered, however badly.

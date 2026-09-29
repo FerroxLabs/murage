@@ -626,7 +626,7 @@ describe("OpenAICompatDriver", () => {
   });
 
   it("sends every provider request through the dispatcher with no transport clock", async () => {
-    const { providerDispatcher } = await import("./openai-chat.ts");
+    const { providerDispatcher } = await import("../provider-dispatcher.ts");
     let dispatcher: unknown;
     vi.stubGlobal(
       "fetch",
@@ -641,8 +641,8 @@ describe("OpenAICompatDriver", () => {
     try {
       await inst.adapter.sendTurn({ threadId: "thread-dispatcher", text: "prompt", model: "vendor/model" });
       await recorder.until((event) => event.type === "turn.completed");
-      expect(providerDispatcher).toBeDefined();
-      expect(dispatcher).toBe(providerDispatcher);
+      expect(dispatcher).toBeDefined();
+      expect(dispatcher).toBe(providerDispatcher());
     } finally {
       recorder.stop();
       await inst.dispose();
