@@ -60,6 +60,8 @@ export type ImageAttemptOutcome = "not-dispatched" | "failed" | "uncertain" | "p
 export type ImageDelivery = "stream" | "job" | "buffered";
 export interface ImageOperationDetails {
   connectionId: string; provider: ImageProvider; model: string; operation: "generate" | "edit";
+  /** The connection's name as Settings shows it (redacted); the card uses it, never the raw id. */
+  connectionLabel?: string;
   /** Images asked for. */
   count: number; referenceCount: number; quality?: string;
   /** The pixels rendered, "WxH", when the model takes a pixel size. */
@@ -116,6 +118,8 @@ export interface ImageGenerationHooks<T> {
   resumeJob?: { id: string };
   /** Must durably record the job id before the first poll. */
   jobStarted?: (job: { id: string }) => void;
+  /** The connection's redacted Settings label, for the card. */
+  connectionLabel?: string;
 }
 /** Phase 2 seam: saved prompt blocks go before the scene, reference-pack
  * images before the attached references. Both count against the model. */
@@ -394,6 +398,23 @@ function googleImageData(result: unknown): string | undefined {
   });
   return images.length === 1 ? images[0] : undefined;
 }
+/** Why a Gemini reply carried no image, in plain words: the provider's own
+ * reason code passed through verbatim (codes only), or a short bounded,
+ * redacted piece of the text it sent instead. */
+function googleNoImageReason(result: unknown): string {
+  const code = (value: unknown) => typeof value === "string" && /^[A-Z][A-Z_]{0,39}$/.test(value) ? value : undefined;
+  const base = "Gemini did not return an image";
+  if (!record(result)) return `${base}.`;
+  const blocked = record(result.promptFeedback) ? code(result.promptFeedback.blockReason) : undefined;
+  if (blocked) return `${base}: it blocked the request (reason: ${blocked}).`;
+  const candidate = Array.isArray(result.candidates) && record(result.candidates[0]) ? result.candidates[0] : undefined;
+  const finish = code(candidate?.finishReason);
+  if (finish && finish !== "STOP") return `${base}: it stopped the render (reason: ${finish}).`;
+  const parts = candidate && record(candidate.content) && Array.isArray(candidate.content.parts) ? candidate.content.parts : [];
+  const text = parts.map(part => record(part) && typeof part.text === "string" ? part.text : "").join(" ").replace(/\s+/g, " ").trim();
+  if (text) { const short = redactSecretsInText(text).replace(/[<>]/g, "").slice(0, 200); return `${base}. It replied: "${short}${text.length > 200 ? "..." : ""}"`; }
+  return `${base}.`;
+}
 function safeUsage(payload: Record<string, unknown>): GeneratedImageMetadata["usage"] {
   if (!record(payload.usage)) return undefined;
   const usage = payload.usage; const result: NonNullable<GeneratedImageMetadata["usage"]> = {};
@@ -424,7 +445,9 @@ export function imageApprovalSubtitle(details: ImageOperationDetails): string {
   const refs = details.referenceCount ? ` from ${details.referenceCount === 1 ? "1 reference image" : `${details.referenceCount} reference images`}` : "";
   const sent = details.sentModel && details.sentModel !== details.model ? ` (sent as ${details.sentModel})` : "";
   const pinned = details.endpointTag ? ` (pinned to ${details.endpointTag}, no fallback)` : "";
-  const lines = [`${count}${refs} · ${details.connectionId} · ${details.model}${sent}${pinned}${details.quality ? ` · ${details.quality}` : ""}${details.size ? ` · ${details.size}` : ""}.`];
+  // A named connection's id is `model:<uuid>`: the card names it the way Settings does.
+  const connection = details.connectionLabel ?? (details.connectionId.startsWith("model:") ? details.provider : details.connectionId);
+  const lines = [`${count}${refs} · ${connection} · ${details.model}${sent}${pinned}${details.quality ? ` · ${details.quality}` : ""}${details.size ? ` · ${details.size}` : ""}.`];
   const size = sizeSentence(details); if (size) lines.push(size);
   if (details.experimentalSize) lines.push("That size is experimental on this model.");
   if (details.referenceCap !== undefined && (details.referenceCount || details.referencePack)) {
@@ -706,6 +729,7 @@ export class ImageGenerationService {
       }
       const promptBlocks = assembly.blocks?.map(block => ({ name: block.name, version: block.version, scope: block.scope, chars: block.text.trim().length }));
       const details: ImageOperationDetails = { connectionId: connection.id, provider: connection.provider, model: modelId!, operation: request.operation, count, referenceCount: references.length,
+        ...(hooks.connectionLabel ? { connectionLabel: hooks.connectionLabel.slice(0, 120) } : {}),
         ...(quality ? { quality } : {}), ...(pixelSize ? { size: pixelSize } : {}), ...(endpointTag ? { endpointTag } : {}),
         ...(sent.model !== modelId ? { sentModel: sent.model } : {}), sizeAsked: resolved.asked, sizeRendered: resolved.rendered,
         ...(resolved.exact ? { cropTo: resolved.exact.width ? `${resolved.exact.width}x${resolved.exact.height}` : `${resolved.asked} (centre crop)` } : {}),
@@ -789,6 +813,7 @@ export class ImageGenerationService {
       const encodedList = connection.provider === "google" ? [googleImageData(result)].filter((item): item is string => item !== undefined)
         : record(result) && Array.isArray(result.data) ? result.data.flatMap(item => record(item) && typeof item.b64_json === "string" ? [item.b64_json] : []) : [];
       // More images than asked is not a result Murage asked for: nothing is published.
+      if (connection.provider === "google" && !encodedList.length) fail("invalid-image", googleNoImageReason(result), outcome);
       if (!record(result) || !encodedList.length || encodedList.length > count) fail("invalid-image", count === 1 ? "The image provider did not return one supported image." : `The image provider did not return up to ${count} supported images.`, outcome);
       const images: Array<{ image: DecodedGeneratedImage; delivered: DeliveredImage }> = [];
       for (const encoded of encodedList) {

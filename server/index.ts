@@ -11701,7 +11701,8 @@ const server = createServer(async (req, res) => {
           const request = { connectionId: chosen, model: body.model ?? state.selected?.model ?? state.catalog?.defaultModel ?? undefined,
             operation: body.operation ?? (refs.length ? "edit" : "generate"), ...options };
           const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds }, (reserve, publish, context) =>
-            imageService.generate(request, { signal: controller.signal, assertActive: active, reserve, publish, operationId: context.operationId, resumeJob: context.resumeJob, jobStarted: context.jobStarted }, refs));
+            imageService.generate(request, { signal: controller.signal, assertActive: active, reserve, publish, operationId: context.operationId, resumeJob: context.resumeJob, jobStarted: context.jobStarted,
+              connectionLabel: labelledImageConnections().find(connection => connection.id === chosen)?.label }, refs));
           active(); return json(res, 200, result);
         } finally { clearInterval(revoked); res.off("close", disconnected); }
       }

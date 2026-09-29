@@ -242,3 +242,28 @@ describe("list_image_models for bots", () => {
     expect(flux.find(model => model.id === "flux-image-fast")).toMatchObject({ capabilities: { maxPromptChars: 2000, sizeRuleText: expect.stringContaining("multiples of 32"), supports: { n: 1 } } });
   });
 });
+
+describe("coordinator additions", () => {
+  it("names the connection by its label on the card, never its raw id", async () => {
+    const f = fixture(); await f.service.generate(f.request, { ...f.hooks, connectionLabel: "Studio OpenAI" });
+    const subtitle = imageApprovalSubtitle(f.reserve.mock.calls[0]![0]);
+    expect(subtitle).toMatch(/^One image · Studio OpenAI · gpt-image-2/); expect(f.reserve.mock.calls[0]![0].connectionId).toBe("openai");
+    expect(imageApprovalSubtitle({ connectionId: "model:1234", provider: "openai", model: "m", operation: "generate", count: 1, referenceCount: 0 })).not.toContain("model:1234");
+  });
+  it("says plainly why Gemini returned no image, with the provider's reason code", async () => {
+    const cases: Array<[unknown, string]> = [
+      [{ promptFeedback: { blockReason: "PROHIBITED_CONTENT" } }, "Gemini did not return an image: it blocked the request (reason: PROHIBITED_CONTENT)."],
+      [{ candidates: [{ finishReason: "IMAGE_SAFETY", content: { parts: [] } }] }, "Gemini did not return an image: it stopped the render (reason: IMAGE_SAFETY)."],
+      [{ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "I can only describe this scene." }] } }] }, 'Gemini did not return an image. It replied: "I can only describe this scene."'],
+      [{ candidates: [{ finishReason: "bad code <script>", content: { parts: [] } }] }, "Gemini did not return an image."],
+    ];
+    for (const [body, message] of cases) {
+      const f = fixture("google"); f.fetcher.mockResolvedValueOnce(json(body));
+      const error = await f.service.generate(f.request, f.hooks).then(() => null, (reason: { code: string; message: string }) => reason);
+      expect(error).toMatchObject({ code: "invalid-image" }); expect(error!.message).toContain(message);
+      expect(error!.message).not.toMatch(/<script>|\bsafety\b/);
+      expect(f.publish).not.toHaveBeenCalled();
+    }
+  });
+});
+
