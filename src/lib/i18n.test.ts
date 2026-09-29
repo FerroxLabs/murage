@@ -104,6 +104,11 @@ describe("language packs load on demand", () => {
     expect(loadLocalePack("de")).toBe(first);
     expect((await first)["engines.local"]).toBe("Lokal");
     await expect(loadLocalePack("xx")).rejects.toThrow(/no language pack/);
+    // an inherited name is not a language
+    for (const code of ["constructor", "toString", "__proto__"]) {
+      await expect(loadLocalePack(code)).rejects.toThrow(/no language pack/);
+      expect(await setLocale(code)).toBe("en");
+    }
   });
 
   it("when two choices overlap, the one made last wins", async () => {

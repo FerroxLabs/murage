@@ -43,7 +43,7 @@ const loaded = new Map<string, Promise<LocalePack>>();
  * choice of that language tries again. Unknown codes reject. */
 export function loadLocalePack(code: string): Promise<LocalePack> {
   if (code === "en") return Promise.resolve(en);
-  const load = localeLoaders[code];
+  const load = Object.hasOwn(localeLoaders, code) ? localeLoaders[code] : undefined;
   if (!load) return Promise.reject(new Error(`no language pack is registered as "${code}"`));
   let pack = loaded.get(code);
   if (!pack) {
