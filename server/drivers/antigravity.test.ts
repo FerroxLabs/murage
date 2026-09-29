@@ -287,10 +287,9 @@ describe("Antigravity turns (fake CLI)", () => {
       await create();
       await instance.adapter.sendTurn({ threadId: "t-live", text: "go" });
       await recorder.until((event) => event.type === "turn.completed");
-      expect(recorder.events.filter((e) => e.type === "item.updated")).toEqual([
-        expect.objectContaining({ itemType: "reasoning", tokens: null }),
-        expect.objectContaining({ itemType: "reasoning", tokens: null }),
-      ]);
+      // planner, the response step, then two growths of it; repeats add nothing
+      expect(recorder.events.filter((e) => e.type === "item.updated")).toHaveLength(4);
+      expect(recorder.events.filter((e) => e.type === "item.updated").every((e) => (e as any).itemType === "reasoning" && (e as any).tokens === null)).toBe(true);
     } finally {
       delete process.env.FAKE_AGY_EXTRA_STEPS;
     }
@@ -348,6 +347,58 @@ describe("Antigravity turns (fake CLI)", () => {
       rmSync(home, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it("stops reporting a queued turn as waiting once the turn ahead has finished its work", async () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-lease-done-"));
+    process.env.MURAGE_ANTIGRAVITY_LEASE_BEAT_MS = "50";
+    // the turn ahead settles, then its process lingers (and ignores SIGTERM)
+    // while it still holds the config
+    const holder = await AntigravityDriver.create({
+      instanceId: "agy-lingering",
+      displayName: undefined,
+      environment: { HOME: home, FAKE_AGY_DELAY_MS: "600", FAKE_AGY_POST_RESULT_DELAY_MS: "10000", FAKE_AGY_IGNORE_SIGTERM: "1" },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    const holderEvents = recordEvents(holder.adapter);
+    await create();
+    try {
+      await holder.adapter.sendTurn({ threadId: "t-lingering", text: "work" });
+      const queued = instance.adapter.sendTurn({ threadId: "t-behind", text: "next" });
+      await holderEvents.until((e) => e.type === "turn.completed", 5_000);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const beats = () => recorder.events.filter((e) => e.type === "item.updated" && e.threadId === "t-behind").length;
+      const settledBeats = beats();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      // no work is left ahead of it: its own silence watch owns it now
+      expect(beats()).toBe(settledBeats);
+      await queued;
+      await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-behind", 15_000);
+    } finally {
+      delete process.env.MURAGE_ANTIGRAVITY_LEASE_BEAT_MS;
+      holderEvents.stop();
+      await holder.dispose().catch(() => undefined);
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 25_000);
+
+  it("a Stop that lands while the engine version is still being read ends the turn before it starts", async () => {
+    instance = await AntigravityDriver.create({
+      instanceId: "agy-early-stop",
+      displayName: undefined,
+      environment: { FAKE_AGY_VERSION_DELAY_MS: "800" },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+    const sent = instance.adapter.sendTurn({ threadId: "t-early", text: "go" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await instance.adapter.interruptTurn("t-early");
+    const { turnId } = await sent;
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+    expect(recorder.events.some((e) => e.type === "turn.started")).toBe(false);
+  });
 
   it("strips ambient routing switches from the agy child env", async () => {
     // agy reads none of these today, but it is one of the five spawn paths

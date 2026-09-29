@@ -181,10 +181,13 @@ export interface AntigravityMcpServers {
 // lifetime so two Antigravity turns cannot see each other's computer, control,
 // or bot-communication tokens.
 let antigravityMcpLease: Promise<void> = Promise.resolve();
-/** True while the lease is held by a stopped turn whose process group could
- * not be confirmed gone (it keeps the lease until restart). A turn queued
- * behind it is then no longer waiting on work, and stops reporting so. */
-let antigravityLeaseRetained = false;
+/** The turn holding the lease, while it holds it. A turn queued behind it
+ * reports waiting only while that turn is still working (not settled, not
+ * stopped): the holder has its own silence watch then. Once it has finished
+ * or been stopped, what is left is cleanup, possibly unbounded (a process
+ * that will not die keeps the lease until restart), and the queued turn's
+ * own watch owns it. */
+let antigravityLeaseHolder: { working: () => boolean } | null = null;
 /** How often a turn queued for the lease tells its thread it is waiting. */
 const leaseWaitBeatMs = (): number => {
   const ms = Number(process.env.MURAGE_ANTIGRAVITY_LEASE_BEAT_MS);
@@ -192,6 +195,14 @@ const leaseWaitBeatMs = (): number => {
 };
 
 class LeaseWaitCancelled extends Error {}
+
+/** Fields that time a step rather than say what it did. */
+const STEP_TIME_KEYS = new Set(["timestamp", "ts", "time", "created_at", "createdAt", "updated_at", "updatedAt", "elapsed_ms", "duration_ms"]);
+/** A step's identity and content, without its clock: the same state sent
+ * again is not new work, a step whose content grows is. */
+function stepFingerprint(payload: unknown): string {
+  return JSON.stringify(payload, (key, value) => (STEP_TIME_KEYS.has(key) ? undefined : value));
+}
 
 /** Waits for the machine-wide lease. An aborted wait keeps its place in the
  * queue only long enough to hand the lease straight on. */
@@ -473,6 +484,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     const pending = new Set<string>();
     // turns queued for the machine-wide config lease; a Stop ends the wait
     const leaseWaits = new Map<string, AbortController>();
+    // a Stop for a turn still reading the engine version, before its wait
+    const earlyStops = new Set<string>();
     let disposed = false;
     let verifiedVersion: string | null | undefined;
     const readVersion = () =>
@@ -525,6 +538,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       if (disposed) throw new Error("Antigravity instance is disposed");
       if (active.has(threadId) || pending.has(threadId)) throw new Error("a turn is already running on this thread");
       pending.add(threadId);
+      earlyStops.delete(threadId);
       const turnId = newId();
 
       const version = await versionForTurn();
@@ -619,7 +633,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // that turn is working (it has its own watch); a Stop ends the wait.
       const leaseWait = new AbortController();
       leaseWaits.set(threadId, leaseWait);
-      const waitBeat = setInterval(() => { if (!antigravityLeaseRetained) working(); }, leaseWaitBeatMs());
+      if (earlyStops.delete(threadId)) leaseWait.abort();
+      const waitBeat = setInterval(() => { if (antigravityLeaseHolder?.working()) working(); }, leaseWaitBeatMs());
       waitBeat.unref?.();
       let releaseMcpLease: () => void;
       try {
@@ -633,6 +648,13 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         clearInterval(waitBeat);
         leaseWaits.delete(threadId);
       }
+      const holder = { working: () => !settled && !stopRequested };
+      antigravityLeaseHolder = holder;
+      const heldLease = releaseMcpLease;
+      releaseMcpLease = () => {
+        if (antigravityLeaseHolder === holder) antigravityLeaseHolder = null;
+        heldLease();
+      };
       if (disposed) {
         releaseMcpLease();
         pending.delete(threadId);
@@ -710,7 +732,6 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       const finalizeMcp = () => {
         if (mcpFinalized) return;
         mcpFinalized = true;
-        antigravityLeaseRetained = false;
         try {
           restoreMcp();
         } catch (error) {
@@ -731,7 +752,6 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         }
         void awaitCliTreeStopped(child).then((stopped) => {
           if (stopped) closeFinalizers.get(child)?.();
-          else if (!mcpFinalized) antigravityLeaseRetained = true;
         });
       };
       const requestStop = () => {
@@ -781,7 +801,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
               } else if (payload.state === "ERROR") {
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: false });
               } else {
-                working(`${payload.step_index}:${payload.step_type}:${payload.state}`);
+                working(stepFingerprint(payload));
               }
             } else if (payload.step_type === "agent_response" && payload.usage) {
               emit({
@@ -791,7 +811,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 output: payload.usage.output_tokens || 0,
               });
             } else {
-              working(`${payload.step_index}:${payload.step_type}:${payload.state}`);
+              working(stepFingerprint(payload));
             }
             break;
           }
@@ -896,10 +916,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         closeFinalizers.set(child, finalize);
         void awaitCliTreeStopped(child).then((stopped) => {
           if (stopped) finalize();
-          else {
-            if (!mcpFinalized) antigravityLeaseRetained = true;
-            emit({ ...base(threadId, turnId), type: "runtime.error", message: "Antigravity shutdown is still pending; its process group and MCP lease remain owned" });
-          }
+          else emit({ ...base(threadId, turnId), type: "runtime.error", message: "Antigravity shutdown is still pending; its process group and MCP lease remain owned" });
         });
       });
 
@@ -1067,12 +1084,15 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         interruptTurn: async (threadId) => {
           const run = active.get(threadId);
           if (run) return run.stop();
-          leaseWaits.get(threadId)?.abort();
+          const wait = leaseWaits.get(threadId);
+          if (wait) wait.abort();
+          else if (pending.has(threadId)) earlyStops.add(threadId);
         },
         respondToRequest: async () => "unavailable" as const, // this engine has no asks to answer
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
           for (const wait of leaseWaits.values()) wait.abort();
+          for (const threadId of pending) earlyStops.add(threadId);
           for (const { stop } of active.values()) stop();
           await reapChildren(); // also reap children that hung post-result
         },

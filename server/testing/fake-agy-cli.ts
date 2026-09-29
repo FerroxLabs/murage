@@ -135,6 +135,8 @@ if (process.env.FAKE_AGY_DUMP) {
   writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
 }
 if (argv.includes("--version")) {
+  const versionDelayMs = Number(process.env.FAKE_AGY_VERSION_DELAY_MS ?? 0);
+  if (Number.isFinite(versionDelayMs) && versionDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, versionDelayMs));
   console.log(process.env.FAKE_AGY_VERSION ?? "1.1.22");
   process.exit(0);
 }
@@ -196,6 +198,9 @@ if (process.env.FAKE_AGY_EXTRA_STEPS === "1") {
   out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 1, state: "ACTIVE", step_type: "planner_response" } });
   out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 2, state: "ACTIVE", step_type: "agent_response" } });
   out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 1, state: "ACTIVE", step_type: "planner_response" } });
+  // one long step whose content keeps growing is still working
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 2, state: "ACTIVE", step_type: "agent_response", partial: "ab" } });
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 2, state: "ACTIVE", step_type: "agent_response", partial: "abc" } });
 }
 
 // A genuine crash: the child dies mid-turn with no `result` and nobody
