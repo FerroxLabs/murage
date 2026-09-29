@@ -19,6 +19,9 @@ export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
   { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/provider-connections(?:\/|$)/, purpose: "model provider connection custody and catalogs" },
   { methods: ["GET", "POST", "PATCH", "DELETE"], path: /^\/api\/local-models(?:\/|$)/, purpose: "local model server addresses, keys, detection and tool tests" },
   { methods: ["GET", "POST"], path: /^\/api\/images\/settings$/, purpose: "image provider and billing selection" },
+  // A model check sends a real render; the library holds every bot's saved
+  // prompt blocks and reference packs. Owner only, like the settings.
+  { methods: ["GET", "POST", "DELETE"], path: /^\/api\/images\/(?:probe|library|prompt-blocks|reference-packs)(?:\/|$)/, purpose: "image model checks and the saved prompt block and reference pack library" },
   { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/memory(?:\/|$)/, purpose: "memory authority, sharing, retention and configuration" },
   { methods: ["PATCH", "PUT"], path: /^\/api\/config$/, purpose: "application, credentials, browser and computer configuration" },
   // The packaged app writes through /replace with its commit token; this

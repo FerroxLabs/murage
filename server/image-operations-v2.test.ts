@@ -109,10 +109,14 @@ it("review: a provider job started in an earlier turn is found again by request_
   await f.approve(); await refusal;
   pollsWork = true;
   (f.actor as { generation: string }).generation = randomUUID();
+  // The caller learns first that this request_id collects a job, so it can skip re-reading saved blocks and packs.
+  expect(f.operations.resumable(f.actor, "later")).toMatchObject({ kind: "job" });
+  expect(f.operations.resumable(f.actor, "never-used")).toBeUndefined();
   const resumed = await f.run("later", request) as { metadata: { jobId: string } };
   expect(resumed.metadata.jobId).toBe("imgjob_77");
   expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   expect(f.cards()).toHaveLength(1); expect(f.images()).toHaveLength(1);
+  expect(f.operations.resumable(f.actor, "later")).toBeUndefined();
 });
 
 it("review: a resumed multi-image render keeps each image's own facts and the whole render's", async () => {

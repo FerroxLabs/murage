@@ -719,5 +719,12 @@
   "imageSettings.loading": "Loading connections…",
   "imageSettings.refresh": "Refresh connections",
   "imageSettings.saving": "Saving image settings…",
-  "imageSettings.errorHint": "Refresh to check the saved settings, then try again."
+  "imageSettings.errorHint": "Refresh to check the saved settings, then try again.",
+  "imageSettings.rule.free": "Any width and height in multiples of {multiple}, ratio {min} to {max}, {minPixels} to {maxPixels} pixels, longest side at most {maxEdge}.",
+  "imageSettings.rule.experimental": "Above {pixels} pixels is experimental.",
+  "imageSettings.rule.ratioTier": "Named ratios {ratios} at size tiers {tiers}.",
+  "imageSettings.rule.list": "Only these sizes: {sizes}.",
+  "imageSettings.rule.providerDefault": "The provider's default size only.",
+  "imageSettings.limits.notPublished": "Limit not published, Murage uses 4,000.",
+  "imageSettings.limits.tokens": "Google counts tokens, not characters; Murage uses a conservative 32,000 characters."
 }

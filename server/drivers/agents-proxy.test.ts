@@ -61,6 +61,7 @@ let savedToolResultBodies: any[] = [];
 /** What the stub returns from /api/internal/image-models — a JSON-returning
  * tool, so an oversized one can be driven through jsonToolResult. */
 let imageModelsResponse: unknown = { connections: [], models: [] };
+const generateCalls: Array<{ requestId: string; prompt?: string }> = [];
 /** What the saved prompt block and reference pack tools sent. */
 const imageLibraryCalls: Array<{ method: string; url: string; body: unknown }> = [];
 let skillsResponse: unknown = {
@@ -206,6 +207,21 @@ beforeAll(async () => {
         lastSkillStageBody = JSON.parse(data);
         res.writeHead(201, { "content-type": "application/json" });
         res.end(JSON.stringify(skillStageResponse));
+      });
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/internal/generate-image") {
+      let data = "";
+      req.on("data", (c) => (data += c));
+      req.on("end", () => {
+        const body = JSON.parse(data) as { requestId: string; prompt?: string };
+        generateCalls.push(body);
+        // Headers only when the render ends, the way the harness answers.
+        setTimeout(() => {
+          const refused = body.prompt === "refuse";
+          res.writeHead(refused ? 409 : 200, { "content-type": "application/json" });
+          res.end(JSON.stringify(refused ? { error: "The prompt is 6,000 characters; grok-imagine-image-2.0 allows 4,000. Nothing was sent." } : { artifact: { id: "img-1" }, metadata: { summary: "1 image" } }));
+        }, 300);
       });
       return;
     }
@@ -504,6 +520,15 @@ describe("agents-proxy MCP surface", () => {
   // RECOVERABLE IN FULL: preview + pages reassembles the retained bytes
   // exactly, and the reassembly parses. That last property is the contract
   // this test holds; if it ever breaks, the fragment really is a loss.
+  it("holds generate_image open until the harness answers, and passes a refusal through as its words", async () => {
+    generateCalls.length = 0;
+    const done = await callTool("generate_image", { request_id: "r1", prompt: "A lighthouse", aspect_ratio: "9:16" });
+    expect(done.result.isError).toBeFalsy(); expect(done.result.content[0].text).toContain("img-1");
+    const refused = await callTool("generate_image", { request_id: "r2", prompt: "refuse" });
+    expect(refused.result.isError).toBe(true); expect(refused.result.content[0].text).toContain("allows 4,000. Nothing was sent.");
+    expect(generateCalls.map(call => call.requestId)).toEqual(["r1", "r2"]);
+  });
+
   it("sends the saved prompt block and reference pack tools to their internal routes", async () => {
     imageLibraryCalls.length = 0;
     await callTool("save_prompt_block", { name: "brand-lock", text: "Identity" });

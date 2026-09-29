@@ -15,7 +15,8 @@ import { join, relative, isAbsolute, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { initializeImageLibrary } from "./image-operations-schema.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
-import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_REFERENCE_LIMITS } from "../shared/media-assets.ts";
+import { IMAGE_GENERATION_REFERENCE_MAX } from "../shared/media-assets.ts";
+import { GENERATED_IMAGE_MAX_BYTES } from "./attachments.ts";
 import { IMAGE_PROMPT_HARD_MAX } from "../shared/image-capabilities.ts";
 import type { ImageReference } from "./image-generation.ts";
 
@@ -25,6 +26,18 @@ export type ImageLibraryActor = { kind: "bot"; botId: string } | { kind: "owner"
 export const IMAGE_LIBRARY_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 /** Most saved blocks one generate_image call may name. */
 export const IMAGE_PROMPT_BLOCKS_MAX = 8;
+/** What one scope (a bot, or the workspace) keeps live: names, and versions of one name. */
+export const IMAGE_LIBRARY_NAMES_MAX = 100;
+export const IMAGE_LIBRARY_VERSIONS_MAX = 50;
+/** Refuses a save that would pass what one scope keeps. `table` is one of the two library tables. */
+function checkRoom(db: DatabaseSync, table: "image_prompt_blocks" | "image_reference_packs", scope: ImageLibraryScope, botId: string, name: string, what: string): void {
+  const versions = (db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE scope=? AND bot_id=? AND name=? AND deleted_at IS NULL`).get(scope, botId, name) as { n: number }).n;
+  if (versions >= IMAGE_LIBRARY_VERSIONS_MAX) refuse(409, `${name} already has ${IMAGE_LIBRARY_VERSIONS_MAX} versions, the most one ${what} keeps. Save it under a new name, or ask the owner to delete old versions in Settings.`);
+  if (versions === 0) {
+    const names = (db.prepare(`SELECT COUNT(DISTINCT name) AS n FROM ${table} WHERE scope=? AND bot_id=? AND deleted_at IS NULL`).get(scope, botId) as { n: number }).n;
+    if (names >= IMAGE_LIBRARY_NAMES_MAX) refuse(409, `There are already ${IMAGE_LIBRARY_NAMES_MAX} saved ${what}s here, the most kept. Reuse a name, or ask the owner to delete some in Settings.`);
+  }
+}
 /** Content-addressed reference-pack images: DATA_DIR/image-reference-packs/<sha256>.<ext>. */
 export const IMAGE_REFERENCE_PACK_DIR = "image-reference-packs";
 const PREVIEW_CHARS = 160;
@@ -74,6 +87,7 @@ export function savePromptBlock(db: DatabaseSync, input: { scope: ImageLibrarySc
   const latest = database.prepare("SELECT * FROM image_prompt_blocks WHERE scope=? AND bot_id=? AND name=? AND deleted_at IS NULL ORDER BY version DESC LIMIT 1").get(input.scope, botId, name) as BlockRow | undefined;
   const digest = sha256(text);
   if (latest && latest.sha256 === digest && latest.text === text) return { ...blockOf(latest), created: false };
+  checkRoom(database, "image_prompt_blocks", input.scope, botId, name, "prompt block");
   const top = database.prepare("SELECT MAX(version) AS version FROM image_prompt_blocks WHERE scope=? AND bot_id=? AND name=?").get(input.scope, botId, name) as { version: number | null };
   const row: BlockRow = { id: randomUUID(), scope: input.scope, bot_id: botId, name, version: (top.version ?? 0) + 1, text, chars: text.length, sha256: digest, created_by: input.createdBy.slice(0, 80), created_at: input.now ?? Date.now(), deleted_at: null };
   database.prepare("INSERT INTO image_prompt_blocks VALUES(?,?,?,?,?,?,?,?,?,?,NULL)").run(row.id, row.scope, row.bot_id, row.name, row.version, row.text, row.chars, row.sha256, row.created_by, row.created_at);
@@ -176,11 +190,14 @@ export function saveReferencePack(db: DatabaseSync, dataDir: string, input: { sc
   if (!input.references.length || input.references.length > IMAGE_GENERATION_REFERENCE_MAX) refuse(400, `A reference pack holds 1 to ${IMAGE_GENERATION_REFERENCE_MAX} images.`);
   const botId = input.scope === "bot" ? input.botId ?? "" : "";
   if (input.scope === "bot" && !botId) refuse(400, "A bot's pack needs its bot.");
+  // The same cap every generated image is kept to, so a saved pack can always be used.
+  if (input.references.some(reference => reference.bytes.length > GENERATED_IMAGE_MAX_BYTES)) refuse(400, `Each image in a reference pack must be at most ${GENERATED_IMAGE_MAX_BYTES / (1024 * 1024)} MB.`);
   const images = input.references.map(reference => storePackImage(dataDir, reference));
   const database = prepared(db);
   const latest = database.prepare("SELECT * FROM image_reference_packs WHERE scope=? AND bot_id=? AND name=? AND deleted_at IS NULL ORDER BY version DESC LIMIT 1").get(input.scope, botId, name) as PackRow | undefined;
   const encoded = JSON.stringify(images);
   if (latest && latest.images === encoded) return { ...packSummary(latest), created: false };
+  checkRoom(database, "image_reference_packs", input.scope, botId, name, "reference pack");
   const top = database.prepare("SELECT MAX(version) AS version FROM image_reference_packs WHERE scope=? AND bot_id=? AND name=?").get(input.scope, botId, name) as { version: number | null };
   const row: PackRow = { id: randomUUID(), scope: input.scope, bot_id: botId, name, version: (top.version ?? 0) + 1, images: encoded, count: images.length, created_by: input.createdBy.slice(0, 80), created_at: input.now ?? Date.now(), deleted_at: null };
   database.prepare("INSERT INTO image_reference_packs VALUES(?,?,?,?,?,?,?,?,?,NULL)").run(row.id, row.scope, row.bot_id, row.name, row.version, row.images, row.count, row.created_by, row.created_at);
@@ -227,9 +244,9 @@ export function resolveReferencePack(db: DatabaseSync, dataDir: string, actor: I
     const file = packFile(dataDir, image);
     try {
       const stat = lstatSync(file);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size !== image.bytes || stat.size > IMAGE_REFERENCE_LIMITS.maxBytesEach || !inside(realRoot, realpathSync(file))) return changed(index);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size !== image.bytes || stat.size > GENERATED_IMAGE_MAX_BYTES || !inside(realRoot, realpathSync(file))) return changed(index);
       const bytes = readFileSync(file);
-      if (sha256(bytes) !== image.sha256 || decodeGeneratedImage(bytes.toString("base64")).mime !== image.mime) return changed(index);
+      if (sha256(bytes) !== image.sha256 || decodeGeneratedImage(bytes.toString("base64"), GENERATED_IMAGE_MAX_BYTES).mime !== image.mime) return changed(index);
       return { bytes, mime: image.mime };
     } catch (error) { if (error instanceof ImageLibraryError) throw error; return changed(index); }
   });

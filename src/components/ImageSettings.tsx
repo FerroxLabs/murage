@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { IMAGE_GENERATION_REFERENCE_MAX } from "../../shared/media-assets";
-import type { ImageModelCapabilities } from "../../shared/image-capabilities";
+import { IMAGE_BUDGET_NOTES, ratioLabel, type ImageModelCapabilities, type SizeRule } from "../../shared/image-capabilities";
 import { t } from "@/lib/i18n";
 import { api } from "@/state/store";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
@@ -96,13 +96,25 @@ export function imageModelCapability(model: ImageModel): ImageModelCapability {
   return { kind: "edits", sentences, maxReferences };
 }
 
+/** A size rule in the reader's language. Pure, for tests. */
+export function imageSizeRuleWords(rule: SizeRule): string {
+  const n = (value: number) => value.toLocaleString("en-US");
+  if (rule.kind === "free") {
+    const base = t("imageSettings.rule.free", { multiple: rule.multiple, min: ratioLabel(rule.minRatio), max: ratioLabel(rule.maxRatio), minPixels: n(rule.minPixels), maxPixels: n(rule.maxPixels), maxEdge: rule.maxEdge });
+    return rule.experimentalAbovePixels ? `${base} ${t("imageSettings.rule.experimental", { pixels: n(rule.experimentalAbovePixels) })}` : base;
+  }
+  if (rule.kind === "ratioTier") return t("imageSettings.rule.ratioTier", { ratios: rule.ratios.join(", "), tiers: rule.tiers.join(", ") });
+  return rule.sizes.length ? t("imageSettings.rule.list", { sizes: rule.sizes.join(", ") }) : t("imageSettings.rule.providerDefault");
+}
+const budgetNote = (note: string) => note === IMAGE_BUDGET_NOTES.notPublished ? t("imageSettings.limits.notPublished") : note === IMAGE_BUDGET_NOTES.tokens ? t("imageSettings.limits.tokens") : note;
+
 /** A model's own limits in plain words, and for Flux whether they came from
  * the router or Murage's built-in table. Pure, for tests. */
 export function imageModelLimits(capabilities: ImageModelCapabilities, source?: "catalogue" | "built-in"): string {
   const count = capabilities.maxPromptChars.toLocaleString("en-US");
-  const budget = capabilities.promptBudgetNote ? t("imageSettings.limits.budgetNote", { count, note: capabilities.promptBudgetNote.replace(/\.$/, "") }) : t("imageSettings.limits.budget", { count });
+  const budget = capabilities.promptBudgetNote ? t("imageSettings.limits.budgetNote", { count, note: budgetNote(capabilities.promptBudgetNote).replace(/\.$/, "") }) : t("imageSettings.limits.budget", { count });
   const details = source === "catalogue" ? ` ${t("imageSettings.limits.fromFlux")}` : source === "built-in" ? ` ${t("imageSettings.limits.builtIn")}` : "";
-  return `${budget} ${t("imageSettings.limits.sizes", { rule: capabilities.sizeRuleText })}${details}`;
+  return `${budget} ${t("imageSettings.limits.sizes", { rule: imageSizeRuleWords(capabilities.sizeRule) })}${details}`;
 }
 
 /** The dropdown suffix for one model: what it can do here, at a glance. */

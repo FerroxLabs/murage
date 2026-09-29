@@ -318,6 +318,9 @@ const GEMINI_STANDARD_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4",
 const NO_SUPPORTS = { edit: false, background: false, seed: false, negative: false, n: 1, compression: false };
 const BUFFERED = { stream: false, streamEdits: false, jobs: false };
 const NOT_PUBLISHED = "Limit not published, Murage uses 4,000.";
+const GOOGLE_TOKENS = "Google counts tokens, not characters; Murage uses a conservative 32,000 characters.";
+/** The built-in budget notes, so a view can say them in the reader's language. */
+export const IMAGE_BUDGET_NOTES = { notPublished: NOT_PUBLISHED, tokens: GOOGLE_TOKENS } as const;
 
 type Built = Omit<ImageModelCapabilities, "sizeRuleText" | "source" | "promptBudgetSource"> & { promptBudgetSource?: ImageModelCapabilities["promptBudgetSource"] };
 function finish(value: Built, source: ImageModelCapabilities["source"] = "built-in"): ImageModelCapabilities {
@@ -336,7 +339,7 @@ function google(id: string): ImageModelCapabilities | null {
   const tiers = id === "gemini-3.1-flash-image" ? ["512", "1K", "2K", "4K"] : id === "gemini-3-pro-image" ? ["1K", "2K", "4K"] : id === "gemini-3.1-flash-lite-image" ? ["1K"] : null;
   if (!tiers) return null;
   const ratios = id === "gemini-3.1-flash-image" ? [...GEMINI_STANDARD_RATIOS, "1:4", "4:1", "1:8", "8:1"] : GEMINI_STANDARD_RATIOS;
-  return finish({ maxPromptChars: 32_000, promptBudgetNote: "Google counts tokens, not characters; Murage uses a conservative 32,000 characters.",
+  return finish({ maxPromptChars: 32_000, promptBudgetNote: GOOGLE_TOKENS,
     sizeRule: { kind: "ratioTier", ratios, tiers }, defaultSize: "1024x1024", qualities: [], qualityMode: "param", formats: ["png"],
     maxReferences: 14, maxReferenceBytes: IMAGE_REFERENCE_BYTES_DEFAULT, maxReferenceBytesTotal: IMAGE_REFERENCE_TOTAL_DEFAULT,
     supports: { ...NO_SUPPORTS, edit: true, seed: true }, delivery: BUFFERED });

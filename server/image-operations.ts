@@ -166,6 +166,20 @@ export class ImageOperations {
     const found = (pending.receiptIds ?? [pending.receiptId]).map(receiptId => receipts.find(receipt => receipt.id === receiptId));
     return found.every(Boolean) ? found as NonNullable<typeof found[number]>[] : null;
   }
+  /** The row a repeat of this request_id would continue, without running it:
+   * "settled" (published or waiting to publish: nothing is re-read) or "job"
+   * (a provider job to poll, with the operation id its prompt was kept under).
+   * The caller then skips re-reading saved blocks and packs, which may have
+   * changed since the render was approved. */
+  resumable(actor: Pick<ImageActor, "botId" | "threadId" | "generation">, requestId: string): { kind: "settled" | "job"; operationId: string } | undefined {
+    if (!/^[\w-]{1,80}$/.test(requestId)) return undefined;
+    const own = this.db().prepare("SELECT id,state,result FROM image_operations WHERE id=?").get(hash(`${actor.botId}:${actor.threadId}:${actor.generation}:${requestId}`)) as { id: string; state: string; result: string | null } | undefined;
+    const row = own ?? this.db().prepare("SELECT id,state,result FROM image_operations WHERE state IN ('running','uncertain') AND json_valid(result) AND json_extract(result,'$.resumeKey')=? ORDER BY updated_at DESC LIMIT 1")
+      .get(hash(`${actor.botId}:${actor.threadId}:${requestId}`)) as { id: string; state: string; result: string | null } | undefined;
+    if (!row) return undefined;
+    if (row.state === "published" || row.state === "publish-pending") return { kind: "settled", operationId: row.id };
+    return ["running", "uncertain"].includes(row.state) && parseJob(row.result) && !parsePending(row.result) ? { kind: "job", operationId: row.id } : undefined;
+  }
   execute<T>(actor: ImageActor, requestId: string, request: unknown, work: (reserve: ImageReserve, publish: PublishOperationImage, context: ImageWorkContext) => Promise<T>): Promise<T> {
     actor.assertActive();
     if (!/^[\w-]{1,80}$/.test(requestId)) throw error(400, "A stable request_id is required for image generation.");

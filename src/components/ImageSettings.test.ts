@@ -195,3 +195,14 @@ describe("model checks and the library (image generation v2 A.2, A.6, A.8)", () 
     expect(html).toContain("No saved reference packs yet.");
   });
 });
+
+describe("review round 2: size rules in the reader's language", () => {
+  it("says every size rule through the catalogue, word for word with the server's English", async () => {
+    const { imageSizeRuleWords } = await import("./ImageSettings");
+    const shared = await import("../../shared/image-capabilities");
+    for (const [provider, id] of [["openai", "gpt-image-2"], ["google", "gemini-3.1-flash-image"], ["xai", "grok-imagine-image-2.0"], ["openai", "gpt-image-1"]] as const) {
+      const capabilities = shared.builtInImageCapabilities(provider, id)!;
+      expect(imageSizeRuleWords(capabilities.sizeRule)).toBe(shared.describeSizeRule(capabilities.sizeRule));
+    }
+  });
+});

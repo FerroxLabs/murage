@@ -51,3 +51,11 @@ it("guards owner team management: rename, members and lead, and delete", () => {
     expect(requiresDesktopAuthority(method, path), `${method} ${path}`).toBe(true);
   expect(requiresDesktopAuthority("POST", "/api/team-sectionsx")).toBe(false);
 });
+
+it("keeps the image model check and the image library owner-only", () => {
+  for (const [method, path] of [["POST", "/api/images/probe"], ["GET", "/api/images/library"], ["POST", "/api/images/prompt-blocks"], ["GET", "/api/images/prompt-blocks/b1"],
+    ["DELETE", "/api/images/prompt-blocks/b1"], ["DELETE", "/api/images/reference-packs/p1"], ["GET", "/api/images/settings"]] as const) {
+    expect(requiresDesktopAuthority(method, path), `${method} ${path}`).toBe(true);
+  }
+  expect(requiresDesktopAuthority("POST", "/api/internal/generate-image")).toBe(false);
+});

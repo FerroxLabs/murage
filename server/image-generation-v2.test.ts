@@ -342,3 +342,39 @@ describe("review fixes: delivery and sizes", () => {
     expect(polls).toBe(0); expect(now).toBeLessThan(60_000);
   });
 });
+
+describe("review round 2", () => {
+  it("does not treat the daily check preference as a settings change for a running render", async () => {
+    const { imageSettingsIdentity } = await import("./image-generation.ts");
+    expect(imageSettingsIdentity({ enabled: true, connectionId: "openai", model: "gpt-image-2", dailyProbe: false }))
+      .toBe(imageSettingsIdentity({ enabled: true, connectionId: "openai", model: "gpt-image-2", dailyProbe: true }));
+    expect(imageSettingsIdentity({ enabled: true, model: "a" })).not.toBe(imageSettingsIdentity({ enabled: true, model: "b" }));
+  });
+});
+
+describe("review round 2: error bodies", () => {
+  it("reads a provider's error body only up to 64 KB, even with no length header", async () => {
+    const f = fixture();
+    const huge = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(`{"error":{"message":"${"x".repeat(200_000)}"}}`)); controller.close(); } });
+    f.fetcher.mockResolvedValueOnce(new Response(huge, { status: 400 }));
+    await expect(f.service.generate(f.request, f.hooks)).rejects.toMatchObject({ code: "provider-error", message: "The selected image provider rejected the request (HTTP 400). No fallback or automatic retry was attempted." });
+  });
+});
+
+describe("review round 2: silence", () => {
+  it("lets a direct OpenAI stream stay quiet for 10 minutes, and Flux for 2 or 4 keepalives", async () => {
+    const { streamIdleMs } = await import("./image-generation.ts");
+    expect(streamIdleMs("openai")).toBe(600_000); expect(streamIdleMs("flux")).toBe(120_000); expect(streamIdleMs("flux", 60)).toBe(240_000);
+  });
+});
+
+describe("review round 2: one image over the cap", () => {
+  it("keeps the images of a multi-image render that fit and names the one that did not", async () => {
+    const f = fixture(); const big = Buffer.concat([pngOf(1024, 1024), Buffer.alloc(26 * 1024 * 1024)]);
+    f.fetcher.mockResolvedValueOnce(json({ data: [{ b64_json: PNG }, { b64_json: big.toString("base64") }] }));
+    const result = await f.service.generate({ ...f.request, n: 2 }, f.hooks);
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(result.metadata.notKept).toEqual([{ index: 1, bytes: big.length }]);
+    expect(result.metadata.summary).toContain("Image 2 arrived at 26 MB, over the 25 MB Murage keeps, so it was not kept.");
+  });
+});

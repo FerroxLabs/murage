@@ -25,6 +25,8 @@
 //   MURAGE_COMMS_TOKEN  shared secret for the localhost-only internal endpoints
 //   MURAGE_TURN_DEPTH   this turn's comms depth (the harness refuses recursion)
 import readline from "node:readline";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 
 import { CREDENTIAL_TARGETS, isCredentialTargetId } from "../../shared/credential-request.ts";
 // Pure, dependency-free, and compiled in: the help corpus is a generated
@@ -597,6 +599,33 @@ async function api(path: string, init?: RequestInit): Promise<Json> {
   return body;
 }
 
+/**
+ * One harness call held open for as long as `signal` allows. Node's fetch
+ * gives up on response headers after 300 seconds, and the harness sends
+ * none until an image render ends, so a render past five minutes was cut
+ * with the provider still working. A plain request has no such clock.
+ */
+function apiLong(path: string, body: string, signal: AbortSignal): Promise<Json> {
+  const unavailable = () => new Error("MURAGE_AGENTS_UNAVAILABLE: the Murage control connection failed or timed out. Report the failure; do not switch to native ListAgents/SendMessage or retry the assignment blindly.");
+  return new Promise((resolve, reject) => {
+    let url: URL;
+    try { url = new URL(HARNESS + path); } catch { reject(unavailable()); return; }
+    const send = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const req = send(url, { method: "POST", signal, headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, "content-length": Buffer.byteLength(body) } }, res => {
+      const chunks: Buffer[] = []; let size = 0;
+      res.on("data", (chunk: Buffer) => { size += chunk.length; if (size > 32 * 1024 * 1024) { req.destroy(); reject(unavailable()); return; } chunks.push(chunk); });
+      res.on("error", () => reject(unavailable()));
+      res.on("end", () => {
+        let parsed: Json = {};
+        try { parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Json; } catch { /* not JSON */ }
+        if ((res.statusCode ?? 500) >= 400) reject(new Error(String(parsed.error ?? `HTTP ${res.statusCode}`))); else resolve(parsed);
+      });
+    });
+    req.on("error", () => reject(unavailable()));
+    req.end(body);
+  });
+}
+
 /** Bound what an agents tool hands back to the engine. Short results — the
  * overwhelming majority — are returned exactly as they came. A 3-second cap on
  * the save keeps a slow harness from adding latency to work that already
@@ -695,13 +724,13 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     // waits (IMAGE_APPROVAL_TIMEOUT_MS, 15 minutes, in server/image-operations.ts)
     // and then while the provider renders. Giving up here first would close the
     // request, which cancels the card under the owner as "not answered".
-    const result = await api("/api/internal/generate-image", { method: "POST", signal: AbortSignal.timeout(GENERATE_IMAGE_TIMEOUT_MS), body: JSON.stringify({
+    const result = await apiLong("/api/internal/generate-image", JSON.stringify({
       requestId: args.request_id, prompt: args.prompt, promptBlocks: args.prompt_blocks, referencePack: args.reference_pack, operation: args.operation, connectionId: args.connection_id,
       model: args.model, quality: args.quality, size: args.size, aspectRatio: args.aspect_ratio, resolution: args.resolution,
       width: args.width, height: args.height, fit: args.fit, n: args.n, outputFormat: args.output_format, outputCompression: args.output_compression,
       background: args.background, seed: args.seed, negativePrompt: args.negative_prompt, condensedFromChars: args.condensed_from_chars,
       referenceIds: args.reference_ids,
-    }) });
+    }), AbortSignal.timeout(GENERATE_IMAGE_TIMEOUT_MS));
     return jsonToolResult(result);
   }
 

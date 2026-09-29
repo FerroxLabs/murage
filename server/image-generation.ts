@@ -110,6 +110,8 @@ export interface DeliveredImage { width?: number; height?: number; mime: string;
   cropFailed?: boolean }
 export interface GeneratedImageMetadata extends ImageOperationDetails {
   reportedModel?: string; upstreamProvider?: string;
+  /** Images of a multi-image render over the kept cap: named, not kept. */
+  notKept?: Array<{ index: number; bytes: number }>;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number; costUsd?: number };
   /** The real pixels of each published image, read from its own header. */
   delivered?: DeliveredImage[];
@@ -150,6 +152,14 @@ export class ImageGenerationError extends Error {
   constructor(code: string, message: string, outcome: ImageAttemptOutcome = "not-dispatched", correctablePreflight = false) { super(message); this.code = code; this.outcome = outcome; this.correctablePreflight = correctablePreflight; }
 }
 const LOCAL_PREFLIGHT_CODES = new Set(["invalid-request", "invalid-references", "model-required", "unsupported-model", "unsupported-edit", "unsupported-quality", "unsupported-size", "unsupported-parameter", "prompt-too-long", "connection-unavailable"]);
+/** What a running render must not see change: the image settings, less the
+ * owner's daily-check preference (ticking it never stops a paid render). */
+export function imageSettingsIdentity(settings: object | undefined): string {
+  const { dailyProbe: _dailyProbe, ...rest } = (settings ?? {}) as Record<string, unknown>;
+  return JSON.stringify(rest);
+}
+/** How long a stream may be silent: OpenAI sends no keepalive and has no edge in between. */
+export const streamIdleMs = (provider: ImageProvider, keepaliveSeconds?: number) => provider === "openai" ? BUFFERED_DEADLINE_MS : idleTimeoutMs(keepaliveSeconds);
 /** Refusals decided from the model's own statement once its catalogue is read. */
 const CATALOGUE_CHECK_CODES = new Set(["prompt-too-long", "unsupported-parameter", "unsupported-size", "unsupported-quality"]);
 /** One provider answer is never held past this, whatever n is. */
@@ -230,9 +240,8 @@ export function assertCredentialOrigin(provider: ImageProvider, url: string): vo
  * not that shape. Bounded and secret-redacted; never the raw body. */
 async function providerErrorDetail(response: Response): Promise<string> {
   try {
-    if (Number(response.headers.get("content-length") ?? 0) > 64 * 1024) { void response.body?.cancel(); return ""; }
-    const text = (await response.text()).slice(0, 64 * 1024);
-    const body = JSON.parse(text) as unknown;
+    // Bounded as it is read: a chunked error body has no length to check first.
+    const body = await boundedJson(response, 64 * 1024);
     const error = record(body) && record(body.error) ? body.error : record(body) ? body : null;
     if (!error) return "";
     const clean = (value: unknown, max: number) => typeof value === "string" && value.trim() ? redactSecretsInText(value.replace(/\s+/g, " ").trim()).slice(0, max) : "";
@@ -520,6 +529,7 @@ export function imageResultSummary(metadata: GeneratedImageMetadata): string {
   if (metadata.promptChars !== undefined) facts.push(`Prompt: ${fmt(metadata.promptChars)} characters.`);
   if (metadata.condensedFromChars !== undefined && metadata.promptChars !== undefined) facts.push(`Condensed from ${fmt(metadata.condensedFromChars)} to ${fmt(metadata.promptChars)} characters for ${metadata.model}.`);
   if (metadata.avoidLine) facts.push("Negative prompt added as an Avoid: line.");
+  for (const item of metadata.notKept ?? []) facts.push(`Image ${item.index + 1} arrived at ${mib(item.bytes)}, over the ${mib(GENERATED_IMAGE_MAX_BYTES)} Murage keeps, so it was not kept.`);
   return facts.filter(Boolean).join(" ");
 }
 
@@ -739,7 +749,8 @@ export class ImageGenerationService {
         catch { fail("invalid-references", "A reference image has an invalid format."); }
       }
       const edit = request.operation === "edit";
-      if (edit !== (references.length > 0)) fail("invalid-references", "Edits require reference images; generation cannot silently ignore them.");
+      // A job being collected sends nothing, so its references are not needed again.
+      if (!hooks.resumeJob && edit !== (references.length > 0)) fail("invalid-references", "Edits require reference images; generation cannot silently ignore them.");
       // OpenRouter edit capability is refreshed on the pinned endpoint just before approval below.
       // The Flux catalogue read is a free metadata read that falls back to
       // the built-in table on any failure, so checks after it stay local.
@@ -793,7 +804,7 @@ export class ImageGenerationService {
       // line when the model has no native negative prompt. Never cut.
       const assembled = assembleImagePrompt({ blocks: assembly.blocks?.map(block => block.text), scene: request.prompt, negative: request.negativePrompt, nativeNegative: caps.supports.negative });
       const promptChars = assembled.prompt.length;
-      if (promptChars > caps.maxPromptChars) fail("prompt-too-long", promptTooLongMessage(promptChars, modelId!, caps.maxPromptChars, otherModels(catalog, modelId!, edit, item => item.maxPromptChars >= promptChars)));
+      if (promptChars > caps.maxPromptChars && !hooks.resumeJob) fail("prompt-too-long", promptTooLongMessage(promptChars, modelId!, caps.maxPromptChars, otherModels(catalog, modelId!, edit, item => item.maxPromptChars >= promptChars)));
       if (request.condensedFromChars !== undefined && request.condensedFromChars <= promptChars) unsupported(`condensed_from_chars (${fmt(request.condensedFromChars)}) must be more than the prompt's ${fmt(promptChars)} characters. Nothing was sent.`);
       // Delivery: stream, job or one buffered answer.
       const pixels = resolved.width && resolved.height ? resolved.width * resolved.height : 1_048_576;
@@ -872,7 +883,8 @@ export class ImageGenerationService {
       const card: ImageApprovalCardInput = { prompt: assembled.prompt, ...(nativeNegative ? { negativePrompt: nativeNegative } : {}) };
       try { reservation = await hooks.reserve(details, card); } catch { fail("permission-denied", "Image generation was not approved."); }
       // The render's own limits start after the separately bounded owner review.
-      const renderSignal = () => AbortSignal.timeout(delivery === "buffered" ? BUFFERED_DEADLINE_MS : RENDER_CEILING_MS);
+      // OpenAI renders several large images in one buffered answer: it gets the full ceiling.
+      const renderSignal = () => AbortSignal.timeout(delivery === "buffered" && connection.provider !== "openai" ? BUFFERED_DEADLINE_MS : RENDER_CEILING_MS);
       signal = hooks.signal ? AbortSignal.any([hooks.signal, renderSignal()]) : renderSignal();
       active();
       if (connection.provider === "openrouter") {
@@ -901,7 +913,9 @@ export class ImageGenerationService {
       let result: unknown;
       if (hooks.resumeJob) result = await pollJob(hooks.resumeJob.id, 2);
       else {
-        const idleMs = idleTimeoutMs(caps.delivery.keepaliveSeconds);
+        // OpenAI sends no keepalive and its one preview frame can come late on
+        // a large render; with no edge in between, it gets the buffered deadline.
+        const idleMs = streamIdleMs(connection.provider, caps.delivery.keepaliveSeconds);
         // The idle clock starts at the response headers: until then only the
         // render ceiling applies (a provider may hold headers while it works).
         const idle = delivery === "stream" ? idleWatch(idleMs, false) : null;
@@ -942,7 +956,8 @@ export class ImageGenerationService {
       if (connection.provider === "google" && !encodedList.length) fail("invalid-image", googleNoImageReason(result), outcome);
       if (!record(result) || !encodedList.length || encodedList.length > count) fail("invalid-image", count === 1 ? "The image provider did not return one supported image." : `The image provider did not return up to ${count} supported images.`, outcome);
       const images: Array<{ image: DecodedGeneratedImage; delivered: DeliveredImage }> = [];
-      for (const encoded of encodedList) {
+      const notKept: Array<{ index: number; bytes: number }> = [];
+      for (const [encodedIndex, encoded] of encodedList.entries()) {
         let image: DecodedGeneratedImage;
         try { image = decodeGeneratedImage(encoded, GENERATED_IMAGE_RECEIVE_MAX_BYTES); } catch { return fail("invalid-image", "The image provider returned invalid or oversized raster bytes.", outcome); }
         if (connection.provider === "flux" && edit && image.mime !== "image/png") fail("invalid-image", "Flux did not return the PNG required by its edit contract.", outcome);
@@ -961,10 +976,15 @@ export class ImageGenerationService {
           }
         }
         // Kept images match what Files, the viewer and Save accept: a larger render is named, not cut.
-        if (image.bytes.length > GENERATED_IMAGE_MAX_BYTES) fail("image-too-large", `The render arrived at ${mib(image.bytes.length)}; Murage keeps images up to ${mib(GENERATED_IMAGE_MAX_BYTES)}. Nothing was published. Ask for output_format jpeg or webp, or a smaller resolution.`, outcome);
+        // Of several, the ones that fit are kept and the rest are named.
+        if (image.bytes.length > GENERATED_IMAGE_MAX_BYTES) { notKept.push({ index: encodedIndex, bytes: image.bytes.length }); continue; }
         images.push({ image, delivered: { ...(rendered ? rendered : {}), mime: image.mime, bytes: image.bytes.length, ...(cropped ? { cropped } : {}), ...(cropFailed ? { cropFailed } : {}) } });
       }
-      const base: GeneratedImageMetadata = { ...details, ...(typeof result.model === "string" && result.model.length <= 180 ? { reportedModel: result.model } : {}), ...(endpointTag ? { upstreamProvider: endpointTag } : {}), ...(safeUsage(result) ? { usage: safeUsage(result) } : {}) };
+      if (!images.length) {
+        const largest = Math.max(...notKept.map(item => item.bytes));
+        fail("image-too-large", `The render arrived at ${mib(largest)}; Murage keeps images up to ${mib(GENERATED_IMAGE_MAX_BYTES)}. Nothing was published. Ask for output_format jpeg or webp, or a smaller resolution.`, outcome);
+      }
+      const base: GeneratedImageMetadata = { ...details, ...(notKept.length ? { notKept } : {}), ...(typeof result.model === "string" && result.model.length <= 180 ? { reportedModel: result.model } : {}), ...(endpointTag ? { upstreamProvider: endpointTag } : {}), ...(safeUsage(result) ? { usage: safeUsage(result) } : {}) };
       const artifacts: T[] = [];
       // Every image is handed over even when an earlier one fails to publish,
       // so each is retained with its receipt and the same request_id can

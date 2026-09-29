@@ -441,13 +441,13 @@ import {
 } from "./browser-connection.ts";
 import { captureOutsideHumanControl } from "./private-screen-capture.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
-import { ImageGenerationError, ImageGenerationService, imageModelsForBots, type ImageConnection } from "./image-generation.ts";
+import { ImageGenerationError, ImageGenerationService, imageModelsForBots, imageSettingsIdentity, type ImageConnection } from "./image-generation.ts";
 import { IMAGE_NEGATIVE_PROMPT_MAX, IMAGE_PROMPT_HARD_MAX } from "../shared/image-capabilities.ts";
 import { IMAGE_GENERATION_REFERENCE_MAX } from "../shared/media-assets.ts";
 import { ImageOperations, imageReferences } from "./image-operations.ts";
 import {
   IMAGE_PROMPT_BLOCKS_MAX, applyImageAvailability, deletePromptBlock, deleteReferencePack, getPromptBlock, imageProbes, listPromptBlocksForBot, listPromptBlocksForOwner,
-  listReferencePacksForBot, listReferencePacksForOwner, promptBlockById, recordImageProbe, resolvePromptBlocks, resolveReferencePack, savePromptBlock, saveReferencePack, scheduledProbeDue,
+  listReferencePacksForBot, listReferencePacksForOwner, promptBlockById, recordImageProbe, renderPrompt, resolvePromptBlocks, resolveReferencePack, savePromptBlock, saveReferencePack, scheduledProbeDue,
 } from "./image-library.ts";
 import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
@@ -11886,32 +11886,39 @@ const server = createServer(async (req, res) => {
           seed: z.number().int().optional(), negativePrompt: z.string().max(IMAGE_NEGATIVE_PROMPT_MAX).optional(), condensedFromChars: z.number().int().optional(),
           referenceIds: z.array(z.string().max(180)).max(64).optional() }).strict().parse(await readBody(req));
         requireActiveInternal();
-        const settingIdentity = JSON.stringify(cfg.imageGen ?? {});
+        const settingIdentity = imageSettingsIdentity(cfg.imageGen);
         const state = await imageSettings(body.connectionId);
         requireActiveInternal();
         const chosen = body.connectionId ?? state.selected?.connectionId;
         if (cfg.imageGen?.enabled === false || !chosen) return json(res, 409, { error: "Choose an image connection and model in Settings → Tools & Connections → Image generation." });
         const controller = new AbortController();
         const disconnected = () => controller.abort(); res.once("close", disconnected);
-        const active = () => { requireActiveInternal(); if (controller.signal.aborted || cfg.imageGen?.enabled === false || JSON.stringify(cfg.imageGen ?? {}) !== settingIdentity) throw Object.assign(new Error("Image operation was cancelled or its settings changed."), { status: 409 }); };
+        const active = () => { requireActiveInternal(); if (controller.signal.aborted || cfg.imageGen?.enabled === false || imageSettingsIdentity(cfg.imageGen) !== settingIdentity) throw Object.assign(new Error("Image operation was cancelled or its settings changed."), { status: 409 }); };
         const revoked = setInterval(() => { try { active(); } catch { controller.abort(); } }, 100);
         try {
           const actor = { botId: internalClaim.botId, threadId: internalClaim.threadId, generation: internalClaim.generation, signal: controller.signal, assertActive: active };
           // Saved blocks and a pack resolve in this bot's scope, then the
           // workspace's, before anything else: a missing or changed one
           // refuses the whole request before the card.
-          const blocks = resolvePromptBlocks(database(), { kind: "bot", botId: actor.botId }, body.promptBlocks ?? []);
-          const pack = body.referencePack ? resolveReferencePack(database(), DATA_DIR, { kind: "bot", botId: actor.botId }, body.referencePack) : null;
-          const attached = imageReferences(store, actor.threadId, body.referenceIds);
+          // A repeat of an approved request (published, waiting to publish, or
+          // a provider job to collect) never re-reads them: they may have
+          // changed since, and the kept prompt is what was approved.
+          const earlier = imageOperations.resumable(actor, body.requestId);
+          const kept = earlier?.kind === "job" ? renderPrompt(database(), earlier.operationId) : undefined;
+          const blocks = earlier ? [] : resolvePromptBlocks(database(), { kind: "bot", botId: actor.botId }, body.promptBlocks ?? []);
+          const pack = !earlier && body.referencePack ? resolveReferencePack(database(), DATA_DIR, { kind: "bot", botId: actor.botId }, body.referencePack) : null;
+          const attached = earlier ? [] : imageReferences(store, actor.threadId, body.referenceIds);
           const refs = [...(pack?.references ?? []), ...attached];
           if (refs.length > IMAGE_GENERATION_REFERENCE_MAX) return json(res, 400, { error: `${refs.length} reference images (${pack?.references.length ?? 0} from the pack, ${attached.length} attached); Murage takes at most ${IMAGE_GENERATION_REFERENCE_MAX}. Nothing was sent.` });
           const { requestId: _requestId, referenceIds: _referenceIds, connectionId: _connectionId, model: _model, operation: _operation, promptBlocks: _promptBlocks, referencePack: _referencePack, ...options } = body;
           const request = { connectionId: chosen, model: body.model ?? state.selected?.model ?? state.catalog?.defaultModel ?? undefined,
-            operation: body.operation ?? (refs.length ? "edit" : "generate"), ...options };
+            operation: body.operation ?? (refs.length || (earlier && body.referenceIds?.length) || (earlier && body.referencePack) ? "edit" : "generate"), ...options };
+          // The job being collected is sent nothing: it is described by the prompt kept at approval.
+          const sent = kept ? { ...request, prompt: kept.prompt, negativePrompt: undefined, condensedFromChars: undefined } : request;
           const assembly = { blocks: blocks.map(block => ({ name: block.name, version: block.version, scope: block.scope, text: block.text })),
             ...(pack ? { referencePack: { name: pack.name, version: pack.version, count: pack.references.length } } : {}) };
           const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds, promptBlocks: body.promptBlocks, referencePack: body.referencePack }, (reserve, publish, context) =>
-            imageService.generate(request, { signal: controller.signal, assertActive: active, reserve, publish, operationId: context.operationId, resumeJob: context.resumeJob, jobStarted: context.jobStarted,
+            imageService.generate(sent, { signal: controller.signal, assertActive: active, reserve, publish, operationId: context.operationId, resumeJob: context.resumeJob, jobStarted: context.jobStarted,
               connectionLabel: labelledImageConnections().find(connection => connection.id === chosen)?.label }, refs, assembly));
           active(); return json(res, 200, result);
         } finally { clearInterval(revoked); res.off("close", disconnected); }

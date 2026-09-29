@@ -2123,6 +2123,10 @@ describe("harness HTTP API", () => {
       expect(settings.body.catalog.models.find((model: { id: string }) => model.id === "gpt-image-2").availability).toBe("unverified");
       const bots = (await api("GET", "/api/bots?messages=100")).body.bots as Array<{ messages: unknown[] }>;
       const messagesBefore = bots.reduce((sum, item) => sum + item.messages.length, 0);
+      // Without the desktop's own proof a local process gets nothing: no check, no library.
+      expect((await api("POST", "/api/images/probe", { connectionId: "openai", model: "gpt-image-2" })).status).toBe(404);
+      expect((await api("GET", "/api/images/library")).status).toBe(404);
+      expect((await api("POST", "/api/images/prompt-blocks", { name: "sneaky", text: "x" })).status).toBe(404);
       const checked = await desktopApi("POST", "/api/images/probe", { connectionId: "openai", model: "gpt-image-2" });
       expect(checked.status).toBe(200);
       expect(checked.body.probe).toMatchObject({ ok: true, free: false });

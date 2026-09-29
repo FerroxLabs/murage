@@ -135,3 +135,19 @@ describe("model checks", () => {
     expect(scheduledProbeDue(db, "flux", "d", now)).toBe(false);
   });
 });
+
+describe("review: how much one scope keeps", () => {
+  it("refuses a 51st version of one name and a 101st name, plainly, and never touches another bot", () => {
+    for (let version = 1; version <= 50; version++) savePromptBlock(db, { scope: "bot", botId: "a", name: "grows", text: `v${version}`, createdBy: "bot:a" });
+    expect(() => savePromptBlock(db, { scope: "bot", botId: "a", name: "grows", text: "v51", createdBy: "bot:a" })).toThrow("already has 50 versions");
+    for (let index = 1; index < 100; index++) savePromptBlock(db, { scope: "bot", botId: "a", name: `name-${index}`, text: "x", createdBy: "bot:a" });
+    expect(() => savePromptBlock(db, { scope: "bot", botId: "a", name: "one-more", text: "x", createdBy: "bot:a" })).toThrow("already 100 saved prompt blocks");
+    expect(savePromptBlock(db, { scope: "bot", botId: "b", name: "one-more", text: "x", createdBy: "bot:b" })).toMatchObject({ created: true });
+  });
+  it("keeps and uses a pack image up to the generated-image cap", () => {
+    const big = Buffer.concat([PNG_A.subarray(0, 33), Buffer.alloc(12 * 1024 * 1024)]);
+    saveReferencePack(db, DATA_DIR, { scope: "bot", botId: "a", name: "big", references: [ref(big)], createdBy: "bot:a" });
+    expect(resolveReferencePack(db, DATA_DIR, bot("a"), "big").references[0]!.bytes.length).toBe(big.length);
+    expect(() => saveReferencePack(db, DATA_DIR, { scope: "bot", botId: "a", name: "huge", references: [ref(Buffer.concat([PNG_A, Buffer.alloc(26 * 1024 * 1024)]))], createdBy: "bot:a" })).toThrow("at most 25 MB");
+  });
+});
