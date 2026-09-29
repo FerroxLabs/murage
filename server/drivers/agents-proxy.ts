@@ -581,15 +581,16 @@ const textResult = (id: unknown, text: string, isError = false) =>
 /** 15-minute approval wait (server/image-operations.ts IMAGE_APPROVAL_TIMEOUT_MS),
  * the 30-minute render ceiling (server/image-delivery.ts RENDER_CEILING_MS)
  * and a 5-minute margin, so the proxy never gives up on a render first. */
-const GENERATE_IMAGE_TIMEOUT_MS = Number(process.env.MURAGE_GENERATE_IMAGE_WAIT_MS) > 0
-  ? Number(process.env.MURAGE_GENERATE_IMAGE_WAIT_MS)
-  : 15 * 60_000 + 30 * 60_000 + 5 * 60_000;
+const GENERATE_IMAGE_DEFAULT_WAIT_MS = 15 * 60_000 + 30 * 60_000 + 5 * 60_000;
+/** A shorter wait for tests only: a whole number of milliseconds, never longer than the default. */
+const GENERATE_IMAGE_TIMEOUT_MS = ((raw: number) => Number.isSafeInteger(raw) && raw > 0 && raw < GENERATE_IMAGE_DEFAULT_WAIT_MS ? raw : GENERATE_IMAGE_DEFAULT_WAIT_MS)(Number(process.env.MURAGE_GENERATE_IMAGE_WAIT_MS));
+const GENERATE_IMAGE_WAIT_MINUTES = Math.max(1, Math.round(GENERATE_IMAGE_TIMEOUT_MS / 60_000));
 /** What the bot is told when that wait itself ends: what happened and what to
  * do next, in words it can pass on. Not the control-channel failure line: the
- * connection did not fail, nothing came back in time. */
-const GENERATE_IMAGE_WAIT_MINUTES = Math.max(1, Math.round(GENERATE_IMAGE_TIMEOUT_MS / 60_000));
+ * connection did not fail, nothing came back in time. A held card (a
+ * routine's) stays open for the owner after the call gives up. */
 const GENERATE_IMAGE_NO_ANSWER = `No answer came back for this image request within ${GENERATE_IMAGE_WAIT_MINUTES} minute${GENERATE_IMAGE_WAIT_MINUTES === 1 ? "" : "s"}, `
-  + "most likely because the approval card was not answered, so this call stopped waiting. "
+  + "so this call stopped waiting. The approval card may still be open for the owner, or the render did not finish. "
   + "No automatic retry was made. Tell the owner, and ask for the image again only if they still want it.";
 
 async function api(path: string, init?: RequestInit): Promise<Json> {
