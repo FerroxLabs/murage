@@ -32,6 +32,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/testing/fake-codex-app-server.ts": "'rm -rf scratch' is a string the fake engine sends as an approval request; nothing executes it",
   "installer/test/systemd.test.mjs": "asserts the exact `rm -r <staging dir>` text setup prints for the operator; the file's own fixture teardown uses safeWipeSync",
   "server/container-computer.ts": "rm -rf \"$source\" inside a generated shell script that runs in the sandbox container against its own copy",
+  "server/box-exec.ts": "computer_exec's box-side shell, sent to the bot's cloud box and run there (never on this machine): every rm -rf is `rm -rf -- \"${J:?}\"` on one job record under $HOME/.cache/murage-exec/<id>, the id checked against [a-f0-9]{16,64} (jobDir) or re-checked before the sweep removes it",
   "installer/lib/systemd.mjs": "prints `rm -r <mkdtemp staging dir>` for the operator to run by hand after the unit is installed; not executed here",
   "installer/lib/tailscale.mjs": "shredAuthKeyFile removes the private mkdtemp directory it created for the auth key",
   "electron/backup-remote-runtime.mjs": "forgetRemoteWorkDirectory removes <control>/remote/<ref> only: the ref is checked against the reference pattern, the path is rebuilt from the control root (never a caller path), must be a direct child of <control>/remote, and must be a real owner-owned directory (no symlink) before the delete",

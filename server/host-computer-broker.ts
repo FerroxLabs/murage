@@ -43,7 +43,9 @@ export class HostComputerBroker {
         allowed();
         if (signal?.aborted) throw cancelled(false);
         actionStarted = Boolean(claim);
-        result = await client.request(method, params, { signal });
+        // no clock on the action itself (0.1.61): it ends when it answers,
+        // on Stop, or when the harness revokes the turn for silence
+        result = await client.request(method, params, method === "tools/call" ? { signal, timeoutMs: null } : { signal });
         actionReplied = true;
         allowed();
       } finally {

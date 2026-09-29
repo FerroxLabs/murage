@@ -33,6 +33,15 @@ describe("TurnWatchdog", () => {
     expect(dog.watching("t1")).toBe(false);
   });
 
+  it("reports the silence limit a running turn is held to (a tool's own work checks against it)", () => {
+    const { dog } = rig();
+    expect(dog.silenceLimitMs("none")).toBe(STALL);
+    dog.watch("t1", "bot1");
+    expect(dog.silenceLimitMs("t1")).toBe(STALL);
+    dog.dispatched("t1", "bot1", undefined, { stallMs: 45 * 60_000 });
+    expect(dog.silenceLimitMs("t1")).toBe(45 * 60_000);
+  });
+
   it("any event on the thread resets the clock", () => {
     const { dog, stalls, tick } = rig();
     dog.watch("t1", "bot1");

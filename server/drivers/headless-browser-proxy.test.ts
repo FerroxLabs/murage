@@ -157,4 +157,24 @@ describe("real isolated engine subprocess", () => {
       await expect(client.request("tools/call", { name: "slow" }, { signal: AbortSignal.abort() })).rejects.toThrow();
     } finally { await client.close(); }
   });
+  it("a request with no clock (a host computer action) outlives the 60 s watchdog, and a Stop still ends it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // the peer never answers an action
+    const script = `let buf='';process.stdin.on('data',c=>{buf+=c;let n;while((n=buf.indexOf('\\n'))>=0){const m=JSON.parse(buf.slice(0,n));buf=buf.slice(n+1);if(m.method==='initialize')process.stdout.write(JSON.stringify({id:m.id,result:{}})+'\\n');}});`;
+    const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: {} });
+    try {
+      await client.request("initialize");
+      const stop = new AbortController();
+      let settled = false;
+      const call = client.request("tools/call", { name: "long" }, { signal: stop.signal, timeoutMs: null });
+      const outcome = call.then(() => "resolved", () => "rejected").finally(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(settled).toBe(false);
+      stop.abort();
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await outcome).toBe("rejected");
+    } finally { vi.useRealTimers(); await client.close(); }
+  });
 });
