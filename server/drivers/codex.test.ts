@@ -14,7 +14,7 @@ import * as procs from "../procs.ts";
 
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { CodexDriver } from "./codex.ts";
+import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver } from "./codex.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { NATIVE_DIR } from "../config.ts";
 
@@ -621,6 +621,14 @@ describe("CodexDriver turns (fake app-server)", () => {
     // server does NOT — its tool calls arrive as approval cards
     expect(argv).toContain('mcp_servers.murage_connectors.default_tools_approval_mode');
     expect(argv).not.toContain('mcp_servers.notes.default_tools_approval_mode');
+    // codex stops any MCP tool call after 60 seconds unless told otherwise;
+    // every server Murage mounts gets a limit past the longest silence
+    // setting, so a long tool call (or a card waiting on the owner) is
+    // stopped only by the thread's silence watch or a Stop
+    for (const name of ["murage_connectors", "notes"]) {
+      expect(seen.argv).toContain(`mcp_servers.${name}.tool_timeout_sec=${CODEX_MCP_TOOL_TIMEOUT_SEC}`);
+    }
+    expect(CODEX_MCP_TOOL_TIMEOUT_SEC).toBeGreaterThan(24 * 60 * 60);
   });
 
   it("gives a custom server its own mount name when the owner's config.toml already declares one by that name", async () => {

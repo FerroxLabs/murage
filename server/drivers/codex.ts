@@ -102,6 +102,14 @@ function noteRenamedMcpServer(name: string, mountName: string, why: string): voi
   console.error(`codex: MCP server ${JSON.stringify(name)} mounted as ${JSON.stringify(mountName)} so definitions do not merge — ${why}`);
 }
 
+/** Codex stops an MCP tool call after 60 seconds unless the server sets
+ * `tool_timeout_sec`. Murage's own tools run longer than that (a computer
+ * command, a picture, a card waiting on the owner), so every server Murage
+ * mounts gets a limit past the longest silence setting (24 hours): a long
+ * tool call ends when it answers, on the owner's Stop, or when the thread's
+ * silence watch stops the turn, never on a clock. */
+export const CODEX_MCP_TOOL_TIMEOUT_SEC = 7 * 24 * 60 * 60;
+
 function mountMcpServer(
   appServerArgs: string[],
   env: Record<string, string | undefined>,
@@ -117,6 +125,7 @@ function mountMcpServer(
     // Values stay in the child environment; argv contains names only so
     // credentials never appear in process listings or diagnostics.
     "-c", `${prefix}.env_vars=${JSON.stringify(Object.keys(server.env))}`,
+    "-c", `${prefix}.tool_timeout_sec=${CODEX_MCP_TOOL_TIMEOUT_SEC}`,
   );
   // Harness-owned servers are pre-quieted; a user-configured server keeps
   // codex's on-request policy so its tool calls become approval cards.
@@ -335,6 +344,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             "-c", `${prefix}.command=${JSON.stringify(bridge.command)}`,
             "-c", `${prefix}.args=${JSON.stringify(bridge.args)}`,
             "-c", `${prefix}.env_vars=${JSON.stringify(Object.keys(bridge.env))}`,
+            "-c", `${prefix}.tool_timeout_sec=${CODEX_MCP_TOOL_TIMEOUT_SEC}`,
             "-c", `${prefix}.default_tools_approval_mode="auto"`,
           );
         }
