@@ -9,6 +9,7 @@ import {
   loadSharpResize,
   loadSharpShrink,
   loadShrink,
+  oneAtATime,
   rasterFormat,
   sharpResize,
   sharpShrink,
@@ -385,4 +386,20 @@ describe.skipIf(!sharp)("sharpShrink with the bundled sharp", () => {
     expect(meta.format).toBe("jpeg");
     expect(Math.max(meta.width!, meta.height!)).toBeLessThanOrEqual(2000);
   }, 60_000);
+});
+
+describe("oneAtATime", () => {
+  it("runs shrinks one after another, and a failed one does not stop the next", async () => {
+    let running = 0, most = 0;
+    const slow = oneAtATime(async (bytes) => {
+      running++; most = Math.max(most, running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running--;
+      if (bytes.length === 0) throw new Error("bad");
+      return "fits";
+    });
+    const results = await Promise.allSettled([slow(Buffer.alloc(1), { maxBytes: 1, maxEdge: 1 }), slow(Buffer.alloc(0), { maxBytes: 1, maxEdge: 1 }), slow(Buffer.alloc(1), { maxBytes: 1, maxEdge: 1 })]);
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
+    expect(most).toBe(1);
+  });
 });

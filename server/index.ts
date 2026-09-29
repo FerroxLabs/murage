@@ -86,7 +86,7 @@ import { listClaudeAccounts } from "./claude-account-list.ts";
 import { leadershipAdmissionError } from "./leadership-admission.ts";
 import { goalWaitMaxMs } from "./goal-wait.ts";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
-import { escapeAttribute } from "../src/lib/composer-attachments.ts";
+import { escapeAttribute, splitTranscriptAttachments } from "../src/lib/composer-attachments.ts";
 import { imageDelivery, imageDeliveryOutcome, IMAGE_DELIVERY_PROMPT, unboundImagePolicy, type ImageDelivery, type ImageDeliveryOutcome } from "./turn-image-dispatch.ts";
 import { CLAUDE_TURN_IMAGE_FIT, DEFAULT_TURN_IMAGE_FIT, limitTurnImagePaths, TurnImages, turnImageAudience, turnImageUnavailable, withoutImageTags, type CollectedTurnImages, type TurnImageFit } from "./turn-images.ts";
 import { imagesNotSentActivityName, imagesNotSentDisplayName } from "../shared/turn-image-note.ts";
@@ -3536,13 +3536,32 @@ function turnImagesNotSent(text: string, collected: CollectedTurnImages | undefi
   return { paths: [...overCount, ...tooLarge], note: imagesNotSentActivityName({ sent, overCount: overCount.length, tooLarge: tooLarge.length }) };
 }
 
+/** Record the left-out paths on every message of this turn that names them,
+ * so a later replay leaves them out too (transcriptText). True when any of
+ * them was not recorded before: a Retry after a restart is not news. */
+function recordImagesNotSent(threadId: string, messageIds: readonly string[], paths: readonly string[]): boolean {
+  let fresh = false;
+  const byId = new Map(store.messagesFor(threadId).map(message => [message.id, message] as const));
+  for (const id of new Set(messageIds)) {
+    const message = byId.get(id);
+    if (!message?.text || message.role !== "user") continue;
+    const named = new Set(splitTranscriptAttachments(message.text).images);
+    const had = new Set(message.imagesNotSent ?? []);
+    const add = paths.filter(path => named.has(path) && !had.has(path));
+    if (!add.length) continue;
+    fresh = true;
+    try { store.patchMessage(threadId, id, { imagesNotSent: [...had, ...add] }); } catch { /* the note still goes */ }
+  }
+  return fresh;
+}
+
 /** One line per message and outcome: a Retry or a second room member that
  * leaves the same images out does not say it again. */
 const imagesNotSentNoted = new Set<string>();
-function noteImagesNotSent(threadId: string, messageId: string | undefined, note: string | undefined, bot: { id: string; name: string; color: string }): void {
+function noteImagesNotSent(threadId: string, messageId: string | undefined, note: string | undefined, bot: { id: string; name: string; color: string }, recorded = true): void {
   if (!note) return;
   const key = `${threadId}\0${messageId ?? ""}\0${note}`;
-  if (messageId && imagesNotSentNoted.has(key)) return;
+  if (messageId && (imagesNotSentNoted.has(key) || !recorded)) return;
   if (imagesNotSentNoted.size >= 1000) imagesNotSentNoted.clear();
   imagesNotSentNoted.add(key);
   try {
@@ -6633,8 +6652,8 @@ async function startTurn(
       const leftOut = turnImagesNotSent(text, collectedImages);
       if (leftOut.paths.length) {
         turnText = withoutImageTags(turnText, leftOut.paths);
-        transcript = transcript.map(entry => ({ ...entry, text: withoutImageTags(entry.text, leftOut.paths) }));
-        noteImagesNotSent(threadId, userMessage?.id, leftOut.note, bot);
+        const recorded = recordImagesNotSent(threadId, [...(userMessage ? [userMessage.id] : []), ...(opts?.excludeMessageIds ?? [])], leftOut.paths);
+        noteImagesNotSent(threadId, userMessage?.id, leftOut.note, bot, recorded);
       }
       const outputInstructions = prepareOutputDestination(bot.id, threadId, dispatchClaimId, worksInWorkspace && opts?.runOn !== "cloud", Boolean(integrations.agents));
       projectTurnLeases.markDispatched(dispatchClaimId);
@@ -8559,7 +8578,7 @@ async function runGroupMemberTurn(
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
       // Same as the direct path: left-out images leave the text, one line says so.
       const roomTurnText = leftOut.paths.length ? withoutImageTags(text, leftOut.paths) : text;
-      if (leftOut.paths.length) noteImagesNotSent(threadId, latestUser?.id, leftOut.note, bot);
+      if (leftOut.paths.length) noteImagesNotSent(threadId, latestUser?.id, leftOut.note, bot, recordImagesNotSent(threadId, latestUser ? [latestUser.id] : [], leftOut.paths));
       submissionBoundary.started();
       preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
       const roomSystemLayers = [...roomLayers, shapeLayer("images", imagePrompt)];

@@ -159,6 +159,8 @@ posixOnly("an image limit never fails a turn (fake Fuigo through the harness)", 
     // The owner's own message keeps all twelve: the chat shows what they sent.
     const recorded = (await messages(bot.threadId)).find((m) => m.role === "user" && String(m.text ?? "").includes(paths[11]!));
     expect(recorded?.attachments).toHaveLength(12);
+    // ...and records which two were not sent, so no later replay names them.
+    expect(recorded?.imagesNotSent).toEqual(paths.slice(10));
   }, 60_000);
 
   it("shows a picture sent while the bot was busy once the queued turn runs", async () => {
@@ -179,5 +181,25 @@ posixOnly("an image limit never fails a turn (fake Fuigo through the harness)", 
     expect(images.map((block) => Buffer.from(block.data!, "base64").at(-1))).toEqual([expected]);
     expect(await failures(bot.threadId)).toEqual([]);
     expect(String(JSON.stringify(await messages(bot.threadId)))).not.toContain(REFUSAL);
+  }, 90_000);
+
+  it("does the same for a room member's turn", async () => {
+    const room = (await request("POST", "/api/groups", { name: "Image room", memberIds: [bot.id] })).body.group as { id: string; threadId: string };
+    expect(room?.threadId).toBeTruthy();
+    await request("PATCH", `/api/groups/${room.id}/setup`, { action: "complete", bulletin: "", defaultResponder: { kind: "member", botId: bot.id } });
+    const first = uploads;
+    const paths: string[] = [];
+    for (let index = 0; index < 11; index++) paths.push(await upload(room.threadId));
+    rmSync(promptDump, { force: true });
+    const sent = await request("POST", `/api/groups/${room.id}/messages`, { threadId: room.threadId, text: `Which colours?\n\n${paths.map((path) => `<attached-image path="${path}" />`).join("\n\n")}` });
+    expect(sent.status, JSON.stringify(sent.body)).toBeLessThan(300);
+    await expect.poll(() => { try { return lastPrompt().filter((block) => block.type === "image").length; } catch { return 0; } }, { timeout: 30_000 }).toBe(10);
+    const images = lastPrompt().filter((block) => block.type === "image");
+    expect(images.map((block) => Buffer.from(block.data!, "base64").at(-1))).toEqual(Array.from({ length: 10 }, (_, index) => first + index));
+    const turnText = lastPrompt().filter((block) => block.type === "text").map((block) => block.text).join("\n");
+    expect(turnText).toContain(paths[9]);
+    expect(turnText).not.toContain(paths[10]);
+    await expect.poll(async () => (await notes(room.threadId)).map((m) => m.tool?.name), { timeout: 30_000 }).toEqual([imagesNotSentActivityName({ sent: 10, overCount: 1, tooLarge: 0 })]);
+    expect(await failures(room.threadId)).toEqual([]);
   }, 90_000);
 });

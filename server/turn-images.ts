@@ -133,7 +133,8 @@ export class TurnImages {
    * are left out in order and named in `overCount` and `tooLarge`; the
    * dispatch removes their tags and tells the owner in one line. Only the
    * first `maxCount` paths are looked at, so a path past the count is never
-   * checked or read: it cannot reach the bot either way. */
+   * checked or read: it cannot reach the bot either way. Every path inside
+   * the count is checked before anything is read. */
   async collect(threadId: string, botId: string, text: string, fit: TurnImageFit = DEFAULT_TURN_IMAGE_FIT): Promise<CollectedTurnImages> {
     const { kept: paths, overCount } = limitTurnImagePaths(text);
     const images: CollectedTurnImages["images"] = [];
@@ -142,20 +143,24 @@ export class TurnImages {
     if (!paths.length) return { images, unbound, overCount, tooLarge };
     if (!turnImageAudience(this.store, threadId, botId)) throw fail();
     const allowed = new Set(this.store.messagesFor(threadId).flatMap(message => (message.attachments ?? []).map(item => item.path)));
+    // A forged path inside the count is refused before anything is read,
+    // wherever the byte budget would have run out.
+    if (paths.some(path => !this.canonical(path))) throw fail();
     const shrink = await this.shrink().catch(() => null);
     let total = 0;
-    for (const [index, path] of paths.entries()) {
-      if (!this.canonical(path)) throw fail();
+    // Once the budget is spent, every later bound image stays out, so what
+    // the bot sees is the first images in order, never a gap. An unbound tag
+    // costs no bytes and keeps its engine's own rule.
+    let spent = false;
+    for (const path of paths) {
       if (!allowed.has(path)) { unbound.push(path); continue; }
+      if (spent) { tooLarge.push(path); continue; }
       const directory = join(this.dataDir, "attachments");
       let parent, stat;
       try { parent = lstatSync(directory); stat = lstatSync(path); } catch { throw fail(); }
       if (!parent.isDirectory() || parent.isSymbolicLink() || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw fail();
       const remaining = TURN_IMAGE_LIMITS.maxTotalBytes - total;
-      // The budget is spent: this image and every one after it stay out, so
-      // what the bot sees is the first images in order, never a gap.
-      const rest = () => { tooLarge.push(...paths.slice(index)); };
-      if (remaining < MIN_IMAGE_BUDGET) { rest(); break; }
+      if (remaining < MIN_IMAGE_BUDGET) { spent = true; tooLarge.push(path); continue; }
       // Read only what can be sent or shrunk; anything larger stays out unread.
       const readable = shrink ? TURN_IMAGE_LIMITS.maxReadBytes : fit.hardMaxBytes;
       if (stat.size > readable) { tooLarge.push(path); continue; }
@@ -166,24 +171,31 @@ export class TurnImages {
       let picture: { bytes: Buffer; mime: string } | null = null;
       if (shrink) {
         const made = await shrink(bytes, { maxBytes: Math.min(fit.targetBytes, remaining), maxEdge: fit.maxEdge }).catch(() => null);
-        if (made === "fits") picture = { bytes, mime: sniffed.mime };
+        // Its word is checked, never taken: "fits" must fit, and new bytes
+        // are sniffed like any upload. Output that is not an image is no
+        // shrink at all, and the original is judged as it is.
+        if (made === "fits") { if (bytes.length <= Math.min(fit.targetBytes, remaining)) picture = { bytes, mime: sniffed.mime }; }
         else if (made) {
-          // The resizer's output is checked like any upload before it rides.
           const out = sniffMedia(made.bytes, made.bytes.length);
-          if (!out.supported || out.kind !== "image" || !(IMAGE_REFERENCE_MIMES as readonly string[]).includes(out.mime)) throw invalid();
-          if (made.bytes.length <= Math.min(fit.hardMaxBytes, remaining)) picture = { bytes: made.bytes, mime: out.mime };
+          const image = out.supported && out.kind === "image" && (IMAGE_REFERENCE_MIMES as readonly string[]).includes(out.mime);
+          if (!image) console.warn("[turn images] the resizer returned something that is not an image; judging the original as it is");
+          else if (made.bytes.length <= Math.min(fit.hardMaxBytes, remaining)) picture = { bytes: made.bytes, mime: out.mime };
         }
       }
       if (!picture && bytes.length <= Math.min(fit.hardMaxBytes, remaining)) picture = { bytes, mime: sniffed.mime };
       if (!picture) {
         // Too large for any engine to take on its own: only this one is out.
         // Too large for what is left of the budget: this one and the rest.
-        if (bytes.length > fit.hardMaxBytes) { tooLarge.push(path); continue; }
-        rest(); break;
+        if (bytes.length <= fit.hardMaxBytes) spent = true;
+        tooLarge.push(path);
+        continue;
       }
       total += picture.bytes.length;
       images.push({ mimeType: picture.mime, data: picture.bytes.toString("base64") });
     }
+    // A shrink can take a while: the audience is asked again before any
+    // bytes leave, as it was right after each read.
+    if (images.length && !turnImageAudience(this.store, threadId, botId)) throw fail();
     return { images, unbound, overCount, tooLarge };
   }
   /** `collect`, but an unbound path is a refusal of the whole turn. This is

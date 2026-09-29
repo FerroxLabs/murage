@@ -162,6 +162,18 @@ export function loadResize(): Promise<Resize | null> {
   return loaded;
 }
 
+/** One shrink at a time across the process: each can decode a picture of up
+ * to MAX_INPUT_PIXELS several times, and ten images in each of several
+ * rooms' turns must not all do so at once. */
+export function oneAtATime(shrink: Shrink): Shrink {
+  let tail: Promise<unknown> = Promise.resolve();
+  return (bytes, target) => {
+    const run = tail.then(() => shrink(bytes, target));
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
 let loadedShrink: Promise<Shrink | null> | undefined;
 
 /** sharpShrink over the same sharp as loadResize, once per process; null
@@ -177,7 +189,7 @@ export async function loadSharpShrink(load: () => unknown): Promise<Shrink | nul
     const sharp = load() as SharpModule;
     sharp.cache(false);
     sharp.concurrency(1);
-    return sharpShrink(sharp);
+    return oneAtATime(sharpShrink(sharp));
   } catch (error) {
     console.warn(`[turn images] cannot shrink images, sending those that fit as they are: ${error instanceof Error ? error.message : String(error)}`);
     return null;

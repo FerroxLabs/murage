@@ -32,3 +32,11 @@ describe("flat replies", () => {
     );
   });
 });
+
+describe("images a turn left out", () => {
+  it("stay out of every later replay of the message", () => {
+    const message = { id: "u1", at: 1, role: "user", kind: "text", text: 'Look\n\n<attached-image path="/d/attachments/a.png" />\n<attached-image path="/d/attachments/b.png" />', imagesNotSent: ["/d/attachments/b.png"] } as Message;
+    expect(transcriptText(message, new Map())).toBe('Look\n\n<attached-image path="/d/attachments/a.png" />\n');
+    expect(transcriptText({ ...message, imagesNotSent: undefined }, new Map())).toBe(message.text);
+  });
+});

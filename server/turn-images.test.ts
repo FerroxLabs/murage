@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, symlinkSync, truncateSync } from
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { Store, Message } from "./store.ts";
 import { CLAUDE_TURN_IMAGE_FIT, limitTurnImagePaths, TurnImages, turnImageAudience, TURN_IMAGE_UPLOAD_CAP, TURN_IMAGE_UPLOAD_TTL, withoutImageTags, type Shrink } from "./turn-images.ts";
 import { TURN_IMAGE_LIMITS } from "../shared/media-assets.ts";
@@ -190,10 +190,14 @@ it("shrinks an image that does not fit instead of leaving it out, and keeps one 
   const g = fixture(async () => null);
   const over = g.file(Buffer.concat([png, Buffer.alloc(4 * 1024 * 1024)])); g.append("t", { attachments: [{ kind: "image", ...over }] });
   expect(await g.images.collect("t", "a", g.text(over.path), CLAUDE_TURN_IMAGE_FIT)).toMatchObject({ images: [], tooLarge: [over.path] });
-  // ...and a shrinker whose output is not an image is a refusal, as ever.
+  // ...and a shrinker whose output is not an image never rides: the original
+  // is judged as it is (here too large for Claude), and the turn goes on.
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const h = fixture(async () => ({ bytes: Buffer.from("not an image") }));
   const odd = h.file(Buffer.concat([png, Buffer.alloc(4 * 1024 * 1024)])); h.append("t", { attachments: [{ kind: "image", ...odd }] });
-  await expect(h.images.collect("t", "a", h.text(odd.path), CLAUDE_TURN_IMAGE_FIT)).rejects.toThrow("valid PNG");
+  expect(await h.images.collect("t", "a", h.text(odd.path), CLAUDE_TURN_IMAGE_FIT)).toMatchObject({ images: [], tooLarge: [odd.path] });
+  expect(warn).toHaveBeenCalledTimes(1);
+  warn.mockRestore();
 });
 
 it("removes exactly the left-out tags from the text a bot receives", () => {
@@ -201,4 +205,34 @@ it("removes exactly the left-out tags from the text a bot receives", () => {
   const text = `Two\n\n<attached-image path="${keep}" />\n\n<attached-image path="${drop}" />\n<attached-file path="${drop}" />\nquoted <attached-image path="${drop}" /> mid-line stays`;
   expect(withoutImageTags(text, [drop])).toBe(`Two\n\n<attached-image path="${keep}" />\n\n<attached-file path="${drop}" />\nquoted <attached-image path="${drop}" /> mid-line stays`);
   expect(withoutImageTags(text, [])).toBe(text);
+});
+
+// Review round 1 (security lens).
+it("refuses a forged path inside the count even when the budget runs out before it", async () => {
+  const f = fixture();
+  const big = () => { const saved = f.file(Buffer.concat([png, Buffer.alloc(7 * 1024 * 1024)])); f.append("t", { attachments: [{ kind: "image", ...saved }] }); return saved.path; };
+  const outside = join(f.root, `${randomUUID()}.png`); writeFileSync(outside, png);
+  await expect(f.images.collect("t", "a", [big(), big(), big(), outside].map(f.text).join("\n"))).rejects.toThrow("Reattach");
+});
+
+it("does not take a resizer's word that an oversized image fits", async () => {
+  const f = fixture(async () => "fits");
+  const huge = f.file(Buffer.concat([png, Buffer.alloc(11 * 1024 * 1024)])); f.append("t", { attachments: [{ kind: "image", ...huge }] });
+  expect(await f.images.collect("t", "a", f.text(huge.path))).toMatchObject({ images: [], tooLarge: [huge.path] });
+});
+
+it("re-checks the audience after a slow shrink, so a bot removed meanwhile gets nothing", async () => {
+  let f!: ReturnType<typeof fixture>;
+  f = fixture(async () => { f.store.bots[0]!.hidden = true; return "fits"; });
+  const saved = f.file(); f.append("t", { attachments: [{ kind: "image", ...saved }] });
+  await expect(f.images.collect("t", "a", f.text(saved.path))).rejects.toThrow("Reattach");
+});
+
+it("keeps an unbound tag as a path after the budget runs out, and leaves only bound images out", async () => {
+  const f = fixture();
+  const big = () => { const saved = f.file(Buffer.concat([png, Buffer.alloc(7 * 1024 * 1024)])); f.append("t", { attachments: [{ kind: "image", ...saved }] }); return saved.path; };
+  const paths = [big(), big(), big(), f.file().path];
+  const collected = await f.images.collect("t", "a", paths.map(f.text).join("\n"));
+  expect(collected).toMatchObject({ unbound: [paths[3]], tooLarge: [paths[2]] });
+  expect(collected.images).toHaveLength(2);
 });
