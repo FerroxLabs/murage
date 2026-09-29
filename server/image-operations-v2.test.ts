@@ -108,14 +108,17 @@ it("review: a provider job started in an earlier turn is found again by request_
   const first = f.run("later", request), refusal = expect(first).rejects.toMatchObject({ code: "job-uncertain" });
   await f.approve(); await refusal;
   pollsWork = true;
+  // Within its own turn a request_id names one request: another is refused.
+  expect(() => f.operations.resumable(f.actor, "later", { ...request, prompt: "Something else" })).toThrow("This image request ID was already used for a different request.");
   (f.actor as { generation: string }).generation = randomUUID();
   // The caller learns first that this request_id collects a job, so it can skip re-reading saved blocks and packs.
   expect(f.operations.resumable(f.actor, "later", request)).toMatchObject({ kind: "job" });
   expect(f.operations.resumable(f.actor, "never-used", request)).toBeUndefined();
-  // Only the same request collects that job: another request that reuses the
-  // request_id is refused before anything is sent, never given the prompt
-  // kept for the first one (its saved blocks included).
-  expect(() => f.operations.resumable(f.actor, "later", { ...request, prompt: "Something else" })).toThrow("This image request ID was already used for a different request.");
+  // Only the same request collects that job. A later turn's different
+  // request under the same request_id is its own new render, as execute()
+  // treats it, and is never given the prompt kept for the first one (its
+  // saved blocks included).
+  expect(f.operations.resumable(f.actor, "later", { ...request, prompt: "Something else" })).toBeUndefined();
   const resumed = await f.run("later", request) as { metadata: { jobId: string } };
   expect(resumed.metadata.jobId).toBe("imgjob_77");
   expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);

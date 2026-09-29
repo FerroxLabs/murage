@@ -135,6 +135,13 @@ export function selectBundledSkills(
   );
 }
 
+/** The skills a turn carries once its tools are mounted: a skill that
+ *  drives the phone rides only a turn with the phone mounted (the owner's
+ *  audience, index.ts), never one told to use tools it does not have. */
+export function skillsWithMountedTools<T extends BundledSkill>(skills: readonly T[], mounted: { phone: boolean }): T[] {
+  return skills.filter((skill) => mounted.phone || !skill.manifest.requiredCapabilities.includes("phoneMcp"));
+}
+
 export function renderSkillInstructions(
   selected: readonly BundledSkill[],
   { includeRoot = false }: { includeRoot?: boolean } = {},

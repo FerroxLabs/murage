@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadBundledSkills, loadUserSkills, mergeSkills, parseSkillManifest, selectBundledSkills, skillInstructionsFor, type BundledSkill } from "./skill-library.ts";
+import { loadBundledSkills, loadUserSkills, mergeSkills, parseSkillManifest, selectBundledSkills, skillInstructionsFor, skillsWithMountedTools, type BundledSkill } from "./skill-library.ts";
 
 const phone: BundledSkill = {
   directory: "/skills/phone-harness",
@@ -118,3 +118,10 @@ describe("bundled verification skill", () => {
   });
 });
 
+describe("a skill rides a turn only with the tools it needs", () => {
+  it("drops the phone skill when this turn has no phone mounted (not the owner's audience), and keeps it when it does", () => {
+    const other = { ...phone, directory: "/skills/other", manifest: { ...phone.manifest, id: "other", requiredCapabilities: [] } };
+    expect(skillsWithMountedTools([phone, other], { phone: false })).toEqual([other]);
+    expect(skillsWithMountedTools([phone, other], { phone: true })).toEqual([phone, other]);
+  });
+});

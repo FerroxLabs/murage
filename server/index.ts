@@ -476,7 +476,7 @@ import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./
 import { memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
-import { attachedSkillOn, attachedSkillsFor, CHIEF_GUIDE_ID, isChiefForAttached, loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
+import { attachedSkillOn, attachedSkillsFor, CHIEF_GUIDE_ID, isChiefForAttached, loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills, skillsWithMountedTools } from "./skill-library.ts";
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { createBotPackageExport, getBotPackageExportSelectionCandidates } from "./package-export.ts";
 import { scanBotPackageContents } from "./bot-package-scan.ts";
@@ -6312,7 +6312,7 @@ async function startTurn(
         preparePinnedProcedures(bot.id, threadId, procedurePin, true, procedureContext(bot.id,threadId));
       }
       // One layer per skill, so "What shapes <bot>" lists each (bot-shapes.ts).
-      const skillShapes = skillLayers(selectedSkills, {
+      const skillShapes = skillLayers(skillsWithMountedTools(selectedSkills, { phone: Boolean(integrations.phone) }), {
         includeRoot: worksInWorkspace && opts?.runOn !== "cloud",
         toolCallStyle: toolCallStyleFor(instance.driverKind), murageSkill, phoneServer: phoneMountName(instance.driverKind),
         // the same audience the images line is written for
@@ -8495,7 +8495,7 @@ async function runGroupMemberTurn(
     shapeLayer("team-brief", roomStanding.teamBrief),
     shapeLayer("memory", roomStanding.memory),
     shapeLayer("skills-index", workspace ? pinnedProcedures.importedPrompt : ""),
-    ...skillLayers(selectedSkills, { includeRoot: Boolean(workspace), toolCallStyle: roomToolStyle, murageSkill, phoneServer: phoneMountName(instance.driverKind), ownerAudience: roomOwnerAudience }),
+    ...skillLayers(skillsWithMountedTools(selectedSkills, { phone: Boolean(integrations.phone) }), { includeRoot: Boolean(workspace), toolCallStyle: roomToolStyle, murageSkill, phoneServer: phoneMountName(instance.driverKind), ownerAudience: roomOwnerAudience }),
     shapeLayer("playbooks", installedPlaybookInstructions(text, pinnedProcedures.playbooks)),
   ];
 
