@@ -5,7 +5,9 @@
 // / set_model, and streams a scripted turn in response to `prompt`. Failure
 // modes mirror how the real CLI misbehaves:
 //
-//   FAKE_PI_MODE   happy (default) | tooluse | permission | host-confirm | gate | question | editor | interleave | todo | turn-error | no-models | exit-early
+//   FAKE_PI_MODE   happy (default) | tooluse | permission | host-confirm | gate | question | editor | interleave | todo | turn-error | no-models | exit-early | stream
+//                  stream = long work that keeps streaming: one text delta every FAKE_PI_STREAM_EVERY_MS
+//                  (default 500) for FAKE_PI_STREAM_FOR_MS (default 8000), then "long reply done" and a clean turn_end
 //                  permission = a `select` ask ("Run bash: echo hi?", Allow once / Deny) — since 0.1.52 ASK3 a select
 //                  is a QUESTION for the owner (its answer is {value}); host-confirm = a `confirm` ask, the permission
 //                  shape; question = an `input` ask; editor = an `editor` ask with prefill
@@ -243,6 +245,30 @@ const streamTodoTurn = () => {
   send({ type: "agent_end" });
 };
 
+/** stream: a long reply that keeps working, a delta at a steady beat, then
+ * a clean finish. Room-turn silence tests run it past the old fixed limit. */
+let aborted = false;
+const streamLongTurn = () => {
+  aborted = false;
+  const every = Math.max(10, Number(process.env.FAKE_PI_STREAM_EVERY_MS) || 500);
+  const total = Math.max(every, Number(process.env.FAKE_PI_STREAM_FOR_MS) || 8_000);
+  const startedAt = Date.now();
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
+  const beat = setInterval(() => {
+    if (aborted) { clearInterval(beat); return; }
+    if (Date.now() - startedAt < total) {
+      send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "." } });
+      return;
+    }
+    clearInterval(beat);
+    send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: " long reply done" } });
+    send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
+    send({ type: "agent_end" });
+  }, every);
+};
+
 const finishPermissionTurn = () => {
   send({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "echo hi" } });
   send({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", isError: false });
@@ -389,6 +415,7 @@ function handle(cmd: any) {
       else if (mode === "interleave") streamInterleaveTurn();
       else if (mode === "todo") streamTodoTurn();
       else if (mode === "turn-error") streamErrorTurn();
+      else if (mode === "stream") streamLongTurn();
       else streamTurn();
       return;
     case "extension_ui_response":
@@ -403,6 +430,7 @@ function handle(cmd: any) {
       if (cmd.id === "ask-1" || cmd.id === "ask-host" || cmd.id === "ask-q" || cmd.id === "ask-e") finishPermissionTurn();
       return;
     case "abort":
+      aborted = true;
       send({ type: "turn_end", message: { stopReason: "cancelled", usage: { input: 0, output: 0 } }, usage: { input: 0, output: 0 } });
       return;
     default:

@@ -799,7 +799,7 @@ export function SettingsModal() {
                 </Card>
                 {desktop === true && <NotificationSettings />}
                 {desktop === true && <StartupSettings />}
-                {desktop === true && <><Card title="Channel turns" subtitle="Set one maximum duration for every bot turn in a channel.">
+                {desktop === true && <><Card title="Channel turns" subtitle="Stop a bot that goes quiet in a channel. Use Stop to end a reply yourself.">
                   <RoomTurnTimeoutSettings />
                 </Card>
                 <LanguageRow />

@@ -1,7 +1,7 @@
 // Box agent contract tests against a scripted fake of ascii.dev's box HTTP
 // API. The driver polls events + prompt status; the fake advances one poll
 // per GET so we can assert message → tool → message order without sleeping.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
@@ -177,6 +177,54 @@ describe("BoxAgentDriver turns (fake API)", () => {
       .filter((e) => e.type === "item.completed" && (e as { itemType: string }).itemType === "assistant_text")
       .map((e) => (e as { text: string }).text);
     expect(texts).toEqual(["before", "done"]);
+  });
+
+  /** Each events poll moves the clock five minutes on. */
+  const fiveMinutesPerPoll = () => {
+    let clock = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const inner = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      if (String(input).includes("/events")) clock += 5 * 60_000;
+      return inner(input, init);
+    }) as typeof fetch;
+    return () => {
+      globalThis.fetch = inner;
+      vi.restoreAllMocks();
+    };
+  };
+
+  it("lets a box run that keeps producing events run past 30 minutes and finish", async () => {
+    const script: Poll[] = [];
+    let text = "";
+    for (let i = 1; i <= 9; i++) {
+      text += `part ${i} `;
+      script.push({ events: [{ id: `e${i}`, type: "response", text }], status: { promptRun: { status: "running" } } });
+    }
+    script.push({ events: [{ id: "e9", type: "response", text }], status: { promptRun: { status: "finished", result: text } } });
+    const restoreBox = installFakeBox(script);
+    const restoreClock = fiveMinutesPerPoll();
+    restoreFetch = () => { restoreClock(); restoreBox(); };
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-long", text: "go", integrations: { computer } });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+  });
+
+  it("stops a box run that has produced nothing for 30 minutes", async () => {
+    const restoreBox = installFakeBox([
+      { events: [{ id: "e1", type: "response", text: "started" }], status: { promptRun: { status: "running" } } },
+    ]);
+    const restoreClock = fiveMinutesPerPoll();
+    restoreFetch = () => { restoreClock(); restoreBox(); };
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-quiet", text: "go", integrations: { computer } });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "error" });
+    expect(recorder.events.filter((e) => e.type === "runtime.error").map((e) => (e as { message: string }).message)).toEqual([
+      "box run had no activity for 30 minutes: interrupted",
+    ]);
   });
 
   it("flushes pending assistant text when the turn is interrupted", async () => {

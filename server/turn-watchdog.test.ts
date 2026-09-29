@@ -61,6 +61,102 @@ describe("TurnWatchdog", () => {
     expect(stalls).toHaveLength(1);
   });
 
+  it("keeps the clock held until every open card is answered", () => {
+    const { dog, stalls, tick } = rig();
+    dog.watch("t1", "bot1");
+    dog.setWaitingOnHuman("t1", true, "card-a");
+    dog.setWaitingOnHuman("t1", true, "card-b");
+    // one answer, one card still open: a person is still deciding
+    dog.setWaitingOnHuman("t1", false, "card-a");
+    tick(STALL * 10);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    // a resolve for a card this turn never opened (a routine-held card, a
+    // previous turn's question) never releases the open one
+    dog.setWaitingOnHuman("t1", false, "someone-elses-card");
+    dog.setWaitingOnHuman("t1", false, "card-a");
+    tick(STALL * 10);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    // the same card reported open twice is still one card
+    dog.setWaitingOnHuman("t1", true, "card-b");
+    dog.setWaitingOnHuman("t1", false, "card-b");
+    tick(STALL - 1);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    tick(2);
+    dog.sweep();
+    expect(stalls).toHaveLength(1);
+  });
+
+  it("a turn with its own silence limit (a room reply) runs on that limit, never on duration", () => {
+    const { dog, stalls, tick } = rig();
+    const ROOM = STALL * 3;
+    dog.watch("room", "bot1", { generation: "g1", setup: true });
+    dog.dispatched("room", "bot1", "g1", { stallMs: ROOM });
+    // streaming for a long time: an event just inside the limit, many times over
+    for (let i = 0; i < 50; i++) {
+      tick(ROOM - 1);
+      dog.touch("room");
+      dog.sweep();
+    }
+    expect(stalls).toHaveLength(0);
+    // silent past the direct ceiling but inside its own limit
+    tick(STALL * 2);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    tick(STALL);
+    dog.sweep();
+    expect(stalls).toEqual([expect.objectContaining({ threadId: "room", stallMs: ROOM })]);
+  });
+
+  it("a re-armed dispatch keeps the turn's own silence limit", () => {
+    const { dog, stalls, tick } = rig();
+    dog.dispatched("room", "bot1", "g1", { stallMs: STALL * 3 });
+    tick(STALL * 2);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    tick(STALL);
+    dog.sweep();
+    expect(stalls).toHaveLength(1);
+  });
+
+  it("another turn's completion on the thread leaves a bound turn's watch, open card and waits in place", () => {
+    const { dog, stalls, tick } = rig();
+    const ROOM = STALL * 3;
+    dog.watch("room", "bot1", { generation: "g1", setup: true });
+    dog.dispatched("room", "bot1", "g1", { stallMs: ROOM });
+    dog.bindProviderTurn("room", "g1", "p1");
+    dog.setWaitingOnHuman("room", true, "card-a");
+    dog.waitingOn("room", "working-folder", "g1");
+    // a late completion from an abandoned handshake on the same thread
+    dog.settleCompleted("room", "p0");
+    expect(dog.watching("room")).toBe(true);
+    expect(dog.waits("room")).toEqual(["working-folder"]);
+    tick(ROOM * 10);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    // the card is answered: the clock runs again on the room's own limit
+    dog.setWaitingOnHuman("room", false, "card-a");
+    expect(dog.watching("room")).toBe(true);
+    // its own completion, or one that names no turn, still settles it
+    dog.settleCompleted("room", "p1");
+    expect(dog.watching("room")).toBe(false);
+    dog.watch("room", "bot1", { generation: "g2" });
+    dog.bindProviderTurn("room", "g2", "p2");
+    dog.settleCompleted("room", undefined);
+    expect(dog.watching("room")).toBe(false);
+    // an unbound watch (a direct turn) settles on any completion, as before
+    dog.watch("direct", "bot1");
+    dog.settleCompleted("direct", "anything");
+    expect(dog.watching("direct")).toBe(false);
+    // a bind for another generation never labels the current watch
+    dog.watch("room", "bot1", { generation: "g3" });
+    dog.bindProviderTurn("room", "g-old", "p-old");
+    dog.settleCompleted("room", "p3");
+    expect(dog.watching("room")).toBe(false);
+  });
+
   it("a settled turn is forgotten", () => {
     const { dog, stalls, tick } = rig();
     dog.watch("t1", "bot1");

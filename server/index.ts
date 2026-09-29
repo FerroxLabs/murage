@@ -174,7 +174,7 @@ import {
 } from "./avatar-image.ts";
 import { parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
-import { RoomPendingStop, RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from "./room-turn-timeout.ts";
+import { RoomPendingStop, RoomTurnStallRegistry, roomTurnSilenceMs, roomTurnStallMessage } from "./room-turn-timeout.ts";
 import { GROUP_CONTEXT_MESSAGES, ROOM_CONTEXT_PINNED_LABEL, roomContextMessageIds, roomContextMessages, ROOM_REPLY_WITHHELD, withheldRoomLine } from "./room-context.ts";
 import { capturedMessageWithheld, copyOriginWithheld, messageMadeWithMemory } from "./memory/replay-lineage.ts";
 import * as box from "./box.ts";
@@ -3402,7 +3402,7 @@ const imageOperations = new ImageOperations({ store, routineCard: routineCardHoo
 }, waiting: (threadId, waiting, requestId, messageId, botId) => {
   if (waiting && messageId) askMessageByRequest.set(`${threadId}:${requestId}`, messageId);
   else askMessageByRequest.delete(`${threadId}:${requestId}`);
-  watchdog.setWaitingOnHuman(threadId, waiting);
+  watchdog.setWaitingOnHuman(threadId, waiting, requestId);
   // The bot that asked. A channel thread belongs to no single bot, so the
   // thread alone cannot name who is waiting on the owner.
   const ownerId = botId ?? internalTurnOwners.get(threadId)?.botId ?? store.botByThread(threadId)?.id;
@@ -4074,11 +4074,13 @@ const turnUsage = new Map<string, { input: number; output: number; cachedInput?:
 const repeats = new RepeatDetector({ thresholds: [5, 10, 20], maxKeysPerThread: 256 });
 
 // ── stall watchdog ─────────────────────────────────────────────────────
-// ask_bot has a short inline wait budget, while room turns have a separately
-// configurable absolute ceiling. The main 1:1 path had none, so a wedged CLI
-// left its bot busy forever. The watchdog stops a turn whose thread has emitted NOTHING for stallMs —
-// activity-based, so an hour-long turn that keeps streaming is never
-// touched, and turns parked on a human approval are exempt.
+// ask_bot has a short inline wait budget. The main 1:1 path once had no
+// guard, so a wedged CLI left its bot busy forever. The watchdog stops a turn
+// whose thread has emitted NOTHING for stallMs — activity-based, so an
+// hour-long turn that keeps streaming is never touched, and turns parked on a
+// human approval are exempt. Room turns follow the same rule on their own
+// silence limit (rooms.turnTimeoutMinutes, never under this one's default);
+// they no longer have an absolute ceiling (0.1.61).
 const TURN_STALL_MS = Math.max(60_000, Number(process.env.MURAGE_TURN_STALL_MS) || 20 * 60_000);
 // The watch is armed at admission (upstream #1682), and setup is latched to
 // this longer ceiling until dispatch: a box, VPS or VM being prepared, a
@@ -4128,7 +4130,7 @@ const watchdog = new TurnWatchdog({
     const bot = store.bot(turn.botId);
     const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
     void instance?.adapter.interruptTurn(turn.threadId).catch(() => {});
-    const minutes = Math.round(TURN_STALL_MS / 60_000);
+    const minutes = Math.round((turn.stallMs ?? TURN_STALL_MS) / 60_000);
     store.appendMessage(turn.threadId, {
       role: "bot",
       kind: "activity",
@@ -4308,6 +4310,10 @@ bus.subscribe((event: RuntimeEvent) => {
     if (!pendingRoomStop || (pendingRoomStop.turnId && pendingRoomStop.turnId !== event.turnId)) {
       projectTurnLeases.complete(event.threadId, event.turnId);
     }
+    // A stopped room turn on an engine with no teardown receipt is closed by
+    // its own terminal event. After this fold, so nothing it starts runs
+    // ahead of the event it is releasing.
+    if (pendingRoomStop) { const turnId = event.turnId; queueMicrotask(() => pendingRoomStop.terminal(turnId)); }
     internalCapabilities.completeProviderTurn(event.threadId, event.turnId);
     // Owner-aware fold (RED2I): the thread's internal turn owner is cleared
     // only when its own generation ended — completeProviderTurn revokes the
@@ -4327,10 +4333,10 @@ bus.subscribe((event: RuntimeEvent) => {
     }
   }
   if (shouldIgnoreProviderEvent(event)) return;
-  if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true);
-  else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false);
+  if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true, event.requestId);
+  else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false, event.requestId);
   else if (event.type === "turn.completed") {
-    watchdog.settle(event.threadId);
+    watchdog.settleCompleted(event.threadId, event.turnId);
     // Scoped to the generation that dispatched this provider turn. A stopped
     // turn's completion lands when its engine closes, after Stop has already
     // let the next turn bind this thread's browser; unscoped, it revoked that
@@ -7945,7 +7951,6 @@ type GroupMemberTurnOutcome =
    * runGroupMemberTurn: the re-dispatch's own outcome is what callers see. */
   | "memory_revoked"
   | "stalled"
-  | "timed_out"
   | "cancelled"
   | "busy"
   | "unavailable";
@@ -8596,7 +8601,10 @@ async function runGroupMemberTurn(
     if (providerTurnId) retireProviderTurn(providerTurnId);
     else markCancelledProviderHandshake(threadId, retirementOwner);
   };
-  const timeoutMinutes = roomTurnTimeoutMinutes(cfg);
+  // Stopped for silence, never for duration: the owner's setting is how long
+  // this reply may go without a single event. Waiting on a person does not
+  // count (turn-watchdog.ts). Stop stays the owner's duration control.
+  const silenceMinutes = roomTurnTimeoutMinutes(cfg);
   // A stall latched during setup: no provider turn was launched, so there is
   // nothing to quarantine or close. Say so and release the claim as every
   // other unstarted exit does. Nothing awaits between this check and the
@@ -8610,22 +8618,9 @@ async function runGroupMemberTurn(
     let done = false;
     let unsub = () => {};
     let unregisterStall = () => {};
-    const deadline = new RoomTurnDeadline(timeoutMinutes, () => {
-      abandonProviderTurn();
-      void releaseBrowserCapabilityForThread(threadId);
-      void beginRoomStop();
-      store.appendMessage(threadId, {
-        role: "bot",
-        kind: "activity",
-        from: { botId: bot.id, name: bot.name, color: bot.color },
-        tool: { name: roomTurnTimeoutMessage(bot.name, timeoutMinutes), ok: false },
-      });
-      finish("timed_out");
-    });
     const finish = (value: GroupMemberTurnOutcome) => {
       if (done) return;
       done = true;
-      deadline.stop();
       unsub();
       unregisterStall();
       resolve(value);
@@ -8633,7 +8628,17 @@ async function runGroupMemberTurn(
     unsub = bus.subscribe((e: RuntimeEvent) => {
       if (shouldIgnoreProviderEvent(e)) return;
       if (e.threadId !== threadId) return;
-      if (providerTurnId && e.turnId && e.turnId !== providerTurnId) return;
+      if (providerTurnId && e.turnId && e.turnId !== providerTurnId) {
+        // Another turn's completion on this thread (a late one from an
+        // abandoned handshake) cleared the thread's watch in the fold. This
+        // turn is still running and must stay watched: with no ceiling, the
+        // watch is what stops it if it goes silent.
+        if (e.type === "turn.completed" && !done) {
+          watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) });
+          watchdog.bindProviderTurn(threadId, internalGeneration, providerTurnId);
+        }
+        return;
+      }
       if (e.type === "item.completed" && e.itemType === "assistant_text" && !isMemoryProvenanceEcho(e.text)) replyText += `\n${e.text}`;
       else if (e.type === "runtime.error") turnFailure = e.message;
       else if (e.type === "turn.completed") {
@@ -8647,23 +8652,19 @@ async function runGroupMemberTurn(
           finish("settled");
         }
       }
-      // Waiting on a person is not turn work: hold the ceiling while an
-      // approval or question card is open, so deciding slowly does not
-      // stop the turn underneath the card. Everything else keeps burning it.
-      else if (e.type === "request.opened") deadline.setWaitingOnHuman(true);
-      else if (e.type === "request.resolved") deadline.setWaitingOnHuman(false);
+      // Cards and every other event reach the watchdog through the bus fold
+      // (request.opened holds the silence clock while a person decides).
     });
-    deadline.start();
     unregisterSetupStall();
     unregisterStall = roomStallCompletions.register(threadId, () => {
       abandonProviderTurn();
       void releaseBrowserCapabilityForThread(threadId);
-      store.appendMessage(threadId, { role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, tool: { name: "error: no activity: stopping; waiting for the engine to confirm close", ok: false } });
+      store.appendMessage(threadId, { role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, tool: { name: roomTurnStallMessage(silenceMinutes), ok: false } });
       recordMemorySettlement(threadId, `watchdog:${store.activeLeaf(threadId)}`, "interrupted");
       void beginRoomStop();
       finish("stalled");
     });
-    watchdog.dispatched(threadId, bot.id, internalGeneration);
+    watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) });
     onProviderHandshakeStarted?.();
     projectTurnLeases.markDispatched(internalGeneration);
     void (async()=>{
@@ -8746,6 +8747,10 @@ async function runGroupMemberTurn(
           revokeInternalGeneration(threadId, internalGeneration);
         }
         providerTurnId = dispatch.value.turnId;
+        // a completion that names another turn on this thread (a late one
+        // from an abandoned handshake) no longer clears this turn's watch,
+        // so an open card or a held wait keeps counting as not silence
+        watchdog.bindProviderTurn(threadId, internalGeneration, dispatch.value.turnId);
         projectTurnLeases.bind(threadId, internalGeneration, dispatch.value.turnId);
         orchestration?.onTurnStarted?.(dispatch.value.turnId);
         if (abandoned) {
@@ -8762,7 +8767,7 @@ async function runGroupMemberTurn(
       })
       .catch((err) => {
         if(acceptedRoomCleanupFailed) {
-          deadline.stop();unregisterStall();unsub();
+          unregisterStall();unsub();
           revokeInternalGeneration(threadId,internalGeneration);
           store.appendMessage(threadId,{role:"bot",kind:"activity",from:{botId:bot.id,name:bot.name,color:bot.color},tool:{name:"error: provider termination is unconfirmed after access changed: restart Murage before continuing",ok:false}});
           // Restart is required; do not report a settled room or
@@ -8823,7 +8828,7 @@ async function runGroupMemberTurn(
     orchestration.result.replyText = replyText.trim();
     orchestration.result.outcome = outcome;
   }
-  // A timed-out provider still owns the room thread until its exact close
+  // A stalled provider still owns the room thread until its exact close
   // receipt confirms teardown; a terminal event alone is insufficient.
   // Do not clear busy or start the next member on that same thread early.
   if (outcome === "cancelled") {
@@ -8849,10 +8854,7 @@ async function runGroupMemberTurn(
     drainTeamIncidents();
     return false;
   }
-  if (outcome === "timed_out") {
-    // Only the captured pending-stop owner may release this room after close.
-    return false;
-  }
+  // Only the captured pending-stop owner may release this room after close.
   if (outcome === "stalled") return false;
   // turn.completed normally performs this cleanup. Only use the fallback
   // when this invocation still owns the room; otherwise it would emit a
@@ -9027,8 +9029,7 @@ async function runGroupGoalStep(args: {
       const transient =
         outcome === "provider_failed" ||
         outcome === "dispatch_failed" ||
-        outcome === "stalled" ||
-        outcome === "timed_out";
+        outcome === "stalled";
       if (transient && !retriedTransient) {
         retriedTransient = true;
         updateGroupGoalRunProgress(
@@ -9050,7 +9051,7 @@ async function runGroupGoalStep(args: {
       // away from unrelated direct work.
       args.operation.botIds.delete(args.bot.id);
       if (coordinatorTurn && groupGoalCoordinatorTurns.get(args.threadId)?.has(coordinatorTurn)) {
-        if (result.outcome === "timed_out" || result.outcome === "stalled") {
+        if (result.outcome === "stalled") {
           // interruptTurn is asynchronous: the orchestration can stop before
           // the provider emits its final text/completion. Retain a discard-only
           // guard so a late private decision envelope never reaches the room.

@@ -626,15 +626,26 @@ describe("configuration boundaries", () => {
     expect(vpsSshAlias({ vps: { sshAlias: "-bad" } })).toBeNull();
   });
 
-  it("accepts a persisted global room turn timeout and supplies the legacy default", () => {
-    expect(parseStoredConfig({ rooms: { turnTimeoutMinutes: 20 } })).toEqual({
-      rooms: { turnTimeoutMinutes: 20 },
+  it("accepts a persisted room silence limit and defaults to the direct turns' 20 minutes", () => {
+    expect(parseStoredConfig({ rooms: { turnTimeoutMinutes: 45 } })).toEqual({
+      rooms: { turnTimeoutMinutes: 45 },
     });
-    expect(roomTurnTimeoutMinutes({ rooms: { turnTimeoutMinutes: 20 } })).toBe(20);
-    expect(roomTurnTimeoutMinutes({})).toBe(5);
+    expect(roomTurnTimeoutMinutes({ rooms: { turnTimeoutMinutes: 45 } })).toBe(45);
+    expect(roomTurnTimeoutMinutes({})).toBe(20);
   });
 
-  it.each([0, 1.5, 1441, "20", null])(
+  it("still loads a pre-0.1.61 short ceiling and raises it to 20 on read", () => {
+    // the whole config file is refused on a schema error, so an old value
+    // must parse; it was chosen as an absolute ceiling, not a silence limit
+    for (const saved of [1, 5, 19]) {
+      const cfg = parseStoredConfig({ rooms: { turnTimeoutMinutes: saved } });
+      expect(cfg).toEqual({ rooms: { turnTimeoutMinutes: saved } });
+      expect(roomTurnTimeoutMinutes(cfg)).toBe(20);
+    }
+    expect(roomTurnTimeoutMinutes({ rooms: { turnTimeoutMinutes: 20 } })).toBe(20);
+  });
+
+  it.each([0, 5, 19, 1.5, 1441, "20", null])(
     "rejects an invalid room turn timeout: %j",
     (turnTimeoutMinutes) => {
       expect(() => parseConfigPatch({ rooms: { turnTimeoutMinutes } })).toThrow(
