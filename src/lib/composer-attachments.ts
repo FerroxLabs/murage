@@ -221,6 +221,15 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** How many attached images are past what one turn carries
+ * (TURN_IMAGE_LIMITS.maxCount): the composer says so before sending, and
+ * the send still goes ahead with the first ones. Counted like the server
+ * counts them, one per distinct path. */
+export function imagesOverTurnLimit(attachments: readonly Attachment[], limit: number): number {
+  const paths = new Set(attachments.flatMap((attachment) => (attachment.kind === "image" ? [attachment.path] : [])));
+  return Math.max(0, paths.size - limit);
+}
+
 /** The prompt the bot receives: what was typed, then one block per
  * attachment. Tagged blocks rather than fences — pasted code and markdown
  * carry fences of their own, and nesting them loses the boundary. A file
@@ -294,13 +303,38 @@ function transcriptFileName(path: string, suppliedName?: string): string {
   return Array.from(safe || fallback || "Attached file").slice(0, 180).join("");
 }
 
+/** One `<attached-image|file>` tag on a line of its own: the only form a
+ * transcript, a turn's image collection or a left-out removal treats as one. */
+const ATTACHMENT_TAG = /^[\t ]*<attached-(image|file)\b((?:[\t ]+[A-Za-z_:][\w:.-]*="[^"\r\n]*")*)[\t ]*\/>[\t ]*(?:\r?\n)?/gm;
+
+/** The decoded path of one tag's attributes, or undefined when it has none. */
+function attachmentTagPath(rawAttributes: string): string | undefined {
+  for (const attribute of rawAttributes.matchAll(/\s+([A-Za-z_:][\w:.-]*)="([^"]*)"/g)) {
+    if (attribute[1] === "path") return decodeAttachmentAttribute(attribute[2]!) || undefined;
+  }
+  return undefined;
+}
+
+/** The text with every `<attached-image>` tag naming one of `paths` taken out,
+ * parsed exactly as splitTranscriptAttachments parses it: an image a turn
+ * left out is not named to the bot at all (0.1.61). */
+export function withoutImageTags(text: string, paths: Iterable<string>): string {
+  const drop = new Set(paths);
+  if (!drop.size) return text;
+  return text.replace(ATTACHMENT_TAG, (match, kind: "image" | "file", rawAttributes: string) => {
+    if (kind !== "image") return match;
+    const path = attachmentTagPath(rawAttributes);
+    return path !== undefined && drop.has(path) ? "" : match;
+  });
+}
+
 /** Split a stored user message into its display text and attachments for
  * transcript rendering. Prompt-only tags never show in the bubble. */
 export function splitTranscriptAttachments(text: string): TranscriptAttachments {
   const images: string[] = [];
   const files: TranscriptFileAttachment[] = [];
   const display = text.replace(
-    /^[\t ]*<attached-(image|file)\b((?:[\t ]+[A-Za-z_:][\w:.-]*="[^"\r\n]*")*)[\t ]*\/>[\t ]*(?:\r?\n)?/gm,
+    ATTACHMENT_TAG,
     (match, kind: "image" | "file", rawAttributes: string) => {
       const attributes = new Map<string, string>();
       for (const attribute of rawAttributes.matchAll(/\s+([A-Za-z_:][\w:.-]*)="([^"]*)"/g)) {

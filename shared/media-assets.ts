@@ -117,6 +117,30 @@ export const IMAGE_REFERENCE_LIMITS = {
   maxTotalBytes: 20 * 1024 * 1024,
 } as const;
 
+/** What one chat turn carries as pictures (0.1.61). Separate from
+ * IMAGE_REFERENCE_LIMITS, which bounds the image tools' reference sources.
+ *
+ * A turn never fails over these. Past `maxCount`, or once the turn's bytes
+ * run out, the remaining images are left out of what the bot receives and
+ * the owner gets one plain line in the chat (shared/turn-image-note.ts).
+ *  - maxCount: Sean's number. Every inline engine takes at least that many in
+ *    one request: Claude Code allows 100 (its own limit, read from the 2.1.284
+ *    binary), the OpenAI Responses API that Codex drives allows 500, and ACP
+ *    carries a plain list of image parts.
+ *  - maxBytesEach: the upload ceiling (attachments IMAGE_MAX_BYTES).
+ *  - maxTotalBytes: 15 MB raw is 20 MB of base64, which leaves room for the
+ *    prompt and history under Anthropic's 32 MB request cap (the smallest
+ *    request limit on any route Murage drives, Flux Router's included:
+ *    flux-router src/anthropic_image_size_preflight.py).
+ *  - maxReadBytes: how much Murage reads to shrink an over-ceiling image,
+ *    only when it can shrink one at all. */
+export const TURN_IMAGE_LIMITS = {
+  maxCount: 10,
+  maxBytesEach: 10 * 1024 * 1024,
+  maxTotalBytes: 15 * 1024 * 1024,
+  maxReadBytes: 40 * 1024 * 1024,
+} as const;
+
 /** One discriminated source. The server derives bot/thread/cwd from the
  * internal capability claim; no root, absolute path or URL is accepted. */
 export type ImageReferenceSource =
