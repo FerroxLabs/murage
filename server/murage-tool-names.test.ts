@@ -196,6 +196,8 @@ describe("proxy results", () => {
       return JSON.stringify(JSON.parse(line).result.tools);
     };
     expect(await list({})).toContain("from the most recent browser_snapshot");
+    // A batch action is a value in the schema, never a tool to call.
+    expect(await list({ MURAGE_TOOL_CALL_STYLE: "use-tool", MURAGE_MCP_SERVER_NAME: "computer" })).toContain("each is {action: click|type_text|press_key|scroll|wait");
     expect(await list({ MURAGE_TOOL_CALL_STYLE: "use-tool", MURAGE_MCP_SERVER_NAME: "computer" })).toContain('from the most recent use_tool with tool_name \\"computer__browser_snapshot\\"');
   });
   it("the browser proxy names its own tools under the mount it was given", () => {
@@ -256,9 +258,12 @@ describe("Murage-written prompt text names tools the turn's engine can call", ()
     expect(text).toContain('Murage file destination: "/Users/o/web_search/generate_image"');
     expectCallableOn(kind, text.replace('"/Users/o/web_search/generate_image"', ""), MURAGE_MCP_TOOLS.agents);
   });
-  it("an owner's or learned skill is never rewritten, even on Fuigo", () => {
-    const own = { manifest: { id: "web_search", name: "web_search", description: "x", requiredCapabilities: [] }, instructions: "Call generate_image with care.", directory: "/data/skills/web_search" } as never;
-    const fuigo = skillLayers([own], { toolCallStyle: "use-tool", murageSkill: () => false })[0]!.text;
+  it("an owner's or learned skill is never rewritten, even on Fuigo, even with a bundled skill's id", () => {
+    // The same check index.ts makes: a skill Murage ships is one from the bundled folder.
+    const bundled = new Set(loadBundledSkills(join(here, "..", "skills")).map(skill => skill.directory));
+    const murageSkill = (skill: { directory: string }) => bundled.has(skill.directory);
+    const own = { manifest: { id: "image-generation", name: "web_search", description: "x", version: "1", requiredCapabilities: [] }, instructions: "Call generate_image with care.", directory: "/data/skills/image-generation" } as never;
+    const fuigo = skillLayers([own], { toolCallStyle: "use-tool", murageSkill })[0]!.text;
     expect(fuigo).toBe(skillLayers([own])[0]!.text);
     expect(fuigo).toContain("Call generate_image with care.");
   });

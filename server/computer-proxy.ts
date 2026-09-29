@@ -36,7 +36,7 @@ import {
   type CropRegion,
 } from "./computer-observation.ts";
 import { CONTROL_REFUSAL, createControlClient } from "./control-client.ts";
-import { TOOL_CALL_STYLE_ENV, TOOL_SERVER_NAME_ENV, murageToolDescriptions, murageToolText, parseToolCallStyle } from "../shared/murage-tool-names.ts";
+import { TOOL_CALL_STYLE_ENV, TOOL_SERVER_NAME_ENV, murageToolText, parseToolCallStyle } from "../shared/murage-tool-names.ts";
 
 // This server's own sentences name its tools the way the turn's engine calls
 // them: the driver that mounted it says how (unset is the bare name).
@@ -959,7 +959,7 @@ async function call(id: unknown, name: string, args: any) {
       id,
       result.ok
         ? `navigation verified: ${publicUrl}`
-        : `navigation not verified after 3 checks. Current structured state: ${result.targets.map((target) => target.url).join(", ") || "unavailable"}. Use screenshot only if needed.`,
+        : `navigation not verified after 3 checks. Current structured state: ${result.targets.map((target) => target.url).join(", ") || "unavailable"}. ${computerText("Use screenshot only if needed.")}`,
       !result.ok,
     );
   }
@@ -1091,7 +1091,7 @@ async function call(id: unknown, name: string, args: any) {
     const elapsed = marker[2];
     const note = met
       ? `condition met: ${label} (~${elapsed}s)`
-      : `timed out after ${timeout}s waiting for ${label}: inspect with computer_exec (logs, process list) before waiting again.`;
+      : `timed out after ${timeout}s waiting for ${label}: ${computerText("inspect with computer_exec (logs, process list) before waiting again.")}`;
     return text(id, note, !met);
   }
   if (name === "open_url") {
@@ -1137,7 +1137,9 @@ async function handle(msg: any) {
       },
     });
   }
-  if (msg.method === "tools/list") return send({ jsonrpc: "2.0", id: msg.id, result: { tools: murageToolDescriptions(TOOLS, toolStyle(), ["computer"], toolMount()) } });
+  // Only each tool's own description: the input schemas name batch actions
+  // (type_text, press_key) that are values there, not tools to call.
+  if (msg.method === "tools/list") return send({ jsonrpc: "2.0", id: msg.id, result: { tools: TOOLS.map(tool => ({ ...tool, description: computerText(tool.description, false) })) } });
   if (msg.method === "tools/call") {
     try {
       return await call(msg.id, msg.params?.name, msg.params?.arguments ?? {});

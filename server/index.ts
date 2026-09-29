@@ -7168,8 +7168,9 @@ function reportTeamIncident(input: { bot: BotRecord; threadId: string | null; mu
       chiefId: chief.id,
       chiefName: chief.name,
       threadId: incidents.threadId,
-      // Tool names as the Chief's engine calls them.
-      text: teamIncidentText(incident, count, toolCallStyleFor(registry.get(chief.modelSelection.instanceId)?.driverKind ?? "")),
+      // Tool names as the engine of the Chief's incidents thread calls them
+      // (a thread keeps its own model once it has one).
+      text: teamIncidentText(incident, count, toolCallStyleFor(registry.get((store.projectBotForTask(chief.id, incidents.threadId) ?? chief).modelSelection.instanceId)?.driverKind ?? "")),
     });
   } catch {
     // never make the failure we are reporting worse than it already is
@@ -8528,7 +8529,7 @@ async function runGroupMemberTurn(
     try {
       cwd = projectTurnLeases.acquire(threadId, internalGeneration, cwd ?? homedir()).canonicalPath;
       turnCwdByThread.set(threadId, cwd);
-      roomLayers.push(shapeLayer("output-folder", prepareOutputDestination(bot.id, threadId, internalGeneration, true, Boolean(integrations.agents))));
+      roomLayers.push(shapeLayer("output-folder", prepareOutputDestination(bot.id, threadId, internalGeneration, true, Boolean(integrations.agents), roomToolStyle)));
     } catch {
       const message = "This project's files are being restored. Wait for the restore to finish before running this task.";
       store.appendMessage(threadId, { role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, tool: { name: `error: ${message}`, ok: false } });
