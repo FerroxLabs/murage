@@ -181,6 +181,14 @@ export const TURN_PROMPTS = {
   roomReply: "Reply as yourself, briefly and conversationally. Use @Name only when intentionally asking that teammate to respond or act; they will see the conversation and respond. To acknowledge or refer to a teammate, use their plain name without @. Do not prefix your reply with another member's @name.",
 } as const;
 
+/** The images line for a turn: the saved-library sentence only when the
+ *  turn's audience is the owner (image-library-audience.ts refuses the
+ *  library on any other). */
+const IMAGE_LIBRARY_SENTENCE = " A prompt part or a set of references you reuse can be saved with save_prompt_block and save_reference_pack, then sent by name in prompt_blocks and reference_pack.";
+export function imageToolsPrompt(ownerAudience: boolean): string {
+  return ownerAudience ? TURN_PROMPTS.imageTools : TURN_PROMPTS.imageTools.replace(IMAGE_LIBRARY_SENTENCE, "");
+}
+
 const COMPUTER = {
   vmPerBot: " You have your own isolated computer sandbox: a Linux desktop in a container reserved for this bot. Only /home/cua/workspace is durable; save downloads, repositories, working files, and browser profiles there because everything else inside the VM is disposable. No other host folder is mounted. Use the computer tools for desktop, accessibility, window, and shell work. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and work carefully.",
   vmShared: " You have a shared, isolated computer sandbox: a Linux desktop in a container on this machine. Only /home/cua/workspace is durable; save downloads, repositories, working files, and browser profiles there because everything else inside the VM is disposable. No other host folder is mounted. Use the computer tools for desktop, accessibility, window, and shell work. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and work carefully.",

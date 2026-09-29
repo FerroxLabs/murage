@@ -25,7 +25,7 @@ import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.t
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
 import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memory/import.ts";
 import { standingContextParts, standingContextSourceIds } from "./standing-context.ts";
-import { TURN_PROMPTS, botShapeRows, directPersona, directTurnLayers, engineToolText, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, roomBulletinLine, roomMembersLine, roomPersonaLines, shapeLayer, skillLayers, speakAsLine, type ShapeLayer } from "./bot-shapes.ts";
+import { TURN_PROMPTS, botShapeRows, imageToolsPrompt, directPersona, directTurnLayers, engineToolText, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, roomBulletinLine, roomMembersLine, roomPersonaLines, shapeLayer, skillLayers, speakAsLine, type ShapeLayer } from "./bot-shapes.ts";
 import { handleHouseRulesApi, houseRulesPrompt, readHouseRules } from "./house-rules.ts";
 import { aboutMePrompt, handleAboutMeApi } from "./about-me.ts";
 import { handleWhatsNewApi } from "./whats-new.ts";
@@ -859,6 +859,8 @@ bus.attach(registry.instances());
 // ── peer-agent comms wiring ────────────────────────────────────────────
 import { InternalCapabilities, type InternalCapabilityKind } from "./internal-capabilities.ts";
 import { internalRouteRefusal } from "./internal-route-authority.ts";
+import { imageLibraryOwnerAudience, imageLibraryRouteRefusal } from "./image-library-audience.ts";
+import { IMAGE_LIBRARY_ENV } from "../shared/image-library-audience.ts";
 import { resolveCoordinationTarget } from "./coordination-target.ts";
 import { CoordinationBudget, MAX_COORDINATION_DEPTH, MAX_HANDOFFS_PER_TURN, MAX_CONCURRENT_HANDOFFS, type CoordinationTrace } from "./coordination-budget.ts";
 const coordinationBudget = new CoordinationBudget(join(DATA_DIR, "coordination-roots.json"));
@@ -1000,6 +1002,9 @@ function agentsIntegration(botId: string, threadId: string, depth: number, skill
       MURAGE_COMMS_TOKEN: internalToken(botId, threadId, generation, "agents"),
       MURAGE_TURN_DEPTH: String(depth),
       MURAGE_SKILL_AUTHORING_ENABLED: skillAuthoring ? "1" : "0",
+      // The owner's saved image library stays out of a turn whose audience
+      // is not the owner; the library routes refuse it there too.
+      ...(imageLibraryOwnerAudience({ threadId, notOwnerAudience: internalTurnOwners.get(threadId)?.notOwnerAudience }) ? {} : { [IMAGE_LIBRARY_ENV]: "0" }),
     },
   };
 }
@@ -6626,7 +6631,7 @@ async function startTurn(
       // bound is not inlined, and the sentence has to say so rather than tell
       // the bot a picture is in front of it when only its path is.
       const imagePromptFor = (outcome: ImageDeliveryOutcome) => integrations.agents
-        ? ` ${TURN_PROMPTS.imageTools}` +
+        ? ` ${imageToolsPrompt(humanIsOwner && !memoryNotOwner)}` +
           IMAGE_DELIVERY_PROMPT[outcome] +
           ` ${TURN_PROMPTS.imageKeys}`
         : "";
@@ -11884,6 +11889,9 @@ const server = createServer((req, res) => withToolCallScope(async () => {
       // while image generation is off.
       if (path.startsWith("/api/internal/image-prompt-block") || path.startsWith("/api/internal/image-reference-pack")) {
         requireActiveInternal();
+        // The owner's, on an owner-audience turn only (image-library-audience.ts).
+        const libraryRefusal = imageLibraryRouteRefusal({ path, ownerAudience: imageLibraryOwnerAudience(internalClaim) });
+        if (libraryRefusal) return json(res, 403, { error: libraryRefusal });
         if (cfg.imageGen?.enabled === false) return json(res, 409, { error: "Image generation is off in Settings → Tools & Connections → Image generation." });
         const actor = { kind: "bot" as const, botId: internalClaim.botId };
         if (path === "/api/internal/image-prompt-blocks" && method === "GET") return json(res, 200, { blocks: listPromptBlocksForBot(database(), actor.botId) });
@@ -11921,6 +11929,9 @@ const server = createServer((req, res) => withToolCallScope(async () => {
           seed: z.number().int().optional(), negativePrompt: z.string().max(IMAGE_NEGATIVE_PROMPT_MAX).optional(), condensedFromChars: z.number().int().optional(),
           referenceIds: z.array(z.string().max(180)).max(64).optional() }).strict().parse(await readBody(req));
         requireActiveInternal();
+        // A saved block or pack is the owner's: refused before anything is read.
+        const libraryRefusal = imageLibraryRouteRefusal({ path, body, ownerAudience: imageLibraryOwnerAudience(internalClaim) });
+        if (libraryRefusal) return json(res, 403, { error: libraryRefusal });
         const settingIdentity = imageSettingsIdentity(cfg.imageGen);
         const state = await imageSettings(body.connectionId);
         requireActiveInternal();

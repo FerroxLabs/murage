@@ -42,6 +42,7 @@ import { searchHelp, helpTopics } from "../../shared/help-search.ts";
 import { boundedAgentResult } from "./agents-result.ts";
 // Pure as well: how this turn's engine names these tools.
 import { TOOL_CALL_STYLE_ENV, TOOL_CALL_STYLE_HEADER, TOOL_SERVER_NAME_ENV, murageToolDescriptions, murageToolName, murageToolText, parseToolCallStyle } from "../../shared/murage-tool-names.ts";
+import { IMAGE_LIBRARY_ENV, IMAGE_LIBRARY_TOOLS } from "../../shared/image-library-audience.ts";
 
 const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
 const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
@@ -49,6 +50,8 @@ const THREAD_ID = process.env.MURAGE_THREAD_ID ?? "";
 const TOKEN = process.env.MURAGE_COMMS_TOKEN ?? "";
 const DEPTH = Number(process.env.MURAGE_TURN_DEPTH ?? "0") || 0;
 const SKILL_AUTHORING_ENABLED = process.env.MURAGE_SKILL_AUTHORING_ENABLED === "1";
+/** Off on a turn whose audience is not the owner (shared/image-library-audience.ts). */
+const IMAGE_LIBRARY_ON = process.env[IMAGE_LIBRARY_ENV] !== "0";
 /** How this turn's engine calls these tools, set by the driver that mounted
  * this server (shared/murage-tool-names.ts). Unset: the bare name. */
 const STYLE = parseToolCallStyle(process.env[TOOL_CALL_STYLE_ENV]);
@@ -574,11 +577,23 @@ const TOOLS = [
 ];
 
 const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_manage"]);
+const LIBRARY_TOOL_NAMES = new Set<string>(IMAGE_LIBRARY_TOOLS);
+/** The owner's saved library, left out: its tools, generate_image's two
+ * arguments that pull from it, and the words about them. The harness
+ * refuses them on such a turn whatever this lists. */
+function withoutImageLibrary(tools: typeof TOOLS): typeof TOOLS {
+  return tools.filter((tool) => !LIBRARY_TOOL_NAMES.has(tool.name)).map((tool) => {
+    if (tool.name !== "generate_image") return tool;
+    const { prompt_blocks: _blocks, reference_pack: _pack, ...properties } = tool.inputSchema.properties as Record<string, Record<string, unknown>>;
+    return { ...tool,
+      description: tool.description.replace(" Saved prompt blocks (prompt_blocks) go first, in order, then the scene prompt; saved reference-pack images (reference_pack) come before reference_ids and count against the model's cap.", ""),
+      inputSchema: { ...tool.inputSchema, properties: { ...properties, prompt: { ...properties.prompt, description: "The scene prompt, sent whole. It must fit the model's maxPromptChars." } } } };
+  }) as typeof TOOLS;
+}
 // The descriptions are this file's own text: sibling tools in them are named
 // the way this turn's engine calls them.
-const AVAILABLE_TOOLS = murageToolDescriptions(SKILL_AUTHORING_ENABLED
-  ? TOOLS
-  : TOOLS.filter((tool) => !SKILL_TOOL_NAMES.has(tool.name)), STYLE, ["agents"], { agents: SERVER_NAME });
+const LISTED_TOOLS = SKILL_AUTHORING_ENABLED ? TOOLS : TOOLS.filter((tool) => !SKILL_TOOL_NAMES.has(tool.name));
+const AVAILABLE_TOOLS = murageToolDescriptions(IMAGE_LIBRARY_ON ? LISTED_TOOLS : withoutImageLibrary(LISTED_TOOLS), STYLE, ["agents"], { agents: SERVER_NAME });
 
 type Json = Record<string, unknown>;
 type RoutineAction = "update" | "pause" | "resume" | "run_now" | "delete";
