@@ -216,6 +216,8 @@ beforeAll(async () => {
       req.on("end", () => {
         const body = JSON.parse(data) as { requestId: string; prompt?: string };
         generateCalls.push(body);
+        // An approval nobody answers: the harness holds the request past the proxy's own wait.
+        if (body.prompt === "never") return;
         // Headers only when the render ends, the way the harness answers.
         setTimeout(() => {
           const refused = body.prompt === "refuse";
@@ -276,6 +278,7 @@ beforeAll(async () => {
       MURAGE_COMMS_TOKEN: TOKEN,
       MURAGE_TURN_DEPTH: "0",
       MURAGE_SKILL_AUTHORING_ENABLED: "1",
+      MURAGE_GENERATE_IMAGE_WAIT_MS: "2000",
     },
     stdio: ["pipe", "pipe", "inherit"],
   });
@@ -527,6 +530,20 @@ describe("agents-proxy MCP surface", () => {
     const refused = await callTool("generate_image", { request_id: "r2", prompt: "refuse" });
     expect(refused.result.isError).toBe(true); expect(refused.result.content[0].text).toContain("allows 4,000. Nothing was sent.");
     expect(generateCalls.map(call => call.requestId)).toEqual(["r1", "r2"]);
+  });
+
+  // The proxy's own long wait for an image ends in words the bot can pass on:
+  // what happened and what to do, never a control-channel code or a claim
+  // that the connection failed.
+  it("says plainly when an image request got no answer within the proxy's wait", async () => {
+    const started = Date.now();
+    const waited = await callTool("generate_image", { request_id: "r-never", prompt: "never" });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1_900);
+    expect(waited.result.isError).toBe(true);
+    const text = waited.result.content[0].text as string;
+    expect(text).toMatch(/no answer/i);
+    expect(text).toMatch(/approval/i);
+    expect(text).not.toMatch(/MURAGE_|_MS\b|control connection|failed/);
   });
 
   it("sends the saved prompt block and reference pack tools to their internal routes", async () => {

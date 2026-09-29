@@ -189,7 +189,8 @@ export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown })
     return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
   }
   if (reasoningOnlyData(error.data)) return "The model returned reasoning without a visible answer. No reply was produced.";
-  return typeof error.message === "string" && error.message ? error.message : "ACP request failed";
+  // "Request failed." is the generic line the error card already recognises.
+  return typeof error.message === "string" && error.message ? error.message : "Request failed.";
 }
 
 /** C0/C1 controls, zero-width characters and bidi overrides: none belongs in one line of error text. */
@@ -516,7 +517,7 @@ function informativeStart(text: string): number {
   return /^[\s\p{P}]+/u.exec(blanked)?.[0].length ?? 0;
 }
 
-/** The reason quoted on the `exited <code> before the prompt result` line:
+/** The reason quoted on the `closed (exit code N) before it finished its reply` line:
  * the failed engine's bounded stderr capture, prepared before redaction
  * by `acpEngineStderrCapture`, sanitised as the
  * engine's `error.data` and JSON-RPC `error.message` are, and quoted from
@@ -667,6 +668,7 @@ import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage, type 
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 import { normalizeEngineCommands } from "../../engine-commands.ts";
 import { engineCommandText } from "../../../shared/engine-commands.ts";
+import { engineClosedLine, plainDuration } from "../stop-copy.ts";
 
 export interface AcpConfig {
   cli: string;
@@ -886,6 +888,26 @@ export const acpPromptIdleTimeoutMs = (): number => {
   const ms = Number(raw);
   return Number.isFinite(ms) && ms > 0 ? ms : 0;
 };
+/** What the owner reads when an engine does not answer one of Murage's
+ * requests in time: the engine and the step in plain words, never the
+ * JSON-RPC method. "timed out" stays in it: the Inbox groups it with other
+ * passing provider trouble (server/inbox-rollup.ts). */
+export function acpRequestTimeoutMessage(engine: string, method: string): string {
+  const step = method === "initialize" || method === "authenticate" ? " while starting"
+    : method === "session/new" || method === "session/load" ? " while opening the conversation"
+    : method === "session/prompt" ? " while answering"
+    : method.startsWith("session/") ? " while applying this conversation's settings"
+    : "";
+  return `${engine} timed out${step}.`;
+}
+/** A turn the engine ended itself for a reason other than finishing. */
+export function acpStopReasonMessage(engine: string, reason: string | null | undefined): string {
+  const why = reason === "max_tokens" ? "reached its reply length limit"
+    : reason === "max_turn_requests" ? "reached its limit of steps for one turn"
+    : reason === "refusal" ? "declined to continue"
+    : "stopped before it finished";
+  return `${engine} ${why}, so this turn ended early.`;
+}
 /** How long a pooled engine process may sit idle before it is closed. Read
  * lazily so a fixture can shorten it; a non-positive or non-numeric value
  * keeps the default rather than disarming the close. */
@@ -952,6 +974,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
     defaultConfig: () => decodeConfig({}),
 
     async create(input: DriverCreateInput<AcpConfig>): Promise<ProviderInstance> {
+      // The engine as Settings names this instance, for every line the chat shows.
+      const ENGINE = input.displayName?.trim() || support.displayName;
       const { instanceId, config } = input;
       const childEnv = () => {
         const env: Record<string, string | undefined> = {
@@ -1471,13 +1495,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           idleMessage?: string,
         ) =>
           new Promise<any>((resolve, reject) => {
-            if (!proc) return reject(new Error(`${method} before the engine started`));
+            if (!proc) return reject(new Error(`${ENGINE} was not running.`));
             const id = proc.nextId++;
             let timer: ReturnType<typeof setTimeout> | null = null;
             if (timeoutMs) {
               timer = setTimeout(() => {
                 rpcPending.delete(id);
-                reject(new Error(`${method} timed out`));
+                reject(new Error(acpRequestTimeoutMessage(ENGINE, method)));
               }, timeoutMs);
               timer.unref?.();
             }
@@ -1625,7 +1649,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `${DRIVER_KIND} asked a question Murage could not show (${normalized.error}); it was told nobody answered`,
+              message: `${ENGINE} asked a question Murage could not show (${normalized.error}); it was told nobody answered`,
             });
             return send({ jsonrpc: "2.0", id: msg.id, result: cancelled });
           }
@@ -1807,7 +1831,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `${DRIVER_KIND} offered no "${want}" permission option: cancelling the request instead of guessing`,
+              message: `${ENGINE} offered no way to ${want === "allow" ? "allow" : "decline"} this request, so Murage cancelled it instead of guessing.`,
             });
 
           const toolCall = params.toolCall ?? {};
@@ -2121,7 +2145,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `${DRIVER_KIND} exited ${code} before the prompt result${detail ? `: ${detail}` : ""}`,
+              message: engineClosedLine(ENGINE, code, undefined, detail || undefined),
             });
             settle(false, "exit_before_result");
           }
@@ -2400,11 +2424,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
               sessionResult = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
               sessionId = typeof sessionResult?.sessionId === "string" ? sessionResult.sessionId : null;
-              if (!sessionId) throw new Error("session/new returned no sessionId");
+              if (!sessionId) throw new Error(`${ENGINE} did not open a conversation.`);
             }
             proc!.sessionKey = sessionKey;
             }
-            if (!sessionId) throw new Error("no native session was established");
+            if (!sessionId) throw new Error(`${ENGINE} did not open a conversation.`);
             let selectedModel: string | null = null;
             let sessionStarted = false;
             const emitSessionStarted = () => {
@@ -2438,7 +2462,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   // one that errors: it burns a paid turn on the wrong thing
                   if (selectedModel !== cliTurn.model) {
                     throw new Error(
-                      `${DRIVER_KIND} did not switch to ${cliTurn.model} (still ${selectedModel ?? "unknown"})`,
+                      `${ENGINE} did not switch to ${cliTurn.model} (still ${selectedModel ?? "unknown"})`,
                     );
                   }
                 }
@@ -2523,9 +2547,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               },
               undefined,
               promptIdleMs,
-              // Kept inside ERROR_MESSAGE_MAX so the card shows all of it.
-              `${DRIVER_KIND} went silent for ${Math.round(promptIdleMs / 1000)} s and the turn was stopped. `
-                + "Raise MURAGE_ACP_PROMPT_IDLE_MS if it needs longer.",
+              // Shown in the chat: the engine as Settings names it, and a
+              // plain duration. Never the knob's name or the driver's kind.
+              `${ENGINE} went silent for ${plainDuration(promptIdleMs)}, so the turn was stopped.`,
             );
             // opencode 1.18.18 reports usage at the result root; grok and
             // gemini put it under _meta. Read both rather than lose the count.
@@ -2579,7 +2603,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ? result.error
                 : typeof result?.message === "string" && result.message
                   ? result.message
-                  : `Model turn failed: ${reason ?? "unknown error"}`;
+                  : acpStopReasonMessage(ENGINE, reason);
               const eventBase=base(threadId,turnId);
               emit({
                 ...eventBase,
@@ -2621,7 +2645,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               emit({
                 ...eventBase,
                 type: "runtime.error",
-                message: engineText ?? acpEngineErrorText(message) ?? "ACP request failed",
+                message: engineText ?? acpEngineErrorText(message) ?? `${ENGINE} could not finish this turn.`,
                 ...(errorKind ? { errorKind } : {}),
                 diagnostic:acpErrorDiagnostic(eventBase,lifecycle.generation,e),
                 details: [acpRpcErrorDetails(e), e instanceof Error

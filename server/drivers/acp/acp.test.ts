@@ -865,7 +865,8 @@ createInterface({ input: process.stdin }).on("line", line => {
       const opened = await recorder.until(event => event.type === "request.opened");
       expect(await instance.adapter.respondToRequest("always-only", (opened as any).requestId, { behavior })).toBe("unavailable");
       expect(await recorder.until(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
-      expect(recorder.events.some(event => event.type === "runtime.error" && event.message.includes("cancelling the request"))).toBe(true);
+      expect(recorder.events.some(event => event.type === "runtime.error"
+        && /^Always only offered no way to (allow|decline) this request, so Murage cancelled it instead of guessing\.$/.test(event.message))).toBe(true);
     }
     await recorder.until(event => event.type === "turn.completed");
     expect(JSON.parse(readFileSync(dump, "utf8"))).toEqual(behavior === "full-auto"
@@ -1315,8 +1316,10 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(recorder.events.some((e) => e.type === "content.delta")).toBe(true);
     const error = recorder.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined;
     expect(error?.message).toMatch(/went silent/i);
-    // the message names the knob, so the owner of a slow model can raise it
-    expect(error?.message).toContain("MURAGE_ACP_PROMPT_IDLE_MS");
+    // The line is shown in the chat: it names the engine as Settings does (the
+    // instance's name) and never an environment variable, a millisecond
+    // figure or the driver's internal kind.
+    expect(error?.message).toBe("ACP Test went silent for 1 second, so the turn was stopped.");
     expect(instance.adapter.hasSession("t-stall")).toBe(false);
   });
 
@@ -1798,7 +1801,8 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
     const error = recorder.events.find(event => event.type === "runtime.error");
     const code = process.platform === "win32" ? 1073807364 : 4;
-    expect(error).toMatchObject({ message: expect.stringContaining(`exited ${code} before the prompt result`) });
+    expect(error).toMatchObject({ message: expect.stringContaining(`ACP Test closed (exit code ${code}) before it finished its reply`) });
+    expect((error as { message: string }).message).not.toMatch(/grokAgent|prompt result/);
   });
 
   it("cancellation-close regression: unsolicited stderr is plain redacted bounded text", async () => {
@@ -1812,7 +1816,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(error.message).toContain("STDERR_VISIBLE_END");
     expect(error.message).not.toContain("\u001b");
     expect(error.message).not.toContain("SYNTHETICKEYCANARY");
-    expect(error.message.split("before the prompt result: ")[1].length).toBeLessThanOrEqual(300);
+    expect(error.message.split("before it finished its reply: ")[1].length).toBeLessThanOrEqual(300);
   });
 
   // Engine stderr is engine-controlled text, and this exit line is the last
@@ -1831,7 +1835,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     for (const leaked of ["billing.invalid", "fake-secret-canary", "fakepass", "10.1.2.3", "https://", "\u001b", "\u202e", "\u0007"]) {
       expect(error.message, leaked).not.toContain(leaked);
     }
-    expect(error.message.split("before the prompt result: ")[1].length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
+    expect(error.message.split("before it finished its reply: ")[1].length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
   });
 
   // …and sanitising must not cost the diagnostic it exists to carry. The
@@ -1847,7 +1851,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "exit_before_result" });
     const error = recorder.events.find(event => event.type === "runtime.error");
     if (error?.type !== "runtime.error") throw new Error("Expected runtime failure");
-    const detail = error.message.split("before the prompt result: ")[1];
+    const detail = error.message.split("before it finished its reply: ")[1];
     expect(detail).toBeTruthy();
     expect(detail.endsWith("FATAL: engine could not open the model file: permission denied")).toBe(true);
     expect(detail.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
@@ -2504,6 +2508,8 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(done).toMatchObject({ ok: false });
     const err = recorder.events.find((e) => e.type === "runtime.error")!;
     expect(err.message).toMatch(/did not switch to m-two \(still m-one\)/);
+    expect(err.message).toMatch(/^ACP Test /);
+    expect(err.message).not.toContain("selectModelTest");
     // the whole point: no paid turn is spent on the wrong model
     expect(recorder.events.some((e) => e.type === "content.delta")).toBe(false);
   });

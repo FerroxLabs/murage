@@ -485,7 +485,9 @@ it("image approval times out on the shared permission bound as not answered, nev
   try {
     expect(IMAGE_APPROVAL_TIMEOUT_MS).toBe(15 * 60_000);
     const f = generationFixture();
-    const job = f.run("late", f.request), refused = expect(job).rejects.toThrow("not approved");
+    // The bot is told the card closed unanswered, not that the owner said no,
+    // and not to point the owner at a card that is no longer there.
+    const job = f.run("late", f.request), refused = expect(job).rejects.toThrow("Nobody answered the approval card within 15 minutes, so it was closed and nothing was sent. If the owner still wants this image, ask for it again; a new card will show.");
     const card = await f.card();
     await vi.advanceTimersByTimeAsync(IMAGE_APPROVAL_TIMEOUT_MS);
     await refused;
@@ -497,7 +499,7 @@ it("image approval times out on the shared permission bound as not answered, nev
 });
 it("the owner's own deny stays a denial and their allow dispatches exactly once", async () => {
   const f = generationFixture();
-  const job = f.run("owner", f.request), refused = expect(job).rejects.toThrow("not approved");
+  const job = f.run("owner", f.request), refused = expect(job).rejects.toThrow("Image generation was not approved by the owner, so nothing was sent.");
   const card = await f.card();
   expect(f.operations.resolve(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected"); await refused;
   const settled = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
@@ -556,4 +558,46 @@ it("a routine run holds its image card open past the bound and past its turn", a
     expect(f.fetcher).toHaveBeenCalledOnce();
     expect(f.store.messagesFor(f.bot.threadId).filter(m => m.card?.tool === "generate_image")).toHaveLength(1);
   } finally { vi.useRealTimers(); }
+});
+// 0.1.61: a turn stops only on silence, Stop or a budget. While Murage itself
+// renders an approved image the engine's turn sends nothing; that is Murage
+// working, bounded by the render ceiling, not the engine going quiet. The
+// operation tells the turn's silence watch for as long as it runs.
+it("an image operation holds the turn's silence watch while it runs, and lets go when it ends", async () => {
+  const store = new Store(() => ({instanceId:"fixture",model:"fixture"})); const bot = store.createBot();
+  const actor = { botId:bot.id,threadId:bot.threadId,generation:randomUUID(),signal:new AbortController().signal,assertActive:()=>{} };
+  const released = vi.fn(), rendering = vi.fn(() => released);
+  const operations = new ImageOperations({ store, waiting: () => {}, rendering });
+  let finish!: (value: unknown) => void, fail!: (error: Error) => void;
+  const done = operations.execute(actor, "watch-ok", { prompt: "a" }, () => new Promise(resolve => { finish = resolve; }));
+  expect(rendering).toHaveBeenCalledOnce();
+  expect(rendering).toHaveBeenCalledWith(expect.objectContaining({ threadId: bot.threadId, generation: actor.generation }));
+  expect(released).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  finish({ ok: true }); await done;
+  expect(released).toHaveBeenCalledOnce();
+  const other = { ...actor, generation: randomUUID() };
+  const failed = operations.execute(other, "watch-fail", { prompt: "b" }, () => new Promise((_, reject) => { fail = reject; }));
+  expect(rendering).toHaveBeenCalledTimes(2);
+  await vi.waitFor(() => expect(fail).toBeDefined());
+  fail(new Error("render failed")); await expect(failed).rejects.toThrow("render failed");
+  expect(released).toHaveBeenCalledTimes(2);
+});
+// A later turn that repeats the request_id of a render still running joins
+// that render; its own silence watch is held until the render ends too.
+it("a later turn joining a running image operation holds its own silence watch", async () => {
+  const store = new Store(() => ({instanceId:"fixture",model:"fixture"})); const bot = store.createBot();
+  const first = { botId:bot.id,threadId:bot.threadId,generation:randomUUID(),signal:new AbortController().signal,assertActive:()=>{} };
+  const releases: Array<ReturnType<typeof vi.fn>> = [];
+  const rendering = vi.fn(() => { const release = vi.fn(); releases.push(release); return release; });
+  const operations = new ImageOperations({ store, waiting: () => {}, rendering });
+  let finish!: (value: unknown) => void;
+  const running = operations.execute(first, "shared-id", { prompt: "a" }, () => new Promise(resolve => { finish = resolve; }));
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  // the same bot, thread and request in the same generation is the same operation
+  const joined = operations.execute({ ...first, signal: new AbortController().signal }, "shared-id", { prompt: "a" }, () => Promise.reject(new Error("never runs")));
+  expect(rendering).toHaveBeenCalledTimes(2);
+  expect(releases.every(release => release.mock.calls.length === 0)).toBe(true);
+  finish({ ok: true }); await running; await joined;
+  expect(releases.map(release => release.mock.calls.length)).toEqual([1, 1]);
 });

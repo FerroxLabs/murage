@@ -204,7 +204,7 @@ describe("Antigravity turns (fake CLI)", () => {
       expect(done).toMatchObject({ type: "turn.completed", ok: false, stopReason: "exit_before_result" });
       const errors = recorder.events.filter((e) => e.type === "runtime.error").map((e) => (e as any).message as string);
       expect(errors).toHaveLength(1);
-      expect(errors[0]).toMatch(/^agy exited 3 before result/);
+      expect(errors[0]).toMatch(/^Antigravity( Test)? closed \(exit code 3\) before it finished its reply/);
       expect(errors[0]).toContain("simulated crash");
     } finally {
       rmSync(home, { recursive: true, force: true });

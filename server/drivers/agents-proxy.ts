@@ -592,7 +592,17 @@ const textResult = (id: unknown, text: string, isError = false) =>
 /** 15-minute approval wait (server/image-operations.ts IMAGE_APPROVAL_TIMEOUT_MS),
  * the 30-minute render ceiling (server/image-delivery.ts RENDER_CEILING_MS)
  * and a 5-minute margin, so the proxy never gives up on a render first. */
-const GENERATE_IMAGE_TIMEOUT_MS = 15 * 60_000 + 30 * 60_000 + 5 * 60_000;
+const GENERATE_IMAGE_DEFAULT_WAIT_MS = 15 * 60_000 + 30 * 60_000 + 5 * 60_000;
+/** A shorter wait for tests only: a whole number of milliseconds, never longer than the default. */
+const GENERATE_IMAGE_TIMEOUT_MS = ((raw: number) => Number.isSafeInteger(raw) && raw > 0 && raw < GENERATE_IMAGE_DEFAULT_WAIT_MS ? raw : GENERATE_IMAGE_DEFAULT_WAIT_MS)(Number(process.env.MURAGE_GENERATE_IMAGE_WAIT_MS));
+const GENERATE_IMAGE_WAIT_MINUTES = Math.max(1, Math.round(GENERATE_IMAGE_TIMEOUT_MS / 60_000));
+/** What the bot is told when that wait itself ends: what happened and what to
+ * do next, in words it can pass on. Not the control-channel failure line: the
+ * connection did not fail, nothing came back in time. A held card (a
+ * routine's) stays open for the owner after the call gives up. */
+const GENERATE_IMAGE_NO_ANSWER = `No answer came back for this image request within ${GENERATE_IMAGE_WAIT_MINUTES} minute${GENERATE_IMAGE_WAIT_MINUTES === 1 ? "" : "s"}, `
+  + "so this call stopped waiting. The approval card may still be open for the owner, or the render did not finish. "
+  + "No automatic retry was made. Tell the owner, and ask for the image again only if they still want it.";
 
 async function api(path: string, init?: RequestInit): Promise<Json> {
   let res: Response;
@@ -616,8 +626,11 @@ async function api(path: string, init?: RequestInit): Promise<Json> {
  * none until an image render ends, so a render past five minutes was cut
  * with the provider still working. A plain request has no such clock.
  */
-function apiLong(path: string, body: string, signal: AbortSignal): Promise<Json> {
-  const unavailable = () => new Error("MURAGE_AGENTS_UNAVAILABLE: the Murage control connection failed or timed out. Report the failure; do not switch to native ListAgents/SendMessage or retry the assignment blindly.");
+function apiLong(path: string, body: string, signal: AbortSignal, noAnswer?: string): Promise<Json> {
+  // The caller's own wait ending is not a failed connection: say what it is.
+  const unavailable = () => new Error(noAnswer && signal.aborted && (signal.reason as Error | undefined)?.name === "TimeoutError"
+    ? noAnswer
+    : "MURAGE_AGENTS_UNAVAILABLE: the Murage control connection failed or timed out. Report the failure; do not switch to native ListAgents/SendMessage or retry the assignment blindly.");
   return new Promise((resolve, reject) => {
     let url: URL;
     try { url = new URL(HARNESS + path); } catch { reject(unavailable()); return; }
@@ -743,7 +756,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       width: args.width, height: args.height, fit: args.fit, n: args.n, outputFormat: args.output_format, outputCompression: args.output_compression,
       background: args.background, seed: args.seed, negativePrompt: args.negative_prompt, condensedFromChars: args.condensed_from_chars,
       referenceIds: args.reference_ids,
-    }), AbortSignal.timeout(GENERATE_IMAGE_TIMEOUT_MS));
+    }), AbortSignal.timeout(GENERATE_IMAGE_TIMEOUT_MS), GENERATE_IMAGE_NO_ANSWER);
     return jsonToolResult(result);
   }
 

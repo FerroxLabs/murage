@@ -73,6 +73,8 @@ import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { normalizeEngineCommands } from "../engine-commands.ts";
 import { engineCommandText } from "../../shared/engine-commands.ts";
+import { engineClosedLine } from "./stop-copy.ts";
+import { acpEngineExitStderrText } from "./acp/core.ts";
 
 /** Whether `claude` has been signed in.
  *
@@ -703,6 +705,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
   defaultConfig: () => decodeConfig({}),
 
   async create(input: DriverCreateInput<ClaudeConfig>): Promise<ProviderInstance> {
+    // The engine as Settings names this instance, for every line the chat shows.
+    const ENGINE = input.displayName?.trim() || "Claude";
     const { instanceId, config } = input;
     const accountEnvironment=()=>claudeAccountEnvironment({...process.env,...input.environment},config.configDir);
     const catalogEnv: Record<string, string | undefined> = accountEnvironment();
@@ -1592,6 +1596,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const closingTurn = session.turn;
           const message = `claude exited ${code} before result${session.stderr ? `: ${session.stderr.trim().slice(-300)}` : ""}`;
           const verdict = classifyError({ exitCode: code, stderr: message });
+          // The classifier reads the raw exit above; the chat reads plain words.
+          const shown = engineClosedLine(ENGINE, code, undefined, session.stderr ? acpEngineExitStderrText(session.stderr.trim().slice(-300)) : undefined);
           if (
             !retry.cancelled &&
             code !== 0 &&
@@ -1691,7 +1697,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           emit({
             ...base(threadId, currentTurnId()),
             type: "runtime.error",
-            message,
+            message: shown,
           });
           settle(false, closingTurn.boundary.submission === "refused" ? "stdin_write_failed" : "exit_before_result");
         }
@@ -1718,7 +1724,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             await closingTurn.submission;
           }
           if (!(await awaitCliTreeStopped(child))) {
-            emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: "Claude shutdown is still pending; its process group remains owned" });
+            emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: `${ENGINE} has not finished closing yet, so this conversation stays busy until it does. Restart Murage if it stays stuck.` });
             return;
           }
           if (closeFinalized) return;

@@ -14,6 +14,7 @@ import {
 import { loadCrop, type CropImage } from "./image-fit.ts";
 import { sniffMedia } from "./media-assets.ts";
 import { IMAGE_PROMPT_BLOCKS_MAX } from "./image-library.ts";
+import { providerDispatcher } from "./provider-dispatcher.ts";
 
 export type ImageProvider = "openai" | "flux" | "openrouter" | "xai" | "google";
 /** Only the server connection resolver constructs this object. Never serialize it. */
@@ -883,7 +884,9 @@ export class ImageGenerationService {
       active();
       reservationStarted = true;
       const card: ImageApprovalCardInput = { prompt: assembled.prompt, ...(nativeNegative ? { negativePrompt: nativeNegative } : {}) };
-      try { reservation = await hooks.reserve(details, card); } catch { fail("permission-denied", "Image generation was not approved."); }
+      // The reservation's own refusal says how the card ended (the owner said
+      // no, or nobody answered in time); anything else stays the plain line.
+      try { reservation = await hooks.reserve(details, card); } catch (e) { fail("permission-denied", (e as { status?: number }).status === 403 && e instanceof Error && e.message ? e.message : "Image generation was not approved."); }
       // The render's own limits start after the separately bounded owner review.
       // OpenAI renders several large images in one buffered answer: it gets the full ceiling.
       const renderSignal = () => AbortSignal.timeout(delivery === "buffered" && connection.provider !== "openai" ? BUFFERED_DEADLINE_MS : RENDER_CEILING_MS);
@@ -922,7 +925,9 @@ export class ImageGenerationService {
         // render ceiling applies (a provider may hold headers while it works).
         const idle = delivery === "stream" ? idleWatch(idleMs, false) : null;
         try {
-          const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, ...auth }, body: outbound.body, signal: idle ? AbortSignal.any([signal, idle.signal]) : signal, redirect: "error" });
+          // No transport clock of its own: the render ceiling, the stream's
+          // idle watch and Stop bound it (server/provider-dispatcher.ts).
+          const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, ...auth }, body: outbound.body, signal: idle ? AbortSignal.any([signal, idle.signal]) : signal, redirect: "error", dispatcher: providerDispatcher(outbound.url) } as RequestInit);
           idle?.touch();
           if (!response.ok) {
             outcome = response.status >= 400 && response.status < 500 ? "failed" : "uncertain";

@@ -66,7 +66,8 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
       httpErrorLabel: "xAI",
       missingKeyError: mismatch ? "The saved xAI key belongs to a different provider. Replace it in App Settings → Models." : "This engine has no xAI key yet. Add one in App Settings → Models.",
       unavailableReason: mismatch ? "The saved xAI key belongs to a different provider. Replace it in App Settings → Models." : "No xAI key yet: add one in App Settings → Models.",
-      timeoutMs: 120_000,
+      // No provider idle cut of its own (0.1.61): the thread's silence watch,
+      // on the owner's setting, decides when a quiet turn stops.
       retryScale: Number(process.env.FAKE_GROK_RETRY_SCALE ?? "1"),
       generateModel: () => "grok-3-mini",
       nativeLog: {

@@ -322,7 +322,7 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(done).toMatchObject({ ok: false, stopReason: "failed" });
     expect(turnEventTypes(turnId)).toEqual(["turn.started", "session.started", "runtime.error", "turn.completed"]);
     expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
-      message: 'pi could not select model "openai/gpt-4o": pi set_model failed: Model not found: openai/gpt-4o',
+      message: 'pi Test could not select model "openai/gpt-4o": Model not found: openai/gpt-4o',
     });
     expect(outboundCommands(threadId)).toEqual(["new_session", "set_model"]);
     expect(dumpRows(dump).filter((row) => row.setModel)).toEqual([{ setModel: { provider: "openai", modelId: "gpt-4o" } }]);
@@ -364,7 +364,7 @@ describe("PiDriver turns (fake CLI)", () => {
 
       expect(done).toMatchObject({ ok: false, stopReason: "failed" });
       expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
-        message: 'pi could not select model "ollama-cloud/glm-5.2": pi set_model timed out',
+        message: 'pi Test could not select model "ollama-cloud/glm-5.2": pi Test timed out (no answer for 20 seconds).',
       });
       expect(outboundCommands(threadId)).toEqual(["new_session", "set_model"]);
       expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toHaveLength(1);
@@ -383,7 +383,7 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(done).toMatchObject({ ok: false, stopReason: "failed" });
     expect(turnEventTypes(turnId)).toEqual(["turn.started", "runtime.error", "turn.completed"]);
     expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
-      message: "pi could not start a session: pi new_session failed: Could not create session directory",
+      message: "pi Test could not start a session: Could not create session directory",
     });
     expect(outboundCommands(threadId)).toEqual(["new_session"]);
   });
@@ -401,7 +401,7 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(done).toMatchObject({ ok: false, stopReason: "failed" });
     expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
       message:
-        "pi could not resume this thread's session: pi switch_session failed: Session file not found: /fake/missing-session.json",
+        "pi Test could not resume this thread's session: Session file not found: /fake/missing-session.json",
     });
     expect(outboundCommands(threadId)).toEqual(["switch_session"]);
   });
@@ -417,7 +417,7 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(done).toMatchObject({ ok: false, stopReason: "failed" });
     expect(turnEventTypes(turnId)).toEqual(["turn.started", "runtime.error", "turn.completed"]);
     expect(recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId)).toMatchObject({
-      message: expect.stringContaining('pi could not select model "gpt-4o": pi needs a provider/model id'),
+      message: expect.stringContaining('pi Test could not select model "gpt-4o": it needs a provider/model id'),
     });
     expect(outboundCommands(threadId)).toEqual([]);
     // no pi child was spawned for the turn, so nothing new reached the fake

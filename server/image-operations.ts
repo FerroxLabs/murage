@@ -30,6 +30,15 @@ interface Pending { threadId: string; botId: string; messageId: string; settle: 
  * generation time, so the proxy never gives up on a card first. */
 export const IMAGE_APPROVAL_TIMEOUT_MS = 15 * 60_000;
 const error = (status: number, message: string) => Object.assign(new Error(message), { status });
+/** How an approval card ended, and what the bot is told for each: the
+ * owner's own answer, a card that closed unanswered on the shared bound, or
+ * a turn that went away under it. */
+type ApprovalAnswer = "allow" | "deny" | "unanswered" | "gone";
+const NOT_APPROVED: Record<Exclude<ApprovalAnswer, "allow">, string> = {
+  deny: "Image generation was not approved by the owner, so nothing was sent.",
+  unanswered: `Nobody answered the approval card within ${IMAGE_APPROVAL_TIMEOUT_MS / 60_000} minutes, so it was closed and nothing was sent. If the owner still wants this image, ask for it again; a new card will show.`,
+  gone: "Image generation was not approved; no image request was sent.",
+};
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 function inside(root: string, file: string) { const tail = relative(root, file); return tail !== ".." && !tail.startsWith(`..${sep}`) && !isAbsolute(tail); }
 /** No caller path is accepted. References must already belong to this exact
@@ -141,6 +150,9 @@ export class ImageOperations {
   private readonly waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void;
   private readonly speaker?: (threadId: string, botId: string) => Message["from"] | undefined;
   private readonly routineCard?: RoutineCardHooks;
+  /** Tells the turn's silence watch that Murage is working on this image
+   * (approval, then the render) and returns the release. */
+  private readonly rendering?: (actor: Pick<ImageActor, "threadId" | "generation">) => () => void;
   /** An allow given after a routine run's turn had ended: the run's next
    * image in that conversation is already approved, once. */
   private readonly lateAllows = new Set<string>();
@@ -150,8 +162,9 @@ export class ImageOperations {
   /** `speaker` names the member who asked when the card lands in a channel:
    * without it the card has no sender, so neither the channel view nor the
    * native approval notification can tell whose request it is. */
-  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void; speaker?: (threadId: string, botId: string) => Message["from"] | undefined; routineCard?: RoutineCardHooks }) {
-    this.store = options.store; this.waiting = options.waiting; this.speaker = options.speaker; this.routineCard = options.routineCard;
+  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void; speaker?: (threadId: string, botId: string) => Message["from"] | undefined; routineCard?: RoutineCardHooks;
+    rendering?: (actor: Pick<ImageActor, "threadId" | "generation">) => () => void }) {
+    this.store = options.store; this.waiting = options.waiting; this.speaker = options.speaker; this.routineCard = options.routineCard; this.rendering = options.rendering;
   }
   private db() {
     const db = database();
@@ -196,7 +209,15 @@ export class ImageOperations {
       if (carried && carried.request_hash === requestHash && parseJob(carried.result) && !parsePending(carried.result)) { id = carried.id; prior = carried; }
     }
     if (prior?.request_hash !== undefined && prior.request_hash !== requestHash) throw error(409, "This image request ID was already used for a different request.");
-    if (this.jobs.has(id)) return this.jobs.get(id) as Promise<T>;
+    if (this.jobs.has(id)) {
+      // Joining a render still running: this turn waits on Murage too.
+      let release: () => void = () => {};
+      try { release = this.rendering?.(actor) ?? release; } catch { /* the watch never changes the operation */ }
+      const joined = this.jobs.get(id) as Promise<T>;
+      const settle = () => { try { release(); } catch { /* as above */ } };
+      void joined.then(settle, settle);
+      return joined;
+    }
     if (prior?.state === "published" && prior.result) return Promise.resolve(this.refreshPublished(actor, id, JSON.parse(prior.result) as T));
     if (prior?.state === "publish-pending") return this.resume<T>(actor, id, prior.result);
     // A provider job this request already started (contract section 4): the
@@ -209,6 +230,10 @@ export class ImageOperations {
       this.db().prepare("INSERT INTO image_operations VALUES(?,?,?,'awaiting',NULL,?)").run(id, actor.generation, requestHash, Date.now());
     }
     this.workspaces.add(actor.botId);
+    // The render is bounded by its own ceiling; until it ends, the engine's
+    // quiet turn is waiting on Murage, not silent.
+    let releaseWatch: () => void = () => {};
+    try { releaseWatch = this.rendering?.(actor) ?? releaseWatch; } catch { /* the watch never changes the operation */ }
     let approvalStarted = false;
     // A pending publication record survives outcome receipts, so a received
     // image stays resumable even when its attempt is recorded as uncertain.
@@ -229,9 +254,9 @@ export class ImageOperations {
       approvalStarted = true;
       actor.assertActive();
       // The owner already approved the job being resumed; no second card.
-      const approved = priorJob ? true : await this.approve(actor, details, request, card);
+      const answer: ApprovalAnswer = priorJob ? "allow" : await this.approve(actor, details, request, card);
       actor.assertActive();
-      if (!approved || actor.signal.aborted) { record("not-dispatched"); throw error(403, "Image generation was not approved; no image request was sent."); }
+      if (answer !== "allow" || actor.signal.aborted) { record("not-dispatched"); throw error(403, NOT_APPROVED[answer === "allow" ? "gone" : answer]); }
       // The full prompt and the block versions it pinned, kept before the
       // provider is asked, so an uncertain render still has them.
       if (card?.prompt !== undefined) recordRenderPrompt(this.db(), { operationId: id, prompt: card.prompt, blocks: details.promptBlocks ?? [] });
@@ -261,7 +286,7 @@ export class ImageOperations {
         throw error(409, imagePublishRecoveryMessage(outputReceipt(database(), receipt.id)?.errorCategory));
       }
       throw e;
-    }).finally(() => { this.jobs.delete(id); this.workspaces.delete(actor.botId); });
+    }).finally(() => { this.jobs.delete(id); this.workspaces.delete(actor.botId); try { releaseWatch(); } catch { /* as above */ } });
     this.jobs.set(id, job); return job;
   }
   /** Completes every retained image of one operation from its receipts. */
@@ -349,8 +374,8 @@ export class ImageOperations {
     }
     return released;
   }
-  private approve(actor: ImageActor, details: ImageOperationDetails, request: unknown, input?: ImageApprovalCardInput): Promise<boolean> {
-    if (this.lateAllows.delete(actor.threadId)) return Promise.resolve(true);
+  private approve(actor: ImageActor, details: ImageOperationDetails, request: unknown, input?: ImageApprovalCardInput): Promise<ApprovalAnswer> {
+    if (this.lateAllows.delete(actor.threadId)) return Promise.resolve("allow");
     const requestId = `image-${randomUUID()}`;
     // `held` is the full assembled prompt: exactly what the provider is sent.
     const prompt = (input?.prompt ?? (request && typeof request === "object" && "prompt" in request ? String(request.prompt) : ""))
@@ -368,9 +393,10 @@ export class ImageOperations {
     this.waiting(actor.threadId, true, requestId, card.id, actor.botId);
     let held = false;
     try { held = this.routineCard?.opened(actor.threadId, requestId, card.card?.title ?? "Approve image") === true; } catch { /* delivery never changes authority */ }
-    return new Promise(resolve => {
+    return new Promise<ApprovalAnswer>(resolve => {
       let settled = false;
       let answered = false;
+      let expired = false;
       // Only the owner's own answer is recorded as allow/deny. A card nobody
       // answered (turn cancelled, request revoked, the shared bound elapsed)
       // settles as "unavailable", the same closing the harness gives every
@@ -391,7 +417,8 @@ export class ImageOperations {
         if (held) { try { this.routineCard?.closed(actor.threadId, requestId, source === "user" ? (allow ? "allow" : "deny") : "none"); } catch { /* delivery never changes authority */ } }
         const current = this.store.messagesFor(actor.threadId).find(message => message.id === card.id);
         if (current?.card && !current.card.answered) this.store.patchMessage(actor.threadId, card.id, { card: { ...current.card, answered: source === "user" ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" } });
-        this.waiting(actor.threadId, false, requestId, undefined, actor.botId); resolve(allow);
+        this.waiting(actor.threadId, false, requestId, undefined, actor.botId);
+        resolve(source === "user" ? (allow ? "allow" : "deny") : expired ? "unanswered" : "gone");
       };
       const abort = () => {
         // A routine run holds the card: the tool call gave up (its turn is
@@ -400,12 +427,12 @@ export class ImageOperations {
         if (held && entry && !settled) {
           settled = true; actor.signal.removeEventListener("abort", abort);
           entry.detached = true;
-          this.waiting(actor.threadId, false, requestId, undefined, actor.botId); resolve(false);
+          this.waiting(actor.threadId, false, requestId, undefined, actor.botId); resolve("gone");
           return;
         }
         finish(false);
       };
-      const timer = held ? undefined : setTimeout(abort, IMAGE_APPROVAL_TIMEOUT_MS); timer?.unref();
+      const timer = held ? undefined : setTimeout(() => { expired = true; abort(); }, IMAGE_APPROVAL_TIMEOUT_MS); timer?.unref();
       this.pending.set(requestId, { threadId: actor.threadId, botId: actor.botId, messageId: card.id, settle: finish, active: actor.assertActive });
       actor.signal.addEventListener("abort", abort, { once: true });
       if (actor.signal.aborted) abort();

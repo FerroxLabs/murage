@@ -208,8 +208,8 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       httpErrorLabel: "upstream",
       missingKeyError: credentialMismatch ? "The saved key does not match this endpoint's provider. Connect its provider in Models." : "This engine has no API key yet. Add one in App Settings → Models.",
       unavailableReason: credentialMismatch ? "The saved key does not match this endpoint's provider. Connect its provider in Models." : "No API key yet. Add one in App Settings → Models.",
-      // Idle budget, renewed by stream progress (U02): not a total deadline.
-      timeoutMs: 180_000,
+      // No provider idle cut of its own (0.1.61): the thread's silence watch,
+      // on the owner's setting, decides when a quiet turn stops.
       reasoning: true,
       billing: "metered",
       includeUsageInCompleted: true,

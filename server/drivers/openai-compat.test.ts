@@ -595,24 +595,27 @@ describe("OpenAICompatDriver", () => {
       }
     });
 
-    it("fails a stalled stream after 180s idle as incomplete, never as a user Stop", async () => {
+    // 0.1.61: a turn stops only on silence (the thread's watch, on the
+    // owner's setting), Stop or a budget. This engine used to cut a stream
+    // quiet for 180 s itself; a quiet stream now stays open for the watch.
+    it("leaves a stream quiet for far longer than 180 s open, with no cut of its own", async () => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
       const { controller, state } = heldStream();
       const inst = await createDriver("test-idle-stall");
       const recorder = recordEvents(inst.adapter);
       try {
         await inst.adapter.sendTurn({ threadId: "thread-idle-stall", text: "prompt", model: "vendor/model" });
-        controller().enqueue(chunk("part 1"));
-        await vi.advanceTimersByTimeAsync(179_000);
+        controller().enqueue(chunk("part 1 "));
+        await vi.advanceTimersByTimeAsync(30 * 60_000);
         expect(recorder.events.some((event) => event.type === "turn.completed")).toBe(false);
-        await vi.advanceTimersByTimeAsync(1_500);
+        expect(recorder.events.some((event) => event.type === "runtime.error")).toBe(false);
+        controller().enqueue(chunk("part 2"));
+        controller().enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller().close();
 
         const completed = await recorder.until((event) => event.type === "turn.completed");
-        expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
-        expect(recorder.events.filter((event) => event.type === "runtime.error")).toEqual([
-          expect.objectContaining({ message: 'The model server stopped sending this answer before it was finished.' }),
-        ]);
-        expect(recorder.events.find((event) => event.type === "item.completed")).toMatchObject({ text: "part 1" });
+        expect(completed).toMatchObject({ ok: true, stopReason: null });
+        expect(recorder.events.find((event) => event.type === "item.completed")).toMatchObject({ text: "part 1 part 2" });
         expect(state.requests).toBe(1);
         expect(vi.getTimerCount()).toBe(0);
       } finally {
@@ -620,6 +623,30 @@ describe("OpenAICompatDriver", () => {
         await inst.dispose();
       }
     });
+  });
+
+  it("sends every provider request through the dispatcher with no transport clock", async () => {
+    const { providerDispatcher } = await import("../provider-dispatcher.ts");
+    let dispatcher: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit & { dispatcher?: unknown }) => {
+        if (String(input).endsWith("/models")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        dispatcher = init?.dispatcher;
+        return new Response('data: {"choices":[{"delta":{"content":"hi"}}]}\n' + "data: [DONE]\n", { status: 200, headers: { "content-type": "text/event-stream" } });
+      }),
+    );
+    const inst = await OpenAICompatDriver.create({ instanceId: "test-dispatcher", displayName: "Dispatcher", enabled: true, config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY" }, environment: { TEST_KEY: "secret" } });
+    const recorder = recordEvents(inst.adapter);
+    try {
+      await inst.adapter.sendTurn({ threadId: "thread-dispatcher", text: "prompt", model: "vendor/model" });
+      await recorder.until((event) => event.type === "turn.completed");
+      expect(dispatcher).toBeDefined();
+      expect(dispatcher).toBe(providerDispatcher());
+    } finally {
+      recorder.stop();
+      await inst.dispose();
+    }
   });
 
   it("omits provider routing when none is configured", async () => {

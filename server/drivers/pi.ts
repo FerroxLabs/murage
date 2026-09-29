@@ -60,6 +60,7 @@ import { isPlainObject, readNativeJsonConfig } from "./native-config-file.ts";
 import { primeLocalContext } from "../local-server-probe.ts";
 import { PI_GATE_TITLE_PREFIX } from "./pi-permission-gate.ts";
 import { createTodoBlockFilter, extractTodoBlocks, type TodoFilterOutput } from "../../shared/todo-block.ts";
+import { plainDuration } from "./stop-copy.ts";
 
 /** Pi's window for a local model whose server has not reported one. */
 const PI_UNKNOWN_CONTEXT_WINDOW = 131072;
@@ -507,6 +508,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
   defaultConfig: () => decodeConfig({}),
 
   async create(input: DriverCreateInput<PiConfig>): Promise<ProviderInstance> {
+    // The engine as Settings names this instance, for every line the chat shows.
+    const ENGINE = input.displayName?.trim() || "pi";
     const { instanceId, config } = input;
     const catalogEnv = piEnvironment({ ...process.env, ...input.environment });
     let models = EMPTY;
@@ -584,7 +587,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         emit({
           ...base(threadId, turnId),
           type: "runtime.error",
-          message: `pi could not select model "${requestedModel.slice(0, 200)}": pi needs a provider/model id. Choose a model from pi's list.`,
+          message: `${ENGINE} could not select model "${requestedModel.slice(0, 200)}": it needs a provider/model id. Choose a model from its list.`,
         });
         emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "failed" });
         return { turnId };
@@ -689,14 +692,14 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         new Promise<unknown>((resolve, reject) => {
           const timer = setTimeout(() => {
             responseWaiters.delete(command);
-            reject(new Error(`pi ${command} timed out`));
+            reject(new Error(`${ENGINE} timed out (no answer for ${plainDuration(timeoutMs)}).`));
           }, timeoutMs);
           timer.unref?.();
           responseWaiters.set(command, { resolve, reject, timer });
         });
       /** The bounded reason a one-shot RPC failed, for a user-facing error. */
       const rpcFailure = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 500);
-      child.stdin.on("error", () => rejectWaiters(new Error("pi stdin closed")));
+      child.stdin.on("error", () => rejectWaiters(new Error(`${ENGINE} stopped taking input.`)));
       const send = (obj: Record<string, unknown>) => {
         appendNative(threadId, { dir: "out", source: "pi.rpc", msg: obj });
         child.stdin.write(JSON.stringify(obj) + "\n");
@@ -765,7 +768,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               if (evt.success) waiter.resolve(evt.data);
               else {
                 const reason = typeof evt.error === "string" && evt.error.trim() ? evt.error.trim() : "no reason given";
-                waiter.reject(new Error(`pi ${evt.command} failed: ${reason}`));
+                // The outer line names the step; this is the engine's own reason.
+                waiter.reject(new Error(reason));
               }
             }
             return;
@@ -820,7 +824,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               if (question && !question.ok) {
                 // a dialog the owner cannot be shown is cancelled at once,
                 // and the owner sees why, instead of a card nobody can answer
-                emit({ ...base(threadId, turnId), type: "runtime.error", message: `pi asked a question Murage could not show (${question.error}); it was cancelled` });
+                emit({ ...base(threadId, turnId), type: "runtime.error", message: `${ENGINE} asked a question Murage could not show (${question.error}); it was cancelled` });
                 send({ type: "extension_ui_response", id: reqId, cancelled: true });
                 return;
               }
@@ -899,7 +903,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               emit({
                 ...base(threadId, turnId),
                 type: "runtime.error",
-                message: String(evt.message?.errorMessage ?? "pi turn failed").slice(0, 2_000),
+                message: String(evt.message?.errorMessage ?? `${ENGINE} could not finish this turn.`).slice(0, 2_000),
               });
               settle(false, "failed", usage);
               return;
@@ -983,8 +987,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         // silently lose its history), or talk to a child that is already gone.
         failBeforePrompt(
           sessionPath
-            ? `pi could not resume this thread's session: ${rpcFailure(err)}`
-            : `pi could not start a session: ${rpcFailure(err)}`,
+            ? `${ENGINE} could not resume this thread's session: ${rpcFailure(err)}`
+            : `${ENGINE} could not start a session: ${rpcFailure(err)}`,
         );
         return { turnId };
       }
@@ -999,7 +1003,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         } catch (err) {
           // Never fall back to pi's default model: that can move a local or
           // private pick onto a hosted or paid provider the user did not choose.
-          failBeforePrompt(`pi could not select model "${requestedModel.slice(0, 200)}": ${rpcFailure(err)}`);
+          failBeforePrompt(`${ENGINE} could not select model "${requestedModel.slice(0, 200)}": ${rpcFailure(err)}`);
           return { turnId };
         }
         if (settled) return { turnId };
