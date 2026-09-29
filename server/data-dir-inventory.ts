@@ -84,6 +84,9 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "attachments": ownerFolder(), "artifact-files": ownerFolder(), "workspaces": ownerFolder(),
   "skills": ownerFolder(), "skill-state": ownerFolder(), "checkpoints": ownerFolder(), "events": ownerFolder(),
   "skill-collection": ownerFolder(),
+  // Reference-pack images, each stored once under its own sha256
+  // (image-library.ts); the packs that name them live in messages.db.
+  "image-reference-packs": ownerFolder(),
 
   "messages.db": { backup: "database", why: APPLICATION },
   "messages.db-wal": { backup: "sidecar", why: APPLICATION },

@@ -107,7 +107,7 @@ describe("every top-level name Murage writes is classified for backup", () => {
     expect(unknown).toEqual([]);
     expect(stale).toEqual([]);
     // The scan must keep finding the writers it was built against.
-    for (const name of ["about-me.md", "decisions.ndjson", "whats-new.json", "house-rules.md", "skill-collection", "stop-line", "telegram", "browser-engine-key", "queued-messages.json", "setup.json", "engine-commands.json", "announcements.json", "restored-connections.json"]) {
+    for (const name of ["about-me.md", "decisions.ndjson", "whats-new.json", "house-rules.md", "skill-collection", "stop-line", "telegram", "browser-engine-key", "queued-messages.json", "setup.json", "engine-commands.json", "announcements.json", "restored-connections.json", "image-reference-packs"]) {
       expect(hits.map(hit => hit.name)).toContain(name);
     }
   });
@@ -133,6 +133,12 @@ describe("every top-level name Murage writes is classified for backup", () => {
       expect(found.has(variable), `${variable} is no longer written; remove it here`).toBe(true);
       if (file) expect(classifyDataDirEntry(`${file}.48213.tmp`), `${file}.<pid>.tmp`).toMatchObject({ backup: "excluded" });
     }
+  });
+
+  it("reference-pack images are owner work the restorable stage copies", () => {
+    expect(scanDataDirWrites([join(ROOT, "server", "image-library.ts")])).toContainEqual({ file: "server/image-library.ts", name: "image-reference-packs" });
+    expect(classifyDataDirEntry("image-reference-packs")).toMatchObject({ backup: "owner-folder" });
+    expect(DATA_DIR_RESTORABLE).toContain("image-reference-packs");
   });
 
   it("the scan sees a name held in a constant under a DATA_DIR default parameter", () => {

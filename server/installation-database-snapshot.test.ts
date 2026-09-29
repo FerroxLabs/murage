@@ -7,7 +7,7 @@ import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { initializeArtifacts } from "./artifacts.ts";
 import { initializeInbox } from "./inbox.ts";
 import { initializeMessageTables } from "./message-tables.ts";
-import { initializeImageOperations } from "./image-operations-schema.ts";
+import { initializeImageLibrary, initializeImageOperations } from "./image-operations-schema.ts";
 import { snapshotInstallationDatabase, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { migrateMemorySchema } from "./memory/schema.ts";
 import { pauseRestoredMemory } from "./memory/restore.ts";
@@ -86,11 +86,23 @@ it("accepts the inbox and saved-file tables the harness creates, and an older ar
   expect(await snapshotInstallationDatabase(older.data, older.target)).toMatchObject({ status: "copied" });
 });
 
+it("accepts the saved prompt block, reference pack, render prompt and model check tables with their rows", async () => {
+  const f = fixture();
+  initializeImageLibrary(f.db);
+  f.db.exec("INSERT INTO image_prompt_blocks VALUES('b1','workspace','','brand-lock',1,'Identity',8,'x','owner',1,NULL)");
+  f.db.exec("INSERT INTO image_render_prompts VALUES('op','Identity','[]',8,'x',1)");
+  f.db.exec("INSERT INTO image_reference_packs VALUES('p1','bot','bot-1','refs',1,'[]',0,'bot:bot-1',1,NULL)");
+  f.db.exec("INSERT INTO image_model_probes VALUES('flux','flux-image',1,1,1,NULL,NULL,NULL,900,NULL)");
+  expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied", messages: 1 });
+});
+
 it.each([
   ["an unknown table", "CREATE TABLE plugins(id TEXT PRIMARY KEY)"],
   ["an image operation trigger", "CREATE TRIGGER hostile_image AFTER UPDATE ON image_operations BEGIN DELETE FROM thread_state; END"],
   ["an image operation column", "ALTER TABLE image_operations ADD COLUMN extra TEXT"],
   ["an image operation index", "CREATE INDEX hostile_image ON image_operations(state)"],
+  ["a prompt block column", "ALTER TABLE image_prompt_blocks ADD COLUMN extra TEXT"],
+  ["a reference pack trigger", "CREATE TRIGGER hostile_pack AFTER INSERT ON image_reference_packs BEGIN DELETE FROM thread_state; END"],
   ["an unknown index on a known table", "CREATE INDEX hostile ON artifacts(name)"],
   ["a known table with a foreign column", "ALTER TABLE inbox_item_state ADD COLUMN extra TEXT"],
   ["a migrated column out of order", "ALTER TABLE artifacts DROP COLUMN producer"],
@@ -105,7 +117,7 @@ it.each([
 ])("still refuses %s", async (_name, sql) => {
   const f = fixture();
   initializeInbox(f.db); initializeArtifacts(f.db);
-  initializeImageOperations(f.db);
+  initializeImageOperations(f.db); initializeImageLibrary(f.db);
   f.db.exec(sql);
   await expect(snapshotInstallationDatabase(f.data, f.target)).rejects.toMatchObject({ code: "DATABASE_SCHEMA_UNSUPPORTED" });
   expect(existsSync(f.target)).toBe(false);
