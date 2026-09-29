@@ -158,9 +158,13 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
         if(bad)break;
         const current=db.prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(ref.id,ref.version);
         if(!current||(current.state!=="active"&&!supersededThreadCheckpoint(ref.id,ref.version,{threadId:own}))||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(ref.id,ref.version)){bad=true;break;}
+        // An owner's correction does not carry the old words, so the version
+        // it replaced is history, not evidence (recordRestsOnWithheldMessage).
         const parents=db.prepare(`WITH RECURSIVE parents(id,version) AS (
           SELECT ?,? UNION SELECT d.parent_id,d.parent_version FROM memory_derivations d
-          JOIN parents p ON d.child_id=p.id AND d.child_version=p.version LIMIT 1025)
+          JOIN parents p ON d.child_id=p.id AND d.child_version=p.version
+          LEFT JOIN memory_records child ON child.id=d.child_id AND child.version=d.child_version
+          WHERE NOT (COALESCE(child.assertion,'')='owner-statement' AND COALESCE(child.supersedes_id,'')=d.parent_id) LIMIT 1025)
           SELECT id,version FROM parents`).all(ref.id,ref.version);
         if(parents.length>1024)throw new Error("MEMORY_REPLAY_LIMIT");charge(parents.length);
         // Content checks cannot lean on the global policy revision a correction
@@ -298,11 +302,17 @@ function generatedSpeaker(speaker: unknown): boolean {
 // on every commit by another one.
 const verdicts = new Map<string,boolean>();
 let verdictStamp = "";
-function verdictCache(): Map<string,boolean> | undefined {
-  // Inside a transaction a verdict may rest on writes that roll back: no cache.
+/** Moves on every write through this connection and every commit by another
+ * one; undefined inside a transaction, where a verdict may rest on writes
+ * that roll back. A cached verdict holds only while it is unchanged. */
+export function databaseStamp(): string | undefined {
   if (database().isTransaction) return undefined;
   const row = database().prepare("SELECT total_changes() AS changes, (SELECT data_version FROM pragma_data_version) AS version").get();
-  const stamp = `${row?.changes}:${row?.version}`;
+  return `${row?.changes}:${row?.version}`;
+}
+function verdictCache(): Map<string,boolean> | undefined {
+  const stamp = databaseStamp();
+  if (stamp === undefined) return undefined;
   if (stamp !== verdictStamp || verdicts.size > 4096) { verdicts.clear(); verdictStamp = stamp; }
   return verdicts;
 }
@@ -331,9 +341,14 @@ export function recordRestsOnWithheldMessage(recordId: string, version: number, 
   // The record and every record it was derived from (an approved projection
   // carries no evidence of its own): a line resting on a withheld reply
   // anywhere up that chain rests on it.
+  // An owner's correction (a new version in the owner's own words that
+  // supersedes the old one) does not carry the old words: that history edge
+  // is not a dependency (0.1.61 third fix round, Astra P1 #3).
   const db = database();
   const chain = `WITH RECURSIVE chain(id,version) AS (
-      SELECT ?,? UNION SELECT d.parent_id,d.parent_version FROM memory_derivations d JOIN chain c ON d.child_id=c.id AND d.child_version=c.version LIMIT 66)`;
+      SELECT ?,? UNION SELECT d.parent_id,d.parent_version FROM memory_derivations d JOIN chain c ON d.child_id=c.id AND d.child_version=c.version
+      LEFT JOIN memory_records child ON child.id=d.child_id AND child.version=d.child_version
+      WHERE NOT (COALESCE(child.assertion,'')='owner-statement' AND COALESCE(child.supersedes_id,'')=d.parent_id) LIMIT 66)`;
   // A chain longer than the budget is not established: it counts as resting
   // on a withheld reply, whether or not its first records carry evidence.
   if (Number(db.prepare(`${chain} SELECT count(*) AS n FROM chain`).get(recordId, version)?.n ?? 0) > 64) return true;

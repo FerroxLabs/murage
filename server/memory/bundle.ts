@@ -23,7 +23,7 @@ export interface BoundedMemoryBundle extends MemoryBundle {
    * (pinRestsOnWithheldReply); the caller tells the owner. */
   withheldPins?: ReadonlyArray<{id: string; version: number}>;
 }
-const bundles = new WeakMap<MemoryBundle, {access: MemoryAccess; records: BundleRecord[]}>();
+const bundles = new WeakMap<MemoryBundle, {access: MemoryAccess; records: BundleRecord[]; withheldMessage?: (threadId: string, messageId: string) => boolean}>();
 
 /** Hydrate authoritative bytes only; an approved projection does not expose its private parents. */
 export function hydrateMemoryRecord(id: string, version: number, access: MemoryAccess): BundleRecord {
@@ -142,16 +142,20 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   const room = accessIncludesRoom(access);
   const pinRows = db.prepare(`SELECT id,version FROM memory_records r WHERE state='active' AND owner_pinned=1 AND scope_id IN (SELECT value FROM json_each(?))
     ${room ? "AND NOT EXISTS (SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.partition='identity')" : ""} ORDER BY id,version`).all(JSON.stringify(access.scopeIds));
-  // More pins than handles cannot fit any budget either; name the real limit.
-  if (pinRows.length > MEMORY_HANDLE_LIMIT) throw new Error("MEMORY_PIN_OVERFLOW: curate owner pins or increase available context before dispatch");
   // A pin resting on a reply bots no longer see is left out, not a refused
-  // turn: the owner is told, and the room goes on without it.
+  // turn: the owner is told, and the room goes on without it. Left-out pins
+  // take no handle.
   const withheldPins: Array<{id: string; version: number}> = [];
-  const pinned: BundleRecord[] = [];
-  for (const row of pinRows) {
+  const deliverable = pinRows.filter(row => {
     const id = String(row.id), version = Number(row.version);
-    if (pinRestsOnWithheldReply(id,version,options.withheldMessage)) { withheldPins.push({id,version}); continue; }
-    try { pinned.push(hydrateMemoryRecord(id,version,access)); }
+    if (!pinRestsOnWithheldReply(id,version,options.withheldMessage)) return true;
+    withheldPins.push({id,version}); return false;
+  });
+  // More pins than handles cannot fit any budget either; name the real limit.
+  if (deliverable.length > MEMORY_HANDLE_LIMIT) throw new Error("MEMORY_PIN_OVERFLOW: curate owner pins or increase available context before dispatch");
+  const pinned: BundleRecord[] = [];
+  for (const row of deliverable) {
+    try { pinned.push(hydrateMemoryRecord(String(row.id),Number(row.version),access)); }
     catch { assertMemoryAccess(access); throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch"); }
   }
   if (tokens(render(pinned)) > budget) throw new Error("MEMORY_PIN_OVERFLOW: curate owner pins or increase available context before dispatch");
@@ -247,6 +251,9 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     try {
       const current = hydrateMemoryRecord(record.id,record.version,access);
       if (JSON.stringify(current)!==JSON.stringify(record)) throw new Error("MEMORY_RECORD_CHANGED");
+      // The reader's own rule too: what it may see can change while recall
+      // waits (a receipt revoked with no policy change; Astra P1 #1).
+      if (options.withheldMessage && recordRestsOnWithheldMessage(record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
     } catch {
       assertMemoryAccess(access);
       const withheldPin = record.pinned && pinRestsOnWithheldReply(record.id,record.version,options.withheldMessage);
@@ -275,7 +282,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   for (const row of bundle.sourceVersions) Object.freeze(row);
   Object.freeze(bundle.recordVersions); Object.freeze(bundle.sourceVersions);
   Object.freeze(pinned); Object.freeze(identity); Object.freeze(checkpoint); Object.freeze(evidence); Object.freeze(bundle);
-  bundles.set(bundle,{access,records:selected});
+  bundles.set(bundle,{access,records:selected,...options.withheldMessage?{withheldMessage:options.withheldMessage}:{}});
   return bundle;
 }
 
@@ -309,5 +316,7 @@ export function assertMemoryBundle(bundle: MemoryBundle, access: MemoryAccess) {
   for (const record of trusted.records) {
     const current = hydrateDisclosedMemoryRecord(record.id,record.version,access);
     if (JSON.stringify(current)!==JSON.stringify(record)) throw new Error("MEMORY_CONTEXT_REVOKED");
+    // What this reader may see is checked afresh at dispatch (Astra P1 #1).
+    if (trusted.withheldMessage && recordRestsOnWithheldMessage(record.id,record.version,trusted.withheldMessage)) throw new Error("MEMORY_CONTEXT_REVOKED");
   }
 }

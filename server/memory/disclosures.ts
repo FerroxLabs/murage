@@ -2,7 +2,7 @@ import { database, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
 import { accessIncludesRoom, assertMemoryAccess, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { assertMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
-import { messageCopy, messageSourceForgotten, replayExclusions, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
+import { databaseStamp, messageCopy, messageSourceForgotten, replayExclusions, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 
 /** Persist before dispatch; records contain references, never duplicated memory text. */
@@ -145,9 +145,14 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
   // a room turn that is not the owner's, or any turn whose words were not
   // proven (a direct one included)
   if (memoryAccessIsOwnerAudience(access) || (!accessIncludesRoom(access) && !memoryAccessNotOwnerAudience(access))) return undefined;
+  // A verdict holds only while nothing changed: a receipt revoked while
+  // recall waits is seen by the check after the wait and at dispatch.
   const verdicts = new Map<string, boolean>();
+  let stamp: string | undefined;
   return (threadId, messageId) => {
     if (threadId !== access.threadId) return false;
+    const now = databaseStamp();
+    if (now === undefined || now !== stamp) { verdicts.clear(); stamp = now; }
     let known = verdicts.get(messageId);
     if (known === undefined) {
       const copy = messageCopy(threadId, messageId);

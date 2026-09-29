@@ -16,9 +16,10 @@ import { captureSource } from "./memory/capture.ts";
 import { claimMemoryJob, publishMemoryWork } from "./memory/jobs.ts";
 import { captureWork } from "./memory/chunks.ts";
 import { refreshMemoryCheckpoint } from "./memory/consolidate.ts";
-import { ownerMemoryTicket, saveMemoryCandidate } from "./memory/authority.ts";
+import { correctMemory, ownerMemoryTicket, saveMemoryCandidate } from "./memory/authority.ts";
 import { forgetMemory } from "./memory/forget.ts";
 import { buildMemoryBundle, hydrateMemoryRecord } from "./memory/bundle.ts";
+import { MEMORY_HANDLE_LIMIT } from "../shared/memory.ts";
 import { searchMemory, type MemorySearchBridge } from "./memory/search.ts";
 import { filterMemoryReplay, roomReplayWithheld } from "./memory/disclosures.ts";
 import { insertMessage } from "./message-db.ts";
@@ -234,4 +235,46 @@ it("gap 2: a copy owed to the asking bot's next turn is known withheld (external
   // the delivery path reads it this way (server/index.ts, planExternalDelivery input)
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   expect(source).toContain("if (message?.copyOf && (memoryNotOwner || capturedMessageWithheld(threadId, id))) return { id, text: withheldRoomLine(message) };");
+});
+
+// Astra P1 audit #3: the owner rewrites a pinned note that rested on a
+// withheld reply in their own words. The new version is theirs, not the
+// reply's: it is handed over.
+it("P1: an owner's correction of a pin resting on a withheld reply is delivered", async () => {
+  const { record } = daxRoomReply();
+  const pinned = pinOnReply();
+  forget(record);
+  expect((await buildMemoryBundle("", access("finch", "closing-chat"), nothing)).withheldPins).toEqual([{ id: pinned, version: version(pinned) }]);
+  const next = correctMemory(ownerMemoryTicket(), pinned, version(pinned), "The invoices go out on Monday.");
+  const bundle = await buildMemoryBundle("", access("finch", "closing-chat"), nothing);
+  expect(bundle.text).toContain("Monday");
+  expect(bundle.text).not.toContain("83-86");
+  expect(bundle.pinned.map(r => [r.id, r.version])).toEqual([[pinned, next]]);
+  expect(bundle.withheldPins).toBeUndefined();
+});
+
+// Astra P1 audit #4: pins left out do not count toward the handle limit.
+it("P1: pins left out do not count toward the pin limit", async () => {
+  const { record } = daxRoomReply();
+  const a = access("finch", "closing-chat");
+  for (let i = 0; i <= MEMORY_HANDLE_LIMIT; i++) {
+    const id = saveMemoryCandidate(`Rows 83-86, note ${i}.`, [{ sourceId: "message:closing-chat:m-dax", revision: 1, startByte: 0, endByte: Buffer.byteLength(REPLY) }], `k-many-${i}`, a);
+    database().prepare("UPDATE memory_records SET state='active',owner_pinned=1 WHERE id=?").run(id);
+  }
+  await expect(buildMemoryBundle("", access("finch", "closing-chat"), nothing)).rejects.toThrow("MEMORY_PIN_OVERFLOW");
+  forget(record);
+  const bundle = await buildMemoryBundle("", access("finch", "closing-chat"), nothing);
+  expect(bundle.text).toBe("");
+  expect(bundle.withheldPins).toHaveLength(MEMORY_HANDLE_LIMIT + 1);
+});
+
+// Astra r2 #6: a reply made with only the owner's corrected note stays visible.
+it("P1: a reply made with the owner's corrected note is not withheld for the old version's reply", () => {
+  const { record } = daxRoomReply();
+  const pinned = pinOnReply();
+  forget(record);
+  const next = correctMemory(ownerMemoryTicket(), pinned, version(pinned), "The invoices go out on Monday.");
+  disclose("b-corrected", "closing-chat", [{ id: pinned, version: next }], ["m-finch-corrected"]);
+  captured("closing-chat", "m-finch-corrected", "finch", "The invoices go out on Monday.");
+  expect([...roomReplayWithheld("closing-chat", [{ id: "m-finch-corrected" }])]).toEqual([]);
 });

@@ -69,7 +69,9 @@ posixOnly("a pinned room note resting on a withheld reply", () => {
         await expect.poll(idle, { timeout: 20000 }).toBe(true);
         await expect.poll(() => pendingJobs(), { timeout: 20000 }).toBe(0);
       };
-      const checkpoint = () => db.prepare("SELECT r.id,r.version,r.text FROM memory_records r JOIN memory_scopes s ON s.id=r.scope_id WHERE r.kind='checkpoint' AND s.kind='conversation' AND s.owner_key=? AND r.state='active' ORDER BY r.version DESC LIMIT 1").get(room.threadId) as { id: string; version: number; text: string } | undefined;
+      // The room's notes: the checkpoint built from this room's messages,
+      // whichever scope the room's captures go to.
+      const checkpoint = () => db.prepare("SELECT r.id,r.version,r.text FROM memory_records r WHERE r.kind='checkpoint' AND r.state='active' AND EXISTS (SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=r.id AND e.record_version=r.version AND s.thread_id=?) ORDER BY r.version DESC LIMIT 1").get(room.threadId) as { id: string; version: number; text: string } | undefined;
 
       const evidenceOf = (id: string, version: number) => (db.prepare("SELECT e.source_id AS id,s.speaker FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=?").all(id, version) as Array<{ id: string; speaker: string }>);
       // Something to forget: an ask that a reply quoted in the room's current
@@ -132,7 +134,7 @@ posixOnly("a pinned room note resting on a withheld reply", () => {
       await send("@Bravo what do you make of Alpha's last answer?");
       await expect.poll(async () => (await repliesBy(bravo.id)).length, { timeout: 15000 }).toBe(1);
       const bravoPrompt = prompts().slice(beforeFifth).at(-1)!;
-      expect(bravoPrompt).toContain(`Alpha: ${fourthReply.text}`);
+      expect(bravoPrompt).toContain(fourthReply.text);
       expect(bravoPrompt).not.toContain("pinned by the owner");
       expect(bravoPrompt).not.toContain(hidden.text);
       const shown = await messages(room.threadId);

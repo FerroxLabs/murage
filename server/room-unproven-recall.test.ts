@@ -17,7 +17,7 @@ import { captureSource } from "./memory/capture.ts";
 import { claimMemoryJob, publishMemoryWork } from "./memory/jobs.ts";
 import { captureWork } from "./memory/chunks.ts";
 import { saveMemoryCandidate } from "./memory/authority.ts";
-import { buildMemoryBundle, hydrateMemoryRecord } from "./memory/bundle.ts";
+import { assertMemoryBundle, buildMemoryBundle, hydrateMemoryRecord } from "./memory/bundle.ts";
 import { type MemorySearchBridge } from "./memory/search.ts";
 import { memoryAgentRoute } from "./memory/routes.ts";
 import { readerWithheldMessage } from "./memory/disclosures.ts";
@@ -111,4 +111,43 @@ it("an unproven room turn does not recall an owner-audience reply its transcript
   await expect(memoryAgentRoute("/api/internal/memory/get", { handles: [{ id: chunk.id, version: chunk.version }] }, unproven, hits([]))).rejects.toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
   const own = await memoryAgentRoute("/api/internal/memory/get", { handles: [{ id: chunk.id, version: chunk.version }] }, owner, hits([])) as { records: Array<{ text: string }> };
   expect(own.records[0].text).toContain("VAULT-5521");
+});
+
+// 0.1.61 third fix round, Astra P1 audit #1: what a reader that is not the
+// owner may see can change while recall waits (a receipt revoked without a
+// policy change). The pin resting on that reply is checked again after the
+// wait and again at dispatch, with a fresh verdict.
+function roomReplyPin() {
+  reconcileMemoryRoster(roster);
+  const a = access("finch", "closing-chat");
+  database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('b-fin','closing-chat','fake',NULL,'[]','[]','[\"m-fin\"]',?,?,10,'delivered',?)")
+    .run(a.policyRevision, a.deletionEpoch, Date.now());
+  const text = "Finch confirmed the vendor call is on Friday.";
+  captureSource(database(), { id: "message:closing-chat:m-fin", threadId: "closing-chat", messageId: "m-fin", kind: "text", speaker: "finch", outcome: "recorded", text });
+  publishCaptures();
+  const pin = saveMemoryCandidate("The vendor call is on Friday.", [{ sourceId: "message:closing-chat:m-fin", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k-pin-fin", a);
+  database().prepare("UPDATE memory_records SET state='active',owner_pinned=1 WHERE id=?").run(pin);
+  return pin;
+}
+const revokeFinch = () => database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id='b-fin'").run();
+
+it("a pin whose reply an unproven reader stops seeing while recall waits is left out", async () => {
+  const pin = roomReplyPin();
+  const reader = access("dax", "closing-chat", true);
+  const before = await buildMemoryBundle("vendor", reader, hits([]), { withheldMessage: readerWithheldMessage(reader) });
+  expect(before.text).toContain("Friday");
+  const during: MemorySearchBridge = { search: async () => { revokeFinch(); return { hits: [], vectorRows: 0, coverageComplete: true }; } };
+  const bundle = await buildMemoryBundle("vendor", reader, during, { withheldMessage: readerWithheldMessage(reader) });
+  expect(bundle.text).not.toContain("Friday");
+  expect(bundle.withheldPins).toEqual([{ id: pin, version: version(pin) }]);
+});
+
+it("a pin whose reply an unproven reader stops seeing before dispatch refuses that dispatch", async () => {
+  roomReplyPin();
+  const reader = access("dax", "closing-chat", true);
+  const bundle = await buildMemoryBundle("vendor", reader, hits([]), { withheldMessage: readerWithheldMessage(reader) });
+  expect(bundle.text).toContain("Friday");
+  assertMemoryBundle(bundle, reader);
+  revokeFinch();
+  expect(() => assertMemoryBundle(bundle, reader)).toThrow("MEMORY_CONTEXT_REVOKED");
 });
