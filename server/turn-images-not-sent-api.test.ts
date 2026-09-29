@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// An image limit never fails a turn (0.1.61). Sean's Sable turn died on
+// An image limit never fails a turn (0.1.61). A real turn died on
 // "Attach at most four images per turn." and Retry sent the same text into
 // the same wall. Through the real server and the fake Fuigo (the engine with
 // the strictest image rule, unboundImagePolicy "refuse"):

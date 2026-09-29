@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // A brand-new bot's first turn runs the one-time move of skill discovery
-// into task desks (skills.ts migrateSkillDiscoveryToTasks). AFTER-REVIEW
-// (0161 lanes/review): that first turn failed with "Procedure migration is
+// into task desks (skills.ts migrateSkillDiscoveryToTasks). In a test
+// run of project cards, that first turn failed with "Procedure migration is
 // waiting for another active task" when another turn of the same bot was
 // already under way, and the room it failed in stayed marked busy. A new
 // bot has nothing to move, so its migration never has to wait; and a turn
