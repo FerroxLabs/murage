@@ -3536,6 +3536,28 @@ function turnImagesNotSent(text: string, collected: CollectedTurnImages | undefi
   return { paths: [...overCount, ...tooLarge], note: imagesNotSentActivityName({ sent, overCount: overCount.length, tooLarge: tooLarge.length }) };
 }
 
+/** Record the left-out paths once this thread's turn has settled. The record
+ * changes what memory holds for the message (capture strips the paths), and
+ * a change to the turn's own context while it is being dispatched fails that
+ * turn ("Context changed"), so it waits for turn.completed. A turn that never
+ * reports one is recorded when the watch gives up. */
+const IMAGES_NOT_SENT_RECORD_WAIT_MS = 30 * 60 * 1000;
+function recordImagesNotSentAfterTurn(threadId: string, messageIds: readonly string[], paths: readonly string[]): void {
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    unsubscribe();
+    recordImagesNotSent(threadId, messageIds, paths);
+  };
+  const unsubscribe = bus.subscribe((event: RuntimeEvent) => {
+    if (event.threadId === threadId && event.type === "turn.completed") queueMicrotask(finish);
+  });
+  const timer = setTimeout(finish, IMAGES_NOT_SENT_RECORD_WAIT_MS);
+  timer.unref?.();
+}
+
 /** Record the left-out paths on every message of this turn that names them,
  * so a later replay or recall leaves them out too (transcriptText, memory
  * capture). */
@@ -6656,7 +6678,7 @@ async function startTurn(
       const leftOut = turnImagesNotSent(text, collectedImages);
       if (leftOut.paths.length) {
         turnText = withoutImageTags(turnText, leftOut.paths);
-        recordImagesNotSent(threadId, [...(userMessage ? [userMessage.id] : []), ...(opts?.excludeMessageIds ?? [])], leftOut.paths);
+        recordImagesNotSentAfterTurn(threadId, [...(userMessage ? [userMessage.id] : []), ...(opts?.excludeMessageIds ?? [])], leftOut.paths);
         noteImagesNotSent(threadId, userMessage?.id, leftOut.note, bot);
       }
       const outputInstructions = prepareOutputDestination(bot.id, threadId, dispatchClaimId, worksInWorkspace && opts?.runOn !== "cloud", Boolean(integrations.agents));
@@ -8583,7 +8605,7 @@ async function runGroupMemberTurn(
       // Same as the direct path: left-out images leave the text, one line says so.
       const roomTurnText = leftOut.paths.length ? withoutImageTags(text, leftOut.paths) : text;
       if (leftOut.paths.length) {
-        recordImagesNotSent(threadId, latestUser ? [latestUser.id] : [], leftOut.paths);
+        recordImagesNotSentAfterTurn(threadId, latestUser ? [latestUser.id] : [], leftOut.paths);
         noteImagesNotSent(threadId, latestUser?.id, leftOut.note, bot);
       }
       submissionBoundary.started();
