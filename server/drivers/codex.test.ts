@@ -346,7 +346,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
     try {
       await instance.adapter.sendTurn({ threadId: "t-uncertain-group", text: "go" });
-      await recorder.until(event => event.type === "runtime.error" && event.message.includes("did not shut down"));
+      await recorder.until(event => event.type === "runtime.error" && event.message === "Codex Test did not close after Stop. This conversation stays busy until it does; restart Murage if it stays stuck.");
       await expect(instance.adapter.interruptTurn("t-uncertain-group")).rejects.toThrow("shutdown is still pending");
       await expect(instance.adapter.stopAll()).rejects.toThrow("shutdown is still pending");
       await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
@@ -1567,7 +1567,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
       try {
         await instance.adapter.sendTurn({ threadId, text: "hi" });
-        await recorder.until((e) => e.type === "runtime.error" && e.message.includes("did not shut down"));
+        await recorder.until((e) => e.type === "runtime.error" && e.message === "Codex Test did not close after Stop. This conversation stays busy until it does; restart Murage if it stays stuck.");
         expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
         expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
         expect(instance.adapter.hasSession(threadId)).toBe(true);

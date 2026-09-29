@@ -903,7 +903,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               emit({
                 ...base(threadId, turnId),
                 type: "runtime.error",
-                message: String(evt.message?.errorMessage ?? "pi turn failed").slice(0, 2_000),
+                message: String(evt.message?.errorMessage ?? `${ENGINE} could not finish this turn.`).slice(0, 2_000),
               });
               settle(false, "failed", usage);
               return;

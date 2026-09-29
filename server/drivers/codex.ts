@@ -51,6 +51,7 @@ import {
 import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
 import { CODEX_BUILTIN_COMMANDS, normalizeEngineCommands } from "../engine-commands.ts";
 import { engineClosedLine, plainDuration } from "./stop-copy.ts";
+import { acpEngineExitStderrText } from "./acp/core.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -465,7 +466,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         };
         completeStoppedTurn = complete;
         if (!(await stop())) {
-          emit({ ...base(threadId, turnId), type: "runtime.error", message: "codex did not shut down after termination was requested" });
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: `${ENGINE} did not close after Stop. This conversation stays busy until it does; restart Murage if it stays stuck.` });
         }
       };
 
@@ -536,7 +537,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `codex asked a question Murage could not show (${normalized.error}); it was told nobody answered`,
+              message: `${ENGINE} asked a question Murage could not show (${normalized.error}); it was told nobody answered`,
             });
             return send({
               jsonrpc: "2.0",
@@ -946,7 +947,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             type: "runtime.error",
             // Shown in the chat: the engine, the exit and its last words, never
             // the app-server's protocol names.
-            message: engineClosedLine(ENGINE, code, signal, recentStderr ? recentStderr.slice(-300) : undefined),
+            message: engineClosedLine(ENGINE, code, signal, recentStderr ? acpEngineExitStderrText(recentStderr.slice(-300)) : undefined),
           });
           settle(false, "exit_before_result");
         }

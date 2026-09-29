@@ -44,6 +44,7 @@ import type {
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { engineClosedLine } from "./stop-copy.ts";
+import { acpEngineExitStderrText } from "./acp/core.ts";
 
 const DRIVER_KIND = "antigravityAgent";
 export const ANTIGRAVITY_STREAM_INPUT_MIN_VERSION = "1.1.15";
@@ -742,10 +743,12 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         try {
           restoreMcp();
         } catch (error) {
+          console.warn("Antigravity tool settings were not restored:", error instanceof Error ? error.message : String(error));
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
-            message: `could not restore Antigravity's MCP config: ${error instanceof Error ? error.message : String(error)}`,
+            // The underlying error names a config path; the owner reads the step.
+            message: `${ENGINE} finished, but Murage could not put back its tool settings for other conversations. Restart Murage if its tools look wrong.`,
           });
         } finally {
           releaseMcpLease();
@@ -915,7 +918,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
-            message: engineClosedLine(ENGINE, code, undefined, stderr ? stderr.trim().slice(-300) : undefined),
+            message: engineClosedLine(ENGINE, code, undefined, stderr ? acpEngineExitStderrText(stderr.trim().slice(-300)) : undefined),
           });
             settle(false, "exit_before_result");
           }
@@ -923,7 +926,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         closeFinalizers.set(child, finalize);
         void awaitCliTreeStopped(child).then((stopped) => {
           if (stopped) finalize();
-          else emit({ ...base(threadId, turnId), type: "runtime.error", message: `${ENGINE} has not finished closing yet. Murage keeps this conversation's working folder until it does; restart Murage if it stays stuck.` });
+          else emit({ ...base(threadId, turnId), type: "runtime.error", message: `${ENGINE} has not finished closing yet, so this conversation stays busy until it does. Restart Murage if it stays stuck.` });
         });
       });
 
