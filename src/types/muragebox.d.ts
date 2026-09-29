@@ -174,6 +174,11 @@ type SkillRecordingPayload = {
         /** A second copy of the key Murage made, saved where the person picks.
          * The secret is read and written in the desktop process. */
         saveRecoveryKeyCopy?(): Promise<{ cancelled:true }|{ saved:true; label:string; publicKey:string }|{ refused:string }>;
+        /** A key an earlier release left in a folder that syncs to the cloud: names only. */
+        recoveryKeyCloudNotice?(): Promise<{ provider:string; label:string }|null>;
+        /** Moves that key, and the backups' reference to it, to this computer only. */
+        moveRecoveryKey?(): Promise<{ moved:true; provider:string; label:string; folder:string; oldRemoved:boolean }|{ refused:string }>;
+        keepRecoveryKeyHere?(): Promise<{ kept:true }>;
       };
       backupSchedule?: {
         status():Promise<BackupScheduleStatus>;

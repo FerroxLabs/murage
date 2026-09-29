@@ -95,6 +95,9 @@ contextBridge.exposeInMainWorld("muragebox", {
     restart: () => ipcRenderer.invoke("backup-mode:restart"),
     createRecoveryKey: () => ipcRenderer.invoke("backup-mode:create-recovery-key"),
     saveRecoveryKeyCopy: () => ipcRenderer.invoke("backup-mode:save-recovery-key-copy"),
+    recoveryKeyCloudNotice: () => ipcRenderer.invoke("backup-mode:recovery-key-cloud-notice"),
+    moveRecoveryKey: () => ipcRenderer.invoke("backup-mode:move-recovery-key"),
+    keepRecoveryKeyHere: () => ipcRenderer.invoke("backup-mode:keep-recovery-key"),
   },
   backupSchedule: {
     status: () => ipcRenderer.invoke("backup-schedule:status"),

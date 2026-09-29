@@ -10,7 +10,7 @@ import { BACKUP_MODE_ARGUMENT, BACKUP_TOOL_STUCK_AFTER, createBackupModeControll
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { BACKUP_UNAVAILABLE_SENTENCES, backupUnavailableCode, captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 import { pathWithin } from "../shared/path-identity.mjs";
-import { createRecoveryKeyFlow, hostCloudFolder, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
+import { cloudNoticeStore, createRecoveryKeyFlow, hostCloudFolder, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
@@ -403,6 +403,14 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   // folder inside the installation or inside the chosen backup folder, and
   // the flow skips any whose name says it syncs to the cloud.
   defaultFolders:()=>{const folders=[];for(const name of ["home"]){try{folders.push(app.getPath(name));}catch{/* Not every platform has every folder. */}}if(process.platform==="win32"&&process.env.LOCALAPPDATA)folders.push(process.env.LOCALAPPDATA);return folders;},
+  // A key an earlier release left in a folder that syncs (0.1.60 used
+  // Documents): the Backups page says so once, and Move takes the backups'
+  // own key with it (backup-schedule-host rebindKeyFile).
+  boundKeyFile:()=>backupScheduleHost?.boundKeyFile?.()??null,
+  rebindKeyFile:file=>backupScheduleHost.rebindKeyFile(file),
+  noticeStore:cloudNoticeStore(path.join(app.getPath("userData"),"backup-key-cloud-notice.json")),
+  // Never written to without asking, even when an earlier key went there.
+  neverAutomatic:()=>{try{return [app.getPath("documents")];}catch{return [];}},
   // A picked folder that syncs to the cloud is named before the key goes there.
   confirmCloudFolder:async provider=>{
     const answer=await dialog.showMessageBox(mainWindow??undefined,{title:"Murage",type:"warning",buttons:["Choose another place","Save here"],defaultId:0,cancelId:0,noLink:true,
@@ -426,6 +434,11 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   },
 });
 ipcMain.handle("backup-mode:create-recovery-key",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");if(backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return settleRecoveryKeyRequest(()=>backupRecoveryKeys.create());});
+// A key left in a folder that syncs to the cloud: the service's name and the
+// file's name only. Move and Keep here answer with names, never paths.
+ipcMain.handle("backup-mode:recovery-key-cloud-notice",async(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");if(!backupKeysUsable())return null;try{return await backupRecoveryKeys.cloudNotice();}catch{return null;}});
+ipcMain.handle("backup-mode:move-recovery-key",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");if(backupMode.isPreparing()||backupScheduleHost?.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return settleRecoveryKeyRequest(()=>backupRecoveryKeys.moveOffCloud());});
+ipcMain.handle("backup-mode:keep-recovery-key",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupRecoveryKeys.keepInCloud();});
 // The copy is read and written here; the renderer is told only the new name.
 ipcMain.handle("backup-mode:save-recovery-key-copy",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");if(backupMode.isPreparing())throw new Error("BACKUP_UNAVAILABLE");return settleRecoveryKeyRequest(()=>backupRecoveryKeys.saveCopy());});
 ipcMain.handle("backup-schedule:status",(_event,...args)=>{if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupScheduleHost?.status()??{supported:false,pending:false,enabled:false,revision:0,phase:"idle",schedule:{enabled:false,preUpgrade:false}};});

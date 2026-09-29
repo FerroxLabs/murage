@@ -216,7 +216,41 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
  * folder that is not allowed) as a value, so the desktop app does not log it
  * as a crash. */
 export type RecoveryKeyResult = { cancelled: true } | { saved: true; label: string; publicKey: string } | { refused: string };
-export type BackupModeBridge = NonNullable<NonNullable<Window["muragebox"]>["backup"]> & { createRecoveryKey?(): Promise<RecoveryKeyResult>; saveRecoveryKeyCopy?(): Promise<RecoveryKeyResult> };
+export type BackupModeBridge = NonNullable<NonNullable<Window["muragebox"]>["backup"]> & { createRecoveryKey?(): Promise<RecoveryKeyResult>; saveRecoveryKeyCopy?(): Promise<RecoveryKeyResult>;
+  recoveryKeyCloudNotice?(): Promise<unknown>; moveRecoveryKey?(): Promise<unknown>; keepRecoveryKeyHere?(): Promise<unknown> };
+
+// eslint-disable-next-line no-control-regex -- a name with control characters is refused
+const shownName = (input: unknown) => typeof input === "string" && input.trim() && input.length <= 255 && !/[\x00-\x1f\x7f]/.test(input) ? input : null;
+/** A recovery key an earlier release left in a folder that syncs to the cloud
+ * (0.1.60 put it in Documents, which OneDrive can hold): the service's name
+ * and the file's name only, or null. */
+export function cloudKeyNotice(value: unknown): { provider: string; label: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const provider = shownName(v.provider), label = shownName(v.label);
+  return provider && label ? { provider, label } : null;
+}
+export function cloudKeyNoticeText(notice: { provider: string; label: string }): { title: string; detail: string } {
+  return {
+    title: `Your recovery key is in a folder that syncs to ${notice.provider}.`,
+    detail: `That puts a copy of ${notice.label}, the one thing that opens your backups, in your ${notice.provider} account. Move keeps it on this computer only, and your backups keep working. Keep here leaves it where it is.`,
+  };
+}
+/** What Move says once the key is off the synced folder. A refusal is thrown
+ * as its code; a malformed answer is not a success. */
+export function cloudKeyMoved(value: unknown): string {
+  if (!value || typeof value !== "object") throw Error("Invalid recovery key result");
+  const v = value as Record<string, unknown>;
+  if (v.refused !== undefined) {
+    if (typeof v.refused !== "string" || !/^BACKUP_[A-Z_]{1,64}$/.test(v.refused)) throw Error("Invalid recovery key result");
+    throw Error(v.refused);
+  }
+  const provider = shownName(v.provider), label = shownName(v.label), folder = shownName(v.folder);
+  if (v.moved !== true || !provider || !label || !folder) throw Error("Invalid recovery key result");
+  return v.oldRemoved === true
+    ? `Your recovery key is now ${label} in ${folder}, on this computer only, and your backups use it. ${provider} may still keep the old file in its recycle bin: empty it there to remove it from the cloud.`
+    : `Your recovery key is now ${label} in ${folder}, and your backups use it. The old file in ${provider} could not be removed: delete it there yourself.`;
+}
 /** What one act of setup reports back: the usual status, plus the key it made
  * for the person so the page can offer to keep a copy of it. */
 export type BackupSetupResult = (BackupScheduleStatus | { cancelled: true }) & { created?: { label: string; publicKey: string | null; folder: string }; refused?: string };

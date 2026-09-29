@@ -9,7 +9,7 @@ import { api, useStore } from "@/state/store";
 import { openInboxLink } from "@/lib/open-inbox-link";
 import { backupWaitingSentence, type BackupWaitingBot } from "../../shared/backup-waiting";
 import { BACKUP_UNAVAILABLE_SENTENCES } from "../../shared/backup-capture-failure.mjs";
-import { backupSummary, closedJobBlockedReason, closedJobCanSetUp, closedJobNotice, completeBackupSetup, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupModeBridge, type BackupScheduleBridge, type BackupSummary } from "./backups-section-ui";
+import { backupSummary, closedJobBlockedReason, closedJobCanSetUp, closedJobNotice, cloudKeyMoved, cloudKeyNotice, cloudKeyNoticeText, completeBackupSetup, recoveryKeyError, recoveryKeyResult, runNowError, setUpClosedJob, timeZoneChoices, type BackupModeBridge, type BackupScheduleBridge, type BackupSummary } from "./backups-section-ui";
 
 const card = "min-w-0 space-y-3 rounded-xl border border-hairline/40 bg-card p-4";
 const scheduleInput = "mt-1 min-h-11 w-full min-w-0 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus:ring-2 focus:ring-accent-border disabled:opacity-50";
@@ -57,6 +57,7 @@ export function useBackupSchedule() {
   const [closed,setClosed]=useState<BackupClosedStatus|null>(null),[closedStale,setClosedStale]=useState(false),[closedAction,setClosedAction]=useState<string|null>(null);
   const [createdKey,setCreatedKey]=useState<{label:string;publicKey:string|null;folder:string}|null>(null),[confirmRun,setConfirmRun]=useState(false);
   const [keyCopy,setKeyCopy]=useState<string|null>(null);
+  const [cloudKey,setCloudKey]=useState<{provider:string;label:string}|null>(null);
   const [closedSetupFailed,setClosedSetupFailed]=useState(false);
   const gate=useRef(false),dirty=useRef(false),mounted=useRef(true),version=useRef(0);
   const bridge=window.muragebox?.backupSchedule as BackupScheduleBridge|undefined;
@@ -69,7 +70,9 @@ export function useBackupSchedule() {
   };
   const applyClosed=(next:BackupClosedStatus,expected:number)=>{if(mounted.current&&version.current===expected){setClosed(next);setClosedStale(false);}};
   const refreshClosed=async(expected:number)=>{if(closedBridge)try{applyClosed(await closedBridge.status(),expected);}catch{if(mounted.current&&version.current===expected)setClosedStale(true);}};
-  const refresh=async(expected:number)=>{let next:BackupScheduleStatus|null=null;if(bridge){next=await bridge.status();apply(next,expected);}await refreshClosed(expected);return next;};
+  // A key an earlier release left in a folder that syncs to the cloud.
+  const refreshCloudKey=async(expected:number)=>{if(!modeBridge?.recoveryKeyCloudNotice)return;let next=null;try{next=cloudKeyNotice(await modeBridge.recoveryKeyCloudNotice());}catch{/* no notice */}if(mounted.current&&expected===version.current)setCloudKey(next);};
+  const refresh=async(expected:number)=>{let next:BackupScheduleStatus|null=null;if(bridge){next=await bridge.status();apply(next,expected);}await refreshClosed(expected);await refreshCloudKey(expected);return next;};
   useEffect(()=>{
     mounted.current=true;const expected=++version.current;
     void refresh(expected).catch(()=>{if(mounted.current&&expected===version.current)setStale(true);});
@@ -166,6 +169,18 @@ export function useBackupSchedule() {
     if("cancelled"in result){setNotice("No copy was saved. Your recovery key is unchanged.");return;}
     setKeyCopy(result.label);setNotice(`A copy of your recovery key was saved as ${result.label}.`);
   }):undefined;
+  /** Moves the key off the synced folder, backups and all; the page learns names only. */
+  const moveCloudKey=modeBridge?.moveRecoveryKey?()=>void run("schedule",async expected=>{
+    let message:string;
+    try{message=cloudKeyMoved(await modeBridge.moveRecoveryKey!());}
+    catch(cause){if(mounted.current&&expected===version.current)setError(recoveryKeyError(cause,"Your recovery key was not moved. It is where it was, and your backups still use it. Try again."));return;}
+    if(!mounted.current||expected!==version.current)return;
+    setCloudKey(null);setNotice(message);await refresh(expected);
+  }):undefined;
+  const keepCloudKey=modeBridge?.keepRecoveryKeyHere?()=>void run("schedule",async expected=>{
+    await modeBridge.keepRecoveryKeyHere!();
+    if(mounted.current&&expected===version.current)setCloudKey(null);
+  }):undefined;
   const enable=()=>void run("schedule",async expected=>{
     if(!choices||!status)return;const next=await bridge!.configure(status.revision,{...choices,allowIdleRestart:true,...(choices.closedApp===true?{allowClosedApp:true}:{})});dirty.current=false;apply(next,expected);setConsent(false);await refreshClosed(expected);
     if(mounted.current)setNotice(next.enabled?next.schedule.closedApp===true?"Daily backups are on, including while Murage is closed and you are signed in.":"Daily backups are on. Backups while Murage is closed are off.":"Settings saved; daily backups are still off.");
@@ -189,7 +204,7 @@ export function useBackupSchedule() {
     if(mounted.current&&expected===version.current)setNotice("Cleared. Back up now or the next daily backup will try again.");
   });
   const refreshNow=(where:ScheduleArea="advanced")=>void run(where,async expected=>{await refresh(expected);});
-  return {bridge,closedBridge,modeBridge,status,draft,consent,setConsent,busy,stale,error,notice,area,closed,closedStale,closedAction,closedSetupFailed,createdKey,keyCopy,confirmRun,setConfirmRun,
+  return {bridge,closedBridge,modeBridge,status,draft,consent,setConsent,busy,stale,error,notice,area,closed,closedStale,closedAction,closedSetupFailed,createdKey,keyCopy,cloudKey,moveCloudKey,keepCloudKey,confirmRun,setConfirmRun,
     unavailable,locked,editingLocked,closedRegistered,closedAllowed,choices,lastClosed,edit,closedOperation,setClosedApp,selectReferences,setUp,saveKeyCopy,enable,disable,canRunNow,runNow,canClearReview,clearReview,refreshNow};
 }
 export type ScheduleController=ReturnType<typeof useBackupSchedule>;
@@ -217,6 +232,22 @@ function ScheduleState({s,attention}:{s:ScheduleController;attention:readonly st
 function PreUpgradeWarning({s}:{s:ScheduleController}) {
   const {status,draft}=s;
   return status&&(status.schedule.preUpgrade||draft.preUpgrade)&&status.preUpgradeSupported!==true?<p className="text-[13px] text-warning">Pre-upgrade backups are unavailable in this app. Your saved choices are preserved. Use a supported updater before enabling this option.</p>:null;
+}
+
+/** A recovery key an earlier release left in a folder that syncs to the
+ * cloud, said once: Move takes it, and the backups with it, to this computer
+ * only; Keep here leaves it. */
+export function RecoveryKeyCloudNotice({s}:{s:ScheduleController}) {
+  if(!s.cloudKey||!s.moveCloudKey||!s.keepCloudKey)return null;
+  const text=cloudKeyNoticeText(s.cloudKey);
+  return <div role="status" className="min-w-0 space-y-2 rounded-lg border border-hairline/40 p-3 text-[13px] text-ink">
+    <p className="break-words font-medium">{text.title}</p>
+    <p className="break-words text-ink-secondary">{text.detail}</p>
+    <div className="flex flex-wrap gap-2">
+      <button type="button" className={primaryButton} disabled={s.busy} onClick={s.moveCloudKey}>Move</button>
+      <button type="button" className={scheduleButton} disabled={s.busy} onClick={s.keepCloudKey}>Keep here</button>
+    </div>
+  </div>;
 }
 
 /** The key Murage just made, and the one thing left to do with it. Shown while
@@ -263,7 +294,7 @@ export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController
     <p className="text-[13px] text-ink-secondary">Murage can save an encrypted copy of your settings, conversations, files and channel history every day. Native sessions, VM homes and external folders are not included.</p>
     <ScheduleState s={s} attention={attention}/>
     {status?.supported&&<>
-      <RecoveryKeyKeepsafe s={s}/>
+      <RecoveryKeyCloudNotice s={s}/><RecoveryKeyKeepsafe s={s}/>
       {!status.refs&&<div className="min-w-0 space-y-3">
         <p className="text-[13px] text-ink-secondary">{s.setUp
           ? "Pick a folder to keep your backups in. Murage makes your recovery key for you, keeps it somewhere outside that folder, and asks you once before switching daily backups on."
@@ -343,7 +374,7 @@ export function ScheduleCard({s,attention=[]}:{s:ScheduleController;attention?:r
   return <section aria-labelledby="backup-schedule-title" className={card}>
     <h3 id="backup-schedule-title" className="text-[15px] font-medium text-ink">Schedule</h3>
     <ScheduleState s={s} attention={attention}/>
-    <RecoveryKeyKeepsafe s={s}/>
+    <RecoveryKeyCloudNotice s={s}/><RecoveryKeyKeepsafe s={s}/>
     <dl className="grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 text-[13px] sm:grid-cols-[max-content_1fr]">
       {rows.map(([label,value])=><div key={label} className="contents"><dt className="text-ink-secondary">{label}</dt><dd className="break-words text-ink">{value}</dd></div>)}
     </dl>

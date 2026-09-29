@@ -8,7 +8,7 @@ import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 import { testAgeKeys } from "../server/testing/backup-fixture.ts";
 import { readBackupIdentity } from "./backup-mode.mjs";
-import { ageIdentityRecipient, bech32Decode, bech32Encode, cloudSyncedFolder, copyRecoveryKeyFile, createRecoveryKeyFile, createRecoveryKeyFlow, createRecoveryKeyIn, generateAgeIdentity, recoveryKeyFolderStore, settleRecoveryKeyRequest, suggestRecoveryKeyPath } from "./backup-recovery-key.mjs";
+import { ageIdentityRecipient, bech32Decode, bech32Encode, cloudNoticeStore, cloudSyncedFolder, copyRecoveryKeyFile, createRecoveryKeyFile, createRecoveryKeyFlow, createRecoveryKeyIn, generateAgeIdentity, recoveryKeyFolderStore, settleRecoveryKeyRequest, suggestRecoveryKeyPath } from "./backup-recovery-key.mjs";
 
 // BIP-173 test vectors.
 const valid=["A12UEL5L","a12uel5l","an83characterlonghumanreadablepartthatcontainsthenumber1andtheexcludedcharactersbio1tt5tgs",
@@ -444,4 +444,107 @@ test("the desktop app names a cloud folder in plain words and keeps a local defa
   assert.match(confirm,/buttons:\["Choose another place","Save here"\]/);
   assert.match(confirm,/title:"Murage"/);
   assert.equal(/—|\bsafe(ly|ty)?\b|unsafe/i.test(confirm.slice(0,confirm.indexOf("\n  },"))),false);
+});
+
+// 0.1.61 (Sean, 2026-09-29): a key 0.1.60 made in a folder that syncs to the
+// cloud (Documents under OneDrive) is named once on the Backups page. Move
+// puts a verified copy on this computer, points the backups at it, then
+// deletes the old file; Keep here silences the notice for that file.
+function cloudKey(p){
+  const synced=path.join(p.root,"OneDrive","Documents");mkdirSync(synced,{recursive:true});
+  const old=createRecoveryKeyFile({file:path.join(synced,"murage-recovery-key.txt"),installation:p.installation,destination:p.destination}).file;
+  const bindings={keyFile:old};const rebinds=[];
+  const flow=(extra={})=>createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,chooseFile:async()=>null,
+    defaultFolders:()=>[synced,p.safe],noticeStore:cloudNoticeStore(path.join(p.root,"notice.json")),
+    boundKeyFile:async()=>bindings.keyFile,rebindKeyFile:async file=>{rebinds.push(file);bindings.keyFile=file;},...extra});
+  return{synced,old,bindings,rebinds,flow};
+}
+test("a key left in a folder that syncs is named once: the service and the file name, never the path",async()=>{
+  const p=place();try{
+    const c=cloudKey(p);
+    assert.deepEqual(await c.flow().cloudNotice(),{provider:"OneDrive",label:"murage-recovery-key.txt"});
+    // Keep here: not shown again for this file, in this launch or the next.
+    assert.deepEqual(await c.flow().keepInCloud(),{kept:true});
+    assert.equal(await c.flow().cloudNotice(),null);
+    assert.equal(readFileSync(path.join(p.root,"notice.json"),"utf8").includes("AGE-SECRET"),false);
+    // A key on this computer is not named at all.
+    const local=createRecoveryKeyFile({file:path.join(p.safe,"k.txt"),installation:p.installation,destination:p.destination}).file;
+    c.bindings.keyFile=local;assert.equal(await c.flow().cloudNotice(),null);
+  }finally{p.cleanup();}
+});
+test("Move writes a verified copy on this computer, points the backups at it, then deletes the old file",async()=>{
+  const p=place();try{
+    const c=cloudKey(p);const before=readFileSync(c.old,"utf8");
+    const moved=await c.flow().moveOffCloud();
+    const fresh=path.join(p.safe,"murage-recovery-key.txt");
+    assert.deepEqual(moved,{moved:true,provider:"OneDrive",label:"murage-recovery-key.txt",folder:"usb",oldRemoved:true});
+    assert.equal(readFileSync(fresh,"utf8"),before);
+    assert.deepEqual(c.rebinds,[fresh]);
+    assert.deepEqual(readdirSync(c.synced),[]);
+    if(process.platform!=="win32")assert.equal(lstatSync(fresh).mode&0o077,0);
+    assert.equal(await c.flow().cloudNotice(),null);
+  }finally{p.cleanup();}
+});
+test("Move changes nothing when the backups cannot be pointed at the copy",async()=>{
+  const p=place();try{
+    const c=cloudKey(p);const before=readFileSync(c.old,"utf8");
+    await assert.rejects(c.flow({rebindKeyFile:async()=>{throw new Error("BACKUP_BUSY");}}).moveOffCloud(),/BACKUP_BUSY/);
+    assert.equal(readFileSync(c.old,"utf8"),before);
+    assert.deepEqual(readdirSync(p.safe),[]);
+    assert.equal(c.bindings.keyFile,c.old);
+    // With nowhere on this computer to go, nothing moves either.
+    await assert.rejects(c.flow({defaultFolders:()=>[c.synced]}).moveOffCloud(),/BACKUP_RECOVERY_KEY_LOCATION_INVALID/);
+    assert.equal(readFileSync(c.old,"utf8"),before);assert.deepEqual(c.rebinds,[]);
+  }finally{p.cleanup();}
+});
+test("the desktop app wires the cloud-key notice, Move and Keep here, names only",()=>{
+  const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8"),preload=readFileSync(new URL("./preload.cjs",import.meta.url),"utf8");
+  for(const channel of ["backup-mode:recovery-key-cloud-notice","backup-mode:move-recovery-key","backup-mode:keep-recovery-key"]){assert.ok(main.includes(`ipcMain.handle("${channel}"`),channel);assert.ok(preload.includes(`"${channel}"`),channel);}
+  assert.match(main,/rebindKeyFile:file=>backupScheduleHost\.rebindKeyFile\(file\)/);
+  assert.match(main,/noticeStore:cloudNoticeStore\(path\.join\(app\.getPath\("userData"\),"backup-key-cloud-notice\.json"\)\)/);
+});
+test("with backups set up on a key that is gone, another remembered key in a synced folder is neither named nor moved",async()=>{
+  const p=place();try{
+    const c=cloudKey(p);
+    const store=recoveryKeyFolderStore(path.join(p.root,"remembered.json"));store.write(c.synced,c.old);
+    c.bindings.keyFile=path.join(p.safe,"gone.txt");
+    const flow=c.flow({folderStore:store});
+    assert.equal(await flow.cloudNotice(),null);
+    await assert.rejects(flow.moveOffCloud(),/BACKUP_RECOVERY_KEY_UNKNOWN/);
+    assert.ok(lstatSync(c.old).isFile());assert.deepEqual(c.rebinds,[]);
+    // With no backups set up, the remembered key is the one named.
+    c.bindings.keyFile=null;
+    assert.deepEqual(await c.flow({folderStore:store}).cloudNotice(),{provider:"OneDrive",label:"murage-recovery-key.txt"});
+  }finally{p.cleanup();}
+});
+// Astra r2 #2-#4: Move reads the saved references once and strictly, deletes
+// only the key it copied, and nothing is made in Documents without asking.
+test("Move refuses when the saved references cannot be read, and changes nothing",async()=>{
+  const p=place();try{
+    const c=cloudKey(p);const before=readFileSync(c.old,"utf8");
+    await assert.rejects(c.flow({boundKeyFile:async()=>{throw new Error("BACKUP_BINDINGS_INVALID");}}).moveOffCloud(),/BACKUP_BINDINGS_UNAVAILABLE/);
+    assert.equal(readFileSync(c.old,"utf8"),before);assert.deepEqual(readdirSync(p.safe),[]);assert.deepEqual(c.rebinds,[]);
+  }finally{p.cleanup();}
+});
+test("Move leaves alone a file put in the key's place while the backups were being pointed at the copy",async()=>{
+  const p=place();try{
+    const c=cloudKey(p);
+    const flow=c.flow({rebindKeyFile:async file=>{c.rebinds.push(file);c.bindings.keyFile=file;rmSync(c.old);writeFileSync(c.old,"a document the person saved here\n");}});
+    const moved=await flow.moveOffCloud();
+    assert.equal(moved.oldRemoved,false);
+    assert.equal(readFileSync(c.old,"utf8"),"a document the person saved here\n");
+    assert.deepEqual(readdirSync(p.safe),["murage-recovery-key.txt"]);
+  }finally{p.cleanup();}
+});
+test("a key is never made in a folder set aside for asking (Documents), even when an earlier key was remembered there",()=>{
+  const p=place();try{
+    const documents=path.join(p.root,"Documents");mkdirSync(documents);
+    const store=recoveryKeyFolderStore(path.join(p.root,"remembered.json"));store.write(documents);
+    const flow=createRecoveryKeyFlow({installation:()=>p.installation,selectedDestination:async()=>p.destination,folderStore:store,chooseFile:async()=>null,
+      defaultFolders:()=>[documents,p.safe],neverAutomatic:()=>[documents]});
+    assert.equal(path.dirname(flow.createFor(p.destination).file),p.safe);
+    assert.deepEqual(readdirSync(documents),[]);
+    const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
+    assert.match(main,/neverAutomatic:\(\)=>\{try\{return \[app\.getPath\("documents"\)\];\}catch\{return \[\];\}\}/);
+  }finally{p.cleanup();}
 });

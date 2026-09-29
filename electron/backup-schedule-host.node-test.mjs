@@ -709,3 +709,23 @@ for(const [what,code] of [["folder","BACKUP_FOLDER_MISSING"],["key","BACKUP_RECO
     }finally{controller?.stopPolling?.();f.cleanup();}
   }
 });
+// 0.1.61 (Sean, 2026-09-29): Move takes a 0.1.60 key off a folder that syncs
+// to the cloud. The saved references follow the verified copy of the same
+// key, and backups keep running once the old file is gone.
+test("the saved references follow a moved copy of the same recovery key, and refuse another key",async()=>{
+  const f=fixture();try{
+    await f.enable();
+    assert.equal(await f.controller.boundKeyFile(),realpathSync(f.keyFile));
+    const moved=path.join(f.root,"moved");mkdirSync(moved);const copy=path.join(moved,"murage-recovery-key.txt");copyFileSync(f.keyFile,copy);
+    const other=path.join(moved,"other-key.txt");writeFileSync(other,fakeKey.replace("age1"+"q".repeat(58),"age1"+"z".repeat(58)),{mode:0o600});
+    await assert.rejects(f.controller.rebindKeyFile(other),/BACKUP_REFERENCE_CHANGED/);
+    await f.controller.rebindKeyFile(copy);
+    assert.equal(await f.controller.boundKeyFile(),realpathSync(copy));
+    rmSync(f.keyFile);
+    f.setNow(Date.parse("2026-09-13T09:01:00Z"));await f.controller.tick();
+    assert.equal(f.coordinator().status().phase,"handoff-armed");
+    const next=f.create();await next.resumeOffline();
+    assert.equal(f.coordinator().status().phase,"return-pending");
+    assert.ok(f.calls.includes("capture"));
+  }finally{f.cleanup();}
+});

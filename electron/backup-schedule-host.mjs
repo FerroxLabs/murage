@@ -331,6 +331,22 @@ export function createBackupScheduleHost(host) {
     status:publicStatus,internalStatus:()=>coordinator.status(),isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
     /** Folder the saved references back up into, for recovery-key placement checks. */
     async selectedDestination(){const b=await read();return b?b.destination:null;},
+    /** The recovery key file the saved references read, or null. */
+    async boundKeyFile(){const b=await read();return b?b.keyFile:null;},
+    /** Points the saved references at a verified copy of the SAME recovery key
+     * (a 0.1.60 key moved off a folder that syncs to the cloud). Nothing else
+     * in them changes; a file that holds another key is refused. */
+    async rebindKeyFile(file){
+      if(running||activePhases.has(coordinator.status().phase))throw Error("BACKUP_BUSY");
+      running=true;try{
+        const b=await read();if(!b)throw Error("BACKUP_BINDINGS_UNAVAILABLE");
+        if(typeof file!=="string"||!path.isAbsolute(file))throw Error("BACKUP_REFERENCE_CHANGED");
+        const key=readBackupIdentity(file,realpathSync.native(host.installation()));
+        if(!key.recipient||key.recipient!==b.recipient)throw Error("BACKUP_REFERENCE_CHANGED");
+        const resolved=realpathSync(file);
+        await host.writeProtected(BACKUP_SCHEDULE_BINDINGS_KEY,JSON.stringify({...b,keyFile:resolved,keyFingerprint:hash(fingerprint(resolved))}));
+      }finally{running=false;}
+    },
     /** The backup folder's own name (never its path), for the Inbox sentence. */
     async destinationLabel(){const b=await read();return b?path.basename(b.destination):null;},
     async latestVerifiedArtifact(){

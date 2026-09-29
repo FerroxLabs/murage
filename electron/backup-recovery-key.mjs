@@ -335,6 +335,27 @@ export async function settleRecoveryKeyRequest(work, log = line => console.warn(
   }
 }
 
+const realpathOrSelf = file => { try { return realpathSync.native(file); } catch { return file; } };
+/** Remembers the one key file the person chose to keep in a synced folder, so
+ * the notice about it is shown once. A location only, written owner-only. */
+export function cloudNoticeStore(file) {
+  return {
+    read() {
+      try { const value = JSON.parse(readFileSync(file, "utf8")); return value?.version === 1 && usablePath(value.kept) ? { kept: value.kept } : null; }
+      catch { return null; }
+    },
+    write({ kept }) {
+      if (!usablePath(kept)) return;
+      const temporary = `${file}.${process.pid}.tmp`;
+      try {
+        mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+        writeFileSync(temporary, JSON.stringify({ version: 1, kept }), { mode: 0o600 });
+        renameSync(temporary, file);
+      } catch { try { rmSync(temporary, { force: true }); } catch { /* A convenience only. */ } }
+    },
+  };
+}
+
 /** Refusals that are about the place the person just picked for the copy, so
  * they are reported as they are however the source was found. Everything else
  * a copy can fail on is about the source file. */
@@ -342,7 +363,7 @@ const COPY_TARGET_REFUSALS = new Set(["BACKUP_RECOVERY_KEY_EXISTS", "BACKUP_RECO
 
 /** Native-dialog orchestration. The secret never leaves this process: the
  * caller receives only the chosen file's name and the public recipient. */
-export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestination, isUsable = () => true, now = () => Date.now(), folderStore = null, defaultFolder = () => null, chooseCopyFile = null, defaultFolders = null, isUsableDuringSetup = null, confirmCloudFolder = null, cloudFolder = hostCloudFolder }) {
+export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestination, isUsable = () => true, now = () => Date.now(), folderStore = null, defaultFolder = () => null, chooseCopyFile = null, defaultFolders = null, isUsableDuringSetup = null, confirmCloudFolder = null, cloudFolder = hostCloudFolder, boundKeyFile = null, rebindKeyFile = null, noticeStore = null, neverAutomatic = () => [] }) {
   let pending = false, folder = null, keyFile = null;
   /** A picker answer, asked about first when its folder syncs to the cloud:
    * the person either saves there knowing it, or picks again. */
@@ -363,6 +384,28 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
    * without asking the person where their key is. Null when neither is
    * known, or when the remembered file is no longer there. */
   const lastKeyFile = () => keyFile ?? remembered()?.file ?? null;
+  /** The key the backups read (the saved references), else the last one made
+   * or picked: the one a person would lose to the cloud. */
+  const currentKeyFile = async () => {
+    let bound = null;
+    try { bound = await boundKeyFile?.() ?? null; } catch { /* No saved references. */ }
+    // Backups set up with a key that is gone: that is the schedule's own
+    // "key missing" problem, and another remembered file is not the one the
+    // backups use, so it is neither named nor moved.
+    if (typeof bound === "string") return usableKeyFile(bound);
+    return lastKeyFile();
+  };
+  /** Folders a key may be written to when nobody is asked: never one that
+   * syncs, and never one set aside for asking only (Documents, which a sync
+   * client can hold under its usual name, and which 0.1.60 remembered). */
+  const quiet = value => {
+    if (typeof value !== "string" || !value || cloudFolder(value)) return false;
+    let set = [];
+    try { set = neverAutomatic() ?? []; } catch { /* nothing set aside */ }
+    const real = realpathOrSelf(value);
+    return !set.some(folder => typeof folder === "string" && folder && pathWithin(realpathOrSelf(folder), real));
+  };
+  const quietFolders = () => [...(defaultFolders?.() ?? [defaultFolder()])].filter(quiet);
   return {
     isPending: () => pending,
     lastKeyFile,
@@ -375,7 +418,7 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
       // else it checks still applies.
       if (!(isUsableDuringSetup ?? isUsable)()) throw new Error("BACKUP_UNAVAILABLE");
       // Made where nobody is asked, so never in a folder that syncs to the cloud.
-      const folders = [lastFolder(), ...(defaultFolders?.() ?? [defaultFolder()])].filter(value => typeof value === "string" && value && !cloudFolder(value));
+      const folders = [lastFolder(), ...(defaultFolders?.() ?? [defaultFolder()])].filter(quiet);
       const created = createRecoveryKeyIn(folders, { installation: installation(), destination, now: now() });
       const stat = lstatSync(created.file);
       made.set(created.file, { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, previous: keyFile });
@@ -427,6 +470,70 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
           throw new Error("BACKUP_RECOVERY_KEY_UNKNOWN");
         }
         return { saved: true, label: copied.label, publicKey: copied.publicKey };
+      } finally { pending = false; }
+    },
+    /** A key made by an earlier release (0.1.60 put it in Documents) that sits
+     * in a folder syncing to the cloud, once: the service's name and the
+     * file's name, or null. Keep here silences it for that file. */
+    async cloudNotice() {
+      const file = await currentKeyFile();
+      if (!file) return null;
+      const provider = cloudFolder(path.dirname(file));
+      if (!provider || noticeStore?.read()?.kept === file) return null;
+      return { provider, label: path.basename(file) };
+    },
+    async keepInCloud() {
+      const file = await currentKeyFile();
+      if (file) noticeStore?.write({ kept: file });
+      return { kept: true };
+    },
+    /** Moves the key off the synced folder: a verified copy in the first folder
+     * a key is made in when nobody is asked (home, then local app data on
+     * Windows), the backups pointed at it, then the old file deleted. Until
+     * the copy is verified and the backups point at it, nothing changes. */
+    async moveOffCloud() {
+      if (pending) throw new Error("BACKUP_BUSY");
+      if (!isUsable()) throw new Error("BACKUP_UNAVAILABLE");
+      pending = true;
+      try {
+        // Read the saved references once, strictly: a Move that cannot tell
+        // whether the backups use this key must not delete it.
+        let bound = null;
+        try { bound = await boundKeyFile?.() ?? null; } catch { throw new Error("BACKUP_BINDINGS_UNAVAILABLE"); }
+        const file = typeof bound === "string" ? usableKeyFile(bound) : lastKeyFile();
+        const provider = file ? cloudFolder(path.dirname(file)) : null;
+        if (!file || !provider) throw new Error("BACKUP_RECOVERY_KEY_UNKNOWN");
+        const same = (a, b) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+        const original = lstatSync(file);
+        let destination;
+        try { destination = await selectedDestination(); } catch { throw new Error("BACKUP_BINDINGS_UNAVAILABLE"); }
+        let copied = null, refused = null;
+        for (const folder of quietFolders()) {
+          const to = suggestRecoveryKeyPath(folder);
+          if (!to) continue;
+          try { copied = copyRecoveryKeyFile({ from: file, to, installation: installation(), destination }); break; }
+          catch (error) {
+            const code = error instanceof Error ? error.message : "";
+            if (!PLACEMENT_REFUSALS.has(code)) throw COPY_TARGET_REFUSALS.has(code) ? error : new Error("BACKUP_RECOVERY_KEY_UNKNOWN");
+            refused = code;
+          }
+        }
+        if (!copied) throw new Error(refused ?? "BACKUP_RECOVERY_KEY_LOCATION_INVALID");
+        const made = lstatSync(copied.file);
+        if (typeof bound === "string" && realpathOrSelf(bound) === realpathOrSelf(file)) {
+          try { if (!rebindKeyFile) throw new Error("BACKUP_UNAVAILABLE"); await rebindKeyFile(copied.file); }
+          catch (error) {
+            // Take back only the copy this call made, unchanged.
+            try { if (same(lstatSync(copied.file), made)) unlinkSync(copied.file); } catch { /* Left as a spare copy. */ }
+            throw error;
+          }
+        }
+        remember(copied.file);
+        // Delete only the key file that was copied, unchanged since: a file
+        // put in its place meanwhile is not the key and is left alone.
+        let oldRemoved = false;
+        try { const stat = lstatSync(file); if (stat.isFile() && !stat.isSymbolicLink() && same(stat, original)) { unlinkSync(file); oldRemoved = true; } } catch { /* Said below. */ }
+        return { moved: true, provider, label: copied.label, folder: path.basename(path.dirname(copied.file)), oldRemoved };
       } finally { pending = false; }
     },
     /** Folder of the last key created or picked, to start the pickers in. */
