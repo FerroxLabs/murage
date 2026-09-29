@@ -128,15 +128,67 @@ it("gap 1: the room checkpoint built from a withheld reply leaves recall, and th
   expect(again.text).toContain("invoices");
 });
 
-it("gap 1: the owner's own words and an owner pin are never withheld for what a bot recalled", () => {
+it("gap 1: the owner's own words are never withheld for what a bot recalled", () => {
   const { record } = daxRoomReply();
   captured("closing-chat", "m-owner", "owner", "Please confirm rows 83-86.");
-  const pinned = saveMemoryCandidate("Rows 83-86 went out on the 26th.", [{ sourceId: "message:closing-chat:m-dax", revision: 1, startByte: 0, endByte: Buffer.byteLength(REPLY) }], "k-pin", access("finch", "closing-chat"));
-  database().prepare("UPDATE memory_records SET state='active',owner_pinned=1 WHERE id=?").run(pinned);
   forget(record);
   const owner = chunkOf("message:closing-chat:m-owner");
   expect(hydrateMemoryRecord(owner.id, owner.version, access("finch", "closing-chat")).text).toContain("confirm");
-  expect(hydrateMemoryRecord(pinned, version(pinned), access("finch", "closing-chat")).pinned).toBe(true);
+});
+
+/** An owner pin quoting Dax's room reply. */
+function pinOnReply() {
+  const pinned = saveMemoryCandidate("Rows 83-86 went out on the 26th.", [{ sourceId: "message:closing-chat:m-dax", revision: 1, startByte: 0, endByte: Buffer.byteLength(REPLY) }], "k-pin", access("finch", "closing-chat"));
+  database().prepare("UPDATE memory_records SET state='active',owner_pinned=1 WHERE id=?").run(pinned);
+  return pinned;
+}
+const nothing: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0 }) };
+
+// 0.1.61 third check, P1: a pinned room note quoting a reply bots no longer
+// see kept going to every bot, its words included.
+it("P1: an owner pin resting on a withheld reply is left out of the turn, and named for the owner", async () => {
+  const { record } = daxRoomReply();
+  const pinned = pinOnReply();
+  const before = await buildMemoryBundle("", access("finch", "closing-chat"), nothing);
+  expect(before.text).toContain("83-86");
+  expect(before.withheldPins).toBeUndefined();
+  forget(record);
+  const reader = access("finch", "closing-chat");
+  const after = await buildMemoryBundle("rows 83-86", reader, nothing);
+  expect(after.text).not.toContain("83-86");
+  expect(after.pinned).toEqual([]);
+  expect(after.withheldPins).toEqual([{ id: pinned, version: version(pinned) }]);
+  // no other door hands it over: hydration and memory search refuse it too
+  expect(() => hydrateMemoryRecord(pinned, version(pinned), reader)).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
+  const bridge: MemorySearchBridge = { search: async () => ({ hits: [{ id: pinned, version: version(pinned), score: 1, lexical: true }], vectorRows: 0, coverageComplete: true }) };
+  expect((await searchMemory("rows 83-86", reader, bridge)).hits.map(hit => hit.id)).not.toContain(pinned);
+});
+
+it("P1: a pin that comes to rest on a withheld reply while recall waits is left out, not a refused turn", async () => {
+  daxRoomReply();
+  const pinned = pinOnReply();
+  // An owner forget moves the deletion epoch and refuses the whole turn
+  // (assertMemoryAccess); a change that moves no epoch reaches the re-check.
+  const bridge: MemorySearchBridge = { search: async () => { database().prepare("UPDATE memory_sources SET state='deleted' WHERE id='src-dax'").run(); return { hits: [], vectorRows: 0, coverageComplete: true }; } };
+  const bundle = await buildMemoryBundle("rows 83-86", access("finch", "closing-chat"), bridge);
+  expect(bundle.text).not.toContain("83-86");
+  expect(bundle.pinned).toEqual([]);
+  expect(bundle.withheldPins).toEqual([{ id: pinned, version: version(pinned) }]);
+});
+
+it("P1: a reply made with a clean pin stays visible; one made with a pin that later rests on a forgotten reply is withheld", () => {
+  const { record } = daxRoomReply();
+  const pinned = pinOnReply();
+  // Finch answers twice in the room: once with nothing remembered, once
+  // with the pin in his remembered context.
+  disclose("b-plain", "closing-chat", [], ["m-finch-plain"]);
+  captured("closing-chat", "m-finch-plain", "finch", "Plain answer.");
+  disclose("b-pinned", "closing-chat", [{ id: pinned, version: version(pinned) }], ["m-finch-pinned"]);
+  captured("closing-chat", "m-finch-pinned", "finch", "Answer made with the pin.");
+  expect([...roomReplayWithheld("closing-chat", [{ id: "m-finch-plain" }, { id: "m-finch-pinned" }])]).toEqual([]);
+  forget(record);
+  // the reply given the pin's words carries what was forgotten; the other does not
+  expect([...roomReplayWithheld("closing-chat", [{ id: "m-finch-plain" }, { id: "m-finch-pinned" }])]).toEqual(["m-finch-pinned"]);
 });
 
 /** Dax's delegated answer in his own task thread, and its copy posted by the

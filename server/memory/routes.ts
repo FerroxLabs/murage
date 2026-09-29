@@ -60,7 +60,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       // transcript leaves out (disclosures.ts readerWithheldMessage).
       const withheld=readerWithheldMessage(access);
       const unless=<T extends {id:string;version:number;pinned:boolean}>(record:T):T=>{
-        if(withheld&&!record.pinned&&recordRestsOnWithheldMessage(record.id,record.version,withheld))throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+        if(withheld&&recordRestsOnWithheldMessage(record.id,record.version,withheld))throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
         return record;
       };
       const records=input.handles.map(item=>{

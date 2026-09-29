@@ -41,7 +41,7 @@ import { EngineManager } from "./engine-management.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { TeamChangeError, changeTeamMembers, deleteTeam, describeTeam, renameTeam, type TeamDeps } from "./team-sections.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
-import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfterReset, pinnedMemoryFailure } from "./memory/dispatch.ts";
+import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfterReset, pinnedMemoryFailure, withheldPinLine } from "./memory/dispatch.ts";
 import { memoryAccess, backgroundMemoryAudience, type MemoryAccess } from "./memory/policy.ts";
 import { memoryState } from "./memory/repository.ts";
 import { continuationMemoryRevoked, filterMemoryReplay, readerWithheldMessage } from "./memory/disclosures.ts";
@@ -1753,6 +1753,12 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
+/** A turn went without an owner pin that rests on a reply bots no longer see
+ * (0.1.61 third check, P1): Murage says so in the thread, once per pin. */
+function noteWithheldPin(threadId: string, bundle: Parameters<typeof withheldPinLine>[1]) {
+  const line = withheldPinLine(threadId, bundle);
+  if (line) store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: line, ok: false } });
+}
 // A run that starts waiting for the person releases nothing, so the queue is
 // looked at again whenever a bot's activity changes: whoever waits behind it
 // for the browser goes on without the browser instead (D4).
@@ -6541,6 +6547,7 @@ async function startTurn(
           turnText=buildTurnContext({text:turnPrompt,transcript,
             rewound,memoryRefreshed,fresh:memoryRefreshed?false:fresh,externallyUpdated:memoryRefreshed?false:externalDelivery.replay,replaysNatively:replaysTranscriptNatively(instance.driverKind)}).turnText;
         }
+        noteWithheldPin(threadId,bundle);
         memoryReceipt=new MemoryDispatchReceipt(bundle,access,instanceId);
         memoryDispatches.set(threadId,memoryReceipt);
         if(instance.adapter.capabilities.memoryMcp)integrations.memory=memoryIntegration(bot.id,threadId,dispatchClaimId);
@@ -8346,6 +8353,7 @@ async function runGroupMemberTurn(
     // their note as it was.
     if(roomTranscriptOwner)syncOwnerWithheldNotes(threadId,roomTranscript);
     text=`${serializeRoomContext(threadId,userName,roomTranscript.messages,roomTranscript.withheld)}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation?`\n\n${cardContinuation}`:""}`;
+    noteWithheldPin(threadId,bundle);
     memoryReceipt=new MemoryDispatchReceipt(bundle,access,instance.instanceId);
     memoryDispatches.set(threadId,memoryReceipt);
     if(instance.adapter.capabilities.memoryMcp)integrations.memory=memoryIntegration(bot.id,threadId,internalGeneration);

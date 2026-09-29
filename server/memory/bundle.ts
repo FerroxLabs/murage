@@ -19,6 +19,9 @@ export interface BundleRecord {
 export interface BoundedMemoryBundle extends MemoryBundle {
   evolutionPolicyRevision:string;
   pinned: BundleRecord[]; identity: BundleRecord[]; checkpoint: BundleRecord[]; evidence: BundleRecord[];
+  /** Owner pins left out because they rest on a reply bots no longer see
+   * (pinRestsOnWithheldReply); the caller tells the owner. */
+  withheldPins?: ReadonlyArray<{id: string; version: number}>;
 }
 const bundles = new WeakMap<MemoryBundle, {access: MemoryAccess; records: BundleRecord[]}>();
 
@@ -62,9 +65,11 @@ function hydrate(id: string, version: number, access: MemoryAccess, allowSuperse
   }
   // A record resting on a generated message that is withheld (what its reply
   // used was forgotten, deleted or changed, replay-lineage.ts) does not bring
-  // that reply back as a remembered line. An owner pin is the owner's own
-  // say-so and stays.
-  if (row.owner_pinned !== 1 && recordRestsOnWithheldMessage(id,version)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+  // that reply back as a remembered line. An owner pin is no exception: a
+  // pinned room note quoting such a reply handed its words back to every bot
+  // (0.1.61 third check, P1). buildMemoryBundle leaves such a pin out and says
+  // so instead of refusing the turn.
+  if (recordRestsOnWithheldMessage(id,version)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
   // A captured chunk keeps its source's settlement (checkpoints.ts): an unsettled
   // intention is not current evidence; a failed tool output is only a failure.
   let sourceOutcome: "failed" | undefined;
@@ -139,10 +144,16 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     ${room ? "AND NOT EXISTS (SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.partition='identity')" : ""} ORDER BY id,version`).all(JSON.stringify(access.scopeIds));
   // More pins than handles cannot fit any budget either; name the real limit.
   if (pinRows.length > MEMORY_HANDLE_LIMIT) throw new Error("MEMORY_PIN_OVERFLOW: curate owner pins or increase available context before dispatch");
-  const pinned = pinRows.map(row => {
-    try { return hydrateMemoryRecord(String(row.id),Number(row.version),access); }
+  // A pin resting on a reply bots no longer see is left out, not a refused
+  // turn: the owner is told, and the room goes on without it.
+  const withheldPins: Array<{id: string; version: number}> = [];
+  const pinned: BundleRecord[] = [];
+  for (const row of pinRows) {
+    const id = String(row.id), version = Number(row.version);
+    if (pinRestsOnWithheldReply(id,version,options.withheldMessage)) { withheldPins.push({id,version}); continue; }
+    try { pinned.push(hydrateMemoryRecord(id,version,access)); }
     catch { assertMemoryAccess(access); throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch"); }
-  });
+  }
   if (tokens(render(pinned)) > budget) throw new Error("MEMORY_PIN_OVERFLOW: curate owner pins or increase available context before dispatch");
   const selected = [...pinned], identity: BundleRecord[] = [], checkpoint: BundleRecord[] = [], evidence: BundleRecord[] = [];
   let degradedReason: string | undefined;
@@ -198,7 +209,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
       for (const hit of result.hits) {
         try {
           const record = hydrateMemoryRecord(hit.id,hit.version,access);
-          if (!record.pinned && options.withheldMessage && recordRestsOnWithheldMessage(record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+          if (options.withheldMessage && recordRestsOnWithheldMessage(record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
           if (!citesOnly(record,ownSources)) add(record,evidence);
         }
         catch { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }
@@ -238,8 +249,13 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
       if (JSON.stringify(current)!==JSON.stringify(record)) throw new Error("MEMORY_RECORD_CHANGED");
     } catch {
       assertMemoryAccess(access);
-      if (record.pinned) throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch");
-      const next = successor(record);
+      const withheldPin = record.pinned && pinRestsOnWithheldReply(record.id,record.version,options.withheldMessage);
+      if (record.pinned && !withheldPin) throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch");
+      if (withheldPin) {
+        withheldPins.push({id:record.id,version:record.version});
+        pinned.splice(pinned.indexOf(record),1);
+      }
+      const next = withheldPin ? undefined : successor(record);
       if (next) {
         selected[selected.indexOf(record)] = next;
         for (const list of [identity,checkpoint,evidence]) { const index=list.indexOf(record); if (index>=0) list[index] = next; }
@@ -247,12 +263,12 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
       }
       selected.splice(selected.indexOf(record),1);
       for (const list of [identity,checkpoint,evidence]) { const index=list.indexOf(record); if (index>=0) list.splice(index,1); }
-      degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE";
+      if (!withheldPin) degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE";
     }
   }
   const text = render(selected);
   const sourceVersions = [...new Map(selected.flatMap(r=>r.evidence).map(e=>[JSON.stringify([e.sourceId,e.revision]),{id:e.sourceId,revision:e.revision}])).values()];
-  const bundle: BoundedMemoryBundle = {evolutionPolicyRevision:evolutionPolicy.revision,bundleId:randomUUID(),text,policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,tokenCount:tokens(text),recordVersions:selected.map(r=>({id:r.id,version:r.version})),sourceVersions,pinned,identity,checkpoint,evidence,...degradedReason?{degradedReason}:{}};
+  const bundle: BoundedMemoryBundle = {evolutionPolicyRevision:evolutionPolicy.revision,bundleId:randomUUID(),text,policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,tokenCount:tokens(text),recordVersions:selected.map(r=>({id:r.id,version:r.version})),sourceVersions,pinned,identity,checkpoint,evidence,...degradedReason?{degradedReason}:{},...withheldPins.length?{withheldPins:Object.freeze(withheldPins.map(pin=>Object.freeze({...pin})))}:{}};
   // Keep an immutable original across async transport and prevent caller-forged bundles.
   for (const record of selected) { for (const handle of record.evidence) Object.freeze(handle); Object.freeze(record.evidence); Object.freeze(record); }
   for (const row of bundle.recordVersions) Object.freeze(row);
@@ -261,6 +277,15 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   Object.freeze(pinned); Object.freeze(identity); Object.freeze(checkpoint); Object.freeze(evidence); Object.freeze(bundle);
   bundles.set(bundle,{access,records:selected});
   return bundle;
+}
+
+/** An owner pin whose words rest on a reply bots no longer see: one the owner
+ * forgot, or one made with something forgotten, deleted or changed, anywhere
+ * down its evidence (replay-lineage.ts), or one the reader's own transcript
+ * leaves out. A check that cannot finish counts as resting on one. */
+function pinRestsOnWithheldReply(id: string, version: number, withheldMessage?: (threadId: string, messageId: string) => boolean): boolean {
+  try { return recordRestsOnWithheldMessage(id,version,withheldMessage); }
+  catch { return true; }
 }
 
 /** Source ids captured from the given messages of the dispatching thread. */

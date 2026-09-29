@@ -71,3 +71,21 @@ export function pinnedMemoryFailure(error: unknown, subject: string): string | u
   if (message.startsWith("MEMORY_PIN_UNAVAILABLE")) return `${subject} pinned memory rests on something that was deleted or changed. Unpin it or fix it in Memory.`;
   return undefined;
 }
+
+/** Murage's line when a turn went without an owner pin because the pin rests
+ * on a reply bots no longer see (bundle.ts withheldPins; 0.1.61 third check,
+ * P1). Said once per thread for each pinned version, so a room of members
+ * each leaving it out hears it once. Undefined when nothing new was left out. */
+export const WITHHELD_PIN_LINE = "Bots were not given a pinned note: it uses a reply they no longer see. Unpin it in Memory, then pin a newer one if you still want it.";
+const withheldPinsNoted = new Map<string, Set<string>>();
+export function withheldPinLine(threadId: string, bundle: MemoryBundle & {withheldPins?: ReadonlyArray<{id: string; version: number}>}): string | undefined {
+  if (!bundle.withheldPins?.length) return undefined;
+  let noted = withheldPinsNoted.get(threadId);
+  if (!noted) {
+    if (withheldPinsNoted.size >= 512) withheldPinsNoted.delete(withheldPinsNoted.keys().next().value!);
+    noted = new Set(); withheldPinsNoted.set(threadId, noted);
+  }
+  const fresh = bundle.withheldPins.map(pin => `${pin.id}@${pin.version}`).filter(key => !noted.has(key));
+  for (const key of fresh) noted.add(key);
+  return fresh.length ? WITHHELD_PIN_LINE : undefined;
+}

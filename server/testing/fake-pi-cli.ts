@@ -22,9 +22,16 @@
 //                  pins, thinking levels, received prompts and every
 //                  extension_ui_response ({uiResponse}) are appended too.
 //   FAKE_PI_PID_FILE   write this child's pid (close-confirmed stop tests)
+//   FAKE_PI_UNIQUE  set: each happy reply ends with a fresh word ("Hello from
+//                  pi 3f9a2c"), so a test can tell replies apart and find one's
+//                  words in a later prompt; and each new session gets an id no
+//                  other process reuses, as the real CLI's are (without it a
+//                  restarted child names its first session pi-session-1 again,
+//                  and memory receipts link every such turn as one session)
 //   FAKE_PI_LINGER_MS  stay alive this long after SIGTERM or stdin end (max
 //                  10 s). POSIX-only observation: Windows taskkill /F runs no handler.
 
+import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_PI_MODE ?? "happy";
@@ -124,7 +131,7 @@ const streamTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
   send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
-  for (const delta of ["Hello", " from", " pi"]) {
+  for (const delta of ["Hello", " from", " pi", ...(process.env.FAKE_PI_UNIQUE ? [` ${randomUUID().slice(0, 6)}`] : [])]) {
     send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta } });
   }
   send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
@@ -300,7 +307,7 @@ function handle(cmd: any) {
         return;
       }
       sessionCounter += 1;
-      currentSessionFile = `/fake/pi-session-${sessionCounter}.json`;
+      currentSessionFile = `/fake/pi-session-${process.env.FAKE_PI_UNIQUE ? `${randomUUID()}-` : ""}${sessionCounter}.json`;
       afterSessionGate(() =>
         send({ type: "response", command: "new_session", success: true, data: { sessionId: `s-${sessionCounter}`, sessionFile: currentSessionFile } }),
       );

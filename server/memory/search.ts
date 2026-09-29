@@ -52,9 +52,9 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     if(room && database().prepare("SELECT 1 FROM memory_record_details WHERE record_id=? AND record_version=? AND partition='identity'").get(hit.id,hit.version))return null;
     const scopeId=String(record.scope_id);
     if(!checkedScopes.has(scopeId)){assertMemoryAccess(access,scopeId);checkedScopes.add(scopeId);}
-    // A withheld reply is not found again through search (replay-lineage.ts);
-    // an owner pin stays.
-    if(record.owner_pinned!==1&&recordRestsOnWithheldMessage(hit.id,hit.version,options.withheldMessage))return null;
+    // A withheld reply is not found again through search (replay-lineage.ts),
+    // an owner pin resting on one included (0.1.61 third check, P1).
+    if(recordRestsOnWithheldMessage(hit.id,hit.version,options.withheldMessage))return null;
     // A captured chunk keeps its source's settlement: an unsettled intention is not
     // current evidence, and a failed tool output is recallable only as a failure.
     const outcome:{sourceOutcome?:"failed"}={};
