@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { capabilitiesPrimer, turnCapabilityFacts, INTEGRATION_FACTS, type PrimerFacts } from "./capabilities-primer.ts";
+import { capabilitiesPrimer, roomToolAccessLine, turnCapabilityFacts, INTEGRATION_FACTS, type PrimerFacts } from "./capabilities-primer.ts";
 import { TURN_PROMPTS } from "./bot-shapes.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt, type ChiefTeamMember } from "./chief-of-staff.ts";
 import { canReach, isIndividualAssistant } from "./store.ts";
@@ -566,5 +566,21 @@ describe("the inline-image story matches the dispatch rule", () => {
       expect(imageFacts({ images: true, imagesInline: true })).toBe("inline");
     }
     expect(declaresInlineImages().every((path) => path.startsWith("server/drivers/"))).toBe(true);
+  });
+});
+
+describe("room turns on engines that reach MCP tools through use_tool", () => {
+  it("tells a Fuigo or Grok room member how to call the agents tools", () => {
+    for (const kind of ["fuigoAgent", "grokAgent"]) {
+      const line = roomToolAccessLine(kind, true);
+      expect(line).toContain("use_tool");
+      expect(line).toContain("agents__delegate_bot");
+      expect(line).not.toContain("listed to you directly");
+    }
+  });
+
+  it("says nothing for engines that list the tools, or with no agents tools", () => {
+    for (const kind of ["claude", "codex", "pi", "openaiCompat", "kimi", "hermes"]) expect(roomToolAccessLine(kind, true)).toBe("");
+    expect(roomToolAccessLine("fuigoAgent", false)).toBe("");
   });
 });

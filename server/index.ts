@@ -179,7 +179,7 @@ import { capturedMessageWithheld, copyOriginWithheld, messageMadeWithMemory } fr
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
-import { capabilitiesPrimer, turnCapabilityFacts } from "./capabilities-primer.ts";
+import { capabilitiesPrimer, roomToolAccessLine, turnCapabilityFacts } from "./capabilities-primer.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
 import { browserRefusal, isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
@@ -8199,6 +8199,10 @@ async function runGroupMemberTurn(
             openMurageStatusSystemPrompt(),
           )
         : TURN_PROMPTS.roomReply,
+      // Room turns carry no capabilities primer, yet mount the agents tools:
+      // on an engine that reaches MCP tools only through use_tool, say how,
+      // or every bare tool name in this prompt is "Tool not found".
+      roomToolAccessLine(instance.driverKind, Boolean(integrations.agents)),
     ] },
     // Talk to Moss, get Moss: whoever answers speaks only for itself.
     { id: "speak-as", lines: [speakAsLine(bot.name)] },
