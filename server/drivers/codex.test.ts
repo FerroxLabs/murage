@@ -187,7 +187,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toMatchObject([{ ok: false }]);
     expect(recorder.events.some((e) => e.type === "content.delta" || e.type === "thread.token-usage.updated")).toBe(false);
     expect(recorder.events.find((e) => e.type === "runtime.error")?.message).toMatch(
-      mode === "parent-invalid-ack" ? /turn\/start.*turn identity/ : /before.*turn\/start.*limit/,
+      mode === "parent-invalid-ack" ? /^Codex Test did not start the turn\.$/ : /^Codex Test sent more updates before the turn started than Murage can hold, so the turn was stopped\.$/,
     );
     expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
   });
@@ -1435,6 +1435,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
       expect(errorsOf()).toHaveLength(1);
       expect(errorsOf()[0]).toContain("(signal SIGKILL)");
+      expect(errorsOf()[0]).not.toContain("exit code null");
       expect(errorsOf()[0]).toContain("connection reset by peer");
       expect(launches()).toBe("1");
     }, 20_000);
@@ -1457,7 +1458,7 @@ describe("CodexDriver turns (fake app-server)", () => {
         const done = await recorder.until((e) => e.type === "turn.completed");
         expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
         expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
-        expect(errorsOf()).toEqual(["codex exited 1 before turn/completed"]);
+        expect(errorsOf()).toEqual(["Codex Test closed (exit code 1) before it finished its reply"]);
         expect(existsSync(gate)).toBe(true);
         expect(launches()).toBe("1");
       } finally {
@@ -1499,7 +1500,7 @@ describe("CodexDriver turns (fake app-server)", () => {
         const done = await recorder.until((e) => e.type === "turn.completed");
         expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
         expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
-        expect(errorsOf()).toEqual(["codex exited 1 before turn/completed: Error: connection reset by peer"]);
+        expect(errorsOf()).toEqual(["Codex Test closed (exit code 1) before it finished its reply: Error: connection reset by peer"]);
         expect(launches()).toBe("1");
       } finally {
         spawnSpy.mockRestore();
@@ -1527,10 +1528,10 @@ describe("CodexDriver turns (fake app-server)", () => {
         expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
         expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
         // win32 has no signals: the kill lands as TerminateProcess, exit 1
-        const wording = process.platform === "win32" ? "codex exited 1 before turn/completed" : "(signal SIGKILL) before turn/completed";
-        expect(errorsOf()).toHaveLength(1);
-        expect(errorsOf()[0]).toContain(wording);
-        expect(errorsOf()[0]).toContain("; no stderr after the last app-server output");
+        // Stale stderr from before the last protocol output is not quoted, and
+        // the line names no protocol step.
+        const wording = process.platform === "win32" ? "Codex Test closed (exit code 1) before it finished its reply" : "Codex Test closed (signal SIGKILL) before it finished its reply";
+        expect(errorsOf()).toEqual([wording]);
         expect(errorsOf()[0]).not.toContain("426");
         expect(launches()).toBe("1");
       } finally {

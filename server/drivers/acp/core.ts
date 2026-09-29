@@ -188,7 +188,8 @@ export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown })
     return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
   }
   if (reasoningOnlyData(error.data)) return "The model returned reasoning without a visible answer. No reply was produced.";
-  return typeof error.message === "string" && error.message ? error.message : "ACP request failed";
+  // "Request failed." is the generic line the error card already recognises.
+  return typeof error.message === "string" && error.message ? error.message : "Request failed.";
 }
 
 /** C0/C1 controls, zero-width characters and bidi overrides: none belongs in one line of error text. */
@@ -666,7 +667,7 @@ import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage, type 
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 import { normalizeEngineCommands } from "../../engine-commands.ts";
 import { engineCommandText } from "../../../shared/engine-commands.ts";
-import { plainDuration } from "../plain-duration.ts";
+import { engineClosedLine, plainDuration } from "../stop-copy.ts";
 
 export interface AcpConfig {
   cli: string;
@@ -2138,7 +2139,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `${ENGINE} closed (exit code ${code}) before it finished its reply${detail ? `: ${detail}` : ""}`,
+              message: engineClosedLine(ENGINE, code, undefined, detail || undefined),
             });
             settle(false, "exit_before_result");
           }

@@ -50,7 +50,7 @@ import {
 } from "../question-normalize.ts";
 import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
 import { CODEX_BUILTIN_COMMANDS, normalizeEngineCommands } from "../engine-commands.ts";
-import { plainDuration } from "./plain-duration.ts";
+import { engineClosedLine, plainDuration } from "./stop-copy.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -156,12 +156,12 @@ const CODEX_TOOL_SURFACE_ARGS: readonly string[] = [
  * requests in time: plain words and a plain duration, never the app-server
  * method or a millisecond count. "timed out" stays in it for the Inbox's
  * grouping (server/inbox-rollup.ts). */
-export function codexRpcTimeoutMessage(method: string, timeoutMs: number): string {
+export function codexRpcTimeoutMessage(method: string, timeoutMs: number, engine = "Codex"): string {
   const step = method === "initialize" ? " while starting"
     : method.startsWith("thread/") ? " while opening the conversation"
     : method.startsWith("turn/") || method.startsWith("review/") ? " while starting the turn"
     : "";
-  return `Codex timed out${step} (no answer for ${plainDuration(timeoutMs)}).`;
+  return `${engine} timed out${step} (no answer for ${plainDuration(timeoutMs)}).`;
 }
 
 export const CodexDriver: ProviderDriver<CodexConfig> = {
@@ -182,6 +182,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
   defaultConfig: () => decodeConfig({}),
 
   async create(input: DriverCreateInput<CodexConfig>): Promise<ProviderInstance> {
+    // The engine as Settings names this instance, for every line the chat shows.
+    const ENGINE = input.displayName?.trim() || "Codex";
     const { instanceId, config } = input;
     const childEnv = (): Record<string, string | undefined> => {
       const env: Record<string, string | undefined> = {
@@ -405,7 +407,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // a wedged app-server can accept stdin and never reply; without this
           // the handshake await hangs forever and the bot stays busy for good
           const timer = setTimeout(() => {
-            if (rpcPending.delete(id)) reject(new Error(codexRpcTimeoutMessage(method, timeoutMs)));
+            if (rpcPending.delete(id)) reject(new Error(codexRpcTimeoutMessage(method, timeoutMs, ENGINE)));
           }, timeoutMs);
           if (typeof timer.unref === "function") timer.unref();
           rpcPending.set(id, {
@@ -648,7 +650,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             // identified candidates until the ACK establishes the parent.
             const bytes = Buffer.byteLength(JSON.stringify(msg));
             if (earlyNotifications.length >= 256 || earlyNotificationBytes + bytes > 32 * 1024 * 1024) {
-              emit({ ...base(threadId, turnId), type: "runtime.error", message: "codex notifications before turn/start acknowledgement exceeded the buffer limit" });
+              emit({ ...base(threadId, turnId), type: "runtime.error", message: `${ENGINE} sent more updates before the turn started than Murage can hold, so the turn was stopped.` });
               void settle(false, "early_notification_overflow");
               return;
             }
@@ -898,7 +900,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         if (!state.settled) {
           const recentStderr = stderrSinceOutput.trim();
-          const hadProtocolOutput = codexTurnId !== null || state.sawStreamDelta;
           // A signal exit is terminal whatever stderr says: something killed
           // the process, and the classifier cannot see a signal behind a null
           // code. Otherwise classify only this generation's recent stderr.
@@ -943,11 +944,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
-            message: `codex exited ${code}${signal ? ` (signal ${signal})` : ""} before turn/completed${
-              recentStderr
-                ? `: ${recentStderr.slice(-300)}`
-                : hadProtocolOutput && stderr.trim() ? "; no stderr after the last app-server output" : ""
-            }`,
+            // Shown in the chat: the engine, the exit and its last words, never
+            // the app-server's protocol names.
+            message: engineClosedLine(ENGINE, code, signal, recentStderr ? recentStderr.slice(-300) : undefined),
           });
           settle(false, "exit_before_result");
         }
@@ -987,7 +986,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           codexThreadId = started?.thread?.id ?? null;
           startedModel = started?.model ?? null;
         }
-        if (typeof codexThreadId !== "string" || !codexThreadId) throw new Error("codex did not return a thread identity");
+        if (typeof codexThreadId !== "string" || !codexThreadId) throw new Error(`${ENGINE} did not open a conversation.`);
         emit({ ...base(threadId, turnId), type: "session.started", sessionId: codexThreadId, model: startedModel ?? turn.model ?? null });
         // Codex has no command list of its own to report. Its skills are the
         // live part of the "/" menu (skills/list, codex-cli 0.156); the
@@ -1078,7 +1077,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           if (typeof result?.turn?.id !== "string" || !result.turn.id) {
             earlyNotifications.length = 0;
             earlyNotificationBytes = 0;
-            throw new Error("codex turn/start did not return a turn identity");
+            throw new Error(`${ENGINE} did not start the turn.`);
           }
           codexTurnId = result.turn.id;
           const buffered = earlyNotifications.splice(0);

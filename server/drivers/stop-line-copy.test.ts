@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { acpRequestTimeoutMessage, acpStopReasonMessage } from "./acp/core.ts";
 import { codexRpcTimeoutMessage } from "./codex.ts";
-import { plainDuration } from "./plain-duration.ts";
+import { engineClosedLine, plainDuration } from "./stop-copy.ts";
 
 const INTERNAL = /MURAGE_|_MS\b|\d+ ?ms\b|session\/|initialize|thread\/|turn\/|prompt result|Agent\b|max_tokens|max_turn_requests/;
 
@@ -21,6 +21,13 @@ describe("stop line copy", () => {
     expect(plainDuration(180_000)).toBe("3 minutes");
     expect(plainDuration(60 * 60_000)).toBe("60 minutes");
     expect(plainDuration(3 * 60 * 60_000)).toBe("3 hours");
+  });
+
+  it("says how an engine closed, without a missing exit code or protocol names", () => {
+    expect(engineClosedLine("Fuigo", 1)).toBe("Fuigo closed (exit code 1) before it finished its reply");
+    expect(engineClosedLine("Codex", null, "SIGKILL")).toBe("Codex closed (signal SIGKILL) before it finished its reply");
+    expect(engineClosedLine("Codex", 137, "SIGKILL", "out of memory")).toBe("Codex closed (exit code 137, signal SIGKILL) before it finished its reply: out of memory");
+    expect(engineClosedLine("Claude", null)).toBe("Claude closed before it finished its reply");
   });
 
   it("names the engine and the step when an ACP request times out", () => {
