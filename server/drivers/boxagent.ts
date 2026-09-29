@@ -128,7 +128,11 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       // poll events + run status until the prompt settles
       (async () => {
         const seen = new Set<string>();
-        const startedAt = Date.now();
+        // Stopped for silence, never for duration (0.1.61): a box run that
+        // keeps producing events may run as long as it needs. A run that
+        // has produced nothing new for this long is treated as stuck.
+        const BOX_SILENCE_MS = 30 * 60_000;
+        let lastActivityAt = Date.now();
         let lastText = "";
         let pendingText = "";
         /** Emit unflushed deltas as assistant_text and reset pendingText. */
@@ -156,6 +160,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               const id = String(ev.id ?? ev.eventId ?? JSON.stringify(ev).slice(0, 120));
               if (seen.has(id)) continue;
               seen.add(id);
+              lastActivityAt = Date.now();
               appendNative(threadId, { dir: "in", source: "box.events", msg: ev });
               const kind = String(ev.type ?? ev.kind ?? "");
               // "response" events carry the agent's text at data.content —
@@ -178,7 +183,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               }
               // shape-drift backstop: without a promptId the status poll
               // below can never see a terminal state, so settle off the
-              // events themselves instead of hanging to the 30-min ceiling
+              // events themselves instead of hanging to the silence limit
               if (!promptId && /complete|finish|done|success|fail|error/i.test(kind)) {
                 active.delete(threadId);
                 flushAssistantText();
@@ -216,8 +221,8 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                 return;
               }
             }
-            if (Date.now() - startedAt > 30 * 60_000) {
-              throw new Error("box run exceeded 30 minutes: interrupted");
+            if (Date.now() - lastActivityAt > BOX_SILENCE_MS) {
+              throw new Error("box run had no activity for 30 minutes: interrupted");
             }
           }
           // Murage stopped the turn: the shared cancelled state every driver

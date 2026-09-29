@@ -5271,28 +5271,30 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("validates and persists the global room turn timeout", async () => {
+  it("validates and persists the room silence limit", async () => {
     const before = await api("GET", "/api/config");
     expect(before.status).toBe(200);
-    expect(before.body.rooms).toEqual({ turnTimeoutMinutes: 5 });
+    expect(before.body.rooms).toEqual({ turnTimeoutMinutes: 20 });
 
-    for (const turnTimeoutMinutes of [0, 1.5, 1441, "20", null]) {
+    // under 20 was an absolute ceiling before 0.1.61; as a silence limit it
+    // would stop work the direct path lets run
+    for (const turnTimeoutMinutes of [0, 5, 19, 1.5, 1441, "20", null]) {
       const invalid = await desktopApi("PUT", "/api/config", { rooms: { turnTimeoutMinutes } });
       expect(invalid.status).toBe(400);
       expect(invalid.body.error).toContain("rooms.turnTimeoutMinutes");
     }
 
-    const saved = await desktopApi("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 20 } });
+    const saved = await desktopApi("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 45 } });
     expect(saved.status).toBe(200);
-    expect(saved.body.rooms).toEqual({ turnTimeoutMinutes: 20 });
+    expect(saved.body.rooms).toEqual({ turnTimeoutMinutes: 45 });
 
     const after = await api("GET", "/api/config");
-    expect(after.body.rooms).toEqual({ turnTimeoutMinutes: 20 });
+    expect(after.body.rooms).toEqual({ turnTimeoutMinutes: 45 });
 
     const disk = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
-    expect(disk.rooms).toEqual({ turnTimeoutMinutes: 20 });
+    expect(disk.rooms).toEqual({ turnTimeoutMinutes: 45 });
 
-    await desktopApi("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
+    await desktopApi("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 20 } });
   });
 
   it("mounts the verification skill into a real turn when its trigger appears", async () => {
@@ -6447,7 +6449,7 @@ describe("harness HTTP API", () => {
     await desktopApi("PATCH", "/api/config", { localVm: { mode: "shared", maxInstances: 2 } });
   });
 
-  it("keeps an active turn alive when only the room timeout changes", async () => {
+  it("keeps an active turn alive when only the room silence limit changes", async () => {
     const created = await api("POST", "/api/bots", {});
     const botId = created.body.bot.id;
     const room = (await api("POST", "/api/groups", {
@@ -6471,7 +6473,7 @@ describe("harness HTTP API", () => {
       expect(before.bots.find((bot: { id: string }) => bot.id === botId)?.busy).toBe(true);
       expect(before.groups.find((group: { id: string }) => group.id === room.id)?.busyBotId).toBe(botId);
 
-      const saved = await desktopApi("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 20 } });
+      const saved = await desktopApi("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 45 } });
       expect(saved.status).toBe(200);
 
       const after = (await api("GET", "/api/bots")).body;
@@ -6492,7 +6494,7 @@ describe("harness HTTP API", () => {
       }, { timeout: 5_000 }).toEqual({ botBusy: false, roomBusyBotId: null });
       await desktopApi("DELETE", `/api/groups/${room.id}`);
       await desktopApi("DELETE", `/api/bots/${botId}`);
-      await desktopApi("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 5 } });
+      await desktopApi("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 20 } });
     }
   });
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  DEFAULT_ROOM_TURN_TIMEOUT_MINUTES,
   MAX_ROOM_TURN_TIMEOUT_MINUTES,
   MIN_ROOM_TURN_TIMEOUT_MINUTES,
   parseRoomTurnTimeoutMinutes,
@@ -9,7 +10,7 @@ import { api, useStore, type ConfigStatus } from "@/state/store";
 
 export function RoomTurnTimeoutSettings() {
   const { state, dispatch } = useStore();
-  const confirmedMinutes = state.config?.rooms.turnTimeoutMinutes ?? 5;
+  const confirmedMinutes = state.config?.rooms.turnTimeoutMinutes ?? DEFAULT_ROOM_TURN_TIMEOUT_MINUTES;
   const [value, setValue] = useState(String(confirmedMinutes));
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
@@ -39,7 +40,7 @@ export function RoomTurnTimeoutSettings() {
       setDirty(false);
       setError("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save the channel turn limit.");
+      setError(cause instanceof Error ? cause.message : "Could not save the no activity limit.");
     } finally {
       saveInFlight.current = false;
       setSaving(false);
@@ -49,7 +50,7 @@ export function RoomTurnTimeoutSettings() {
   return (
     <div className="flex flex-col gap-2">
       <label htmlFor="room-turn-timeout" className="text-[13px] font-medium text-ink">
-        Maximum turn length
+        No activity limit
       </label>
       <div
         className={`flex max-w-[220px] items-center rounded-lg border bg-inset ${
@@ -81,7 +82,7 @@ export function RoomTurnTimeoutSettings() {
         <span className="pr-3 text-[13px] text-ink-secondary">minutes</span>
       </div>
       <p id="room-turn-timeout-help" className="text-[12px] leading-relaxed text-ink-secondary">
-        Applies to every bot turn in channels. Direct chats use the inactivity watchdog instead.
+        Stop a room reply after {confirmedMinutes} minutes with no activity. A reply that keeps working runs as long as it needs, and time spent waiting on you does not count.
       </p>
       {error ? (
         <p id="room-turn-timeout-error" role="alert" className="text-[12px] text-danger">

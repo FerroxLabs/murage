@@ -70,8 +70,10 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
   });
 
   it("exempts a person deciding: every request.opened, folder-trust cards included, holds the clock", () => {
-    expect(SOURCE).toContain('if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true);');
-    expect(SOURCE).toContain('else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false);');
+    expect(SOURCE).toContain('if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true, event.requestId);');
+    expect(SOURCE).toContain('else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false, event.requestId);');
+    // an image approval card is keyed by its own request id too
+    expect(SOURCE).toContain("watchdog.setWaitingOnHuman(threadId, waiting, requestId);");
   });
 
   it("latches setup to its own ceiling, never shorter than the running one", () => {
@@ -97,9 +99,27 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     // synchronously up to the swap
     expect(body.slice(honoured, swap)).not.toMatch(/await (?!releaseUnstartedRoomTurn\(\)|new Promise<GroupMemberTurnOutcome>)/);
     expect(swap).toBeGreaterThan(outcome);
-    expect(body).toContain("watchdog.dispatched(threadId, bot.id, internalGeneration)");
+    expect(body).toContain("watchdog.dispatched(threadId, bot.id, internalGeneration, {");
     // every other exit clears the latch and this attempt's setup watch
     expect(body).toMatch(/\} finally \{\s*unregisterSetupStall\(\);\s*watchdog\.settleSetup\(threadId, internalGeneration\);/);
+  });
+
+  it("stops a room reply for silence on the owner's limit, never for duration", () => {
+    const body = fn("runGroupMemberTurn");
+    // 0.1.61: no absolute ceiling on a room turn that keeps working
+    expect(SOURCE).not.toContain("RoomTurnDeadline");
+    expect(body).toContain("const silenceMinutes = roomTurnTimeoutMinutes(cfg);");
+    expect(body).toContain("watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) })");
+    expect(body).toContain("tool: { name: roomTurnStallMessage(silenceMinutes), ok: false }");
+    // the room turn binds its engine turn to its watch, so a completion that
+    // names another turn leaves the watch (and any open card) in place; if an
+    // unbound completion cleared it first, the running turn re-arms and rebinds
+    expect(SOURCE).toContain('if (event.type === "turn.completed") {\n    watchdog.settleCompleted(event.threadId, event.turnId);');
+    expect(body).toContain("watchdog.bindProviderTurn(threadId, internalGeneration, dispatch.value.turnId);");
+    expect(body).toMatch(/if \(e\.type === "turn\.completed" && !done\) \{\s*watchdog\.dispatched\(threadId, bot\.id, internalGeneration, \{ stallMs: roomTurnSilenceMs\(silenceMinutes\) \}\);\s*watchdog\.bindProviderTurn\(threadId, internalGeneration, providerTurnId\);/);
+    // a stopped room turn on an engine without a close receipt is released by
+    // its own terminal event
+    expect(SOURCE).toContain("if (pendingRoomStop) { const turnId = event.turnId; queueMicrotask(() => pendingRoomStop.terminal(turnId)); }");
   });
 
   it("a Stop during direct setup ends that setup's watch", () => {

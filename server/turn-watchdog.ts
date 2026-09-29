@@ -1,7 +1,7 @@
 // Stall watchdog for admitted turns.
 //
-// ask_bot has a short inline wait budget, while room turns have a separately
-// configurable absolute ceiling. The main 1:1 path had none: a wedged CLI
+// ask_bot has a short inline wait budget. The main 1:1 path once had no
+// guard at all: a wedged CLI
 // (hung network call, dead MCP child,
 // a provider that stops streaming without exiting) left its bot busy
 // forever — composer locked, screen poller running — until an interrupt or
@@ -9,6 +9,11 @@
 // legitimately run for an hour while events keep flowing, but a turn whose
 // thread has emitted nothing at all for `stallMs` is wedged. Turns parked
 // on a human approval are exempt — waiting on a person is not a stall.
+//
+// Room turns use the same rule (0.1.61): they used to carry an absolute
+// ceiling, five minutes by default, that stopped long work while it was
+// still streaming. A room turn now passes its own silence limit (the
+// owner's rooms.turnTimeoutMinutes) as `stallMs` when it is dispatched.
 //
 // Armed at ADMISSION, not dispatch (upstream #1682, hand port): a turn can
 // wedge in setup (a hung box or VM mount, a browser that never registers,
@@ -39,10 +44,22 @@ export interface WatchedTurn {
   startedAt: number;
   lastEventAt: number;
   waitingOnHuman: boolean;
+  /** The cards open on this turn right now, by request id. Two cards can be
+   * open at once, so the first answer must not restart the clock under the
+   * second, and a resolve for a card this turn never opened (a routine-held
+   * card, stale cleanup after an interrupt) must not release a real one. */
+  openRequests: Set<string>;
+  /** This turn's own silence limit once running (a room turn's setting);
+   * the watchdog's stallMs when absent. */
+  stallMs?: number;
   /** "setup" from admission until dispatch; "running" after. */
   phase: "setup" | "running";
   /** The turn's own claim; lets a finished setup settle only its own watch. */
   generation?: string;
+  /** The engine's id for this turn once known (a room reply binds it). A
+   * completion naming another turn on the thread then leaves this watch, its
+   * open cards and its waits in place. */
+  providerTurnId?: string;
 }
 
 export interface TurnWatchdogOptions {
@@ -101,7 +118,7 @@ export class TurnWatchdog {
   }
 
   /** A turn was admitted (`setup: true`) or dispatched on this thread. */
-  watch(threadId: string, botId: string, opts: { generation?: string; setup?: boolean } = {}): void {
+  watch(threadId: string, botId: string, opts: { generation?: string; setup?: boolean; stallMs?: number } = {}): void {
     const previous = this.turns.get(threadId);
     if (previous) this.turnWaits.delete(previous);
     const at = this.now();
@@ -111,24 +128,28 @@ export class TurnWatchdog {
       startedAt: at,
       lastEventAt: at,
       waitingOnHuman: false,
+      openRequests: new Set(),
       phase: opts.setup ? "setup" : "running",
       ...(opts.generation !== undefined ? { generation: opts.generation } : {}),
+      ...(opts.stallMs !== undefined ? { stallMs: opts.stallMs } : {}),
     });
   }
 
   /** The admitted turn reached its provider: setup is over, the clock
-   * restarts at the running ceiling. If something cleared the watch in
-   * between, it is re-armed, unless this very turn already stalled. */
-  dispatched(threadId: string, botId: string, generation?: string): void {
+   * restarts at the running ceiling (`stallMs` when the turn has its own
+   * silence limit). If something cleared the watch in between, it is
+   * re-armed, unless this very turn already stalled. */
+  dispatched(threadId: string, botId: string, generation?: string, opts: { stallMs?: number } = {}): void {
     const turn = this.owned(threadId, generation);
     if (turn && (generation === undefined || turn.generation === generation || turn.generation === undefined)) {
       turn.phase = "running";
       turn.lastEventAt = this.now();
+      if (opts.stallMs !== undefined) turn.stallMs = opts.stallMs;
       return;
     }
     if (generation !== undefined && this.stalledGenerations.has(generation)) return;
     if (this.turns.has(threadId)) return; // a newer turn owns the thread
-    this.watch(threadId, botId, { generation });
+    this.watch(threadId, botId, { generation, stallMs: opts.stallMs });
   }
 
   /** The turn is waiting for a resource, not working. Returns the release;
@@ -160,11 +181,15 @@ export class TurnWatchdog {
   }
 
   /** request.opened → true (a human is deciding; not a stall however long
-   * they take); request.resolved → false (the clock restarts). */
-  setWaitingOnHuman(threadId: string, waiting: boolean): void {
+   * they take); request.resolved → false (the clock restarts once no card
+   * is left open). Keyed by the card's request id; a caller without one
+   * shares a single anonymous key. */
+  setWaitingOnHuman(threadId: string, waiting: boolean, requestId = ""): void {
     const turn = this.turns.get(threadId);
     if (!turn) return;
-    turn.waitingOnHuman = waiting;
+    if (waiting) turn.openRequests.add(requestId);
+    else turn.openRequests.delete(requestId);
+    turn.waitingOnHuman = turn.openRequests.size > 0;
     turn.lastEventAt = this.now();
   }
 
@@ -173,6 +198,22 @@ export class TurnWatchdog {
   settle(threadId: string, generation?: string): void {
     const turn = this.owned(threadId, generation);
     if (turn) this.forget(turn);
+  }
+
+  /** Names the engine turn this watch belongs to (only the claim's own). */
+  bindProviderTurn(threadId: string, generation: string, providerTurnId: string): void {
+    const turn = this.turns.get(threadId);
+    if (turn?.generation === generation) turn.providerTurnId = providerTurnId;
+  }
+
+  /** An engine turn completed on this thread. A bound watch settles only on
+   * its own turn's completion, or one that names no turn; an unbound watch
+   * (a direct turn) settles on any completion, as before. */
+  settleCompleted(threadId: string, providerTurnId?: string): void {
+    const turn = this.turns.get(threadId);
+    if (!turn) return;
+    if (turn.providerTurnId && providerTurnId && providerTurnId !== turn.providerTurnId) return;
+    this.forget(turn);
   }
 
   /** A turn left setup without dispatching: clear its watch, and only if it
@@ -193,7 +234,8 @@ export class TurnWatchdog {
     for (const turn of [...this.turns.values()]) {
       if (turn.waitingOnHuman) continue;
       if (this.turnWaits.get(turn)?.size) continue;
-      const ceiling = turn.phase === "setup" ? setupStallMs : this.opts.stallMs;
+      const running = turn.stallMs ?? this.opts.stallMs;
+      const ceiling = turn.phase === "setup" ? Math.max(running, setupStallMs) : running;
       if (at - turn.lastEventAt < ceiling) continue;
       this.forget(turn);
       if (turn.generation !== undefined) {
