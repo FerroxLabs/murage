@@ -93,6 +93,17 @@ describe("computer_exec on the box: silence, not a clock", () => {
     expect((await runBoxExec("curl -so f url", deps, OPTS, new AbortController().signal)).kind).toBe("done");
   });
 
+  it("a loop that keeps starting a probe while it waits is not work (finished children count from 5%)", async () => {
+    // 15 s windows at 100 Hz: 20 ticks of finished probes is 1.3%, under 5%
+    const polls = Array.from({ length: 100 }, (_, i) => `${status("running", 5, 10)}EXEC_CCPU ${20 * (i + 1)}\n`);
+    const { deps } = rig([status("running", 5, 10), ...polls], 5 * 60_000);
+    expect((await runBoxExec("until curl -sf localhost:3000; do sleep 1; done", deps, OPTS, new AbortController().signal)).kind).toBe("silent");
+    // while a quiet build's finished compilers (a core's worth) are work
+    const build = Array.from({ length: 60 }, (_, i) => `${status("running", 5, 10)}EXEC_CCPU ${1500 * (i + 1)}\n`);
+    const second = rig([status("running", 5, 10), ...build, done(0, "")], 5 * 60_000);
+    expect((await runBoxExec("make -s", second.deps, OPTS, new AbortController().signal)).kind).toBe("done");
+  });
+
   it("an idle server's timer ticks are not work: it is stopped as silent", async () => {
     const polls = Array.from({ length: 100 }, (_, i) => status("running", 5, 10 + i));
     const { deps, scripts } = rig([status("running", 5, 10), ...polls], 5 * 60_000);
@@ -270,6 +281,21 @@ describe.skipIf(process.platform !== "linux")("computer_exec's box-side records 
     writeFileSync(boot, real);
     expect(sh(stopScript(id, true)).state).toBe("done");
     expect(alive(pid)).toBe(false);
+  });
+
+  it("a record nobody has checked on for past its lease is ended and removed by the next start", () => {
+    const id = "aa00000000000006";
+    const pidFile = join(home, "abandoned.pid");
+    expect(sh(startScript(id, `echo $$ > ${pidFile}; sleep 60`, opts)).state).toBe("running");
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    const record = join(home, ".cache", "murage-exec", id);
+    // its supervisor is gone too (killed with the box agent, say)
+    const supervisor = Number(readFileSync(`/proc/${pid}/stat`, "utf8").replace(/^.*\) /, "").split(" ")[1]);
+    process.kill(-supervisor, "SIGKILL");
+    writeFileSync(join(record, "lease"), "1\n");
+    sh(startScript("aa00000000000007", "true", opts));
+    expect(alive(pid)).toBe(false);
+    expect(existsSync(record)).toBe(false);
   });
 
   it("Stop reaches a process that moved to a session of its own", () => {

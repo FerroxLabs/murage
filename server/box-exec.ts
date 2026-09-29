@@ -80,10 +80,13 @@ export function commandSilenceMs(turnSilenceMs: number): number {
   return Math.max(1_000, turnSilenceMs - Math.min(60_000, Math.floor(turnSilenceMs / 4)));
 }
 
-/** Processor time that counts as work over a window: 1% of it, at least a tick. */
-export function cpuProgressTicks(windowMs: number, hz: number): number {
-  return Math.max(1, Math.ceil((windowMs / 1000) * hz * 0.01));
+/** Processor time that counts as work over a window: 1% of it, at least a
+ * tick. Finished children count from 5%, so a loop that keeps starting a
+ * probe while it waits for something (curl, nc, sleep 0.1) is not work. */
+export function cpuProgressTicks(windowMs: number, hz: number, share = 0.01): number {
+  return Math.max(1, Math.ceil((windowMs / 1000) * hz * share));
 }
+const CHILD_CPU_SHARE = 0.05;
 
 const shq = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
@@ -99,8 +102,9 @@ const HELPERS = [
   'BOOT=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)',
   // the job's processes: its session, and everything descended from it (sudo
   // and job-control shells start new sessions or groups underneath)
+  // mode cpu: own and finished children's processor ticks; mode pids: one per line
   'members() {',
-  `  cat /proc/[0-9]*/stat 2>/dev/null | awk -v s="$S" -v mode="$1" '{ p = $1; sub(/^.*\\) /, ""); pp[p] = $2; t[p] = $12 + $13 + $14 + $15; if ($4 == s) m[p] = 1 } END { c = 1; while (c) { c = 0; for (p in pp) if (!(p in m) && (pp[p] in m)) { m[p] = 1; c = 1 } } n = 0; for (p in m) { if (mode == "cpu") n += t[p]; else print p } if (mode == "cpu") print n + 0 }'`,
+  `  cat /proc/[0-9]*/stat 2>/dev/null | awk -v s="$S" -v mode="$1" '{ p = $1; sub(/^.*\\) /, ""); pp[p] = $2; t[p] = $12 + $13; c[p] = $14 + $15; if ($4 == s) m[p] = 1 } END { k = 1; while (k) { k = 0; for (p in pp) if (!(p in m) && (pp[p] in m)) { m[p] = 1; k = 1 } } n = 0; d = 0; for (p in m) { if (mode == "cpu") { n += t[p]; d += c[p] } else print p } if (mode == "cpu") printf "%.0f %.0f\\n", n, d }'`,
   '}',
   // a session id is trusted only when it is a real one from this boot
   'sidok() {',
@@ -108,16 +112,26 @@ const HELPERS = [
   '  case "$S" in ""|*[!0-9]*) S=""; return 1;; esac',
   '  if [ "$S" -le 1 ] || [ "$(cat "$J/boot" 2>/dev/null)" != "$BOOT" ]; then S=""; return 1; fi',
   // a live leader must be the one this job started, not a reused id
-  '  if [ -r "/proc/$S/stat" ]; then read -r l < "/proc/$S/stat"; set -- ${l##*")" }; if [ "${20}" != "$(cat "$J/sidstart" 2>/dev/null)" ]; then S=""; return 1; fi; fi',
+  // (a leader that has just exited, or a record without the time, skips it)
+  '  local st0 want; want=$(cat "$J/sidstart" 2>/dev/null)',
+  '  if [ -n "$want" ] && [ -r "/proc/$S/stat" ] && read -r st0 < "/proc/$S/stat" 2>/dev/null && [ -n "$st0" ]; then',
+  '    set -- ${st0##*")" }',
+  '    if [ "${20}" != "$want" ]; then S=""; return 1; fi',
+  '  fi',
   '}',
   // bytes the job's processes read from or wrote to storage
+  // (a running total: a member that exits keeps the bytes last seen for it)
   'io() {',
-  `  t=0; for p in $(members pids); do v=$(awk '/^(read|write)_bytes:/ { s += $2 } END { print s + 0 }' "/proc/$p/io" 2>/dev/null); t=$((t + \${v:-0})); done; echo "$t"`,
+  `  for p in $(members pids); do printf '%s %s\\n' "$p" "$(awk '/^(read|write)_bytes:/ { s += $2 } END { printf "%.0f", s }' "/proc/$p/io" 2>/dev/null || echo 0)"; done > "$J/io.now"`,
+  '  touch "$J/io.seen"',
+  `  set -- $(awk -v base="$(cat "$J/io.base" 2>/dev/null || echo 0)" 'FILENAME == ARGV[1] { seen[$1] = $2; next } { now[$1] = $2 } END { for (p in seen) if (!(p in now)) base += seen[p]; t = base; for (p in now) t += now[p]; printf "%.0f %.0f\\n", base, t }' "$J/io.seen" "$J/io.now")`,
+  '  echo "${1:-0}" > "$J/io.base"; mv -f "$J/io.now" "$J/io.seen"; echo "${2:-0}"',
   '}',
   // the whole tree is listed before anything is signalled: a child whose
   // parent dies first is re-parented away and would no longer be found
-  'sig() {',
-  '  sidok || return 0',
+  'sig() { sidok && sigS "$1"; return 0; }',
+  // signal session $S as it stands (the supervisor knows its own)
+  'sigS() {',
   '  set -- "$1" $(members pids)',
   '  sg=$1; shift',
   '  kill "-$sg" -- "-$S" 2>/dev/null',
@@ -139,13 +153,16 @@ function supervisorScript(): string {
     `setsid -w bash -c 'read -r l < /proc/$$/stat; set -- \${l##*")" }; echo "\${20}" > "$0/sidstart"; echo $$ > "$0/sid"; exec bash "$0/cmd"' "$J" > "$J/o.fifo" 2> "$J/e.fifo" < /dev/null &`,
     'P=$!',
     '(',
+    '  S=$P',
     '  while kill -0 "$P" 2>/dev/null; do',
     '    sleep 1',
+    // a record removed from under a live job: nobody can check on it any more
+    '    if [ ! -d "$J" ]; then sigS TERM; sleep 3; sigS KILL; break; fi',
     '    now=$(date +%s); l=$(cat "$J/lease" 2>/dev/null)',
     '    case "$l" in ""|*[!0-9]*) continue;; esac',
     '    if [ $((now - l)) -gt "$LEASE" ]; then',
     '      echo lease > "$J/abandoned"',
-    '      sig TERM; sleep 3; sig KILL',
+    '      sigS TERM; sleep 3; sigS KILL',
     '      break',
     '    fi',
     '    for f in out err; do',
@@ -177,7 +194,7 @@ const STATUS = [
   '  if [ -f "$J/abandoned" ]; then echo "EXEC_ABANDONED yes"; fi',
   '  n=0; for f in out err; do s=$(stat -c %s "$J/$f" 2>/dev/null || echo 0); d=$(cat "$J/$f.dropped" 2>/dev/null || echo 0); n=$((n + s + d)); done',
   '  echo "EXEC_BYTES $n"',
-  '  if sidok; then echo "EXEC_CPU $(members cpu)"; echo "EXEC_IO $(io)"; else echo "EXEC_CPU 0"; echo "EXEC_IO 0"; fi',
+  '  if sidok; then set -- $(members cpu); echo "EXEC_CPU ${1:-0}"; echo "EXEC_CCPU ${2:-0}"; echo "EXEC_IO $(io)"; else echo "EXEC_CPU 0"; echo "EXEC_CCPU 0"; echo "EXEC_IO 0"; fi',
   '  echo "EXEC_HZ $(getconf CLK_TCK 2>/dev/null || echo 100)"',
   '}',
   // the record stays until the proxy's cleanup (or the next start's sweep),
@@ -224,7 +241,12 @@ function sweepShell(leaseSec: number): string {
     '    if [ -f "$J/stopping" ] && ! old "$J/stopping" 10; then exit 0; fi',
     '    if [ -f "$J/rc" ]; then old "$J/rc" 60 && rm -rf -- "${J:?}"; exit 0; fi',
     '    case "$l" in ""|*[!0-9]*) old "$J" 10 && rm -rf -- "${J:?}"; exit 0;; esac',
-    `    if [ $(( $(date +%s) - l )) -gt ${Math.trunc(leaseSec) + ABANDON_MARGIN_SEC} ]; then sig KILL; rm -rf -- "\${J:?}"; fi`,
+    `    if [ $(( $(date +%s) - l )) -gt ${Math.trunc(leaseSec) + ABANDON_MARGIN_SEC} ]; then`,
+    '      sig KILL; sleep 1',
+    // kept (and retried by the next sweep) while anything of it still runs
+    '      if sidok && [ -n "$(members pids)" ]; then exit 0; fi',
+    '      rm -rf -- "${J:?}"',
+    '    fi',
     '  )',
     'done',
   ].join("\n");
@@ -260,7 +282,7 @@ export function pollScript(id: string, waitSec: number): string {
     jobDir(id),
     HELPERS,
     STATUS,
-    'if [ -d "$J" ] && [ ! -f "$J/rc" ] && [ ! -f "$J/cancel" ]; then lease; fi',
+    'if [ -d "$J" ] && [ ! -f "$J/rc" ] && [ ! -f "$J/cancel" ] && [ ! -f "$J/stopping" ]; then lease; fi',
     waitShell(waitSec),
   ].join("\n");
 }
@@ -318,6 +340,8 @@ export interface ExecStatus {
   exitCode: number | null;
   bytes: number;
   cpu: number;
+  /** Processor time of the job's children that have already finished. */
+  ccpu: number;
   io: number;
   hz: number;
   stdout: string;
@@ -341,6 +365,7 @@ export function parseStatus(stdout: string): ExecStatus {
     exitCode: rc !== undefined && /^-?\d+$/.test(rc) ? Number(rc) : null,
     bytes: Number(line("EXEC_BYTES") ?? 0) || 0,
     cpu: Number(line("EXEC_CPU") ?? 0) || 0,
+    ccpu: Number(line("EXEC_CCPU") ?? 0) || 0,
     io: Number(line("EXEC_IO") ?? 0) || 0,
     hz: Number.isFinite(hz) && hz > 0 ? hz : 100,
     stdout: decode(line("EXEC_STDOUT")),
@@ -444,10 +469,13 @@ export async function runBoxExec(
   }
   let lastBytes = status.bytes;
   let lastCpu = status.cpu;
+  let lastCcpu = status.ccpu;
   let lastIo = status.io;
   let lastPollAt = now();
   let failingSince: number | null = null;
-  if (status.state === "running" && (lastBytes > 0 || lastCpu >= cpuProgressTicks(lastPollAt - lastProgress, status.hz))) {
+  const window0 = lastPollAt - lastProgress;
+  if (status.state === "running" && (lastBytes > 0 || lastCpu >= cpuProgressTicks(window0, status.hz)
+    || lastCcpu >= cpuProgressTicks(window0, status.hz, CHILD_CPU_SHARE) || lastIo >= IO_PROGRESS_BYTES)) {
     lastProgress = lastPollAt;
     deps.progress();
   }
@@ -493,13 +521,17 @@ export async function runBoxExec(
     failingSince = null;
     if (next.state !== "running" && next.state !== "done") return { kind: "failed", detail: MISSING };
     const at = now();
-    const worked = next.cpu - lastCpu >= cpuProgressTicks(at - lastPollAt, next.hz) || next.io - lastIo >= IO_PROGRESS_BYTES;
+    const window = at - lastPollAt;
+    const worked = next.cpu - lastCpu >= cpuProgressTicks(window, next.hz)
+      || next.ccpu - lastCcpu >= cpuProgressTicks(window, next.hz, CHILD_CPU_SHARE)
+      || next.io - lastIo >= IO_PROGRESS_BYTES;
     if (next.bytes !== lastBytes || worked) {
       lastProgress = at;
       deps.progress();
     }
     lastBytes = next.bytes;
     lastCpu = next.cpu;
+    lastCcpu = next.ccpu;
     lastIo = next.io;
     lastPollAt = at;
     status = next;

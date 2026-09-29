@@ -1096,7 +1096,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     activeExecs.add(running);
     const outcome = await running.finally(() => activeExecs.delete(running));
     // the result is delivered below; the record goes after it
-    if (outcome.kind === "done") queueMicrotask(() => void cleanupBoxJob(execDeps, job));
+    if (outcome.kind === "done" || outcome.kind === "silent") queueMicrotask(() => void cleanupBoxJob(execDeps, job));
     // MCP: a request the client cancelled gets no response
     if (outcome.kind === "stopped" || signal.aborted) return;
     if (outcome.kind === "failed") return text(id, `the command could not be run to the end: ${outcome.detail}`, true);
