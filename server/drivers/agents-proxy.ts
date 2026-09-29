@@ -40,6 +40,8 @@ import { searchHelp, helpTopics } from "../../shared/help-search.ts";
 // reads no path and no env, so it does not disturb the bundled proxy's
 // anchoring invariant either.
 import { boundedAgentResult } from "./agents-result.ts";
+// Pure as well: how this turn's engine names these tools.
+import { TOOL_CALL_STYLE_ENV, TOOL_CALL_STYLE_HEADER, TOOL_SERVER_NAME_ENV, murageToolDescriptions, murageToolName, murageToolText, parseToolCallStyle } from "../../shared/murage-tool-names.ts";
 
 const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
 const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
@@ -47,6 +49,13 @@ const THREAD_ID = process.env.MURAGE_THREAD_ID ?? "";
 const TOKEN = process.env.MURAGE_COMMS_TOKEN ?? "";
 const DEPTH = Number(process.env.MURAGE_TURN_DEPTH ?? "0") || 0;
 const SKILL_AUTHORING_ENABLED = process.env.MURAGE_SKILL_AUTHORING_ENABLED === "1";
+/** How this turn's engine calls these tools, set by the driver that mounted
+ * this server (shared/murage-tool-names.ts). Unset: the bare name. */
+const STYLE = parseToolCallStyle(process.env[TOOL_CALL_STYLE_ENV]);
+const SERVER_NAME = process.env[TOOL_SERVER_NAME_ENV] || "agents";
+const callable = (name: string) => murageToolName(name, STYLE, SERVER_NAME);
+/** Only for text written here, never for a bot's, owner's or harness's data. */
+const authored = (text: string) => murageToolText(text, STYLE, ["agents"], { agents: SERVER_NAME });
 const MAX_CREATED_PER_TURN = 4;
 /** Attached to every murage_help answer. Documentation is data: it describes
  * the product, it does not extend this bot's permissions or override the
@@ -565,9 +574,11 @@ const TOOLS = [
 ];
 
 const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_manage"]);
-const AVAILABLE_TOOLS = SKILL_AUTHORING_ENABLED
+// The descriptions are this file's own text: sibling tools in them are named
+// the way this turn's engine calls them.
+const AVAILABLE_TOOLS = murageToolDescriptions(SKILL_AUTHORING_ENABLED
   ? TOOLS
-  : TOOLS.filter((tool) => !SKILL_TOOL_NAMES.has(tool.name));
+  : TOOLS.filter((tool) => !SKILL_TOOL_NAMES.has(tool.name)), STYLE, ["agents"], { agents: SERVER_NAME });
 
 type Json = Record<string, unknown>;
 type RoutineAction = "update" | "pause" | "resume" | "run_now" | "delete";
@@ -589,7 +600,7 @@ async function api(path: string, init?: RequestInit): Promise<Json> {
     res = await fetch(HARNESS + path, {
       ...init,
       signal: init?.signal ?? AbortSignal.timeout(250_000),
-      headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, ...init?.headers },
+      headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, [TOOL_CALL_STYLE_HEADER]: STYLE, ...init?.headers },
     });
   } catch {
     throw new Error("MURAGE_AGENTS_UNAVAILABLE: the Murage control connection failed or timed out. Report the failure; do not switch to native ListAgents/SendMessage or retry the assignment blindly.");
@@ -611,7 +622,7 @@ function apiLong(path: string, body: string, signal: AbortSignal): Promise<Json>
     let url: URL;
     try { url = new URL(HARNESS + path); } catch { reject(unavailable()); return; }
     const send = url.protocol === "https:" ? httpsRequest : httpRequest;
-    const req = send(url, { method: "POST", signal, headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, "content-length": Buffer.byteLength(body) } }, res => {
+    const req = send(url, { method: "POST", signal, headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, [TOOL_CALL_STYLE_HEADER]: STYLE, "content-length": Buffer.byteLength(body) } }, res => {
       const chunks: Buffer[] = []; let size = 0;
       res.on("data", (chunk: Buffer) => { size += chunk.length; if (size > 32 * 1024 * 1024) { req.destroy(); reject(unavailable()); return; } chunks.push(chunk); });
       res.on("error", () => reject(unavailable()));
@@ -634,7 +645,7 @@ function apiLong(path: string, body: string, signal: AbortSignal): Promise<Json>
  * succeeded; if it fails, the caller still gets the preview and a notice. */
 const capResult = (text: string) => boundedAgentResult(text, (retained, truncated) =>
   api("/api/internal/tool-result", { method: "POST", signal: AbortSignal.timeout(3_000),
-    body: JSON.stringify({ text: retained, truncated }) }));
+    body: JSON.stringify({ text: retained, truncated }) }), callable("tool_result_read"));
 
 function jsonRecord(value: unknown): value is Json {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -772,7 +783,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     if (!jsonRecord(args) || Object.keys(args).some(key => !["question", "limit"].includes(key))
       || (args.question !== undefined && (typeof args.question !== "string" || args.question.length > 400))
       || (args.limit !== undefined && (typeof args.limit !== "number" || !Number.isInteger(args.limit) || args.limit < 1 || args.limit > 5))) {
-      return { text: "murage_help takes an optional question of at most 400 characters and an optional limit from 1 to 5.", isError: true };
+      return { text: authored("murage_help takes an optional question of at most 400 characters and an optional limit from 1 to 5."), isError: true };
     }
     const question = typeof args.question === "string" ? args.question.trim() : "";
     if (!question) return { text: JSON.stringify({ topics: helpTopics(), note: HELP_NOTE }) };
@@ -780,7 +791,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     if (!results.length) {
       return { text: JSON.stringify({
         results: [],
-        note: "Murage's documentation does not cover that. Say so plainly rather than inventing an answer, and offer the topics murage_help does cover if that would help.",
+        note: authored("Murage's documentation does not cover that. Say so plainly rather than inventing an answer, and offer the topics murage_help does cover if that would help."),
         topics: helpTopics(),
       }) };
     }
@@ -796,7 +807,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     if (!jsonRecord(args) || Object.keys(args).some(key => !["query", "max_results"].includes(key))
       || typeof args.query !== "string" || !args.query.trim() || args.query.length > 4096
       || (args.max_results !== undefined && (typeof args.max_results !== "number" || !Number.isInteger(args.max_results) || args.max_results < 1 || args.max_results > 10))) {
-      return { text: "web_search needs a nonempty query of at most 4096 characters and optional max_results from 1 to 10. Provider and credentials are configured in Settings.", isError: true };
+      return { text: authored("web_search needs a nonempty query of at most 4096 characters and optional max_results from 1 to 10. Provider and credentials are configured in Settings."), isError: true };
     }
     const result = await api("/api/internal/web-search", { method: "POST", body: JSON.stringify({
       fromBotId: BOT_ID, fromThreadId: THREAD_ID, query: args.query, maxResults: args.max_results ?? 5,
@@ -821,13 +832,13 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${team}${rank}${b.busy ? ", busy" : ""}${b.reachable === false ? ", coordinate through its team lead" : ""}]`;
     });
     return {
-      text: `Bots you can inspect:\n${lines.join("\n")}\n\nAssign work with delegate_bot within your permitted roster; seeing a bot does not grant direct messaging access. Use ask_bot only for a short answer you need inline. Use get_bot to inspect or update a profile.`,
+      text: `Bots you can inspect:\n${lines.join("\n")}\n\n${authored("Assign work with delegate_bot within your permitted roster; seeing a bot does not grant direct messaging access. Use ask_bot only for a short answer you need inline. Use get_bot to inspect or update a profile.")}`,
     };
   }
   if (name === "ask_bot") {
     const toBotId = String(args.bot_id ?? "").trim();
     const message = String(args.message ?? "").trim();
-    if (!toBotId || !message) return { text: "ask_bot needs bot_id and message.", isError: true };
+    if (!toBotId || !message) return { text: authored("ask_bot needs bot_id and message."), isError: true };
     const r = await api(`/api/internal/ask-bot`, {
       method: "POST",
       body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, toBotId, message, depth: DEPTH }),
@@ -843,7 +854,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       const amount = waitedSeconds < 60 ? waitedSeconds : Math.round(waitedSeconds / 60);
       const unit = waitedSeconds < 60 ? "second" : "minute";
       return {
-        text: `${r.toBotName ?? "That bot"} is still working after ${amount} ${unit}${amount === 1 ? "" : "s"}: the ask was converted to a delegation so the reply is not lost. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use check_delegation in a later turn only if the user asks for status.`,
+        text: `${r.toBotName ?? "That bot"} is still working after ${amount} ${unit}${amount === 1 ? "" : "s"}: the ask was converted to a delegation so the reply is not lost. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use ${callable("check_delegation")} in a later turn only if the user asks for status.`,
       };
     }
     if (r.busy) {
@@ -853,7 +864,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       if (taskId) {
         delegationTaskIdsThisTurn.add(taskId);
         return {
-          text: `${r.toBotName ?? "That bot"} is busy right now, so your message was queued as a delegation instead: it runs after your current turn ends. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use check_delegation in a later turn only if the user asks for status.`,
+          text: `${r.toBotName ?? "That bot"} is busy right now, so your message was queued as a delegation instead: it runs after your current turn ends. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use ${callable("check_delegation")} in a later turn only if the user asks for status.`,
         };
       }
       return { text: `That bot is busy right now: try again after it finishes.` };
@@ -865,7 +876,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const toBotId = String(args.bot_id ?? "").trim();
     const message = String(args.message ?? "").trim();
     const reason = typeof args.reason === "string" ? args.reason.trim() : "";
-    if (!toBotId || !message) return { text: "delegate_bot needs bot_id and message.", isError: true };
+    if (!toBotId || !message) return { text: authored("delegate_bot needs bot_id and message."), isError: true };
     const body: Record<string, unknown> = {
       fromBotId: BOT_ID,
       fromThreadId: THREAD_ID,
@@ -890,7 +901,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
   if (name === "check_delegation" || name === "wait_delegation") {
     const taskId = String(args.task_id ?? "").trim();
     if (!/^[\w-]{4,64}$/.test(taskId)) {
-      return { text: `${name} needs the "task_id" that delegate_bot returned, e.g. {"task_id":"1f0c2f4e-..."}.`, isError: true };
+      return { text: `${callable(name)} needs the "task_id" that ${callable("delegate_bot")} returned, e.g. {"task_id":"1f0c2f4e-..."}.`, isError: true };
     }
     if (delegationTaskIdsThisTurn.has(taskId)) {
       return {
@@ -932,7 +943,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const section = String(args.section ?? "").trim();
     const lead = args.lead === true;
     if (!botName || !role || !instructions) {
-      return { text: "create_bot needs name, role, and instructions.", isError: true };
+      return { text: authored("create_bot needs name, role, and instructions."), isError: true };
     }
     if (createdThisTurn >= MAX_CREATED_PER_TURN) {
       return { text: `You can create at most ${MAX_CREATED_PER_TURN} bots in one turn. Use the team you have before adding more.`, isError: true };
@@ -955,13 +966,13 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       ? "Auto mode (inherited from you; computer off, destructive and sensitive actions still ask)"
       : "Ask mode (the user approves each action)";
     return {
-      text: `Created @${r.name ?? botName} in ${r.section ?? "General"} [id: ${r.id}], ${mode}. Assign work with delegate_bot.`,
+      text: `Created @${r.name ?? botName} in ${r.section ?? "General"} [id: ${r.id}], ${mode}. Assign work with ${callable("delegate_bot")}.`,
     };
   }
   if (name === "request_credential") {
     const credentialId = args.credential_id;
     if (!isCredentialTargetId(credentialId)) {
-      return { text: "request_credential needs a supported credential_id.", isError: true };
+      return { text: authored("request_credential needs a supported credential_id."), isError: true };
     }
     const reason = typeof args.reason === "string" ? args.reason.trim().slice(0, 240) : "";
     const r = await api("/api/internal/request-credential", {
@@ -1002,7 +1013,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const { fields: routine, error: scheduleError } = routineFields(args);
     if (scheduleError) return { text: scheduleError, isError: true };
     if (!routine.name || !routine.instructions || !routine.schedule) {
-      return { text: "propose_routine needs name, instructions, and schedule.", isError: true };
+      return { text: authored("propose_routine needs name, instructions, and schedule."), isError: true };
     }
     if (args.watch !== undefined) {
       if (!jsonRecord(args.watch) || Object.keys(args.watch).some(key => !["relative_path", "expires_at", "max_checks"].includes(key))) return { text: "A file watch needs only relative_path, expires_at and max_checks.", isError: true };
@@ -1026,7 +1037,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const routineId = String(args.routine_id ?? "").trim();
     const action = routineAction(args.action);
     if (!routineId || !action) {
-      return { text: "propose_routine_action needs a routine_id and supported action.", isError: true };
+      return { text: authored("propose_routine_action needs a routine_id and supported action."), isError: true };
     }
     const body: Json = {
       fromBotId: BOT_ID,
@@ -1059,7 +1070,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const skills = Array.isArray(r.skills) ? r.skills : [];
     const staged = Array.isArray(r.staged) ? r.staged : [];
     if (!skills.length && !staged.length) {
-      return { text: "This bot has no imported skills and nothing staged. Use skill_manage action=\"create\" to stage one for the user to confirm." };
+      return { text: authored("This bot has no imported skills and nothing staged. Use skill_manage action=\"create\" to stage one for the user to confirm.") };
     }
     const live = skills.length
       ? skills.map((skill) => {
@@ -1085,19 +1096,19 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
   }
   if (name === "skill_manage") {
     if (args.action !== "create" && args.action !== "update") {
-      return { text: 'skill_manage action must be "create" or "update".', isError: true };
+      return { text: authored('skill_manage action must be "create" or "update".'), isError: true };
     }
     const skillMd = typeof args.skill_md === "string" ? args.skill_md : "";
     if (!skillMd.trim()) {
-      return { text: 'skill_manage needs skill_md: the full SKILL.md including YAML frontmatter.', isError: true };
+      return { text: authored('skill_manage needs skill_md: the full SKILL.md including YAML frontmatter.'), isError: true };
     }
     const source = typeof args.source === "string" ? args.source.trim() : "";
     if (!source) {
-      return { text: 'skill_manage needs source: the URL, folder, or "conversation" used to author the skill.', isError: true };
+      return { text: authored('skill_manage needs source: the URL, folder, or "conversation" used to author the skill.'), isError: true };
     }
     const skillName = typeof args.skill_name === "string" ? args.skill_name.trim() : "";
     if (args.action === "update" && !skillName) {
-      return { text: "skill_manage needs skill_name for an update. Copy the exact name from skills_list.", isError: true };
+      return { text: authored("skill_manage needs skill_name for an update. Copy the exact name from skills_list."), isError: true };
     }
     const r = await api("/api/internal/skills/stage", {
       method: "POST",
@@ -1132,7 +1143,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const r = await api(`/api/internal/tool-result?id=${encodeURIComponent(args.id)}&offset=${args.offset ?? 0}`, { signal: AbortSignal.timeout(3_000) });
     const text = String(r.text ?? "");
     return { text: `${text}\n\n[${Number(r.nextOffset) < Number(r.length)
-      ? `Read more with tool_result_read id "${args.id}" and offset ${r.nextOffset}.`
+      ? `Read more with ${callable("tool_result_read")} id "${args.id}" and offset ${r.nextOffset}.`
       : `End of retained result.${r.truncated ? " The original tail exceeded the storage limit and was omitted." : ""}`}]` };
   }
   return { text: `Unknown tool: ${name}`, isError: true };

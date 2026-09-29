@@ -1,4 +1,5 @@
 import { canReach, type ReachableBot } from "./store.ts";
+import { murageTool } from "./tool-call-context.ts";
 
 /** Resolve only after scope filtering; never fall back to a provider session address. */
 export function resolveCoordinationTarget<T extends ReachableBot & { id: string; name: string; hidden?: boolean }>(
@@ -11,7 +12,7 @@ export function resolveCoordinationTarget<T extends ReachableBot & { id: string;
   const exact = peers.filter(bot => bot.name.trim().toLocaleLowerCase() === name);
   const matches = exact.length ? exact : peers.filter(bot => bot.name.trim().toLocaleLowerCase().startsWith(name + " ("));
   if (matches.length !== 1) throw Object.assign(new Error(matches.length
-    ? "BOT_NAME_AMBIGUOUS: use the stable bot ID from list_bots"
-    : "BOT_NOT_ON_ROSTER: use the stable bot ID from list_bots, not a native provider session address"), { status: matches.length ? 409 : 404 });
+    ? `BOT_NAME_AMBIGUOUS: use the stable bot ID from ${murageTool("list_bots")}`
+    : `BOT_NOT_ON_ROSTER: use the stable bot ID from ${murageTool("list_bots")}, not a native provider session address`), { status: matches.length ? 409 : 404 });
   return matches[0];
 }

@@ -36,6 +36,7 @@ import {
   type CropRegion,
 } from "./computer-observation.ts";
 import { CONTROL_REFUSAL, createControlClient } from "./control-client.ts";
+import { TOOL_CALL_STYLE_ENV, TOOL_SERVER_NAME_ENV, murageToolText, parseToolCallStyle } from "../shared/murage-tool-names.ts";
 import {
   ensureRemoteCuaCommand,
   REMOTE_CUA_EXECUTABLE,
@@ -832,7 +833,10 @@ const OPEN_WHILE_DRIVEN = new Set(["computer_request_help", "computer_status", "
 
 async function call(id: unknown, name: string, args: any) {
   if (!OPEN_WHILE_DRIVEN.has(name) && (await control.state(true)).held) {
-    return text(id, CONTROL_REFUSAL, true);
+    // Names its wait tool the way this turn's engine calls it (the driver
+    // that mounted this server says how; unset is the bare name).
+    return text(id, murageToolText(CONTROL_REFUSAL, parseToolCallStyle(process.env[TOOL_CALL_STYLE_ENV]), ["computer"],
+      { computer: process.env[TOOL_SERVER_NAME_ENV] || "computer" }), true);
   }
   if (name === "computer_request_help") {
     if (!control.configured) {

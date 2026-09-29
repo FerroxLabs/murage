@@ -193,3 +193,24 @@ it.each([
   // Server names are routing labels, never something to tell the owner.
   expect(lines[0]).toContain("These names are internal: never mention them to the person you are helping.");
 });
+
+it.each(["valid", "grok", "other-engine"])("%s tells Murage's own agents and browser servers how the engine calls their tools", async scenario => {
+  const f = await fixture(scenario);
+  const stub = { command: process.execPath, args: ["unused-fixture-proxy"], env: { MURAGE_BOT_ID: "fixture" } };
+  const sent = await f.instance.adapter.sendTurn({ ...f.turn, integrations: { agents: stub, memory: f.memory, browser: stub, localComputer: stub, custom: { research: { ...stub, env: {} } } } });
+  if (scenario !== "valid") {
+    const opened = await f.recorder.until(event => event.type === "request.opened");
+    if (opened.type !== "request.opened" || typeof opened.requestId !== "string") throw Error("missing request");
+    await f.instance.adapter.respondToRequest(f.threadId, opened.requestId, { behavior: "deny" });
+  }
+  await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
+  const observed = JSON.parse(readFileSync(f.dump, "utf8"))[0];
+  const env = (name: string) => observed.definitions[0].servers.find((server: { name: string }) => server.name === name).env as Array<{ name: string; value: string }>;
+  const style = (name: string) => env(name).filter(entry => entry.name === "MURAGE_TOOL_CALL_STYLE" || entry.name === "MURAGE_MCP_SERVER_NAME");
+  for (const name of ["agents", "browser"]) {
+    expect(env(name)).toContainEqual({ name: "MURAGE_BOT_ID", value: "fixture" });
+    expect(style(name)).toEqual(scenario === "other-engine" ? [] : [{ name: "MURAGE_TOOL_CALL_STYLE", value: "use-tool" }, { name: "MURAGE_MCP_SERVER_NAME", value: name }]);
+  }
+  // Not Murage's text: the owner's own servers, the external computer server and memory are left as they were.
+  for (const name of ["research", "computer", observed.alias]) expect(style(name)).toEqual([]);
+});

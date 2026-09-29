@@ -656,6 +656,9 @@ describe("ACP turns (fake CLI)", () => {
       env: [
         { name: "MURAGE_HARNESS_URL", value: "http://127.0.0.1:1" },
         { name: "MURAGE_COMMS_TOKEN", value: "built-in-token" },
+        // Grok reaches MCP tools only through use_tool: the proxy is told so.
+        { name: "MURAGE_TOOL_CALL_STYLE", value: "use-tool" },
+        { name: "MURAGE_MCP_SERVER_NAME", value: "agents" },
       ],
     });
     expect(seen.mcpServers).toContainEqual({

@@ -16,6 +16,7 @@ import type { LocalOutputReceipt } from "../shared/output-publication.ts";
 import { completeImageOutput, outputReceipt, outputReceiptsForRun, retainImageOutput, type ImageOutputCompletion } from "./output-publication.ts";
 import { conversationImageAttachments } from "./image-reference-resolver.ts";
 import { recordRenderPrompt } from "./image-library.ts";
+import { murageTool } from "./tool-call-context.ts";
 
 export interface ImageActor { botId: string; threadId: string; generation: string; assertActive: () => void; signal: AbortSignal }
 interface Pending { threadId: string; botId: string; messageId: string; settle: (allow: boolean, source?: "user" | "system") => void; active: () => void;
@@ -124,8 +125,8 @@ export function publishImage(store: Store, actor: ImageActor, image: DecodedGene
   return imageArtifact(completeImageOutput(deps, receipt.id, { transcriptText: transcriptText(metadata), artifactName: artifactName(metadata) }));
 }
 
-const recoveryMessage = (category?: string) => `Image received and kept locally, but publishing it to this conversation did not finish${category ? ` (${category})` : ""}. `
-  + "Call generate_image again with the same request_id during this turn to finish; no new provider request will be sent.";
+export const imagePublishRecoveryMessage = (category?: string) => `Image received and kept locally, but publishing it to this conversation did not finish${category ? ` (${category})` : ""}. `
+  + `Call ${murageTool("generate_image")} again with the same request_id during this turn to finish; no new provider request will be sent.`;
 
 export type PublishOperationImage = (image: DecodedGeneratedImage, metadata: GeneratedImageMetadata) => Promise<ImageArtifact>;
 export type ImageReserve = (details: ImageOperationDetails, card?: ImageApprovalCardInput) => Promise<{ finish: (outcome: ImageAttemptOutcome) => void }>;
@@ -257,7 +258,7 @@ export class ImageOperations {
         // C2: valid bytes were received and retained. Keep the operation
         // resumable from them; never re-dispatch the provider request.
         this.db().prepare("UPDATE image_operations SET state='publish-pending',updated_at=? WHERE id=?").run(Date.now(), id);
-        throw error(409, recoveryMessage(outputReceipt(database(), receipt.id)?.errorCategory));
+        throw error(409, imagePublishRecoveryMessage(outputReceipt(database(), receipt.id)?.errorCategory));
       }
       throw e;
     }).finally(() => { this.jobs.delete(id); this.workspaces.delete(actor.botId); });
@@ -286,7 +287,7 @@ export class ImageOperations {
       return value as T;
     }).catch(e => {
       const category = outputReceipt(database(), receipts[0]!.id)?.errorCategory;
-      throw (e as { status?: number }).status === 409 && /revoked|cancel/i.test(String((e as Error).message)) ? e : error(409, recoveryMessage(category));
+      throw (e as { status?: number }).status === 409 && /revoked|cancel/i.test(String((e as Error).message)) ? e : error(409, imagePublishRecoveryMessage(category));
     }).finally(() => { this.jobs.delete(id); this.workspaces.delete(actor.botId); });
     this.jobs.set(id, job); return job;
   }

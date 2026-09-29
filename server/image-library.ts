@@ -19,6 +19,7 @@ import { IMAGE_GENERATION_REFERENCE_MAX } from "../shared/media-assets.ts";
 import { GENERATED_IMAGE_MAX_BYTES } from "./attachments.ts";
 import { IMAGE_PROMPT_HARD_MAX } from "../shared/image-capabilities.ts";
 import type { ImageReference } from "./image-generation.ts";
+import { murageTool } from "./tool-call-context.ts";
 
 export type ImageLibraryScope = "workspace" | "bot";
 /** Who is asking: a bot (its own scope plus the workspace) or the owner (everything). */
@@ -106,7 +107,7 @@ function visibleBlockRows(db: DatabaseSync, actor: ImageLibraryActor, name: stri
 export function getPromptBlock(db: DatabaseSync, actor: ImageLibraryActor, ref: string): PromptBlock {
   const { name, version } = parseLibraryRef(ref, "block");
   const rows = visibleBlockRows(db, actor, name);
-  if (!rows.length) refuse(404, `No saved prompt block is named ${name}. list_prompt_blocks shows the ones you can use.`);
+  if (!rows.length) refuse(404, `No saved prompt block is named ${name}. ${murageTool("list_prompt_blocks")} shows the ones you can use.`);
   const row = version === undefined ? rows[0] : rows.find(item => item.version === version);
   if (!row) refuse(404, `${name} has no version ${version}. Its latest is v${rows[0]!.version}.`);
   return blockOf(row!);
@@ -229,7 +230,7 @@ export function resolveReferencePack(db: DatabaseSync, dataDir: string, actor: I
   const rows = (scope: ImageLibraryScope, botId: string) => database.prepare("SELECT * FROM image_reference_packs WHERE scope=? AND bot_id=? AND name=? AND deleted_at IS NULL ORDER BY version DESC").all(scope, botId, name) as unknown as PackRow[];
   let found = actor.kind === "bot" ? rows("bot", actor.botId) : [];
   if (!found.length) found = rows("workspace", "");
-  if (!found.length) refuse(404, `No saved reference pack is named ${name}. list_reference_packs shows the ones you can use. Nothing was sent.`);
+  if (!found.length) refuse(404, `No saved reference pack is named ${name}. ${murageTool("list_reference_packs")} shows the ones you can use. Nothing was sent.`);
   const row = version === undefined ? found[0] : found.find(item => item.version === version);
   if (!row) refuse(404, `Reference pack ${name} has no version ${version}. Its latest is v${found[0]!.version}. Nothing was sent.`);
   let images: PackImage[] = [];

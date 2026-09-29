@@ -14,6 +14,7 @@
 // session/update notifications, so updates are double-gated: nothing emits
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { reachesMcpThroughUseTool } from "../../capabilities-primer.ts";
+import { TOOL_CALL_STYLE_ENV, TOOL_SERVER_NAME_ENV } from "../../../shared/murage-tool-names.ts";
 import { applyProviderRoute, grokResumeBinding, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
 import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
@@ -1043,9 +1044,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const servers: Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }> = [];
         const acpEnv = (env: Record<string, string>) =>
           Object.entries(env).map(([name, value]) => ({ name, value: String(value) }));
+        // Murage's own servers name their sibling tools in results and
+        // refusals; on an engine that reaches them only through use_tool,
+        // tell each one so, and the name it is mounted under.
+        const named = (name: string, env: Record<string, string>) => reachesMcpThroughUseTool(support.driverKind)
+          ? { ...env, [TOOL_CALL_STYLE_ENV]: "use-tool", [TOOL_SERVER_NAME_ENV]: name } : env;
         const agents = turn.integrations?.agents;
         if (agents) {
-          servers.push({ name: "agents", command: agents.command, args: agents.args, env: acpEnv(agents.env) });
+          servers.push({ name: "agents", command: agents.command, args: agents.args, env: acpEnv(named("agents", agents.env)) });
         }
         const memory = turn.integrations?.memory;
         if (memory) {
@@ -1062,7 +1068,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }
         const browser = turn.integrations?.browser;
         if (browser) {
-          servers.push({ name: "browser", command: browser.command, args: browser.args, env: acpEnv(browser.env) });
+          servers.push({ name: "browser", command: browser.command, args: browser.args, env: acpEnv(named("browser", browser.env)) });
         }
         // The bot's computer, mounted exactly like the Claude driver does.
         // Cloud boxes use the REST adapter; host and sandbox Cua connections
@@ -1073,7 +1079,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             name: "computer",
             command: process.execPath,
             args: [COMPUTER_PROXY_PATH],
-            env: acpEnv({ ELECTRON_RUN_AS_NODE: "1", ...computerProxyEnv(computer) }),
+            env: acpEnv(named("computer", { ELECTRON_RUN_AS_NODE: "1", ...computerProxyEnv(computer) })),
           });
         } else if (turn.integrations?.localComputer) {
           const local = turn.integrations.localComputer;

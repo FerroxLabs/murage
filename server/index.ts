@@ -25,7 +25,7 @@ import { memoryOwnerRoute, memoryExtractorInstanceId } from "./memory/settings.t
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./memory/extractor-connections.ts";
 import { syncTrackedMemoryImports, migrateDetectedMemoryNotebooks } from "./memory/import.ts";
 import { standingContextParts, standingContextSourceIds } from "./standing-context.ts";
-import { TURN_PROMPTS, botShapeRows, directPersona, directTurnLayers, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, roomBulletinLine, roomMembersLine, roomPersonaLines, shapeLayer, skillLayers, speakAsLine, type ShapeLayer } from "./bot-shapes.ts";
+import { TURN_PROMPTS, botShapeRows, directPersona, directTurnLayers, engineToolText, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, lineLayers, recordTurnShapes, roomBulletinLine, roomMembersLine, roomPersonaLines, shapeLayer, skillLayers, speakAsLine, type ShapeLayer } from "./bot-shapes.ts";
 import { handleHouseRulesApi, houseRulesPrompt, readHouseRules } from "./house-rules.ts";
 import { aboutMePrompt, handleAboutMeApi } from "./about-me.ts";
 import { handleWhatsNewApi } from "./whats-new.ts";
@@ -181,6 +181,8 @@ import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
 import { capabilitiesPrimer, roomToolAccessLine, turnCapabilityFacts, type ImageConnectionFact } from "./capabilities-primer.ts";
+import { murageTool, setToolCallStyle, withToolCallScope } from "./tool-call-context.ts";
+import { TOOL_CALL_STYLE_HEADER, murageToolText, parseToolCallStyle, toolCallStyleFor } from "../shared/murage-tool-names.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
 import { browserRefusal, isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
@@ -6198,7 +6200,7 @@ async function startTurn(
     instance.adapter.capabilities.agentsMcp === true;
   const turnPrompt = withExternalDelivery(
     promptWithReply(
-      routineRunPrompt ? `${routineRunPromptNote(routineRunPrompt.trigger, routineRunPrompt.routineName)}\n\n${text}` : skillAuthoring ? expandLearnTurnText(text) : text,
+      routineRunPrompt ? `${routineRunPromptNote(routineRunPrompt.trigger, routineRunPrompt.routineName)}\n\n${text}` : skillAuthoring ? expandLearnTurnText(text, toolCallStyleFor(instance.driverKind)) : text,
       replyForPrompt(threadId, opts?.replyTo, memoryNotOwner),
       cfg.profile?.name?.trim() || "User",
     ),
@@ -6300,6 +6302,7 @@ async function startTurn(
       // One layer per skill, so "What shapes <bot>" lists each (bot-shapes.ts).
       const skillShapes = skillLayers(selectedSkills, {
         includeRoot: worksInWorkspace && opts?.runOn !== "cloud",
+        toolCallStyle: toolCallStyleFor(instance.driverKind),
       });
       const packagePlaybooks = installedPlaybookInstructions(text, pinnedProcedures.playbooks);
       // An explicit working folder wins for new tasks; otherwise they use
@@ -6574,21 +6577,25 @@ async function startTurn(
             reachablePeers,
           )
         : [];
+      // Tool names in every Murage-written line of this turn, as this
+      // engine calls them (shared/murage-tool-names.ts).
+      const toolCallStyle = toolCallStyleFor(instance.driverKind);
       const coordinationPrompt = bot.chiefOfStaff
         ? chiefOfStaffSystemPrompt(
             bot.id,
             store.bots,
             Boolean(integrations.agents),
             openMurageStatusSystemPrompt(),
+            toolCallStyle,
           )
         // The Chief's other branch. The generic line below says "the other
         // bots in your section", which is the one thing an individual
         // assistant does not have — its single peer is the workspace Chief,
         // across the section boundary.
         : isIndividualAssistant(bot)
-          ? individualAssistantSystemPrompt(bot.id, store.bots, Boolean(integrations.agents))
+          ? individualAssistantSystemPrompt(bot.id, store.bots, Boolean(integrations.agents), toolCallStyle)
           : integrations.agents && reachablePeers.length > 0
-            ? TURN_PROMPTS.sectionPeers
+            ? murageToolText(TURN_PROMPTS.sectionPeers, toolCallStyle)
             : "";
       const credentialPrompt = integrations.agents
         ? ` ${TURN_PROMPTS.credential}`
@@ -8373,6 +8380,9 @@ async function runGroupMemberTurn(
     .filter((b): b is NonNullable<typeof b> => Boolean(b))
     .map((b) => `@${b.name}${b.title ? ` (${b.title})` : ""}`)
     .join(", ");
+  // Tool names in every Murage-written line of this turn, as this engine
+  // calls them (shared/murage-tool-names.ts).
+  const roomToolStyle = toolCallStyleFor(instance.driverKind);
   // One array joined with "\n", as it always was, now in labelled groups
   // for "What shapes <bot>" (bot-shapes.ts lineLayers keeps the bytes).
   const system = lineLayers([
@@ -8397,6 +8407,7 @@ async function runGroupMemberTurn(
             store.bots,
             Boolean(integrations.agents),
             openMurageStatusSystemPrompt(),
+            roomToolStyle,
           )
         : TURN_PROMPTS.roomReply,
       // Room turns carry no capabilities primer, yet mount the agents tools:
@@ -8406,13 +8417,13 @@ async function runGroupMemberTurn(
     ] },
     // Talk to Moss, get Moss: whoever answers speaks only for itself.
     { id: "speak-as", lines: [speakAsLine(bot.name)] },
-    { id: "credential", lines: [integrations.agents && TURN_PROMPTS.credential] },
-    { id: "routines", lines: [integrations.agents && TURN_PROMPTS.routines] },
-    { id: "learn", lines: [skillAuthoring && TURN_PROMPTS.learn] },
+    { id: "credential", lines: [integrations.agents && engineToolText(TURN_PROMPTS.credential, roomToolStyle)] },
+    { id: "routines", lines: [integrations.agents && engineToolText(TURN_PROMPTS.routines, roomToolStyle)] },
+    { id: "learn", lines: [skillAuthoring && engineToolText(TURN_PROMPTS.learn, roomToolStyle)] },
     { id: "goal", lines: [orchestration?.systemInstructions] },
   ]);
 
-  const learnTurn = skillAuthoring && latestUser?.text ? expandLearnTurnText(latestUser.text) : "";
+  const learnTurn = skillAuthoring && latestUser?.text ? expandLearnTurnText(latestUser.text, roomToolStyle) : "";
   const learnBlock = learnTurn && learnTurn !== latestUser?.text ? `\n\n${learnTurn}` : "";
   let text = `${roomContextText()}\n\n(Reply to the conversation above as ${bot.name}.)${learnBlock}${cardContinuation ? `\n\n${cardContinuation}` : ""
   }`;
@@ -8460,13 +8471,13 @@ async function runGroupMemberTurn(
     // What the profile said this assistant's job needs. A packaged bot does
     // not stop needing Gmail because it is answering in a room.
     shapeLayer("required-apps", composio.requiredAppsSystemPrompt(bot.installedPackage?.requiredApps)),
-    shapeLayer("browser", integrations.browser ? unifiedBrowserSystemPrompt(unifiedBrowserProtection(threadId)) : ""),
+    shapeLayer("browser", integrations.browser ? engineToolText(unifiedBrowserSystemPrompt(unifiedBrowserProtection(threadId)), roomToolStyle) : ""),
     // The member's own team brief and MEMORY.md, as in its direct chat —
     // only when the room's human audience is the owner (standing-context.ts).
     shapeLayer("team-brief", roomStanding.teamBrief),
     shapeLayer("memory", roomStanding.memory),
     shapeLayer("skills-index", workspace ? pinnedProcedures.importedPrompt : ""),
-    ...skillLayers(selectedSkills, { includeRoot: Boolean(workspace) }),
+    ...skillLayers(selectedSkills, { includeRoot: Boolean(workspace), toolCallStyle: roomToolStyle }),
     shapeLayer("playbooks", installedPlaybookInstructions(text, pinnedProcedures.playbooks)),
   ];
 
@@ -11394,7 +11405,10 @@ function wouldRunEngineCommand(bot: { id: string; modelSelection: { instanceId: 
   return Boolean(instance && !replyTo && engineCommandForTurn(bot.id, instance.driverKind, text));
 }
 
-const server = createServer(async (req, res) => {
+// Each request gets its own tool-call scope: an internal route records its
+// turn's style there, so text written deep inside a route names tools the way
+// that turn's engine calls them (server/tool-call-context.ts).
+const server = createServer((req, res) => withToolCallScope(async () => {
   let url: URL;
   try {
     url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
@@ -11720,6 +11734,7 @@ const server = createServer(async (req, res) => {
       if (!internalClaim) {
         return json(res, 401, { error: "unauthorized" });
       }
+      setToolCallStyle(parseToolCallStyle(req.headers[TOOL_CALL_STYLE_HEADER]));
       const requiredKind: InternalCapabilityKind = path.startsWith("/api/internal/memory/") ? "memory" : path.startsWith("/api/internal/connectors/")
         ? "connectors" : ["/api/internal/computer-control", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path) ? "computer" : "agents";
       if (internalClaim.kind !== requiredKind) return json(res, 403, { error: "capability cannot access this service" });
@@ -12220,12 +12235,12 @@ const server = createServer(async (req, res) => {
           const parsedForBotId = z.string().max(128).safeParse(body.forBotId);
           const forBotId = parsedForBotId.success ? parsedForBotId.data.trim() : "";
           if (!forBotId) {
-            return json(res, 400, { error: 'for_bot_id must be a bot id from list_bots, e.g. { "for_bot_id": "bot-abc123" }' });
+            return json(res, 400, { error: `for_bot_id must be a bot id from ${murageTool("list_bots")}, e.g. { "for_bot_id": "bot-abc123" }` });
           }
           if (forBotId !== from.id) {
             const target = store.bot(forBotId);
             if (!target) {
-              return json(res, 404, { error: "no bot with that id: call list_bots and copy the exact id from the result" });
+              return json(res, 404, { error: `no bot with that id: call ${murageTool("list_bots")} and copy the exact id from the result` });
             }
             if (!canReach(from, target)) {
               return json(res, 403, { error: "that bot is not on your roster" });
@@ -12317,7 +12332,7 @@ const server = createServer(async (req, res) => {
         if (!action) return json(res, 400, { error: 'action must be "create" or "update"' });
         const skillMd = typeof body.skill_md === "string" ? body.skill_md : "";
         if (!skillMd.trim()) {
-          return json(res, 400, { error: 'skill_manage needs skill_md: the full SKILL.md including YAML frontmatter, for example ---\\nname: file-expense\\ndescription: Files an expense in the company portal.\\n---\\n\\n# File expense\\n' });
+          return json(res, 400, { error: `${murageTool("skill_manage")} needs skill_md: the full SKILL.md including YAML frontmatter, for example ---\\nname: file-expense\\ndescription: Files an expense in the company portal.\\n---\\n\\n# File expense\\n` });
         }
         const source = internalOwner.memorySkillSource ?? (typeof body.source === "string" ? body.source.trim() : "");
         if (!source) return json(res, 400, { error: 'source must be a URL, folder, or "conversation"' });
@@ -12697,12 +12712,12 @@ const server = createServer(async (req, res) => {
         if (isWorkspaceChief(chief)) {
           if (!requestedSection) {
             return json(res, 400, {
-              error: "name the team this specialist joins: create_bot cannot add bots to your own roster",
+              error: `name the team this specialist joins: ${murageTool("create_bot")} cannot add bots to your own roster`,
             });
           }
           if (sectionKey(requestedSection) === sectionKey(chief.section)) {
             return json(res, 400, {
-              error: "create_bot cannot add bots to your own roster: name one of the teams from list_bots",
+              error: `${murageTool("create_bot")} cannot add bots to your own roster: name one of the teams from ${murageTool("list_bots")}`,
             });
           }
           const lead = store.bots.find(
@@ -12777,7 +12792,7 @@ const server = createServer(async (req, res) => {
             candidate.name.trim().toLowerCase() === name.toLowerCase(),
         );
         if (duplicate) {
-          return json(res, 409, { error: `@${duplicate.name} already exists in this section; use list_bots` });
+          return json(res, 409, { error: `@${duplicate.name} already exists in this section; use ${murageTool("list_bots")}` });
         }
         if (wantsLead) {
           const error = leadershipAdmissionError(registry.get(modelSelection.instanceId), modelSelection.instanceId);
@@ -18425,7 +18440,7 @@ const server = createServer(async (req, res) => {
     const status = (e as any)?.status ?? 500;
     return json(res, status, { error: e instanceof Error ? e.message : String(e) });
   }
-});
+}));
 
 const stopModelCatalogRefresh = startModelCatalogRefresh(async signal => {
   await Promise.all([registry.refreshModelCatalogs(), providerConnections.refreshDue(signal)]);

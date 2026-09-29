@@ -23,6 +23,13 @@ import { z } from "zod";
 
 import { safeBrowserUrl } from "../computer-observation.ts";
 import { createControlClient } from "../control-client.ts";
+import { TOOL_CALL_STYLE_ENV, TOOL_SERVER_NAME_ENV, murageToolDescriptions, murageToolText, parseToolCallStyle } from "../../shared/murage-tool-names.ts";
+
+/** Text written here, with this server's tools named the way the turn's
+ * engine calls them (set by the driver that mounted this server). */
+const engineStyle = () => parseToolCallStyle(process.env[TOOL_CALL_STYLE_ENV]);
+const engineMount = () => ({ browser: process.env[TOOL_SERVER_NAME_ENV] || "browser" });
+export const engineText = (text: string) => murageToolText(text, engineStyle(), ["browser"], engineMount());
 
 const HOST = (process.env.MURAGE_BROWSER_URL ?? "").replace(/\/$/, "");
 const TOKEN = process.env.MURAGE_BROWSER_TOKEN ?? "";
@@ -118,9 +125,9 @@ export function classifyWall(page: { url: string; title: string; yaml?: string |
 }
 
 function wallNote(kind: WallKind): string {
-  return kind === "verification"
+  return engineText(kind === "verification"
     ? "This looks like a bot check or verification page. Do not try to solve it: call browser_request_takeover so the user can complete it in the Browser panel, then continue from the page you get back."
-    : "This looks like a sign-in step. Never type the user's password or a one-time code: call browser_request_takeover so they can sign in in the Browser panel, then continue from the page you get back.";
+    : "This looks like a sign-in step. Never type the user's password or a one-time code: call browser_request_takeover so they can sign in in the Browser panel, then continue from the page you get back.");
 }
 
 const PROTECTED_FIELD_NAME = /\b(password|passwd|passcode|client[ _-]?secret|api[ _-]?key|secret[ _-]?key|private[ _-]?key|signing[ _-]?key|webhook[ _-]?secret|(?:aws[ _-]?)?secret[ _-]?access[ _-]?key|access[ _-]?token|auth[ _-]?token|refresh[ _-]?token|bearer[ _-]?token|one[ _-]?time(?:[ _-]?code)?|verification[ _-]?code|security[ _-]?(?:code|answer)|recovery[ _-]?(?:code|phrase)|seed[ _-]?phrase|mnemonic|otp|pin|card[ _-]?(?:number|security|cvv|cvc)|cvv|cvc|bank[ _-]?(?:account|routing)|routing[ _-]?(?:number|code)|account[ _-]?(?:number|no)|social[ _-]?(?:security|insurance)|ssn|tax[ _-]?id)\b/i;
@@ -344,7 +351,7 @@ function textResult(text: string, isError = false): ToolResult {
 function argumentError(tool: string, error: z.ZodError): ToolResult {
   const issue = error.issues[0];
   const where = issue?.path.length ? ` (${issue.path.join(".")})` : "";
-  return textResult(`${tool}: ${issue?.message ?? "invalid arguments"}${where}`, true);
+  return textResult(engineText(`${tool}: ${issue?.message ?? "invalid arguments"}${where}`), true);
 }
 
 const TAKEOVER_WAIT_MS = 10 * 60_000;
@@ -399,7 +406,7 @@ export async function callTool(name: string, args: unknown, request: HostRequest
   // or screenshot taken while they enter a password would leak it straight
   // into model context. Only the takeover wait choreography remains open.
   if (name !== "browser_request_takeover" && (await control.state(true)).held) {
-    return textResult(BROWSER_CONTROL_REFUSAL, true);
+    return textResult(engineText(BROWSER_CONTROL_REFUSAL), true);
   }
   if (name === "browser_navigate") {
     const parsed = navigateArgs.safeParse(args);
@@ -472,7 +479,7 @@ export async function callTool(name: string, args: unknown, request: HostRequest
   }
   if (name === "browser_state") {
     const state = stateSchema.parse(await request("state"));
-    if (!state.url || state.url === "about:blank") return textResult("The browser tab is empty. Use browser_navigate to open a page.");
+    if (!state.url || state.url === "about:blank") return textResult(engineText("The browser tab is empty. Use browser_navigate to open a page."));
     return textResult(`${state.title || "Untitled"}: ${safeBrowserUrl(state.url) ?? "URL unavailable"}${state.loading === true ? " (still loading)" : ""}`);
   }
   if (name === "browser_screenshot") {
@@ -500,7 +507,7 @@ async function handle(line: string) {
   }
   if (method === "notifications/initialized" || method === "notifications/cancelled") return;
   if (method === "ping") return ok(id, {});
-  if (method === "tools/list") return ok(id, { tools: TOOLS });
+  if (method === "tools/list") return ok(id, { tools: murageToolDescriptions(TOOLS, engineStyle(), ["browser"], engineMount()) });
   if (method === "tools/call") {
     const name = params?.name ?? "";
     if (!TOOLS.some((tool) => tool.name === name)) return rpcError(id, -32602, `Unknown tool: ${name}`);

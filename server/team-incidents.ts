@@ -249,7 +249,7 @@ export function teamIncidentText(incident: TeamIncident, count: TeamIncidentCoun
     [
       "Decide, in this order:",
       "1. If the cause is something only the person can fix (a sign-in, a missing credential, an unanswered question, a setting), say so here in one or two plain sentences and stop.",
-      "2. Otherwise, if the request itself needs to change, use delegate_bot with a corrected brief.",
+      "2. Otherwise, if the request itself needs to change, delegate it again with a corrected brief.",
       "3. Either way, finish by saying in one or two sentences what broke and what you did about it.",
       "You cannot resume that thread yourself, and you must not start the same work over more than once: if it breaks again, hand it to the person.",
     ].join("\n"),

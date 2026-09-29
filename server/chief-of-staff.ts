@@ -1,4 +1,5 @@
 import { canReach, isIndividualAssistant, isWorkspaceChief, sectionKey } from "./store.ts";
+import { murageToolName, murageToolText, type ToolCallStyle } from "../shared/murage-tool-names.ts";
 
 export interface ChiefTeamMember {
   id: string;
@@ -42,20 +43,20 @@ const memberLine = (bot: ChiefTeamMember): string => {
   return `${name} (${role}, ${availabilityOf(bot)})${about ? `: ${clip(about, ROSTER_ABOUT_MAX)}` : ""}`;
 };
 
-const withOverflow = (lines: string[], total: number): string =>
+const withOverflow = (lines: string[], total: number, style: ToolCallStyle | undefined): string =>
   lines.join("\n") +
-  (total > lines.length ? `\n- …and ${total - lines.length} more (use list_bots for the full roster).` : "");
+  (total > lines.length ? `\n- …and ${total - lines.length} more (use ${murageToolName("list_bots", style)} for the full roster).` : "");
 
-const delegationGuidance = (canDelegate: boolean): string =>
+const delegationGuidance = (canDelegate: boolean, style: ToolCallStyle | undefined): string =>
   canDelegate
-    ? [
+    ? murageToolText([
         "Use Murage's agents tools (list_bots, ask_bot, delegate_bot), never native ListAgents or SendMessage: those address unrelated provider sessions. Use list_bots to confirm the live roster and stable IDs. When assigning work to a teammate, use delegate_bot: it returns immediately, keeps you available to the user, and delivers the teammate's completed result back into this conversation automatically.",
         "After delegate_bot accepts the task, acknowledge the handoff and continue with any independent work or end your turn. Do not call wait_delegation or repeatedly poll check_delegation in the same turn.",
         "Use ask_bot only for a brief consultation whose answer you must have before writing your current response. Never use ask_bot for an assigned task, background work, or anything potentially long-running.",
         "When the user asks you to assemble a team, use create_bot for each genuinely useful specialist. Give each one a clear role and instructions, then use delegate_bot to assign its work. Do not create duplicate or unnecessary bots.",
         "Delegate with a clear, self-contained brief. Say that the task is assigned, not completed; only claim completion after the teammate's result has actually arrived.",
         "You may assign work to more than one teammate when the request genuinely benefits. Stay responsive while they work, then combine their returned results when the user asks for a synthesis.",
-      ].join(" ")
+      ].join(" "), style)
     : "Your current engine cannot contact teammates. Be honest about that limitation and ask the user to choose a delegation-compatible engine before promising coordinated work.";
 
 /** The workspace tier: three groups, presented distinctly, because the Chief
@@ -71,7 +72,7 @@ const delegationGuidance = (canDelegate: boolean): string =>
  *    an individual never appears as a leaderless team.
  *  - DIRECT REPORTS: whatever else shares the Chief's own section.
  */
-function workspaceRoster(chief: ChiefTeamMember, bots: ChiefTeamMember[]): string {
+function workspaceRoster(chief: ChiefTeamMember, bots: ChiefTeamMember[], style: ToolCallStyle | undefined): string {
   const chiefSection = sectionKey(chief.section);
   const sections = new Map<string, { label: string; lead?: ChiefTeamMember; members: ChiefTeamMember[] }>();
   const individuals: ChiefTeamMember[] = [];
@@ -114,12 +115,12 @@ function workspaceRoster(chief: ChiefTeamMember, bots: ChiefTeamMember[]): strin
   );
   return [
     "Team leaders:",
-    listedTeams.length ? withOverflow(listedTeams, teamLines.length) : "- No team leaders yet. Say so rather than inventing one.",
+    listedTeams.length ? withOverflow(listedTeams, teamLines.length, style) : "- No team leaders yet. Say so rather than inventing one.",
     ...(listedIndividuals.length
-      ? ["Individual assistants (they lead no team and report to you directly):", withOverflow(listedIndividuals, individualLines.length)]
+      ? ["Individual assistants (they lead no team and report to you directly):", withOverflow(listedIndividuals, individualLines.length, style)]
       : []),
     ...(listedDirect.length
-      ? ["Also reporting to you directly:", withOverflow(listedDirect, directLines.length)]
+      ? ["Also reporting to you directly:", withOverflow(listedDirect, directLines.length, style)]
       : []),
   ].join("\n");
 }
@@ -137,9 +138,11 @@ export function chiefOfStaffSystemPrompt(
   bots: ChiefTeamMember[],
   canDelegate: boolean,
   trustedMurageStatus = "",
+  /** How this turn's engine calls Murage's tools (shared/murage-tool-names.ts). */
+  toolCallStyle?: ToolCallStyle,
 ): string {
   const chief = bots.find((bot) => bot.id === chiefId);
-  const delegation = delegationGuidance(canDelegate);
+  const delegation = delegationGuidance(canDelegate, toolCallStyle);
 
   if (chief && isWorkspaceChief(chief)) {
     return [
@@ -151,7 +154,7 @@ export function chiefOfStaffSystemPrompt(
       SPEAK_FOR_YOURSELF,
       delegation,
       "Current workspace:",
-      workspaceRoster(chief, bots),
+      workspaceRoster(chief, bots, toolCallStyle),
       trustedMurageStatus,
     ].filter(Boolean).join("\n");
   }
@@ -163,7 +166,7 @@ export function chiefOfStaffSystemPrompt(
   );
   const listed = team.slice(0, ROSTER_MAX_BOTS);
   const roster = team.length
-    ? withOverflow(listed.map((bot) => `- ${memberLine(bot)}`), team.length)
+    ? withOverflow(listed.map((bot) => `- ${memberLine(bot)}`), team.length, toolCallStyle)
     : "- No other visible bots are available yet.";
   // A section lead that reports to a workspace Chief is told so explicitly:
   // canReach opens that one edge, and a lead that does not know the edge
@@ -196,6 +199,7 @@ export function individualAssistantSystemPrompt(
   selfId: string,
   bots: ChiefTeamMember[],
   canDelegate: boolean,
+  toolCallStyle?: ToolCallStyle,
 ): string {
   const self = bots.find((bot) => bot.id === selfId);
   const reachable = self
@@ -214,12 +218,12 @@ export function individualAssistantSystemPrompt(
       ? `@${clip(chief.name, ROSTER_NAME_MAX)} is the workspace Chief of Staff and you report to them directly. Send your results back to them when they assigned the work; the user is otherwise your primary contact.`
       : "This workspace has no Chief of Staff, so nobody above you has been elected yet. The user is your primary contact.",
     others.length
-      ? `Bots filed alongside you (they are not your team, and you do not direct them):\n${withOverflow(listed.map((bot) => `- ${memberLine(bot)}`), others.length)}`
+      ? `Bots filed alongside you (they are not your team, and you do not direct them):\n${withOverflow(listed.map((bot) => `- ${memberLine(bot)}`), others.length, toolCallStyle)}`
       : !chief
         ? "There is no other bot you can reach right now. Say so rather than inventing a teammate."
         : "",
     canDelegate && (chief || others.length)
-      ? "Use list_bots to confirm who you can reach. Use ask_bot for a short answer you need inline; use delegate_bot to hand work over."
+      ? murageToolText("Use list_bots to confirm who you can reach. Use ask_bot for a short answer you need inline; use delegate_bot to hand work over.", toolCallStyle)
       : "",
   ].filter(Boolean).join("\n");
 }

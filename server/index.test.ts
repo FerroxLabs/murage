@@ -1878,6 +1878,30 @@ describe("harness HTTP API", () => {
     }
   }, 30_000);
 
+  it("names tools in a harness refusal the way the calling turn's engine calls them", async () => {
+    // A Fuigo or Grok turn reaches Murage's tools only through use_tool; the
+    // driver tells the proxy so, and the proxy tells the harness per call.
+    const bot = (await api("POST", "/api/bots", { name: "Tool names fixture" })).body.bot;
+    const clients: ReturnType<typeof persistentAgentsClient>[] = [];
+    try {
+      const turn = await startInternalFixtureTurn(bot.id);
+      const refusal = async (env: Record<string, string>) => {
+        const client = persistentAgentsClient(env); clients.push(client); await client.initialize();
+        const result = await client.request("tools/call", { name: "get_prompt_block", arguments: { name: "no-such-block" } });
+        expect(result.isError).toBe(true);
+        return result.content?.[0]?.text ?? "";
+      };
+      expect(await refusal(turn.env)).toBe("No saved prompt block is named no-such-block. list_prompt_blocks shows the ones you can use.");
+      expect(await refusal({ ...turn.env, MURAGE_TOOL_CALL_STYLE: "use-tool", MURAGE_MCP_SERVER_NAME: "agents" }))
+        .toBe('No saved prompt block is named no-such-block. use_tool with tool_name "agents__list_prompt_blocks" shows the ones you can use.');
+      await stopFixtureTurn(bot.id, turn);
+    } finally {
+      await Promise.all(clients.map(client => client.close()));
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  }, 30_000);
+
   it("routes approved image MCP requests into owned artifacts without exposing keys or crossing conversations", async () => {
     const bot = (await api("POST", "/api/bots", { name: "Image fixture" })).body.bot;
     const receipt = join(home, "image-fixture-calls.json"); rmSync(receipt, { force: true });

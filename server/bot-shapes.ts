@@ -16,6 +16,16 @@
 // integrations, never in its system text.
 import { personalityImprint } from "../shared/bot-identity.ts";
 import { renderSkillInstructions, type BundledSkill } from "./skill-library.ts";
+import { murageToolText, toolCallStyleFor, type ToolCallStyle } from "../shared/murage-tool-names.ts";
+
+/** The Murage servers a prompt sentence may name tools of. */
+const PROMPT_SERVERS = ["agents", "browser"] as const;
+/** A Murage-written prompt sentence with every Murage tool in it named the
+ * way this turn's engine calls it (shared/murage-tool-names.ts). Never for
+ * the owner's persona, rules, memory, or a bot's or person's words. */
+export function engineToolText(text: string, style: ToolCallStyle | undefined): string {
+  return murageToolText(text, style, PROMPT_SERVERS);
+}
 
 export type ShapeGroup = "rules" | "identity" | "tools" | "turn";
 /** Where a row's Edit link goes. */
@@ -97,10 +107,12 @@ export function lineLayers(groups: ReadonlyArray<{ id: string; lines: readonly u
 
 /** One layer per selected skill; renderSkillInstructions of the whole list
  *  is exactly these joined. The Chief of Staff guide is its own row. */
-export function skillLayers(selected: readonly BundledSkill[], options: { includeRoot?: boolean } = {}): ShapeLayer[] {
+export function skillLayers(selected: readonly BundledSkill[], options: { includeRoot?: boolean; toolCallStyle?: ToolCallStyle } = {}): ShapeLayer[] {
   return selected.map((skill) => {
     const id = skill.manifest.id === "chief-of-staff" ? "chief-guide" : `skill:${skill.manifest.id}`;
-    return shapeLayer(id, renderSkillInstructions([skill], options), id === "chief-guide" ? undefined : skill.manifest.name);
+    // These are the skills Murage ships (the owner's imported skills ride
+    // skills-index), so their tool names are ours to spell for this engine.
+    return shapeLayer(id, engineToolText(renderSkillInstructions([skill], options), options.toolCallStyle), id === "chief-guide" ? undefined : skill.manifest.name);
   });
 }
 
@@ -213,31 +225,39 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
     : kind === "vps" ? COMPUTER.vps
     : kind === "local" ? COMPUTER.local
     : "";
+  // Every layer below that Murage writes names its tools for this engine.
+  // Not the owner's layers, not the primer (it says for itself how this
+  // engine calls tools), not the coordination text (index.ts built it with
+  // the roster in it, already named for this engine).
+  const style = toolCallStyleFor(v.driverKind);
+  const named = (text: string) => engineToolText(text, style);
   return [
     shapeLayer("house-rules", v.houseRules),
     shapeLayer("about-me", v.aboutMe ?? ""),
     shapeLayer("persona", v.persona),
-    shapeLayer("computer", computer),
+    // The cloud computer's line names that server's own tools, its Chrome
+    // ones included, and uses screenshot and click only as tool names.
+    shapeLayer("computer", murageToolText(computer, style, ["computer"], {}, { computer: ["screenshot", "click"] })),
     shapeLayer("computer-protected-input", kind ? COMPUTER.protectedInput : ""),
     shapeLayer("connected-apps", v.connectors),
     shapeLayer("required-apps", v.requiredApps),
-    shapeLayer("browser", v.browser),
+    shapeLayer("browser", named(v.browser)),
     shapeLayer("coordination", v.coordination ? ` ${v.coordination}` : ""),
-    shapeLayer("credential", v.credential),
-    shapeLayer("images", v.image),
-    shapeLayer("web-search", v.webSearchBackup ? WEB_SEARCH_BACKUP : ""),
-    shapeLayer("routines", v.routines),
-    shapeLayer("learn", v.learn),
+    shapeLayer("credential", named(v.credential)),
+    shapeLayer("images", named(v.image)),
+    shapeLayer("web-search", named(v.webSearchBackup ? WEB_SEARCH_BACKUP : "")),
+    shapeLayer("routines", named(v.routines)),
+    shapeLayer("learn", named(v.learn)),
     shapeLayer("skills-index", v.importedSkills),
     shapeLayer("team-brief", v.teamBrief),
     shapeLayer("memory", v.memory),
     shapeLayer("capabilities", v.primer),
     ...v.skills,
     shapeLayer("playbooks", v.playbooks),
-    shapeLayer("output-folder", v.outputFolder),
+    shapeLayer("output-folder", named(v.outputFolder)),
     shapeLayer("automation", automationPrompt(v.automationSource)),
     shapeLayer("tagged", v.tagged.length
-      ? ` The user tagged ${v.tagged.map((t) => `@${t.name} (bot_id ${t.id})`).join(" and ")} in their message. If they assigned independent work, use delegate_bot and finish your turn without waiting; use ask_bot only if their short reply is required in this answer.`
+      ? ` The user tagged ${v.tagged.map((t) => `@${t.name} (bot_id ${t.id})`).join(" and ")} in their message.${named(" If they assigned independent work, use delegate_bot and finish your turn without waiting; use ask_bot only if their short reply is required in this answer.")}`
       : ""),
   ];
 }
