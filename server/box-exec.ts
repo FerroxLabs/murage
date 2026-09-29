@@ -102,9 +102,10 @@ const HELPERS = [
   'BOOT=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)',
   // the job's processes: its session, and everything descended from it (sudo
   // and job-control shells start new sessions or groups underneath)
-  // mode cpu: own and finished children's processor ticks; mode pids: one per line
+  // mode cpu: own and finished children's processor ticks; mode pids: the
+  // live ones, one per line (a zombie is dead, whoever has yet to reap it)
   'members() {',
-  `  cat /proc/[0-9]*/stat 2>/dev/null | awk -v s="$S" -v mode="$1" '{ p = $1; sub(/^.*\\) /, ""); pp[p] = $2; t[p] = $12 + $13; c[p] = $14 + $15; if ($4 == s) m[p] = 1 } END { k = 1; while (k) { k = 0; for (p in pp) if (!(p in m) && (pp[p] in m)) { m[p] = 1; k = 1 } } n = 0; d = 0; for (p in m) { if (mode == "cpu") { n += t[p]; d += c[p] } else print p } if (mode == "cpu") printf "%.0f %.0f\\n", n, d }'`,
+  `  cat /proc/[0-9]*/stat 2>/dev/null | awk -v s="$S" -v mode="$1" '{ p = $1; sub(/^.*\\) /, ""); pp[p] = $2; t[p] = $12 + $13; c[p] = $14 + $15; if ($1 == "Z") z[p] = 1; if ($4 == s) m[p] = 1 } END { k = 1; while (k) { k = 0; for (p in pp) if (!(p in m) && (pp[p] in m)) { m[p] = 1; k = 1 } } n = 0; d = 0; for (p in m) { if (mode == "cpu") { n += t[p]; d += c[p] } else if (!(p in z)) print p } if (mode == "cpu") printf "%.0f %.0f\\n", n, d }'`,
   '}',
   // a session id is trusted only when it is a real one from this boot
   'sidok() {',
@@ -114,18 +115,21 @@ const HELPERS = [
   // a live leader must be the one this job started, not a reused id
   // (a leader that has just exited, or a record without the time, skips it)
   '  local st0 want; want=$(cat "$J/sidstart" 2>/dev/null)',
-  '  if [ -n "$want" ] && [ -r "/proc/$S/stat" ] && read -r st0 < "/proc/$S/stat" 2>/dev/null && [ -n "$st0" ]; then',
+  '  if [ -n "$want" ] && [ -r "/proc/$S/stat" ] && read -r st0 2>/dev/null < "/proc/$S/stat" && [ -n "$st0" ]; then',
   '    set -- ${st0##*")" }',
   '    if [ "${20}" != "$want" ]; then S=""; return 1; fi',
   '  fi',
   '}',
   // bytes the job's processes read from or wrote to storage
   // (a running total: a member that exits keeps the bytes last seen for it)
+  // (two requests at once take turns; a lock left by a killed one is broken)
   'io() {',
-  `  for p in $(members pids); do printf '%s %s\\n' "$p" "$(awk '/^(read|write)_bytes:/ { s += $2 } END { printf "%.0f", s }' "/proc/$p/io" 2>/dev/null || echo 0)"; done > "$J/io.now"`,
+  '  local now="$J/io.now.$$" i=0',
+  `  for p in $(members pids); do printf '%s %s\\n' "$p" "$(awk '/^(read|write)_bytes:/ { s += $2 } END { printf "%.0f", s }' "/proc/$p/io" 2>/dev/null || echo 0)"; done > "$now"`,
+  '  until mkdir "$J/io.lock" 2>/dev/null; do i=$((i + 1)); if [ $i -ge 20 ]; then rm -rf -- "$J/io.lock"; i=0; fi; sleep 0.1; done',
   '  touch "$J/io.seen"',
-  `  set -- $(awk -v base="$(cat "$J/io.base" 2>/dev/null || echo 0)" 'FILENAME == ARGV[1] { seen[$1] = $2; next } { now[$1] = $2 } END { for (p in seen) if (!(p in now)) base += seen[p]; t = base; for (p in now) t += now[p]; printf "%.0f %.0f\\n", base, t }' "$J/io.seen" "$J/io.now")`,
-  '  echo "${1:-0}" > "$J/io.base"; mv -f "$J/io.now" "$J/io.seen"; echo "${2:-0}"',
+  `  set -- $(awk -v base="$(cat "$J/io.base" 2>/dev/null || echo 0)" 'FILENAME == ARGV[1] { seen[$1] = $2; next } { now[$1] = $2 } END { for (p in seen) if (!(p in now)) base += seen[p]; t = base; for (p in now) t += now[p]; printf "%.0f %.0f\\n", base, t }' "$J/io.seen" "$now")`,
+  '  echo "${1:-0}" > "$J/io.base"; mv -f "$now" "$J/io.seen"; rmdir "$J/io.lock" 2>/dev/null; echo "${2:-0}"',
   '}',
   // the whole tree is listed before anything is signalled: a child whose
   // parent dies first is re-parented away and would no longer be found
@@ -134,7 +138,7 @@ const HELPERS = [
   'sigS() {',
   '  set -- "$1" $(members pids)',
   '  sg=$1; shift',
-  '  kill "-$sg" -- "-$S" 2>/dev/null',
+  // each process by id (no group-wide signal: a reused group id is not ours)
   '  for p in "$@"; do kill "-$sg" "$p" 2>/dev/null || sudo -n kill "-$sg" "$p" 2>/dev/null; done',
   '}',
   'lease() { date +%s > "$J/lease.tmp" && mv -f "$J/lease.tmp" "$J/lease"; }',
@@ -177,6 +181,9 @@ function supervisorScript(): string {
     ') & M=$!',
     'wait "$P"; rc=$?',
     'kill "$M" 2>/dev/null',
+    // an abandoned job's TERM ended its leader (and so the watcher before it
+    // could send KILL): whatever of it ignored TERM is ended now
+    'if [ -f "$J/abandoned" ] || [ ! -d "$J" ]; then S=$P; sleep 1; sigS KILL; fi',
     // the readers end on their own at EOF; a daemon the command left holding
     // the pipe gets one second, then loses it
     '( sleep 1; kill "$RO" "$RE" 2>/dev/null ) & K=$!',
@@ -225,30 +232,34 @@ function waitShell(sec: number): string {
  * or abandoned (no result, lease long gone: its supervisor died). */
 function sweepShell(leaseSec: number): string {
   return [
+    // in a subshell: it walks other records with its own $J
+    '(',
+    'old() { [ -n "$(find "$1" -maxdepth 0 -mmin +"$2" 2>/dev/null)" ]; }',
+    'ended=""',
     'for d in "$R"/*/; do',
     '  [ -d "$d" ] || continue',
-    '  ( J=${d%/}',
-    '    old() { [ -n "$(find "$1" -maxdepth 0 -mmin +"$2" 2>/dev/null)" ]; }',
-    '    b=$(cat "$J/boot" 2>/dev/null); l=$(cat "$J/lease" 2>/dev/null)',
+    '  J=${d%/}',
+    '  b=$(cat "$J/boot" 2>/dev/null); l=$(cat "$J/lease" 2>/dev/null)',
     // a record still being written (by another start or stop) is left alone
-    '    if [ -z "$b" ]; then old "$J" 10 && rm -rf -- "${J:?}"; exit 0; fi',
-    '    if [ "$b" != "$BOOT" ]; then rm -rf -- "${J:?}"; exit 0; fi',
+    '  if [ -z "$b" ]; then old "$J" 10 && rm -rf -- "${J:?}"; continue; fi',
+    '  if [ "$b" != "$BOOT" ]; then rm -rf -- "${J:?}"; continue; fi',
     // a stop's tombstone outlives any start still in flight
-    '    if [ -f "$J/cancel" ]; then old "$J/cancel" 10 && rm -rf -- "${J:?}"; exit 0; fi',
+    '  if [ -f "$J/cancel" ]; then old "$J/cancel" 10 && rm -rf -- "${J:?}"; continue; fi',
     // delivered: kept a while in case the answer was lost on the way
-    '    if [ -f "$J/collected" ]; then old "$J/collected" 10 && rm -rf -- "${J:?}"; exit 0; fi',
+    '  if [ -f "$J/collected" ]; then old "$J/collected" 10 && rm -rf -- "${J:?}"; continue; fi',
     // a stop in progress expired the lease on purpose
-    '    if [ -f "$J/stopping" ] && ! old "$J/stopping" 10; then exit 0; fi',
-    '    if [ -f "$J/rc" ]; then old "$J/rc" 60 && rm -rf -- "${J:?}"; exit 0; fi',
-    '    case "$l" in ""|*[!0-9]*) old "$J" 10 && rm -rf -- "${J:?}"; exit 0;; esac',
-    `    if [ $(( $(date +%s) - l )) -gt ${Math.trunc(leaseSec) + ABANDON_MARGIN_SEC} ]; then`,
-    '      sig KILL; sleep 1',
-    // kept (and retried by the next sweep) while anything of it still runs
-    '      if sidok && [ -n "$(members pids)" ]; then exit 0; fi',
-    '      rm -rf -- "${J:?}"',
-    '    fi',
-    '  )',
+    '  if [ -f "$J/stopping" ] && ! old "$J/stopping" 10; then continue; fi',
+    '  if [ -f "$J/rc" ]; then old "$J/rc" 60 && rm -rf -- "${J:?}"; continue; fi',
+    '  case "$l" in ""|*[!0-9]*) old "$J" 10 && rm -rf -- "${J:?}"; continue;; esac',
+    `  if [ $(( $(date +%s) - l )) -gt ${Math.trunc(leaseSec) + ABANDON_MARGIN_SEC} ]; then sig KILL; ended="$ended \${J##*/}"; fi`,
     'done',
+    // abandoned: removed once nothing of it runs (kept, and retried by the
+    // next sweep, while something does)
+    'if [ -n "$ended" ]; then',
+    '  sleep 1',
+    '  for id in $ended; do J="$R/$id"; if sidok && [ -n "$(members pids)" ]; then continue; fi; rm -rf -- "${J:?}"; done',
+    'fi',
+    ')',
   ].join("\n");
 }
 
@@ -311,7 +322,8 @@ export function stopScript(id: string, graceful: boolean): string {
     const followUp = [
       'J=$1',
       HELPERS,
-      'sleep 3; [ -f "$J/rc" ] || sig KILL',
+      // whatever of the job ignored TERM, even once its leader has ended
+      'sleep 3; sig KILL',
       'sleep 2; [ -f "$J/rc" ] && : > "$J/collected"',
     ].join("\n");
     lines.push(
@@ -323,7 +335,8 @@ export function stopScript(id: string, graceful: boolean): string {
   }
   lines.push(
     'i=0; while [ ! -f "$J/rc" ] && [ $i -lt 20 ]; do sleep 0.25; i=$((i + 1)); done',
-    'if [ ! -f "$J/rc" ]; then sig KILL; fi',
+    // whatever of the job ignored TERM, even once its leader has ended
+    "sig KILL",
     'i=0; while [ ! -f "$J/rc" ] && [ $i -lt 20 ]; do sleep 0.25; i=$((i + 1)); done',
     'st; collect',
   );

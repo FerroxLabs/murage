@@ -291,11 +291,25 @@ describe.skipIf(process.platform !== "linux")("computer_exec's box-side records 
     const record = join(home, ".cache", "murage-exec", id);
     // its supervisor is gone too (killed with the box agent, say)
     const supervisor = Number(readFileSync(`/proc/${pid}/stat`, "utf8").replace(/^.*\) /, "").split(" ")[1]);
+    // only ever the supervisor's own group (it leads it), never this runner's
+    const [, , group] = readFileSync(`/proc/${supervisor}/stat`, "utf8").replace(/^.*\) /, "").split(" ");
+    expect(supervisor).toBeGreaterThan(1);
+    expect(Number(group)).toBe(supervisor);
+    expect(supervisor).not.toBe(process.pid);
     process.kill(-supervisor, "SIGKILL");
     writeFileSync(join(record, "lease"), "1\n");
     sh(startScript("aa00000000000007", "true", opts));
     expect(alive(pid)).toBe(false);
     expect(existsSync(record)).toBe(false);
+  });
+
+  it("Stop also ends what ignores TERM, even after the command's own shell has gone", () => {
+    const id = "aa00000000000008";
+    const pidFile = join(home, "stubborn.pid");
+    expect(sh(startScript(id, `bash -c 'trap "" TERM; echo $$ > ${pidFile}; sleep 60' & wait`, opts)).state).toBe("running");
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    sh(stopScript(id, true));
+    expect(alive(pid)).toBe(false);
   });
 
   it("Stop reaches a process that moved to a session of its own", () => {
