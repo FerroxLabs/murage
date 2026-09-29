@@ -23,7 +23,7 @@ test.beforeAll(async () => {
       load(id) {
         if (id === "\0notification-store") return "import React from 'react';export async function api(path,init){const r=await fetch(path,init);const value=await r.json();if(!r.ok)throw new Error(value.error);return value;}export function useStore(){const [config,setConfig]=React.useState(window.fixtureConfig);return {state:{config},dispatch:action=>setConfig(action.config)}}";
         if (id !== "\0notification-settings") return;
-        return "import React from 'react';import {createRoot} from 'react-dom/client';import {NotificationSettings} from '/src/components/NotificationSettings.tsx';import {setLocale} from '/src/lib/i18n.ts';import '/src/styles.css';const query=new URLSearchParams(location.search);setLocale(query.get('lang')||'en');document.documentElement.dataset.skin=query.get('skin')||'dark';window.fixtureConfig=await (await fetch('/api/config')).json();createRoot(document.getElementById('root')).render(React.createElement(NotificationSettings));";
+        return "import React from 'react';import {createRoot} from 'react-dom/client';import {NotificationSettings} from '/src/components/NotificationSettings.tsx';import {setLocale} from '/src/lib/i18n.ts';import '/src/styles.css';const query=new URLSearchParams(location.search);await setLocale(query.get('lang')||'en');document.documentElement.dataset.skin=query.get('skin')||'dark';window.fixtureConfig=await (await fetch('/api/config')).json();createRoot(document.getElementById('root')).render(React.createElement(NotificationSettings));";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith("/__notifications?") && req.url !== "/__notifications") return next();

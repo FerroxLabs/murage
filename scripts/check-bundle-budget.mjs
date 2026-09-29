@@ -16,11 +16,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliCompressSync, constants } from "node:zlib";
 
-/** 720 KiB at brotli quality 11. Measured on the build server at d489043f: 698.0 KiB
- *  after the E1–E3 splits, `ceil(698/10)*10 + 20` KiB per the plan's decision
- *  rule. Lower it when the first paint shrinks further; never raise it to
- *  make a regression pass. */
-export const FIRST_PAINT_BROTLI_BUDGET = 720 * 1024;
+/** 670 KiB at brotli quality 11. Measured on the build server: 698.0 KiB at
+ *  d489043f after the E1–E3 splits (720 then), 647.3 KiB once only English
+ *  rode the first paint and the other language packs became their own
+ *  chunks; `ceil(647.3/10)*10 + 20` KiB per the plan's decision rule. Lower
+ *  it when the first paint shrinks further; never raise it to make a
+ *  regression pass. */
+export const FIRST_PAINT_BROTLI_BUDGET = 670 * 1024;
 
 /** The door's `/assets/` pattern for the file types this checks (js, css,
  *  mjs — companion/src/routes.ts BROWSER_STATIC, kept in sync by the

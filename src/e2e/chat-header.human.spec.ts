@@ -71,7 +71,7 @@ export function MemorySettings(){return React.createElement('textarea',{'aria-la
           return `import React from 'react';import {createRoot} from 'react-dom/client';
 import {initialState} from '/src/state/store.tsx?original';
 import {ChatHeader} from '/src/components/ChatHeader.tsx';
-import {en,locales} from '/src/locales/index.ts';
+import {en,localeLoaders} from '/src/locales/index.ts';
 import {setLocale} from '/src/lib/i18n.ts';
 import '/src/styles.css';
 const listeners=new Set();window.subscribeFixture=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
@@ -80,8 +80,8 @@ const q=new URLSearchParams(location.search);
 // the way German and French labels run against English. Registered like any
 // other pack, so the header sees it through the same t() as a real one.
 if(q.get('labels')==='long'){
-  locales.xx=Object.fromEntries(Object.entries(en).map(([key,value])=>[key,value+' \u2014 l\u00e4ngere \u00dcbersetzung']));
-  setLocale('xx');
+  localeLoaders.xx=async()=>Object.fromEntries(Object.entries(en).map(([key,value])=>[key,value+' \u2014 l\u00e4ngere \u00dcbersetzung']));
+  await setLocale('xx');
 }
 const LONG='Quarterly Revenue Reconciliation & Board Narrative';
 const bot={

@@ -94,6 +94,6 @@ describe("first-paint payload budget", () => {
   });
 
   it("holds the budget the spec set, not a placeholder", () => {
-    expect(FIRST_PAINT_BROTLI_BUDGET).toBe(720 * 1024);
+    expect(FIRST_PAINT_BROTLI_BUDGET).toBe(670 * 1024);
   });
 });

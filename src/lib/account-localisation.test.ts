@@ -1,7 +1,9 @@
 import { afterEach, expect, it } from "vitest";
-import { en, locales } from "@/locales";
+import { en } from "@/locales";
+import { allLocalePacks } from "@/locales/testing";
 import { setLocale, t } from "./i18n";
-afterEach(() => { setLocale("en"); });
+afterEach(() => setLocale("en"));
+const locales = await allLocalePacks();
 const keys = Object.keys(en).filter(key => key.startsWith("claudeAccounts.")) as Array<keyof typeof en>;
 // The complete claudeAccounts.* set, grouped by the commit that added each key.
 // A new account string must be translated in all seven packs and listed here.
@@ -15,10 +17,10 @@ const expectedKeys = [
   // FOLLOW4 fix(engines): refreshInstances reports its failure; the section names the engine list
   "fleetRefreshError",
 ].map(name => `claudeAccounts.${name}`);
-it("provides all 23 account action messages and preserves placeholders in seven packs", () => {
+it("provides all 23 account action messages and preserves placeholders in seven packs", async () => {
   expect([...keys].sort()).toEqual([...expectedKeys].sort());
   for (const code of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
-    setLocale(code);
+    await setLocale(code);
     for (const key of keys) {
       const value = locales[code][key];
       expect(value?.trim(), `${code}:${key}`).toBeTruthy();
@@ -27,8 +29,8 @@ it("provides all 23 account action messages and preserves placeholders in seven 
     }
   }
 });
-it("falls back to English without losing the selected account name", () => {
-  setLocale("zz");
+it("falls back to English without losing the selected account name", async () => {
+  await setLocale("zz");
   expect(t("claudeAccounts.copySignIn", { name: "Work" })).toBe("Copy sign-in command for Work");
   expect(t("claudeAccounts.removeConfirm", { name: "Work" })).toContain("Remove Work from Murage?");
 });

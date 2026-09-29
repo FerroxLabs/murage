@@ -8,11 +8,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { RuntimeErrorCard } from "./RuntimeErrorCard";
 import { setLocale } from "@/lib/i18n";
 import { ENGINE_ERROR_CATEGORIES, LOCAL_RESOURCE_BUSY_MESSAGES, engineErrorCategory } from "../../shared/provider-error";
-import { en, locales } from "@/locales";
+import { en } from "@/locales";
+import { allLocalePacks } from "@/locales/testing";
 
-afterEach(() => {
-  setLocale("en");
-});
+const locales = await allLocalePacks();
+
+afterEach(() => setLocale("en"));
 
 const render = (props: { message: string; details?: string; errorKind?: string; localFailure?: string; setup?: string; onRetry?: () => void }) =>
   renderToStaticMarkup(createElement(RuntimeErrorCard, { ...props, onOpenProviderSettings: () => {} }));
@@ -149,8 +150,8 @@ describe("typed engine failures", () => {
     }
   });
 
-  it("renders the explanation in the reader's language", () => {
-    setLocale("de");
+  it("renders the explanation in the reader's language", async () => {
+    await setLocale("de");
     const german = locales.de?.["runtimeError.engineKind.empty_response"];
     expect(german).toBeTruthy();
     expect(german).not.toBe(en["runtimeError.engineKind.empty_response"]);

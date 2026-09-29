@@ -103,4 +103,16 @@ describe("the first paint", () => {
     }
     expect([...reached].filter((path) => path.startsWith("@tiptap/"))).toEqual([]);
   });
+
+  it("carries English only; every other language pack loads when that language is chosen", () => {
+    const reached = staticallyReached(graph);
+    expect(reached).toContain("src/locales/en.json");
+    for (const code of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
+      const file = `src/locales/${code}.json`;
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    // the translators' bookkeeping never ships to the renderer at all
+    expect(graph.inputs["src/locales/source-hashes.json"]).toBeUndefined();
+  });
 });

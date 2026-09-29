@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Loader2, Menu } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
 import { initAnalytics } from "@/lib/analytics";
@@ -26,7 +26,7 @@ import { TeamMapPage } from "@/components/TeamMapPage";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { trackVisualViewport } from "@/lib/visual-viewport";
-import { setLocale } from "@/lib/i18n";
+import { localeVersion, setLocale, subscribeLocale } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { InstallPrompt } from "./components/InstallPrompt";
 import { useDeepLinks } from "@/components/useDeepLinks";
@@ -66,13 +66,13 @@ function Shell() {
   // Sidebar.tsx's className comment).
   const [drawerOpen, setDrawerOpen] = useState(false);
   // Apply the configured UI language the moment config arrives or changes;
-  // "" follows the system. The epoch bump re-renders extracted strings —
-  // t() reads a module variable, so React needs this nudge.
+  // "" follows the system. A pack other than English arrives as its own
+  // chunk, and t() reads a module variable, so the app re-renders its
+  // extracted strings when the locale version moves, not when this is asked.
   const language = state.config?.language ?? "";
-  const [, setLocaleEpoch] = useState(0);
+  useSyncExternalStore(subscribeLocale, localeVersion);
   useEffect(() => {
-    setLocale(language || globalThis.navigator?.language);
-    setLocaleEpoch((epoch) => epoch + 1);
+    void setLocale(language || globalThis.navigator?.language);
   }, [language]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [localVmWorkspaceBotId, setLocalVmWorkspaceBotId] = useState<string | null>(null);
