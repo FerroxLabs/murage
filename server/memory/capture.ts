@@ -5,6 +5,7 @@ import type { Message } from "../store.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { applyMemoryTombstones } from "./restore.ts";
 import { enqueueProcedureSourceReview } from "./procedure-review.ts";
+import { withoutImageTags } from "../../src/lib/composer-attachments.ts";
 
 function enabled(db: DatabaseSync) { return db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode !== "off"; }
 function excludedThread(db:DatabaseSync,threadId:string){return Boolean(db.prepare("SELECT 1 FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=? LIMIT 1").get(threadId));}
@@ -51,7 +52,9 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
   if (message.kind === "text" && !userText && !finalText) return;
   captureSource(db,{id:`message:${threadId}:${message.id}`,threadId,messageId:message.id,turnId:message.turnId,parentId:message.parentId,
     kind:tool?"tool-outcome":message.kind,speaker:message.role === "user"?(isWorkspaceOwner(threadHumanPrincipal(threadId,db))?"owner":"person:"+threadHumanPrincipal(threadId,db).personId):tool?"tool":message.from?.botId??"assistant",
-    outcome:tool?(message.tool!.ok?"completed":"failed"):"recorded",text:userText||finalText?message.text??"":tool?[message.tool!.name,message.text,message.tool!.errorDetails].filter(Boolean).join("\n"):"",
+    outcome:tool?(message.tool!.ok?"completed":"failed"):"recorded",
+    // images a turn left out never come back through recall (turn-images.ts)
+    text:userText?withoutImageTags(message.text??"",message.imagesNotSent??[]):finalText?message.text??"":tool?[message.tool!.name,message.text,message.tool!.errorDetails].filter(Boolean).join("\n"):"",
     occurredAt:message.at,actorId:message.role==="user"?threadHumanPrincipal(threadId,db).personId:message.from?.botId,artifactIds:message.artifactIds,
     ...(tool?{action:{label:message.tool!.name,reportedOutcome:message.tool!.ok?"completed" as const:"failed" as const,detail:message.tool!.errorDetails??message.text,verification:"tool-reported" as const}}:{}),
     ...(!userText&&!finalText&&!tool?{excluded:`unsupported-${message.kind}`}:{})});

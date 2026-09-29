@@ -86,9 +86,10 @@ import { listClaudeAccounts } from "./claude-account-list.ts";
 import { leadershipAdmissionError } from "./leadership-admission.ts";
 import { goalWaitMaxMs } from "./goal-wait.ts";
 import { botAvatarUrlFromStoredPath } from "../shared/bot-avatar.ts";
-import { escapeAttribute } from "../src/lib/composer-attachments.ts";
+import { escapeAttribute, splitTranscriptAttachments } from "../src/lib/composer-attachments.ts";
 import { imageDelivery, imageDeliveryOutcome, IMAGE_DELIVERY_PROMPT, unboundImagePolicy, type ImageDelivery, type ImageDeliveryOutcome } from "./turn-image-dispatch.ts";
-import { TurnImages, turnImageAudience } from "./turn-images.ts";
+import { CLAUDE_TURN_IMAGE_FIT, DEFAULT_TURN_IMAGE_FIT, limitTurnImagePaths, TurnImages, turnImageAudience, turnImageUnavailable, withoutImageTags, type CollectedTurnImages, type TurnImageFit } from "./turn-images.ts";
+import { imagesNotSentActivityName, imagesNotSentDisplayName } from "../shared/turn-image-note.ts";
 import {
   chooseIntakeProfile,
   chooseIntakeSkills,
@@ -164,7 +165,7 @@ import {
   type SavedAttachment,
   validateAttachmentUploadId,
 } from "./attachments.ts";
-import { createThumbnails, loadResize, THUMBNAIL_WIDTHS, thumbnailWidth } from "./image-thumbnail.ts";
+import { createThumbnails, loadResize, loadShrink, THUMBNAIL_WIDTHS, thumbnailWidth } from "./image-thumbnail.ts";
 import {
   avatarGenerationRequestSchema,
   avatarGenerationStateMatches,
@@ -1776,7 +1777,9 @@ function noteWithheldPin(threadId: string, bundle: Parameters<typeof withheldPin
 // looked at again whenever a bot's activity changes: whoever waits behind it
 // for the browser goes on without the browser instead (D4).
 store.onChange(change => { if (change.type === "bot") directRuns.recheck(); });
-const turnImages = new TurnImages(store, DATA_DIR);
+// sharp from beside transformers shrinks a picture that would not fit the
+// engine; without it, a turn sends the ones that fit as they are.
+const turnImages = new TurnImages(store, DATA_DIR, Date.now, loadShrink);
 // Murage's own per-folder trust record (FUIGOTRUST1): what the human said
 // about a folder's AGENTS.md / .mcp.json / skills, remembered by workspace
 // root next to bots.json. Read before every turn on an engine that gates
@@ -3587,13 +3590,100 @@ function turnImageDelivery(
   return imageDelivery(instance.adapter.capabilities, routedModelAcceptsImages(providerRoute));
 }
 
+/** What one picture has to fit for this engine (turn-images.ts TurnImageFit):
+ * Claude Code refuses an image over 5 MB of base64 before it sends. */
+function turnImageFit(driverKind: string): TurnImageFit {
+  return driverKind === "claudeAgent" ? CLAUDE_TURN_IMAGE_FIT : DEFAULT_TURN_IMAGE_FIT;
+}
+
 /** The bytes to inline for this turn, under the engine's own rule for a tag
- * the conversation never bound: Fuigo refuses the turn (`read`), everything
- * else inlines what is bound and carries the rest as text (`collect`). */
-function collectTurnImages(driverKind: string, threadId: string, botId: string, text: string) {
-  return unboundImagePolicy(driverKind) === "refuse"
-    ? turnImages.read(threadId, botId, text).then(images => ({ images, unbound: [] as string[] }))
-    : turnImages.collect(threadId, botId, text);
+ * the conversation never bound: Fuigo refuses the turn, everything else
+ * inlines what is bound and carries the rest as text. How many images and
+ * how large never refuse a turn on any engine: what does not fit is left out
+ * (turnImagesNotSent). */
+async function collectTurnImages(driverKind: string, threadId: string, botId: string, text: string): Promise<CollectedTurnImages> {
+  const collected = await turnImages.collect(threadId, botId, text, turnImageFit(driverKind));
+  if (unboundImagePolicy(driverKind) === "refuse" && collected.unbound.length) throw turnImageUnavailable();
+  return collected;
+}
+
+/** The images a turn leaves out, and the one line that tells the owner.
+ * `collected` is undefined when the engine is not sent pictures at all (it
+ * gets the tags as paths, or cannot see): the per-turn count still holds, so
+ * every engine gets the same first images, and the composer's line before
+ * sending is true whatever the bot runs on. */
+function turnImagesNotSent(text: string, collected: CollectedTurnImages | undefined): { paths: string[]; note?: string } {
+  const limited = collected ? undefined : limitTurnImagePaths(text);
+  const overCount = collected?.overCount ?? limited!.overCount;
+  const tooLarge = collected?.tooLarge ?? [];
+  if (!overCount.length && !tooLarge.length) return { paths: [] };
+  const sent = collected ? collected.images.length + collected.unbound.length : limited!.kept.length;
+  return { paths: [...overCount, ...tooLarge], note: imagesNotSentActivityName({ sent, overCount: overCount.length, tooLarge: tooLarge.length }) };
+}
+
+/** Record the left-out paths once this thread's turn has settled. The record
+ * changes what memory holds for the message (capture strips the paths), and
+ * a change to the turn's own context while it is being dispatched fails that
+ * turn ("Context changed"), so it waits for turn.completed. A turn that never
+ * reports one is recorded when the watch gives up. */
+const IMAGES_NOT_SENT_RECORD_WAIT_MS = 30 * 60 * 1000;
+function recordImagesNotSentAfterTurn(threadId: string, messageIds: readonly string[], paths: readonly string[]): void {
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    unsubscribe();
+    recordImagesNotSent(threadId, messageIds, paths);
+  };
+  const unsubscribe = bus.subscribe((event: RuntimeEvent) => {
+    if (event.threadId === threadId && event.type === "turn.completed") queueMicrotask(finish);
+  });
+  const timer = setTimeout(finish, IMAGES_NOT_SENT_RECORD_WAIT_MS);
+  timer.unref?.();
+}
+
+/** Record the left-out paths on every message of this turn that names them,
+ * so a later replay or recall leaves them out too (transcriptText, memory
+ * capture). */
+function recordImagesNotSent(threadId: string, messageIds: readonly string[], paths: readonly string[]): void {
+  const byId = new Map(store.messagesFor(threadId).map(message => [message.id, message] as const));
+  for (const id of new Set(messageIds)) {
+    const message = byId.get(id);
+    if (!message?.text || message.role !== "user") continue;
+    const named = new Set(splitTranscriptAttachments(message.text).images);
+    const had = new Set(message.imagesNotSent ?? []);
+    const add = paths.filter(path => named.has(path) && !had.has(path));
+    if (!add.length) continue;
+    try { store.patchMessage(threadId, id, { imagesNotSent: [...had, ...add] }); } catch { /* the note still goes */ }
+  }
+}
+
+/** One line per message and outcome: a Retry or a second room member that
+ * leaves the same images out does not say it again. */
+const imagesNotSentNoted = new Set<string>();
+function noteImagesNotSent(threadId: string, messageId: string | undefined, note: string | undefined, bot: { id: string; name: string; color: string }): void {
+  if (!note) return;
+  const key = `${threadId}\0${messageId ?? ""}\0${note}`;
+  if (messageId && imagesNotSentNoted.has(key)) return;
+  // The same line already follows this message (a Retry after a restart):
+  // not news. A different outcome, from another engine, still gets its line.
+  if (messageId) {
+    const thread = store.messagesFor(threadId);
+    const at = thread.findIndex(message => message.id === messageId);
+    if (at !== -1 && thread.slice(at + 1).some(message => message.kind === "activity" && message.tool?.name === note)) return;
+  }
+  if (imagesNotSentNoted.size >= 1000) imagesNotSentNoted.clear();
+  imagesNotSentNoted.add(key);
+  try {
+    store.appendMessage(threadId, {
+      role: "bot",
+      kind: "activity",
+      ...(store.groupByThread(threadId) ? { from: { botId: bot.id, name: bot.name, color: bot.color } } : {}),
+      // ok:true like a browser-unavailable note: neutral, never an error card.
+      tool: { name: note, ok: true },
+    });
+  } catch { /* a note is never worth the turn */ }
 }
 
 function pendingPermissionStatus(bot: BotRecord): PendingPermissionInput[] {
@@ -5664,6 +5754,8 @@ function drainQueuedSends() {
   },
     // a bot idle in this thread can still be speaking in a room
     (botId) => Boolean(activeGroupTurnForBot(botId)),
+    // a held line binds its own uploads as it lands, like any other send
+    (threadId, text) => turnImages.promote(threadId, text),
   );
 }
 
@@ -6666,6 +6758,15 @@ async function startTurn(
       if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before image dispatch");
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
+      // Images past the count or the bytes are left out of the turn, not the
+      // turn out of the conversation: their tags leave what the bot reads,
+      // and the owner gets one plain line.
+      const leftOut = turnImagesNotSent(text, collectedImages);
+      if (leftOut.paths.length) {
+        turnText = withoutImageTags(turnText, leftOut.paths);
+        recordImagesNotSentAfterTurn(threadId, [...(userMessage ? [userMessage.id] : []), ...(opts?.excludeMessageIds ?? [])], leftOut.paths);
+        noteImagesNotSent(threadId, userMessage?.id, leftOut.note, bot);
+      }
       const outputInstructions = prepareOutputDestination(bot.id, threadId, dispatchClaimId, worksInWorkspace && opts?.runOn !== "cloud", Boolean(integrations.agents));
       projectTurnLeases.markDispatched(dispatchClaimId);
       submissionBoundary.started();
@@ -8580,6 +8681,7 @@ async function runGroupMemberTurn(
         ? await collectTurnImages(instance.driverKind, threadId, bot.id, imageSelectionText)
         : undefined;
       const incomingImages = collectedImages?.images;
+      const leftOut = turnImagesNotSent(imageSelectionText, collectedImages);
       // And the same sentence the direct path puts beside its image tools,
       // from what the attachments turned out to be: a room member is told
       // whether the picture is in front of it or only a path to open.
@@ -8587,6 +8689,12 @@ async function runGroupMemberTurn(
       if (abandoned || isCancelled?.() || internalTurnOwners.get(threadId)?.generation !== internalGeneration) throw new Error("turn stopped before image dispatch");
       memoryReceipt?.assertCurrent();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
+      // Same as the direct path: left-out images leave the text, one line says so.
+      const roomTurnText = leftOut.paths.length ? withoutImageTags(text, leftOut.paths) : text;
+      if (leftOut.paths.length) {
+        recordImagesNotSentAfterTurn(threadId, latestUser ? [latestUser.id] : [], leftOut.paths);
+        noteImagesNotSent(threadId, latestUser?.id, leftOut.note, bot);
+      }
       submissionBoundary.started();
       preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
       const roomSystemLayers = [...roomLayers, shapeLayer("images", imagePrompt)];
@@ -8602,7 +8710,7 @@ async function runGroupMemberTurn(
         providerRoute,
         memoryContext:memoryReceipt?.bundle,
         threadId,
-        text: withNowLine(text, nowLine),
+        text: withNowLine(roomTurnText, nowLine),
         system: joinShapeLayers(roomSystemLayers),
         cwd,
         integrations,
@@ -13478,7 +13586,7 @@ const server = createServer(async (req, res) => {
       for (const msg of messages) {
         const who = msg.role === "user" ? userName : (msg.from?.name ?? bot?.name ?? "Bot");
         if (msg.kind === "text" && msg.text) lines.push(`**${who}:**`, "", msg.text, "");
-        else if (msg.kind === "activity" && msg.tool) lines.push(`> ${hostStoppedDisplayName(msg.tool.name) ?? folderTrustDisplayName(msg.tool.name) ?? browserUnavailableDisplayName(msg.tool.name) ?? msg.tool.name}`, "");
+        else if (msg.kind === "activity" && msg.tool) lines.push(`> ${hostStoppedDisplayName(msg.tool.name) ?? folderTrustDisplayName(msg.tool.name) ?? browserUnavailableDisplayName(msg.tool.name) ?? imagesNotSentDisplayName(msg.tool.name) ?? msg.tool.name}`, "");
         else if (msg.kind === "screen") lines.push("> [screen capture]", "");
         else if (msg.kind === "options" && msg.card) {
           lines.push(`> ${msg.card.title}${msg.card.answered ? ` (answered: ${msg.card.answered})` : ""}`, "");

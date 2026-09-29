@@ -7,8 +7,12 @@ import {
   createThumbnails,
   loadResize,
   loadSharpResize,
+  loadSharpShrink,
+  loadShrink,
+  oneAtATime,
   rasterFormat,
   sharpResize,
+  sharpShrink,
   thumbnailWidth,
   type Resize,
 } from "./image-thumbnail.ts";
@@ -58,6 +62,8 @@ function fakeSharp(meta: Meta, out = Buffer.alloc(10)) {
       rotate() { calls.push("rotate"); return image; },
       resize(resizeOptions: { width: number }) { calls.push(`resize:${resizeOptions.width}`); return image; },
       webp(webpOptions: { quality: number }) { calls.push(`webp:${webpOptions.quality}`); return image; },
+      flatten() { calls.push("flatten"); return image; },
+      jpeg(jpegOptions: { quality: number }) { calls.push(`jpeg:${jpegOptions.quality}`); return image; },
       toBuffer: async () => {
         if ((meta.width ?? 0) * (meta.height ?? 0) > options.limitInputPixels) throw new Error("Input image exceeds pixel limit");
         return out;
@@ -284,7 +290,7 @@ describe("createThumbnails", () => {
 });
 
 /** The sharp the server would load, when this checkout has it. */
-function realSharp(): ((...args: unknown[]) => { png(): { toBuffer(): Promise<Buffer> }; metadata(): Promise<{ width?: number; format?: string }> }) | null {
+function realSharp(): ((...args: unknown[]) => { png(): { toBuffer(): Promise<Buffer> }; metadata(): Promise<{ width?: number; height?: number; format?: string }> }) | null {
   try {
     return createRequire(fileURLToPath(import.meta.resolve("@huggingface/transformers")))("sharp");
   } catch {
@@ -302,5 +308,104 @@ describe.skipIf(!sharp)("with the bundled sharp", () => {
     expect(thumb?.mime).toBe("image/webp");
     const meta = await sharp!(thumb!.bytes).metadata();
     expect(meta).toMatchObject({ format: "webp", width: 320 });
+  });
+});
+
+/** A fake sharp for sharpShrink: every encode yields the next buffer in `outs`. */
+function fakeShrinkSharp(meta: Meta, outs: Buffer[]) {
+  const calls: string[] = [];
+  const sharp = vi.fn((_input: Buffer, _options: { limitInputPixels: number }) => {
+    const image = {
+      metadata: async () => meta,
+      rotate() { calls.push("rotate"); return image; },
+      resize(options: { width: number; height?: number; fit?: string }) { calls.push(`resize:${options.width}x${options.height}:${options.fit}`); return image; },
+      flatten() { calls.push("flatten"); return image; },
+      jpeg(options: { quality: number }) { calls.push(`jpeg:${options.quality}`); return image; },
+      webp() { return image; },
+      toBuffer: async () => outs.shift() ?? Buffer.alloc(1 << 30),
+    };
+    return image;
+  });
+  return { sharp, calls };
+}
+
+describe("sharpShrink", () => {
+  it("says an image that already fits does, without encoding it", async () => {
+    const { sharp, calls } = fakeShrinkSharp({ format: "png", width: 1200, height: 900 }, []);
+    await expect(sharpShrink(sharp)(PNG, { maxBytes: 5000, maxEdge: 2000 })).resolves.toBe("fits");
+    expect(calls).toEqual([]);
+  });
+
+  it("brings a photo inside the longest side, upright and flattened, as JPEG, stepping down until it fits", async () => {
+    const { sharp, calls } = fakeShrinkSharp({ format: "jpeg", width: 4032, height: 3024 }, [Buffer.alloc(9000), Buffer.alloc(9000), Buffer.alloc(900)]);
+    await expect(sharpShrink(sharp)(JPEG, { maxBytes: 1000, maxEdge: 2000 })).resolves.toEqual({ bytes: Buffer.alloc(900) });
+    expect(calls).toEqual([
+      "rotate", "resize:2000x2000:inside", "flatten", "jpeg:85",
+      "rotate", "resize:2000x2000:inside", "flatten", "jpeg:70",
+      "rotate", "resize:1600x1600:inside", "flatten", "jpeg:85",
+    ]);
+  });
+
+  it("shrinks a small image that is merely too heavy without enlarging it", async () => {
+    const { sharp, calls } = fakeShrinkSharp({ format: "png", width: 900, height: 700 }, [Buffer.alloc(10)]);
+    await expect(sharpShrink(sharp)(PNG, { maxBytes: 100, maxEdge: 2000 })).resolves.toEqual({ bytes: Buffer.alloc(10) });
+    expect(calls[1]).toBe("resize:900x900:inside");
+  });
+
+  it("gives up rather than guess: an animation, a pixel bomb, a disagreeing decoder, or nothing small enough", async () => {
+    await expect(sharpShrink(fakeShrinkSharp({ format: "webp", width: 4000, height: 3000, pages: 5 }, []).sharp)(WEBP, { maxBytes: 10, maxEdge: 2000 })).resolves.toBeNull();
+    await expect(sharpShrink(fakeShrinkSharp({ format: "png", width: 10_000, height: 10_000 }, []).sharp)(PNG, { maxBytes: 10, maxEdge: 2000 })).resolves.toBeNull();
+    await expect(sharpShrink(fakeShrinkSharp({ format: "svg", width: 4000, height: 3000 }, []).sharp)(JPEG, { maxBytes: 10, maxEdge: 2000 })).resolves.toBeNull();
+    const svg = fakeShrinkSharp({ format: "svg", width: 4000, height: 4000 }, []);
+    await expect(sharpShrink(svg.sharp)(SVG, { maxBytes: 10, maxEdge: 2000 })).resolves.toBeNull();
+    expect(svg.sharp).not.toHaveBeenCalled();
+    await expect(sharpShrink(fakeShrinkSharp({ format: "jpeg", width: 4000, height: 3000 }, []).sharp)(JPEG, { maxBytes: 10, maxEdge: 2000 })).resolves.toBeNull();
+  });
+
+  it("loads once and falls back to sending what fits when sharp is missing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(await loadSharpShrink(() => { throw new Error("Cannot find module 'sharp'"); })).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+});
+
+describe.skipIf(!sharp)("sharpShrink with the bundled sharp", () => {
+  it("turns a large transparent PNG into a JPEG no longer than 2000 px and under the byte target", async () => {
+    const shrink = await loadShrink();
+    expect(shrink).not.toBeNull();
+    const noisy = Buffer.alloc(3000 * 2200 * 4);
+    for (let index = 0; index < noisy.length; index++) noisy[index] = (index * 2654435761) >>> 24;
+    const png = await sharp!(noisy, { raw: { width: 3000, height: 2200, channels: 4 } }).png().toBuffer();
+    const made = await shrink!(png, { maxBytes: 1024 * 1024, maxEdge: 2000 });
+    expect(made).not.toBe("fits");
+    expect(made).not.toBeNull();
+    const out = (made as { bytes: Buffer }).bytes;
+    expect(out.length).toBeLessThanOrEqual(1024 * 1024);
+    const meta = await sharp!(out).metadata();
+    expect(meta.format).toBe("jpeg");
+    expect(Math.max(meta.width!, meta.height!)).toBeLessThanOrEqual(2000);
+  }, 60_000);
+});
+
+describe("oneAtATime", () => {
+  it("runs shrinks one after another, and a failed one does not stop the next", async () => {
+    let running = 0, most = 0;
+    const slow = oneAtATime(async (bytes) => {
+      running++; most = Math.max(most, running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running--;
+      if (bytes.length === 0) throw new Error("bad");
+      return "fits";
+    });
+    const results = await Promise.allSettled([slow(Buffer.alloc(1), { maxBytes: 1, maxEdge: 1 }), slow(Buffer.alloc(0), { maxBytes: 1, maxEdge: 1 }), slow(Buffer.alloc(1), { maxBytes: 1, maxEdge: 1 })]);
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
+    expect(most).toBe(1);
+  });
+
+  it("moves on from a shrink that never answers, as no shrink", async () => {
+    const stuck = oneAtATime(() => new Promise(() => undefined), 20);
+    await expect(stuck(Buffer.alloc(1), { maxBytes: 1, maxEdge: 1 })).resolves.toBeNull();
+    await expect(stuck(Buffer.alloc(1), { maxBytes: 1, maxEdge: 1 })).resolves.toBeNull();
   });
 });

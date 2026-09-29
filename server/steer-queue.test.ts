@@ -93,6 +93,25 @@ describe("steer-queue module", () => {
     expect(_queuedCount("thread-a")).toBe(0);
   });
 
+  it("binds each queued line's own images when it lands, so the drained turn can show them", () => {
+    // Before 0.1.61 a queued line was appended with no attachments: its
+    // uploads were never bound to the conversation, so Fuigo refused the
+    // drained turn ("Reattach the image") and other engines got bare paths.
+    const bot = fakeBot("bot-img", "thread-img", true);
+    const store = fakeStore([bot]);
+    queueSteeredMessage(bot.id, bot.threadId, 'one\n\n<attached-image path="/d/attachments/a.png" />');
+    queueSteeredMessage(bot.id, bot.threadId, "no picture");
+    queueSteeredMessage(bot.id, bot.threadId, "throws");
+    bot.busy = false;
+    const bind = vi.fn((_threadId: string, text: string) => {
+      if (text === "throws") throw new Error("audience changed");
+      return text.includes("a.png") ? [{ kind: "image" as const, path: "/d/attachments/a.png", mime: "image/png" }] : [];
+    });
+    drainSteeredMessages(store, vi.fn(), undefined, bind);
+    expect(bind).toHaveBeenCalledTimes(3);
+    expect(store.messages.map((message) => message.attachments)).toEqual([[{ kind: "image", path: "/d/attachments/a.png", mime: "image/png" }], undefined, undefined]);
+  });
+
   it("keeps a stable client receipt while a send waits to drain", () => {
     const bot = fakeBot("bot-receipt", "thread-receipt", true);
     const store = fakeStore([bot]);

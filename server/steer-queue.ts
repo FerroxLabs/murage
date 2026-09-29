@@ -135,6 +135,11 @@ export function drainSteeredMessages(
   /** Holds a queue the thread's own busy flag cannot see, such as the bot
    * speaking in a room turn (upstream OpenMausBot #1664). */
   isBlocked?: (botId: string, threadId: string) => boolean,
+  /** The images a held line binds to the conversation as it lands, exactly
+   * as a line sent to an idle bot does (turn-images.ts promote). Without it
+   * a queued picture stayed unbound, and Fuigo refused the drained turn. A
+   * binder that throws leaves that line unbound, as before. */
+  bindAttachments?: (threadId: string, text: string) => NonNullable<Message["attachments"]>,
 ): void {
   // deleting only the entry being visited is safe under Map iteration
   for (const [threadId, entry] of queues) {
@@ -153,6 +158,8 @@ export function drainSteeredMessages(
     saveQueues();
     const appended: Message[] = [];
     for (const item of entry.items) {
+      let attachments: NonNullable<Message["attachments"]> = [];
+      try { attachments = bindAttachments?.(threadId, item.text) ?? []; } catch { attachments = []; }
       // queueId is the pending-chip identity from the 202; append still
       // assigns a fresh transcript id so replay/exclude keep using message.id.
       appended.push(
@@ -160,6 +167,7 @@ export function drainSteeredMessages(
           role: "user",
           kind: "text",
           text: item.text,
+          ...(attachments.length ? { attachments } : {}),
           replyToId: item.replyToId,
           sendId: item.sendId,
           queueId: item.messageId,

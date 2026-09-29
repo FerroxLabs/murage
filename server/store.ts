@@ -208,6 +208,10 @@ export interface Message {
    * model saw it mid-turn, so the transcript marks it — a reader should
    * know the reply above it may already account for this line */
   steered?: boolean;
+  /** user messages: images named in this message that a turn left out
+   * (per-turn count or bytes, shared/turn-image-note.ts). A later replay of
+   * the message leaves them out too, so the bot is never handed their paths. */
+  imagesNotSent?: string[];
   /** Provider turn that produced this message. Assistant output can arrive
    * in several pieces around tool calls; the UI uses this identity to keep
    * those pieces together without discarding them. */

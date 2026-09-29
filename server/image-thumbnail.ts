@@ -15,6 +15,7 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { THUMBNAIL_WIDTHS, type ThumbnailWidth } from "../shared/image-thumbnail.ts";
+import type { Shrink } from "./turn-images.ts";
 
 export { THUMBNAIL_WIDTHS };
 
@@ -39,8 +40,10 @@ interface SharpMetadata { format?: string; width?: number; height?: number; orie
 interface SharpImage {
   metadata(): Promise<SharpMetadata>;
   rotate(): SharpImage;
-  resize(options: { width: number; withoutEnlargement: boolean }): SharpImage;
+  resize(options: { width: number; height?: number; fit?: "inside"; withoutEnlargement: boolean }): SharpImage;
   webp(options: { quality: number }): SharpImage;
+  flatten(options: { background: string }): SharpImage;
+  jpeg(options: { quality: number }): SharpImage;
   toBuffer(): Promise<Buffer>;
 }
 type Sharp = (input: Buffer, options: { limitInputPixels: number }) => SharpImage;
@@ -93,6 +96,43 @@ export function sharpResize(sharp: Sharp): Resize {
   };
 }
 
+/** The longest sides and JPEG qualities `sharpShrink` tries, largest first.
+ * JPEG because every engine and model takes it (xAI reads only JPEG and PNG);
+ * a transparent PNG is laid on white first, as a chat window shows it. */
+const SHRINK_EDGES = [2000, 1600, 1280, 1024, 768] as const;
+const SHRINK_QUALITIES = [85, 70] as const;
+
+/** A turn image made to fit an engine (server/turn-images.ts Shrink): "fits"
+ * when it already does, a JPEG that does, or null when it cannot be done. The
+ * same fail-closed reading as sharpResize: the magic number and sharp must
+ * agree, one frame only, and the header's size within the pixel limit before
+ * anything is decoded. Exported for its test, which passes a fake. */
+export function sharpShrink(sharp: Sharp): Shrink {
+  return async (bytes, { maxBytes, maxEdge }) => {
+    const sniffed = rasterFormat(bytes);
+    if (!sniffed) return null;
+    const meta = await sharp(bytes, { limitInputPixels: MAX_INPUT_PIXELS }).metadata();
+    if (meta.format !== sniffed) return null;
+    if ((meta.pages ?? 1) > 1) return null;
+    if (!meta.width || !meta.height || meta.width * meta.height > MAX_INPUT_PIXELS) return null;
+    const longest = Math.max(meta.width, meta.height);
+    if (bytes.length <= maxBytes && longest <= maxEdge) return "fits";
+    const sides = [...new Set(SHRINK_EDGES.filter(edge => edge <= maxEdge).map(edge => Math.min(edge, longest)))];
+    for (const side of sides) {
+      for (const quality of SHRINK_QUALITIES) {
+        const out = await sharp(bytes, { limitInputPixels: MAX_INPUT_PIXELS })
+          .rotate()
+          .resize({ width: side, height: side, fit: "inside", withoutEnlargement: true })
+          .flatten({ background: "#ffffff" })
+          .jpeg({ quality })
+          .toBuffer();
+        if (out.length <= maxBytes) return { bytes: out };
+      }
+    }
+    return null;
+  };
+}
+
 /** A Resize over the sharp that `load` returns, or null (with one warning)
  * when it cannot be loaded. sharp's own file cache is off (sources are
  * already in memory, and thumbnails are cached below) and it decodes on one
@@ -120,6 +160,47 @@ export function loadResize(): Promise<Resize | null> {
   // originals.
   loaded ??= loadSharpResize(() => createRequire(fileURLToPath(import.meta.resolve("@huggingface/transformers")))("sharp"));
   return loaded;
+}
+
+const SHRINK_TIMEOUT_MS = 20_000;
+
+/** One shrink at a time across the process: each can decode a picture of up
+ * to MAX_INPUT_PIXELS several times, and ten images in each of several
+ * rooms' turns must not all do so at once. */
+export function oneAtATime(shrink: Shrink, timeoutMs = SHRINK_TIMEOUT_MS): Shrink {
+  let tail: Promise<unknown> = Promise.resolve();
+  return (bytes, target) => {
+    // A shrink that hangs is no shrink: the queue moves on after timeoutMs
+    // and that picture is judged as it is.
+    const run = tail.then(() => new Promise<Awaited<ReturnType<Shrink>>>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(null), timeoutMs);
+      shrink(bytes, target).then(resolve, reject).finally(() => clearTimeout(timer));
+    }));
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}
+
+let loadedShrink: Promise<Shrink | null> | undefined;
+
+/** sharpShrink over the same sharp as loadResize, once per process; null
+ * when sharp is unavailable, and a turn then sends what fits as it is. */
+export function loadShrink(): Promise<Shrink | null> {
+  loadedShrink ??= loadSharpShrink(() => createRequire(fileURLToPath(import.meta.resolve("@huggingface/transformers")))("sharp"));
+  return loadedShrink;
+}
+
+/** loadSharpResize's twin for sharpShrink. */
+export async function loadSharpShrink(load: () => unknown): Promise<Shrink | null> {
+  try {
+    const sharp = load() as SharpModule;
+    sharp.cache(false);
+    sharp.concurrency(1);
+    return oneAtATime(sharpShrink(sharp));
+  } catch (error) {
+    console.warn(`[turn images] cannot shrink images, sending those that fit as they are: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
 }
 
 /** An answer to a `?w=` view. `image` null means "send the original".

@@ -124,7 +124,7 @@ export type ToolAccess = "direct" | "use-tool" | "none";
  *    driver that declares `capabilities.imagesInline` does this — Claude
  *    (a stream-json content block array), Codex (`turn/start` input
  *    `{type:"image", url}` carrying a data URL) and the ACP engines (real
- *    `session/prompt` image parts). index.ts gates `turnImages.read` on that
+ *    `session/prompt` image parts). index.ts gates `collectTurnImages` on that
  *    flag composed with the routed model's vision fact, so the primer reads
  *    the same flag rather than naming engines of its own. It is deliberately
  *    NOT `capabilities.images`, which answers the composer's question ("may

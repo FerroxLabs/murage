@@ -68,7 +68,9 @@ import { ConnectorCard } from "./ConnectorCard";
 import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
 import { FolderTrustRow } from "./FolderTrustRow";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
+import { ImagesNotSentRow } from "./ImagesNotSentRow";
 import { browserUnavailableReason } from "../../shared/browser-unavailable";
+import { imagesNotSent } from "../../shared/turn-image-note";
 import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 import { folderTrustNotice } from "../../shared/folder-trust";
@@ -1107,6 +1109,9 @@ const MessagesList = memo(function MessagesList({
               // a turn that ran without its browser: a quiet note, not a card
               const browserReason = browserUnavailableReason(m.tool?.name);
               if (browserReason) return <BrowserUnavailableRow reason={browserReason} />;
+              // a turn that went ahead with only some of its images
+              const leftOut = imagesNotSent(m.tool?.name);
+              if (leftOut) return <ImagesNotSentRow counts={leftOut} />;
               if (m.tool?.name.startsWith("error:")) {
                 return (
                   <ErrorRow
