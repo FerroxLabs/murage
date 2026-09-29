@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PROVIDER_PRESETS, parseProviderBank } from "../electron/provider-connections.mjs";
+import { PROVIDER_PRESETS, keyIssuer, parseProviderBank } from "../electron/provider-connections.mjs";
 import { MODEL_CATALOG_REFRESH_MS } from "./model-catalog-refresh.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { resolveModelLabel } from "../shared/model-label.ts";
@@ -57,6 +57,10 @@ function knownChat(preset: ProviderPreset, id: string, capabilities: Record<stri
  if (preset === "mistral") return capabilities.completion_chat === true;
  if (preset === "xai") return /^grok-/.test(id);
  if (preset === "groq") return /(?:^|\/)(llama|gemma|qwen|deepseek|gpt-oss|compound)/.test(id);
+ // Gemini API: chat is the gemini/gemma families, minus the Live, robotics,
+ // video and computer-use rows that share the prefix (MEDIA already drops
+ // image, TTS, embedding and transcription ids).
+ if (preset === "google") return /^(gemini|gemma)-/.test(id) && !/(?:^|-)(live|robotics|omni|computer-use)(?:-|$)/.test(id);
  if (preset === "flux") return /^flux-(auto|fast|standard|reasoning|pinned-)/.test(id) || /^(claude-|gpt-|grok-|deepseek-|qwen-|gemini-)/.test(id);
  return false;
 }
@@ -64,6 +68,9 @@ export function normalizeProviderModels(connection: ProviderConnectionRecord, pa
  if (!object(payload) || !Array.isArray(payload.data) || payload.data.length > MAX_MODELS) throw new CatalogFailure("invalid-catalog");
  const models: ProviderModel[] = [], seen = new Set<string>();
  for (const row of payload.data) {
+  // Google's OpenAI-compatible list names models `models/<id>`; its chat
+  // endpoint takes the bare id, which is the id Murage stores and sends.
+  if (connection.preset === "google" && object(row) && typeof row.id === "string" && row.id.startsWith("models/")) row.id = row.id.slice(7);
   if (!object(row) || typeof row.id !== "string" || !row.id || row.id.length > 200 || /[\x00-\x1f]/.test(row.id) || seen.has(row.id)) continue;
   if ([row.id,row.name,row.display_name].some(value=>typeof value==="string"&&value.includes(connection.key)))throw new CatalogFailure("invalid-catalog");
   seen.add(row.id);const capabilities=object(row.capabilities)?row.capabilities:{};
@@ -114,7 +121,11 @@ export class ProviderConnectionsService {
  subscribe(callback:(changedIds:string[])=>void|Promise<void>){this.listeners.add(callback);return()=>{this.listeners.delete(callback);};}
  async changed(previousBank:string|undefined,nextBank:string){const before=parseProviderBank(previousBank),after=parseProviderBank(nextBank);const ids=[...new Set([...before.map(row=>row.id),...after.map(row=>row.id)])].filter(id=>before.find(row=>row.id===id)?.revision!==after.find(row=>row.id===id)?.revision);for(const id of ids)this.cache.delete(id);await Promise.all([...this.listeners].map(listener=>listener(ids)));}
  private now(){return this.options.now?.()??Date.now();}
- private records():Array<ProviderConnectionRecord|LegacyProviderConnection>{return [...(this.options.legacyConnections?.()??[]),...parseProviderBank(this.options.readBank())];}
+ // A saved row whose key names another provider (saved before every door
+ // checked it, or restored from such a backup) is listed for review and never
+ // enabled, refreshed or sent. Removing it and adding the key under its own
+ // provider clears it.
+ private records():Array<ProviderConnectionRecord|LegacyProviderConnection|(ProviderConnectionRecord&{legacyError:string})>{return [...(this.options.legacyConnections?.()??[]),...parseProviderBank(this.options.readBank()).map(row=>{const issuer=keyIssuer(row.key);return issuer&&issuer!==row.preset?{...row,enabled:false,legacyError:"This saved key belongs to a different provider. Remove it, then add the key under its own provider."}:row;})];}
  resolve(id:string){const found=this.records().find(row=>row.id===id)??this.options.resolveAlias?.(id);return found?{...PROVIDER_PRESETS[found.preset],...found}:null;}
  private readCache(connection:ProviderConnectionRecord):ProviderCatalog {
   if("legacyError" in connection && connection.legacyError)return{connectionId:connection.id,models:[],stale:false,assurance:"catalog-only",error:{code:"unavailable",message:String(connection.legacyError)}};

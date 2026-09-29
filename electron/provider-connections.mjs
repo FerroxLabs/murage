@@ -8,6 +8,9 @@ export const PROVIDER_PRESETS = Object.freeze({
   flux: { label: "Flux Router", baseUrl: "https://api.fluxrouter.ai/v1", catalogUrl: "https://api.fluxrouter.ai/v1/models", protocol: "openai" },
   groq: { label: "Groq", baseUrl: "https://api.groq.com/openai/v1", catalogUrl: "https://api.groq.com/openai/v1/models", protocol: "openai" },
   xai: { label: "xAI", baseUrl: "https://api.x.ai/v1", catalogUrl: "https://api.x.ai/v1/models", protocol: "openai" },
+  // Gemini API (Google AI Studio key), through Google's OpenAI-compatible
+  // endpoint: https://ai.google.dev/gemini-api/docs/openai (checked 2026-09-28).
+  google: { label: "Google", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", catalogUrl: "https://generativelanguage.googleapis.com/v1beta/openai/models", protocol: "openai" },
 });
 const plain = value => value && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 const id = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value);
@@ -26,10 +29,16 @@ export function parseProviderBank(raw) {
   }
   return structuredClone(bank);
 }
+/** The provider a key's own prefix names, or null. Read from the trimmed
+ * value, which is the value every door stores. */
+export function keyIssuer(key) {
+  const value = typeof key === "string" ? key.trim() : "";
+  return value.startsWith("sk-ant-") ? "anthropic" : value.startsWith("sk-flux-") ? "flux" : value.startsWith("sk-or-") ? "openrouter" : /^sk-(?:proj|svcacct)-/.test(value) ? "openai" : value.startsWith("xai-") ? "xai" : value.startsWith("gsk_") ? "groq" : /^AIza[A-Za-z0-9_-]{35}$/.test(value) ? "google" : null;
+}
 export function assertProviderKey(preset, key) {
   if (!Object.hasOwn(PROVIDER_PRESETS, preset) || !secret(key)) fail("Choose a provider and paste a valid model API key.");
-  if (key.startsWith("sk-admin-")) fail("Use an inference API key, not an OpenAI admin key.");
-  const known = key.startsWith("sk-ant-") ? "anthropic" : key.startsWith("sk-flux-") ? "flux" : key.startsWith("sk-or-") ? "openrouter" : /^sk-(?:proj|svcacct)-/.test(key) ? "openai" : key.startsWith("xai-") ? "xai" : key.startsWith("gsk_") ? "groq" : null;
+  if (key.trim().startsWith("sk-admin-")) fail("Use an inference API key, not an OpenAI admin key.");
+  const known = keyIssuer(key);
   if (known && known !== preset) fail("This key appears to belong to a different provider. Choose its provider before saving.");
 }
 /** Caller supplies fresh opaque IDs; create/update never sends a key anywhere. */
@@ -42,6 +51,7 @@ export function mutateProviderBank(raw, input, createId) {
     if (bank.length >= 32) fail("You can save up to 32 model connections.");
     const name = input.label === undefined ? PROVIDER_PRESETS[input.preset].label : input.label;
     if (!label(name)) fail("Use an account label of at most 80 characters.");
+    if (name.includes(input.key.trim())) fail("Use a name for this account, not its key.");
     bank.push({ id: createId(), preset: input.preset, label: name.trim(), enabled: true, key: input.key.trim(), revision: createId() });
   } else if (input.action === "update" || input.action === "remove") {
     const allowed = input.action === "remove" ? ["action", "id", "revision"] : ["action", "id", "revision", "label", "key", "enabled"];
@@ -54,6 +64,8 @@ export function mutateProviderBank(raw, input, createId) {
       if (input.label !== undefined && !label(input.label)) fail("Use an account label of at most 80 characters.");
       if (input.enabled !== undefined && typeof input.enabled !== "boolean") fail("Enabled must be true or false.");
       if (input.key !== undefined) assertProviderKey(bank[index].preset, input.key);
+      const nextKey = input.key === undefined ? bank[index].key : input.key.trim();
+      if (input.label !== undefined && input.label.includes(nextKey)) fail("Use a name for this account, not its key.");
       bank[index] = { ...bank[index], ...(input.label === undefined ? {} : { label: input.label.trim() }), ...(input.key === undefined ? {} : { key: input.key.trim() }), ...(input.enabled === undefined ? {} : { enabled: input.enabled }), revision: input.key !== undefined || input.enabled !== undefined ? createId() : bank[index].revision };
     }
   } else fail("Choose create, update or remove.");

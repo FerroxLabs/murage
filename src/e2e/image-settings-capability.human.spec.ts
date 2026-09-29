@@ -50,7 +50,11 @@ async function startHarness() {
   writeFileSync(offline, `const original = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (new URL(url).hostname.endsWith("fluxrouter.ai")) throw new Error("image-settings fixture: Flux Router is offline in this spec");
+  const target = new URL(url);
+  if (target.hostname.endsWith("fluxrouter.ai")) throw new Error("image-settings fixture: Flux Router is offline in this spec");
+  // Fake connection keys never leave the machine: every other provider's
+  // catalog is offline too (IMGSET2 lists connections from local rows only).
+  if (["api.x.ai", "openrouter.ai", "generativelanguage.googleapis.com"].includes(target.hostname) || (target.hostname === "api.openai.com" && target.pathname.endsWith("/models"))) throw new Error("image-settings fixture: provider catalogs are offline in this spec");
   return original(input, init);
 };\n`);
   const home = join(DATA_DIR, "home"), tmp = join(DATA_DIR, "tmp");
@@ -178,7 +182,7 @@ test("an OpenAI image key states create-and-edit, and switching connections swit
   await expect(images.getByText("Image settings saved.")).toBeVisible();
   await shot(images, "03-openai-creates-and-edits");
 
-  await expect(images.getByText(/^Images use OpenAI image key\. /)).toBeVisible();
+  await expect(images.getByText(/^Images use OpenAI image key, with that connection’s account\. /)).toBeVisible();
   await connection.selectOption({ label: "Flux Router" });
   // Both connections now create and edit, so the switch shows in the model
   // and the connection named for charges. Was:
@@ -187,6 +191,28 @@ test("an OpenAI image key states create-and-edit, and switching connections swit
   //   toHaveText(/^Creates images only\. /);
   await expect(images.getByRole("combobox", { name: "Image model" })).toHaveValue("flux-image");
   await expect(line).toHaveAttribute("data-image-capability", "edits");
-  await expect(images.getByText(/^Images use Flux Router\. /)).toBeVisible();
+  await expect(images.getByText(/^Images use Flux Router, with that connection’s account\. /)).toBeVisible();
   await shot(images, "04-switched-back-to-flux");
+});
+
+// IMGSET2 (Sean, 2026-09-28): keys saved in Settings → Models for xAI,
+// OpenAI, OpenRouter and Google all appear as image connections next to
+// Flux Router, at every width the settings render at.
+test("every image-capable key saved in Models is an image connection", async ({ page }) => {
+  for (const [preset, key] of [["openai", "sk-proj-fixture-openai-connection"], ["xai", "xai-fixture-xai-connection-00"], ["openrouter", "sk-or-v1-fixture-openrouter-conn"], ["google", `AIza${"f".repeat(35)}`]]) {
+    expect((await fixtureRequest("/api/provider-connections/mutate", "POST", { action: "create", preset, key })).status).toBe(200);
+  }
+  await openApp(page);
+  const images = imageRegion(await openSettings(page, "Tools & Connections"));
+  await images.scrollIntoViewIfNeeded();
+  const connection = images.getByRole("combobox", { name: "Image connection" });
+  for (const label of ["Flux Router", "OpenAI image key", "OpenAI", "xAI", "OpenRouter", "Google"]) await expect(connection.locator("option", { hasText: new RegExp(`^${label}$`) })).toHaveCount(1);
+  await connection.selectOption({ label: "Google" });
+  await expect(images.getByRole("combobox", { name: "Image model" })).toHaveValue("gemini-3.1-flash-image");
+  await expect(images.locator("[data-image-capability]")).toHaveAttribute("data-image-capability", "edits");
+  for (const width of [390, 820, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await images.scrollIntoViewIfNeeded();
+    await shot(images, `05-several-connections-${width}`);
+  }
 });

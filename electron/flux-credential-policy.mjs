@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { assertProviderKey, parseProviderBank } from "./provider-connections.mjs";
+import { assertProviderKey, keyIssuer, parseProviderBank } from "./provider-connections.mjs";
 
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
+/** A saved key picked as the Flux key must not name another provider. */
+const assertFluxIssuer = key => { const issuer = keyIssuer(key); if (issuer && issuer !== "flux") fail("This key appears to belong to a different provider. Choose its provider before saving."); };
 const validId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value);
 /** Private snapshot only. Aliases contain no credentials and are never user input. */
 function snapshot(state) {
@@ -42,6 +44,7 @@ export function planFluxCredentialChange(state, input) {
   else if (input.action === "select") {
     const selected = input.connectionId === "legacy-flux" ? saved.workspaceKey : input.connectionId === "legacy-flux-file" ? saved.fileWorkspaceKey : input.connectionId === "legacy-flux-environment" ? saved.ambientWorkspaceKey : rows.find(row => row.id === input.connectionId)?.key;
     if (!selected) fail("Choose an existing Flux connection.");
+    assertFluxIssuer(selected);
     workspaceKey = selected.trim();
   } else {
     if (status.conflict) fail("Choose which existing Flux key to keep before changing it.", 409);
@@ -51,6 +54,7 @@ export function planFluxCredentialChange(state, input) {
       if (!workspaceKey && (saved.fileWorkspaceKey || saved.ambientWorkspaceKey)) fail("Select a saved Flux key before enabling it.", 409);
       if (!workspaceKey && rows.length && !rows.some(row => row.enabled)) fail("Select a saved Flux key before enabling it.", 409);
       workspaceKey ||= rows.find(row => row.enabled)?.key.trim() ?? "";
+      assertFluxIssuer(workspaceKey);
     } else {
       assertProviderKey("flux", input.key);
       workspaceKey = input.key.trim();

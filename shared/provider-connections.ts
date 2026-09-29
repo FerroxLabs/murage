@@ -1,4 +1,4 @@
-export type ProviderPreset = "anthropic" | "openai" | "openrouter" | "deepseek" | "mistral" | "flux" | "groq" | "xai";
+export type ProviderPreset = "anthropic" | "openai" | "openrouter" | "deepseek" | "mistral" | "flux" | "groq" | "xai" | "google";
 export type ProviderProtocol = "openai" | "anthropic" | "responses";
 /** Private server/Electron record. Never include key in public responses. */
 export interface ProviderConnectionRecord { id: string; preset: ProviderPreset; label: string; enabled: boolean; key: string; revision: string }

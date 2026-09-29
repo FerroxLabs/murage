@@ -211,9 +211,9 @@ describe("extraction is a suggestion, never an action", () => {
   });
 
   it("offers no save at all for a key Murage cannot store", () => {
-    const html = render({ rows: [row(`GOOGLE_API_KEY=${GOOGLE}`)], scanned: true });
-    expect(html).toContain("Google AI key");
-    expect(html).toContain("Google CLI&#x27;s own login");
+    const html = render({ rows: [row(`STRIPE_SECRET_KEY=sk_live_${"s".repeat(24)}`)], scanned: true });
+    expect(html).toContain("Stripe secret key");
+    expect(html).toContain("never asks for a payment key");
     expect(html).not.toContain("Save this key");
     // Ignoring it is the only thing on offer.
     expect(html).toContain("Ignore");
@@ -224,6 +224,7 @@ describe("extraction is a suggestion, never an action", () => {
     expect(rowTarget(row(`my key is ${BARE}`))).toBeNull();
     expect(rowTarget(row(`my key is ${BARE}`, { chosen: "flux" as ProviderId }))).toBe("flux");
     expect(rowTarget(row(`ANTHROPIC_API_KEY=${ANTHROPIC}`))).toBe("anthropic");
+    expect(rowTarget(row(`GOOGLE_API_KEY=${GOOGLE}`))).toBe("google");
   });
 });
 

@@ -58,6 +58,22 @@ describe("capabilities primer", () => {
       expect(primer({ imageProvider: true })).toContain("create and edit images");
     });
 
+    it("names the real image connections so a bot never invents setup steps", () => {
+      const imageConnections = [{ label: "Flux Router", inUse: true, model: "flux-image" }, { label: "xAI", inUse: false }, { label: "Google", inUse: false }];
+      const text = primer({ imageProvider: true, imageConnections });
+      expect(text).toContain("Image connections set up in this workspace: Flux Router (in use, model flux-image); xAI; Google. These are the only ones");
+      expect(text).toContain("Never tell the owner to set up a connection listed here");
+      expect(text).toContain("list_image_models");
+      expect(primer({ mounted: {}, imageProvider: true, imageConnections })).not.toContain("Image connections set up");
+    });
+
+    it("says image requests are off, not missing, when connections exist but are switched off", () => {
+      const text = primer({ imageProvider: false, imageConnections: [{ label: "xAI", inUse: true }] });
+      expect(text).toContain("image requests are switched off in Settings → Tools & Connections → Image generation");
+      expect(text).not.toContain("no image provider is connected");
+      expect(text).not.toContain("Image connections set up");
+    });
+
     it("does not repeat image generation when the agents server itself is absent", () => {
       const text = primer({ mounted: {}, imageProvider: false });
       expect(text.match(/image generation/g)).toHaveLength(1);

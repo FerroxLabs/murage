@@ -22,6 +22,8 @@ export interface ImageSettingsSnapshot {
   connections: Array<{ id: string; label: string; provider: string }>;
   selected: { connectionId: string; model: string } | null;
   catalog: { connectionId: string; provider: string; defaultModel: string | null; models: ImageModel[] } | null;
+  /** Why the chosen connection's models could not be read. */
+  catalogError?: string;
 }
 export interface ImageSettingsPatch { enabled?: boolean; connectionId?: string; model?: string }
 
@@ -130,6 +132,7 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
           {catalog?.models.map(item => <option key={item.id} value={item.id} disabled={!item.generate || Boolean(item.disabledReason)}>{imageModelOptionLabel(item, catalog.defaultModel)}</option>)}
         </select>
       </label>
+      {snapshot?.catalogError && <p role="alert" className="mt-2 text-[12px] text-danger">{snapshot.catalogError}</p>}
       {catalog?.provider === "xai" && !modelId && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">GPT Image 2 is not available on this connection. Choose an Imagine model to use xAI.</p>}
       {model && capability && <p data-image-capability={capability.kind} className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{capability.sentences.join(" ")}</p>}
       {model && usable && <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{model.availability === "catalog-listed" ? "Listed by the provider. Account access is checked when a request runs." : "Account access has not been verified for this model."}</p>}

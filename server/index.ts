@@ -15,7 +15,7 @@ import { providerEngineProtocol } from "../shared/provider-engine.ts";
 import { ERROR_MESSAGE_MAX } from "../shared/provider-error.ts";
 import { startModelCatalogRefresh } from "./model-catalog-refresh.ts";
 import { ProviderConnectionsService, type LegacyProviderConnection } from "./provider-connections.ts";
-import { PROVIDER_PRESETS, assertProviderKey, mutateProviderBank, parseProviderBank, providerBankRevision } from "../electron/provider-connections.mjs";
+import { PROVIDER_PRESETS, assertProviderKey, keyIssuer, mutateProviderBank, parseProviderBank, providerBankRevision } from "../electron/provider-connections.mjs";
 import { PROVIDER_BANK_FENCE_ERROR, applyProviderBankFenceMessage, modelProviderCommitAuthorized, providerBankDispatchFenced } from "./provider-bank-fence.ts";
 import { fluxCredentialStatus, resolveFluxAlias, type FluxCredentialState } from "../electron/flux-credential-policy.mjs";
 import { FluxConnectionTransaction } from "./flux-connection-transaction.ts";
@@ -180,7 +180,7 @@ import { capturedMessageWithheld, copyOriginWithheld, messageMadeWithMemory } fr
 import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
-import { capabilitiesPrimer, roomToolAccessLine, turnCapabilityFacts } from "./capabilities-primer.ts";
+import { capabilitiesPrimer, roomToolAccessLine, turnCapabilityFacts, type ImageConnectionFact } from "./capabilities-primer.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
 import { browserRefusal, isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
@@ -441,7 +441,7 @@ import {
 } from "./browser-connection.ts";
 import { captureOutsideHumanControl } from "./private-screen-capture.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
-import { ImageGenerationService, type ImageConnection } from "./image-generation.ts";
+import { ImageGenerationError, ImageGenerationService, type ImageConnection } from "./image-generation.ts";
 import { ImageOperations, imageReferences } from "./image-operations.ts";
 import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
@@ -616,14 +616,21 @@ const providerConnections = new ProviderConnectionsService({ readBank: () => cfg
     if (!key?.trim()) return;
     rows.push({ id, preset, label, key: key.trim(), enabled: !legacyError, revision: createHash("sha256").update(JSON.stringify([id, key, legacyError ?? "", PROVIDER_PRESETS[preset].baseUrl])).digest("hex"), legacy: true, managedIn, ...(legacyError ? { legacyError } : {}) });
   };
-  add("legacy-flux", "flux", "Flux Router", fluxKey(), "connections");
-  add("legacy-openai-image", "openai", "OpenAI · existing image key", cfg.imageGen?.key, "images");
-  add("legacy-xai", "xai", "xAI · existing workspace key", cfg.xai?.key, "engines");
+  // A key saved before its slot checked the issuer (or restored from such a
+  // backup) stays listed for review, but is never enabled or sent.
+  const mismatch = (slot: string, key: string | undefined) => { const issuer = key ? keyIssuer(key) : null; return issuer && issuer !== slot ? "This saved key belongs to a different provider. Replace it with the right key before using it." : undefined; };
+  // fluxKey() refuses another provider's key; the saved value is still
+  // listed here for review, disabled.
+  add("legacy-flux", "flux", "Flux Router", fluxKey() ?? cfg.flux?.apiKey, "connections", fluxKey() ? undefined : mismatch("flux", cfg.flux?.apiKey));
+  add("legacy-openai-image", "openai", "OpenAI · existing image key", cfg.imageGen?.key, "images", mismatch("openai", cfg.imageGen?.key));
+  add("legacy-xai", "xai", "xAI · existing workspace key", cfg.xai?.key, "engines", mismatch("xai", cfg.xai?.key));
   if (cfg.openaiCompat?.key?.trim()) {
     const configuredUrl = (cfg.openaiCompat.url ?? "https://openrouter.ai/api/v1").replace(/\/+$/, "");
     const preset = Object.keys(PROVIDER_PRESETS).find(id => PROVIDER_PRESETS[id as keyof typeof PROVIDER_PRESETS].baseUrl === configuredUrl) as keyof typeof PROVIDER_PRESETS | undefined;
     let problem = preset ? undefined : "This existing compatible endpoint is not a named provider preset. Manage it in existing engine settings; no key has been copied.";
-    if (preset && /^(sk-ant-|sk-flux-|sk-(?:proj|svcacct|admin)-|xai-|gsk_)/.test(cfg.openaiCompat.key)) {
+    // Every recognised prefix, Google's included: a key on the wrong
+    // endpoint stays listed for review but is never enabled or sent.
+    if (preset && (keyIssuer(cfg.openaiCompat.key) || cfg.openaiCompat.key.trim().startsWith("sk-admin-"))) {
       try { assertProviderKey(preset, cfg.openaiCompat.key); } catch { problem = "This saved key does not match its configured endpoint. Choose the correct provider before using it."; }
     }
     add("legacy-openai-compatible", preset ?? "openrouter", problem ? "Existing compatible key · needs review" : `${PROVIDER_PRESETS[preset!].label} · existing compatible key`, cfg.openaiCompat.key, "engines", problem);
@@ -3407,7 +3414,7 @@ const imageOperations = new ImageOperations({ store, routineCard: routineCardHoo
   }
 } });
 /** Providers whose keys can make images here. */
-const IMAGE_PRESETS: readonly string[] = ["flux", "openai", "openrouter", "xai"];
+const IMAGE_PRESETS: readonly string[] = ["flux", "openai", "openrouter", "xai", "google"];
 /** The fixed image ids older settings saved, each standing for one existing
  * key. Kept so a saved choice still resolves; listing only offers each key
  * once (imageConnectionIds). */
@@ -3450,15 +3457,53 @@ function imageConnectionIds(): string[] {
   return ids;
 }
 const imageService = new ImageGenerationService({ resolveConnection: imageConnection, connectionIds: imageConnectionIds });
+/** The image connections as Settings shows them, labelled. Local rows only.
+ * This list also reaches bots (list_image_models and the primer), so a saved
+ * label that holds its own key, or any recognisable key, is replaced here. */
+function labelledImageConnections() {
+  // Every stored model key, not only this connection's own: a name may hold
+  // another account's key too.
+  const savedKeys = providerConnections.list().flatMap(row => { const key = providerConnections.resolve(row.id)?.key.trim(); return key && key.length >= 8 ? [key] : []; });
+  const flux = fluxKey()?.trim(); if (flux && flux.length >= 8) savedKeys.push(flux);
+  return imageService.listConnections().map(connection => {
+    const label = connection.id.startsWith("model:")
+      ? providerConnections.resolve(connection.id.slice(6))?.label ?? connection.provider
+      : ({ flux: "Flux Router", openai: "OpenAI image key", "openai-compatible": "OpenAI", openrouter: "OpenRouter", xai: "xAI" } as Record<string,string>)[connection.id] ?? connection.provider;
+    return { ...connection, label: savedKeys.some(key => label.includes(key)) ? connection.provider : redactSecretsInText(label) };
+  });
+}
+function defaultImageConnection(connections: ReturnType<typeof labelledImageConnections>, connectionId = cfg.imageGen?.connectionId) {
+  return connectionId ?? connections.find(connection => connection.provider === "flux")?.id ?? connections.find(connection => connection.provider === "openai")?.id;
+}
+/** What a bot is told about images: the same connections Settings lists, and
+ * which one its requests use by default. No catalog read, so no network. */
+function imageConnectionFacts(): ImageConnectionFact[] {
+  const connections = labelledImageConnections(), chosen = defaultImageConnection(connections);
+  return connections.map(connection => {
+    const inUse = connection.id === chosen;
+    // Only a model this connection is known to offer is named. OpenRouter's
+    // list lives with OpenRouter, so its model is left for list_image_models.
+    const saved = inUse ? (cfg.imageGen?.connectionId === chosen ? cfg.imageGen?.model : undefined) ?? connection.defaultModel ?? undefined : undefined;
+    let known: string[] | null = null;
+    try { known = imageService.localModelIds(connection.id); } catch { known = null; }
+    const model = saved && known?.includes(saved) ? saved : undefined;
+    return { label: connection.label, inUse, ...(model ? { model } : {}) };
+  });
+}
 async function imageSettings(connectionId = cfg.imageGen?.connectionId) {
-  const connections = imageService.listConnections().map(connection => ({ ...connection, label: connection.id.startsWith("model:")
-    ? providerConnections.resolve(connection.id.slice(6))?.label ?? connection.provider
-    : ({ flux: "Flux Router", openai: "OpenAI image key", "openai-compatible": "OpenAI", openrouter: "OpenRouter", xai: "xAI" } as Record<string,string>)[connection.id] ?? connection.provider }));
-  const chosen = connectionId ?? connections.find(connection => connection.provider === "flux")?.id ?? connections.find(connection => connection.provider === "openai")?.id;
-  const catalog = chosen && imageConnection(chosen) ? await imageService.getCatalog(chosen) : null;
+  const connections = labelledImageConnections();
+  const chosen = defaultImageConnection(connections, connectionId);
+  // The connection list is local; only the chosen catalog may need its
+  // provider (OpenRouter). When that read fails, Settings still lists every
+  // connection and says why the models are missing.
+  let catalog: Awaited<ReturnType<typeof imageService.getCatalog>> | null = null, catalogError: string | undefined;
+  if (chosen && imageConnection(chosen)) {
+    try { catalog = await imageService.getCatalog(chosen); }
+    catch (error) { catalogError = error instanceof ImageGenerationError ? error.message : "Could not load this connection's image models. Try again later."; }
+  }
   const model = cfg.imageGen?.connectionId === chosen ? cfg.imageGen?.model ?? catalog?.defaultModel : catalog?.defaultModel;
   const selected = chosen && model && catalog?.models.some(item => item.id === model && item.generate && !item.disabledReason) ? { connectionId: chosen, model } : null;
-  return { enabled: cfg.imageGen?.enabled !== false && !!selected, connections, selected, catalog };
+  return { enabled: cfg.imageGen?.enabled !== false && !!selected, connections, selected, catalog, ...(catalogError ? { catalogError } : {}) };
 }
 
 /** The one per-MODEL image fact Murage holds: a BYOK provider catalog's
@@ -6704,6 +6749,7 @@ async function startTurn(
         // behind it, which is the case where a bot promises a picture it
         // cannot make.
         imageProvider: cfg.imageGen?.enabled !== false && imageService.listConnections().length > 0,
+        imageConnections: imageConnectionFacts(),
         voice: tts.voiceReady(cfg, bot.voice, bot.voiceProvider),
         canAskOwner: humanIsOwner && opts?.automationSource === undefined,
         browserLock: integrations.browser ? unifiedBrowserProtection(threadId) ?? undefined : undefined,
@@ -11579,7 +11625,7 @@ const server = createServer(async (req, res) => {
       if (patch.connectionId && patch.connectionId !== cfg.imageGen?.connectionId) delete next.model;
       if (patch.connectionId || patch.model || patch.enabled === true) {
         const state = await imageSettings(next.connectionId);
-        if (!state.catalog) return json(res, 409, { error: "Connect an image provider first." });
+        if (!state.catalog) return json(res, 409, { error: state.catalogError ?? "Connect an image provider first." });
         const model = patch.model ?? next.model ?? state.catalog.defaultModel;
         if (model && !state.catalog.models.some(item => item.id === model && item.generate && !item.disabledReason)) return json(res, 400, { error: "Choose a supported image model from this connection." });
         if (model) next.model = model; else { delete next.model; next.enabled = false; }
@@ -14883,9 +14929,13 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: `prompt must be at most 400 characters` });
       }
       if (providerConfigBusy) return json(res, 409, { error: "Credentials are being changed. Try again shortly." });
+      // The avatar key is OpenAI's; one that names another provider is left
+      // out, so Flux (when connected) still draws and nothing is sent to OpenAI.
+      const savedAvatarKey = cfg.imageGen?.key ?? "";
+      const avatarKey = keyIssuer(savedAvatarKey) && keyIssuer(savedAvatarKey) !== "openai" ? "" : savedAvatarKey;
       fluxMediaRequests++;
       let generated: Awaited<ReturnType<typeof generateAvatarImage>>;
-      try { generated = await generateAvatarImage(cfg.imageGen?.key ?? "", existing, parsed.data.prompt); }
+      try { generated = await generateAvatarImage(avatarKey, existing, parsed.data.prompt); }
       finally { fluxMediaRequests--; }
       const current = store.bot(existing.id);
       if (!current) return json(res, 404, { error: "no such bot" });
