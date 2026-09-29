@@ -403,6 +403,7 @@ export function recoveryKeyError(cause: unknown, fallback = "The recovery key co
     ["BACKUP_RECOVERY_KEY_LOCATION_INVALID", "That location can't be used. Choose another folder; nothing was saved."],
     ["BACKUP_RECOVERY_KEY_WRITE_FAILED", "The key could not be written or checked, so nothing was saved. Try again."],
     ["BACKUP_RECOVERY_KEY_UNVERIFIED", "The key could not be written or checked, so nothing was saved. Try again."],
+    ["BACKUP_RECOVERY_KEY_MOVE_INCOMPLETE", "Your recovery key was not moved, and Murage couldn't confirm that daily backups can still use their key. If daily backups are on, turn them off, then choose a different folder in Backups to start again with a new key. Keep the old key file if you still have it: it opens your earlier backups."],
     ["BACKUP_BINDINGS_UNAVAILABLE", "Backup settings can't be read right now. Refresh status, then try again."],
     ["BACKUP_BUSY", "A backup is running. Try again when it finishes."],
     ["BACKUP_UNAVAILABLE", "Recovery keys can't be created in this app. A supported desktop app is required."],
