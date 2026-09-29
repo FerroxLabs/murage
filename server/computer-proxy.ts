@@ -1284,7 +1284,7 @@ async function close(): Promise<void> {
   // each withdrawn command sends its own stop; wait for them, within the
   // engine's grace before it kills outright
   for (const withdrawn of inFlight.values()) withdrawn.abort();
-  await Promise.race([Promise.allSettled([...activeExecs]), new Promise((r) => setTimeout(r, 2_500))]);
+  await Promise.race([Promise.allSettled(activeExecs), new Promise((r) => setTimeout(r, 2_500))]);
   process.exit(0);
 }
 process.stdin.on("end", () => void close());
