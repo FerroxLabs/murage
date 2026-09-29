@@ -55,6 +55,7 @@ import {
   type PasteAttachment,
 } from "@/lib/composer-attachments";
 import { imageAttachmentFromFile } from "@/lib/composer-image-upload";
+import { ComposerImagesOverLimit } from "./ComposerImagesOverLimit";
 import { composerFileIntake, composerPasteIntake } from "@/lib/composer-intake";
 import { composerUploadsPending, subscribeComposerUploads } from "@/lib/composer-uploads";
 import { composerSendGate } from "@/lib/composer-send-gate";
@@ -929,6 +930,7 @@ export function Composer({
           </div>
         ))}
         <ComposerSendNotice id={sendNoticeId} notice={sendNotice} onDismiss={() => setSendNotice(null)} />
+        <ComposerImagesOverLimit attachments={attachments} />
         {commandPickerOpen && (
           <div
             ref={commandListRef}

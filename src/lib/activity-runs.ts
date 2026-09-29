@@ -10,6 +10,7 @@ import { formatElapsed } from "@/lib/working-time";
 import { isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { browserUnavailableReason } from "../../shared/browser-unavailable";
+import { imagesLeftOut } from "../../shared/turn-image-note";
 import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 import { routineRunMarker } from "../../shared/routine-run-marker";
 
@@ -36,7 +37,7 @@ function foldable(message: Message): boolean {
 
 /** A notice the transcripts render as their own row so it stays visible with
  * Settings → Tool calls off: a stop, a folder-trust notice, a turn that ran
- * without its browser. A run is hidden entirely by that same setting, and
+ * without its browser or with only some of its images. A run is hidden entirely by that same setting, and
  * these notices settle `ok: true` right after the tool calls they follow —
  * so folding one would put it straight back behind the setting its own row
  * exists to escape. A host stop never reached here (it settles `ok: false`);
@@ -44,7 +45,7 @@ function foldable(message: Message): boolean {
 function isQuietNote(name: string, message?: Message): boolean {
   if (message && routineRunMarker(message)) return true;
   if (name === TURN_STOPPED_NOTE || isStoppedMidDesktopAction(name)) return true;
-  return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name));
+  return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name)) || Boolean(imagesLeftOut(name));
 }
 
 type TurnFold = Extract<TranscriptItem, { kind: "turn" }>;
