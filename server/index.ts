@@ -3386,7 +3386,7 @@ const imageOperations = new ImageOperations({ store, routineCard: routineCardHoo
 }, waiting: (threadId, waiting, requestId, messageId, botId) => {
   if (waiting && messageId) askMessageByRequest.set(`${threadId}:${requestId}`, messageId);
   else askMessageByRequest.delete(`${threadId}:${requestId}`);
-  watchdog.setWaitingOnHuman(threadId, waiting);
+  watchdog.setWaitingOnHuman(threadId, waiting, requestId);
   // The bot that asked. A channel thread belongs to no single bot, so the
   // thread alone cannot name who is waiting on the owner.
   const ownerId = botId ?? internalTurnOwners.get(threadId)?.botId ?? store.botByThread(threadId)?.id;
@@ -4135,6 +4135,10 @@ bus.subscribe((event: RuntimeEvent) => {
     if (!pendingRoomStop || (pendingRoomStop.turnId && pendingRoomStop.turnId !== event.turnId)) {
       projectTurnLeases.complete(event.threadId, event.turnId);
     }
+    // A stopped room turn on an engine with no teardown receipt is closed by
+    // its own terminal event. After this fold, so nothing it starts runs
+    // ahead of the event it is releasing.
+    if (pendingRoomStop) { const turnId = event.turnId; queueMicrotask(() => pendingRoomStop.terminal(turnId)); }
     internalCapabilities.completeProviderTurn(event.threadId, event.turnId);
     // Owner-aware fold (RED2I): the thread's internal turn owner is cleared
     // only when its own generation ended — completeProviderTurn revokes the
@@ -4154,8 +4158,8 @@ bus.subscribe((event: RuntimeEvent) => {
     }
   }
   if (shouldIgnoreProviderEvent(event)) return;
-  if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true);
-  else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false);
+  if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true, event.requestId);
+  else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false, event.requestId);
   else if (event.type === "turn.completed") {
     watchdog.settle(event.threadId);
     // Scoped to the generation that dispatched this provider turn. A stopped
@@ -8436,7 +8440,14 @@ async function runGroupMemberTurn(
     unsub = bus.subscribe((e: RuntimeEvent) => {
       if (shouldIgnoreProviderEvent(e)) return;
       if (e.threadId !== threadId) return;
-      if (providerTurnId && e.turnId && e.turnId !== providerTurnId) return;
+      if (providerTurnId && e.turnId && e.turnId !== providerTurnId) {
+        // Another turn's completion on this thread (a late one from an
+        // abandoned handshake) cleared the thread's watch in the fold. This
+        // turn is still running and must stay watched: with no ceiling, the
+        // watch is what stops it if it goes silent.
+        if (e.type === "turn.completed" && !done) watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) });
+        return;
+      }
       if (e.type === "item.completed" && e.itemType === "assistant_text" && !isMemoryProvenanceEcho(e.text)) replyText += `\n${e.text}`;
       else if (e.type === "runtime.error") turnFailure = e.message;
       else if (e.type === "turn.completed") {

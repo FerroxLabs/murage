@@ -68,3 +68,37 @@ it("shutdown cancellation prevents outstanding receipts or timers from releasing
   await vi.advanceTimersByTimeAsync(10000);
   expect(observe).not.toHaveBeenCalled();expect(release).not.toHaveBeenCalled();
 });
+
+it("an engine with no teardown receipt releases on its own stopped turn's terminal event, never another turn's", async () => {
+  // Claude, Codex and Box end a stop without a close receipt. Their stopped
+  // turn's terminal event is the receipt, as it is for a direct turn; without
+  // it a stalled room stayed busy until the app restarted.
+  vi.useFakeTimers();const release = vi.fn();
+  const pending = new RoomPendingStop({ current: () => true, closed: release });
+  pending.terminal("stopped-turn");
+  expect(release).not.toHaveBeenCalled(); // nothing stopped yet: not a receipt
+  await pending.stop("stopped-turn", async () => {});
+  pending.terminal("some-other-turn");
+  expect(release).not.toHaveBeenCalled();
+  pending.terminal("stopped-turn");
+  expect(release).toHaveBeenCalledExactlyOnceWith("stopped-turn");
+  pending.terminal("stopped-turn");
+  expect(release).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);
+});
+
+it("an engine with a teardown receipt is never released by a terminal event alone", async () => {
+  vi.useFakeTimers();const release = vi.fn(), observe = vi.fn(async () => no);
+  const pending = new RoomPendingStop({ current: () => true, observe, closed: release });
+  await pending.stop("held", async () => no);
+  pending.terminal("held");
+  expect(release).not.toHaveBeenCalled();
+  pending.cancel();
+});
+
+it("a terminal event cannot release a room a replacement now owns", async () => {
+  vi.useFakeTimers();let current = true;const release = vi.fn();
+  const pending = new RoomPendingStop({ current: () => current, closed: release });
+  await pending.stop("old-turn", async () => {});
+  current = false;pending.terminal("old-turn");
+  expect(release).not.toHaveBeenCalled();
+});

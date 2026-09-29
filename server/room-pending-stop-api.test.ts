@@ -18,10 +18,11 @@ const rows = () => {
 beforeAll(async () => {
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
     const fs=await import('node:fs');const path=await import('node:path');
-    // A room turn stops for silence (0.1.61): run the stall clock 600 times
-    // faster, so the held turn's twenty silent minutes pass in two seconds.
+    // A room turn stops for silence (0.1.61): run the stall clock 120 times
+    // faster, so the held turn's twenty silent minutes pass in ten seconds
+    // while the independent turn still has ten real seconds between events.
     const {TurnWatchdog}=await import(${JSON.stringify(pathToFileURL(join(serverDir, "turn-watchdog.ts")).href)});
-    const t0=Date.now();TurnWatchdog.prototype.now=function(){return t0+(Date.now()-t0)*600};
+    const t0=Date.now();TurnWatchdog.prototype.now=function(){return t0+(Date.now()-t0)*120};
     const watch=TurnWatchdog.prototype.start;
     TurnWatchdog.prototype.start=function(){this.opts={...this.opts,checkMs:100};return watch.call(this)};
     const {PiDriver}=await import(${JSON.stringify(pathToFileURL(join(serverDir, "drivers/pi.ts")).href)});
@@ -66,7 +67,7 @@ it("retains a stalled room beyond six seconds, queues its next prompt without di
   const held = await room("Held room", slow.id), independent = await room("Independent room", fast.id);
   const state = async () => (await api("GET", "/api/bots?messages=0")).body;
   expect((await api("POST", `/api/groups/${held.id}/messages`, { text: "Wait for explicit close" })).status).toBe(202);
-  await expect.poll(() => rows().filter(row => row.stop).length, { timeout: 15000 }).toBe(1);
+  await expect.poll(() => rows().filter(row => row.stop).length, { timeout: 30000 }).toBe(1);
   await new Promise(resolve => setTimeout(resolve, 6500));
   expect((await state()).groups.find((group: any) => group.id === held.id).busyBotId).toBe(slow.id);
   expect((await state()).bots.find((candidate: any) => candidate.id === slow.id).busy).toBe(true);
@@ -87,4 +88,4 @@ it("retains a stalled room beyond six seconds, queues its next prompt without di
   expect(rows().filter(row => row.send)).toHaveLength(1);
   expect(stops).toHaveLength(1);expect(stops[0].turnId).toEqual(expect.any(String));
   expect(closes).toHaveLength(1);expect(closes[0]).toMatchObject({ threadId: held.threadId, turnId: stops[0].turnId });
-}, 45000);
+}, 75000);

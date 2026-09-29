@@ -247,7 +247,9 @@ const streamTodoTurn = () => {
 
 /** stream: a long reply that keeps working, a delta at a steady beat, then
  * a clean finish. Room-turn silence tests run it past the old fixed limit. */
+let aborted = false;
 const streamLongTurn = () => {
+  aborted = false;
   const every = Math.max(10, Number(process.env.FAKE_PI_STREAM_EVERY_MS) || 500);
   const total = Math.max(every, Number(process.env.FAKE_PI_STREAM_FOR_MS) || 8_000);
   const startedAt = Date.now();
@@ -255,6 +257,7 @@ const streamLongTurn = () => {
   send({ type: "turn_start" });
   send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
   const beat = setInterval(() => {
+    if (aborted) { clearInterval(beat); return; }
     if (Date.now() - startedAt < total) {
       send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "." } });
       return;
@@ -427,6 +430,7 @@ function handle(cmd: any) {
       if (cmd.id === "ask-1" || cmd.id === "ask-host" || cmd.id === "ask-q" || cmd.id === "ask-e") finishPermissionTurn();
       return;
     case "abort":
+      aborted = true;
       send({ type: "turn_end", message: { stopReason: "cancelled", usage: { input: 0, output: 0 } }, usage: { input: 0, output: 0 } });
       return;
     default:

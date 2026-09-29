@@ -64,16 +64,23 @@ describe("TurnWatchdog", () => {
   it("keeps the clock held until every open card is answered", () => {
     const { dog, stalls, tick } = rig();
     dog.watch("t1", "bot1");
-    dog.setWaitingOnHuman("t1", true);
-    dog.setWaitingOnHuman("t1", true);
+    dog.setWaitingOnHuman("t1", true, "card-a");
+    dog.setWaitingOnHuman("t1", true, "card-b");
     // one answer, one card still open: a person is still deciding
-    dog.setWaitingOnHuman("t1", false);
+    dog.setWaitingOnHuman("t1", false, "card-a");
     tick(STALL * 10);
     dog.sweep();
     expect(stalls).toHaveLength(0);
-    dog.setWaitingOnHuman("t1", false);
-    // a stale resolve for a card this turn never opened stops at zero
-    dog.setWaitingOnHuman("t1", false);
+    // a resolve for a card this turn never opened (a routine-held card, a
+    // previous turn's question) never releases the open one
+    dog.setWaitingOnHuman("t1", false, "someone-elses-card");
+    dog.setWaitingOnHuman("t1", false, "card-a");
+    tick(STALL * 10);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    // the same card reported open twice is still one card
+    dog.setWaitingOnHuman("t1", true, "card-b");
+    dog.setWaitingOnHuman("t1", false, "card-b");
     tick(STALL - 1);
     dog.sweep();
     expect(stalls).toHaveLength(0);

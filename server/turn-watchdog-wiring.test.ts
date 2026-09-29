@@ -70,8 +70,10 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
   });
 
   it("exempts a person deciding: every request.opened, folder-trust cards included, holds the clock", () => {
-    expect(SOURCE).toContain('if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true);');
-    expect(SOURCE).toContain('else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false);');
+    expect(SOURCE).toContain('if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true, event.requestId);');
+    expect(SOURCE).toContain('else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false, event.requestId);');
+    // an image approval card is keyed by its own request id too
+    expect(SOURCE).toContain("watchdog.setWaitingOnHuman(threadId, waiting, requestId);");
   });
 
   it("latches setup to its own ceiling, never shorter than the running one", () => {
@@ -109,6 +111,12 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     expect(body).toContain("const silenceMinutes = roomTurnTimeoutMinutes(cfg);");
     expect(body).toContain("watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) })");
     expect(body).toContain("tool: { name: roomTurnStallMessage(silenceMinutes), ok: false }");
+    // a foreign turn's completion clears the thread's watch in the fold; the
+    // running room turn re-arms its own
+    expect(body).toContain('if (e.type === "turn.completed" && !done) watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) });');
+    // a stopped room turn on an engine without a close receipt is released by
+    // its own terminal event
+    expect(SOURCE).toContain("if (pendingRoomStop) { const turnId = event.turnId; queueMicrotask(() => pendingRoomStop.terminal(turnId)); }");
   });
 
   it("a Stop during direct setup ends that setup's watch", () => {

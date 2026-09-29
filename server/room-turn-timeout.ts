@@ -62,6 +62,16 @@ export class RoomPendingStop {
     return this.request;
   }
 
+  /** The stopped turn's own terminal event (turn.completed or
+   * session.exited). For an engine with no teardown receipt (Claude, Codex,
+   * Box: `observe` absent) this is the close receipt, as it is for a direct
+   * turn (index.ts settleDirect); without it a stopped room stayed busy until
+   * the app restarted. An engine that does give a receipt waits for it. */
+  terminal(turnId: string): void {
+    if (this.cancelled || this.deps.observe || !this.request || this.turnId !== turnId) return;
+    this.accept({ closeConfirmed: true });
+  }
+
   cancel(): void {
     this.cancelled = true;
     if (this.timer) clearTimeout(this.timer);

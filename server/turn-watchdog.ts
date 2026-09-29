@@ -44,9 +44,11 @@ export interface WatchedTurn {
   startedAt: number;
   lastEventAt: number;
   waitingOnHuman: boolean;
-  /** Cards open on this turn right now. Two cards can be open at once, so
-   * the first answer must not restart the clock under the second. */
-  openRequests: number;
+  /** The cards open on this turn right now, by request id. Two cards can be
+   * open at once, so the first answer must not restart the clock under the
+   * second, and a resolve for a card this turn never opened (a routine-held
+   * card, stale cleanup after an interrupt) must not release a real one. */
+  openRequests: Set<string>;
   /** This turn's own silence limit once running (a room turn's setting);
    * the watchdog's stallMs when absent. */
   stallMs?: number;
@@ -122,7 +124,7 @@ export class TurnWatchdog {
       startedAt: at,
       lastEventAt: at,
       waitingOnHuman: false,
-      openRequests: 0,
+      openRequests: new Set(),
       phase: opts.setup ? "setup" : "running",
       ...(opts.generation !== undefined ? { generation: opts.generation } : {}),
       ...(opts.stallMs !== undefined ? { stallMs: opts.stallMs } : {}),
@@ -176,13 +178,14 @@ export class TurnWatchdog {
 
   /** request.opened → true (a human is deciding; not a stall however long
    * they take); request.resolved → false (the clock restarts once no card
-   * is left open). Resolves can arrive for cards this turn never opened
-   * (stale cleanup after an interrupt), so the count stops at zero. */
-  setWaitingOnHuman(threadId: string, waiting: boolean): void {
+   * is left open). Keyed by the card's request id; a caller without one
+   * shares a single anonymous key. */
+  setWaitingOnHuman(threadId: string, waiting: boolean, requestId = ""): void {
     const turn = this.turns.get(threadId);
     if (!turn) return;
-    turn.openRequests = waiting ? turn.openRequests + 1 : Math.max(0, turn.openRequests - 1);
-    turn.waitingOnHuman = turn.openRequests > 0;
+    if (waiting) turn.openRequests.add(requestId);
+    else turn.openRequests.delete(requestId);
+    turn.waitingOnHuman = turn.openRequests.size > 0;
     turn.lastEventAt = this.now();
   }
 
