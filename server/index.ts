@@ -7168,7 +7168,8 @@ function reportTeamIncident(input: { bot: BotRecord; threadId: string | null; mu
       chiefId: chief.id,
       chiefName: chief.name,
       threadId: incidents.threadId,
-      text: teamIncidentText(incident, count),
+      // Tool names as the Chief's engine calls them.
+      text: teamIncidentText(incident, count, toolCallStyleFor(registry.get(chief.modelSelection.instanceId)?.driverKind ?? "")),
     });
   } catch {
     // never make the failure we are reporting worse than it already is

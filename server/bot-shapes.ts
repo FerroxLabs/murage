@@ -238,9 +238,10 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
     shapeLayer("house-rules", v.houseRules),
     shapeLayer("about-me", v.aboutMe ?? ""),
     shapeLayer("persona", v.persona),
-    // The cloud computer's line names that server's own tools, its Chrome
-    // ones included, and uses screenshot and click only as tool names.
-    shapeLayer("computer", murageToolText(computer, style, ["computer"], {}, { computer: ["screenshot", "click"] })),
+    // Only the cloud computer's line names tools: its own server's, its
+    // Chrome ones included, and screenshot and click only as tool names.
+    // The other computers speak of the desktop, never of a tool.
+    shapeLayer("computer", kind === "box" ? murageToolText(computer, style, ["computer"], {}, { computer: ["screenshot", "click"] }) : computer),
     shapeLayer("computer-protected-input", kind ? COMPUTER.protectedInput : ""),
     shapeLayer("connected-apps", v.connectors),
     shapeLayer("required-apps", v.requiredApps),

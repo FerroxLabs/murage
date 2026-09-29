@@ -32,7 +32,11 @@ export function currentToolCallStyle(): ToolCallStyle {
   return requests.getStore()?.style ?? "direct";
 }
 
-/** A Murage agents tool, named the way the calling turn's engine calls it. */
+/** A Murage agents tool, named the way the calling turn's engine calls it.
+ * The agents server is mounted as "agents" by every driver that mounts it
+ * (drivers/acp/core.ts acpMcpServers), so that is the prefix used here.
+ * Work a route starts keeps the route's scope: only call this for text that
+ * goes back to the caller of that route, never for text another bot reads. */
 export function murageTool(tool: string): string {
   return murageToolName(tool, currentToolCallStyle());
 }

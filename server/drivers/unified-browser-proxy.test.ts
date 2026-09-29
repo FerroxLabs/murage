@@ -24,9 +24,9 @@ async function route(status: number, body: unknown): Promise<string> {
 }
 
 /** Run the proxy over stdio exactly as an engine does and collect replies. */
-async function exchange(base: string, requests: unknown[]): Promise<any[]> {
+async function exchange(base: string, requests: unknown[], extraEnv: Record<string, string> = {}): Promise<any[]> {
   const child = spawn(process.execPath, [PROXY], {
-    env: { PATH: process.env.PATH, MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "fixture-token", MURAGE_BOT_ID: "bot", MURAGE_THREAD_ID: "thread" },
+    env: { PATH: process.env.PATH, MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "fixture-token", MURAGE_BOT_ID: "bot", MURAGE_THREAD_ID: "thread", ...extraEnv },
     stdio: ["pipe", "pipe", "inherit"],
   });
   let output = "";
@@ -43,6 +43,15 @@ it("passes Murage's own refusal to the bot word for word", async () => {
   const base = await route(409, { error: PROTECTED, code: "browser_protected_owner_input" });
   const [call] = await exchange(base, [{ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "agent_browser_snapshot" } }]);
   expect(call.result).toEqual({ isError: true, content: [{ type: "text", text: PROTECTED }] });
+});
+
+it("names the browser's own tools in its refusal the way Fuigo and Grok call them", async () => {
+  const reason = "You can leave it by calling agent_browser_open with a different address.";
+  const base = await route(409, { error: reason, code: "browser_protected_sensitive_page" });
+  const call = { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "agent_browser_snapshot" } };
+  expect((await exchange(base, [call]))[0].result.content[0].text).toBe(reason);
+  expect((await exchange(base, [call], { MURAGE_TOOL_CALL_STYLE: "use-tool", MURAGE_MCP_SERVER_NAME: "browser" }))[0].result.content[0].text)
+    .toBe('You can leave it by calling use_tool with tool_name "browser__agent_browser_open" with a different address.');
 });
 
 it("answers a failed tool listing with an error that says why, not a result with no tools in it", async () => {

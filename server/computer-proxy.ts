@@ -36,7 +36,16 @@ import {
   type CropRegion,
 } from "./computer-observation.ts";
 import { CONTROL_REFUSAL, createControlClient } from "./control-client.ts";
-import { TOOL_CALL_STYLE_ENV, TOOL_SERVER_NAME_ENV, murageToolText, parseToolCallStyle } from "../shared/murage-tool-names.ts";
+import { TOOL_CALL_STYLE_ENV, TOOL_SERVER_NAME_ENV, murageToolDescriptions, murageToolText, parseToolCallStyle } from "../shared/murage-tool-names.ts";
+
+// This server's own sentences name its tools the way the turn's engine calls
+// them: the driver that mounted it says how (unset is the bare name).
+const toolStyle = () => parseToolCallStyle(process.env[TOOL_CALL_STYLE_ENV]);
+const toolMount = () => ({ computer: process.env[TOOL_SERVER_NAME_ENV] || "computer" });
+/** Only for text written here. `screenshot` counts as the tool only in a
+ * sentence that uses the word for nothing else. */
+export const computerText = (text: string, screenshotIsTool = true) =>
+  murageToolText(text, toolStyle(), ["computer"], toolMount(), screenshotIsTool ? { computer: ["screenshot"] } : {});
 import {
   ensureRemoteCuaCommand,
   REMOTE_CUA_EXECUTABLE,
@@ -428,7 +437,7 @@ function observed(
   isError = false,
 ) {
   if (!frame) {
-    return text(id, `${note}\n(couldn't capture the screen: call screenshot to retry)`, isError);
+    return text(id, `${note}\n${computerText("(couldn't capture the screen: call screenshot to retry)")}`, isError);
   }
   const observation = observations.observeFrame(frame.hash ?? (crop ? null : frame.data), crop);
   if (!observation.changed) {
@@ -436,7 +445,7 @@ function observed(
     // well have landed, and re-clicking a button that already submitted
     // is the expensive kind of wrong
     const guidance = followsAction
-      ? " Don't repeat the action: it may already have succeeded. If you expected a change, call screenshot again after it has had time to render."
+      ? computerText(" Don't repeat the action: it may already have succeeded. If you expected a change, call screenshot again after it has had time to render.")
       : " No new image is attached.";
     return text(id, `${note}\n(the screen is identical to the frame you already have.${guidance})`, isError);
   }
@@ -795,7 +804,7 @@ async function semanticActAndObserve(
   args: any,
 ): Promise<void> {
   if (!semanticBrowserUrl || !semanticBrowserRefs.has(ref)) {
-    return text(id, "that browser ref is stale or unknown: take a new browser_snapshot", true);
+    return text(id, computerText("that browser ref is stale or unknown: take a new browser_snapshot"), true);
   }
   const observe = wantsFrame(args);
   const semantic = semanticBrowserCommand(action, {
@@ -822,7 +831,7 @@ async function semanticActAndObserve(
     ? action === "fill"
       ? `filled ${ref} with ${value?.length ?? 0} chars (trusted Chrome DevTools input)`
       : `clicked ${ref} (trusted Chrome DevTools input)`
-    : `${action} ${ref} failed: ${out.stderr.slice(0, 200) || "the page changed; take a new browser_snapshot"}`;
+    : `${action} ${ref} failed: ${out.stderr.slice(0, 200) || computerText("the page changed; take a new browser_snapshot")}`;
   if (!observe) return text(id, note, !acted);
   return observed(id, note, await frameFrom(out));
 }
@@ -833,10 +842,8 @@ const OPEN_WHILE_DRIVEN = new Set(["computer_request_help", "computer_status", "
 
 async function call(id: unknown, name: string, args: any) {
   if (!OPEN_WHILE_DRIVEN.has(name) && (await control.state(true)).held) {
-    // Names its wait tool the way this turn's engine calls it (the driver
-    // that mounted this server says how; unset is the bare name).
-    return text(id, murageToolText(CONTROL_REFUSAL, parseToolCallStyle(process.env[TOOL_CALL_STYLE_ENV]), ["computer"],
-      { computer: process.env[TOOL_SERVER_NAME_ENV] || "computer" }), true);
+    // "take a fresh screenshot" here is the act, not the tool.
+    return text(id, computerText(CONTROL_REFUSAL, false), true);
   }
   if (name === "computer_request_help") {
     if (!control.configured) {
@@ -901,7 +908,7 @@ async function call(id: unknown, name: string, args: any) {
       id,
       targets.length
         ? `Structured browser state:\n${targets.map((target) => `- ${target.title || "Untitled"}: ${target.url}`).join("\n")}`
-        : "Structured browser state unavailable. Use screenshot only if visual state is necessary.",
+        : computerText("Structured browser state unavailable. Use screenshot only if visual state is necessary."),
     );
   }
   if (name === "browser_snapshot") {
@@ -909,7 +916,7 @@ async function call(id: unknown, name: string, args: any) {
     if (!out.ok) {
       semanticBrowserUrl = null;
       semanticBrowserRefs.clear();
-      return text(id, "Semantic browser state is unavailable. Open Chrome with open_url, or use screenshot.", true);
+      return text(id, computerText("Semantic browser state is unavailable. Open Chrome with open_url, or use screenshot."), true);
     }
     try {
       const snapshot = JSON.parse(out.stdout) as SemanticBrowserSnapshot;
@@ -929,7 +936,7 @@ async function call(id: unknown, name: string, args: any) {
     } catch {
       semanticBrowserUrl = null;
       semanticBrowserRefs.clear();
-      return text(id, "Chrome returned an invalid semantic snapshot; use screenshot.", true);
+      return text(id, computerText("Chrome returned an invalid semantic snapshot; use screenshot."), true);
     }
   }
   if (name === "browser_click") {
@@ -945,7 +952,7 @@ async function call(id: unknown, name: string, args: any) {
     const publicUrl = safeBrowserUrl(url);
     if (!normalizeBrowserUrl(url) || !publicUrl) {
       observations.noteVerification(false);
-      return text(id, "wait_for_navigation needs a valid http(s) URL", true);
+      return text(id, computerText("wait_for_navigation needs a valid http(s) URL"), true);
     }
     const result = await waitForNavigation(url);
     return text(
@@ -1130,7 +1137,7 @@ async function handle(msg: any) {
       },
     });
   }
-  if (msg.method === "tools/list") return send({ jsonrpc: "2.0", id: msg.id, result: { tools: TOOLS } });
+  if (msg.method === "tools/list") return send({ jsonrpc: "2.0", id: msg.id, result: { tools: murageToolDescriptions(TOOLS, toolStyle(), ["computer"], toolMount()) } });
   if (msg.method === "tools/call") {
     try {
       return await call(msg.id, msg.params?.name, msg.params?.arguments ?? {});

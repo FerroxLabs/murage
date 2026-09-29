@@ -4,6 +4,8 @@
 // Fuigo and Grok Build Murage's tools are reached only through use_tool with
 // "<server>__<tool>"; a bare "Call generate_image again" is "Tool not found".
 import { spawn } from "node:child_process";
+import { createServer, type IncomingHttpHeaders } from "node:http";
+import type { AddressInfo } from "node:net";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -167,6 +169,35 @@ describe("proxy results", () => {
     expect(await call({})).toBe("delegate_bot needs bot_id and message.");
     expect(await call({ MURAGE_TOOL_CALL_STYLE: "use-tool", MURAGE_MCP_SERVER_NAME: "agents" })).toBe('use_tool with tool_name "agents__delegate_bot" needs bot_id and message.');
   });
+  it("the agents proxy tells the harness its style on every call, the long image call included", async () => {
+    const seen: Array<{ url: string; headers: IncomingHttpHeaders }> = [];
+    const stub = createServer((req, res) => { seen.push({ url: req.url ?? "", headers: req.headers }); req.resume(); req.on("end", () => { res.writeHead(404, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "fixture" })); }); });
+    await new Promise<void>(resolve => stub.listen(0, "127.0.0.1", resolve));
+    try {
+      const child = spawn(process.execPath, [AGENTS_PROXY], { env: { ...process.env, MURAGE_HARNESS_URL: `http://127.0.0.1:${(stub.address() as AddressInfo).port}`, MURAGE_BOT_ID: "b", MURAGE_THREAD_ID: "t", MURAGE_COMMS_TOKEN: "x",
+        MURAGE_TOOL_CALL_STYLE: "use-tool", MURAGE_MCP_SERVER_NAME: "agents" }, stdio: ["pipe", "pipe", "ignore"] });
+      let out = "";
+      const replies = (n: number) => new Promise<void>(resolve => { const check = () => { if (out.split("\n").filter(Boolean).length >= n) resolve(); }; child.stdout.on("data", chunk => { out += chunk; check(); }); });
+      const done = replies(2);
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "list_bots", arguments: {} } })}\n`);
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "generate_image", arguments: { request_id: "r1", prompt: "x" } } })}\n`);
+      await done; child.kill();
+      const calls = seen.filter(call => call.url.startsWith("/api/internal/agents") || call.url.startsWith("/api/internal/generate-image"));
+      expect(calls.map(call => call.url.split("?")[0]).sort()).toEqual(["/api/internal/agents", "/api/internal/generate-image"]);
+      for (const call of calls) expect(call.headers["x-murage-tool-call-style"]).toBe("use-tool");
+    } finally { await new Promise(resolve => stub.close(resolve)); }
+  });
+  it("Murage's computer server names its tools in its descriptions the way Fuigo calls them", async () => {
+    const list = async (env: Record<string, string>) => {
+      const child = spawn(process.execPath, [join(here, "computer-proxy.ts")], { env: { ...process.env, MURAGEBOX_BOX_API: "http://127.0.0.1:9", MURAGEBOX_BOX_ID: "box-fixture", ...env }, stdio: ["pipe", "pipe", "ignore"] });
+      const reply = new Promise<string>(resolve => { let out = ""; child.stdout.on("data", chunk => { out += chunk; const line = out.split("\n").find(item => item.includes('"id":7')); if (line) resolve(line); }); });
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/list" })}\n`);
+      const line = await reply; child.kill();
+      return JSON.stringify(JSON.parse(line).result.tools);
+    };
+    expect(await list({})).toContain("from the most recent browser_snapshot");
+    expect(await list({ MURAGE_TOOL_CALL_STYLE: "use-tool", MURAGE_MCP_SERVER_NAME: "computer" })).toContain('from the most recent use_tool with tool_name \\"computer__browser_snapshot\\"');
+  });
   it("the browser proxy names its own tools under the mount it was given", () => {
     const text = "The browser tab is empty. Use browser_navigate to open a page.";
     vi.stubEnv("MURAGE_TOOL_CALL_STYLE", "");
@@ -203,6 +234,22 @@ describe("Murage-written prompt text names tools the turn's engine can call", ()
     expect(all.find(layer => layer.id === "persona")!.text).toBe("You are Nova. Owner says: ask_bot is my favourite word.");
     expect(all.find(layer => layer.id === "memory")!.text).toBe("Remember: delegate_bot is how Sam works.");
     expect(all.find(layer => layer.id === "output-folder")!.text).toBe("\nAfter creating each file, call register_artifact with its path relative to the file workspace.");
+    // Every engine that lists tools gets exactly the text it had.
+    if (toolCallStyleFor(kind) === "direct") {
+      expect(all.find(layer => layer.id === "credential")!.text).toBe(` ${TURN_PROMPTS.credential}`);
+      expect(all.find(layer => layer.id === "images")!.text).toBe(` ${TURN_PROMPTS.imageTools}`);
+      expect(all.find(layer => layer.id === "routines")!.text).toBe(` ${TURN_PROMPTS.routines}`);
+      expect(all.find(layer => layer.id === "tagged")!.text).toBe(" The user tagged @Reed (bot_id bot-reed) in their message. If they assigned independent work, use delegate_bot and finish your turn without waiting; use ask_bot only if their short reply is required in this answer.");
+    }
+  });
+  it("a computer other than the cloud box is never rewritten: it speaks of the desktop, not a tool", () => {
+    for (const kind of ["local", "vps", "vm"] as const) {
+      const text = (driverKind: string) => directTurnLayers({ houseRules: "", persona: "", computerKind: kind, vmPerBot: false, driverKind,
+        connectors: "", requiredApps: "", browser: "", coordination: "", credential: "", image: "", webSearchBackup: false, routines: "", learn: "", importedSkills: "", teamBrief: "", memory: "",
+        primer: "", skills: [], playbooks: "", outputFolder: "", tagged: [] }).find(layer => layer.id === "computer")!.text;
+      expect(text("fuigoAgent")).toBe(text("claude"));
+      expect(text("fuigoAgent")).not.toContain("use_tool");
+    }
   });
   it.each(ENGINES.map(engine => engine.kind))("%s: the file destination line, with the owner's folder word for word", kind => {
     const text = outputDestinationInstructions({ workspaceRoot: "/Users/o/web_search/generate_image", managed: false }, false, true, toolCallStyleFor(kind));

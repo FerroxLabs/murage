@@ -65,5 +65,11 @@ it.each(["fuigoRoom", "claudeRoom"])("assembles the appropriate room tool instru
   if (instanceId === "fuigoRoom") {
     expect(system).toContain("use_tool");
     expect(system).toContain("agents__delegate_bot");
-  } else expect(system).not.toContain("use_tool");
+    // The room's own lines name tools the way Fuigo calls them.
+    expect(system).toContain('use use_tool with tool_name "agents__request_credential" to show the secure in-app card');
+    expect(system).not.toMatch(/use request_credential|use list_routines/);
+  } else {
+    expect(system).not.toContain("use_tool");
+    expect(system).toContain("use request_credential to show the secure in-app card");
+  }
 }, 30000);
