@@ -8357,14 +8357,15 @@ async function runGroupMemberTurn(
     return false;
   }
 
-  const releaseUnstartedRoomTurn = () => releaseUnstartedRoomTurnThrough(unstartedRoomTurnReleaseDeps, {
+  // Every release of the claim ends the catch's duty to release it.
+  const releaseUnstartedRoomTurn = () => { releaseClaimedSetup = undefined; return releaseUnstartedRoomTurnThrough(unstartedRoomTurnReleaseDeps, {
     groupId: group.id,
     threadId,
     botId: bot.id,
     ownerId: internalGeneration,
     skillAuthoring,
     skillAuthoringClaim,
-  });
+  }); };
   store.patchGroup(group.id, { busyBotId: bot.id }); // the store's change stream carries the frame
   releaseClaimedSetup = releaseUnstartedRoomTurn;
   pendingRoomStops.get(threadId)?.cancel();
@@ -8991,13 +8992,16 @@ async function runGroupMemberTurn(
     releaseClaimedSetup = undefined;
     if (release) {
       const raw = error instanceof Error ? error.message : String(error);
-      console.error(`[room] ${bot.id} could not get ready in ${threadId}: ${raw}`);
+      console.error(`[room] ${bot.id} could not get ready in ${threadId}: ${redactSecretsInText(raw)}`);
       await release().catch((releaseError: unknown) => {
-        console.error(`[room] could not hand ${threadId} back after a failed setup: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`);
+        console.error(`[room] could not hand ${threadId} back after a failed setup: ${redactSecretsInText(releaseError instanceof Error ? releaseError.message : String(releaseError))}`);
       });
       const message = roomSetupFailureLine(error);
       murageFailureLine(message);
       onDispatchError?.(message);
+      // callers that show the error (connector and secret resume cards) get
+      // the plain line too; the original rides as the cause
+      throw Object.assign(new Error(message), { cause: error });
     }
     throw error;
   } finally {

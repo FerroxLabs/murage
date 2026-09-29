@@ -28,6 +28,7 @@ const lines = (thread: any[]) => thread.map((m) => `${m.from?.name ?? m.actorKin
 const replied = (thread: any[], botId: string) => thread.some((m) => (m.from ? m.from.botId === botId : m.role === "bot") && m.kind === "text" && m.text === "Hello from pi");
 // the migration refusing, as the room says it (roomSetupFailureLine) or as a desk error
 const migrationError = (thread: any[]) => thread.some((m) => /Procedure migration|PROCEDURE_DISCOVERY|could not answer: it (is still finishing other work|could not get ready)/.test(`${m.text ?? ""} ${m.tool?.name ?? ""}`));
+const said = (thread: any[], line: string) => thread.some((m) => String(m.tool?.name ?? "").includes(line));
 const rawCodes = (thread: any[]) => thread.some((m) => /PROCEDURE_|Procedure migration|EACCES|\/workspaces\//.test(`${m.text ?? ""} ${m.tool?.name ?? ""}`));
 
 // chmod 0500 holds nothing back from root
@@ -138,7 +139,7 @@ posixOnly("the first turn of a new bot while another of its turns runs", () => {
       const report = async () => `room:\n${lines(await messages(desk.threadId))}\nstate: ${JSON.stringify((await state()).groups.find((g) => g.id === desk.id))}`;
       await expect.poll(async () => {
         const group = (await state()).groups.find((g) => g.id === desk.id);
-        return migrationError(await messages(desk.threadId)) && !group.busyBotId && !group.working;
+        return said(await messages(desk.threadId), "could not answer: it could not get ready.") && !group.busyBotId && !group.working;
       }, { timeout: 15000 }).toBe(true).catch(async (error) => { throw new Error(`${error}\n${await report()}`); });
       await expect.poll(() => settled(desk.id, quinn.id), { timeout: 15000 }).toBe(true);
       expect(rawCodes(await messages(desk.threadId))).toBe(false);
