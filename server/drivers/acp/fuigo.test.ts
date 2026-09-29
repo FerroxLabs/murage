@@ -595,7 +595,9 @@ describe("fuigo binary resolution — the bundled engine", () => {
     expect(dump("agent").env.PATH.split(delimiter)[0]).toBe(bundleDir);
     const session = JSON.parse(readFileSync(join(dumps, "session.json"), "utf8"));
     expect(session.mcpServers).toContainEqual({ name: "browser", command: browser.command, args: browser.args,
-      env: [{ name: "PATH", value: emptyBin }, { name: "ELECTRON_RUN_AS_NODE", value: "1" }] });
+      env: [{ name: "PATH", value: emptyBin }, { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+        // Fuigo reaches MCP tools only through use_tool: Murage's browser server is told so.
+        { name: "MURAGE_TOOL_CALL_STYLE", value: "use-tool" }, { name: "MURAGE_MCP_SERVER_NAME", value: "browser" }] });
   });
 
   const snapshotDefault = async (cli = "fuigo") => {
