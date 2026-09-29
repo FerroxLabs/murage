@@ -26,7 +26,12 @@ const state = async () => (await api("GET", "/api/bots?messages=0")).body as { b
 const lines = (thread: any[]) => thread.map((m) => `${m.from?.name ?? m.actorKind ?? m.role}: ${m.tool?.name ?? String(m.text ?? "").slice(0, 120)}`).join("\n");
 // a room reply names its speaker; a desk reply is the bot's own line
 const replied = (thread: any[], botId: string) => thread.some((m) => (m.from ? m.from.botId === botId : m.role === "bot") && m.kind === "text" && m.text === "Hello from pi");
-const migrationError = (thread: any[]) => thread.some((m) => /Procedure migration|PROCEDURE_DISCOVERY/.test(`${m.text ?? ""} ${m.tool?.name ?? ""}`));
+// the migration refusing, as the room says it (roomSetupFailureLine) or as a desk error
+const migrationError = (thread: any[]) => thread.some((m) => /Procedure migration|PROCEDURE_DISCOVERY|could not answer: it (is still finishing other work|could not get ready)/.test(`${m.text ?? ""} ${m.tool?.name ?? ""}`));
+const rawCodes = (thread: any[]) => thread.some((m) => /PROCEDURE_|Procedure migration|EACCES|\/workspaces\//.test(`${m.text ?? ""} ${m.tool?.name ?? ""}`));
+
+// chmod 0500 holds nothing back from root
+const asRoot = process.getuid?.() === 0;
 
 posixOnly("the first turn of a new bot while another of its turns runs", () => {
   beforeAll(async () => {
@@ -116,7 +121,7 @@ posixOnly("the first turn of a new bot while another of its turns runs", () => {
   // Nothing else of the bot runs, but the old link cannot be moved (its
   // folder is read-only): the migration refuses, and the room is handed
   // back all the same.
-  it("a room turn whose one-time migration cannot finish hands the room back", async () => {
+  it.skipIf(asRoot)("a room turn whose one-time migration cannot finish hands the room back", async () => {
     await hideEveryone();
     const quinn = await bot("Quarry");
     const desk = await room("Stuck desk", [quinn.id]);
@@ -136,6 +141,7 @@ posixOnly("the first turn of a new bot while another of its turns runs", () => {
         return migrationError(await messages(desk.threadId)) && !group.busyBotId && !group.working;
       }, { timeout: 15000 }).toBe(true).catch(async (error) => { throw new Error(`${error}\n${await report()}`); });
       await expect.poll(() => settled(desk.id, quinn.id), { timeout: 15000 }).toBe(true);
+      expect(rawCodes(await messages(desk.threadId))).toBe(false);
     } finally { chmodSync(links, 0o700); }
     // the folder writable again: the next message moves the link and is answered
     expect((await api("POST", `/api/groups/${desk.id}/messages`, { text: "one more line" })).status).toBe(202);

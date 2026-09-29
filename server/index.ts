@@ -298,7 +298,7 @@ import {
   type SteerQueueEntries,
 } from "./steer-queue.ts";
 import { sendScreenshot } from "./screenshot-response.ts";
-import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn as releaseUnstartedRoomTurnThrough } from "./room-turn-release.ts";
+import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn as releaseUnstartedRoomTurnThrough, roomSetupFailureLine } from "./room-turn-release.ts";
 import {
   cancelChannelMessage,
   drainChannelMessages,
@@ -8357,7 +8357,16 @@ async function runGroupMemberTurn(
     return false;
   }
 
+  const releaseUnstartedRoomTurn = () => releaseUnstartedRoomTurnThrough(unstartedRoomTurnReleaseDeps, {
+    groupId: group.id,
+    threadId,
+    botId: bot.id,
+    ownerId: internalGeneration,
+    skillAuthoring,
+    skillAuthoringClaim,
+  });
   store.patchGroup(group.id, { busyBotId: bot.id }); // the store's change stream carries the frame
+  releaseClaimedSetup = releaseUnstartedRoomTurn;
   pendingRoomStops.get(threadId)?.cancel();
   pendingRoomStops.delete(threadId);
   groupSpeakers.set(threadId, { botId: bot.id, name: bot.name, color: bot.color });
@@ -8379,15 +8388,8 @@ async function runGroupMemberTurn(
   // held /learn and a queued send nobody would retry (RED2K). The room and
   // the bot are touched only while this attempt still owns the room
   // (server/room-turn-release.ts).
-  const releaseUnstartedRoomTurn = () => releaseUnstartedRoomTurnThrough(unstartedRoomTurnReleaseDeps, {
-    groupId: group.id,
-    threadId,
-    botId: bot.id,
-    ownerId: internalGeneration,
-    skillAuthoring,
-    skillAuthoringClaim,
-  });
-  releaseClaimedSetup = releaseUnstartedRoomTurn;
+  // (defined above the claim, so a setup step that throws right after it
+  // still releases through it)
 
   const roster = group.memberIds
     .map((id) => store.bot(id))
@@ -8646,7 +8648,7 @@ async function runGroupMemberTurn(
     await releaseUnstartedRoomTurn();
     return false;
   }
-  // From here the dispatch and the turn's own end release the room.
+  // From here the dispatch catch and the turn's own end release the room.
   releaseClaimedSetup = undefined;
   const outcome = await new Promise<GroupMemberTurnOutcome>((resolve) => {
     let done = false;
@@ -8983,11 +8985,17 @@ async function runGroupMemberTurn(
     // the claim as every other unstarted exit does and say why in the room;
     // left alone the room stayed busy, with no reply and nothing queued
     // behind it ever starting.
+    // The room gets a plain line; the raw error (codes, paths, ids) stays in
+    // the server log.
     const release = releaseClaimedSetup;
     releaseClaimedSetup = undefined;
     if (release) {
-      await release().catch(() => {});
-      const message = error instanceof Error ? error.message : String(error);
+      const raw = error instanceof Error ? error.message : String(error);
+      console.error(`[room] ${bot.id} could not get ready in ${threadId}: ${raw}`);
+      await release().catch((releaseError: unknown) => {
+        console.error(`[room] could not hand ${threadId} back after a failed setup: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`);
+      });
+      const message = roomSetupFailureLine(error);
       murageFailureLine(message);
       onDispatchError?.(message);
     }

@@ -9,7 +9,7 @@
 // the bot idle by the activity it set, its browser capability, the queues —
 // never the room claim or the skill-authoring claim, which it does not hold.
 import { describe, expect, it } from "vitest";
-import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn, type UnstartedRoomTurnReleaseDeps } from "./room-turn-release.ts";
+import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn, roomSetupFailureLine, type UnstartedRoomTurnReleaseDeps } from "./room-turn-release.ts";
 
 const harness = (state: { busyBotId: string | null; busy: Record<string, boolean> }) => {
   const calls: string[] = [];
@@ -87,5 +87,16 @@ describe("releaseUnclaimedRoomTurn", () => {
     await releaseUnclaimedRoomTurn(deps, { threadId: "thread", botId: "scout", ownerId: "gen-1" });
     expect(state).toEqual({ busyBotId: null, busy: { scout: false } });
     expect(calls).toEqual(["browser:thread:gen-1", "drain"]);
+  });
+});
+
+describe("roomSetupFailureLine", () => {
+  it("never shows the raw error: codes, paths and ids stay in the log", () => {
+    expect(roomSetupFailureLine(new Error("Procedure migration is waiting for another active task"))).toBe("it is still finishing other work. Send the message again when that is done.");
+    for (const raw of ["PROCEDURE_DISCOVERY_MIGRATION_PENDING", "PROCEDURE_AUDIENCE_REVOKED", "EACCES: permission denied, mkdir '/Users/sam/.murage/workspaces/bot-1/threads/t-1'"]) {
+      const line = roomSetupFailureLine(new Error(raw));
+      expect(line).toBe("it could not get ready. Try again in a moment.");
+      expect(line).not.toMatch(/PROCEDURE|EACCES|\/Users/);
+    }
   });
 });
