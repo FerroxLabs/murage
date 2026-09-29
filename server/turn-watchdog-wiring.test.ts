@@ -111,9 +111,12 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     expect(body).toContain("const silenceMinutes = roomTurnTimeoutMinutes(cfg);");
     expect(body).toContain("watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) })");
     expect(body).toContain("tool: { name: roomTurnStallMessage(silenceMinutes), ok: false }");
-    // a foreign turn's completion clears the thread's watch in the fold; the
-    // running room turn re-arms its own
-    expect(body).toContain('if (e.type === "turn.completed" && !done) watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) });');
+    // the room turn binds its engine turn to its watch, so a completion that
+    // names another turn leaves the watch (and any open card) in place; if an
+    // unbound completion cleared it first, the running turn re-arms and rebinds
+    expect(SOURCE).toContain('if (event.type === "turn.completed") {\n    watchdog.settleCompleted(event.threadId, event.turnId);');
+    expect(body).toContain("watchdog.bindProviderTurn(threadId, internalGeneration, dispatch.value.turnId);");
+    expect(body).toMatch(/if \(e\.type === "turn\.completed" && !done\) \{\s*watchdog\.dispatched\(threadId, bot\.id, internalGeneration, \{ stallMs: roomTurnSilenceMs\(silenceMinutes\) \}\);\s*watchdog\.bindProviderTurn\(threadId, internalGeneration, providerTurnId\);/);
     // a stopped room turn on an engine without a close receipt is released by
     // its own terminal event
     expect(SOURCE).toContain("if (pendingRoomStop) { const turnId = event.turnId; queueMicrotask(() => pendingRoomStop.terminal(turnId)); }");

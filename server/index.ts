@@ -4206,7 +4206,7 @@ bus.subscribe((event: RuntimeEvent) => {
   if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true, event.requestId);
   else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false, event.requestId);
   else if (event.type === "turn.completed") {
-    watchdog.settle(event.threadId);
+    watchdog.settleCompleted(event.threadId, event.turnId);
     // Scoped to the generation that dispatched this provider turn. A stopped
     // turn's completion lands when its engine closes, after Stop has already
     // let the next turn bind this thread's browser; unscoped, it revoked that
@@ -8491,7 +8491,10 @@ async function runGroupMemberTurn(
         // abandoned handshake) cleared the thread's watch in the fold. This
         // turn is still running and must stay watched: with no ceiling, the
         // watch is what stops it if it goes silent.
-        if (e.type === "turn.completed" && !done) watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) });
+        if (e.type === "turn.completed" && !done) {
+          watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) });
+          watchdog.bindProviderTurn(threadId, internalGeneration, providerTurnId);
+        }
         return;
       }
       if (e.type === "item.completed" && e.itemType === "assistant_text" && !isMemoryProvenanceEcho(e.text)) replyText += `\n${e.text}`;
@@ -8595,6 +8598,10 @@ async function runGroupMemberTurn(
           revokeInternalGeneration(threadId, internalGeneration);
         }
         providerTurnId = dispatch.value.turnId;
+        // a completion that names another turn on this thread (a late one
+        // from an abandoned handshake) no longer clears this turn's watch,
+        // so an open card or a held wait keeps counting as not silence
+        watchdog.bindProviderTurn(threadId, internalGeneration, dispatch.value.turnId);
         projectTurnLeases.bind(threadId, internalGeneration, dispatch.value.turnId);
         orchestration?.onTurnStarted?.(dispatch.value.turnId);
         if (abandoned) {

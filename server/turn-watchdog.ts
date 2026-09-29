@@ -56,6 +56,10 @@ export interface WatchedTurn {
   phase: "setup" | "running";
   /** The turn's own claim; lets a finished setup settle only its own watch. */
   generation?: string;
+  /** The engine's id for this turn once known (a room reply binds it). A
+   * completion naming another turn on the thread then leaves this watch, its
+   * open cards and its waits in place. */
+  providerTurnId?: string;
 }
 
 export interface TurnWatchdogOptions {
@@ -194,6 +198,22 @@ export class TurnWatchdog {
   settle(threadId: string, generation?: string): void {
     const turn = this.owned(threadId, generation);
     if (turn) this.forget(turn);
+  }
+
+  /** Names the engine turn this watch belongs to (only the claim's own). */
+  bindProviderTurn(threadId: string, generation: string, providerTurnId: string): void {
+    const turn = this.turns.get(threadId);
+    if (turn?.generation === generation) turn.providerTurnId = providerTurnId;
+  }
+
+  /** An engine turn completed on this thread. A bound watch settles only on
+   * its own turn's completion, or one that names no turn; an unbound watch
+   * (a direct turn) settles on any completion, as before. */
+  settleCompleted(threadId: string, providerTurnId?: string): void {
+    const turn = this.turns.get(threadId);
+    if (!turn) return;
+    if (turn.providerTurnId && providerTurnId && providerTurnId !== turn.providerTurnId) return;
+    this.forget(turn);
   }
 
   /** A turn left setup without dispatching: clear its watch, and only if it
