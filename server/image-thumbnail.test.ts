@@ -402,4 +402,10 @@ describe("oneAtATime", () => {
     expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
     expect(most).toBe(1);
   });
+
+  it("moves on from a shrink that never answers, as no shrink", async () => {
+    const stuck = oneAtATime(() => new Promise(() => undefined), 20);
+    await expect(stuck(Buffer.alloc(1), { maxBytes: 1, maxEdge: 1 })).resolves.toBeNull();
+    await expect(stuck(Buffer.alloc(1), { maxBytes: 1, maxEdge: 1 })).resolves.toBeNull();
+  });
 });

@@ -88,3 +88,15 @@ it("captures event time, actor, outcome detail and artifact references exactly o
   db.exec("BEGIN IMMEDIATE"); expect(pauseRestoredMemory(db)).toBe(true); db.exec("COMMIT");
   expect(db.prepare("SELECT mode FROM memory_meta").get()?.mode).toBe("paused");
 });
+
+it("keeps images a turn left out out of a captured user message, as a new revision when they are recorded", () => {
+  const db = legacy(); migrateMemorySchema(db);
+  const text = 'Look\n\n<attached-image path="/d/attachments/a.png" />\n<attached-image path="/d/attachments/b.png" />';
+  const message = { id: "u1", at: 1, role: "user" as const, kind: "text" as const, text };
+  captureMessage(db, "thread", message);
+  captureMessage(db, "thread", { ...message, imagesNotSent: ["/d/attachments/b.png"] });
+  const versions = db.prepare("SELECT revision, payload FROM memory_source_versions WHERE source_id='message:thread:u1' ORDER BY revision").all() as Array<{ revision: number; payload: string }>;
+  expect(versions.map(version => version.revision)).toEqual([1, 2]);
+  expect(JSON.parse(versions[1]!.payload).text).toContain("a.png");
+  expect(JSON.parse(versions[1]!.payload).text).not.toContain("b.png");
+});

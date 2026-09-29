@@ -3537,10 +3537,9 @@ function turnImagesNotSent(text: string, collected: CollectedTurnImages | undefi
 }
 
 /** Record the left-out paths on every message of this turn that names them,
- * so a later replay leaves them out too (transcriptText). True when any of
- * them was not recorded before: a Retry after a restart is not news. */
-function recordImagesNotSent(threadId: string, messageIds: readonly string[], paths: readonly string[]): boolean {
-  let fresh = false;
+ * so a later replay or recall leaves them out too (transcriptText, memory
+ * capture). */
+function recordImagesNotSent(threadId: string, messageIds: readonly string[], paths: readonly string[]): void {
   const byId = new Map(store.messagesFor(threadId).map(message => [message.id, message] as const));
   for (const id of new Set(messageIds)) {
     const message = byId.get(id);
@@ -3549,19 +3548,24 @@ function recordImagesNotSent(threadId: string, messageIds: readonly string[], pa
     const had = new Set(message.imagesNotSent ?? []);
     const add = paths.filter(path => named.has(path) && !had.has(path));
     if (!add.length) continue;
-    fresh = true;
     try { store.patchMessage(threadId, id, { imagesNotSent: [...had, ...add] }); } catch { /* the note still goes */ }
   }
-  return fresh;
 }
 
 /** One line per message and outcome: a Retry or a second room member that
  * leaves the same images out does not say it again. */
 const imagesNotSentNoted = new Set<string>();
-function noteImagesNotSent(threadId: string, messageId: string | undefined, note: string | undefined, bot: { id: string; name: string; color: string }, recorded = true): void {
+function noteImagesNotSent(threadId: string, messageId: string | undefined, note: string | undefined, bot: { id: string; name: string; color: string }): void {
   if (!note) return;
   const key = `${threadId}\0${messageId ?? ""}\0${note}`;
-  if (messageId && (imagesNotSentNoted.has(key) || !recorded)) return;
+  if (messageId && imagesNotSentNoted.has(key)) return;
+  // The same line already follows this message (a Retry after a restart):
+  // not news. A different outcome, from another engine, still gets its line.
+  if (messageId) {
+    const thread = store.messagesFor(threadId);
+    const at = thread.findIndex(message => message.id === messageId);
+    if (at !== -1 && thread.slice(at + 1).some(message => message.kind === "activity" && message.tool?.name === note)) return;
+  }
   if (imagesNotSentNoted.size >= 1000) imagesNotSentNoted.clear();
   imagesNotSentNoted.add(key);
   try {
@@ -6652,8 +6656,8 @@ async function startTurn(
       const leftOut = turnImagesNotSent(text, collectedImages);
       if (leftOut.paths.length) {
         turnText = withoutImageTags(turnText, leftOut.paths);
-        const recorded = recordImagesNotSent(threadId, [...(userMessage ? [userMessage.id] : []), ...(opts?.excludeMessageIds ?? [])], leftOut.paths);
-        noteImagesNotSent(threadId, userMessage?.id, leftOut.note, bot, recorded);
+        recordImagesNotSent(threadId, [...(userMessage ? [userMessage.id] : []), ...(opts?.excludeMessageIds ?? [])], leftOut.paths);
+        noteImagesNotSent(threadId, userMessage?.id, leftOut.note, bot);
       }
       const outputInstructions = prepareOutputDestination(bot.id, threadId, dispatchClaimId, worksInWorkspace && opts?.runOn !== "cloud", Boolean(integrations.agents));
       projectTurnLeases.markDispatched(dispatchClaimId);
@@ -8578,7 +8582,10 @@ async function runGroupMemberTurn(
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
       // Same as the direct path: left-out images leave the text, one line says so.
       const roomTurnText = leftOut.paths.length ? withoutImageTags(text, leftOut.paths) : text;
-      if (leftOut.paths.length) noteImagesNotSent(threadId, latestUser?.id, leftOut.note, bot, recordImagesNotSent(threadId, latestUser ? [latestUser.id] : [], leftOut.paths));
+      if (leftOut.paths.length) {
+        recordImagesNotSent(threadId, latestUser ? [latestUser.id] : [], leftOut.paths);
+        noteImagesNotSent(threadId, latestUser?.id, leftOut.note, bot);
+      }
       submissionBoundary.started();
       preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
       const roomSystemLayers = [...roomLayers, shapeLayer("images", imagePrompt)];

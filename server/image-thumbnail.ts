@@ -162,13 +162,20 @@ export function loadResize(): Promise<Resize | null> {
   return loaded;
 }
 
+const SHRINK_TIMEOUT_MS = 20_000;
+
 /** One shrink at a time across the process: each can decode a picture of up
  * to MAX_INPUT_PIXELS several times, and ten images in each of several
  * rooms' turns must not all do so at once. */
-export function oneAtATime(shrink: Shrink): Shrink {
+export function oneAtATime(shrink: Shrink, timeoutMs = SHRINK_TIMEOUT_MS): Shrink {
   let tail: Promise<unknown> = Promise.resolve();
   return (bytes, target) => {
-    const run = tail.then(() => shrink(bytes, target));
+    // A shrink that hangs is no shrink: the queue moves on after timeoutMs
+    // and that picture is judged as it is.
+    const run = tail.then(() => new Promise<Awaited<ReturnType<Shrink>>>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(null), timeoutMs);
+      shrink(bytes, target).then(resolve, reject).finally(() => clearTimeout(timer));
+    }));
     tail = run.catch(() => undefined);
     return run;
   };
