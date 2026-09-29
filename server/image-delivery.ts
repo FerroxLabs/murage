@@ -108,7 +108,8 @@ export async function readImageEventStream(body: ReadableStream<Uint8Array>, opt
     reader.releaseLock();
   }
   if (!completed || !images.size) throw new ImageDeliveryError("invalid-image", "The image stream ended before an image arrived.", "uncertain");
-  const data = [...images.entries()].sort(([a], [b]) => a - b).map(([, row]) => row).slice(0, Math.max(1, options.expected));
+  // Every image is returned; the caller refuses more than it asked for.
+  const data = [...images.entries()].sort(([a], [b]) => a - b).map(([, row]) => row);
   return { data, ...(usage !== undefined ? { usage } : {}), ...(model ? { model } : {}) };
 }
 

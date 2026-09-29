@@ -246,9 +246,9 @@ const TOOLS = [
   },
   { name: "register_artifact", description: "Save a completed report or deliverable into Murage Files. Create the real file inside the host-specified file workspace, which may differ from the engine's working directory, then register its relative path. Follow this turn's destination instructions: admitted managed outputs/ files are checked automatically after successful completion; other files and custom folders require this tool. Murage verifies and preserves bytes before showing a downloadable card. Do not pass absolute paths, private setup/memory files or credentials. A filename in prose is not a saved deliverable.", inputSchema: { type: "object", required: ["relative_path"], additionalProperties: false, properties: { relative_path: { type: "string", minLength: 1, maxLength: 4096 }, name: { type: "string", minLength: 1, maxLength: 200 } } } },
   { name: "send_voice_note", description: "Send the owner a voice note: Murage says `text` in your own voice (the voice set in your profile) and leaves it in this conversation as an audio message with the words as its caption. When the owner is talking to you from Telegram, Slack or Discord, it is sent there too. Use it when the owner asks for a voice note, audio or to hear something, or for a short spoken summary of an answer. Write it to be heard: plain sentences, no markdown, lists, links, code or tables; say numbers and dates the way a person would. At most 1,500 characters (about a minute and a half): summarise and leave detail in the chat. Hosted voices are billed per character, so at most three voice notes per turn.", inputSchema: { type: "object", required: ["text"], additionalProperties: false, properties: { text: { type: "string", minLength: 1, maxLength: 1500, description: "What to say, written to be spoken." }, title: { type: "string", minLength: 1, maxLength: 120, description: "Optional short title for the saved file." } } } },
-  { name: "list_image_models", description: "List Murage's configured image connections, selected default and supported generation/edit models. This checks metadata only; no image is generated. Image tools use server-owned keys, never a CLI subscription.", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "resolve_image_reference", description: "Prepare up to four reference images for an image edit, from this exact conversation only: an image attachment it already shows (uploaded by the person or generated earlier), a saved Files image of this conversation pinned by its sha256, or an image file inside this task's workspace named by its relative path (optionally pinned to a revision). Murage checks the exact bytes (PNG, JPEG or WebP; at most 10 MB each and 20 MB together), shows the prepared images in the conversation and returns their ids for generate_image reference_ids. If any source fails, none is prepared. Nothing is generated or billed. A reference image is not a numeric seed. Never pass absolute paths, URLs or another conversation's files.", inputSchema: { type: "object", required: ["sources"], additionalProperties: false, properties: {
-    sources: { type: "array", minItems: 1, maxItems: 4, items: { type: "object", additionalProperties: false, properties: {
+  { name: "list_image_models", description: "List Murage's configured image connections, the selected default and every model with its own limits: prompt budget in characters (maxPromptChars), size rule in words and as data, qualities, output formats, reference cap (maxReferences), what it supports (edits, transparent background, seed, negative prompt, images per request) and how results are delivered. Limits differ per model, so read them here before writing a prompt. This checks metadata only; no image is generated. Image tools use server-owned keys, never a CLI subscription.", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "resolve_image_reference", description: "Prepare up to 16 reference images for an image edit, from this exact conversation only: an image attachment it already shows (uploaded by the person or generated earlier), a saved Files image of this conversation pinned by its sha256, or an image file inside this task's workspace named by its relative path (optionally pinned to a revision). Murage checks the exact bytes (PNG, JPEG or WebP; at most 10 MB each and 64 MB together), shows the prepared images in the conversation and returns their ids for generate_image reference_ids. Each model takes its own number of references: list_image_models gives maxReferences. If any source fails, none is prepared. Nothing is generated or billed. A reference image is not a numeric seed. Never pass absolute paths, URLs or another conversation's files.", inputSchema: { type: "object", required: ["sources"], additionalProperties: false, properties: {
+    sources: { type: "array", minItems: 1, maxItems: 16, items: { type: "object", additionalProperties: false, properties: {
       attachment_id: { type: "string", maxLength: 180, description: "An image attachment name already in this conversation, e.g. the basename of an attached-image path or a generated image's referenceId." },
       artifact_id: { type: "string", description: "A saved Files image of this conversation; requires sha256." },
       sha256: { type: "string", description: "The saved file's sha256, pinning its exact version." },
@@ -256,10 +256,21 @@ const TOOLS = [
       revision: { type: "string", maxLength: 256, description: "Optional workspace revision; a changed file is then refused." },
     } } },
   } } },
-  { name: "generate_image", description: "Create one image, or edit up to four reference images from this exact conversation. Murage shows the owner a paid-operation approval with connection/model and reference count before any provider request; if the chosen model cannot edit with references, the request fails with the reason before approval. Flux defaults to GPT Image 2.5 Flare high. Use list_image_models to inspect choices and each model's supported quality and size. Never pass keys, provider URLs, local paths or remote reference URLs. Keep request_id stable for the same logical request; do not retry or switch billing connections after timeout/uncertain failure. Generated output is saved in this bot's private generated-images workspace, attached to this conversation and saved to Files. One image attempt per turn.", inputSchema: { type: "object", properties: {
-    request_id: {type:"string",minLength:1,maxLength:80}, prompt:{type:"string",minLength:1,maxLength:4000}, operation:{type:"string",enum:["generate","edit"]},
-    connection_id:{type:"string"},model:{type:"string"},quality:{type:"string",enum:["low","medium","high","xhigh","max"]},size:{type:"string",enum:["1024x1024","1536x1024","1024x1536"]},
-    reference_ids:{type:"array",maxItems:4,items:{type:"string"},description:"Image attachment ids already in this conversation (uploaded or generated) or ids returned by resolve_image_reference; never file paths."}
+  { name: "generate_image", description: "Create images, or edit reference images from this exact conversation. Murage shows the owner an approval card with the connection, model, size, image count, references and prompt length before any provider request. A request the chosen model cannot take (a prompt over its budget, or a size, quality, reference count or setting it does not support) is refused with the reason and the numbers before the card; nothing is ever cut or quietly changed. Limits differ per model: read them with list_image_models first. Ask for a shape with aspect_ratio and resolution, or exact width and height; fit exact renders the nearest size the model supports and crops it here to what you asked. When a prompt is over a model's budget, condense it yourself and pass condensed_from_chars. Flux defaults to GPT Image 2.5 Flare high. Never pass keys, provider URLs, local paths or remote reference URLs. Keep request_id stable for the same logical request: repeating it resumes the same render and never starts a second one. Do not retry or switch connections after a timeout or uncertain result. Generated images are saved in this bot's private generated-images workspace, attached to this conversation and saved to Files. One image request per turn.", inputSchema: { type: "object", properties: {
+    request_id: {type:"string",minLength:1,maxLength:80}, prompt:{type:"string",minLength:1,maxLength:100000,description:"The prompt, sent whole. Its budget is the model's maxPromptChars."}, operation:{type:"string",enum:["generate","edit"]},
+    connection_id:{type:"string"},model:{type:"string"},quality:{type:"string",enum:["low","medium","high","xhigh","max"],description:"Checked against the model's qualities."},
+    aspect_ratio:{type:"string",pattern:"^[0-9]{1,2}:[0-9]{1,2}$",description:"W:H with whole numbers 1 to 64, e.g. 9:16, 4:5, 1:1, 16:9."},
+    resolution:{type:"string",enum:["small","standard","large","max"],description:"About 0.5K, 1K, 2K or 4K. Defaults to standard."},
+    width:{type:"integer",minimum:64,maximum:8192},height:{type:"integer",minimum:64,maximum:8192,description:"Exact pixels with width, instead of aspect_ratio and resolution."},
+    fit:{type:"string",enum:["nearest","exact"],description:"nearest (default) renders the closest size the model supports and refuses a different shape; exact renders that size and crops and resizes it here to exactly what you asked."},
+    size:{type:"string",pattern:"^[0-9]{2,5}x[0-9]{2,5}$",description:"Older form of width and height, e.g. 1024x1024."},
+    n:{type:"integer",minimum:1,maximum:10,description:"How many images, up to the model's supports.n."},
+    output_format:{type:"string",enum:["png","jpeg","webp"]},output_compression:{type:"integer",minimum:0,maximum:100,description:"For jpeg or webp, where the model supports it."},
+    background:{type:"string",enum:["transparent"],description:"Needs png or webp and a model that supports it."},
+    seed:{type:"integer",minimum:0,maximum:2147483647,description:"Only for models whose supports.seed is true."},
+    negative_prompt:{type:"string",minLength:1,maxLength:2000,description:"What to keep out. Sent natively where the model supports it, otherwise added as an Avoid: line and counted in the prompt."},
+    condensed_from_chars:{type:"integer",minimum:1,description:"When you condensed a longer prompt to fit this model: the original length. The card and result say so."},
+    reference_ids:{type:"array",maxItems:16,items:{type:"string"},description:"Image attachment ids already in this conversation (uploaded or generated) or ids returned by resolve_image_reference; never file paths. At most the model's maxReferences."}
   },required:["request_id","prompt"],additionalProperties:false } },
 
   {
@@ -549,9 +560,10 @@ const rpcErr = (id: unknown, code: number, message: string) => send({ jsonrpc: "
 const textResult = (id: unknown, text: string, isError = false) =>
   ok(id, { content: [{ type: "text", text }], isError });
 
-/** 15-minute approval wait (server/image-operations.ts IMAGE_APPROVAL_TIMEOUT_MS)
- * plus the 300 s the provider request itself was already allowed. */
-const GENERATE_IMAGE_TIMEOUT_MS = 15 * 60_000 + 300_000;
+/** 15-minute approval wait (server/image-operations.ts IMAGE_APPROVAL_TIMEOUT_MS),
+ * the 30-minute render ceiling (server/image-delivery.ts RENDER_CEILING_MS)
+ * and a 5-minute margin, so the proxy never gives up on a render first. */
+const GENERATE_IMAGE_TIMEOUT_MS = 15 * 60_000 + 30 * 60_000 + 5 * 60_000;
 
 async function api(path: string, init?: RequestInit): Promise<Json> {
   let res: Response;
@@ -669,7 +681,10 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     // request, which cancels the card under the owner as "not answered".
     const result = await api("/api/internal/generate-image", { method: "POST", signal: AbortSignal.timeout(GENERATE_IMAGE_TIMEOUT_MS), body: JSON.stringify({
       requestId: args.request_id, prompt: args.prompt, operation: args.operation, connectionId: args.connection_id,
-      model: args.model, quality: args.quality, size: args.size, referenceIds: args.reference_ids,
+      model: args.model, quality: args.quality, size: args.size, aspectRatio: args.aspect_ratio, resolution: args.resolution,
+      width: args.width, height: args.height, fit: args.fit, n: args.n, outputFormat: args.output_format, outputCompression: args.output_compression,
+      background: args.background, seed: args.seed, negativePrompt: args.negative_prompt, condensedFromChars: args.condensed_from_chars,
+      referenceIds: args.reference_ids,
     }) });
     return jsonToolResult(result);
   }

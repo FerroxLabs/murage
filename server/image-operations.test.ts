@@ -446,16 +446,17 @@ it("B16 releases an ungranted Flux alias edit before approval, while a refused O
   expect(fetcher).toHaveBeenCalledOnce();
 });
 
-it("B16 resolves two exactly 10 MiB conversation PNG attachments as 20 MiB of references and refuses one more reference", () => {
+it("B16 resolves six exactly 10 MiB conversation PNG attachments as 60 MiB of references, refuses past 64 MiB and past sixteen", () => {
   const f = fixture(), MiB = 1024 * 1024, name = (path: string) => path.split(/[\\/]/).at(-1)!;
-  const exact = [1, 2].map(fill => { const bytes = Buffer.alloc(10 * MiB, fill); png.copy(bytes, 0, 0, 8); return saveImage(bytes, "image/png"); });
-  const extra = saveImage(png, "image/png");
+  const exact = [1, 2, 3, 4, 5, 6].map(fill => { const bytes = Buffer.alloc(10 * MiB, fill); png.copy(bytes, 0, 0, 8); return saveImage(bytes, "image/png"); });
+  const extra = (() => { const bytes = Buffer.alloc(10 * MiB, 7); png.copy(bytes, 0, 0, 8); return saveImage(bytes, "image/png"); })();
   f.store.appendMessage(f.actor.threadId, { role: "user", kind: "text", text: "references", attachments: [...exact, extra].map(item => ({ kind: "image", path: item.path, mime: item.mime })) });
   const refs = imageReferences(f.store, f.actor.threadId, exact.map(item => name(item.path)));
-  expect(refs).toHaveLength(2);
-  expect(refs.reduce((sum, item) => sum + item.bytes.length, 0)).toBe(20 * MiB);
+  expect(refs).toHaveLength(6);
+  expect(refs.reduce((sum, item) => sum + item.bytes.length, 0)).toBe(60 * MiB);
   for (const [index, item] of refs.entries()) { expect(item.mime).toBe("image/png"); expect(item.bytes.length).toBe(10 * MiB); expect(item.bytes.equals(readFileSync(exact[index]!.path))).toBe(true); }
-  expect(() => imageReferences(f.store, f.actor.threadId, [...exact, extra].map(item => name(item.path)))).toThrow("total at most 20 MB");
+  expect(() => imageReferences(f.store, f.actor.threadId, [...exact, extra].map(item => name(item.path)))).toThrow("total at most 64 MB");
+  expect(() => imageReferences(f.store, f.actor.threadId, Array(17).fill(name(exact[0]!.path)))).toThrow("17 reference images; Murage takes at most 16. Nothing was sent.");
 });
 // 0.1.54: an image approval is an approval like any other. It used to deny
 // itself after 60 s, so an owner who was not staring at the screen found a

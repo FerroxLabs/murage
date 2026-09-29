@@ -213,10 +213,13 @@ export function resolveImageSize(rule: SizeRule, request: ImageSizeRequest, defa
   if (rule.kind === "ratioTier") {
     const named = rule.ratios.flatMap(label => { const parsed = parseAspectRatio(label); return parsed ? [{ label, ratio: parsed.ratio }] : []; });
     if (!named.length || !rule.tiers.length) return { ok: false, message: "This model has no size choices Murage can send." };
-    const target = asksNothing ? named.find(item => item.ratio === 1) ?? named[0]! : named.reduce((best, item) => ratioDistance(item.ratio, ratio) < ratioDistance(best.ratio, ratio) ? item : best);
     const wantedTier = pixels ? tierForEdge(rule.tiers, Math.max(pixels.width, pixels.height)) : RESOLUTION_TIER[request.resolution ?? "standard"];
     const tier = rule.tiers.includes(wantedTier) ? wantedTier : nearestTier(rule.tiers, wantedTier);
-    if (fit === "nearest" && !asksNothing && !ratioWithin(target.ratio, ratio)) return tooFar(target.label);
+    // Nothing asked: no ratio is sent, so the model keeps its own default (an
+    // edit keeps its reference's shape).
+    if (asksNothing) return { ok: true, size: { asked, tier, rendered: `the model's default ratio at ${tier}`, sendsSize: true } };
+    const target = named.reduce((best, item) => ratioDistance(item.ratio, ratio) < ratioDistance(best.ratio, ratio) ? item : best);
+    if (fit === "nearest" && !ratioWithin(target.ratio, ratio)) return tooFar(target.label);
     const exact = exactFor(target.ratio);
     return { ok: true, size: { asked, aspectRatio: target.label, tier, rendered: `${target.label} at ${tier}`, sendsSize: true, ...(exact ? { exact } : {}) } };
   }
@@ -264,7 +267,9 @@ export type SentModel = { ok: true; model: string; quality?: string; sendQuality
  * quality field. A combination no alias serves is refused, naming what exists.
  */
 export function sentModelFor(id: string, capabilities: ImageModelCapabilities, quality: string | undefined, size: string | undefined): SentModel {
-  const q = quality ?? capabilities.defaultQuality ?? capabilities.qualities[0];
+  // A param model sends a quality only when one was asked or it declares a
+  // default; an alias model always resolves one (its id names it).
+  const q = quality ?? capabilities.defaultQuality ?? (capabilities.qualityMode === "alias" ? capabilities.qualities[0] : undefined);
   if (quality !== undefined && !capabilities.qualities.includes(quality)) {
     return { ok: false, message: capabilities.qualities.length ? `${id} takes quality ${capabilities.qualities.join(", ")}. Nothing was sent.` : `${id} takes no quality setting. Nothing was sent. Leave quality out.` };
   }

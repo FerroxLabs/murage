@@ -67,10 +67,10 @@ it("B16 serializes one/four scoped references over real local HTTP after approva
 });
 it("B16 admits the exact default alias without remapping explicit high or legacy selections", async () => {
  const catalogFixture=fixture();expect(catalogFixture.service.listConnections()).toEqual([{id:"flux",provider:"flux",defaultModel:"flux-image"}]);
- const catalog=await catalogFixture.service.getCatalog("flux");expect(catalog.models).toHaveLength(15);expect(catalog.models.find(model=>model.id==="flux-image")).toMatchObject({generate:true,edit:true,maxReferences:4,qualities:["high"],sizes:["1024x1024"],outputFormat:"png"});expect(catalogFixture.fetcher).not.toHaveBeenCalled();
+ const catalog=await catalogFixture.service.getCatalog("flux");expect(catalog.models).toHaveLength(18);expect(catalog.models.find(model=>model.id==="flux-image")).toMatchObject({generate:true,edit:true,maxReferences:4,qualities:["high"],sizes:["1024x1024"],outputFormat:"png"});expect(catalogFixture.fetcher).not.toHaveBeenCalled();
  for(const model of ["flux-image","flux-image-gpt25-high","flux-image-gpt2","flux-image-gpt2-low"]){
   const f=fixture(),selected=Object.freeze({...request,model});const result=await f.service.generate(selected,f.hooks,[reference]);
-  expect(selected.model).toBe(model);expect(result.metadata.model).toBe(model);expect(f.reserve).toHaveBeenCalledWith(expect.objectContaining({model}));expect((f.fetcher.mock.calls[0]![1]!.body as FormData).get("model")).toBe(model);expect(f.fetcher).toHaveBeenCalledOnce();
+  expect(selected.model).toBe(model);expect(result.metadata.model).toBe(model);expect(f.reserve).toHaveBeenCalledWith(expect.objectContaining({model}),expect.anything());expect((f.fetcher.mock.calls[0]![1]!.body as FormData).get("model")).toBe(model);expect(f.fetcher).toHaveBeenCalledOnce();
  }
 });
 it("B16 verifies all twelve GPT25 aliases and preserves provider-specific quality checks", async () => {
@@ -87,8 +87,13 @@ it("B16 verifies all twelve GPT25 aliases and preserves provider-specific qualit
  }
 });
 it("B16 rejects ungranted aliases, foreign presets, noncatalog models and invalid references before approval or POST", async () => {
- for (const model of ["flux-image-gpt2-high", "flux-image-gpt2-xl", "fuigo-imagine-image-quality", "flux-image-nano-banana-2"]) {
+ for (const model of ["flux-image-gpt2-high", "flux-image-gpt2-xl", "fuigo-imagine-image-quality"]) {
   const f = fixture(); await expect(f.service.generate({ ...request, model }, f.hooks, [reference])).rejects.toMatchObject({ code: "unsupported-model", correctablePreflight: true });
+  expect(f.reserve).not.toHaveBeenCalled(); expect(f.fetcher).not.toHaveBeenCalled();
+ }
+ // Listed since IMG2 (contract section 5), but they only create: an edit is refused before approval.
+ for (const model of ["flux-image-nano-banana-2", "flux-image-fast", "flux-image-lite"]) {
+  const f = fixture(); await expect(f.service.generate({ ...request, model }, f.hooks, [reference])).rejects.toMatchObject({ code: "unsupported-edit", correctablePreflight: true });
   expect(f.reserve).not.toHaveBeenCalled(); expect(f.fetcher).not.toHaveBeenCalled();
  }
  const invalid: ImageReference[][] = [[], Array(5).fill(reference), [{ bytes: Buffer.alloc(10 * 1024 * 1024 + 1), mime: "image/png" }], Array(3).fill({ bytes: Buffer.alloc(7 * 1024 * 1024), mime: "image/png" }), [{ bytes: png, mime: "image/jpeg" }]];
@@ -126,7 +131,7 @@ it("B16 accepts exactly 4 x 5 MiB and 2 x 10 MiB references over real local HTTP
    const f = fixture(); local(f); posts = 0; forms.length = 0;
    expect(refs.reduce((sum, item) => sum + item.bytes.length, 0)).toBe(20 * MiB);
    await f.service.generate(request, f.hooks, refs);
-   expect(f.reserve).toHaveBeenCalledOnce(); expect(f.reserve).toHaveBeenCalledWith(expect.objectContaining({ operation: "edit", referenceCount: refs.length }));
+   expect(f.reserve).toHaveBeenCalledOnce(); expect(f.reserve).toHaveBeenCalledWith(expect.objectContaining({ operation: "edit", referenceCount: refs.length, referenceCap: 4 }), expect.anything());
    expect(posts).toBe(1); expect(f.fetcher).toHaveBeenCalledOnce(); expect(f.publish).toHaveBeenCalledOnce();
    const files = forms[0]!.getAll("image[]") as File[]; expect(files).toHaveLength(refs.length);
    for (const [i, file] of files.entries()) { const sent = Buffer.from(await file.arrayBuffer()); expect(sent.length).toBe(refs[i]!.bytes.length); expect(sent.equals(refs[i]!.bytes)).toBe(true); }

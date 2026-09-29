@@ -38,7 +38,7 @@ it("B15 rechecks authority after post-approval capability reads",async()=>{
 it("posts one OpenAI GPT Image 2 generation after reservation and returns decoded artifact metadata",async()=>{
  const f=fixture();const result=await f.service.generate(f.request,f.hooks);
  expect(f.fetcher).toHaveBeenCalledOnce();const[url,init]=f.fetcher.mock.calls[0]!;expect(url).toBe("https://api.openai.com/v1/images/generations");expect(init?.redirect).toBe("error");
- expect(JSON.parse(String(init?.body))).toEqual({model:"gpt-image-2",prompt:f.request.prompt,n:1,quality:"medium",size:"1024x1024",output_format:"png"});
+ expect(JSON.parse(String(init?.body))).toEqual({model:"gpt-image-2",prompt:f.request.prompt,n:1,quality:"medium",size:"1024x1024",output_format:"png",stream:true});
  expect(f.reserve.mock.invocationCallOrder[0]).toBeLessThan(f.fetcher.mock.invocationCallOrder[0]!);
  expect(f.publish.mock.calls[0]).toEqual([expect.objectContaining({mime:"image/png",bytes:Buffer.from(PNG,"base64")}),expect.objectContaining({model:"gpt-image-2",reportedModel:"reported-image-model",usage:{inputTokens:12,outputTokens:23,costUsd:0.04}})]);
  expect(f.finish).toHaveBeenCalledWith("published");expect(result.artifact.id).toBe("owned-artifact");
@@ -52,7 +52,7 @@ it("uses multipart OpenAI edits containing every approved reference and never se
 });
 it("defaults Flux to flux-image GPT2.5 Flare high after approval",async()=>{
  const f=fixture("flux");const catalog=await f.service.getCatalog("flux");expect(catalog.defaultModel).toBe("flux-image");expect(catalog.models.find(model=>model.id===catalog.defaultModel)).toMatchObject({qualities:["high"],sizes:["1024x1024"],edit:true,maxReferences:4});expect(f.fetcher).not.toHaveBeenCalled();
- const result=await f.service.generate(f.request,f.hooks);const[url,init]=f.fetcher.mock.calls[0]!;expect(url).toBe("https://api.fluxrouter.ai/v1/images/generations");expect(JSON.parse(String(init?.body))).toEqual({model:"flux-image",prompt:f.request.prompt,n:1,size:"1024x1024",response_format:"b64_json"});expect(new Headers(init?.headers).get("authorization")).toBe("Bearer FAKE_CREDENTIAL_CANARY");expect(f.reserve.mock.invocationCallOrder[0]).toBeLessThan(f.fetcher.mock.invocationCallOrder[0]!);expect(JSON.stringify(f.reserve.mock.calls)).not.toContain("CANARY");expect(result.metadata).toMatchObject({model:"flux-image",quality:"high",size:"1024x1024"});
+ const result=await f.service.generate(f.request,f.hooks);const[url,init]=f.fetcher.mock.calls[0]!;expect(url).toBe("https://api.fluxrouter.ai/v1/images/generations");expect(JSON.parse(String(init?.body))).toEqual({model:"flux-image",prompt:f.request.prompt,n:1,size:"1024x1024",response_format:"b64_json",stream:true});expect(new Headers(init?.headers).get("authorization")).toBe("Bearer FAKE_CREDENTIAL_CANARY");expect(f.reserve.mock.invocationCallOrder[0]).toBeLessThan(f.fetcher.mock.invocationCallOrder[0]!);expect(JSON.stringify(f.reserve.mock.calls)).not.toContain("CANARY");expect(result.metadata).toMatchObject({model:"flux-image",quality:"high",size:"1024x1024"});
 });
 it("preserves the supported explicit Flux GPT2 aliases and their quality and size",async()=>{
  for(const[model,quality,size] of [["flux-image-gpt2","medium","1024x1024"],["flux-image-gpt2-low","low","1024x1024"]]){const f=fixture("flux");const result=await f.service.generate({...f.request,model},f.hooks);expect(JSON.parse(String(f.fetcher.mock.calls[0]![1]?.body))).toMatchObject({model,size});expect(result.metadata).toMatchObject({model,quality,size});}
@@ -81,10 +81,10 @@ it("refuses OpenRouter execution when endpoint-specific parameters do not match 
  await expect(f.service.generate({...f.request,model:"vendor/model"},f.hooks)).rejects.toThrow("No verified raster endpoint");expect(f.reserve).not.toHaveBeenCalled();expect(f.fetcher.mock.calls.every(call=>call[1]?.method!=="POST")).toBe(true);
 });
 it("rejects model/URL/key overrides and excessive prompts before permission or HTTP",async()=>{
- for(const extra of [{url:"https://untrusted.invalid"},{apiKey:"other"},{n:2},{prompt:"a".repeat(4001)},{model:"unknown-image-model"}]){const f=fixture();await expect(f.service.generate({...f.request,...extra},f.hooks)).rejects.toThrow();expect(f.fetcher).not.toHaveBeenCalled();expect(f.reserve).not.toHaveBeenCalled();}
+ for(const extra of [{url:"https://untrusted.invalid"},{apiKey:"other"},{n:11},{prompt:"a".repeat(100_001)},{model:"unknown-image-model"}]){const f=fixture();await expect(f.service.generate({...f.request,...extra},f.hooks)).rejects.toThrow();expect(f.fetcher).not.toHaveBeenCalled();expect(f.reserve).not.toHaveBeenCalled();}
 });
 it("rejects missing, excessive, mismatched and ignored references before billing",async()=>{
- const cases=[{operation:"edit",refs:[]},{operation:"generate",refs:[{bytes:Buffer.from(PNG,"base64"),mime:"image/png"}]},{operation:"edit",refs:Array(5).fill({bytes:Buffer.from(PNG,"base64"),mime:"image/png"})},{operation:"edit",refs:[{bytes:Buffer.from(PNG,"base64"),mime:"image/jpeg"}]}];
+ const cases=[{operation:"edit",refs:[]},{operation:"generate",refs:[{bytes:Buffer.from(PNG,"base64"),mime:"image/png"}]},{operation:"edit",refs:Array(17).fill({bytes:Buffer.from(PNG,"base64"),mime:"image/png"})},{operation:"edit",refs:[{bytes:Buffer.from(PNG,"base64"),mime:"image/jpeg"}]}];
  for(const test of cases){const f=fixture();await expect(f.service.generate({...f.request,operation:test.operation},f.hooks,test.refs as any)).rejects.toThrow();expect(f.fetcher).not.toHaveBeenCalled();expect(f.reserve).not.toHaveBeenCalled();}
 });
 it("does not dispatch when owner permission is denied",async()=>{
@@ -142,7 +142,7 @@ it("surfaces the provider's own error code and message from a 4xx JSON body, bou
  await expect(server.service.generate(server.request,server.hooks)).rejects.not.toThrow("PRIVATE_DETAIL");
 });
 it("rejects oversized response, invalid raster, URL-only output and extra images without publishing",async()=>{
- const responses=[()=>new Response("{}",{headers:{"content-length":String(16*1024*1024)}}),()=>new Response(JSON.stringify({data:[{b64_json:Buffer.from("<svg/>").toString("base64") }]})),()=>new Response(JSON.stringify({data:[{url:"https://untrusted.invalid/image.png"}]})),()=>new Response(JSON.stringify({data:[{b64_json:PNG},{b64_json:PNG}]}))];
+ const responses=[()=>new Response("{}",{headers:{"content-length":String(200*1024*1024)}}),()=>new Response(JSON.stringify({data:[{b64_json:Buffer.from("<svg/>").toString("base64") }]})),()=>new Response(JSON.stringify({data:[{url:"https://untrusted.invalid/image.png"}]})),()=>new Response(JSON.stringify({data:[{b64_json:PNG},{b64_json:PNG}]}))];
  for(const response of responses){const f=fixture();f.fetcher.mockResolvedValueOnce(response());await expect(f.service.generate(f.request,f.hooks)).rejects.toThrow();expect(f.publish).not.toHaveBeenCalled();expect(f.finish).toHaveBeenCalledWith("uncertain");expect(f.fetcher).toHaveBeenCalledOnce();}
 });
 it("retains uncertain reservation if artifact publication fails, and sanitizes receipt failures",async()=>{
@@ -157,7 +157,7 @@ it("propagates cancellation to an in-flight provider request without retry or pu
  await expect(pending).rejects.toMatchObject({outcome:"uncertain"});expect(f.publish).not.toHaveBeenCalled();expect(f.finish).toHaveBeenCalledWith("uncertain");
 });
 it("enforces streamed response and reference byte limits without trusting content length",async()=>{
- const f=fixture();f.fetcher.mockResolvedValueOnce(new Response(new ReadableStream({start(controller){controller.enqueue(new Uint8Array(15*1024*1024+1));controller.close();}})));
+ const f=fixture();f.fetcher.mockResolvedValueOnce(new Response(new ReadableStream({start(controller){controller.enqueue(new Uint8Array(60*1024*1024));controller.close();}})));
  await expect(f.service.generate(f.request,f.hooks)).rejects.toMatchObject({code:"oversized-response"});expect(f.publish).not.toHaveBeenCalled();
  const reference=fixture();await expect(reference.service.generate({...reference.request,operation:"edit"},reference.hooks,[{bytes:Buffer.alloc(10*1024*1024+1),mime:"image/png"}])).rejects.toThrow("bounded PNG");expect(reference.fetcher).not.toHaveBeenCalled();
 });
@@ -206,15 +206,17 @@ it("F1-T1 refuses a key for any URL outside its provider's exact https origin",(
   expect(()=>assertCredentialOrigin(provider,url)).toThrow(expect.objectContaining({code:"credential-origin-mismatch"}));
 });
 it("F1-T1 publishes bounded reference capability fields per model; Flux stays generation-only",async()=>{
- const openai=(await fixture("openai").service.getCatalog("openai")).models;expect(openai.every(model=>model.edit&&model.maxReferences===4)).toBe(true);
- const flux=(await fixture("flux").service.getCatalog("flux")).models;expect(flux.every(model=>model.generate&&model.edit&&model.maxReferences===4&&!model.editUnavailableReason)).toBe(true);
+ const openai=(await fixture("openai").service.getCatalog("openai")).models;expect(openai.every(model=>model.edit&&model.maxReferences===16)).toBe(true);
+ const flux=(await fixture("flux").service.getCatalog("flux")).models;const createsOnly=["flux-image-fast","flux-image-nano-banana-2","flux-image-lite"];
+ expect(flux.filter(model=>!createsOnly.includes(model.id)).every(model=>model.generate&&model.edit&&model.maxReferences===4&&!model.editUnavailableReason)).toBe(true);
+ expect(flux.filter(model=>createsOnly.includes(model.id)).every(model=>model.generate&&!model.edit&&model.maxReferences===0&&model.editUnavailableReason)).toBe(true);
  expect((await fixture("xai").service.getCatalog("xai")).models).toEqual([expect.objectContaining({id:"grok-imagine-image-2.0",generate:true,edit:true,maxReferences:4,editQualities:[]})]);
 });
 it("F1-T2 sends xAI JSON edits: image for one input, images for two to four, exact bytes, b64_json and no quality",async()=>{
  const one=strict("xai");await one.service.generate(xaiEdit,one.hooks,[ref(PNG)]);
  expect(one.posts()[0]![0]).toBe("https://api.x.ai/v1/images/edits");
  expect(JSON.parse(String(one.posts()[0]![1]?.body))).toEqual({model:"grok-imagine-image-2.0",prompt:"Edit the fixture",n:1,response_format:"b64_json",image:{type:"image_url",url:dataUrl(PNG)}});
- expect((one.reserve.mock.calls[0] as unknown[])[0]).toEqual({connectionId:"xai",provider:"xai",model:"grok-imagine-image-2.0",operation:"edit",count:1,referenceCount:1});
+ expect((one.reserve.mock.calls[0] as unknown[])[0]).toMatchObject({connectionId:"xai",provider:"xai",model:"grok-imagine-image-2.0",operation:"edit",count:1,referenceCount:1,referenceCap:4,promptChars:16});
  const inputs=[PNG,PNG_B,PNG_B,PNG];
  for(const count of [2,4]){
   const many=strict("xai");await many.service.generate(xaiEdit,many.hooks,inputs.slice(0,count).map(ref));
@@ -252,7 +254,7 @@ it("F1-T3 fails closed before approval when the pinned endpoint record is absent
  const range=(input_references:unknown,extra:Record<string,unknown>={})=>({endpoints:[{provider_tag:"openai",supported_parameters:{...extra,input_references}}]});
  const records:unknown[]=[
   {endpoints:[{provider_tag:"openai",supported_parameters:{quality:parameters.quality}}]},
-  range({type:"enum",values:["1"]}),range({type:"range",min:"0",max:16}),range({type:"range",min:0,max:0}),range({type:"range",min:3,max:2}),range({type:"range",min:5,max:16}),
+  range({type:"enum",values:["1"]}),range({type:"range",min:"0",max:16}),range({type:"range",min:0,max:0}),range({type:"range",min:3,max:2}),range({type:"range",min:17,max:32}),
   {endpoints:[{provider_tag:"vendor-fallback",supported_parameters:gpt2Endpoint}]},
   range({type:"range",min:0,max:16},{output_format:{values:["svg"]}}),
   {endpoints:"not a list"},{},
@@ -268,7 +270,7 @@ it("F1-T3 fails closed before approval when the pinned endpoint record is absent
 });
 it("F1-T3 catalog shows OpenRouter GPT2 editing only after the pinned endpoint check and keeps generation when the check fails",async()=>{
  const ok=strict("openrouter");const models=(await ok.service.getCatalog("openrouter")).models;
- expect(models).toEqual([expect.objectContaining({id:"openai/gpt-image-2",generate:true,edit:true,maxReferences:4})]);expect(models[0]).not.toHaveProperty("editUnavailableReason");
+ expect(models).toEqual([expect.objectContaining({id:"openai/gpt-image-2",generate:true,edit:true,maxReferences:16,capabilities:expect.objectContaining({maxReferences:16,maxPromptChars:32000})})]);expect(models[0]).not.toHaveProperty("editUnavailableReason");
  const lower=strict("openrouter",{endpoints:[{provider_tag:"openai",supported_parameters:{...gpt2Endpoint,input_references:{type:"range",min:0,max:2}}}]});expect((await lower.service.getCatalog("openrouter")).models[0]).toMatchObject({edit:true,maxReferences:2});
  const down=strict("openrouter");const inner=down.fetcher.getMockImplementation()!;down.fetcher.mockImplementation(async(input,init)=>String(input).endsWith("/endpoints")?new Response("no",{status:500}):inner(input,init));
  expect((await down.service.getCatalog("openrouter")).models[0]).toMatchObject({generate:true,edit:false,maxReferences:0,editUnavailableReason:expect.stringContaining("could not be verified")});
@@ -305,7 +307,7 @@ it("GOOG-1 lists Google with its Gemini image models and no network read",async(
  expect(f.service.listConnections()).toEqual([{id:"google",provider:"google",defaultModel:"gemini-3.1-flash-image"}]);
  const catalog=await f.service.getCatalog("google");
  expect(catalog.models.map(model=>model.id)).toEqual(["gemini-3.1-flash-image","gemini-3.1-flash-lite-image","gemini-3-pro-image"]);
- expect(catalog.models.every(model=>model.generate&&model.edit&&model.maxReferences===4&&model.qualities.length===0)).toBe(true);
+ expect(catalog.models.every(model=>model.generate&&model.edit&&model.maxReferences===14&&model.qualities.length===0&&model.capabilities.sizeRule.kind==="ratioTier")).toBe(true);
  expect(f.fetcher).not.toHaveBeenCalled();expect(JSON.stringify(catalog)).not.toContain("CANARY");
 });
 it("GOOG-2 generates through generateContent on Google's origin with the key only in x-goog-api-key",async()=>{
@@ -315,8 +317,8 @@ it("GOOG-2 generates through generateContent on Google's origin with the key onl
  expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent");
  const headers=new Headers(init?.headers);expect(headers.get("x-goog-api-key")).toBe(CANARY.google);expect(headers.get("authorization")).toBeNull();
  expect(String(url)).not.toContain(CANARY.google);expect(init?.redirect).toBe("error");
- expect(JSON.parse(String(init?.body))).toEqual({contents:[{role:"user",parts:[{text:"A watercolor mountain"}]}],generationConfig:{responseModalities:["IMAGE"],imageConfig:{aspectRatio:"3:2",imageSize:"1K"}}});
- expect(result.metadata).toMatchObject({connectionId:"google",provider:"google",model:"gemini-3.1-flash-image",size:"1536x1024"});
+ expect(JSON.parse(String(init?.body))).toEqual({contents:[{role:"user",parts:[{text:"A watercolor mountain"}]}],generationConfig:{responseModalities:["IMAGE"],imageConfig:{aspectRatio:"3:2",imageSize:"2K"}}});
+ expect(result.metadata).toMatchObject({connectionId:"google",provider:"google",model:"gemini-3.1-flash-image",sizeAsked:"1536x1024",sizeRendered:"3:2 at 2K"});
  expect(JSON.stringify(f.reserve.mock.calls)).not.toContain(CANARY.google);expect(f.finish).toHaveBeenCalledWith("published");
 });
 it("GOOG-3 edits with reference images as inline parts of the same request",async()=>{

@@ -6,9 +6,10 @@ import type { RoutineCardHooks } from "./peer-approval.ts";
 import { database } from "./database.ts";
 import { initializeImageOperations } from "./image-operations-schema.ts";
 import { ATTACHMENTS_DIR, IMAGE_MAX_BYTES } from "./attachments.ts";
+import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES } from "../shared/media-assets.ts";
 import { DATA_DIR } from "./config.ts";
-import type { ImageOperationDetails, ImageAttemptOutcome, ImageReference, GeneratedImageMetadata } from "./image-generation.ts";
-import { ImageGenerationError } from "./image-generation.ts";
+import type { ImageOperationDetails, ImageAttemptOutcome, ImageReference, GeneratedImageMetadata, ImageApprovalCardInput } from "./image-generation.ts";
+import { ImageGenerationError, imageApprovalSubtitle, imageDeliveredSentence } from "./image-generation.ts";
 import type { DecodedGeneratedImage } from "./generated-image.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import type { LocalOutputReceipt } from "../shared/output-publication.ts";
@@ -34,7 +35,8 @@ function inside(root: string, file: string) { const tail = relative(root, file);
  * resolve_image_reference (F5-T4), which stores its pinned bytes the same way. */
 export function imageReferences(store: Store, threadId: string, names: unknown): ImageReference[] {
   if (names === undefined) return [];
-  if (!Array.isArray(names) || names.length > 4 || names.some(name => typeof name !== "string" || !/^[\w-]+\.(png|jpg|jpeg|webp)$/i.test(name))) throw error(400, "Choose up to four image attachments from this conversation.");
+  if (Array.isArray(names) && names.length > IMAGE_GENERATION_REFERENCE_MAX) throw error(400, `${names.length} reference images; Murage takes at most ${IMAGE_GENERATION_REFERENCE_MAX}. Nothing was sent.`);
+  if (!Array.isArray(names) || names.some(name => typeof name !== "string" || !/^[\w-]+\.(png|jpg|jpeg|webp)$/i.test(name))) throw error(400, `Choose up to ${IMAGE_GENERATION_REFERENCE_MAX} image attachments from this conversation.`);
   const allowed = new Set(conversationImageAttachments(store, threadId, ATTACHMENTS_DIR).values());
   let total = 0;
   return names.map(name => {
@@ -42,7 +44,7 @@ export function imageReferences(store: Store, threadId: string, names: unknown):
     const stat = lstatSync(file);
     if (!allowed.has(file) || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !inside(root, realpathSync(file)) || stat.size > IMAGE_MAX_BYTES) throw error(403, "Image reference is unavailable in this conversation.");
     const decoded = decodeGeneratedImage(readFileSync(file).toString("base64")); total += decoded.bytes.length;
-    if (total > 20 * 1024 * 1024 || decoded.mime === "image/gif") throw error(400, "References must be PNG, JPEG or WebP and total at most 20 MB.");
+    if (total > IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES || decoded.mime === "image/gif") throw error(400, `References must be PNG, JPEG or WebP and total at most ${IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES / (1024 * 1024)} MB.`);
     return { bytes: decoded.bytes, mime: decoded.mime };
   });
 }
@@ -62,23 +64,42 @@ export interface PublishImageOptions {
   /** Called after the bytes and their receipt are durable, before attachment. */
   onRetained?: (receipt: LocalOutputReceipt) => void;
 }
-interface PendingPublication { receiptId: string; metadata: GeneratedImageMetadata }
-interface ImageOperationResult { artifact: ImageArtifact; metadata: GeneratedImageMetadata }
+/** Retained images waiting to be published. `receiptId` is the first (older
+ * rows hold only it); `receiptIds` lists every image of a multi-image render. */
+interface PendingPublication { receiptId: string; receiptIds?: string[]; metadata: GeneratedImageMetadata }
+interface ImageOperationResult { artifact: ImageArtifact; artifacts?: ImageArtifact[]; metadata: GeneratedImageMetadata }
+/** What an operation row's `result` holds while it runs: the retained
+ * images, and the provider job it waits on (kept before the first poll). */
+interface OperationProgress { pending?: PendingPublication; job?: { id: string } }
 
 const outputDeps = (store: Store) => ({ db: database(), dataDir: DATA_DIR, store });
-const transcriptText = (metadata: GeneratedImageMetadata) => `Image created with ${metadata.model} through ${metadata.provider}.`;
+/** The conversation line under each image: the real delivered pixels, read
+ * from the image itself, and what was asked when that differs. */
+const transcriptText = (metadata: GeneratedImageMetadata) => {
+  const delivered = imageDeliveredSentence(metadata);
+  const which = metadata.imageIndex !== undefined ? ` (image ${metadata.imageIndex + 1} of ${metadata.count})` : "";
+  return `Image created with ${metadata.model} through ${metadata.provider}${which}.${delivered ? ` ${delivered}` : ""}`;
+};
 const artifactName = (metadata: GeneratedImageMetadata) => `Generated image (${metadata.model})`.slice(0, 200);
 function imageArtifact(done: ImageOutputCompletion): ImageArtifact {
   const name = basename(done.saved.path), artifactId = done.artifact?.id ?? done.receipt.artifactId;
   return { id: done.receipt.id, path: done.path, url: `/api/attachments/${name}`, mime: done.saved.mime, bytes: done.saved.bytes, referenceId: name,
     ...(artifactId ? { artifactId } : {}), ...(done.filesError ? { filesError: done.filesError } : {}) };
 }
+function progressOf(result: string | null): OperationProgress {
+  if (!result) return {};
+  try { const value = JSON.parse(result) as unknown; return value && typeof value === "object" && !Array.isArray(value) ? value as OperationProgress : {}; }
+  catch { return {}; }
+}
 function parsePending(result: string | null): PendingPublication | undefined {
-  if (!result) return undefined;
-  try {
-    const value = JSON.parse(result) as { pending?: PendingPublication };
-    return value.pending && typeof value.pending.receiptId === "string" && value.pending.metadata && typeof value.pending.metadata === "object" ? value.pending : undefined;
-  } catch { return undefined; }
+  const pending = progressOf(result).pending;
+  if (!pending || typeof pending.receiptId !== "string" || !pending.metadata || typeof pending.metadata !== "object") return undefined;
+  const ids = Array.isArray(pending.receiptIds) && pending.receiptIds.every(id => typeof id === "string") && pending.receiptIds[0] === pending.receiptId ? pending.receiptIds : [pending.receiptId];
+  return { ...pending, receiptIds: ids };
+}
+function parseJob(result: string | null): { id: string } | undefined {
+  const job = progressOf(result).job;
+  return job && typeof job.id === "string" && /^[A-Za-z0-9_.-]{1,160}$/.test(job.id) ? { id: job.id } : undefined;
 }
 const isOperationResult = (value: unknown): value is ImageOperationResult =>
   Boolean(value && typeof value === "object" && "artifact" in value && "metadata" in value && typeof (value as ImageOperationResult).artifact?.id === "string");
@@ -100,6 +121,11 @@ const recoveryMessage = (category?: string) => `Image received and kept locally,
   + "Call generate_image again with the same request_id during this turn to finish; no new provider request will be sent.";
 
 export type PublishOperationImage = (image: DecodedGeneratedImage, metadata: GeneratedImageMetadata) => Promise<ImageArtifact>;
+export type ImageReserve = (details: ImageOperationDetails, card?: ImageApprovalCardInput) => Promise<{ finish: (outcome: ImageAttemptOutcome) => void }>;
+/** What the operation hands its work: its id (the Flux Idempotency-Key is its
+ * sha256), a job to resume when this same request started one, and where to
+ * record a new job id before the first poll. */
+export interface ImageWorkContext { operationId: string; resumeJob?: { id: string }; jobStarted: (job: { id: string }) => void }
 
 /** One explicit count grant, one attempt per turn, one active operation per bot workspace. */
 export class ImageOperations {
@@ -127,7 +153,13 @@ export class ImageOperations {
   private receiptFor(actor: ImageActor, id: string) {
     return outputReceiptsForRun(database(), "image-operation", actor.botId, actor.threadId, id)[0];
   }
-  execute<T>(actor: ImageActor, requestId: string, request: unknown, work: (reserve: (details: ImageOperationDetails) => Promise<{ finish: (outcome: ImageAttemptOutcome) => void }>, publish: PublishOperationImage) => Promise<T>): Promise<T> {
+  /** Every retained receipt the pending record names, in order, or null when one is missing. */
+  private pendingReceipts(actor: ImageActor, id: string, pending: PendingPublication) {
+    const receipts = outputReceiptsForRun(database(), "image-operation", actor.botId, actor.threadId, id);
+    const found = (pending.receiptIds ?? [pending.receiptId]).map(receiptId => receipts.find(receipt => receipt.id === receiptId));
+    return found.every(Boolean) ? found as NonNullable<typeof found[number]>[] : null;
+  }
+  execute<T>(actor: ImageActor, requestId: string, request: unknown, work: (reserve: ImageReserve, publish: PublishOperationImage, context: ImageWorkContext) => Promise<T>): Promise<T> {
     actor.assertActive();
     if (!/^[\w-]{1,80}$/.test(requestId)) throw error(400, "A stable request_id is required for image generation.");
     const id = hash(`${actor.botId}:${actor.threadId}:${actor.generation}:${requestId}`), requestHash = hash(JSON.stringify(request));
@@ -136,27 +168,43 @@ export class ImageOperations {
     if (this.jobs.has(id)) return this.jobs.get(id) as Promise<T>;
     if (prior?.state === "published" && prior.result) return Promise.resolve(this.refreshPublished(actor, id, JSON.parse(prior.result) as T));
     if (prior?.state === "publish-pending") return this.resume<T>(actor, id, prior.result);
-    if (prior) throw error(409, "This image request already finished or was interrupted. Check its earlier result and provider billing; it will not be retried automatically.");
+    // A provider job this request already started (contract section 4): the
+    // same request_id polls it again. It never submits a second render.
+    const priorJob = prior && ["running", "uncertain"].includes(prior.state) && !parsePending(prior.result) ? parseJob(prior.result) : undefined;
+    if (prior && !priorJob) throw error(409, "This image request already finished or was interrupted. Check its earlier result and provider billing; it will not be retried automatically.");
     if (this.workspaces.has(actor.botId)) throw error(409, "An image request is already active in this bot's workspace.");
-    if (this.db().prepare("SELECT id FROM image_operations WHERE generation=?").get(actor.generation)) throw error(429, "One image attempt is allowed per turn. Start a new task or turn for another image.");
-    this.db().prepare("INSERT INTO image_operations VALUES(?,?,?,'awaiting',NULL,?)").run(id, actor.generation, requestHash, Date.now());
+    if (!priorJob) {
+      if (this.db().prepare("SELECT id FROM image_operations WHERE generation=?").get(actor.generation)) throw error(429, "One image attempt is allowed per turn. Start a new task or turn for another image.");
+      this.db().prepare("INSERT INTO image_operations VALUES(?,?,?,'awaiting',NULL,?)").run(id, actor.generation, requestHash, Date.now());
+    }
     this.workspaces.add(actor.botId);
     let approvalStarted = false;
     // A pending publication record survives outcome receipts, so a received
     // image stays resumable even when its attempt is recorded as uncertain.
-    const record = (state: string, result: unknown = null) => { this.db().prepare("UPDATE image_operations SET state=?,result=COALESCE(?,result),updated_at=? WHERE id=?").run(state, result === null ? null : JSON.stringify(result), Date.now(), id); };
+    // Progress (retained receipts, the job id) is merged, never dropped.
+    const record = (state: string, patch?: OperationProgress) => {
+      const current = patch ? progressOf((this.db().prepare("SELECT result FROM image_operations WHERE id=?").get(id) as { result: string | null } | undefined)?.result ?? null) : undefined;
+      this.db().prepare("UPDATE image_operations SET state=?,result=COALESCE(?,result),updated_at=? WHERE id=?").run(state, patch ? JSON.stringify({ ...current, ...patch }) : null, Date.now(), id);
+    };
+    const retained: string[] = [];
     const publish: PublishOperationImage = async (image, metadata) => publishImage(this.store, actor, image, metadata, { operationId: id,
-      onRetained: receipt => record("running", { pending: { receiptId: receipt.id, metadata } }) });
-    const job = Promise.resolve().then(() => work(async details => {
+      onRetained: receipt => { retained.push(receipt.id); record("running", { pending: { receiptId: retained[0]!, receiptIds: [...retained], metadata } }); } });
+    const reserve: ImageReserve = async (details, card) => {
       approvalStarted = true;
       actor.assertActive();
-      const approved = await this.approve(actor, details, request);
+      // The owner already approved the job being resumed; no second card.
+      const approved = priorJob ? true : await this.approve(actor, details, request, card);
       actor.assertActive();
       if (!approved || actor.signal.aborted) { record("not-dispatched"); throw error(403, "Image generation was not approved; no image request was sent."); }
       record("running");
       return { finish: (outcome: ImageAttemptOutcome) => record(outcome) };
-    }, publish)).then(result => { record("published", result); return result; }).catch(e => {
-      if (!approvalStarted && e instanceof ImageGenerationError && e.correctablePreflight && !actor.signal.aborted) {
+    };
+    const context: ImageWorkContext = { operationId: id, ...(priorJob ? { resumeJob: priorJob } : {}), jobStarted: job => record("running", { job }) };
+    const job = Promise.resolve().then(() => work(reserve, publish, context)).then(result => {
+      this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=?").run(JSON.stringify(result), Date.now(), id);
+      return result;
+    }).catch(e => {
+      if (!approvalStarted && !priorJob && e instanceof ImageGenerationError && e.correctablePreflight && !actor.signal.aborted) {
         // Synchronous identity-checked deletion under the existing job and
         // workspace lock. Crashes, denial and unknown failures retain the row.
         actor.assertActive();
@@ -165,7 +213,8 @@ export class ImageOperations {
       }
       const row = this.db().prepare("SELECT state,result FROM image_operations WHERE id=?").get(id) as { state: string; result: string | null };
       if (row.state === "awaiting") record("not-dispatched"); else if (row.state === "running") record("uncertain");
-      const receipt = parsePending(row.result) ? this.receiptFor(actor, id) : undefined;
+      const pending = parsePending(row.result);
+      const receipt = pending ? this.receiptFor(actor, id) : undefined;
       if (receipt) {
         // C2: valid bytes were received and retained. Keep the operation
         // resumable from them; never re-dispatch the provider request.
@@ -176,21 +225,29 @@ export class ImageOperations {
     }).finally(() => { this.jobs.delete(id); this.workspaces.delete(actor.botId); });
     this.jobs.set(id, job); return job;
   }
+  /** Completes every retained image of one operation from its receipts. */
+  private completeAll(receipts: Array<{ id: string }>, metadata: GeneratedImageMetadata): ImageOperationResult {
+    const artifacts = receipts.map((receipt, index) => {
+      const each: GeneratedImageMetadata = receipts.length > 1 ? { ...metadata, imageIndex: index, delivered: metadata.delivered?.[index] ? [metadata.delivered[index]!] : metadata.delivered } : metadata;
+      return imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: transcriptText(each), artifactName: artifactName(each) }));
+    });
+    return { artifact: artifacts[0]!, artifacts, metadata };
+  }
   /** Same request_id after a local publication failure: finish from the
-   * retained receipt with zero provider calls and no new approval. */
+   * retained receipts with zero provider calls and no new approval. */
   private resume<T>(actor: ImageActor, id: string, result: string | null): Promise<T> {
-    const pending = parsePending(result), receipt = pending ? this.receiptFor(actor, id) : undefined;
-    if (!pending || !receipt || receipt.id !== pending.receiptId) throw error(409, "This image request already finished or was interrupted. Check its earlier result and provider billing; it will not be retried automatically.");
+    const pending = parsePending(result), receipts = pending ? this.pendingReceipts(actor, id, pending) : null;
+    if (!pending || !receipts || receipts[0]!.id !== pending.receiptId) throw error(409, "This image request already finished or was interrupted. Check its earlier result and provider billing; it will not be retried automatically.");
     if (this.workspaces.has(actor.botId)) throw error(409, "An image request is already active in this bot's workspace.");
     this.workspaces.add(actor.botId);
     const job = Promise.resolve().then(() => {
       actor.assertActive();
       if (actor.signal.aborted) throw error(409, "Image operation was cancelled.");
-      const value: ImageOperationResult = { artifact: imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: transcriptText(pending.metadata), artifactName: artifactName(pending.metadata) })), metadata: pending.metadata };
+      const value = this.completeAll(receipts, pending.metadata);
       this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=? AND state='publish-pending'").run(JSON.stringify(value), Date.now(), id);
       return value as T;
     }).catch(e => {
-      const category = outputReceipt(database(), receipt.id)?.errorCategory;
+      const category = outputReceipt(database(), receipts[0]!.id)?.errorCategory;
       throw (e as { status?: number }).status === 409 && /revoked|cancel/i.test(String((e as Error).message)) ? e : error(409, recoveryMessage(category));
     }).finally(() => { this.jobs.delete(id); this.workspaces.delete(actor.botId); });
     this.jobs.set(id, job); return job;
@@ -198,12 +255,17 @@ export class ImageOperations {
   /** A published image whose Files copy did not finish is retried from its
    * retained bytes when the same request is repeated; no provider work. */
   private refreshPublished<T>(actor: ImageActor, id: string, value: T): T {
-    if (!isOperationResult(value) || value.artifact.artifactId) return value;
-    const receipt = this.receiptFor(actor, id);
-    if (!receipt || receipt.id !== value.artifact.id) return value;
+    if (!isOperationResult(value)) return value;
+    const artifacts = value.artifacts?.length ? value.artifacts : [value.artifact];
+    if (artifacts.every(artifact => artifact.artifactId)) return value;
+    const receipts = outputReceiptsForRun(database(), "image-operation", actor.botId, actor.threadId, id);
     try {
       actor.assertActive();
-      const updated: ImageOperationResult = { ...value, artifact: imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: transcriptText(value.metadata), artifactName: artifactName(value.metadata) })) };
+      const refreshed = artifacts.map(artifact => {
+        const receipt = receipts.find(item => item.id === artifact.id);
+        return artifact.artifactId || !receipt ? artifact : imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: transcriptText(value.metadata), artifactName: artifactName(value.metadata) }));
+      });
+      const updated: ImageOperationResult = { ...value, artifact: refreshed[0]!, ...(value.artifacts ? { artifacts: refreshed } : {}) };
       this.db().prepare("UPDATE image_operations SET result=?,updated_at=? WHERE id=? AND state='published'").run(JSON.stringify(updated), Date.now(), id);
       return updated as T;
     } catch { return value; }
@@ -216,10 +278,10 @@ export class ImageOperations {
     let completed = 0;
     for (const row of rows) {
       const pending = parsePending(row.result);
-      const receipt = pending ? outputReceipt(database(), pending.receiptId) : undefined;
-      if (!pending || !receipt || receipt.producer !== "image-operation" || receipt.runId !== row.id) continue;
+      const receipts = pending ? pending.receiptIds!.map(receiptId => outputReceipt(database(), receiptId)) : [];
+      if (!pending || !receipts.length || receipts.some(receipt => !receipt || receipt.producer !== "image-operation" || receipt.runId !== row.id)) continue;
       try {
-        const value: ImageOperationResult = { artifact: imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: transcriptText(pending.metadata), artifactName: artifactName(pending.metadata) })), metadata: pending.metadata };
+        const value = this.completeAll(receipts as Array<{ id: string }>, pending.metadata);
         this.db().prepare("UPDATE image_operations SET state='published',result=?,updated_at=? WHERE id=? AND state=?").run(JSON.stringify(value), Date.now(), row.id, row.state);
         completed++;
       } catch { /* stays pending with the receipt's recorded category */ }
@@ -248,16 +310,19 @@ export class ImageOperations {
     }
     return released;
   }
-  private approve(actor: ImageActor, details: ImageOperationDetails, request: unknown): Promise<boolean> {
+  private approve(actor: ImageActor, details: ImageOperationDetails, request: unknown, input?: ImageApprovalCardInput): Promise<boolean> {
     if (this.lateAllows.delete(actor.threadId)) return Promise.resolve(true);
     const requestId = `image-${randomUUID()}`;
-    const prompt = request && typeof request === "object" && "prompt" in request ? String(request.prompt) : "";
+    // `held` is the full assembled prompt: exactly what the provider is sent.
+    const prompt = input?.prompt ?? (request && typeof request === "object" && "prompt" in request ? String(request.prompt) : "");
     const from = this.speaker?.(actor.threadId, actor.botId);
     const card = this.store.appendMessage(actor.threadId, { role: "bot", kind: "options", ...(from ? { from } : {}), card: {
       title: details.operation === "edit" ? "Approve image edit" : "Approve image generation",
       // F1-T4: the owner approves the exact upstream that will bill them. An
       // OpenRouter edit names its pinned endpoint; nothing else is routed.
-      subtitle: `One image${details.referenceCount ? ` from ${details.referenceCount === 1 ? "1 reference image" : `${details.referenceCount} reference images`}` : ""} · ${details.connectionId} · ${details.model}${details.endpointTag ? ` (pinned to ${details.endpointTag}, no fallback)` : ""}${details.quality ? ` · ${details.quality}` : ""}${details.size ? ` · ${details.size}` : ""}.`,
+      // No cost on the card: it states the engine, sizes, count, references
+      // and prompt the owner is approving (image-generation.ts).
+      subtitle: imageApprovalSubtitle(details),
       held: prompt, options: ["Allow", "Deny"], requestId, tool: "generate_image",
     } });
     this.waiting(actor.threadId, true, requestId, card.id, actor.botId);

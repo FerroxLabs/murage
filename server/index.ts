@@ -441,6 +441,7 @@ import {
 import { captureOutsideHumanControl } from "./private-screen-capture.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import { ImageGenerationError, ImageGenerationService, type ImageConnection } from "./image-generation.ts";
+import { IMAGE_NEGATIVE_PROMPT_MAX, IMAGE_PROMPT_HARD_MAX } from "../shared/image-capabilities.ts";
 import { ImageOperations, imageReferences } from "./image-operations.ts";
 import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
@@ -3453,7 +3454,10 @@ function imageConnectionIds(): string[] {
   if (fluxKey() && !ids.includes("flux")) ids.push("flux");
   return ids;
 }
-const imageService = new ImageGenerationService({ resolveConnection: imageConnection, connectionIds: imageConnectionIds });
+const imageService = new ImageGenerationService({ resolveConnection: imageConnection, connectionIds: imageConnectionIds, fluxCatalogue: true });
+/** Image generation is on and has a connection: the generate_image tools
+ * have something behind them, so the image-generation skill may ride along. */
+const imageGenerationOn = () => cfg.imageGen?.enabled !== false && imageService.listConnections().length > 0;
 /** The image connections as Settings shows them, labelled. Local rows only.
  * This list also reaches bots (list_image_models and the primer), so a saved
  * label that holds its own key, or any recognisable key, is replaced here. */
@@ -6124,6 +6128,7 @@ async function startTurn(
         [
           ...(instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : []),
           ...(skillAuthoring ? ["skillAuthoring"] : []),
+          ...(imageGenerationOn() ? ["imageGeneration"] : []),
         ],
         pinnedProcedures.catalogue,
       ), ...attachedSkillsFor(bot, pinnedProcedures.catalogue)];
@@ -8080,7 +8085,7 @@ async function runGroupMemberTurn(
     ),
     [...selectBundledSkills(
       latestUser?.text ?? "",
-      skillAuthoring ? ["skillAuthoring"] : [],
+      [...(skillAuthoring ? ["skillAuthoring"] : []), ...(imageGenerationOn() ? ["imageGeneration"] : [])],
       skills,
     ), ...attachedSkillsFor(bot, skills)],
   );
@@ -11665,9 +11670,16 @@ const server = createServer(async (req, res) => {
 
       if (path === "/api/internal/image-models" && method === "GET") { const settings = await imageSettings(); requireActiveInternal(); return json(res, 200, settings); }
       if (path === "/api/internal/generate-image" && method === "POST") {
-        const body = z.object({ requestId: z.string().regex(/^[\w-]{1,80}$/), prompt: z.string().min(1).max(4000), operation: z.enum(["generate", "edit"]).optional(),
+        // Shapes only: every limit that depends on the model (prompt budget,
+        // sizes, references, n, formats) is checked by imageService.generate
+        // before the approval card, with the model named.
+        const body = z.object({ requestId: z.string().regex(/^[\w-]{1,80}$/), prompt: z.string().min(1).max(IMAGE_PROMPT_HARD_MAX), operation: z.enum(["generate", "edit"]).optional(),
           connectionId: z.string().max(160).optional(), model: z.string().max(180).optional(), quality: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
-          size: z.enum(["1024x1024", "1536x1024", "1024x1536"]).optional(), referenceIds: z.array(z.string().max(180)).max(4).optional() }).strict().parse(await readBody(req));
+          size: z.string().max(12).optional(), aspectRatio: z.string().max(8).optional(), resolution: z.enum(["small", "standard", "large", "max"]).optional(),
+          width: z.number().int().optional(), height: z.number().int().optional(), fit: z.enum(["nearest", "exact"]).optional(), n: z.number().int().optional(),
+          outputFormat: z.enum(["png", "jpeg", "webp"]).optional(), outputCompression: z.number().int().optional(), background: z.enum(["transparent"]).optional(),
+          seed: z.number().int().optional(), negativePrompt: z.string().max(IMAGE_NEGATIVE_PROMPT_MAX).optional(), condensedFromChars: z.number().int().optional(),
+          referenceIds: z.array(z.string().max(180)).max(64).optional() }).strict().parse(await readBody(req));
         requireActiveInternal();
         const settingIdentity = JSON.stringify(cfg.imageGen ?? {});
         const state = await imageSettings(body.connectionId);
@@ -11681,10 +11693,11 @@ const server = createServer(async (req, res) => {
         try {
           const actor = { botId: internalClaim.botId, threadId: internalClaim.threadId, generation: internalClaim.generation, signal: controller.signal, assertActive: active };
           const refs = imageReferences(store, actor.threadId, body.referenceIds);
-          const request = { connectionId: chosen, model: body.model ?? state.selected?.model ?? state.catalog?.defaultModel ?? undefined, prompt: body.prompt,
-            operation: body.operation ?? (refs.length ? "edit" : "generate"), quality: body.quality, size: body.size };
-          const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds }, (reserve, publish) =>
-            imageService.generate(request, { signal: controller.signal, assertActive: active, reserve, publish }, refs));
+          const { requestId: _requestId, referenceIds: _referenceIds, connectionId: _connectionId, model: _model, operation: _operation, ...options } = body;
+          const request = { connectionId: chosen, model: body.model ?? state.selected?.model ?? state.catalog?.defaultModel ?? undefined,
+            operation: body.operation ?? (refs.length ? "edit" : "generate"), ...options };
+          const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds }, (reserve, publish, context) =>
+            imageService.generate(request, { signal: controller.signal, assertActive: active, reserve, publish, operationId: context.operationId, resumeJob: context.resumeJob, jobStarted: context.jobStarted }, refs));
           active(); return json(res, 200, result);
         } finally { clearInterval(revoked); res.off("close", disconnected); }
       }

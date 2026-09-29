@@ -60,7 +60,7 @@ describe("resolveImageSize: ratioTier and list", () => {
   it("picks the nearest named ratio and the tier for the resolution", () => {
     expect(ok(resolveImageSize(GEMINI, { aspectRatio: "9:16", resolution: "large" }, "1024x1024"))).toMatchObject({ aspectRatio: "9:16", tier: "2K", rendered: "9:16 at 2K" });
     expect(ok(resolveImageSize(GEMINI, { resolution: "small" }, "1024x1024"))).toMatchObject({ aspectRatio: "1:1", tier: "1K" });
-    expect(ok(resolveImageSize(GEMINI, {}, "1024x1024"))).toMatchObject({ aspectRatio: "1:1", tier: "1K" });
+    expect(ok(resolveImageSize(GEMINI, {}, "1024x1024"))).toEqual({ asked: "default", tier: "1K", rendered: "the model's default ratio at 1K", sendsSize: true });
     expect(resolveImageSize(GEMINI, { aspectRatio: "1:8" }, "1024x1024")).toMatchObject({ ok: false, message: expect.stringContaining("The nearest it can do is 9:16") });
     expect(ok(resolveImageSize(GEMINI, { width: 1080, height: 1350 }, "1024x1024"))).toMatchObject({ aspectRatio: "4:5", tier: "2K" });
   });
@@ -94,8 +94,10 @@ describe("quality and aliases", () => {
     expect(sentModelFor("flux-image-gpt25-sunburst", sunburst, "xhigh", "1536x1024")).toEqual({ ok: false, message: expect.stringContaining("exists only at quality high") });
     expect(sentModelFor("flux-image-gpt25-sunburst", sunburst, "max", "1024x1024")).toEqual({ ok: false, message: expect.stringContaining("low, medium, high, xhigh") });
   });
-  it("sends quality as a parameter on OpenAI models", () => {
+  it("sends quality as a parameter on OpenAI models, and only an asked or declared one", () => {
     expect(sentModelFor("gpt-image-2", builtInImageCapabilities("openai", "gpt-image-2")!, undefined, "1024x1024")).toEqual({ ok: true, model: "gpt-image-2", quality: "medium", sendQuality: true });
+    expect(sentModelFor("vendor/model", openRouterCapabilities("vendor/model", [], ["low", "high"], 0, "png"), undefined, undefined)).toEqual({ ok: true, model: "vendor/model", sendQuality: false });
+    expect(sentModelFor("gemini-3-pro-image", builtInImageCapabilities("google", "gemini-3-pro-image")!, "high", undefined)).toEqual({ ok: false, message: expect.stringContaining("takes no quality setting") });
   });
   it("keeps every older Flux id as an alias with its fixed quality and size", () => {
     expect(FLUX_LEGACY_IDS["flux-image-gpt25-xhigh"]).toEqual({ base: "flux-image-gpt25", quality: "xhigh", size: "1024x1024" });
