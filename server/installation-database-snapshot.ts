@@ -10,7 +10,7 @@ import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts"
 import { initializeArtifacts } from "./artifacts.ts";
 import { initializeInbox } from "./inbox.ts";
 import { initializeMessageTables } from "./message-tables.ts";
-import { initializeImageOperations } from "./image-operations-schema.ts";
+import { initializeImageLibrary, initializeImageOperations } from "./image-operations-schema.ts";
 
 export class InstallationSnapshotError extends Error {
   readonly code: string;
@@ -57,6 +57,12 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   artifacts: { required: false, optional: ["producer", "publication_id"] },
   output_publications: { required: false, optional: [] },
   image_operations: { required: false, optional: [] },
+  // saved prompt blocks, reference packs, render prompts and model checks
+  // (image-operations-schema.ts initializeImageLibrary), new in 0.1.61
+  image_prompt_blocks: { required: false, optional: [] },
+  image_render_prompts: { required: false, optional: [] },
+  image_reference_packs: { required: false, optional: [] },
+  image_model_probes: { required: false, optional: [] },
   // conversation snooze (server/thread-snooze.ts), new in 0.1.60
   thread_snooze: { required: false, optional: [] },
 }));
@@ -86,7 +92,7 @@ function referenceSchema(): Map<string, ReferenceObject> {
   const db = new DatabaseSync(":memory:");
   try {
     initializeMessageTables(db); initializeInbox(db); initializeArtifacts(db);
-    initializeImageOperations(db); initializeThreadSnooze(db);
+    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db);
     const objects = new Map<string, ReferenceObject>();
     for (const row of db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[]) {
       if (!APP_TABLES.has(row.tbl_name)) throw new Error(`initializer created an object outside APP_TABLES: ${row.name}`);
