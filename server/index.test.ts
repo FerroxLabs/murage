@@ -2112,6 +2112,30 @@ describe("harness HTTP API", () => {
   // pack in its own scope, generates from them with no scene, and the card
   // names the block version, the assembled length and the pack. The owner
   // sees both in the library, with the bot's name, and deletes them.
+  // A.8: the owner's "Check this model now" runs one small render that is
+  // never published, marks the model verified with the time, and the daily
+  // check stays off until the owner turns it on.
+  it("checks a model for the owner without publishing anything, and keeps the daily check off by default", async () => {
+    try {
+      expect((await desktopApi("PATCH", "/api/config?secretStorage=external", { imageGen: { key: "fixture-image-key" } })).status).toBe(200);
+      const settings = await desktopApi("POST", "/api/images/settings", { enabled: true, connectionId: "openai", model: "gpt-image-2" });
+      expect(settings.body.dailyProbe).toBe(false);
+      expect(settings.body.catalog.models.find((model: { id: string }) => model.id === "gpt-image-2").availability).toBe("unverified");
+      const bots = (await api("GET", "/api/bots?messages=100")).body.bots as Array<{ messages: unknown[] }>;
+      const messagesBefore = bots.reduce((sum, item) => sum + item.messages.length, 0);
+      const checked = await desktopApi("POST", "/api/images/probe", { connectionId: "openai", model: "gpt-image-2" });
+      expect(checked.status).toBe(200);
+      expect(checked.body.probe).toMatchObject({ ok: true, free: false });
+      const model = checked.body.settings.catalog.models.find((item: { id: string }) => item.id === "gpt-image-2");
+      expect(model).toMatchObject({ availability: "verified", lastGoodAt: expect.any(Number) });
+      const after = (await api("GET", "/api/bots?messages=100")).body.bots as Array<{ messages: unknown[] }>;
+      expect(after.reduce((sum, item) => sum + item.messages.length, 0)).toBe(messagesBefore);
+      expect((await desktopApi("POST", "/api/images/settings", { dailyProbe: true })).body.dailyProbe).toBe(true);
+    } finally {
+      await desktopApi("PATCH", "/api/config", { imageGen: { key: "", enabled: false, dailyProbe: false } });
+    }
+  }, 40_000);
+
   it("saves prompt blocks and reference packs for a bot and generates from them", async () => {
     const bot = (await api("POST", "/api/bots", { name: "Library fixture" })).body.bot;
     const proxies: ChildProcess[] = [];
