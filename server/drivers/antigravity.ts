@@ -45,6 +45,11 @@ import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "antigravityAgent";
 export const ANTIGRAVITY_STREAM_INPUT_MIN_VERSION = "1.1.15";
+/** agy's own `--print-timeout` (a Go duration, default 5m) ends print mode
+ * after that long however busy the turn is. Set past the longest silence
+ * limit an owner can choose (24 hours), so a turn is stopped only by the
+ * thread's silence watch, the owner's Stop or a budget stop. */
+export const ANTIGRAVITY_PRINT_TIMEOUT = "8760h";
 
 export function supportsAntigravityStreamInput(version: string | null): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
@@ -542,10 +547,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       const resumeCursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
 
       let settled = false;
-      // backstop watchdog: if agy hangs without emitting `result` and without
-      // exiting, the bot would stay busy forever (agy's own --print-timeout 10m
-      // is the only other net). Assigned just below; settle() always clears it.
-      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      // No clock of its own (0.1.61): a child that hangs without `result` and
+      // without exiting goes quiet, and the thread's silence watch stops it
+      // through interruptTurn like every other engine's turn.
       // Assigned once the child exists. A child can emit `result` and then
       // hang, so settling must still arrange for process and MCP cleanup.
       let armPostSettleCleanup = () => {};
@@ -557,7 +561,6 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       ) => {
         if (settled) return;
         settled = true;
-        clearTimeout(watchdog);
         active.delete(threadId);
         armPostSettleCleanup();
         emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost, ...(usage ? { usage } : {}) });
@@ -602,7 +605,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       const args = [
         "--input-format", "stream-json",
         "--output-format", "stream-json",
-        "--print-timeout", "10m",
+        "--print-timeout", ANTIGRAVITY_PRINT_TIMEOUT,
         "--add-dir", cwd,
         // fullAuto approves everything; otherwise accept-edits allows file
         // edits but auto-denies shell (no interactive channel in print mode)
@@ -687,6 +690,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // is what the harness persists as the cursor). Also seeds tool item ids.
       let conversationId: string | null = null;
 
+      // A step the chat does not show (planning, a response still being
+      // written) is still the turn working: report it, so the thread's
+      // silence watch never mistakes a long model step for a hang.
+      const working = () => emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
+
       const handleLine = (line: string) => {
         let o: any;
         try {
@@ -716,6 +724,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
               } else if (payload.state === "ERROR") {
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: false });
+              } else {
+                working();
               }
             } else if (payload.step_type === "agent_response" && payload.usage) {
               emit({
@@ -724,6 +734,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 input: (payload.usage.input_tokens || 0) + (payload.usage.cache_read_tokens || 0),
                 output: payload.usage.output_tokens || 0,
               });
+            } else {
+              working();
             }
             break;
           }
@@ -834,17 +846,6 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
 
       active.set(threadId, { stop: requestStop, turnId });
       pending.delete(threadId);
-
-      // 11 min — just above agy's own 10m --print-timeout, so agy normally
-      // settles first; this is the backstop for a fully wedged child.
-      watchdog = setTimeout(() => {
-        if (!settled) {
-          emit({ ...base(threadId, turnId), type: "runtime.error", message: "agy watchdog timeout" });
-          stop();
-          settle(false, "timeout");
-        }
-      }, 11 * 60_000);
-      watchdog.unref?.();
 
       emit({ ...base(threadId, turnId), type: "turn.started" });
 

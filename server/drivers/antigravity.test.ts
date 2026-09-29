@@ -8,7 +8,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
@@ -18,6 +18,7 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import {
   ANTIGRAVITY_AGENTS_MCP_KEY,
   ANTIGRAVITY_COMPUTER_MCP_KEY,
+  ANTIGRAVITY_PRINT_TIMEOUT,
   AntigravityDriver,
   antigravityAgentsMcpServer,
   antigravityComputerMcpServer,
@@ -253,6 +254,45 @@ describe("Antigravity turns (fake CLI)", () => {
       expect(JSON.stringify(seen.argv).length).toBeLessThan(8_000);
     } finally {
       await removeTempDir(scratch);
+    }
+  });
+
+  it("runs a turn on activity alone: agy's own print timeout is out of reach and the driver arms no clock of its own", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "murage-agy-no-cap-"));
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_AGY_DUMP = dump;
+    await create();
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-no-cap", text: "go" });
+      await recorder.until((event) => event.type === "turn.completed");
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      const at = seen.argv.indexOf("--print-timeout");
+      expect(at).toBeGreaterThan(-1);
+      expect(seen.argv[at + 1]).toBe(ANTIGRAVITY_PRINT_TIMEOUT);
+      // beyond the longest silence limit an owner can set (24 hours), so the
+      // thread's silence watch is always what stops a quiet turn
+      expect(Number(/^(\d+)h$/.exec(ANTIGRAVITY_PRINT_TIMEOUT)?.[1])).toBeGreaterThan(24);
+      // no fixed per-turn deadline (the old 11-minute backstop)
+      expect(timers.mock.calls.filter(([, ms]) => typeof ms === "number" && ms >= 60_000)).toEqual([]);
+    } finally {
+      timers.mockRestore();
+      await removeTempDir(scratch);
+    }
+  });
+
+  it("reports agy steps the chat does not show as activity, so the silence watch sees the turn working", async () => {
+    process.env.FAKE_AGY_EXTRA_STEPS = "1";
+    try {
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-live", text: "go" });
+      await recorder.until((event) => event.type === "turn.completed");
+      expect(recorder.events.filter((e) => e.type === "item.updated")).toEqual([
+        expect.objectContaining({ itemType: "reasoning", tokens: null }),
+        expect.objectContaining({ itemType: "reasoning", tokens: null }),
+      ]);
+    } finally {
+      delete process.env.FAKE_AGY_EXTRA_STEPS;
     }
   });
 

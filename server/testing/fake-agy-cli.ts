@@ -187,6 +187,12 @@ if (process.env.FAKE_AGY_DUMP) {
 const toolName = mode === "ask-peer" ? "ask_bot" : "write_to_file";
 out({ event: "init", conversation_id: CONV, init: { cwd: process.cwd(), tools: ["run_command", "write_to_file", ...(mode === "ask-peer" ? ["list_bots", "ask_bot"] : [])], permission_mode: "accept-edits" } });
 out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ACTIVE", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {} } } });
+// FAKE_AGY_EXTRA_STEPS=1: steps agy streams that carry no chat content
+// (planning, a response still being written), as a long model step does.
+if (process.env.FAKE_AGY_EXTRA_STEPS === "1") {
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 1, state: "ACTIVE", step_type: "planner_response" } });
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 2, state: "ACTIVE", step_type: "agent_response" } });
+}
 
 // A genuine crash: the child dies mid-turn with no `result` and nobody
 // asked it to stop (STOP1 pins this as exit_before_result, unlike a Stop).
