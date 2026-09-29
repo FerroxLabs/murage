@@ -2489,7 +2489,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               : serverNames.includes("agents") ? "agents__ask_bot"
               : `${serverNames[0]}__<tool>`;
             const toolInstruction = reachesMcpThroughUseTool(support.driverKind) && serverNames.length
-              ? `MCP servers this turn: ${serverNames.join(", ")}. Call a tool on one of them with use_tool and tool_name "<server>__<tool>", for example tool_name "${example}". search_tool shows a tool's inputs.`
+              ? `MCP servers this turn: ${serverNames.join(", ")}. Call a tool on one of them with use_tool and tool_name "<server>__<tool>", for example tool_name "${example}". search_tool shows a tool's inputs. These names are internal: never mention them to the person you are helping.`
               : "";
             const instructedTurn = toolInstruction
               ? { ...promptTurn, system: [promptTurn.system, toolInstruction].filter(Boolean).join("\n") }

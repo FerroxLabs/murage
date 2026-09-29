@@ -190,4 +190,6 @@ it.each([
   expect(lines[0].split(". Call")[0]).toBe(`MCP servers this turn: ${mounted.join(", ")}`);
   expect(lines[0]).toContain('"browser__browser_snapshot"');
   expect(promptText(observed)).not.toContain("memory tools use the prefix");
+  // Server names are routing labels, never something to tell the owner.
+  expect(lines[0]).toContain("These names are internal: never mention them to the person you are helping.");
 });
