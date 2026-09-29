@@ -25,7 +25,7 @@ import {
 import { OUTPUT_NAMESPACE, WORKSPACE_SEARCH_MAX_DEPTH, WORKSPACE_SEARCH_MAX_ENTRIES } from "../shared/workspace-files.ts";
 import type { Artifact } from "../shared/artifacts.ts";
 import { ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, ArtifactError, artifactWorkspaceIdentity, readArtifact, registerArtifact, verifiedArtifactSource, type ArtifactScope } from "./artifacts.ts";
-import { IMAGE_MAX_BYTES, saveImage, type SavedAttachment } from "./attachments.ts";
+import { GENERATED_IMAGE_MAX_BYTES, IMAGE_MAX_BYTES, saveImage, type SavedAttachment } from "./attachments.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import type { Store } from "./store.ts";
 import { turnSucceeded } from "./turn-outcome.ts";
@@ -440,13 +440,17 @@ export function managedImageOutputRoot(dataDir: string, botId: string, threadId:
   return directory;
 }
 
+/** Provider renders (image-operation) may be large 4K images; an engine's
+ * own assistant image keeps the upload cap. */
+const imageOutputMaxBytes = (producer: string) => producer === "image-operation" ? GENERATED_IMAGE_MAX_BYTES : IMAGE_MAX_BYTES;
+
 export interface RetainImageInput { producer: ImageOutputProducer; botId: string; threadId: string; runId: string; bytes: Buffer; mime: string; beforeCommit?: () => void }
 
 /** Commits provider bytes to the managed root and persists their receipt
  * before any attachment, transcript or Files step can fail. */
 export function retainImageOutput(deps: Pick<ImageOutputDeps, "db" | "dataDir">, input: RetainImageInput): LocalOutputReceipt {
   const extension = input.mime === "image/jpeg" ? "jpg" : input.mime.split("/")[1];
-  if (!["png", "jpg", "gif", "webp"].includes(extension ?? "") || input.bytes.length === 0 || input.bytes.length > IMAGE_MAX_BYTES) throw Object.assign(new Error("unsupported image output"), { status: 400 });
+  if (!["png", "jpg", "gif", "webp"].includes(extension ?? "") || input.bytes.length === 0 || input.bytes.length > imageOutputMaxBytes(input.producer)) throw Object.assign(new Error("unsupported image output"), { status: 400 });
   const directory = managedImageOutputRoot(deps.dataDir, input.botId, input.threadId, true), id = randomUUID();
   const name = `${id}.${extension}`, path = join(directory, name), partial = join(directory, `.${id}.partial`);
   // Directory identity and authority are rechecked immediately before the synchronous commit.
@@ -484,7 +488,7 @@ export function completeImageOutput(deps: ImageOutputDeps, receiptId: string, op
   try {
     root = managedImageOutputRoot(deps.dataDir, receipt.botId, receipt.threadId, false);
     if (!/^[a-f0-9-]{36}\.(png|jpg|gif|webp)$/.test(receipt.pathToken)) throw new OutputPublicationError("verification", "The retained image identity is invalid.");
-    bytes = readStableFile(join(root, receipt.pathToken), IMAGE_MAX_BYTES);
+    bytes = readStableFile(join(root, receipt.pathToken), imageOutputMaxBytes(receipt.producer));
     if (bytes.length !== receipt.bytes || sha256(bytes) !== receipt.sha256) throw new OutputPublicationError("verification", "The retained image changed.");
   } catch (error) {
     const category = outputErrorCategory(error, "verification");
@@ -492,7 +496,7 @@ export function completeImageOutput(deps: ImageOutputDeps, receiptId: string, op
     throw new OutputPublicationError(category, "The retained image could not be verified. It was not published.");
   }
   let saved: SavedAttachment;
-  try { saved = saveImage(bytes, receipt.mime, receipt.id); }
+  try { saved = saveImage(bytes, receipt.mime, receipt.id, imageOutputMaxBytes(receipt.producer)); }
   catch (error) {
     const category = outputErrorCategory(error, "attachment");
     if (receipt.stage !== "registered") failReceipt(db, receipt.id, category);

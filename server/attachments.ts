@@ -26,6 +26,10 @@ export const ATTACHMENTS_DIR = join(DATA_DIR, "attachments");
 /** The spec's ceiling: a screenshot bigger than this is rejected before it
  * is ever buffered, matching the composer's existing size discipline. */
 export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+/** Images a generation provider returns: a 4K PNG can pass 10 MB, so the
+ * generated-image path (provider response, retained receipt, conversation
+ * attachment) has its own larger cap. Uploads keep IMAGE_MAX_BYTES. */
+export const GENERATED_IMAGE_MAX_BYTES = 40 * 1024 * 1024;
 
 /** Shared documents are deliberately smaller than Cloudflare's transport
  * ceiling. This is a local inbox, not unbounded remote storage. */
@@ -531,12 +535,12 @@ export async function saveFile(
 /** Persist one image and return its path. The UUID filename means the name
  * is never attacker-controlled and never collides; the extension preserves
  * the format the sender claimed. */
-export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: string): SavedAttachment {
+export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: string, maxBytes = IMAGE_MAX_BYTES): SavedAttachment {
   const ext = extensionForMime(mime);
   if (!ext) throw Object.assign(new Error("unsupported image type"), { status: 400 });
   if (bytes.byteLength === 0) throw Object.assign(new Error("empty image"), { status: 400 });
-  if (bytes.byteLength > IMAGE_MAX_BYTES) {
-    throw Object.assign(new Error(IMAGE_TOO_LARGE_MESSAGE), { status: 413 });
+  if (bytes.byteLength > maxBytes) {
+    throw Object.assign(new Error(maxBytes === IMAGE_MAX_BYTES ? IMAGE_TOO_LARGE_MESSAGE : `That image is too large. Images can be up to ${humanBytes(maxBytes)}.`), { status: 413 });
   }
   const uploadId = validateAttachmentUploadId(requestedUploadId);
   ensureAttachmentsDir();

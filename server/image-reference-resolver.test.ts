@@ -184,17 +184,18 @@ describe("resolve-image-reference: all or nothing, before approval", () => {
     expect(f.store.messagesFor(f.threadId)).toHaveLength(messages);
   });
 
-  it("enforces four references, 10 MiB each and 20 MiB together", async () => {
+  it("enforces sixteen references, 10 MiB each and 64 MiB together", async () => {
     const f = fixture();
     writeFileSync(join(f.root, "a.png"), png(0x71));
-    refusal(await internal(f, { sources: Array.from({ length: 5 }, () => ({ kind: "workspace", relativePath: "a.png" })) }), 400, "invalid-request");
+    refusal(await internal(f, { sources: Array.from({ length: 17 }, () => ({ kind: "workspace", relativePath: "a.png" })) }), 400, "invalid-request");
+    expect(ok(await internal(f, { sources: Array.from({ length: 16 }, () => ({ kind: "workspace", relativePath: "a.png" })) })).references).toHaveLength(16);
     refusal(await internal(f, { sources: [] }), 400, "invalid-request");
     refusal(await internal(f, { source: { kind: "workspace", relativePath: "a.png" }, sources: [] }), 400, "invalid-request");
     writeFileSync(join(f.root, "huge.png"), png(0x72, 10 * 1024 * 1024));
     refusal(await internal(f, { source: { kind: "workspace", relativePath: "huge.png" } }), 413, "too-large", 0);
-    const seven = 7 * 1024 * 1024;
-    for (const name of ["x.png", "y.png", "z.png"]) writeFileSync(join(f.root, name), png(name.charCodeAt(0), seven));
-    refusal(await internal(f, { sources: ["x.png", "y.png", "z.png"].map(relativePath => ({ kind: "workspace", relativePath })) }), 413, "too-large", 2);
+    const nine = 9.5 * 1024 * 1024, names = ["s.png", "t.png", "u.png", "v.png", "x.png", "y.png", "z.png"];
+    for (const name of names) writeFileSync(join(f.root, name), png(name.charCodeAt(0), nine));
+    refusal(await internal(f, { sources: names.map(relativePath => ({ kind: "workspace", relativePath })) }), 413, "too-large", 6);
   });
 });
 

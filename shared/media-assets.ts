@@ -116,6 +116,12 @@ export const IMAGE_REFERENCE_LIMITS = {
   maxBytesEach: 10 * 1024 * 1024,
   maxTotalBytes: 20 * 1024 * 1024,
 } as const;
+/** Image generation takes more references than a turn carries: the most any
+ * model accepts. Each model's own cap (its `maxReferences`) is lower or equal
+ * and is enforced before the approval card. */
+export const IMAGE_GENERATION_REFERENCE_MAX = 16;
+/** Most reference bytes one generation request may carry in total. */
+export const IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 
 /** One discriminated source. The server derives bot/thread/cwd from the
  * internal capability claim; no root, absolute path or URL is accepted. */
@@ -127,8 +133,9 @@ export type ImageReferenceSource =
   /** A file in the current task workspace, optionally pinned to a revision. */
   | { kind: "workspace"; relativePath: string; revision?: FileRevision };
 
-/** One source (frozen K0 shape) or, additively in F5-T4, up to four sources
- * resolved all-or-nothing: if one fails, none is prepared. */
+/** One source (frozen K0 shape) or, additively in F5-T4, up to
+ * IMAGE_GENERATION_REFERENCE_MAX sources resolved all-or-nothing: if one
+ * fails, none is prepared. */
 export type ResolveImageReferenceRequest = { source: ImageReferenceSource } | { sources: ImageReferenceSource[] };
 
 export interface ResolvedImageReference {

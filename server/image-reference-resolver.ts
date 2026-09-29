@@ -20,8 +20,10 @@
 // - Files are read through a pinned handle that never follows a link; a file
 //   that changes while it is read, or whose pinned revision/digest no longer
 //   matches, is refused as changed.
-// - Bytes are PNG, JPEG or WebP, at most 10 MiB each and 20 MiB together,
-//   matching image-operations and the frozen IMAGE_REFERENCE_LIMITS.
+// - Bytes are PNG, JPEG or WebP, at most 10 MiB each (the frozen
+//   IMAGE_REFERENCE_LIMITS), up to IMAGE_GENERATION_REFERENCE_MAX sources and
+//   64 MiB together, matching image-operations. Each model's own lower caps
+//   are enforced by generate_image before its approval card.
 // - A prior generated image, or saved bytes that are already an attachment of
 //   this conversation, reuse that attachment instead of copying it again.
 import { createHash } from "node:crypto";
@@ -35,7 +37,7 @@ import type { DelegatedRequest, DelegatedResult } from "./route-delegation.ts";
 import type { Store } from "./store.ts";
 import { splitTranscriptAttachments } from "../src/lib/composer-attachments.ts";
 import {
-  IMAGE_REFERENCE_LIMITS, IMAGE_REFERENCE_MIMES, isImageReferenceSource,
+  IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES, IMAGE_REFERENCE_LIMITS, IMAGE_REFERENCE_MIMES, isImageReferenceSource,
   type ImageReferenceErrorBody, type ImageReferenceErrorCode, type ImageReferenceMime, type ImageReferenceSource,
   type MediaReferenceResponse, type ResolveImageReferenceResponse, type ResolvedImageReference,
 } from "../shared/media-assets.ts";
@@ -236,8 +238,8 @@ function assertAudience(store: Store, audience: ImageReferenceAudience): void {
 
 /** Validate and read every source. Nothing is written. */
 export async function loadImageReferences(sources: readonly unknown[], audience: ImageReferenceAudience, deps: ImageReferenceDeps): Promise<Loaded[]> {
-  if (!Array.isArray(sources) || sources.length === 0 || sources.length > IMAGE_REFERENCE_LIMITS.maxCount) {
-    throw new ImageReferenceError("invalid-request", `Choose one to ${IMAGE_REFERENCE_LIMITS.maxCount} reference images. ${NONE}`);
+  if (!Array.isArray(sources) || sources.length === 0 || sources.length > IMAGE_GENERATION_REFERENCE_MAX) {
+    throw new ImageReferenceError("invalid-request", `Choose one to ${IMAGE_GENERATION_REFERENCE_MAX} reference images. ${NONE}`);
   }
   sources.forEach((source, index) => {
     if (!isImageReferenceSource(source)) refuse("invalid-request", "Name an image attachment of this conversation, a saved file with its sha256, or a relative path in this task's workspace. Absolute paths and URLs are not accepted.", index);
@@ -249,7 +251,7 @@ export async function loadImageReferences(sources: readonly unknown[], audience:
   for (const [index, source] of (sources as ImageReferenceSource[]).entries()) {
     const item = await loadOne(source, index, audience, deps, allowed);
     total += item.bytes.length;
-    if (total > IMAGE_REFERENCE_LIMITS.maxTotalBytes) refuse("too-large", `Reference images must total at most ${IMAGE_REFERENCE_LIMITS.maxTotalBytes / (1024 * 1024)} MB.`, index);
+    if (total > IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES) refuse("too-large", `Reference images must total at most ${IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES / (1024 * 1024)} MB.`, index);
     loaded.push(item);
   }
   return loaded;
