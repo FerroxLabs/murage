@@ -128,11 +128,10 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       // poll events + run status until the prompt settles
       (async () => {
         const seen = new Set<string>();
-        // Stopped for silence, never for duration (0.1.61): a box run that
-        // keeps producing events may run as long as it needs. A run that
-        // has produced nothing new for this long is treated as stuck.
-        const BOX_SILENCE_MS = 30 * 60_000;
-        let lastActivityAt = Date.now();
+        // No clock of its own (0.1.61): every new box event reaches the
+        // thread as activity, and the thread's silence watch (the owner's
+        // room setting in a room) stops a run that goes quiet, through
+        // interruptTurn, like every other engine's turn.
         let lastText = "";
         let pendingText = "";
         /** Emit unflushed deltas as assistant_text and reset pendingText. */
@@ -143,13 +142,15 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
           emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text });
         };
         /** Stream a full-text snapshot as a delta and accumulate it for flush. */
-        const ingest = (text: string) => {
+        const ingest = (text: string): boolean => {
           const delta = text.startsWith(lastText) ? text.slice(lastText.length) : text;
           lastText = text;
-          if (!delta) return;
+          if (!delta) return false;
           pendingText += delta;
           emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta });
+          return true;
         };
+        const working = () => emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
         try {
           for (;;) {
             if (cancelled) break;
@@ -160,7 +161,6 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               const id = String(ev.id ?? ev.eventId ?? JSON.stringify(ev).slice(0, 120));
               if (seen.has(id)) continue;
               seen.add(id);
-              lastActivityAt = Date.now();
               appendNative(threadId, { dir: "in", source: "box.events", msg: ev });
               const kind = String(ev.type ?? ev.kind ?? "");
               // "response" events carry the agent's text at data.content —
@@ -170,7 +170,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               // stream anyway.
               const text = ev.text ?? ev.message ?? ev.data?.text ?? ev.data?.content ?? null;
               if (/assistant|message|output|response/i.test(kind) && typeof text === "string" && text.trim()) {
-                ingest(text);
+                if (!ingest(text)) working();
               } else if (/tool|command|exec|browse/i.test(kind)) {
                 flushAssistantText();
                 emit({
@@ -180,10 +180,13 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                   itemId: id,
                   title: String(ev.title ?? ev.command ?? kind).slice(0, 80),
                 });
+              } else {
+                // work the chat does not show is still work
+                working();
               }
               // shape-drift backstop: without a promptId the status poll
               // below can never see a terminal state, so settle off the
-              // events themselves instead of hanging to the silence limit
+              // events themselves instead of waiting for the silence watch
               if (!promptId && /complete|finish|done|success|fail|error/i.test(kind)) {
                 active.delete(threadId);
                 flushAssistantText();
@@ -220,9 +223,6 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                 else emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: state, cost: null });
                 return;
               }
-            }
-            if (Date.now() - lastActivityAt > BOX_SILENCE_MS) {
-              throw new Error("box run had no activity for 30 minutes: interrupted");
             }
           }
           // Murage stopped the turn: the shared cancelled state every driver
