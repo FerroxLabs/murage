@@ -243,6 +243,9 @@ describe("BoxAgentDriver turns (fake API)", () => {
       { events: [{ id: "s1", type: "status", data: { phase: "thinking" } }], status: { promptRun: { status: "running" } } },
       // a heartbeat: a fresh id and time, nothing else new
       { events: [{ id: "s2", type: "status", ts: 2, data: { phase: "thinking" } }], status: { promptRun: { status: "running" } } },
+      // a heartbeat whose time sits inside its data
+      { events: [{ id: "s4", type: "status", data: { phase: "thinking", ts: 5 } }], status: { promptRun: { status: "running" } } },
+      { events: [{ id: "s5", type: "status", data: { phase: "thinking", ts: 6 } }], status: { promptRun: { status: "running" } } },
       { events: [{ id: "r1", type: "response", text: "half" }], status: { promptRun: { status: "running" } } },
       // the same text again under a new id
       { events: [{ id: "r2", type: "response", text: "half" }], status: { promptRun: { status: "running" } } },

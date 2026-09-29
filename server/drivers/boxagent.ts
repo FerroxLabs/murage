@@ -157,7 +157,8 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         // not, so a box stuck sending them still goes quiet for the watch.
         const shownContents = new Set<string>();
         const working = (ev: Record<string, unknown>) => {
-          const key = JSON.stringify(Object.entries(ev).filter(([name]) => !EVENT_IDENTITY_KEYS.has(name)));
+          // at any depth: a heartbeat's time can sit inside its data
+          const key = JSON.stringify(ev, (name, value) => (EVENT_IDENTITY_KEYS.has(name) ? undefined : value));
           if (shownContents.has(key)) return;
           if (shownContents.size >= 1_000) shownContents.clear();
           shownContents.add(key);
