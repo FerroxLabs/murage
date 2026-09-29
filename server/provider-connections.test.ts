@@ -14,8 +14,11 @@ function fixture(preset:ProviderPreset="openai",now?:()=>number) {
  const make=()=>new ProviderConnectionsService({readBank:()=>bank,cacheDir,fetch:fetcher,now});const service=make();const id=parseProviderBank(bank)[0]!.id;
  return{cacheDir,service,fetcher,id,make,bank:()=>bank,setBank:(next:string)=>{bank=next;},mutate:async(input:unknown)=>{const before=bank;bank=JSON.stringify(mutateProviderBank(bank,input,()=>`record-${++sequence}`));await service.changed(before,bank);}};
 }
-it("binds eight presets to fixed issuer endpoints, never arbitrary caller URLs",()=>{
- expect(Object.keys(PROVIDER_PRESETS)).toHaveLength(8);
+it("binds nine presets to fixed issuer endpoints, never arbitrary caller URLs",()=>{
+ expect(Object.keys(PROVIDER_PRESETS)).toHaveLength(9);
+ expect(PROVIDER_PRESETS.google).toEqual({label:"Google",baseUrl:"https://generativelanguage.googleapis.com/v1beta/openai",catalogUrl:"https://generativelanguage.googleapis.com/v1beta/openai/models",protocol:"openai"});
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:`AIza${"k".repeat(35)}`},()=>"fixture")).toThrow("different provider");
+ expect(mutateProviderBank("[]",{action:"create",preset:"google",key:`AIza${"k".repeat(35)}`},()=>"fixture")[0]).toMatchObject({preset:"google",label:"Google"});
  expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:"sk-proj-fixture-key-private",url:"https://untrusted.invalid"},()=>"fixture")).toThrow("Only a provider");
  expect(()=>mutateProviderBank("[]",{action:"create",preset:"openrouter",key:"sk-proj-fixture-key-private"},()=>"fixture")).toThrow("different provider");
  expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:"sk-admin-fixture-key-private"},()=>"fixture")).toThrow("inference API key");
@@ -197,4 +200,21 @@ it("excludes rerankers by id, and still admits the chat model named Musica",()=>
   {id:"gemma-4-26b-a4b-it-musica",architecture:{output_modalities:["text"]}},
  ]},1);
  expect(models.filter(model=>model.chatEligible).map(model=>model.id)).toEqual(["gemma-4-26b-a4b-it-musica"]);
+});
+it("reads Google's OpenAI-compatible catalog as bare ids and keeps only its chat families",()=>{
+ const connection={id:"g",preset:"google" as const,label:"Google",enabled:true,key:`AIza${"k".repeat(35)}`,revision:"r"};
+ const ids=["models/gemini-3.8-flash","models/gemini-3.1-pro-preview","models/gemma-4-26b-it","models/gemini-3.1-flash-image","models/gemini-3.8-live","models/gemini-3.8-flash-tts","models/gemini-embedding-001","models/gemini-robotics-er-2-preview","models/gemini-omni-flash","models/gemini-2.5-computer-use-preview-10-2025","models/veo-3.1-generate-preview","models/lyria-3.5"];
+ const models=normalizeProviderModels(connection,{object:"list",data:ids.map(id=>({id,object:"model",owned_by:"google"}))},1);
+ expect(models.filter(model=>model.chatEligible).map(model=>model.id)).toEqual(["gemini-3.8-flash","gemini-3.1-pro-preview","gemma-4-26b-it"]);
+ expect(models.every(model=>!model.id.startsWith("models/"))).toBe(true);
+});
+it("checks the trimmed key against its provider at every door, and never takes a key as a label",()=>{
+ const google=`AIza${"k".repeat(35)}`;
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:`  ${google}  `},()=>"fixture")).toThrow("different provider");
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:" sk-admin-fixture-key-private"},()=>"fixture")).toThrow("inference API key");
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"google",label:`Mine ${google}`,key:google},()=>"fixture")).toThrow("not its key");
+ const bank=JSON.stringify(mutateProviderBank("[]",{action:"create",preset:"google",key:google},()=>"fixture"));
+ expect(()=>mutateProviderBank(bank,{action:"update",id:"fixture",revision:"fixture",label:google},()=>"next")).toThrow("not its key");
+ for(const patch of [{imageGen:{key:google}},{imageGen:{key:"xai-fixture-key-private-000"}},{xai:{key:"sk-proj-fixture-key-private"}},{xai:{key:` ${google}`}}] as Parameters<typeof parseConfigPatch>[0][])expect(()=>parseConfigPatch(patch)).toThrow("different provider");
+ expect(parseConfigPatch({imageGen:{key:"sk-proj-fixture-key-private"},xai:{key:"xai-fixture-key-private-000"}})).toBeTruthy();
 });

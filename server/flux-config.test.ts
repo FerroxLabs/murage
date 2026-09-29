@@ -169,3 +169,23 @@ describe("flux key redaction in the native log", () => {
     expect(redactSecretsInText(`Authorization: Bearer ${FLUX_KEY}`)).not.toContain(FLUX_KEY);
   });
 });
+
+// A restored config, an ambient FLUX_API_KEY or an older backup can hold
+// another provider's key in the Flux slot. Every Flux reader goes through
+// fluxKey(), so it answers "no Flux key" and the key never reaches Flux.
+describe("fluxKey() never returns another provider's key", () => {
+  it.each([`AIza${"g".repeat(35)}`, "sk-proj-fixture-openai-key-private", "xai-fixture-key-private-0000"])("refuses %s from config or env", (key) => {
+    process.env.FLUX_API_KEY = key;
+    expect(fluxKey()).toBeNull();
+    expect(fluxConfigured()).toBe(false);
+    delete process.env.FLUX_API_KEY;
+    writeFileSync(CONFIG_PATH, JSON.stringify({ flux: { apiKey: ` ${key} ` } }));
+    expect(fluxKey()).toBeNull();
+  });
+  it("keeps a Flux key and an opaque legacy key", () => {
+    process.env.FLUX_API_KEY = FLUX_KEY;
+    expect(fluxKey()).toBe(FLUX_KEY);
+    process.env.FLUX_API_KEY = "opaque-legacy-workspace-key";
+    expect(fluxKey()).toBe("opaque-legacy-workspace-key");
+  });
+});

@@ -67,3 +67,12 @@ test("different raw configuration and inherited environment keys require explici
   assert.equal(change(saved, { action: "select", connectionId: "legacy-flux-file" }).workspaceKey, "sk-flux-FAKE_FILE");
   assert.equal(change(saved, { action: "select", connectionId: "legacy-flux-environment" }).workspaceKey, "sk-flux-FAKE_ENV");
 });
+test("select and consolidate never make another provider's key the Flux key", () => {
+  const google = `AIza${"g".repeat(35)}`;
+  const saved = state([row("named", google)]);
+  assert.throws(() => change(saved, { action: "select", connectionId: "named" }), /different provider/);
+  assert.throws(() => change(saved, { action: "consolidate" }), /different provider/);
+  const legacy = { ...state([], ""), fileWorkspaceKey: "xai-fixture-key-private-0000" };
+  assert.throws(() => change(legacy, { action: "select", connectionId: "legacy-flux-file" }), /different provider/);
+  assert.equal(change(state([row("opaque", "opaque-legacy-flux-key")]), { action: "select", connectionId: "opaque" }).workspaceKey, "opaque-legacy-flux-key");
+});

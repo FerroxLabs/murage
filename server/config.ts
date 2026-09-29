@@ -15,6 +15,7 @@ import { dataDirLeasePaths } from "./data-dir-lease.ts";
 import { installDataDirGuard } from "./data-dir-guard.ts";
 import { migrateLegacyDataDirectory } from "../electron/data-dir-migration.mjs";
 import { tightenOwnedDirectory } from "../electron/private-directory.mjs";
+import { keyIssuer } from "../electron/provider-connections.mjs";
 import { readPersistedJson, PersistedStateRecoveryError } from "./persisted-state.ts";
 import { notificationPreferencesSchema, type NotificationPreferences } from "../shared/notification-preferences.ts";
 
@@ -481,6 +482,13 @@ export function parseConfigPatch(value: JsonValue): ConfigPatch {
   const parsed = appConfigPatchSchema.safeParse(value);
   if (!parsed.success) {
     throw Object.assign(new Error(schemaIssue(parsed.error, "Invalid configuration")), { status: 400 });
+  }
+  // The avatar/image key slot is OpenAI's and the workspace xAI slot is xAI's.
+  // A key whose own prefix names another provider would be sent to the wrong
+  // one, so every door into these two slots refuses it here.
+  for (const [slot, key] of [["openai", parsed.data.imageGen?.key], ["xai", parsed.data.xai?.key]] as const) {
+    const issuer = key ? keyIssuer(key) : null;
+    if (issuer && issuer !== slot) throw Object.assign(new Error("This key appears to belong to a different provider. Choose its provider before saving."), { status: 400 });
   }
   return parsed.data;
 }
