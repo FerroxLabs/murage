@@ -537,7 +537,9 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
           let intact = false;
           try { intact = same(lstatSync(copied.file), made); } catch { /* gone */ }
           if (!intact) {
-            try { await rebindKeyFile(file); } catch { /* the schedule names the missing key */ }
+            // If they cannot be pointed back, Move still leaves the original
+            // alone, and the page says it can't confirm the backups' key.
+            try { await rebindKeyFile(file); } catch { throw new Error("BACKUP_RECOVERY_KEY_MOVE_INCOMPLETE"); }
             throw new Error("BACKUP_RECOVERY_KEY_UNVERIFIED");
           }
         } else {

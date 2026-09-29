@@ -559,6 +559,23 @@ test("Move keeps the original and points the backups back at it when the copy ch
     assert.equal(c.bindings.keyFile,c.old);
   }finally{p.cleanup();}
 });
+test("Move keeps the original when another file takes the copy's place during the switch, and leaves that file alone",async()=>{
+  const p=place();try{
+    const c=cloudKey(p);const before=readFileSync(c.old,"utf8");let swapped=null;
+    const flow=c.flow({rebindKeyFile:async file=>{c.rebinds.push(file);c.bindings.keyFile=file;if(file!==c.old){rmSync(file);writeFileSync(file,"not the key\n");swapped=file;}}});
+    await assert.rejects(flow.moveOffCloud(),/^Error: BACKUP_RECOVERY_KEY_UNVERIFIED$/);
+    assert.equal(readFileSync(c.old,"utf8"),before);assert.equal(c.bindings.keyFile,c.old);
+    assert.equal(readFileSync(swapped,"utf8"),"not the key\n");
+  }finally{p.cleanup();}
+});
+test("Move says it can't confirm the backups' key when pointing them back at the original fails",async()=>{
+  const p=place();try{
+    const c=cloudKey(p);const before=readFileSync(c.old,"utf8");
+    const flow=c.flow({rebindKeyFile:async file=>{if(file===c.old)throw new Error("BACKUP_BUSY");c.rebinds.push(file);c.bindings.keyFile=file;rmSync(file);}});
+    await assert.rejects(flow.moveOffCloud(),/^Error: BACKUP_RECOVERY_KEY_MOVE_INCOMPLETE$/);
+    assert.equal(readFileSync(c.old,"utf8"),before);
+  }finally{p.cleanup();}
+});
 test("a Move failure reaches the page as a code, never a message with a path",async()=>{
   const p=place();try{
     const c=cloudKey(p);
