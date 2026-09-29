@@ -17,6 +17,13 @@ import { IMAGE_PROMPT_BLOCKS_MAX } from "./image-library.ts";
 import { providerDispatcher } from "./provider-dispatcher.ts";
 
 export type ImageProvider = "openai" | "flux" | "openrouter" | "xai" | "google";
+/** Each provider as the owner reads it (Settings' names, not a connection's
+ *  own label, which could hold whatever was typed into it). Display only:
+ *  metadata keeps the id. */
+export const IMAGE_PROVIDER_NAMES: Readonly<Record<ImageProvider, string>> = Object.freeze({ flux: "Flux Router", openai: "OpenAI", openrouter: "OpenRouter", xai: "xAI", google: "Google" });
+export function imageProviderName(provider: ImageProvider): string {
+  return Object.hasOwn(IMAGE_PROVIDER_NAMES, provider) ? IMAGE_PROVIDER_NAMES[provider] : provider;
+}
 /** Only the server connection resolver constructs this object. Never serialize it. */
 export interface ImageConnection { id: string; provider: ImageProvider; apiKey: string; revision: string }
 export interface ImageReference { bytes: Buffer; mime: "image/png" | "image/jpeg" | "image/webp" }
@@ -528,7 +535,7 @@ export function imageResultSummary(metadata: GeneratedImageMetadata): string {
   const delivered = metadata.delivered ?? [];
   const count = delivered.length === 1 ? "1 image" : `${delivered.length} images${metadata.count > delivered.length ? ` of ${metadata.count} asked` : ""}`;
   const size = imageDeliveredSentence(metadata);
-  const facts = [`${count} with ${metadata.model}${metadata.sentModel && metadata.sentModel !== metadata.model ? ` (sent as ${metadata.sentModel})` : ""} through ${metadata.provider}.`, size];
+  const facts = [`${count} with ${metadata.model}${metadata.sentModel && metadata.sentModel !== metadata.model ? ` (sent as ${metadata.sentModel})` : ""} through ${imageProviderName(metadata.provider)}.`, size];
   if (metadata.promptChars !== undefined) facts.push(`Prompt: ${fmt(metadata.promptChars)} characters.`);
   if (metadata.condensedFromChars !== undefined && metadata.promptChars !== undefined) facts.push(`Condensed from ${fmt(metadata.condensedFromChars)} to ${fmt(metadata.promptChars)} characters for ${metadata.model}.`);
   if (metadata.avoidLine) facts.push("Negative prompt added as an Avoid: line.");

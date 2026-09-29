@@ -9,7 +9,7 @@ import { ATTACHMENTS_DIR, GENERATED_IMAGE_MAX_BYTES } from "./attachments.ts";
 import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES } from "../shared/media-assets.ts";
 import { DATA_DIR } from "./config.ts";
 import type { ImageOperationDetails, ImageAttemptOutcome, ImageReference, GeneratedImageMetadata, ImageApprovalCardInput } from "./image-generation.ts";
-import { ImageGenerationError, imageApprovalSubtitle, imageDeliveredSentence } from "./image-generation.ts";
+import { ImageGenerationError, imageApprovalSubtitle, imageDeliveredSentence, imageProviderName } from "./image-generation.ts";
 import type { DecodedGeneratedImage } from "./generated-image.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import type { LocalOutputReceipt } from "../shared/output-publication.ts";
@@ -91,10 +91,10 @@ interface OperationProgress { pending?: PendingPublication; job?: { id: string }
 const outputDeps = (store: Store) => ({ db: database(), dataDir: DATA_DIR, store });
 /** The conversation line under each image: the real delivered pixels, read
  * from the image itself, and what was asked when that differs. */
-const transcriptText = (metadata: GeneratedImageMetadata) => {
+export const imageTranscriptText = (metadata: GeneratedImageMetadata) => {
   const delivered = imageDeliveredSentence(metadata);
   const which = metadata.imageIndex !== undefined ? ` (image ${metadata.imageIndex + 1} of ${metadata.count})` : "";
-  return `Image created with ${metadata.model} through ${metadata.provider}${which}.${delivered ? ` ${delivered}` : ""}`;
+  return `Image created with ${metadata.model} through ${imageProviderName(metadata.provider)}${which}.${delivered ? ` ${delivered}` : ""}`;
 };
 const artifactName = (metadata: GeneratedImageMetadata) => `Generated image (${metadata.model})`.slice(0, 200);
 function imageArtifact(done: ImageOutputCompletion): ImageArtifact {
@@ -131,7 +131,7 @@ export function publishImage(store: Store, actor: ImageActor, image: DecodedGene
   const receipt = retainImageOutput(deps, { producer: "image-operation", botId: actor.botId, threadId: actor.threadId, runId: options.operationId ?? actor.generation,
     bytes: image.bytes, mime: image.mime, beforeCommit: () => { actor.assertActive(); if (actor.signal.aborted) throw error(409, "Image operation was cancelled."); } });
   options.onRetained?.(receipt);
-  return imageArtifact(completeImageOutput(deps, receipt.id, { transcriptText: transcriptText(metadata), artifactName: artifactName(metadata) }));
+  return imageArtifact(completeImageOutput(deps, receipt.id, { transcriptText: imageTranscriptText(metadata), artifactName: artifactName(metadata) }));
 }
 
 export const imagePublishRecoveryMessage = (category?: string) => `Image received and kept locally, but publishing it to this conversation did not finish${category ? ` (${category})` : ""}. `
@@ -293,7 +293,7 @@ export class ImageOperations {
   private completeAll(receipts: Array<{ id: string }>, metadata: GeneratedImageMetadata, items?: GeneratedImageMetadata[]): ImageOperationResult {
     const artifacts = receipts.map((receipt, index) => {
       const each: GeneratedImageMetadata = items?.[index] ?? (receipts.length > 1 ? { ...metadata, imageIndex: index, delivered: metadata.delivered?.[index] ? [metadata.delivered[index]!] : metadata.delivered } : metadata);
-      return imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: transcriptText(each), artifactName: artifactName(each) }));
+      return imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: imageTranscriptText(each), artifactName: artifactName(each) }));
     });
     return { artifact: artifacts[0]!, artifacts, metadata };
   }
@@ -327,7 +327,7 @@ export class ImageOperations {
       actor.assertActive();
       const refreshed = artifacts.map(artifact => {
         const receipt = receipts.find(item => item.id === artifact.id);
-        return artifact.artifactId || !receipt ? artifact : imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: transcriptText(value.metadata), artifactName: artifactName(value.metadata) }));
+        return artifact.artifactId || !receipt ? artifact : imageArtifact(completeImageOutput(outputDeps(this.store), receipt.id, { transcriptText: imageTranscriptText(value.metadata), artifactName: artifactName(value.metadata) }));
       });
       const updated: ImageOperationResult = { ...value, artifact: refreshed[0]!, ...(value.artifacts ? { artifacts: refreshed } : {}) };
       this.db().prepare("UPDATE image_operations SET result=?,updated_at=? WHERE id=? AND state='published'").run(JSON.stringify(updated), Date.now(), id);
