@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -79,6 +79,23 @@ it("custom folder is unchanged while prompt references immutable absolute bytes"
 it("another room responder cannot consume this bot's pinned catalogue",()=>{
   const first=bot(),second=bot();const pin=createProcedurePin(first,"room",[],[]);
   expect(()=>readProcedureBundle(second,"room",pin)).toThrow();
+});
+// AFTER-REVIEW: a brand new lead's room wake and its review started together,
+// and each refused to migrate because the other was running.
+it("a bot with nothing to move migrates while another of its turns runs; an old app link still waits",()=>{
+  const fresh=bot();
+  expect(()=>migrateSkillDiscoveryToTasks(fresh,false)).not.toThrow();
+  expect(existsSync(join(DATA_DIR,"skill-state",fresh,"task-discovery.json"))).toBe(true);
+  const old=bot(),root=workspaceDir(old);
+  mkdirSync(join(root,"skills","old-habit"),{recursive:true});writeFileSync(join(root,"skills","old-habit","SKILL.md"),"Old habit");
+  mkdirSync(join(root,".claude","skills"),{recursive:true});symlinkSync("../../skills/old-habit",join(root,".claude","skills","old-habit"));
+  // a user's own native skill is not the app's to move, and does not hold the move
+  mkdirSync(join(root,".agents","skills","owner-only"),{recursive:true});writeFileSync(join(root,".agents","skills","owner-only","SKILL.md"),"Owner native skill");
+  expect(()=>migrateSkillDiscoveryToTasks(old,false)).toThrow("another active task");
+  expect(existsSync(join(DATA_DIR,"skill-state",old,"task-discovery.json"))).toBe(false);
+  migrateSkillDiscoveryToTasks(old,true);
+  expect(existsSync(join(root,".claude","skills","old-habit"))).toBe(false);
+  expect(readFileSync(join(root,".agents","skills","owner-only","SKILL.md"),"utf8")).toBe("Owner native skill");
 });
 it("migration waits for active peers and preserves unknown native files",()=>{
   const id=bot();learned(id,"Original");

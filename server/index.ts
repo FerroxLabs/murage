@@ -298,7 +298,7 @@ import {
   type SteerQueueEntries,
 } from "./steer-queue.ts";
 import { sendScreenshot } from "./screenshot-response.ts";
-import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn as releaseUnstartedRoomTurnThrough } from "./room-turn-release.ts";
+import { releaseUnclaimedRoomTurn, releaseUnstartedRoomTurn as releaseUnstartedRoomTurnThrough, roomSetupFailureLine } from "./room-turn-release.ts";
 import {
   cancelChannelMessage,
   drainChannelMessages,
@@ -8233,6 +8233,9 @@ async function runGroupMemberTurn(
   // Upstream 0b2694a4: the setup latch for a stall during room setup.
   let setupStalled = false;
   let unregisterSetupStall = () => {};
+  // Set from this attempt's room claim until its provider turn is launched:
+  // a setup step that throws in between releases the claim through it.
+  let releaseClaimedSetup: (() => Promise<unknown>) | undefined;
   try {
   if (instance.adapter.capabilities.agentsMcp === true) {
     integrations.agents = agentsIntegration(bot.id, threadId, hop, skillAuthoring, internalGeneration);
@@ -8362,7 +8365,17 @@ async function runGroupMemberTurn(
     return false;
   }
 
+  // Every release of the claim ends the catch's duty to release it.
+  const releaseUnstartedRoomTurn = () => { releaseClaimedSetup = undefined; return releaseUnstartedRoomTurnThrough(unstartedRoomTurnReleaseDeps, {
+    groupId: group.id,
+    threadId,
+    botId: bot.id,
+    ownerId: internalGeneration,
+    skillAuthoring,
+    skillAuthoringClaim,
+  }); };
   store.patchGroup(group.id, { busyBotId: bot.id }); // the store's change stream carries the frame
+  releaseClaimedSetup = releaseUnstartedRoomTurn;
   pendingRoomStops.get(threadId)?.cancel();
   pendingRoomStops.delete(threadId);
   groupSpeakers.set(threadId, { botId: bot.id, name: bot.name, color: bot.color });
@@ -8384,14 +8397,8 @@ async function runGroupMemberTurn(
   // held /learn and a queued send nobody would retry (RED2K). The room and
   // the bot are touched only while this attempt still owns the room
   // (server/room-turn-release.ts).
-  const releaseUnstartedRoomTurn = () => releaseUnstartedRoomTurnThrough(unstartedRoomTurnReleaseDeps, {
-    groupId: group.id,
-    threadId,
-    botId: bot.id,
-    ownerId: internalGeneration,
-    skillAuthoring,
-    skillAuthoringClaim,
-  });
+  // (defined above the claim, so a setup step that throws right after it
+  // still releases through it)
 
   const roster = group.memberIds
     .map((id) => store.bot(id))
@@ -8650,6 +8657,8 @@ async function runGroupMemberTurn(
     await releaseUnstartedRoomTurn();
     return false;
   }
+  // From here the dispatch catch and the turn's own end release the room.
+  releaseClaimedSetup = undefined;
   const outcome = await new Promise<GroupMemberTurnOutcome>((resolve) => {
     let done = false;
     let unsub = () => {};
@@ -8979,6 +8988,30 @@ async function runGroupMemberTurn(
     }
   }
   return true;
+  } catch (error) {
+    // A setup step threw after this attempt claimed the room (AFTER-REVIEW: a
+    // new lead's room wake failed its one-time procedure migration). Release
+    // the claim as every other unstarted exit does and say why in the room;
+    // left alone the room stayed busy, with no reply and nothing queued
+    // behind it ever starting.
+    // The room gets a plain line; the raw error (codes, paths, ids) stays in
+    // the server log.
+    const release = releaseClaimedSetup;
+    releaseClaimedSetup = undefined;
+    if (release) {
+      const raw = error instanceof Error ? error.message : String(error);
+      console.error(`[room] ${bot.id} could not get ready in ${threadId}: ${redactSecretsInText(raw)}`);
+      await release().catch((releaseError: unknown) => {
+        console.error(`[room] could not hand ${threadId} back after a failed setup: ${redactSecretsInText(releaseError instanceof Error ? releaseError.message : String(releaseError))}`);
+      });
+      const message = roomSetupFailureLine(error);
+      murageFailureLine(message);
+      onDispatchError?.(message);
+      // callers that show the error (connector and secret resume cards) get
+      // the plain line too; the original rides as the cause
+      throw Object.assign(new Error(message), { cause: error });
+    }
+    throw error;
   } finally {
     unregisterSetupStall();
     watchdog.settleSetup(threadId, internalGeneration);

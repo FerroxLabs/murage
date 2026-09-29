@@ -92,3 +92,15 @@ export async function releaseUnclaimedRoomTurn(
   await deps.releaseBrowser(turn.threadId, turn.ownerId);
   deps.drainQueues();
 }
+
+/** What the room reads when a member's turn failed while getting ready,
+ * after the room was claimed (the claim is released through
+ * releaseUnstartedRoomTurn). A plain line: the raw error can carry internal
+ * codes, file paths and ids, and a room can be read by people other than
+ * the owner, so it stays in the server log. */
+export function roomSetupFailureLine(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  // skills.ts migrateSkillDiscoveryToTasks, while another turn of the bot runs
+  if (raw.includes("waiting for another active task")) return "it is still finishing other work. Send the message again when that is done.";
+  return "it could not get ready. Try again in a moment.";
+}
