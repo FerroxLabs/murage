@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { IMAGE_REFERENCE_LIMITS } from "../../shared/media-assets";
+import { IMAGE_GENERATION_REFERENCE_MAX } from "../../shared/media-assets";
+import type { ImageModelCapabilities } from "../../shared/image-capabilities";
 import { t } from "@/lib/i18n";
 import { api } from "@/state/store";
 
@@ -16,12 +17,16 @@ export interface ImageModel {
   editUnavailableReason?: string;
   /** Edit-specific quality support when it differs from generation. */
   editQualities?: string[];
+  /** The full per-model statement (image generation v2); absent from older servers. */
+  capabilities?: ImageModelCapabilities;
+  /** An older id standing for a base model at a fixed quality and size. */
+  aliasOf?: string;
 }
 export interface ImageSettingsSnapshot {
   enabled: boolean;
   connections: Array<{ id: string; label: string; provider: string }>;
   selected: { connectionId: string; model: string } | null;
-  catalog: { connectionId: string; provider: string; defaultModel: string | null; models: ImageModel[] } | null;
+  catalog: { connectionId: string; provider: string; defaultModel: string | null; models: ImageModel[]; capabilitySource?: "catalogue" | "built-in" } | null;
   /** Why the chosen connection's models could not be read. */
   catalogError?: string;
 }
@@ -44,7 +49,7 @@ export function imageModelCapability(model: ImageModel): ImageModelCapability {
   if (!model.generate) return { kind: "disabled", sentences: [t("imageSettings.model.disabled")] };
   if (!model.edit) return { kind: "generates", sentences: [t("imageSettings.model.createsOnly"), model.editUnavailableReason?.trim() || t("imageSettings.model.editUnavailable")] };
   const raw = model.maxReferences;
-  const maxReferences = typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1 ? Math.min(raw, IMAGE_REFERENCE_LIMITS.maxCount) : null;
+  const maxReferences = typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1 ? Math.min(raw, IMAGE_GENERATION_REFERENCE_MAX) : null;
   const sentences = [t("imageSettings.model.createsAndEdits"),
     maxReferences === null ? t("imageSettings.model.referenceLimitUnknown") : maxReferences === 1 ? t("imageSettings.model.referenceLimitOne") : t("imageSettings.model.referenceLimit", { count: maxReferences })];
   if (Array.isArray(model.editQualities)) {
@@ -53,6 +58,14 @@ export function imageModelCapability(model: ImageModel): ImageModelCapability {
     else if (qualities.join(",") !== model.qualities.join(",")) sentences.push(t("imageSettings.model.editQualities", { qualities: qualities.join(", ") }));
   }
   return { kind: "edits", sentences, maxReferences };
+}
+
+/** A model's own limits in plain words, and for Flux whether they came from
+ * the router or Murage's built-in table. Pure, for tests. */
+export function imageModelLimits(capabilities: ImageModelCapabilities, source?: "catalogue" | "built-in"): string {
+  const budget = `Prompt budget: ${capabilities.maxPromptChars.toLocaleString("en-US")} characters${capabilities.promptBudgetNote ? ` (${capabilities.promptBudgetNote.replace(/\.$/, "")})` : ""}.`;
+  const details = source === "catalogue" ? " Model details: from Flux." : source === "built-in" ? " Model details: built in." : "";
+  return `${budget} Sizes: ${capabilities.sizeRuleText}${details}`;
 }
 
 /** The dropdown suffix for one model: what it can do here, at a glance. */
@@ -135,11 +148,12 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
       {snapshot?.catalogError && <p role="alert" className="mt-2 text-[12px] text-danger">{snapshot.catalogError}</p>}
       {catalog?.provider === "xai" && !modelId && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">GPT Image 2 is not available on this connection. Choose an Imagine model to use xAI.</p>}
       {model && capability && <p data-image-capability={capability.kind} className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{capability.sentences.join(" ")}</p>}
+      {model && usable && model.capabilities && <p data-image-limits className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{imageModelLimits(model.capabilities, catalog?.provider === "flux" ? catalog.capabilitySource : undefined)}</p>}
       {model && usable && <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{model.availability === "catalog-listed" ? "Listed by the provider. Account access is checked when a request runs." : "Account access has not been verified for this model."}</p>}
       {catalog && !usable && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">Choose an available model before enabling image requests.</p>}
       {connection && <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">Images use {connection.label}, with that connection’s account. Murage will not switch providers if a request fails.</p>}
     </>}
-    <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">One image per bot turn. You review and approve each image request before it runs. Editing is offered only when the selected model supports it.</p>
+    <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">One image request per bot turn. You review and approve each image request before it runs. Editing is offered only when the selected model supports it.</p>
     <button type="button" onClick={onRefresh} disabled={Boolean(busy)} className={`mt-3 min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`}>{busy === "load" ? "Loading connections…" : "Refresh connections"}</button>
     {busy === "save" && <p role="status" className="mt-2 text-[12px] text-ink-secondary">Saving image settings…</p>}
     {notice && <p role="status" className="mt-2 text-[12px] text-success">{notice}</p>}

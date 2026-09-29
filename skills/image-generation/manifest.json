@@ -1,0 +1,30 @@
+{
+  "id": "image-generation",
+  "name": "Image Generation",
+  "version": "0.1.0",
+  "description": "Write and send image prompts that fit whichever image model is selected: read its limits, keep recurring subjects consistent with a lock plus a scene, condense visibly when a prompt is too long, ask for the right shape and size, use references up to the model's cap, and say plainly what was sent and what came back.",
+  "defaultEnabled": true,
+  "triggerTerms": [
+    "generate an image",
+    "generate image",
+    "make an image",
+    "make me an image",
+    "create an image",
+    "draw ",
+    "picture of",
+    "illustration",
+    "thumbnail",
+    "aspect ratio",
+    "9:16",
+    "16:9",
+    "4:5",
+    "reference images",
+    "reference image",
+    "image prompt",
+    "render",
+    "generate_image",
+    "edit this image",
+    "edit the image"
+  ],
+  "requiredCapabilities": ["imageGeneration"]
+}

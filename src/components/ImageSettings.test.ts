@@ -3,8 +3,9 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { IMAGE_REFERENCE_LIMITS } from "../../shared/media-assets";
-import { ImageSettingsView, imageModelCapability, imageModelOptionLabel, type ImageModel, type ImageSettingsSnapshot } from "./ImageSettings";
+import { IMAGE_GENERATION_REFERENCE_MAX } from "../../shared/media-assets";
+import { builtInImageCapabilities } from "../../shared/image-capabilities";
+import { ImageSettingsView, imageModelCapability, imageModelLimits, imageModelOptionLabel, type ImageModel, type ImageSettingsSnapshot } from "./ImageSettings";
 
 const base = { availability: "unverified" as const, qualities: ["low", "medium", "high"], sizes: ["1024x1024"] };
 const openai: ImageModel = { ...base, id: "gpt-image-2", label: "gpt-image-2", generate: true, edit: true, maxReferences: 4 };
@@ -28,11 +29,17 @@ describe("imageModelCapability", () => {
     expect(imageModelCapability(openai)).toEqual({ kind: "edits", maxReferences: 4, sentences: ["Creates and edits images.", "Up to 4 reference images per edit."] });
     expect(imageModelCapability({ ...openai, maxReferences: 1 }).sentences).toContain("One reference image per edit.");
   });
-  it("never advertises more references than Murage's shared cap", () => {
-    const inflated = imageModelCapability({ ...openRouterVerified, maxReferences: 16 });
-    expect(inflated).toMatchObject({ kind: "edits", maxReferences: IMAGE_REFERENCE_LIMITS.maxCount });
-    expect(inflated.sentences.join(" ")).toContain(`Up to ${IMAGE_REFERENCE_LIMITS.maxCount} reference images per edit.`);
-    expect(inflated.sentences.join(" ")).not.toContain("16");
+  it("never advertises more references than image generation's shared cap", () => {
+    const inflated = imageModelCapability({ ...openRouterVerified, maxReferences: 40 });
+    expect(inflated).toMatchObject({ kind: "edits", maxReferences: IMAGE_GENERATION_REFERENCE_MAX });
+    expect(inflated.sentences.join(" ")).toContain(`Up to ${IMAGE_GENERATION_REFERENCE_MAX} reference images per edit.`);
+    expect(inflated.sentences.join(" ")).not.toContain("40");
+  });
+  it("states a model's prompt budget, sizes and where the details came from", () => {
+    expect(imageModelLimits(builtInImageCapabilities("flux", "flux-image-fast")!, "built-in")).toBe("Prompt budget: 2,000 characters. Sizes: Any width and height in multiples of 32, ratio 1:3 to 3:1, 65,536 to 4,194,304 pixels, longest side at most 4096. Model details: built in.");
+    expect(imageModelLimits(builtInImageCapabilities("xai", "grok-imagine-image-2.0")!)).toBe("Prompt budget: 4,000 characters (Limit not published, Murage uses 4,000). Sizes: Only these sizes: 1024x1024.");
+    const html = render(snapshot("flux", "flux", [{ ...openai, id: "flux-image", capabilities: builtInImageCapabilities("flux", "flux-image")! }], "flux-image"));
+    expect(html).toContain("Prompt budget: 32,000 characters.");
   });
   it("does not invent a reference count from an older server record", () => {
     const legacy = imageModelCapability({ ...openai, maxReferences: undefined });
