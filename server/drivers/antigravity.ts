@@ -17,6 +17,7 @@
 // instances only; the host desktop stays off (no approval channel in print
 // mode, ever).
 import { awaitCliTreeStopped, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -45,6 +46,11 @@ import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "antigravityAgent";
 export const ANTIGRAVITY_STREAM_INPUT_MIN_VERSION = "1.1.15";
+/** agy's own `--print-timeout` (a Go duration, default 5m) ends print mode
+ * after that long however busy the turn is. Set past the longest silence
+ * limit an owner can choose (24 hours), so a turn is stopped only by the
+ * thread's silence watch, the owner's Stop or a budget stop. */
+export const ANTIGRAVITY_PRINT_TIMEOUT = "8760h";
 
 export function supportsAntigravityStreamInput(version: string | null): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
@@ -176,21 +182,60 @@ export interface AntigravityMcpServers {
 // lifetime so two Antigravity turns cannot see each other's computer, control,
 // or bot-communication tokens.
 let antigravityMcpLease: Promise<void> = Promise.resolve();
+/** The turn holding the lease, while it holds it. A turn queued behind it
+ * reports waiting only while that turn is still working (not settled, not
+ * stopped): the holder has its own silence watch then. Once it has finished
+ * or been stopped, what is left is cleanup, possibly unbounded (a process
+ * that will not die keeps the lease until restart), and the queued turn's
+ * own watch owns it. */
+let antigravityLeaseHolder: { working: () => boolean } | null = null;
+/** How often a turn queued for the lease tells its thread it is waiting. */
+const leaseWaitBeatMs = (): number => {
+  const ms = Number(process.env.MURAGE_ANTIGRAVITY_LEASE_BEAT_MS);
+  return Number.isFinite(ms) && ms > 0 ? ms : 60_000;
+};
 
-async function acquireAntigravityMcpLease(): Promise<() => void> {
+class LeaseWaitCancelled extends Error {}
+
+/** Fields that time a step rather than say what it did. */
+const STEP_TIME_KEYS = new Set(["timestamp", "ts", "time", "created_at", "createdAt", "updated_at", "updatedAt", "elapsed_ms", "duration_ms"]);
+/** A step's identity and content, without its clock: the same state sent
+ * again is not new work, a step whose content grows is. Hashed, so a long
+ * turn of growing snapshots keeps a few bytes per step, not the snapshots. */
+function stepFingerprint(payload: unknown): string {
+  const content = JSON.stringify(payload, (key, value) => (STEP_TIME_KEYS.has(key) ? undefined : value)) ?? "";
+  return createHash("sha256").update(content).digest("base64");
+}
+
+/** Waits for the machine-wide lease. An aborted wait keeps its place in the
+ * queue only long enough to hand the lease straight on. */
+async function acquireAntigravityMcpLease(signal?: AbortSignal): Promise<() => void> {
   const previous = antigravityMcpLease;
   let unlock: (() => void) | undefined;
   const current = new Promise<void>((resolve) => {
     unlock = resolve;
   });
   antigravityMcpLease = previous.then(() => current);
-  await previous;
   let released = false;
-  return () => {
+  const release = () => {
     if (released) return;
     released = true;
     unlock?.();
   };
+  const cancelled = await new Promise<boolean>((resolve) => {
+    const onAbort = () => resolve(true);
+    if (signal?.aborted) return resolve(true);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    void previous.then(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(false);
+    });
+  });
+  if (cancelled) {
+    void previous.then(release);
+    throw new LeaseWaitCancelled("the wait for Antigravity's config was stopped");
+  }
+  return release;
 }
 
 // Keep every unknown key the user put in the file. A present-but-wrong
@@ -440,6 +485,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     // one active turn per thread; a second send while busy is a caller bug
     const active = new Map<string, { stop: () => void; turnId: string }>();
     const pending = new Set<string>();
+    // turns queued for the machine-wide config lease; a Stop ends the wait
+    const leaseWaits = new Map<string, AbortController>();
+    // a Stop for a turn still reading the engine version, before its wait
+    const earlyStops = new Set<string>();
     let disposed = false;
     let verifiedVersion: string | null | undefined;
     const readVersion = () =>
@@ -492,6 +541,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       if (disposed) throw new Error("Antigravity instance is disposed");
       if (active.has(threadId) || pending.has(threadId)) throw new Error("a turn is already running on this thread");
       pending.add(threadId);
+      earlyStops.delete(threadId);
       const turnId = newId();
 
       const version = await versionForTurn();
@@ -542,10 +592,27 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       const resumeCursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
 
       let settled = false;
-      // backstop watchdog: if agy hangs without emitting `result` and without
-      // exiting, the bot would stay busy forever (agy's own --print-timeout 10m
-      // is the only other net). Assigned just below; settle() always clears it.
-      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      // Set when Murage stopped this turn (interruptTurn, stopAll). The
+      // child's exit is then the user's Stop, not a crash (STOP1).
+      let stopRequested = false;
+      // A step the chat does not show (planning, a response still being
+      // written) is still the turn working: report it, so the thread's
+      // silence watch never mistakes a long model step for a hang. A step
+      // seen before is not new work (a stuck retry loop re-sending its
+      // state), and nothing is reported once the turn settled or was stopped.
+      const shownSteps = new Set<string>();
+      const working = (step?: string) => {
+        if (settled || stopRequested) return;
+        if (step !== undefined) {
+          if (shownSteps.has(step)) return;
+          if (shownSteps.size >= 1_000) shownSteps.clear();
+          shownSteps.add(step);
+        }
+        emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
+      };
+      // No clock of its own (0.1.61): a child that hangs without `result` and
+      // without exiting goes quiet, and the thread's silence watch stops it
+      // through interruptTurn like every other engine's turn.
       // Assigned once the child exists. A child can emit `result` and then
       // hang, so settling must still arrange for process and MCP cleanup.
       let armPostSettleCleanup = () => {};
@@ -557,7 +624,6 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       ) => {
         if (settled) return;
         settled = true;
-        clearTimeout(watchdog);
         active.delete(threadId);
         armPostSettleCleanup();
         emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost, ...(usage ? { usage } : {}) });
@@ -567,7 +633,32 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // Murage tools — owns the mount for its complete child lifetime. This keeps
       // overlapping turns from inheriting, replacing, or removing each
       // other's tools and credentials.
-      const releaseMcpLease = await acquireAntigravityMcpLease();
+      // Queued behind another Antigravity turn: waiting, not silent, while
+      // that turn is working (it has its own watch); a Stop ends the wait.
+      const leaseWait = new AbortController();
+      leaseWaits.set(threadId, leaseWait);
+      if (earlyStops.delete(threadId)) leaseWait.abort();
+      const waitBeat = setInterval(() => { if (antigravityLeaseHolder?.working()) working(); }, leaseWaitBeatMs());
+      waitBeat.unref?.();
+      let releaseMcpLease: () => void;
+      try {
+        releaseMcpLease = await acquireAntigravityMcpLease(leaseWait.signal);
+      } catch (error) {
+        if (!(error instanceof LeaseWaitCancelled)) throw error;
+        pending.delete(threadId);
+        settle(true, "cancelled");
+        return { turnId };
+      } finally {
+        clearInterval(waitBeat);
+        leaseWaits.delete(threadId);
+      }
+      const holder = { working: () => !settled && !stopRequested };
+      antigravityLeaseHolder = holder;
+      const heldLease = releaseMcpLease;
+      releaseMcpLease = () => {
+        if (antigravityLeaseHolder === holder) antigravityLeaseHolder = null;
+        heldLease();
+      };
       if (disposed) {
         releaseMcpLease();
         pending.delete(threadId);
@@ -602,7 +693,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       const args = [
         "--input-format", "stream-json",
         "--output-format", "stream-json",
-        "--print-timeout", "10m",
+        "--print-timeout", ANTIGRAVITY_PRINT_TIMEOUT,
         "--add-dir", cwd,
         // fullAuto approves everything; otherwise accept-edits allows file
         // edits but auto-denies shell (no interactive channel in print mode)
@@ -667,9 +758,6 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           if (stopped) closeFinalizers.get(child)?.();
         });
       };
-      // Set when Murage stopped this turn (interruptTurn, stopAll). The
-      // child's exit is then the user's Stop, not a crash (STOP1).
-      let stopRequested = false;
       const requestStop = () => {
         stopRequested = true;
         stop();
@@ -716,6 +804,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
               } else if (payload.state === "ERROR") {
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: false });
+              } else {
+                working(stepFingerprint(payload));
               }
             } else if (payload.step_type === "agent_response" && payload.usage) {
               emit({
@@ -724,6 +814,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 input: (payload.usage.input_tokens || 0) + (payload.usage.cache_read_tokens || 0),
                 output: payload.usage.output_tokens || 0,
               });
+            } else {
+              working(stepFingerprint(payload));
             }
             break;
           }
@@ -834,17 +926,6 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
 
       active.set(threadId, { stop: requestStop, turnId });
       pending.delete(threadId);
-
-      // 11 min — just above agy's own 10m --print-timeout, so agy normally
-      // settles first; this is the backstop for a fully wedged child.
-      watchdog = setTimeout(() => {
-        if (!settled) {
-          emit({ ...base(threadId, turnId), type: "runtime.error", message: "agy watchdog timeout" });
-          stop();
-          settle(false, "timeout");
-        }
-      }, 11 * 60_000);
-      watchdog.unref?.();
 
       emit({ ...base(threadId, turnId), type: "turn.started" });
 
@@ -1004,10 +1085,18 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           agentsMcp: config.fullAuto,
         },
         sendTurn,
-        interruptTurn: async (threadId) => active.get(threadId)?.stop(),
+        interruptTurn: async (threadId) => {
+          const run = active.get(threadId);
+          if (run) return run.stop();
+          const wait = leaseWaits.get(threadId);
+          if (wait) wait.abort();
+          else if (pending.has(threadId)) earlyStops.add(threadId);
+        },
         respondToRequest: async () => "unavailable" as const, // this engine has no asks to answer
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
+          for (const wait of leaseWaits.values()) wait.abort();
+          for (const threadId of pending) earlyStops.add(threadId);
           for (const { stop } of active.values()) stop();
           await reapChildren(); // also reap children that hung post-result
         },
@@ -1019,6 +1108,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       generateText,
       dispose: async () => {
         disposed = true;
+        for (const wait of leaseWaits.values()) wait.abort();
         for (const { stop } of active.values()) stop();
         await reapChildren(); // retain listeners and MCP lease on uncertainty
         listeners.clear();

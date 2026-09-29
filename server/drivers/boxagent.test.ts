@@ -212,18 +212,54 @@ describe("BoxAgentDriver turns (fake API)", () => {
     expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
   });
 
-  it("stops a box run that has produced nothing for 30 minutes", async () => {
+  it("never stops a quiet box run on its own clock: the thread's silence watch or the owner's Stop ends it", async () => {
     const restoreBox = installFakeBox([
       { events: [{ id: "e1", type: "response", text: "started" }], status: { promptRun: { status: "running" } } },
     ]);
+    let polls = 0;
+    const counted = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      if (String(input).includes("/events")) polls += 1;
+      return counted(input, init);
+    }) as typeof fetch;
     const restoreClock = fiveMinutesPerPoll();
-    restoreFetch = () => { restoreClock(); restoreBox(); };
+    restoreFetch = () => { restoreClock(); globalThis.fetch = counted; restoreBox(); };
     await create();
     await instance.adapter.sendTurn({ threadId: "t-quiet", text: "go", integrations: { computer } });
+    // 36 polls, five simulated minutes each: three hours with nothing new
+    await vi.waitFor(() => expect(polls).toBeGreaterThanOrEqual(36), { timeout: 5_000 });
+    expect(recorder.events.filter((e) => e.type === "turn.completed" || e.type === "runtime.error")).toEqual([]);
+    expect(instance.adapter.hasSession("t-quiet")).toBe(true);
+    // the watch (or the owner) stops it through interruptTurn
+    await instance.adapter.interruptTurn("t-quiet");
     const done = await recorder.until((e) => e.type === "turn.completed");
-    expect(done).toMatchObject({ ok: false, stopReason: "error" });
-    expect(recorder.events.filter((e) => e.type === "runtime.error").map((e) => (e as { message: string }).message)).toEqual([
-      "box run had no activity for 30 minutes: interrupted",
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+  });
+
+  it("reports every new box event as activity, so the thread's silence watch sees work the chat does not show", async () => {
+    restoreFetch = installFakeBox([
+      { events: [{ id: "s1", type: "status", data: { phase: "thinking" } }], status: { promptRun: { status: "running" } } },
+      { events: [{ id: "s1", type: "status", data: { phase: "thinking" } }], status: { promptRun: { status: "running" } } },
+      // a heartbeat: a fresh id and time, nothing else new
+      { events: [{ id: "s2", type: "status", ts: 2, data: { phase: "thinking" } }], status: { promptRun: { status: "running" } } },
+      // a heartbeat whose time sits inside its data
+      { events: [{ id: "s4", type: "status", data: { phase: "thinking", ts: 5 } }], status: { promptRun: { status: "running" } } },
+      { events: [{ id: "s5", type: "status", data: { phase: "thinking", ts: 6 } }], status: { promptRun: { status: "running" } } },
+      { events: [{ id: "r1", type: "response", text: "half" }], status: { promptRun: { status: "running" } } },
+      // the same text again under a new id
+      { events: [{ id: "r2", type: "response", text: "half" }], status: { promptRun: { status: "running" } } },
+      { events: [{ id: "s3", type: "progress" }], status: { promptRun: { status: "finished", result: "half" } } },
+    ]);
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-live", text: "go", integrations: { computer } });
+    await recorder.until((e) => e.type === "turn.completed");
+    // one per event that says something new; a repeat, a heartbeat or a
+    // resent snapshot is not work, so a box stuck sending them still goes
+    // quiet for the silence watch
+    expect(recorder.events.filter((e) => e.type === "item.updated")).toEqual([
+      expect.objectContaining({ itemType: "reasoning", tokens: null }),
+      expect.objectContaining({ itemType: "reasoning", tokens: null }),
     ]);
   });
 

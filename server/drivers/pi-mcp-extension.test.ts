@@ -228,6 +228,37 @@ describe("StdioMcp", () => {
     await expect(pending).rejects.toThrow(/aborted/);
     await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8"))).toMatchObject({ requestId: 2 }));
   });
+
+  it("gives a tool call no fixed deadline: it runs until it answers or the turn stops", async () => {
+    const client = createClient(`
+      let buffer = "";
+      process.stdin.setEncoding("utf8");
+      const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: {} } } });
+        }
+      });
+    `);
+    await client.init();
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    try {
+      const controller = new AbortController();
+      const pending = client.callTool("long_job", {}, controller.signal);
+      const settled = pending.then(() => "answered", (error: Error) => error.message);
+      // the old ten-minute call deadline stopped long work that was still running
+      expect(timers.mock.calls.filter(([, ms]) => typeof ms === "number" && ms >= 60_000)).toEqual([]);
+      controller.abort();
+      expect(await settled).toMatch(/aborted/);
+    } finally {
+      timers.mockRestore();
+    }
+  });
 });
 
 describe("Pi MCP extension registration", () => {

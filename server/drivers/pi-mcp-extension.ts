@@ -76,7 +76,6 @@ interface PiExtensionApi {
 }
 
 const MCP_STARTUP_TIMEOUT_MS = 8_000;
-const MCP_TOOL_TIMEOUT_MS = 10 * 60_000;
 const MCP_MAX_LIST_PAGES = 100;
 const MCP_MAX_FRAME_BYTES = 32 * 1024 * 1024;
 const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
@@ -178,7 +177,9 @@ export class StdioMcp {
     this.child.stdin.write(JSON.stringify(frame) + "\n");
   }
 
-  private call(method: string, params: unknown, timeoutMs: number, signal?: AbortSignal): Promise<unknown> {
+  /** `timeoutMs` bounds setup requests only; a tool call passes none and
+   * runs until it answers or the turn's signal stops it. */
+  private call(method: string, params: unknown, timeoutMs: number | undefined, signal?: AbortSignal): Promise<unknown> {
     if (this.disposed) return Promise.reject(new Error("MCP client is closed"));
     if (signal?.aborted) return Promise.reject(new Error(`MCP ${method} aborted`));
 
@@ -205,8 +206,8 @@ export class StdioMcp {
         settle(() => reject(new Error(reason)));
       };
       const onAbort = () => cancel(`MCP ${method} aborted`);
-      const timer = setTimeout(() => cancel(`MCP ${method} timed out after ${timeoutMs}ms`), timeoutMs);
-      timer.unref?.();
+      const timer = timeoutMs === undefined ? undefined : setTimeout(() => cancel(`MCP ${method} timed out after ${timeoutMs}ms`), timeoutMs);
+      timer?.unref?.();
       signal?.addEventListener("abort", onAbort, { once: true });
       this.pending.set(id, {
         resolve: (value) => settle(() => resolve(value)),
@@ -261,12 +262,14 @@ export class StdioMcp {
   }
 
   /** tools/call → Pi content, preserving screenshots and bounding text so a
-   * remote server cannot flood the model context. */
+   * remote server cannot flood the model context. No fixed deadline
+   * (0.1.61): a long tool call ends when it answers or when the turn stops
+   * (the owner's Stop, or the thread's silence watch), never on a clock. */
   async callTool(name: string, args: unknown, signal?: AbortSignal): Promise<{ content: PiToolContent[]; isError: boolean }> {
     const res = (await this.call(
       "tools/call",
       { name, arguments: args ?? {} },
-      MCP_TOOL_TIMEOUT_MS,
+      undefined,
       signal,
     )) as { content?: unknown; isError?: boolean } | undefined;
     const rawContent = Array.isArray(res?.content) ? res.content : [];

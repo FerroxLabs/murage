@@ -135,6 +135,8 @@ if (process.env.FAKE_AGY_DUMP) {
   writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
 }
 if (argv.includes("--version")) {
+  const versionDelayMs = Number(process.env.FAKE_AGY_VERSION_DELAY_MS ?? 0);
+  if (Number.isFinite(versionDelayMs) && versionDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, versionDelayMs));
   console.log(process.env.FAKE_AGY_VERSION ?? "1.1.22");
   process.exit(0);
 }
@@ -187,6 +189,19 @@ if (process.env.FAKE_AGY_DUMP) {
 const toolName = mode === "ask-peer" ? "ask_bot" : "write_to_file";
 out({ event: "init", conversation_id: CONV, init: { cwd: process.cwd(), tools: ["run_command", "write_to_file", ...(mode === "ask-peer" ? ["list_bots", "ask_bot"] : [])], permission_mode: "accept-edits" } });
 out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ACTIVE", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {} } } });
+// FAKE_AGY_EXTRA_STEPS=1: steps agy streams that carry no chat content
+// (planning, a response still being written), as a long model step does.
+// The same step repeated (a stuck retry loop re-sending its state) is not
+// new work.
+if (process.env.FAKE_AGY_EXTRA_STEPS === "1") {
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 1, state: "ACTIVE", step_type: "planner_response" } });
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 1, state: "ACTIVE", step_type: "planner_response" } });
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 2, state: "ACTIVE", step_type: "agent_response" } });
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 1, state: "ACTIVE", step_type: "planner_response" } });
+  // one long step whose content keeps growing is still working
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 2, state: "ACTIVE", step_type: "agent_response", partial: "ab" } });
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 2, state: "ACTIVE", step_type: "agent_response", partial: "abc" } });
+}
 
 // A genuine crash: the child dies mid-turn with no `result` and nobody
 // asked it to stop (STOP1 pins this as exit_before_result, unlike a Stop).
@@ -222,6 +237,11 @@ if (mode === "ask-peer") {
 out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "DONE", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {} } } });
 out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 1, state: "DONE", step_type: "agent_response", usage: { input_tokens: 100, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 5, total_tokens: 125 } } });
 out({ event: "result", conversation_id: CONV, result: { conversation_id: CONV, status: "SUCCESS", response, duration_seconds: 1, num_turns: 1, usage: { input_tokens: 100, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 5, total_tokens: 125 } } });
+// FAKE_AGY_POST_RESULT_STEP=1: a step line written after the result, while
+// the process is still closing
+if (process.env.FAKE_AGY_POST_RESULT_STEP === "1") {
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 9, state: "ACTIVE", step_type: "planner_response" } });
+}
 const postResultDelayMs = Number(process.env.FAKE_AGY_POST_RESULT_DELAY_MS ?? 0);
 if (Number.isFinite(postResultDelayMs) && postResultDelayMs > 0) {
   await new Promise((resolve) => setTimeout(resolve, postResultDelayMs));

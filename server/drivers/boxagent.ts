@@ -10,6 +10,8 @@
 //
 // The event payload shapes are tolerated liberally and teed verbatim to
 // the native log — the same protocol-drift armor as every other driver.
+import { createHash } from "node:crypto";
+
 import type {
   DriverCreateInput,
   ProviderDriver,
@@ -34,6 +36,9 @@ const MODELS = {
     { id: "gpt-5.4", label: "GPT-5.4 (Codex) · on the box" },
   ],
 };
+
+/** Fields that name or time an event rather than say what happened. */
+const EVENT_IDENTITY_KEYS = new Set(["id", "eventId", "ts", "timestamp", "time", "createdAt", "created_at"]);
 
 const providerFor = (model: string) => (model.startsWith("gpt") ? "codex" : "claude-code");
 
@@ -128,11 +133,10 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       // poll events + run status until the prompt settles
       (async () => {
         const seen = new Set<string>();
-        // Stopped for silence, never for duration (0.1.61): a box run that
-        // keeps producing events may run as long as it needs. A run that
-        // has produced nothing new for this long is treated as stuck.
-        const BOX_SILENCE_MS = 30 * 60_000;
-        let lastActivityAt = Date.now();
+        // No clock of its own (0.1.61): every new box event reaches the
+        // thread as activity, and the thread's silence watch (the owner's
+        // room setting in a room) stops a run that goes quiet, through
+        // interruptTurn, like every other engine's turn.
         let lastText = "";
         let pendingText = "";
         /** Emit unflushed deltas as assistant_text and reset pendingText. */
@@ -150,6 +154,19 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
           pendingText += delta;
           emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta });
         };
+        // Only an event that says something new is work. A heartbeat (a
+        // fresh id or time around the same content) or a resent snapshot is
+        // not, so a box stuck sending them still goes quiet for the watch.
+        const shownContents = new Set<string>();
+        const working = (ev: Record<string, unknown>) => {
+          // at any depth: a heartbeat's time can sit inside its data
+          const content = JSON.stringify(ev, (name, value) => (EVENT_IDENTITY_KEYS.has(name) ? undefined : value)) ?? "";
+          const key = createHash("sha256").update(content).digest("base64");
+          if (shownContents.has(key)) return;
+          if (shownContents.size >= 1_000) shownContents.clear();
+          shownContents.add(key);
+          emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
+        };
         try {
           for (;;) {
             if (cancelled) break;
@@ -160,7 +177,6 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               const id = String(ev.id ?? ev.eventId ?? JSON.stringify(ev).slice(0, 120));
               if (seen.has(id)) continue;
               seen.add(id);
-              lastActivityAt = Date.now();
               appendNative(threadId, { dir: "in", source: "box.events", msg: ev });
               const kind = String(ev.type ?? ev.kind ?? "");
               // "response" events carry the agent's text at data.content —
@@ -180,10 +196,13 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                   itemId: id,
                   title: String(ev.title ?? ev.command ?? kind).slice(0, 80),
                 });
+              } else {
+                // work the chat does not show is still work
+                working(ev);
               }
               // shape-drift backstop: without a promptId the status poll
               // below can never see a terminal state, so settle off the
-              // events themselves instead of hanging to the silence limit
+              // events themselves instead of waiting for the silence watch
               if (!promptId && /complete|finish|done|success|fail|error/i.test(kind)) {
                 active.delete(threadId);
                 flushAssistantText();
@@ -220,9 +239,6 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                 else emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: state, cost: null });
                 return;
               }
-            }
-            if (Date.now() - lastActivityAt > BOX_SILENCE_MS) {
-              throw new Error("box run had no activity for 30 minutes: interrupted");
             }
           }
           // Murage stopped the turn: the shared cancelled state every driver

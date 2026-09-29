@@ -8,7 +8,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
@@ -18,6 +18,7 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import {
   ANTIGRAVITY_AGENTS_MCP_KEY,
   ANTIGRAVITY_COMPUTER_MCP_KEY,
+  ANTIGRAVITY_PRINT_TIMEOUT,
   AntigravityDriver,
   antigravityAgentsMcpServer,
   antigravityComputerMcpServer,
@@ -254,6 +255,149 @@ describe("Antigravity turns (fake CLI)", () => {
     } finally {
       await removeTempDir(scratch);
     }
+  });
+
+  it("runs a turn on activity alone: agy's own print timeout is out of reach and the driver arms no clock of its own", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "murage-agy-no-cap-"));
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_AGY_DUMP = dump;
+    await create();
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-no-cap", text: "go" });
+      await recorder.until((event) => event.type === "turn.completed");
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      const at = seen.argv.indexOf("--print-timeout");
+      expect(at).toBeGreaterThan(-1);
+      expect(seen.argv[at + 1]).toBe(ANTIGRAVITY_PRINT_TIMEOUT);
+      // beyond the longest silence limit an owner can set (24 hours), so the
+      // thread's silence watch is always what stops a quiet turn
+      expect(Number(/^(\d+)h$/.exec(ANTIGRAVITY_PRINT_TIMEOUT)?.[1])).toBeGreaterThan(24);
+      // no fixed per-turn deadline (the old 11-minute backstop)
+      expect(timers.mock.calls.filter(([, ms]) => typeof ms === "number" && ms >= 60_000)).toEqual([]);
+    } finally {
+      timers.mockRestore();
+      await removeTempDir(scratch);
+    }
+  });
+
+  it("reports agy steps the chat does not show as activity, so the silence watch sees the turn working", async () => {
+    process.env.FAKE_AGY_EXTRA_STEPS = "1";
+    try {
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-live", text: "go" });
+      await recorder.until((event) => event.type === "turn.completed");
+      // planner, the response step, then two growths of it; repeats add nothing
+      expect(recorder.events.filter((e) => e.type === "item.updated")).toHaveLength(4);
+      expect(recorder.events.filter((e) => e.type === "item.updated").every((e) => (e as any).itemType === "reasoning" && (e as any).tokens === null)).toBe(true);
+    } finally {
+      delete process.env.FAKE_AGY_EXTRA_STEPS;
+    }
+  });
+
+  it("reports nothing for a step line written after the result, so a closing child never feeds the next turn's silence watch", async () => {
+    process.env.FAKE_AGY_POST_RESULT_STEP = "1";
+    try {
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-after", text: "go" });
+      await recorder.until((event) => event.type === "turn.completed");
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const done = recorder.events.findIndex((event) => event.type === "turn.completed");
+      expect(recorder.events.slice(done + 1).filter((event) => event.type === "item.updated")).toEqual([]);
+    } finally {
+      delete process.env.FAKE_AGY_POST_RESULT_STEP;
+    }
+  });
+
+  it("a turn queued behind another Antigravity turn is waiting, not silent, and the owner's Stop ends the wait", async () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-lease-"));
+    const readyFile = join(home, "ready");
+    process.env.MURAGE_ANTIGRAVITY_LEASE_BEAT_MS = "50";
+    const holder = await AntigravityDriver.create({
+      instanceId: "agy-holder",
+      displayName: undefined,
+      environment: { HOME: home, FAKE_AGY_DELAY_MS: "10000", FAKE_AGY_READY_FILE: readyFile },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    const holderEvents = recordEvents(holder.adapter);
+    await create();
+    try {
+      await holder.adapter.sendTurn({ threadId: "t-holder", text: "long work" });
+      await expect.poll(() => existsSync(readyFile), { timeout: 2_000 }).toBe(true);
+      let returned = false;
+      const queued = instance.adapter.sendTurn({ threadId: "t-queued", text: "next" }).then((value) => { returned = true; return value; });
+      // waiting behind a working turn reads as activity on the waiting thread
+      await expect.poll(() => recorder.events.filter((e) => e.type === "item.updated" && e.threadId === "t-queued").length, { timeout: 2_000 }).toBeGreaterThanOrEqual(2);
+      expect(returned).toBe(false);
+      expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
+      // a Stop (the owner's, or the silence watch's) ends the wait itself
+      await instance.adapter.interruptTurn("t-queued");
+      const { turnId } = await queued;
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-queued");
+      expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+      expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+      expect(holderEvents.events.some((e) => e.type === "turn.completed")).toBe(false);
+    } finally {
+      delete process.env.MURAGE_ANTIGRAVITY_LEASE_BEAT_MS;
+      await holder.adapter.interruptTurn("t-holder");
+      await holderEvents.until((e) => e.type === "turn.completed").catch(() => undefined);
+      holderEvents.stop();
+      await holder.dispose();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it("stops reporting a queued turn as waiting once the turn ahead has finished its work", async () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-lease-done-"));
+    process.env.MURAGE_ANTIGRAVITY_LEASE_BEAT_MS = "50";
+    // the turn ahead settles, then its process lingers (and ignores SIGTERM)
+    // while it still holds the config
+    const holder = await AntigravityDriver.create({
+      instanceId: "agy-lingering",
+      displayName: undefined,
+      environment: { HOME: home, FAKE_AGY_DELAY_MS: "600", FAKE_AGY_POST_RESULT_DELAY_MS: "10000", FAKE_AGY_IGNORE_SIGTERM: "1" },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    const holderEvents = recordEvents(holder.adapter);
+    await create();
+    try {
+      await holder.adapter.sendTurn({ threadId: "t-lingering", text: "work" });
+      const queued = instance.adapter.sendTurn({ threadId: "t-behind", text: "next" });
+      await holderEvents.until((e) => e.type === "turn.completed", 5_000);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const beats = () => recorder.events.filter((e) => e.type === "item.updated" && e.threadId === "t-behind").length;
+      const settledBeats = beats();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      // no work is left ahead of it: its own silence watch owns it now
+      expect(beats()).toBe(settledBeats);
+      await queued;
+      await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-behind", 15_000);
+    } finally {
+      delete process.env.MURAGE_ANTIGRAVITY_LEASE_BEAT_MS;
+      holderEvents.stop();
+      await holder.dispose().catch(() => undefined);
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 25_000);
+
+  it("a Stop that lands while the engine version is still being read ends the turn before it starts", async () => {
+    instance = await AntigravityDriver.create({
+      instanceId: "agy-early-stop",
+      displayName: undefined,
+      environment: { FAKE_AGY_VERSION_DELAY_MS: "800" },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+    const sent = instance.adapter.sendTurn({ threadId: "t-early", text: "go" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await instance.adapter.interruptTurn("t-early");
+    const { turnId } = await sent;
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+    expect(recorder.events.some((e) => e.type === "turn.started")).toBe(false);
   });
 
   it("strips ambient routing switches from the agy child env", async () => {
