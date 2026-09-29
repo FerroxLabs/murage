@@ -2,6 +2,7 @@ import {randomBytes,randomUUID} from "node:crypto";
 import {constants,openSync,closeSync,lstatSync,fstatSync,readSync,realpathSync,writeFileSync,unlinkSync,mkdirSync,rmdirSync,linkSync} from "node:fs";
 import path from "node:path";
 import {restrictToOwnerAsync,assertPrivateToOwnerAsync,volumeKeepsAclsAsync} from "./backup-windows-acl.mjs";
+import {hostCloudFolder} from "./backup-recovery-key.mjs";
 // Windows has no uid or mode bits: its files are made owner-only by ACL instead.
 const posix=()=>process.platform!=="win32";
 export const BACKUP_REMOTE_PASSWORDS_KEY="backupRemotePasswordReferences";
@@ -95,13 +96,15 @@ async function writeOwnerOnly(folder,names,bytes,{restrictFile,restrictDirectory
   try{rmdirSync(stage);}catch{/* left empty and owner-only; nothing secret inside */}
  }
 }
-/** A new owner-only file in the first usable folder, never replacing one. */
-async function writeNewFile(folders,excludedRoots,uid,bytes,options){
+/** A new owner-only file in the first usable folder, never replacing one.
+ * Made where nobody is asked, so never in a folder that syncs to the cloud
+ * (the same rule as the recovery key, backup-recovery-key.mjs). */
+async function writeNewFile(folders,excludedRoots,uid,bytes,options,cloudFolder){
  for(const folder of folders){
   try{
    if(typeof folder!=="string"||!path.isAbsolute(folder))continue;
    const real=realpathSync.native(folder),stat=lstatSync(real);
-   if(!stat.isDirectory()||stat.isSymbolicLink()||(posix()&&stat.uid!==uid)||insideAny(real,excludedRoots))continue;
+   if(!stat.isDirectory()||stat.isSymbolicLink()||(posix()&&stat.uid!==uid)||insideAny(real,excludedRoots)||cloudFolder(real))continue;
    const names=[];for(let n=1;n<100;n++)names.push(n===1?`${REMOTE_PASSWORD_FILE_NAME}.txt`:`${REMOTE_PASSWORD_FILE_NAME}-${n}.txt`);
    const file=await writeOwnerOnly(real,names,bytes,options);if(file)return file;
   }catch{/* try the next folder */}
@@ -119,7 +122,7 @@ function references(document){
 }
 /** All file selections and encrypted-document callbacks belong to main. */
 export function createRemotePasswordStore({chooseFile,excludedRoots,readProtected,updateProtected,uid=process.getuid?.(),createId=randomUUID,createFolders=()=>[],createExcludedRoots=()=>[],chooseCopyFile=null,
- restrict=async file=>{if(!posix())await restrictToOwnerAsync(file);},restrictDirectory=async directory=>{if(!posix())await restrictToOwnerAsync(directory,{directory:true});},checkPrivate=assertPrivateToOwnerAsync,stageId=randomUUID,keepsAcls=volumeKeepsAclsAsync}){
+ restrict=async file=>{if(!posix())await restrictToOwnerAsync(file);},restrictDirectory=async directory=>{if(!posix())await restrictToOwnerAsync(directory,{directory:true});},checkPrivate=assertPrivateToOwnerAsync,stageId=randomUUID,keepsAcls=volumeKeepsAclsAsync,cloudFolder=hostCloudFolder}){
  const written={restrictFile:restrict,restrictDirectory,createId:stageId};
  // Kimi audit #3: read first with the file held open, then check the ACL of
 // the path, then prove the path still names the file that was read. A file
@@ -146,7 +149,7 @@ export function createRemotePasswordStore({chooseFile,excludedRoots,readProtecte
     if(posix()&&(!Number.isSafeInteger(uid)||uid<1))refuse();
     bytes=Buffer.from(randomBytes(32).toString("base64url")+"\n");
     const excluded=[...roots(excludedRoots),...(await createExcludedRoots())];
-    file=await writeNewFile(createFolders(),excluded,uid,bytes,written);
+    file=await writeNewFile(createFolders(),excluded,uid,bytes,written,cloudFolder);
     try{selected=await read(file,excluded);}catch(error){try{unlinkSync(file);}catch{/* reported below */}throw error;}
     return{passwordRef:await register(selected),path:selected.path};
    }catch(error){return refuse(error instanceof Error&&error.message==="BACKUP_REMOTE_CONTROL_UNAVAILABLE"?error.message:undefined,error);}finally{bytes?.fill(0);selected?.password.fill(0);}

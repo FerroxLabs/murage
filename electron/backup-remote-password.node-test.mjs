@@ -163,3 +163,33 @@ test("Windows: a password file swapped while its ACL is checked is refused",asyn
  await assert.rejects(store.select(),/BACKUP_REMOTE_PASSWORD/);
  assert.deepEqual(document,{});
 });
+// 0.1.61 (Sean, 2026-09-29): the off-site password follows the recovery key's
+// rule. Made where nobody is asked, so never in a folder that syncs to the
+// cloud, the remembered key folder included; none left is a refusal.
+test("the off-site password Murage makes skips folders that sync to the cloud",{skip:POSIX_ONLY},async t=>{
+ const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-remote-password-cloud-")));t.after(()=>safeWipeSync(root));
+ const installation=path.join(root,"installation"),oneDrive=path.join(root,"OneDrive - Contoso"),cloudStorage=path.join(root,"Library","CloudStorage","GoogleDrive-me@example.com"),home=path.join(root,"home");
+ for(const dir of [installation,oneDrive,cloudStorage,home])mkdirSync(dir,{recursive:true,mode:0o700});
+ let document={};
+ const store=folders=>createRemotePasswordStore({chooseFile:async()=>null,excludedRoots:()=>[installation],readProtected:async()=>document,updateProtected:async derive=>{document=derive(document);},createFolders:()=>folders});
+ const made=await store([oneDrive,cloudStorage,home]).create();
+ assert.equal(made.path,path.join(home,"murage-offsite-password.txt"));
+ assert.deepEqual(readdirSync(oneDrive),[]);assert.deepEqual(readdirSync(cloudStorage),[]);
+ await assert.rejects(store([oneDrive,cloudStorage]).create(),/PASSWORD_UNAVAILABLE/);
+ assert.deepEqual(readdirSync(oneDrive),[]);assert.deepEqual(readdirSync(cloudStorage),[]);
+});
+test("main makes the off-site password in the key's folder, then home, then (Windows) local app data: never Documents",()=>{
+ const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
+ const line=main.split("\n").find(text=>text.includes("createFolders:()=>"));
+ assert.ok(line,"createFolders is wired");
+ // Documents is only ever the folder set aside, even when an earlier key was remembered there (Astra r2 #4).
+ assert.doesNotMatch(line,/folders\.push\(app\.getPath\("documents"\)\)/);
+ assert.match(line,/documents=fs\.realpathSync\(app\.getPath\("documents"\)\)/);
+ assert.match(line,/pathWithin\(documents,fs\.realpathSync\(remembered\)\)[^\n]*if\(remembered&&!within\)folders\.push\(remembered\)/);
+ assert.match(line,/getPath\("home"\)/);
+ assert.match(line,/process\.platform==="win32"[^\n]*localAppDataDirectory\(\)/);
+ // a picked copy folder that syncs is named before anything is saved there
+ const copy=main.slice(main.indexOf('title:"Save a copy of your off-site password"')-600,main.indexOf('title:"Save a copy of your off-site password"')+1400);
+ assert.match(copy,/hostCloudFolder\(path\.dirname\(answer\.filePath\)\)/);
+ assert.match(copy,/This folder syncs to \$\{provider\}\./);
+});

@@ -9,7 +9,8 @@ import { createApprovalNotifications } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, BACKUP_TOOL_STUCK_AFTER, createBackupModeController, createBackupToolCapability, createResticToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { BACKUP_UNAVAILABLE_SENTENCES, backupUnavailableCode, captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
-import { createRecoveryKeyFlow, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
+import { pathWithin } from "../shared/path-identity.mjs";
+import { createRecoveryKeyFlow, hostCloudFolder, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
@@ -3504,13 +3505,26 @@ async function initializeBackupRemoteHost(){
       return confirmed.response===1?answer.filePaths[0]??null:null;
     },
     // Murage's own off-site password goes where the recovery key went, else
-    // Documents, else Home: never the data, settings, control or backup folder.
-    createFolders:()=>{const folders=[];const remembered=recoveryKeyFolderStore(path.join(app.getPath("userData"),"backup-key-folder.json")).read()?.folder;if(remembered)folders.push(remembered);for(const name of ["documents","home"]){try{folders.push(app.getPath(name));}catch{/* not on every platform */}}return folders;},
+    // the home folder, else (Windows) the local app data folder: never the
+    // data, settings, control or backup folder, and never Documents, which
+    // sync clients take over under its usual name (the recovery key's rule).
+    // The store skips any folder that syncs to the cloud, the remembered one
+    // included.
+    createFolders:()=>{const folders=[];const remembered=recoveryKeyFolderStore(path.join(app.getPath("userData"),"backup-key-folder.json")).read()?.folder;let documents=null;try{documents=fs.realpathSync(app.getPath("documents"));}catch{/* none */}let within=false;try{within=Boolean(remembered&&documents&&pathWithin(documents,fs.realpathSync(remembered)));}catch{/* a folder that is gone is skipped when written */}if(remembered&&!within)folders.push(remembered);try{folders.push(app.getPath("home"));}catch{/* not on every platform */}if(process.platform==="win32"){const local=localAppDataDirectory();if(local)folders.push(local);}return folders;},
     createExcludedRoots:async()=>{let destination=null;try{destination=await backupScheduleHost?.selectedDestination?.();}catch{/* no backup folder chosen */}return typeof destination==="string"&&path.isAbsolute(destination)?[destination]:[];},
+    // A picked folder that syncs to the cloud is named before the copy goes there.
     chooseCopyFile:async suggested=>{
-      const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save a copy of your off-site password",buttonLabel:"Save copy",properties:["createDirectory"],defaultPath:suggested,nameFieldLabel:"Password file:",
-        message:"Keep this copy away from this computer, for example on a USB drive or in your password manager. You need it, with your recovery key, to restore the off-site copy on a new computer."});
-      return answer.canceled||!answer.filePath?null:answer.filePath;
+      for(;;){
+        const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save a copy of your off-site password",buttonLabel:"Save copy",properties:["createDirectory"],defaultPath:suggested,nameFieldLabel:"Password file:",
+          message:"Keep this copy away from this computer, for example on a USB drive or in your password manager. You need it, with your recovery key, to restore the off-site copy on a new computer."});
+        if(answer.canceled||!answer.filePath)return null;
+        const provider=hostCloudFolder(path.dirname(answer.filePath));
+        if(!provider)return answer.filePath;
+        const confirm=await dialog.showMessageBox(mainWindow??undefined,{title:"Murage",type:"warning",buttons:["Choose another place","Save here"],defaultId:0,cancelId:0,noLink:true,
+          message:`This folder syncs to ${provider}.`,
+          detail:`Your off-site password would be stored in ${provider} as well as on this computer. Choose another place to keep it only on this computer or on a USB drive, or save it here if you want it there.`});
+        if(confirm.response===1)return answer.filePath;
+      }
     },
   });
   // One pinned restic per shipped platform and arch (shared/backup-restic-pin.mjs).

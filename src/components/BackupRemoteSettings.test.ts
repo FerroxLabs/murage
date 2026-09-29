@@ -87,7 +87,7 @@ it("names why an off-site password step was refused instead of a bare 'could not
  }
  expect(sentences.size).toBe(8);
  // Windows has no chmod: its sentence says what to do there (W-A5).
- expect(remoteBackupError(Error("Error invoking remote method 'backupRemote:selectPassword': Error: BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS"))).toMatch(/Documents folder/);
+ expect(remoteBackupError(Error("Error invoking remote method 'backupRemote:selectPassword': Error: BACKUP_REMOTE_PASSWORD_FILE_SHARED_WINDOWS"))).toMatch(/home folder/);
  expect(remoteBackupError(Error("SOMETHING_ELSE"))).not.toMatch(/could not be confirmed/);
 });
 

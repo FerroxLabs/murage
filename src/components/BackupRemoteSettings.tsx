@@ -102,12 +102,12 @@ export function remoteBackupError(cause:unknown){
  if(code.includes("CREATE_FAILED"))return "Murage reached the destination but could not create the backup repository there. Check that the access keys may write to this bucket, or that the user may write to this folder, then test the connection again.";
  if(code.includes("PASSWORD_FILE_UNREADABLE"))return "Murage could not read the off-site password file. It may have been moved, renamed or changed. Put it back, or choose it again.";
  if(code.includes("CONTROL_UNAVAILABLE"))return "Murage couldn't prepare its private off-site folder beside its data folder, so it didn't create or choose a password file. Check that you can create folders in the folder that holds Murage's data, then try again.";
- if(code.includes("PASSWORD_FILE_PLACE"))return "That file is inside Murage's own folders or your backup folder. Keep the off-site password somewhere else, such as Documents, then choose it again.";
+ if(code.includes("PASSWORD_FILE_PLACE"))return "That file is inside Murage's own folders or your backup folder. Keep the off-site password somewhere else, such as your home folder, then choose it again.";
  if(code.includes("PASSWORD_FILE_KIND"))return "That isn't a plain password file. Choose a small text file (under 4 KB) that is not a shortcut or link.";
- if(code.includes("PASSWORD_FILE_SHARED_WINDOWS"))return "Other accounts on this computer can open that file. Copy it into your Documents folder, which only you can open, then choose the copy and delete the original.";
+ if(code.includes("PASSWORD_FILE_SHARED_WINDOWS"))return "Other accounts on this computer can open that file. Copy it into your home folder, which only you can open, then choose the copy and delete the original.";
  if(code.includes("PASSWORD_FILE_SHARED"))return "Other accounts on this computer can read that file. Make it readable only by you, then choose it again.";
  if(code.includes("PASSWORD_FILE_FORMAT"))return "That file doesn't hold a single-line password. Choose a file with the password on one line and nothing else.";
- if(code.includes("PASSWORD_NOT_CREATED"))return "Murage could not create the off-site password file. Check that your Documents or home folder can be written to, then try again.";
+ if(code.includes("PASSWORD_NOT_CREATED"))return "Murage could not create the off-site password file. Check that your home folder can be written to and does not sync to a cloud service, then try again.";
  if(code.includes("PASSWORD_COPY_FAILED"))return "The copy was not saved. Choose a folder outside Murage's own folders and your backup folder, with no file of that name yet.";
  if(code.includes("TOOL_UNVERIFIED"))return "The backup tool that comes with Murage could not be checked. Reinstall Murage, then try again.";
  if(code.includes("KEYS_UNREADABLE"))return "Murage could not read the saved access details for this destination. Choose Change destination and save it again.";

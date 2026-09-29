@@ -233,7 +233,7 @@ export function cloudSyncedFolder(folder, { platform = process.platform, env = p
 }
 /** The same, for a folder on this host: judged where it really is, so a link
  * into a synced folder counts as that folder. */
-function hostCloudFolder(folder) {
+export function hostCloudFolder(folder) {
   let resolved = folder;
   try { resolved = realpathSync.native(folder); } catch { /* Judge the spelling it was given. */ }
   return cloudSyncedFolder(resolved);
