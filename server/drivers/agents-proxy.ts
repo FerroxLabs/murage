@@ -587,7 +587,8 @@ function withoutImageLibrary(tools: typeof TOOLS): typeof TOOLS {
     const { prompt_blocks: _blocks, reference_pack: _pack, ...properties } = tool.inputSchema.properties as Record<string, Record<string, unknown>>;
     return { ...tool,
       description: tool.description.replace(" Saved prompt blocks (prompt_blocks) go first, in order, then the scene prompt; saved reference-pack images (reference_pack) come before reference_ids and count against the model's cap.", ""),
-      inputSchema: { ...tool.inputSchema, properties: { ...properties, prompt: { ...properties.prompt, description: "The scene prompt, sent whole. It must fit the model's maxPromptChars." } } } };
+      // No saved blocks to build on: the prompt is the whole request.
+      inputSchema: { ...tool.inputSchema, required: ["request_id", "prompt"], properties: { ...properties, prompt: { ...properties.prompt, description: "The scene prompt, sent whole. It must fit the model's maxPromptChars." } } } };
   }) as typeof TOOLS;
 }
 // The descriptions are this file's own text: sibling tools in them are named

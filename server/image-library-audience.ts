@@ -27,7 +27,9 @@ export function imageLibraryContactRefusal(): string {
   return `Saved prompt blocks and reference packs belong to the owner, so they cannot be used in this conversation. Write what you need into the prompt and call ${murageTool("generate_image")} without prompt_blocks or reference_pack.`;
 }
 
-const LIBRARY_ROUTE = /^\/api\/internal\/image-(?:prompt-blocks?|reference-packs?)$/;
+// Every path under the library's two prefixes, the same test index.ts uses
+// to enter the library routes, so a route added there later is covered.
+const LIBRARY_ROUTE = /^\/api\/internal\/image-(?:prompt-block|reference-pack)/;
 
 /** The refusal this internal request earns, or null when it may proceed. A
  * render that names no saved block or pack keeps whatever rule it has. */

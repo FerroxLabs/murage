@@ -115,21 +115,55 @@ function phoneSkillText(text: string, style: ToolCallStyle | undefined, mount: s
   return murageToolText(named, style, ["phone", ...PROMPT_SERVERS], { phone: mount }, { phone: MURAGE_TOOL_WORDS.phone });
 }
 
+/** A SKILL.md's body, rewritten; its frontmatter (name, description) stays
+ *  word for word. */
+function inBody(instructions: string, rewrite: (body: string) => string): string {
+  const end = instructions.startsWith("---") ? instructions.indexOf("\n---", 3) : -1;
+  if (end < 0) return rewrite(instructions);
+  const split = end + 4;
+  return instructions.slice(0, split) + rewrite(instructions.slice(split));
+}
+
+/** The bundled image guide's saved-library teaching (prompt blocks, reference
+ *  packs), cut on a turn whose audience is not the owner: the tools are not
+ *  listed there and the harness refuses them (image-library-audience.ts).
+ *  Each cut is an exact passage of skills/image-generation/SKILL.md, so an
+ *  edit there that moves one fails image-library-audience.test.ts. */
+const IMAGE_LIBRARY_PASSAGES: ReadonlyArray<[from: string, to: string, instead: string]> = [
+  ["Send the lock first, then the scene. Save the lock once with", "Never rewrite a lock from memory.", "Send the lock first, then the scene, both in `prompt`. Never rewrite a lock from memory."],
+  ["- Save a set you reuse with `save_reference_pack`", "refuses the whole request.\n", ""],
+  ["counts: saved blocks, the scene and any Avoid: line.", "", "counts: the scene and any Avoid: line."],
+];
+function withoutImageLibrary(body: string): string {
+  let text = body;
+  for (const [from, to, instead] of IMAGE_LIBRARY_PASSAGES) {
+    const start = text.indexOf(from);
+    const stop = to ? text.indexOf(to, start) : start;
+    if (start < 0 || stop < 0) continue;
+    text = text.slice(0, start) + instead + text.slice(to ? stop + to.length : start + from.length);
+  }
+  return text;
+}
+
 /** One layer per selected skill; renderSkillInstructions of the whole list
  *  is exactly these joined. The Chief of Staff guide is its own row.
  *  `phoneServer`: the name this engine mounts the phone under
- *  (shared/murage-tool-names.ts phoneMountName). */
-export function skillLayers(selected: readonly BundledSkill[], options: { includeRoot?: boolean; toolCallStyle?: ToolCallStyle; murageSkill?: (skill: BundledSkill) => boolean; phoneServer?: string } = {}): ShapeLayer[] {
+ *  (shared/murage-tool-names.ts phoneMountName). `ownerAudience: false`: a
+ *  turn whose audience is not the owner, whose image guide leaves out the
+ *  owner's saved library. */
+export function skillLayers(selected: readonly BundledSkill[], options: { includeRoot?: boolean; toolCallStyle?: ToolCallStyle; murageSkill?: (skill: BundledSkill) => boolean; phoneServer?: string; ownerAudience?: boolean } = {}): ShapeLayer[] {
   return selected.map((skill) => {
     const id = skill.manifest.id === "chief-of-staff" ? "chief-guide" : `skill:${skill.manifest.id}`;
     // Only a skill Murage ships has its tool names spelled for this engine,
-    // and only in its instructions: an owner's or learned skill, its id and
-    // its folder are theirs, word for word.
+    // and only in its instructions' body: an owner's or learned skill, its
+    // id, its frontmatter and its folder are theirs, word for word.
     const murage = options.murageSkill?.(skill) === true;
+    const own = murage && skill.manifest.id === "image-generation" && options.ownerAudience === false
+      ? inBody(skill.instructions, withoutImageLibrary) : skill.instructions;
     const shown = murage && skill.manifest.id === "phone-harness"
-      ? { ...skill, instructions: phoneSkillText(skill.instructions, options.toolCallStyle, options.phoneServer ?? "phone") }
+      ? { ...skill, instructions: inBody(own, body => phoneSkillText(body, options.toolCallStyle, options.phoneServer ?? "phone")) }
       : murage && options.toolCallStyle === "use-tool"
-        ? { ...skill, instructions: engineToolText(skill.instructions, options.toolCallStyle) } : skill;
+        ? { ...skill, instructions: inBody(own, body => engineToolText(body, options.toolCallStyle)) } : { ...skill, instructions: own };
     return shapeLayer(id, renderSkillInstructions([shown], options), id === "chief-guide" ? undefined : skill.manifest.name);
   });
 }

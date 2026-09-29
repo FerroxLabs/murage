@@ -185,12 +185,17 @@ export class ImageOperations {
    * (a provider job to poll, with the operation id its prompt was kept under).
    * The caller then skips re-reading saved blocks and packs, which may have
    * changed since the render was approved. */
-  resumable(actor: Pick<ImageActor, "botId" | "threadId" | "generation">, requestId: string): { kind: "settled" | "job"; operationId: string } | undefined {
+  resumable(actor: Pick<ImageActor, "botId" | "threadId" | "generation">, requestId: string, request: unknown): { kind: "settled" | "job"; operationId: string } | undefined {
     if (!/^[\w-]{1,80}$/.test(requestId)) return undefined;
-    const own = this.db().prepare("SELECT id,state,result FROM image_operations WHERE id=?").get(hash(`${actor.botId}:${actor.threadId}:${actor.generation}:${requestId}`)) as { id: string; state: string; result: string | null } | undefined;
-    const row = own ?? this.db().prepare("SELECT id,state,result FROM image_operations WHERE state IN ('running','uncertain') AND json_valid(result) AND json_extract(result,'$.resumeKey')=? ORDER BY updated_at DESC LIMIT 1")
-      .get(hash(`${actor.botId}:${actor.threadId}:${requestId}`)) as { id: string; state: string; result: string | null } | undefined;
+    type Row = { id: string; request_hash: string; state: string; result: string | null };
+    const own = this.db().prepare("SELECT id,request_hash,state,result FROM image_operations WHERE id=?").get(hash(`${actor.botId}:${actor.threadId}:${actor.generation}:${requestId}`)) as Row | undefined;
+    const row = own ?? this.db().prepare("SELECT id,request_hash,state,result FROM image_operations WHERE state IN ('running','uncertain') AND json_valid(result) AND json_extract(result,'$.resumeKey')=? ORDER BY updated_at DESC LIMIT 1")
+      .get(hash(`${actor.botId}:${actor.threadId}:${requestId}`)) as Row | undefined;
     if (!row) return undefined;
+    // Only the request that started it collects it: another request reusing
+    // the request_id must never be sent the prompt kept for this one (its
+    // saved blocks included), on this turn or a later one.
+    if (row.request_hash !== hash(JSON.stringify(request))) throw error(409, "This image request ID was already used for a different request.");
     if (row.state === "published" || row.state === "publish-pending") return { kind: "settled", operationId: row.id };
     return ["running", "uncertain"].includes(row.state) && parseJob(row.result) && !parsePending(row.result) ? { kind: "job", operationId: row.id } : undefined;
   }

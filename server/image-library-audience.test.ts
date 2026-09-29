@@ -22,7 +22,9 @@ import { internalRouteRefusal } from "./internal-route-authority.ts";
 import { imageLibraryContactRefusal, imageLibraryOwnerAudience, imageLibraryRouteRefusal } from "./image-library-audience.ts";
 import { IMAGE_LIBRARY_ENV, IMAGE_LIBRARY_TOOLS } from "../shared/image-library-audience.ts";
 import { MURAGE_MCP_TOOLS } from "../shared/murage-tool-names.ts";
-import { TURN_PROMPTS, imageToolsPrompt } from "./bot-shapes.ts";
+import { TURN_PROMPTS, imageToolsPrompt, skillLayers } from "./bot-shapes.ts";
+import { loadBundledSkills } from "./skill-library.ts";
+import { toolCallStyleFor } from "../shared/murage-tool-names.ts";
 
 beforeEach(() => {
   closeDatabase();
@@ -46,6 +48,9 @@ const LIBRARY_ROUTES: Array<[string, string, unknown?]> = [
   ["GET", "/api/internal/image-prompt-block"],
   ["GET", "/api/internal/image-reference-packs"],
   ["POST", "/api/internal/image-reference-packs", { name: "hero", referenceIds: ["a.png"] }],
+  // anything later added under the library's paths is the library too
+  ["GET", "/api/internal/image-prompt-blocks/brand-lock"],
+  ["DELETE", "/api/internal/image-reference-pack/hero"],
 ];
 
 describe("who is the library's audience", () => {
@@ -121,6 +126,9 @@ describe("the agents proxy on a contact turn", () => {
     expect(Object.keys(generate.inputSchema.properties)).not.toContain("reference_pack");
     expect(JSON.stringify(contact)).not.toMatch(/prompt_blocks|reference_pack|prompt block|reference-pack/i);
     expect(owner.find(t => t.name === "generate_image")!.inputSchema.properties.prompt_blocks).toBeDefined();
+    // with no saved blocks to lean on, the prompt is what the render needs
+    expect((generate.inputSchema as { required?: string[] }).required).toEqual(["request_id", "prompt"]);
+    expect((owner.find(t => t.name === "generate_image")!.inputSchema as { required?: string[] }).required).toEqual(["request_id"]);
   });
 });
 
@@ -131,6 +139,22 @@ describe("the images line on a contact turn", () => {
     expect(contact.length).toBeLessThan(TURN_PROMPTS.imageTools.length);
     expect(TURN_PROMPTS.imageTools.startsWith(contact)).toBe(true);
     expect(contact).not.toMatch(/prompt_block|reference_pack/);
+    expect(contact).toContain("generate_image");
+  });
+});
+
+describe("the image skill on a contact turn", () => {
+  const skill = loadBundledSkills(join(import.meta.dirname, "..", "skills")).find(item => item.manifest.id === "image-generation")!;
+  const layer = (kind: string, ownerAudience?: boolean) => skillLayers([skill], { toolCallStyle: toolCallStyleFor(kind), murageSkill: item => item === skill, ownerAudience })[0]!.text;
+  it.each(["claude", "fuigoAgent"])("%s: teaches no saved library, and the owner's copy keeps all of it", kind => {
+    const contact = layer(kind, false), owner = layer(kind);
+    expect(layer(kind, true)).toBe(owner);
+    for (const tool of IMAGE_LIBRARY_TOOLS) { expect(owner).toContain(tool); expect(contact).not.toContain(tool); }
+    expect(contact).not.toMatch(/prompt_blocks|reference_pack/);
+    // the rest of the guide is still there, lock plus scene included
+    expect(contact).toContain("Lock plus scene");
+    expect(contact).toContain("Send the lock first, then the scene");
+    expect(contact).toContain("resolve_image_reference");
     expect(contact).toContain("generate_image");
   });
 });

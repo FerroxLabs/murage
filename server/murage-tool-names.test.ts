@@ -335,6 +335,15 @@ describe("Murage-written prompt text names tools the turn's engine can call", ()
     expect(text).toContain(`Use the \`${mount}\` tools`);
     expectCallableOn(kind, text, [...tools, ...MURAGE_MCP_TOOLS.agents]);
   });
+  it("a bundled skill's frontmatter is left word for word; only its body names tools per engine", () => {
+    for (const id of ["image-generation", "phone-harness"]) {
+      const skill = loadBundledSkills(join(here, "..", "skills")).find(item => item.manifest.id === id)!;
+      const front = skill.instructions.slice(0, skill.instructions.indexOf("\n---", 3) + 4);
+      const text = skillLayers([skill], { toolCallStyle: "use-tool", murageSkill: item => item === skill, phoneServer: "phone" })[0]!.text;
+      expect(text, id).toContain(front);
+      expect(text, id).toContain("use_tool with tool_name");
+    }
+  });
   it("the phone server's mount name is the one each driver mounts it under", () => {
     expect(phoneMountName("claude")).toBe("phone");
     expect(phoneMountName("pi")).toBe("phone");

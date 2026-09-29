@@ -6315,6 +6315,8 @@ async function startTurn(
       const skillShapes = skillLayers(selectedSkills, {
         includeRoot: worksInWorkspace && opts?.runOn !== "cloud",
         toolCallStyle: toolCallStyleFor(instance.driverKind), murageSkill, phoneServer: phoneMountName(instance.driverKind),
+        // the same audience the images line is written for
+        ownerAudience: humanIsOwner && !memoryNotOwner,
       });
       const packagePlaybooks = installedPlaybookInstructions(text, pinnedProcedures.playbooks);
       // An explicit working folder wins for new tasks; otherwise they use
@@ -8260,7 +8262,8 @@ async function runGroupMemberTurn(
       skills,
     ), ...attachedSkillsFor(bot, skills)],
   );
-  if (selectedSkills.some((skill) => skill.manifest.requiredCapabilities.includes("phoneMcp"))) {
+  // The owner's own phone, for the owner's audience only, as in a 1:1 turn.
+  if (roomOwnerAudience && selectedSkills.some((skill) => skill.manifest.requiredCapabilities.includes("phoneMcp"))) {
     integrations.phone = phoneIntegration();
   }
   try {
@@ -8492,7 +8495,7 @@ async function runGroupMemberTurn(
     shapeLayer("team-brief", roomStanding.teamBrief),
     shapeLayer("memory", roomStanding.memory),
     shapeLayer("skills-index", workspace ? pinnedProcedures.importedPrompt : ""),
-    ...skillLayers(selectedSkills, { includeRoot: Boolean(workspace), toolCallStyle: roomToolStyle, murageSkill, phoneServer: phoneMountName(instance.driverKind) }),
+    ...skillLayers(selectedSkills, { includeRoot: Boolean(workspace), toolCallStyle: roomToolStyle, murageSkill, phoneServer: phoneMountName(instance.driverKind), ownerAudience: roomOwnerAudience }),
     shapeLayer("playbooks", installedPlaybookInstructions(text, pinnedProcedures.playbooks)),
   ];
 
@@ -11949,7 +11952,13 @@ const server = createServer((req, res) => withToolCallScope(async () => {
           // A repeat of an approved request (published, waiting to publish, or
           // a provider job to collect) never re-reads them: they may have
           // changed since, and the kept prompt is what was approved.
-          const earlier = imageOperations.resumable(actor, body.requestId);
+          // The request as the operation row records it. References make it
+          // an edit: attached ones and a pack's (a pack is never empty).
+          const { requestId: _requestId, referenceIds: _referenceIds, connectionId: _connectionId, model: _model, operation: _operation, promptBlocks: _promptBlocks, referencePack: _referencePack, ...options } = body;
+          const request = { connectionId: chosen, model: body.model ?? state.selected?.model ?? state.catalog?.defaultModel ?? undefined,
+            operation: body.operation ?? (body.referenceIds?.length || body.referencePack ? "edit" : "generate"), ...options };
+          const recorded = { ...request, referenceIds: body.referenceIds, promptBlocks: body.promptBlocks, referencePack: body.referencePack };
+          const earlier = imageOperations.resumable(actor, body.requestId, recorded);
           const kept = earlier?.kind === "job" ? renderPrompt(database(), earlier.operationId) : undefined;
           if (earlier?.kind === "job" && !kept) return json(res, 409, { error: "The prompt kept for this render is missing, so its provider job cannot be collected here. Check the provider before trying again; no new image request was sent." });
           const blocks = earlier ? [] : resolvePromptBlocks(database(), { kind: "bot", botId: actor.botId }, body.promptBlocks ?? []);
@@ -11957,15 +11966,12 @@ const server = createServer((req, res) => withToolCallScope(async () => {
           const attached = earlier ? [] : imageReferences(store, actor.threadId, body.referenceIds);
           const refs = [...(pack?.references ?? []), ...attached];
           if (refs.length > IMAGE_GENERATION_REFERENCE_MAX) return json(res, 400, { error: `${refs.length} reference images (${pack?.references.length ?? 0} from the pack, ${attached.length} attached); Murage takes at most ${IMAGE_GENERATION_REFERENCE_MAX}. Nothing was sent.` });
-          const { requestId: _requestId, referenceIds: _referenceIds, connectionId: _connectionId, model: _model, operation: _operation, promptBlocks: _promptBlocks, referencePack: _referencePack, ...options } = body;
-          const request = { connectionId: chosen, model: body.model ?? state.selected?.model ?? state.catalog?.defaultModel ?? undefined,
-            operation: body.operation ?? (refs.length || (earlier && body.referenceIds?.length) || (earlier && body.referencePack) ? "edit" : "generate"), ...options };
           // The job being collected is sent nothing: it is described by the prompt kept at approval.
           const sent = kept ? { ...request, prompt: kept.prompt, negativePrompt: undefined, condensedFromChars: undefined } : request;
           const assembly = { blocks: blocks.map(block => ({ name: block.name, version: block.version, scope: block.scope, text: block.text })),
             ...(pack ? { referencePack: { name: pack.name, version: pack.version, count: pack.references.length } } : {}),
             ...(kept?.blocks.length ? { keptBlocks: kept.blocks } : {}) };
-          const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds, promptBlocks: body.promptBlocks, referencePack: body.referencePack }, (reserve, publish, context) =>
+          const result = await imageOperations.execute(actor, body.requestId, recorded, (reserve, publish, context) =>
             imageService.generate(sent, { signal: controller.signal, assertActive: active, reserve, publish, operationId: context.operationId, resumeJob: context.resumeJob, jobStarted: context.jobStarted,
               connectionLabel: labelledImageConnections().find(connection => connection.id === chosen)?.label }, refs, assembly));
           active(); return json(res, 200, result);
