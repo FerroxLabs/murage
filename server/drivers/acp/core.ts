@@ -515,7 +515,7 @@ function informativeStart(text: string): number {
   return /^[\s\p{P}]+/u.exec(blanked)?.[0].length ?? 0;
 }
 
-/** The reason quoted on the `exited <code> before the prompt result` line:
+/** The reason quoted on the `closed (exit code N) before it finished its reply` line:
  * the failed engine's bounded stderr capture, prepared before redaction
  * by `acpEngineStderrCapture`, sanitised as the
  * engine's `error.data` and JSON-RPC `error.message` are, and quoted from
@@ -879,6 +879,12 @@ const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // hi
  * A three-minute guard here cut long tool calls short and ignored the owner's
  * setting. Setting the knob turns it back on for an engine that needs a
  * sooner, engine-named failure; 0 or unset leaves the watch as the only bound. */
+/** A wait as the chat says it: whole minutes from one minute up, seconds below. */
+const plainDuration = (ms: number): string => {
+  if (ms >= 60_000) { const minutes = Math.round(ms / 60_000); return `${minutes} minute${minutes === 1 ? "" : "s"}`; }
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
+};
 export const acpPromptIdleTimeoutMs = (): number => {
   const raw = process.env.MURAGE_ACP_PROMPT_IDLE_MS;
   if (raw === undefined) return 0;
@@ -1619,7 +1625,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `${DRIVER_KIND} asked a question Murage could not show (${normalized.error}); it was told nobody answered`,
+              message: `${support.displayName} asked a question Murage could not show (${normalized.error}); it was told nobody answered`,
             });
             return send({ jsonrpc: "2.0", id: msg.id, result: cancelled });
           }
@@ -1801,7 +1807,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `${DRIVER_KIND} offered no "${want}" permission option: cancelling the request instead of guessing`,
+              message: `${support.displayName} offered no "${want}" permission option: cancelling the request instead of guessing`,
             });
 
           const toolCall = params.toolCall ?? {};
@@ -2115,7 +2121,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `${DRIVER_KIND} exited ${code} before the prompt result${detail ? `: ${detail}` : ""}`,
+              message: `${support.displayName} closed (exit code ${code}) before it finished its reply${detail ? `: ${detail}` : ""}`,
             });
             settle(false, "exit_before_result");
           }
@@ -2432,7 +2438,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   // one that errors: it burns a paid turn on the wrong thing
                   if (selectedModel !== cliTurn.model) {
                     throw new Error(
-                      `${DRIVER_KIND} did not switch to ${cliTurn.model} (still ${selectedModel ?? "unknown"})`,
+                      `${support.displayName} did not switch to ${cliTurn.model} (still ${selectedModel ?? "unknown"})`,
                     );
                   }
                 }
@@ -2517,9 +2523,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               },
               undefined,
               promptIdleMs,
-              // Kept inside ERROR_MESSAGE_MAX so the card shows all of it.
-              `${DRIVER_KIND} went silent for ${Math.round(promptIdleMs / 1000)} s and the turn was stopped. `
-                + "Raise MURAGE_ACP_PROMPT_IDLE_MS if it needs longer.",
+              // Shown in the chat: the engine as Settings names it, and a
+              // plain duration. Never the knob's name or the driver's kind.
+              `${support.displayName} went silent for ${plainDuration(promptIdleMs)}, so the turn was stopped.`,
             );
             // opencode 1.18.18 reports usage at the result root; grok and
             // gemini put it under _meta. Read both rather than lose the count.
