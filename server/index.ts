@@ -8596,10 +8596,12 @@ async function runGroupMemberTurn(
       if (e.threadId !== threadId) return;
       if (providerTurnId && e.turnId && e.turnId !== providerTurnId) {
         // Another turn's completion on this thread (a late one from an
-        // abandoned handshake) cleared the thread's watch in the fold. This
-        // turn is still running and must stay watched: with no ceiling, the
-        // watch is what stops it if it goes silent.
-        if (e.type === "turn.completed" && !done) {
+        // abandoned handshake). The watch is bound to this turn, so the fold
+        // leaves it; if an unbound completion cleared it first, this turn is
+        // still running and must stay watched: with no ceiling, the watch is
+        // what stops it if it goes silent. A live watch is not re-armed,
+        // which would restart its silence clock on someone else's event.
+        if (e.type === "turn.completed" && !done && !watchdog.watching(threadId)) {
           watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) });
           watchdog.bindProviderTurn(threadId, internalGeneration, providerTurnId);
         }
