@@ -1,6 +1,9 @@
-export const MIN_ROOM_TURN_TIMEOUT_MINUTES = 1;
+// A room reply's silence limit (server/config.ts): minutes with no activity
+// before the reply is stopped. Never under the direct chats' 20 minutes.
+export const DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 20;
+export const MIN_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MAX_ROOM_TURN_TIMEOUT_MINUTES = 1_440;
-export const ROOM_TURN_TIMEOUT_INPUT_ERROR = "Enter a whole number from 1 to 1,440.";
+export const ROOM_TURN_TIMEOUT_INPUT_ERROR = "Enter a whole number from 20 to 1,440.";
 
 export type RoomTurnTimeoutInput =
   | { ok: true; minutes: number }

@@ -61,6 +61,59 @@ describe("TurnWatchdog", () => {
     expect(stalls).toHaveLength(1);
   });
 
+  it("keeps the clock held until every open card is answered", () => {
+    const { dog, stalls, tick } = rig();
+    dog.watch("t1", "bot1");
+    dog.setWaitingOnHuman("t1", true);
+    dog.setWaitingOnHuman("t1", true);
+    // one answer, one card still open: a person is still deciding
+    dog.setWaitingOnHuman("t1", false);
+    tick(STALL * 10);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    dog.setWaitingOnHuman("t1", false);
+    // a stale resolve for a card this turn never opened stops at zero
+    dog.setWaitingOnHuman("t1", false);
+    tick(STALL - 1);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    tick(2);
+    dog.sweep();
+    expect(stalls).toHaveLength(1);
+  });
+
+  it("a turn with its own silence limit (a room reply) runs on that limit, never on duration", () => {
+    const { dog, stalls, tick } = rig();
+    const ROOM = STALL * 3;
+    dog.watch("room", "bot1", { generation: "g1", setup: true });
+    dog.dispatched("room", "bot1", "g1", { stallMs: ROOM });
+    // streaming for a long time: an event just inside the limit, many times over
+    for (let i = 0; i < 50; i++) {
+      tick(ROOM - 1);
+      dog.touch("room");
+      dog.sweep();
+    }
+    expect(stalls).toHaveLength(0);
+    // silent past the direct ceiling but inside its own limit
+    tick(STALL * 2);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    tick(STALL);
+    dog.sweep();
+    expect(stalls).toEqual([expect.objectContaining({ threadId: "room", stallMs: ROOM })]);
+  });
+
+  it("a re-armed dispatch keeps the turn's own silence limit", () => {
+    const { dog, stalls, tick } = rig();
+    dog.dispatched("room", "bot1", "g1", { stallMs: STALL * 3 });
+    tick(STALL * 2);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    tick(STALL);
+    dog.sweep();
+    expect(stalls).toHaveLength(1);
+  });
+
   it("a settled turn is forgotten", () => {
     const { dog, stalls, tick } = rig();
     dog.watch("t1", "bot1");

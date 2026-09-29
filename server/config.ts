@@ -23,9 +23,18 @@ const SSH_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const LEGACY_BROWSER_PROFILE_ID = /^[A-Za-z0-9_-]{1,40}$/;
 const BROWSER_PROFILE_ID = /^[a-z0-9_-]{1,40}$/;
 
-export const DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 5;
-export const MIN_ROOM_TURN_TIMEOUT_MINUTES = 1;
+// rooms.turnTimeoutMinutes is a room reply's SILENCE limit: minutes without a
+// single event before the turn is stopped (0.1.61). Before 0.1.61 it was an
+// absolute ceiling on the whole turn (default 5, from 1), which stopped long
+// work while it was still streaming. A short value was chosen under that old
+// meaning, so a saved value under the minimum still loads (the whole config
+// file is refused on a schema error) and is raised to it on read; a new save
+// must be at least the minimum. The minimum and default match the direct
+// turns' 20-minute no-activity limit (TURN_STALL_MS in index.ts).
+export const DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 20;
+export const MIN_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MAX_ROOM_TURN_TIMEOUT_MINUTES = 1_440;
+const LEGACY_MIN_ROOM_TURN_TIMEOUT_MINUTES = 1;
 export const DEFAULT_LOCAL_VM_MODE = "shared" as const;
 export const DEFAULT_LOCAL_VM_MAX_INSTANCES = 2;
 export const MIN_LOCAL_VM_MAX_INSTANCES = 1;
@@ -59,6 +68,14 @@ const roomConfigSchema = z.object({
     .number()
     .int()
     .min(MIN_ROOM_TURN_TIMEOUT_MINUTES)
+    .max(MAX_ROOM_TURN_TIMEOUT_MINUTES),
+});
+/** What an older config.json may hold: the pre-0.1.61 ceiling allowed 1. */
+const storedRoomConfigSchema = z.object({
+  turnTimeoutMinutes: z
+    .number()
+    .int()
+    .min(LEGACY_MIN_ROOM_TURN_TIMEOUT_MINUTES)
     .max(MAX_ROOM_TURN_TIMEOUT_MINUTES),
 });
 const localVmConfigSchema = z.object({
@@ -303,6 +320,7 @@ const appConfigSchema = z.object({
 });
 const storedAppConfigSchema = appConfigSchema.extend({
   browserProfiles: storedBrowserProfilesSchema.optional(),
+  rooms: storedRoomConfigSchema.optional(),
 });
 const notificationPreferencesPatchSchema = notificationPreferencesSchema.extend({
   attention: notificationPreferencesSchema.shape.attention.removeDefault().optional(),
@@ -471,8 +489,10 @@ export function vpsSshAlias(cfg: AppConfig): string | null {
   return isValidSshAlias(cfg.vps?.sshAlias) ? cfg.vps.sshAlias : null;
 }
 
+/** A room reply's silence limit in minutes. A value saved under the old
+ * absolute meaning is raised to the minimum here, on every read. */
 export function roomTurnTimeoutMinutes(cfg: AppConfig): number {
-  return cfg.rooms?.turnTimeoutMinutes ?? DEFAULT_ROOM_TURN_TIMEOUT_MINUTES;
+  return Math.max(MIN_ROOM_TURN_TIMEOUT_MINUTES, cfg.rooms?.turnTimeoutMinutes ?? DEFAULT_ROOM_TURN_TIMEOUT_MINUTES);
 }
 
 export function localVmMode(cfg: AppConfig): "shared" | "per-bot" {

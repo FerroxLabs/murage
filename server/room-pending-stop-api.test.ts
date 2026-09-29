@@ -18,9 +18,12 @@ const rows = () => {
 beforeAll(async () => {
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
     const fs=await import('node:fs');const path=await import('node:path');
-    const {RoomTurnDeadline}=await import(${JSON.stringify(pathToFileURL(join(serverDir, "room-turn-timeout.ts")).href)});
-    const start=RoomTurnDeadline.prototype.start;
-    RoomTurnDeadline.prototype.start=function(){this.remainingMs=1000;start.call(this)};
+    // A room turn stops for silence (0.1.61): run the stall clock 600 times
+    // faster, so the held turn's twenty silent minutes pass in two seconds.
+    const {TurnWatchdog}=await import(${JSON.stringify(pathToFileURL(join(serverDir, "turn-watchdog.ts")).href)});
+    const t0=Date.now();TurnWatchdog.prototype.now=function(){return t0+(Date.now()-t0)*600};
+    const watch=TurnWatchdog.prototype.start;
+    TurnWatchdog.prototype.start=function(){this.opts={...this.opts,checkMs:100};return watch.call(this)};
     const {PiDriver}=await import(${JSON.stringify(pathToFileURL(join(serverDir, "drivers/pi.ts")).href)});
     const create=PiDriver.create;
     PiDriver.create=async function(input){
@@ -48,7 +51,7 @@ beforeAll(async () => {
 }, 30000);
 afterAll(async () => { await fixture?.close(); });
 
-it("retains a timed-out room beyond six seconds, queues its next prompt without dispatch and releases only after the exact fake child closes", async () => {
+it("retains a stalled room beyond six seconds, queues its next prompt without dispatch and releases only after the exact fake child closes", async () => {
   const bot = async (name: string, instanceId: string) => {
     const result = await api("POST", "/api/bots", { name, modelSelection: { instanceId, model: "ollama-cloud/glm-5.2" } });
     expect(result.status).toBe(201);

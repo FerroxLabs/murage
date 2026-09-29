@@ -1,5 +1,9 @@
 # Configurable Room Turn Timeout
 
+> **Superseded in 0.1.61: the setting is now a silence limit.** A room reply is stopped only after `rooms.turnTimeoutMinutes` minutes with no activity at all, exactly like a direct turn (the stall watchdog, `server/turn-watchdog.ts`); it is never stopped for how long it runs. Waiting on a person (an open approval or question card) does not count as silence. The owner's Stop and project budgets are the only duration controls.
+>
+> Migration: the default and the minimum are now 20 minutes, the direct turns' no-activity limit. A value saved before 0.1.61 (1 to 19) was chosen as an absolute ceiling, so it still loads (a schema error would refuse the whole config file) and is raised to 20 on every read; `GET /api/config` reports the raised value. A new save must be 20 to 1,440. The stop line is `error: no activity for N minutes: stopping; waiting for the engine to confirm close`. Settings reads "Stop a room reply after N minutes with no activity." `RoomTurnDeadline` is removed. The rest of this document describes the original 0.1.5x design.
+
 ## Summary
 
 Murage currently stops every room member turn after five minutes, even when the engine is still producing output. The duration and the error message are hard-coded in `server/index.ts`. This behavior is separate from the activity-based turn stall watchdog controlled by `MURAGE_TURN_STALL_MS`.

@@ -97,9 +97,18 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     // synchronously up to the swap
     expect(body.slice(honoured, swap)).not.toMatch(/await (?!releaseUnstartedRoomTurn\(\)|new Promise<GroupMemberTurnOutcome>)/);
     expect(swap).toBeGreaterThan(outcome);
-    expect(body).toContain("watchdog.dispatched(threadId, bot.id, internalGeneration)");
+    expect(body).toContain("watchdog.dispatched(threadId, bot.id, internalGeneration, {");
     // every other exit clears the latch and this attempt's setup watch
     expect(body).toMatch(/\} finally \{\s*unregisterSetupStall\(\);\s*watchdog\.settleSetup\(threadId, internalGeneration\);/);
+  });
+
+  it("stops a room reply for silence on the owner's limit, never for duration", () => {
+    const body = fn("runGroupMemberTurn");
+    // 0.1.61: no absolute ceiling on a room turn that keeps working
+    expect(SOURCE).not.toContain("RoomTurnDeadline");
+    expect(body).toContain("const silenceMinutes = roomTurnTimeoutMinutes(cfg);");
+    expect(body).toContain("watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) })");
+    expect(body).toContain("tool: { name: roomTurnStallMessage(silenceMinutes), ok: false }");
   });
 
   it("a Stop during direct setup ends that setup's watch", () => {
