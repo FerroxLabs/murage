@@ -8,6 +8,7 @@
 // re-inject a copy under a harness-owned name AFTER the strip has run. Reading
 // the key back off a child env is guaranteed to find nothing.
 import { loadConfig } from "./config.ts";
+import { keyIssuer } from "../electron/provider-connections.mjs";
 
 /** Config first, then env, so a packaged build can be pointed at a different
  *  key without a rebuild — the same order `announcementsBaseUrl()` uses.
@@ -21,6 +22,10 @@ export function fluxKey(env: NodeJS.ProcessEnv = process.env): string | null {
     // a malformed config must not make every Flux lookup throw
   }
   const key = (cfg.flux?.apiKey ?? env.FLUX_API_KEY ?? "").trim();
+  // A key whose own prefix names another provider (a restored config, an
+  // ambient variable) is never a Flux key, so it is never sent to Flux.
+  const issuer = keyIssuer(key);
+  if (issuer && issuer !== "flux") return null;
   return key || null;
 }
 

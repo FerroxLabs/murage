@@ -615,10 +615,12 @@ const providerConnections = new ProviderConnectionsService({ readBank: () => cfg
     if (!key?.trim()) return;
     rows.push({ id, preset, label, key: key.trim(), enabled: !legacyError, revision: createHash("sha256").update(JSON.stringify([id, key, legacyError ?? "", PROVIDER_PRESETS[preset].baseUrl])).digest("hex"), legacy: true, managedIn, ...(legacyError ? { legacyError } : {}) });
   };
-  add("legacy-flux", "flux", "Flux Router", fluxKey(), "connections");
   // A key saved before its slot checked the issuer (or restored from such a
   // backup) stays listed for review, but is never enabled or sent.
   const mismatch = (slot: string, key: string | undefined) => { const issuer = key ? keyIssuer(key) : null; return issuer && issuer !== slot ? "This saved key belongs to a different provider. Replace it with the right key before using it." : undefined; };
+  // fluxKey() refuses another provider's key; the saved value is still
+  // listed here for review, disabled.
+  add("legacy-flux", "flux", "Flux Router", fluxKey() ?? cfg.flux?.apiKey, "connections", fluxKey() ? undefined : mismatch("flux", cfg.flux?.apiKey));
   add("legacy-openai-image", "openai", "OpenAI · existing image key", cfg.imageGen?.key, "images", mismatch("openai", cfg.imageGen?.key));
   add("legacy-xai", "xai", "xAI · existing workspace key", cfg.xai?.key, "engines", mismatch("xai", cfg.xai?.key));
   if (cfg.openaiCompat?.key?.trim()) {
