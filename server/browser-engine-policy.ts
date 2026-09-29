@@ -37,6 +37,10 @@ allow(["tab_close"], { tab: string });
 // Upstream emits image content for small PNG/JPEG captures. Destination is
 // its harness-controlled default; neither path nor screenshotDir is exposed.
 allow(["screenshot"], { selector: string, fullPage: boolean, annotate: boolean, format: { type: "string", enum: ["png", "jpeg"] }, quality: { type: "integer", minimum: 0, maximum: 100 } });
+/** Every tool the unified browser may list, by name. shared/murage-tool-names.ts
+ * MURAGE_MCP_TOOLS.browser keeps them all, so text naming any of them is
+ * spelled the way the turn's engine calls it. */
+export const AGENT_BROWSER_TOOLS: readonly string[] = Object.freeze(Object.keys(policies));
 
 function object(value: unknown): value is Json {
   return value !== null && typeof value === "object" && !Array.isArray(value);

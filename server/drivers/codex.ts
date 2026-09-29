@@ -52,6 +52,7 @@ import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
 import { CODEX_BUILTIN_COMMANDS, normalizeEngineCommands } from "../engine-commands.ts";
 import { engineClosedLine, plainDuration } from "./stop-copy.ts";
 import { acpEngineExitStderrText } from "./acp/core.ts";
+import { phoneMountName } from "../../shared/murage-tool-names.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -355,7 +356,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.phone) {
           const bridge = turn.integrations.phone;
           Object.assign(env, bridge.env);
-          const prefix = "mcp_servers.murage_phone";
+          const prefix = `mcp_servers.${phoneMountName("codex")}`;
           appServerArgs.push(
             "-c", `${prefix}.command=${JSON.stringify(bridge.command)}`,
             "-c", `${prefix}.args=${JSON.stringify(bridge.args)}`,

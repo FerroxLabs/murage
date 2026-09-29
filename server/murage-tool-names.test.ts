@@ -12,14 +12,17 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
-import { MURAGE_MCP_TOOLS, murageToolName, murageToolText, parseToolCallStyle, toolCallStyleFor, type ToolCallStyle } from "../shared/murage-tool-names.ts";
+import { MURAGE_MCP_TOOLS, MURAGE_TOOL_WORDS, murageToolName, murageToolText, parseToolCallStyle, phoneMountName, toolCallStyleFor, type ToolCallStyle } from "../shared/murage-tool-names.ts";
 import { withToolCallStyle } from "./tool-call-context.ts";
 import { getPromptBlock, resolveReferencePack } from "./image-library.ts";
 import { pollImageJob } from "./image-delivery.ts";
 import { imagePublishRecoveryMessage } from "./image-operations.ts";
 import { TOOLS as BROWSER_TOOLS, engineText as browserEngineText } from "./drivers/browser-proxy.ts";
+import { TOOLS as PHONE_TOOLS } from "./drivers/phone-proxy.ts";
+import { AGENT_BROWSER_TOOLS } from "./browser-engine-policy.ts";
+import { unifiedBrowserSystemPrompt } from "./browser-engine.ts";
 import { allocateToolName } from "./drivers/pi-mcp-extension.ts";
-import { TURN_PROMPTS, directTurnLayers, joinShapeLayers, skillLayers } from "./bot-shapes.ts";
+import { TURN_PROMPTS, directTurnLayers, engineToolText, joinShapeLayers, skillLayers } from "./bot-shapes.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt } from "./chief-of-staff.ts";
 import { expandLearnTurnText } from "./skill-learn.ts";
 import { capabilitiesPrimer, turnCapabilityFacts } from "./capabilities-primer.ts";
@@ -106,6 +109,14 @@ describe("the tool name list follows the proxies", () => {
   it("matches Murage's computer proxy's tools", () => {
     const source = readFileSync(join(here, "computer-proxy.ts"), "utf8");
     expect([...source.matchAll(/^\s+name: "([a-z_]+)",$/gm)].map(match => match[1]).filter(name => name!.includes("_")).sort()).toEqual([...MURAGE_MCP_TOOLS.computer].sort());
+  });
+  it("matches the phone proxy's tools, its plain-word tools included", () => {
+    const names = PHONE_TOOLS.map(tool => tool.name as string);
+    expect(names.filter(name => name.includes("_")).sort()).toEqual([...MURAGE_MCP_TOOLS.phone].sort());
+    expect(names.filter(name => !name.includes("_")).sort()).toEqual([...MURAGE_TOOL_WORDS.phone].sort());
+  });
+  it("matches every agent_browser tool the unified browser can list", () => {
+    expect(MURAGE_MCP_TOOLS.browser.filter(name => name.startsWith("agent_browser_")).sort()).toEqual([...AGENT_BROWSER_TOOLS].sort());
   });
   it("matches the dweb proxy's tools", () => {
     const source = readFileSync(join(here, "drivers", "dweb-proxy.ts"), "utf8");
@@ -303,6 +314,47 @@ describe("Murage-written prompt text names tools the turn's engine can call", ()
     for (const tool of ["list_image_models", "generate_image", "save_prompt_block", "list_prompt_blocks", "get_prompt_block", "resolve_image_reference", "save_reference_pack", "list_reference_packs"])
       expect(text).toContain(toolCallStyleFor(kind) === "use-tool" ? `tool_name "agents__${tool}"` : `\`${tool}\``);
     expectCallableOn(kind, text, MURAGE_MCP_TOOLS.agents);
+  });
+  it.each(ENGINES.map(engine => engine.kind))("%s: the bundled phone-harness skill as the turn carries it", kind => {
+    // Only claude, codex and pi mount the phone today (phoneMcp); the skill
+    // still names its tools the way any engine that got it would call them,
+    // under the name that engine mounts the phone server as.
+    const skill = loadBundledSkills(join(here, "..", "skills")).find(item => item.manifest.id === "phone-harness")!;
+    const mount = phoneMountName(kind);
+    const text = skillLayers([skill], { toolCallStyle: toolCallStyleFor(kind), murageSkill: item => item === skill, phoneServer: mount })[0]!.text;
+    const tools = [...MURAGE_MCP_TOOLS.phone, ...MURAGE_TOOL_WORDS.phone];
+    if (toolCallStyleFor(kind) === "use-tool") {
+      for (const tool of tools) expect(text).toContain(`use_tool with tool_name "${mount}__${tool}"`);
+      // The computer server has screenshot and type_text too: never it here.
+      expect(text).not.toContain("computer__");
+      expect(text.replace(/use_tool with tool_name "[^"]+"/g, "")).not.toMatch(new RegExp(`\`(${tools.join("|")})\``));
+    } else {
+      for (const tool of tools) expect(text).toContain(`\`${tool}\``);
+      expect(text).not.toContain("use_tool");
+    }
+    expect(text).toContain(`Use the \`${mount}\` tools`);
+    expectCallableOn(kind, text, [...tools, ...MURAGE_MCP_TOOLS.agents]);
+  });
+  it("the phone server's mount name is the one each driver mounts it under", () => {
+    expect(phoneMountName("claude")).toBe("phone");
+    expect(phoneMountName("pi")).toBe("phone");
+    expect(phoneMountName("codex")).toBe("murage_phone");
+    const codex = readFileSync(join(here, "drivers", "codex.ts"), "utf8");
+    expect(codex).toContain("mcp_servers.${phoneMountName(\"codex\")}");
+  });
+  it.each(ENGINES.map(engine => engine.kind))("%s: the browser prompt, locked or not, on the direct and the room turn", kind => {
+    const style = toolCallStyleFor(kind);
+    for (const protection of [null, "owner-input", "sensitive-page"] as const) {
+      const prompt = unifiedBrowserSystemPrompt(protection);
+      // index.ts: the direct turn hands it to directTurnLayers; the room turn names it with engineToolText.
+      const direct = directTurnLayers({ houseRules: "", persona: "", computerKind: null, vmPerBot: false, driverKind: kind, connectors: "", requiredApps: "", browser: prompt,
+        coordination: "", credential: "", image: "", webSearchBackup: false, routines: "", learn: "", importedSkills: "", teamBrief: "", memory: "",
+        primer: "", skills: [], playbooks: "", outputFolder: "", tagged: [] }).find(layer => layer.id === "browser")!.text;
+      const room = engineToolText(prompt, style);
+      expect(direct).toBe(room);
+      expectCallableOn(kind, room, MURAGE_MCP_TOOLS.browser);
+      if (style === "direct") expect(room).toBe(prompt);
+    }
   });
   it.each(ENGINES.map(engine => engine.kind))("%s: the capabilities primer's own sentences", kind => {
     const text = capabilitiesPrimer(turnCapabilityFacts({

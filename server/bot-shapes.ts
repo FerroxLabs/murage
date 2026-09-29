@@ -16,7 +16,7 @@
 // integrations, never in its system text.
 import { personalityImprint } from "../shared/bot-identity.ts";
 import { renderSkillInstructions, type BundledSkill } from "./skill-library.ts";
-import { murageToolText, toolCallStyleFor, type ToolCallStyle } from "../shared/murage-tool-names.ts";
+import { MURAGE_TOOL_WORDS, murageToolText, toolCallStyleFor, type ToolCallStyle } from "../shared/murage-tool-names.ts";
 
 /** The Murage servers a prompt sentence may name tools of. */
 const PROMPT_SERVERS = ["agents", "browser"] as const;
@@ -105,16 +105,31 @@ export function lineLayers(groups: ReadonlyArray<{ id: string; lines: readonly u
   });
 }
 
+/** The bundled phone skill as this engine reads it. It names the phone
+ *  server ("the `phone` tools") and its tools, five of them plain words
+ *  (status, tap): those are rewritten only here, where they are only ever
+ *  the phone's tools, and on the phone server, never the computer's
+ *  screenshot or type_text. */
+function phoneSkillText(text: string, style: ToolCallStyle | undefined, mount: string): string {
+  const named = mount === "phone" ? text : text.replaceAll("the `phone` tools", `the \`${mount}\` tools`);
+  return murageToolText(named, style, ["phone", ...PROMPT_SERVERS], { phone: mount }, { phone: MURAGE_TOOL_WORDS.phone });
+}
+
 /** One layer per selected skill; renderSkillInstructions of the whole list
- *  is exactly these joined. The Chief of Staff guide is its own row. */
-export function skillLayers(selected: readonly BundledSkill[], options: { includeRoot?: boolean; toolCallStyle?: ToolCallStyle; murageSkill?: (skill: BundledSkill) => boolean } = {}): ShapeLayer[] {
+ *  is exactly these joined. The Chief of Staff guide is its own row.
+ *  `phoneServer`: the name this engine mounts the phone under
+ *  (shared/murage-tool-names.ts phoneMountName). */
+export function skillLayers(selected: readonly BundledSkill[], options: { includeRoot?: boolean; toolCallStyle?: ToolCallStyle; murageSkill?: (skill: BundledSkill) => boolean; phoneServer?: string } = {}): ShapeLayer[] {
   return selected.map((skill) => {
     const id = skill.manifest.id === "chief-of-staff" ? "chief-guide" : `skill:${skill.manifest.id}`;
     // Only a skill Murage ships has its tool names spelled for this engine,
     // and only in its instructions: an owner's or learned skill, its id and
     // its folder are theirs, word for word.
-    const shown = options.toolCallStyle === "use-tool" && options.murageSkill?.(skill)
-      ? { ...skill, instructions: engineToolText(skill.instructions, options.toolCallStyle) } : skill;
+    const murage = options.murageSkill?.(skill) === true;
+    const shown = murage && skill.manifest.id === "phone-harness"
+      ? { ...skill, instructions: phoneSkillText(skill.instructions, options.toolCallStyle, options.phoneServer ?? "phone") }
+      : murage && options.toolCallStyle === "use-tool"
+        ? { ...skill, instructions: engineToolText(skill.instructions, options.toolCallStyle) } : skill;
     return shapeLayer(id, renderSkillInstructions([shown], options), id === "chief-guide" ? undefined : skill.manifest.name);
   });
 }

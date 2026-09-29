@@ -52,14 +52,24 @@ export const MURAGE_MCP_TOOLS = {
     "save_prompt_block", "save_reference_pack", "send_voice_note", "set_team_lead", "skill_manage", "skills_list",
     "tool_result_read", "update_bot", "wait_delegation", "web_search",
   ],
-  // The built-in browser (drivers/browser-proxy.ts) and the agent_browser
-  // tools the unified browser proxy relays under the same mount.
+  // The built-in browser (drivers/browser-proxy.ts) and every agent_browser
+  // tool the unified browser proxy can list under the same mount
+  // (browser-engine-policy.ts AGENT_BROWSER_TOOLS).
   browser: [
     "browser_back", "browser_click", "browser_drag", "browser_fill", "browser_forward", "browser_hover",
     "browser_navigate", "browser_press", "browser_read", "browser_request_takeover", "browser_screenshot",
     "browser_scroll", "browser_select_option", "browser_snapshot", "browser_state", "browser_type", "browser_wait_for",
-    "agent_browser_click", "agent_browser_fill", "agent_browser_open", "agent_browser_press", "agent_browser_screenshot",
-    "agent_browser_snapshot", "agent_browser_type",
+    "agent_browser_back", "agent_browser_check", "agent_browser_click", "agent_browser_close", "agent_browser_dblclick",
+    "agent_browser_fill", "agent_browser_focus", "agent_browser_forward", "agent_browser_get_attr", "agent_browser_get_box",
+    "agent_browser_get_count", "agent_browser_get_html", "agent_browser_get_styles", "agent_browser_get_text",
+    "agent_browser_get_title", "agent_browser_get_url", "agent_browser_get_value", "agent_browser_hover",
+    "agent_browser_is_checked", "agent_browser_is_enabled", "agent_browser_is_visible", "agent_browser_keyboard_insert_text",
+    "agent_browser_keyboard_type", "agent_browser_keydown", "agent_browser_keyup", "agent_browser_open", "agent_browser_press",
+    "agent_browser_read", "agent_browser_reload", "agent_browser_screenshot", "agent_browser_scroll",
+    "agent_browser_scroll_into_view", "agent_browser_select", "agent_browser_snapshot", "agent_browser_tab_close",
+    "agent_browser_tab_list", "agent_browser_tab_new", "agent_browser_tab_switch", "agent_browser_type",
+    "agent_browser_uncheck", "agent_browser_wait_for_load", "agent_browser_wait_for_selector", "agent_browser_wait_for_text",
+    "agent_browser_wait_for_url", "agent_browser_wait_ms",
   ],
   // Murage's own computer server (computer-proxy.ts). Its browser_* tools
   // are the cloud computer's Chrome, not the built-in browser.
@@ -69,8 +79,25 @@ export const MURAGE_MCP_TOOLS = {
     "wait_for", "wait_for_navigation",
   ],
   dweb: ["dweb_opencode_models", "dweb_opencode_run", "dweb_repo_status", "dweb_status"],
+  // The Android phone (drivers/phone-proxy.ts). Its one-word tools are in
+  // MURAGE_TOOL_WORDS: only the phone skill's own text names them as tools.
+  phone: ["list_apps", "open_app", "read_screen", "tap_text", "type_text"],
 } as const satisfies Record<string, readonly string[]>;
 export type MurageMcpServer = keyof typeof MURAGE_MCP_TOOLS;
+
+/** A server's plain-word tools (status, tap), for the `words` of text that
+ * uses them only as its tools. Kept in step with the proxy like the above. */
+export const MURAGE_TOOL_WORDS = {
+  phone: ["press", "screenshot", "status", "swipe", "tap"],
+} as const satisfies Partial<Record<MurageMcpServer, readonly string[]>>;
+
+/** Codex mounts the phone under a name of its own, never a bot's server's
+ * (mcp-registry.ts reserves it); claude and pi mount it as "phone". */
+export const CODEX_PHONE_MOUNT = "murage_phone";
+/** The name this engine's driver mounts the phone server under. */
+export function phoneMountName(driverKind: string): string {
+  return driverKind === "codex" ? CODEX_PHONE_MOUNT : "phone";
+}
 
 /** The first of `servers` that has this tool. */
 function serverOf(tool: string, servers: readonly MurageMcpServer[]): MurageMcpServer | undefined {

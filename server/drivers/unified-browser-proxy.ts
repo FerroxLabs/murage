@@ -1,7 +1,7 @@
 // No native ports, encryption keys, or engine paths cross the turn boundary.
 import { pathToFileURL } from "node:url";
 import { createLineSplitter, writeMcpLine } from "../mcp-bridge.ts";
-import { TOOL_CALL_STYLE_ENV, TOOL_SERVER_NAME_ENV, murageToolText, parseToolCallStyle } from "../../shared/murage-tool-names.ts";
+import { TOOL_CALL_STYLE_ENV, TOOL_SERVER_NAME_ENV, murageToolDescriptions, murageToolText, parseToolCallStyle } from "../../shared/murage-tool-names.ts";
 /** Murage's own refusal, word for word, and nothing else: the server marks
  * the sentences it wrote for the bot with a `browser_` code, and any other
  * error body (which could quote a page) is never forwarded. */
@@ -20,6 +20,8 @@ export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.en
   url.searchParams.set("botId", env.MURAGE_BOT_ID!); url.searchParams.set("threadId", env.MURAGE_THREAD_ID!);
   // Longer for "Use my Chrome", whose first call waits on the owner's Allow.
   const callTimeout = Math.min(600_000, Math.max(60_000, Number(env.MURAGE_BROWSER_CALL_TIMEOUT_MS) || 60_000));
+  const style = parseToolCallStyle(env[TOOL_CALL_STYLE_ENV]);
+  const mounted = { browser: env[TOOL_SERVER_NAME_ENV] || "browser" };
   const lines: string[] = [];
   const splitter = createLineSplitter(line => lines.push(line), 64 * 1024);
   const drain = async () => {
@@ -41,11 +43,16 @@ export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.en
           catch (error) { await reader.cancel(); throw error; }
           finally { reader.releaseLock(); }
           result = JSON.parse(Buffer.concat(chunks).toString());
+          // The listed descriptions name sibling tools (the harness owns the
+          // schemas; the text is the browser engine's own, never a page's):
+          // named the way this turn's engine calls them. A call's result is
+          // the page's, word for word.
+          if (rpc.method === "tools/list") result = murageToolDescriptions(result, style, ["browser"], mounted);
         }
       } catch {
         // Murage's own refusal names its tools the way this turn's engine
         // calls them (the driver that mounted this server says how).
-        const text = failure ? murageToolText(failure, parseToolCallStyle(env[TOOL_CALL_STYLE_ENV]), ["browser"], { browser: env[TOOL_SERVER_NAME_ENV] || "browser" })
+        const text = failure ? murageToolText(failure, style, ["browser"], mounted)
           : "Browser unavailable or control changed. Ask the owner to open the browser panel.";
         // A tool call fails as a tool result the model reads. Anything else
         // (tools/list above all) fails as a JSON-RPC error: a "result" with

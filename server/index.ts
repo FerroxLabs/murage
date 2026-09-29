@@ -182,7 +182,7 @@ import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts
 import * as composio from "./composio.ts";
 import { capabilitiesPrimer, roomToolAccessLine, turnCapabilityFacts, type ImageConnectionFact } from "./capabilities-primer.ts";
 import { murageTool, setToolCallStyle, withToolCallScope } from "./tool-call-context.ts";
-import { TOOL_CALL_STYLE_HEADER, murageToolText, parseToolCallStyle, toolCallStyleFor, type ToolCallStyle } from "../shared/murage-tool-names.ts";
+import { TOOL_CALL_STYLE_HEADER, murageToolText, parseToolCallStyle, phoneMountName, toolCallStyleFor, type ToolCallStyle } from "../shared/murage-tool-names.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
 import { browserRefusal, isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
@@ -6309,7 +6309,7 @@ async function startTurn(
       // One layer per skill, so "What shapes <bot>" lists each (bot-shapes.ts).
       const skillShapes = skillLayers(selectedSkills, {
         includeRoot: worksInWorkspace && opts?.runOn !== "cloud",
-        toolCallStyle: toolCallStyleFor(instance.driverKind), murageSkill,
+        toolCallStyle: toolCallStyleFor(instance.driverKind), murageSkill, phoneServer: phoneMountName(instance.driverKind),
       });
       const packagePlaybooks = installedPlaybookInstructions(text, pinnedProcedures.playbooks);
       // An explicit working folder wins for new tasks; otherwise they use
@@ -8487,7 +8487,7 @@ async function runGroupMemberTurn(
     shapeLayer("team-brief", roomStanding.teamBrief),
     shapeLayer("memory", roomStanding.memory),
     shapeLayer("skills-index", workspace ? pinnedProcedures.importedPrompt : ""),
-    ...skillLayers(selectedSkills, { includeRoot: Boolean(workspace), toolCallStyle: roomToolStyle, murageSkill }),
+    ...skillLayers(selectedSkills, { includeRoot: Boolean(workspace), toolCallStyle: roomToolStyle, murageSkill, phoneServer: phoneMountName(instance.driverKind) }),
     shapeLayer("playbooks", installedPlaybookInstructions(text, pinnedProcedures.playbooks)),
   ];
 
