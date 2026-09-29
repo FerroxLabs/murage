@@ -10,6 +10,8 @@
 //
 // The event payload shapes are tolerated liberally and teed verbatim to
 // the native log — the same protocol-drift armor as every other driver.
+import { createHash } from "node:crypto";
+
 import type {
   DriverCreateInput,
   ProviderDriver,
@@ -158,7 +160,8 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         const shownContents = new Set<string>();
         const working = (ev: Record<string, unknown>) => {
           // at any depth: a heartbeat's time can sit inside its data
-          const key = JSON.stringify(ev, (name, value) => (EVENT_IDENTITY_KEYS.has(name) ? undefined : value));
+          const content = JSON.stringify(ev, (name, value) => (EVENT_IDENTITY_KEYS.has(name) ? undefined : value)) ?? "";
+          const key = createHash("sha256").update(content).digest("base64");
           if (shownContents.has(key)) return;
           if (shownContents.size >= 1_000) shownContents.clear();
           shownContents.add(key);

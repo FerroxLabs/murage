@@ -17,6 +17,7 @@
 // instances only; the host desktop stays off (no approval channel in print
 // mode, ever).
 import { awaitCliTreeStopped, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -199,9 +200,11 @@ class LeaseWaitCancelled extends Error {}
 /** Fields that time a step rather than say what it did. */
 const STEP_TIME_KEYS = new Set(["timestamp", "ts", "time", "created_at", "createdAt", "updated_at", "updatedAt", "elapsed_ms", "duration_ms"]);
 /** A step's identity and content, without its clock: the same state sent
- * again is not new work, a step whose content grows is. */
+ * again is not new work, a step whose content grows is. Hashed, so a long
+ * turn of growing snapshots keeps a few bytes per step, not the snapshots. */
 function stepFingerprint(payload: unknown): string {
-  return JSON.stringify(payload, (key, value) => (STEP_TIME_KEYS.has(key) ? undefined : value));
+  const content = JSON.stringify(payload, (key, value) => (STEP_TIME_KEYS.has(key) ? undefined : value)) ?? "";
+  return createHash("sha256").update(content).digest("base64");
 }
 
 /** Waits for the machine-wide lease. An aborted wait keeps its place in the
@@ -602,6 +605,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         if (settled || stopRequested) return;
         if (step !== undefined) {
           if (shownSteps.has(step)) return;
+          if (shownSteps.size >= 1_000) shownSteps.clear();
           shownSteps.add(step);
         }
         emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
