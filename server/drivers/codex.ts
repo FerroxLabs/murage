@@ -50,6 +50,7 @@ import {
 } from "../question-normalize.ts";
 import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
 import { CODEX_BUILTIN_COMMANDS, normalizeEngineCommands } from "../engine-commands.ts";
+import { plainDuration } from "./plain-duration.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -150,6 +151,18 @@ const CODEX_TOOL_SURFACE_ARGS: readonly string[] = [
   // some CLIs read quoted dotted keys literally.
   "-c", 'plugins={ "browser@openai-bundled" = { enabled = false }, "computer-use@openai-bundled" = { enabled = false }, "unified-computer-use@openai-bundled" = { enabled = false } }',
 ];
+
+/** What the owner reads when Codex does not answer one of Murage's
+ * requests in time: plain words and a plain duration, never the app-server
+ * method or a millisecond count. "timed out" stays in it for the Inbox's
+ * grouping (server/inbox-rollup.ts). */
+export function codexRpcTimeoutMessage(method: string, timeoutMs: number): string {
+  const step = method === "initialize" ? " while starting"
+    : method.startsWith("thread/") ? " while opening the conversation"
+    : method.startsWith("turn/") || method.startsWith("review/") ? " while starting the turn"
+    : "";
+  return `Codex timed out${step} (no answer for ${plainDuration(timeoutMs)}).`;
+}
 
 export const CodexDriver: ProviderDriver<CodexConfig> = {
   driverKind: DRIVER_KIND,
@@ -392,7 +405,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // a wedged app-server can accept stdin and never reply; without this
           // the handshake await hangs forever and the bot stays busy for good
           const timer = setTimeout(() => {
-            if (rpcPending.delete(id)) reject(new Error(`codex ${method} timed out after ${timeoutMs}ms`));
+            if (rpcPending.delete(id)) reject(new Error(codexRpcTimeoutMessage(method, timeoutMs)));
           }, timeoutMs);
           if (typeof timer.unref === "function") timer.unref();
           rpcPending.set(id, {

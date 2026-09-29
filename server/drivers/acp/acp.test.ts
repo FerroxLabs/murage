@@ -862,7 +862,8 @@ createInterface({ input: process.stdin }).on("line", line => {
       const opened = await recorder.until(event => event.type === "request.opened");
       expect(await instance.adapter.respondToRequest("always-only", (opened as any).requestId, { behavior })).toBe("unavailable");
       expect(await recorder.until(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
-      expect(recorder.events.some(event => event.type === "runtime.error" && event.message.includes("cancelling the request"))).toBe(true);
+      expect(recorder.events.some(event => event.type === "runtime.error"
+        && /^Always only offered no way to (allow|decline) this request, so Murage cancelled it instead of guessing\.$/.test(event.message))).toBe(true);
     }
     await recorder.until(event => event.type === "turn.completed");
     expect(JSON.parse(readFileSync(dump, "utf8"))).toEqual(behavior === "full-auto"
@@ -1312,10 +1313,10 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(recorder.events.some((e) => e.type === "content.delta")).toBe(true);
     const error = recorder.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined;
     expect(error?.message).toMatch(/went silent/i);
-    // The line is shown in the chat: it names the engine as Settings does and
-    // never an environment variable or the driver's internal kind.
-    expect(error?.message).toContain("Grok");
-    expect(error?.message).not.toMatch(/MURAGE_|_MS\b|grokAgent/);
+    // The line is shown in the chat: it names the engine as Settings does (the
+    // instance's name) and never an environment variable, a millisecond
+    // figure or the driver's internal kind.
+    expect(error?.message).toBe("ACP Test went silent for 1 second, so the turn was stopped.");
     expect(instance.adapter.hasSession("t-stall")).toBe(false);
   });
 
@@ -1797,7 +1798,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
     const error = recorder.events.find(event => event.type === "runtime.error");
     const code = process.platform === "win32" ? 1073807364 : 4;
-    expect(error).toMatchObject({ message: expect.stringContaining(`Grok closed (exit code ${code}) before it finished its reply`) });
+    expect(error).toMatchObject({ message: expect.stringContaining(`ACP Test closed (exit code ${code}) before it finished its reply`) });
     expect((error as { message: string }).message).not.toMatch(/grokAgent|prompt result/);
   });
 
@@ -2504,7 +2505,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(done).toMatchObject({ ok: false });
     const err = recorder.events.find((e) => e.type === "runtime.error")!;
     expect(err.message).toMatch(/did not switch to m-two \(still m-one\)/);
-    expect(err.message).toMatch(/^Select Model Test /);
+    expect(err.message).toMatch(/^ACP Test /);
     expect(err.message).not.toContain("selectModelTest");
     // the whole point: no paid turn is spent on the wrong model
     expect(recorder.events.some((e) => e.type === "content.delta")).toBe(false);
