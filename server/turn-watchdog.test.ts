@@ -157,6 +157,43 @@ describe("TurnWatchdog", () => {
     expect(dog.watching("room")).toBe(false);
   });
 
+  it("a direct turn's watch is its own: an earlier turn's late completion leaves it, its card and its waits in place", () => {
+    const { dog, stalls, tick } = rig();
+    // turn g2 is admitted while the stopped turn g1 (engine turn pA) is
+    // still closing on the same thread
+    dog.watch("direct", "bot1", { generation: "g2", setup: true });
+    const release = dog.waitingOn("direct", "working-folder", "g2");
+    // a setup watch has no engine turn yet, so no completion is its own
+    dog.settleCompleted("direct", "pA", "g1");
+    dog.settleCompleted("direct", undefined);
+    expect(dog.watching("direct")).toBe(true);
+    expect(dog.waits("direct")).toEqual(["working-folder"]);
+    release();
+    dog.dispatched("direct", "bot1", "g2");
+    // dispatched, engine id not known yet: a completion from another
+    // generation's engine turn is still not this turn's
+    dog.settleCompleted("direct", "pA", "g1");
+    expect(dog.watching("direct")).toBe(true);
+    dog.bindProviderTurn("direct", "g2", "pB");
+    dog.setWaitingOnHuman("direct", true, "card-b");
+    dog.settleCompleted("direct", "pA", "g1");
+    expect(dog.watching("direct")).toBe(true);
+    // a person deciding for ten silence limits is not a stall
+    tick(STALL * 10);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    dog.setWaitingOnHuman("direct", false, "card-b");
+    // its own completion settles it
+    dog.settleCompleted("direct", "pB", "g2");
+    expect(dog.watching("direct")).toBe(false);
+    // a turn that completes before its dispatch returned (engine id unknown
+    // to both sides) still settles its own running watch
+    dog.watch("fast", "bot1", { generation: "g3", setup: true });
+    dog.dispatched("fast", "bot1", "g3");
+    dog.settleCompleted("fast", "pC", undefined);
+    expect(dog.watching("fast")).toBe(false);
+  });
+
   it("a settled turn is forgotten", () => {
     const { dog, stalls, tick } = rig();
     dog.watch("t1", "bot1");

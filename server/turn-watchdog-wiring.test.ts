@@ -39,6 +39,15 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     expect(body).toContain("watchdog.settle(threadId, dispatchClaimId)");
   });
 
+  it("binds the direct watch to its own engine turn, so another turn's completion leaves it (and its open card) in place", () => {
+    const body = fn("startTurn");
+    // once dispatch returns, alongside the capability and lease binds
+    expect(body).toMatch(/projectTurnLeases\.bind\(threadId, dispatchClaimId, dispatch\.value\.turnId\);[\s\S]{0,300}watchdog\.bindProviderTurn\(threadId, dispatchClaimId, dispatch\.value\.turnId\);\s*if \(dispatch\.cancelled\)/);
+    // the fold names the completing turn and the generation that sent it
+    expect(SOURCE).toContain("watchdog.settleCompleted(event.threadId, event.turnId, completedGeneration);");
+    expect(SOURCE).toContain("const completedGeneration = event.turnId ? internalCapabilities.dispatchingGeneration(event.threadId, event.turnId) : undefined;");
+  });
+
   it("exempts a routine waiting for a thread slot", () => {
     const body = fn("acquireDirectTurnSlot");
     expect(body).toMatch(/watchdog\.waitingOn\(run\.threadId,"thread-slot",run\.generation\)/);
@@ -114,7 +123,7 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     // the room turn binds its engine turn to its watch, so a completion that
     // names another turn leaves the watch (and any open card) in place; if an
     // unbound completion cleared it first, the running turn re-arms and rebinds
-    expect(SOURCE).toContain('if (event.type === "turn.completed") {\n    watchdog.settleCompleted(event.threadId, event.turnId);');
+    expect(SOURCE).toContain("watchdog.settleCompleted(event.threadId, event.turnId, completedGeneration);");
     expect(body).toContain("watchdog.bindProviderTurn(threadId, internalGeneration, dispatch.value.turnId);");
     expect(body).toMatch(/if \(e\.type === "turn\.completed" && !done\) \{\s*watchdog\.dispatched\(threadId, bot\.id, internalGeneration, \{ stallMs: roomTurnSilenceMs\(silenceMinutes\) \}\);\s*watchdog\.bindProviderTurn\(threadId, internalGeneration, providerTurnId\);/);
     // a stopped room turn on an engine without a close receipt is released by

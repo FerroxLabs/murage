@@ -56,9 +56,9 @@ export interface WatchedTurn {
   phase: "setup" | "running";
   /** The turn's own claim; lets a finished setup settle only its own watch. */
   generation?: string;
-  /** The engine's id for this turn once known (a room reply binds it). A
-   * completion naming another turn on the thread then leaves this watch, its
-   * open cards and its waits in place. */
+  /** The engine's id for this turn once known (room replies and direct
+   * turns bind it). A completion naming another turn on the thread then
+   * leaves this watch, its open cards and its waits in place. */
   providerTurnId?: string;
 }
 
@@ -206,13 +206,22 @@ export class TurnWatchdog {
     if (turn?.generation === generation) turn.providerTurnId = providerTurnId;
   }
 
-  /** An engine turn completed on this thread. A bound watch settles only on
-   * its own turn's completion, or one that names no turn; an unbound watch
-   * (a direct turn) settles on any completion, as before. */
-  settleCompleted(threadId: string, providerTurnId?: string): void {
+  /** An engine turn completed on this thread. `generation` is the claim that
+   * dispatched that engine turn, when known. The watch is left in place when
+   * the completion is not its own turn's:
+   *   - it is still in setup (no engine turn of its own exists yet);
+   *   - it is bound and the completion names another engine turn;
+   *   - the completion's turn was sent by another claim (a stopped turn's
+   *     late close landing after the next turn started, before that turn's
+   *     engine id was known).
+   * Otherwise it settles, including a completion that names no turn on a
+   * running watch. */
+  settleCompleted(threadId: string, providerTurnId?: string, generation?: string): void {
     const turn = this.turns.get(threadId);
     if (!turn) return;
+    if (turn.phase === "setup") return;
     if (turn.providerTurnId && providerTurnId && providerTurnId !== turn.providerTurnId) return;
+    if (generation !== undefined && turn.generation !== undefined && generation !== turn.generation) return;
     this.forget(turn);
   }
 

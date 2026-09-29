@@ -4296,14 +4296,17 @@ bus.subscribe((event: RuntimeEvent) => {
   if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true, event.requestId);
   else if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false, event.requestId);
   else if (event.type === "turn.completed") {
-    watchdog.settleCompleted(event.threadId, event.turnId);
+    const completedGeneration = event.turnId ? internalCapabilities.dispatchingGeneration(event.threadId, event.turnId) : undefined;
+    // Only the watch's own turn settles it. A stopped turn's completion lands
+    // when its engine closes, after the next turn on the thread has started;
+    // settling on it dropped that turn's watch with its open card and waits.
+    watchdog.settleCompleted(event.threadId, event.turnId, completedGeneration);
     // Scoped to the generation that dispatched this provider turn. A stopped
     // turn's completion lands when its engine closes, after Stop has already
     // let the next turn bind this thread's browser; unscoped, it revoked that
     // newer turn's browser for its whole life. An unbound turn (no id, or one
     // that completed before its dispatch resolved) keeps the thread-wide release.
-    void releaseBrowserCapabilityForThread(event.threadId,
-      event.turnId ? internalCapabilities.dispatchingGeneration(event.threadId, event.turnId) : undefined);
+    void releaseBrowserCapabilityForThread(event.threadId, completedGeneration);
   } else if (event.type === "session.exited") {
     // A retained provider session can exit after a newer turn reused the same
     // thread. An unscoped session event must never revoke that newer turn's
@@ -6875,6 +6878,10 @@ async function startTurn(
         revokeInternalGeneration(threadId, dispatchClaimId);
       }
       projectTurnLeases.bind(threadId, dispatchClaimId, dispatch.value.turnId);
+      // the watch names its engine turn: another turn's completion on this
+      // thread (a stopped turn's late close) leaves it, its open card and
+      // its waits in place
+      watchdog.bindProviderTurn(threadId, dispatchClaimId, dispatch.value.turnId);
       if (dispatch.cancelled) {
         retireProviderTurn(dispatch.value.turnId);
         throw new DirectTurnSetupCancelled("turn stopped during provider setup");
