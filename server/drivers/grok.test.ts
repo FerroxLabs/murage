@@ -362,3 +362,27 @@ describe("GrokDriver key issuer guard", () => {
     await instance.dispose();
   });
 });
+
+describe("GrokDriver key issuer guard follows the configured endpoint", () => {
+  let previousFetch: typeof globalThis.fetch;
+  beforeEach(() => { ensureDirs(); previousFetch = globalThis.fetch; });
+  afterEach(() => { globalThis.fetch = previousFetch; });
+  it("still sends a matching key to a server other than xAI", async () => {
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    // SAFETY: the stub only returns real Response objects.
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      seen.push({ url: String(url), auth: new Headers(init?.headers).get("authorization") });
+      return sseResponse(SSE_BODY("hi"));
+    }) as typeof fetch;
+    for (const [url, key] of [["http://127.0.0.1:11434/v1", "sk-proj-fixture-key-private"], ["https://api.fluxrouter.ai/v1", "sk-flux-fixture-key-private"]] as const) {
+      const instance = await GrokDriver.create({ instanceId: "grok-custom", displayName: "Grok", environment: { XAI_API_KEY: key }, enabled: true, config: { url, apiKeyEnv: "XAI_API_KEY" } });
+      expect((await instance.snapshot()).state).not.toBe("unavailable");
+      await instance.dispose();
+    }
+  });
+  it("refuses another provider's key on the xAI host written with a trailing dot", async () => {
+    const instance = await GrokDriver.create({ instanceId: "grok-dot", displayName: "Grok", environment: { XAI_API_KEY: `AIza${"g".repeat(35)}` }, enabled: true, config: { url: "https://api.x.ai./v1", apiKeyEnv: "XAI_API_KEY" } });
+    expect(await instance.snapshot()).toMatchObject({ state: "unavailable" });
+    await instance.dispose();
+  });
+});

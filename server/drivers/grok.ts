@@ -3,6 +3,7 @@
 import type { ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 import { keyIssuer } from "../../electron/provider-connections.mjs";
+import { endpointProvider } from "./endpoint-provider.ts";
 
 const DRIVER_KIND = "grok";
 const DEFAULT_URL = "https://api.x.ai/v1";
@@ -41,10 +42,12 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
   async create(input) {
     const { config } = input;
     const saved = input.environment[config.apiKeyEnv] ?? process.env[config.apiKeyEnv] ?? "";
-    // A key whose own prefix names another provider (a restored workspace
-    // slot, say) is never sent to xAI; the person replaces it in Models.
-    const issuer = keyIssuer(saved);
-    const mismatch = Boolean(issuer && issuer !== "xai");
+    // A key whose own prefix names a provider other than the one this
+    // endpoint belongs to (a restored workspace slot on api.x.ai, say) is
+    // never sent; the person replaces it in Models. Any other server keeps
+    // whatever key it was configured with.
+    const issuer = keyIssuer(saved), endpoint = endpointProvider(config.url);
+    const mismatch = Boolean(issuer && endpoint && issuer !== endpoint);
     const apiKey = mismatch ? "" : saved;
     return createOpenAIChatRuntime({
       input,

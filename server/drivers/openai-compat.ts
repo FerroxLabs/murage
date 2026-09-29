@@ -1,7 +1,7 @@
 // Transcript-replay driver for OpenRouter, Groq, Together, llama.cpp, and
 // other endpoints that speak the OpenAI chat-completions contract.
-import { PROVIDER_PRESETS, assertProviderKey, keyIssuer } from "../../electron/provider-connections.mjs";
-import type { ProviderPreset } from "../../shared/provider-connections.ts";
+import { assertProviderKey, keyIssuer } from "../../electron/provider-connections.mjs";
+import { endpointProvider } from "./endpoint-provider.ts";
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 import { requestMemoryExtraction, requestMemoryInference, requestMemoryGrounding } from "../memory/extract.ts";
@@ -44,21 +44,6 @@ function isOpenRouterUrl(url: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** The named provider whose API this endpoint is (its host or a subdomain of
- * it), or undefined for any other server. */
-function endpointProvider(url: string): ProviderPreset | undefined {
-  let host: string;
-  try {
-    host = new URL(url).hostname.toLowerCase();
-  } catch {
-    return undefined;
-  }
-  return (Object.keys(PROVIDER_PRESETS) as ProviderPreset[]).find((preset) => {
-    const presetHost = new URL(PROVIDER_PRESETS[preset].baseUrl).hostname;
-    return host === presetHost || host.endsWith(`.${presetHost}`);
-  });
 }
 
 function decodeConfig(raw: unknown): OpenAICompatConfig {
@@ -221,8 +206,8 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           : {}),
       }),
       httpErrorLabel: "upstream",
-      missingKeyError: credentialMismatch ? "The saved key does not match this legacy endpoint. Connect its provider in Models." : "This engine has no API key yet. Add one in App Settings → Models.",
-      unavailableReason: credentialMismatch ? "The saved key does not match this legacy endpoint. Connect its provider in Models." : "No API key yet. Add one in App Settings → Models.",
+      missingKeyError: credentialMismatch ? "The saved key does not match this endpoint's provider. Connect its provider in Models." : "This engine has no API key yet. Add one in App Settings → Models.",
+      unavailableReason: credentialMismatch ? "The saved key does not match this endpoint's provider. Connect its provider in Models." : "No API key yet. Add one in App Settings → Models.",
       // Idle budget, renewed by stream progress (U02): not a total deadline.
       timeoutMs: 180_000,
       reasoning: true,

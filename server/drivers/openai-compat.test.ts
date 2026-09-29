@@ -717,6 +717,8 @@ describe("OpenAICompatDriver key issuer guard", () => {
     ["https://api.groq.com/openai/v1", "sk-or-v1-fixture-key-private"],
     ["https://api.x.ai/v1", GOOGLE],
     ["https://generativelanguage.googleapis.com/v1beta/openai", "xai-fixture-key-private-0000"],
+    ["https://API.OpenAI.com./v1", GOOGLE],
+    ["https://eu.openrouter.ai/api/v1", "sk-proj-fixture-key-private"],
   ])("sends no key to %s when the key names another provider", async (url, key) => {
     const seen: Array<string | null> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string | URL, init?: RequestInit) => {
@@ -731,7 +733,7 @@ describe("OpenAICompatDriver key issuer guard", () => {
   });
   it("keeps an opaque key, and the provider's own key, on its endpoint", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })));
-    for (const [url, key] of [["https://openrouter.ai/api/v1", "opaque-fixture-key"], ["https://generativelanguage.googleapis.com/v1beta/openai", GOOGLE], ["https://api.groq.com/openai/v1", "gsk_fixture-key-private"]] as const) {
+    for (const [url, key] of [["https://openrouter.ai/api/v1", "opaque-fixture-key"], ["https://generativelanguage.googleapis.com/v1beta/openai", GOOGLE], ["https://api.groq.com/openai/v1", "gsk_fixture-key-private"], ["https://api.fluxrouter.ai/v1", "sk-flux-fixture-key-private"], ["https://api.openai.com.example.test/v1", GOOGLE]] as const) {
       const inst = await OpenAICompatDriver.create({ instanceId: "guard-2", displayName: "Guard", enabled: true, config: { url, key, apiKeyEnv: "OPENAI_COMPAT_API_KEY" }, environment: {} });
       expect((await inst.snapshot()).state).not.toBe("unavailable");
       await inst.dispose();
