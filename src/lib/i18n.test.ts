@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { UI_LANGUAGE_KEY, bootLanguage, localeVersion, rememberLanguage, resolveLocale, setLocale, subscribeLocale, t } from "./i18n";
 import { en, loadLocalePack, localeChoices, localeCodes, localeLoaders } from "@/locales";
@@ -165,19 +165,35 @@ describe("the language the first paint starts in", () => {
     return { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, next: string) => void saved.set(key, next), saved };
   };
   it("is the owner's last choice on this device, else the system's", () => {
-    expect(bootLanguage(storage("fr"), "de-DE")).toBe("fr");
-    expect(bootLanguage(storage("en"), "de-DE")).toBe("en");
+    expect(bootLanguage(() => storage("fr"), "de-DE")).toBe("fr");
+    expect(bootLanguage(() => storage("en"), "de-DE")).toBe("en");
     // "" is "follow the system", as in Settings
-    expect(bootLanguage(storage(""), "de-DE")).toBe("de-DE");
-    expect(bootLanguage(storage(null), "de-DE")).toBe("de-DE");
-    expect(bootLanguage(undefined, "ja")).toBe("ja");
+    expect(bootLanguage(() => storage(""), "de-DE")).toBe("de-DE");
+    expect(bootLanguage(() => storage(null), "de-DE")).toBe("de-DE");
+    expect(bootLanguage(() => undefined, "ja")).toBe("ja");
     const blocked = { getItem: () => { throw new Error("SecurityError"); } };
-    expect(bootLanguage(blocked, "ja")).toBe("ja");
+    expect(bootLanguage(() => blocked, "ja")).toBe("ja");
+    // where site data is blocked, reaching localStorage at all throws
+    expect(bootLanguage(() => { throw new DOMException("denied", "SecurityError"); }, "ja")).toBe("ja");
   });
   it("remembers a choice, and a blocked storage is not an error", () => {
     const store = storage(null);
-    rememberLanguage("pt-br", store);
+    rememberLanguage("pt-br", () => store);
     expect(store.saved.get(UI_LANGUAGE_KEY)).toBe("pt-br");
-    expect(() => rememberLanguage("de", { setItem: () => { throw new Error("QuotaExceededError"); } })).not.toThrow();
+    expect(() => rememberLanguage("de", () => ({ setItem: () => { throw new Error("QuotaExceededError"); } }))).not.toThrow();
+    expect(() => rememberLanguage("de", () => { throw new DOMException("denied", "SecurityError"); })).not.toThrow();
+  });
+  it("loads, and starts in the system language, where reaching localStorage throws", async () => {
+    vi.resetModules();
+    const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, get: () => { throw new DOMException("denied", "SecurityError"); } });
+    try {
+      const fresh = await import("./i18n");
+      await expect(fresh.bootLocaleReady).resolves.toBeTypeOf("string");
+    } finally {
+      if (original) Object.defineProperty(globalThis, "localStorage", original);
+      else delete (globalThis as { localStorage?: unknown }).localStorage;
+      vi.resetModules();
+    }
   });
 });

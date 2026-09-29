@@ -59,17 +59,21 @@ export function localeVersion(): number {
  * ("" follows the system), so the next start paints in it before config
  * arrives. A convenience only: config.language stays the truth. */
 export const UI_LANGUAGE_KEY = "murage-ui-language";
-export function rememberLanguage(language: string, storage: Pick<Storage, "setItem"> | undefined = globalThis.localStorage): void {
+type StorageRead<T> = () => T | undefined;
+/** Reading `localStorage` itself throws where site data is blocked, so the
+ * storage is always reached inside the try. */
+const deviceStorage = (): Storage | undefined => globalThis.localStorage;
+export function rememberLanguage(language: string, storage: StorageRead<Pick<Storage, "setItem">> = deviceStorage): void {
   try {
-    storage?.setItem(UI_LANGUAGE_KEY, language);
+    storage()?.setItem(UI_LANGUAGE_KEY, language);
   } catch {
     /* private mode or blocked storage: the next start follows the system */
   }
 }
 /** The tag the first paint starts in: the remembered choice, else the system's. */
-export function bootLanguage(storage: Pick<Storage, "getItem"> | undefined, system: string | undefined): string | undefined {
+export function bootLanguage(storage: StorageRead<Pick<Storage, "getItem">>, system: string | undefined): string | undefined {
   try {
-    return storage?.getItem(UI_LANGUAGE_KEY) || system;
+    return storage()?.getItem(UI_LANGUAGE_KEY) || system;
   } catch {
     return system;
   }
@@ -78,7 +82,7 @@ export function bootLanguage(storage: Pick<Storage, "getItem"> | undefined, syst
 /** That language's pack, fetched as the app starts. main.tsx holds the first
  * render for it, briefly, so a German phone does not paint English and then
  * change under the reader's eyes. */
-export const bootLocaleReady: Promise<string> = setLocale(bootLanguage(globalThis.localStorage, globalThis.navigator?.language));
+export const bootLocaleReady: Promise<string> = setLocale(bootLanguage(deviceStorage, globalThis.navigator?.language));
 
 /** Look up a catalog string. `{name}` placeholders interpolate from params;
  * a placeholder without a matching param stays verbatim so a bad pack shows
