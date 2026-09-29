@@ -149,6 +149,9 @@ export class ImageOperations {
   private readonly waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void;
   private readonly speaker?: (threadId: string, botId: string) => Message["from"] | undefined;
   private readonly routineCard?: RoutineCardHooks;
+  /** Tells the turn's silence watch that Murage is working on this image
+   * (approval, then the render) and returns the release. */
+  private readonly rendering?: (actor: Pick<ImageActor, "threadId" | "generation">) => () => void;
   /** An allow given after a routine run's turn had ended: the run's next
    * image in that conversation is already approved, once. */
   private readonly lateAllows = new Set<string>();
@@ -158,8 +161,9 @@ export class ImageOperations {
   /** `speaker` names the member who asked when the card lands in a channel:
    * without it the card has no sender, so neither the channel view nor the
    * native approval notification can tell whose request it is. */
-  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void; speaker?: (threadId: string, botId: string) => Message["from"] | undefined; routineCard?: RoutineCardHooks }) {
-    this.store = options.store; this.waiting = options.waiting; this.speaker = options.speaker; this.routineCard = options.routineCard;
+  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void; speaker?: (threadId: string, botId: string) => Message["from"] | undefined; routineCard?: RoutineCardHooks;
+    rendering?: (actor: Pick<ImageActor, "threadId" | "generation">) => () => void }) {
+    this.store = options.store; this.waiting = options.waiting; this.speaker = options.speaker; this.routineCard = options.routineCard; this.rendering = options.rendering;
   }
   private db() {
     const db = database();
@@ -217,6 +221,10 @@ export class ImageOperations {
       this.db().prepare("INSERT INTO image_operations VALUES(?,?,?,'awaiting',NULL,?)").run(id, actor.generation, requestHash, Date.now());
     }
     this.workspaces.add(actor.botId);
+    // The render is bounded by its own ceiling; until it ends, the engine's
+    // quiet turn is waiting on Murage, not silent.
+    let releaseWatch: () => void = () => {};
+    try { releaseWatch = this.rendering?.(actor) ?? releaseWatch; } catch { /* the watch never changes the operation */ }
     let approvalStarted = false;
     // A pending publication record survives outcome receipts, so a received
     // image stays resumable even when its attempt is recorded as uncertain.
@@ -269,7 +277,7 @@ export class ImageOperations {
         throw error(409, recoveryMessage(outputReceipt(database(), receipt.id)?.errorCategory));
       }
       throw e;
-    }).finally(() => { this.jobs.delete(id); this.workspaces.delete(actor.botId); });
+    }).finally(() => { this.jobs.delete(id); this.workspaces.delete(actor.botId); try { releaseWatch(); } catch { /* as above */ } });
     this.jobs.set(id, job); return job;
   }
   /** Completes every retained image of one operation from its receipts. */

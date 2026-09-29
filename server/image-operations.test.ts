@@ -559,3 +559,27 @@ it("a routine run holds its image card open past the bound and past its turn", a
     expect(f.store.messagesFor(f.bot.threadId).filter(m => m.card?.tool === "generate_image")).toHaveLength(1);
   } finally { vi.useRealTimers(); }
 });
+// 0.1.61: a turn stops only on silence, Stop or a budget. While Murage itself
+// renders an approved image the engine's turn sends nothing; that is Murage
+// working, bounded by the render ceiling, not the engine going quiet. The
+// operation tells the turn's silence watch for as long as it runs.
+it("an image operation holds the turn's silence watch while it runs, and lets go when it ends", async () => {
+  const store = new Store(() => ({instanceId:"fixture",model:"fixture"})); const bot = store.createBot();
+  const actor = { botId:bot.id,threadId:bot.threadId,generation:randomUUID(),signal:new AbortController().signal,assertActive:()=>{} };
+  const released = vi.fn(), rendering = vi.fn(() => released);
+  const operations = new ImageOperations({ store, waiting: () => {}, rendering });
+  let finish!: (value: unknown) => void, fail!: (error: Error) => void;
+  const done = operations.execute(actor, "watch-ok", { prompt: "a" }, () => new Promise(resolve => { finish = resolve; }));
+  expect(rendering).toHaveBeenCalledOnce();
+  expect(rendering).toHaveBeenCalledWith(expect.objectContaining({ threadId: bot.threadId, generation: actor.generation }));
+  expect(released).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  finish({ ok: true }); await done;
+  expect(released).toHaveBeenCalledOnce();
+  const other = { ...actor, generation: randomUUID() };
+  const failed = operations.execute(other, "watch-fail", { prompt: "b" }, () => new Promise((_, reject) => { fail = reject; }));
+  expect(rendering).toHaveBeenCalledTimes(2);
+  await vi.waitFor(() => expect(fail).toBeDefined());
+  fail(new Error("render failed")); await expect(failed).rejects.toThrow("render failed");
+  expect(released).toHaveBeenCalledTimes(2);
+});

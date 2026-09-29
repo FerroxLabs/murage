@@ -36,7 +36,10 @@ export type StallWaitReason =
   | "browser"
   | "working-folder"
   | "shared"
-  | "room-turn";
+  | "room-turn"
+  /** Murage is asking the owner about, or rendering, an image for this turn
+   * (server/image-operations.ts); the render has its own ceiling. */
+  | "image-render";
 
 export interface WatchedTurn {
   threadId: string;

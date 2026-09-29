@@ -3391,7 +3391,10 @@ function routineCardClosed(threadId: string, requestId: string, answer: "allow" 
 }
 const routineCardHooks = { opened: routineCardOpened, closed: routineCardClosed };
 
-const imageOperations = new ImageOperations({ store, routineCard: routineCardHooks, speaker: (threadId, botId) => {
+const imageOperations = new ImageOperations({ store, routineCard: routineCardHooks,
+  // A render is Murage working, bounded by its ceiling: not the engine's silence.
+  rendering: actor => watchdog.waitingOn(actor.threadId, "image-render", actor.generation),
+  speaker: (threadId, botId) => {
   // A channel card carries its sender like every other member message; a
   // one-to-one task needs none.
   if (!store.groupByThread(threadId)) return undefined;
