@@ -65,6 +65,8 @@ const failures = async (threadId: string) => (await messages(threadId))
   .filter((m) => m.kind === "activity" && (m.tool?.ok === false || String(m.tool?.name ?? "").startsWith("error:")));
 const notes = async (threadId: string) => (await messages(threadId))
   .filter((m) => m.kind === "activity" && String(m.tool?.name ?? "").startsWith(IMAGES_NOT_SENT_PREFIX));
+/** Replies of the echo-gated fake engine: one per turn that reached it. */
+const echoes = async (threadId: string) => (await messages(threadId)).filter((m) => m.role === "bot" && m.kind === "text" && String(m.text ?? "").includes("echo:")).length;
 type PromptBlock = { type: string; text?: string; data?: string; mimeType?: string };
 const lastPrompt = () => JSON.parse(readFileSync(promptDump, "utf8")) as PromptBlock[];
 
@@ -146,6 +148,9 @@ posixOnly("an image limit never fails a turn (fake Fuigo through the harness)", 
     const text = `What do you see?\n\n${paths.map((path) => `<attached-image path="${path}" />`).join("\n\n")}`;
     const sent = await request("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text });
     expect(sent.status, JSON.stringify(sent.body)).toBe(202);
+    // The 202 comes before the turn starts: wait for the engine's reply, not
+    // for an idle flag that is still idle under a loaded machine.
+    await expect.poll(async () => (await echoes(bot.threadId)), { timeout: 60_000 }).toBe(1);
     await settled(bot.id);
     const prompt = lastPrompt();
     const images = prompt.filter((block) => block.type === "image");
@@ -153,7 +158,7 @@ posixOnly("an image limit never fails a turn (fake Fuigo through the harness)", 
     const turnText = prompt.filter((block) => block.type === "text").map((block) => block.text).join("\n");
     for (const path of paths.slice(0, 10)) expect(turnText).toContain(`<attached-image path="${path}" />`);
     for (const path of paths.slice(10)) expect(turnText).not.toContain(path);
-    expect(await failures(bot.threadId)).toEqual([]);
+    expect(JSON.stringify(await failures(bot.threadId))).toBe("[]");
     const lines = await notes(bot.threadId);
     expect(lines.map((m) => m.tool)).toEqual([{ name: imagesNotSentActivityName({ sent: 10, overCount: 2, tooLarge: 0 }), ok: true }]);
     // The owner's own message keeps all twelve: the chat shows what they sent.
@@ -175,11 +180,12 @@ posixOnly("an image limit never fails a turn (fake Fuigo through the harness)", 
     expect(queued.body.queued).toBe(true);
     writeFileSync(gateFile, "open");
     await expect.poll(async () => (await messages(bot.threadId)).some((m) => m.role === "user" && String(m.text ?? "").includes(path)), { timeout: 30_000 }).toBe(true);
+    await expect.poll(() => { try { return lastPrompt().some((block) => block.type === "text" && block.text?.includes(path)); } catch { return false; } }, { timeout: 60_000 }).toBe(true);
+    await expect.poll(async () => (await echoes(bot.threadId)), { timeout: 60_000 }).toBe(3);
     await settled(bot.id);
-    await expect.poll(() => lastPrompt().some((block) => block.type === "text" && block.text?.includes(path)), { timeout: 30_000 }).toBe(true);
     const images = lastPrompt().filter((block) => block.type === "image");
     expect(images.map((block) => Buffer.from(block.data!, "base64").at(-1))).toEqual([expected]);
-    expect(await failures(bot.threadId)).toEqual([]);
+    expect(JSON.stringify(await failures(bot.threadId))).toBe("[]");
     expect(String(JSON.stringify(await messages(bot.threadId)))).not.toContain(REFUSAL);
   }, 90_000);
 
