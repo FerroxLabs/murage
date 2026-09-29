@@ -874,13 +874,14 @@ const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // hi
  * speaking for good — a wedged OpenCode turn streams thought chunks and then
  * goes silent forever without ever answering the RPC.
  *
- * The server's stall watchdog (server/turn-watchdog.ts, 20 minutes) already
- * bounds this; the guard here ends it sooner, with a message that names the
- * engine and this knob instead of "no activity for 20 minutes". 0 turns it
- * off and leaves the watchdog as the only bound. */
-const promptIdleTimeoutMs = (): number => {
+ * Off by default (0.1.61): the thread's silence watch (server/turn-watchdog.ts,
+ * 20 minutes, or the room's own setting) is the one place silence is judged.
+ * A three-minute guard here cut long tool calls short and ignored the owner's
+ * setting. Setting the knob turns it back on for an engine that needs a
+ * sooner, engine-named failure; 0 or unset leaves the watch as the only bound. */
+export const acpPromptIdleTimeoutMs = (): number => {
   const raw = process.env.MURAGE_ACP_PROMPT_IDLE_MS;
-  if (raw === undefined) return 180_000;
+  if (raw === undefined) return 0;
   const ms = Number(raw);
   return Number.isFinite(ms) && ms > 0 ? ms : 0;
 };
@@ -2506,7 +2507,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               state.promptSent = true;
               promptStartedAt = Date.now();
             }
-            const promptIdleMs = promptIdleTimeoutMs();
+            const promptIdleMs = acpPromptIdleTimeoutMs();
             const result = await request(
               "session/prompt",
               {

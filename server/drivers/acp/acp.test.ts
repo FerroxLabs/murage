@@ -19,7 +19,7 @@ import { scanFolderTrustSources } from "../../folder-trust.ts";
 import type { ProviderTurnRoute } from "../../provider-routing.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
 import { redactSecretsInText } from "../../redact.ts";
 import { redactSecretsInText as redactSecretsInTextShipped } from "../../testing/redact-release-0.1.53.ts";
 import { ERROR_MESSAGE_MAX, ENGINE_ERROR_CATEGORIES } from "../../../shared/provider-error.ts";
@@ -1291,6 +1291,16 @@ createInterface({ input: process.stdin }).on("line", line => {
   // the only thing that ended the turn was the server's 20-minute stall
   // watchdog, so the bot sat busy for twenty minutes and then reported "no
   // activity" rather than naming the engine that stopped talking.
+  // 0.1.61: silence is judged once, by the thread's silence watch on the
+  // owner's setting (20 minutes, or the room's). The engine-level guard no
+  // longer cuts a quiet turn at 3 minutes; it stays available as a knob.
+  it("leaves a quiet turn to the thread's silence watch unless the idle knob is set", () => {
+    delete process.env.MURAGE_ACP_PROMPT_IDLE_MS;
+    expect(acpPromptIdleTimeoutMs()).toBe(0);
+    process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
+    expect(acpPromptIdleTimeoutMs()).toBe(150);
+  });
+
   it("fails a turn whose agent goes silent mid-answer, and kills the wedged child", async () => {
     process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
     await create(GrokAgentDriver, "stall-after-text");
