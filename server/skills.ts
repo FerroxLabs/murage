@@ -1838,13 +1838,32 @@ export function rollbackSkillRevision(botId:string, name:string, expectedStageId
   } catch { return {error:"The retained skill revision is unavailable or changed"}; }
 }
 
-/** Called only after the dispatcher has excluded another active task. Unknown
- * native files/links are user-owned and are never removed or replaced. */
+/** App-made native skill links still in the bot's shared workspace, the
+ * only thing the migration moves. A bot made on a release with task desks
+ * has none. */
+function legacyDiscoveryLinks(root:string, managed:string[]):boolean {
+  if(managed.length)return true;
+  for(const dir of NATIVE_SKILL_DIRS){
+    const directory=nativeLinkDirectory(root,dir,false);
+    if(!directory)continue;
+    let names:string[];
+    try{names=readdirSync(directory).filter(isSkillName);}catch{return true;}
+    if(names.some(name=>nativeLinkDirectlyTargetsOwnedSkill(join(directory,name),root,name,false)))return true;
+  }
+  return false;
+}
+
+/** Moving links out of the shared workspace waits until no other turn of the
+ * bot runs (`quiescent`): that turn may be reading them. With nothing to
+ * move, nothing can change under another turn, so a brand new bot's first
+ * turns never wait on each other (AFTER-REVIEW: a new lead's room wake and
+ * its review started together and both failed here). Unknown native
+ * files/links are user-owned and are never removed or replaced. */
 export function migrateSkillDiscoveryToTasks(botId:string, quiescent=true):void {
   const marker=join(skillStateDir(botId),"task-discovery.json");
   if(existsSync(marker))return;
-  if(!quiescent)throw new Error("Procedure migration is waiting for another active task");
   const root=workspaceDir(botId), managed=readManagedLinks(botId);
+  if(!quiescent&&legacyDiscoveryLinks(root,managed))throw new Error("Procedure migration is waiting for another active task");
   removeNativeLinksForUnsafeSkillsRoot(botId,root,managed);
   for(const dir of NATIVE_SKILL_DIRS){
     const directory=nativeLinkDirectory(root,dir,false);

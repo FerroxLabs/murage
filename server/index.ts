@@ -8226,6 +8226,9 @@ async function runGroupMemberTurn(
   // Upstream 0b2694a4: the setup latch for a stall during room setup.
   let setupStalled = false;
   let unregisterSetupStall = () => {};
+  // Set from this attempt's room claim until its provider turn is launched:
+  // a setup step that throws in between releases the claim through it.
+  let releaseClaimedSetup: (() => Promise<unknown>) | undefined;
   try {
   if (instance.adapter.capabilities.agentsMcp === true) {
     integrations.agents = agentsIntegration(bot.id, threadId, hop, skillAuthoring, internalGeneration);
@@ -8384,6 +8387,7 @@ async function runGroupMemberTurn(
     skillAuthoring,
     skillAuthoringClaim,
   });
+  releaseClaimedSetup = releaseUnstartedRoomTurn;
 
   const roster = group.memberIds
     .map((id) => store.bot(id))
@@ -8642,6 +8646,8 @@ async function runGroupMemberTurn(
     await releaseUnstartedRoomTurn();
     return false;
   }
+  // From here the dispatch and the turn's own end release the room.
+  releaseClaimedSetup = undefined;
   const outcome = await new Promise<GroupMemberTurnOutcome>((resolve) => {
     let done = false;
     let unsub = () => {};
@@ -8971,6 +8977,21 @@ async function runGroupMemberTurn(
     }
   }
   return true;
+  } catch (error) {
+    // A setup step threw after this attempt claimed the room (AFTER-REVIEW: a
+    // new lead's room wake failed its one-time procedure migration). Release
+    // the claim as every other unstarted exit does and say why in the room;
+    // left alone the room stayed busy, with no reply and nothing queued
+    // behind it ever starting.
+    const release = releaseClaimedSetup;
+    releaseClaimedSetup = undefined;
+    if (release) {
+      await release().catch(() => {});
+      const message = error instanceof Error ? error.message : String(error);
+      murageFailureLine(message);
+      onDispatchError?.(message);
+    }
+    throw error;
   } finally {
     unregisterSetupStall();
     watchdog.settleSetup(threadId, internalGeneration);
