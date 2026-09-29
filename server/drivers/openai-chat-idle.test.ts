@@ -192,6 +192,26 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
     expect(requests).toBe(1);
   });
 
+  // 0.1.61: a turn stops only on silence (the thread's watch, the owner's
+  // setting), Stop or a budget. A runtime built without an idle budget never
+  // cuts a quiet provider on a fixed clock of its own.
+  it("without an idle budget, a provider quiet for longer than any budget still answers", async () => {
+    handler = (_req, res) => {
+      const answer = setTimeout(() => {
+        sse(res);
+        res.end(content("late ") + finish + DONE);
+      }, IDLE_MS * 2);
+      timers.add(answer as unknown as ReturnType<typeof setInterval>);
+    };
+    const { completed, events, settledMs } = await runTurn(create({ timeoutMs: undefined }), "t-no-budget");
+
+    expect(completed).toMatchObject({ ok: true, stopReason: null });
+    expect(settledMs).toBeGreaterThanOrEqual(IDLE_MS * 2 - 5);
+    expect(replies(events)).toEqual(["late "]);
+    expect(errors(events)).toEqual([]);
+    expect(requests).toBe(1);
+  });
+
   it("does not let keepalive comments or empty deltas hold a stalled stream open", async () => {
     let keepalives = 0;
     let keepalivesAtTimeout = 0;

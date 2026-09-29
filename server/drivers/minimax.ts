@@ -114,7 +114,8 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
       httpErrorLabel: "MiniMax",
       missingKeyError: `no MiniMax key: set ${API_KEY_ENV} or run mmx auth login --api-key …`,
       unavailableReason: `no MiniMax API key: run mmx auth login --api-key … or set ${API_KEY_ENV}`,
-      timeoutMs: 180_000,
+      // No provider idle cut of its own (0.1.61): the thread's silence watch,
+      // on the owner's setting, decides when a quiet turn stops.
       billing: "metered",
       includeUsageInCompleted: true,
       noBodyError: "MiniMax returned no response body",

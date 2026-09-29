@@ -595,24 +595,27 @@ describe("OpenAICompatDriver", () => {
       }
     });
 
-    it("fails a stalled stream after 180s idle as incomplete, never as a user Stop", async () => {
+    // 0.1.61: a turn stops only on silence (the thread's watch, on the
+    // owner's setting), Stop or a budget. This engine used to cut a stream
+    // quiet for 180 s itself; a quiet stream now stays open for the watch.
+    it("leaves a stream quiet for far longer than 180 s open, with no cut of its own", async () => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
       const { controller, state } = heldStream();
       const inst = await createDriver("test-idle-stall");
       const recorder = recordEvents(inst.adapter);
       try {
         await inst.adapter.sendTurn({ threadId: "thread-idle-stall", text: "prompt", model: "vendor/model" });
-        controller().enqueue(chunk("part 1"));
-        await vi.advanceTimersByTimeAsync(179_000);
+        controller().enqueue(chunk("part 1 "));
+        await vi.advanceTimersByTimeAsync(30 * 60_000);
         expect(recorder.events.some((event) => event.type === "turn.completed")).toBe(false);
-        await vi.advanceTimersByTimeAsync(1_500);
+        expect(recorder.events.some((event) => event.type === "runtime.error")).toBe(false);
+        controller().enqueue(chunk("part 2"));
+        controller().enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller().close();
 
         const completed = await recorder.until((event) => event.type === "turn.completed");
-        expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
-        expect(recorder.events.filter((event) => event.type === "runtime.error")).toEqual([
-          expect.objectContaining({ message: 'The model server stopped sending this answer before it was finished.' }),
-        ]);
-        expect(recorder.events.find((event) => event.type === "item.completed")).toMatchObject({ text: "part 1" });
+        expect(completed).toMatchObject({ ok: true, stopReason: null });
+        expect(recorder.events.find((event) => event.type === "item.completed")).toMatchObject({ text: "part 1 part 2" });
         expect(state.requests).toBe(1);
         expect(vi.getTimerCount()).toBe(0);
       } finally {

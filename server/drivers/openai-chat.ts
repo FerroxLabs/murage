@@ -78,8 +78,11 @@ interface RuntimeOptions<Config> {
   missingKeyError: string;
   unavailableReason: string;
   /** Longest wait without provider progress, renewed by each progress frame.
-   * Bounds connecting, headers and first progress; not a total deadline. */
-  timeoutMs: number;
+   * Bounds connecting, headers and first progress; not a total deadline.
+   * Absent (the shipped engines, 0.1.61): no idle cut of the runtime's own.
+   * The thread's silence watch, on the owner's setting, decides when a quiet
+   * turn stops, and Stop always works. */
+  timeoutMs?: number;
   nativeLog: NativeLog;
   refreshModels?: () => Promise<void>;
   generateModel?: () => string;
@@ -245,8 +248,12 @@ interface IdleBudget {
   clear(): void;
 }
 
-function createIdleBudget(ms: number): IdleBudget {
+function createIdleBudget(ms: number | undefined): IdleBudget {
   const controller = new AbortController();
+  if (!ms || ms <= 0) {
+    // No budget: nothing ever expires here, and progress has nothing to renew.
+    return { signal: controller.signal, expired: false, message: "", renew: () => {}, clear: () => {} };
+  }
   const message = `timed out after ${ms}ms without provider progress`;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let cleared = false;
