@@ -927,7 +927,7 @@ export class ImageGenerationService {
         try {
           // No transport clock of its own: the render ceiling, the stream's
           // idle watch and Stop bound it (server/provider-dispatcher.ts).
-          const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, ...auth }, body: outbound.body, signal: idle ? AbortSignal.any([signal, idle.signal]) : signal, redirect: "error", dispatcher: providerDispatcher() } as RequestInit);
+          const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, ...auth }, body: outbound.body, signal: idle ? AbortSignal.any([signal, idle.signal]) : signal, redirect: "error", dispatcher: providerDispatcher(outbound.url) } as RequestInit);
           idle?.touch();
           if (!response.ok) {
             outcome = response.status >= 400 && response.status < 500 ? "failed" : "uncertain";

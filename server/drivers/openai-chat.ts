@@ -436,7 +436,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       body: JSON.stringify(options.requestBody(model, messages, stream)),
       signal: requestSignal,
       // No transport clock of its own (server/provider-dispatcher.ts).
-      dispatcher: providerDispatcher(),
+      dispatcher: providerDispatcher(endpoint),
     } as RequestInit);
     // Headers are back: something is listening at that address. Everything
     // after this point is a server that answered, however badly.

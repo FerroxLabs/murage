@@ -76,7 +76,17 @@ describe("chat engines on the shared runtime", () => {
     const saved = process.env.NODE_USE_ENV_PROXY;
     process.env.NODE_USE_ENV_PROXY = "1";
     try {
-      expect(providerDispatcher()).toBeInstanceOf(EnvHttpProxyAgent);
+      expect(providerDispatcher("https://api.fluxrouter.ai/v1/chat/completions")).toBeInstanceOf(EnvHttpProxyAgent);
+      // A model server on this computer or the local network stays direct.
+      for (const local of ["http://127.0.0.1:1234/v1/chat/completions", "http://localhost:11434/v1", "http://[::1]:8080/v1", "http://192.168.1.20:8000/v1", "http://10.0.0.5/v1", "http://100.101.102.103/v1", "http://box.local/v1"]) {
+        expect(providerDispatcher(local), local).not.toBeInstanceOf(EnvHttpProxyAgent);
+      }
+      expect(providerDispatcher("http://8.8.8.8/v1")).toBeInstanceOf(EnvHttpProxyAgent);
+      delete process.env.NODE_USE_ENV_PROXY;
+      const savedOptions = process.env.NODE_OPTIONS;
+      process.env.NODE_OPTIONS = "--max-old-space-size=4096 --use-env-proxy";
+      try { expect(providerDispatcher("https://api.fluxrouter.ai/v1")).toBeInstanceOf(EnvHttpProxyAgent); }
+      finally { if (savedOptions === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = savedOptions; }
     } finally { if (saved === undefined) delete process.env.NODE_USE_ENV_PROXY; else process.env.NODE_USE_ENV_PROXY = saved; }
   });
 });
