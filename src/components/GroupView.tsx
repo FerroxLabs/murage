@@ -58,9 +58,9 @@ import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { FolderTrustRow } from "./FolderTrustRow";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
-import { ImagesLeftOutRow } from "./ImagesLeftOutRow";
+import { ImagesNotSentRow } from "./ImagesNotSentRow";
 import { browserUnavailableReason } from "../../shared/browser-unavailable";
-import { imagesLeftOut } from "../../shared/turn-image-note";
+import { imagesNotSent } from "../../shared/turn-image-note";
 import { FolderTrustNote } from "./FolderTrustNote";
 import { useFocusMessage } from "@/lib/focus-message";
 import { shortPath } from "@/lib/short-path";
@@ -311,8 +311,8 @@ const Transcript = memo(function Transcript({
               <FolderTrustRow kind={folderTrustNotice(m.tool.name)!.kind} sources={folderTrustNotice(m.tool.name)!.sources} />
             ) : browserUnavailableReason(m.tool.name) ? (
               <BrowserUnavailableRow reason={browserUnavailableReason(m.tool.name)!} />
-            ) : imagesLeftOut(m.tool.name) ? (
-              <ImagesLeftOutRow counts={imagesLeftOut(m.tool.name)!} />
+            ) : imagesNotSent(m.tool.name) ? (
+              <ImagesNotSentRow counts={imagesNotSent(m.tool.name)!} />
             ) : m.tool.ok === false || m.tool.name.startsWith("error:") || showToolCalls ? (
               <RoomToolChip message={m} />
             ) : null

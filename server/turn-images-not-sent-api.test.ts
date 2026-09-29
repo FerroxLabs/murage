@@ -22,7 +22,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
-import { IMAGES_LEFT_OUT_PREFIX, imagesLeftOutActivityName } from "../shared/turn-image-note.ts";
+import { IMAGES_NOT_SENT_PREFIX, imagesNotSentActivityName } from "../shared/turn-image-note.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -64,7 +64,7 @@ const settled = async (botId: string) => {
 const failures = async (threadId: string) => (await messages(threadId))
   .filter((m) => m.kind === "activity" && (m.tool?.ok === false || String(m.tool?.name ?? "").startsWith("error:")));
 const notes = async (threadId: string) => (await messages(threadId))
-  .filter((m) => m.kind === "activity" && String(m.tool?.name ?? "").startsWith(IMAGES_LEFT_OUT_PREFIX));
+  .filter((m) => m.kind === "activity" && String(m.tool?.name ?? "").startsWith(IMAGES_NOT_SENT_PREFIX));
 type PromptBlock = { type: string; text?: string; data?: string; mimeType?: string };
 const lastPrompt = () => JSON.parse(readFileSync(promptDump, "utf8")) as PromptBlock[];
 
@@ -155,7 +155,7 @@ posixOnly("an image limit never fails a turn (fake Fuigo through the harness)", 
     for (const path of paths.slice(10)) expect(turnText).not.toContain(path);
     expect(await failures(bot.threadId)).toEqual([]);
     const lines = await notes(bot.threadId);
-    expect(lines.map((m) => m.tool)).toEqual([{ name: imagesLeftOutActivityName({ sent: 10, overCount: 2, tooLarge: 0 }), ok: true }]);
+    expect(lines.map((m) => m.tool)).toEqual([{ name: imagesNotSentActivityName({ sent: 10, overCount: 2, tooLarge: 0 }), ok: true }]);
     // The owner's own message keeps all twelve: the chat shows what they sent.
     const recorded = (await messages(bot.threadId)).find((m) => m.role === "user" && String(m.text ?? "").includes(paths[11]!));
     expect(recorded?.attachments).toHaveLength(12);

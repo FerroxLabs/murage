@@ -6,7 +6,7 @@ import { TURN_IMAGE_LIMITS } from "../../shared/media-assets";
 
 /** Said before sending, never a block: more images are attached than one
  * turn carries, so the first ones go and the rest are left out. The chat says
- * the same after the turn (ImagesLeftOutRow). */
+ * the same after the turn (ImagesNotSentRow). */
 export function ComposerImagesOverLimit({ attachments }: { attachments: readonly Attachment[] }) {
   const over = imagesOverTurnLimit(attachments, TURN_IMAGE_LIMITS.maxCount);
   if (!over) return null;

@@ -10,12 +10,12 @@
 //
 // The counts ride the tool name so every surface words the same line from
 // the same facts: the chat rows through the renderer's locale catalog, the
-// Markdown export and the task timeline through `imagesLeftOutSentence`.
+// Markdown export and the task timeline through `imagesNotSentDisplayName`.
 import { TURN_IMAGE_LIMITS } from "./media-assets.ts";
 
-export const IMAGES_LEFT_OUT_PREFIX = "images left out:";
+export const IMAGES_NOT_SENT_PREFIX = "images not sent:";
 
-export interface ImagesLeftOut {
+export interface ImagesNotSent {
   /** Pictures the bot received. */
   sent: number;
   /** Left out because the turn named more than `limit`. */
@@ -27,16 +27,16 @@ export interface ImagesLeftOut {
 }
 
 /** The activity tool name for a turn that left images out. */
-export function imagesLeftOutActivityName(counts: Omit<ImagesLeftOut, "limit"> & { limit?: number }): string {
+export function imagesNotSentActivityName(counts: Omit<ImagesNotSent, "limit"> & { limit?: number }): string {
   const limit = counts.limit ?? TURN_IMAGE_LIMITS.maxCount;
-  return `${IMAGES_LEFT_OUT_PREFIX} sent=${counts.sent} over=${counts.overCount} large=${counts.tooLarge} limit=${limit}`;
+  return `${IMAGES_NOT_SENT_PREFIX} sent=${counts.sent} over=${counts.overCount} large=${counts.tooLarge} limit=${limit}`;
 }
 
 /** The counts an images-left-out note carries, or undefined for any other
  * activity name. */
-export function imagesLeftOut(name: string | undefined | null): ImagesLeftOut | undefined {
-  if (typeof name !== "string" || !name.startsWith(IMAGES_LEFT_OUT_PREFIX)) return undefined;
-  const match = /^ sent=(\d{1,4}) over=(\d{1,4}) large=(\d{1,4}) limit=(\d{1,4})$/.exec(name.slice(IMAGES_LEFT_OUT_PREFIX.length));
+export function imagesNotSent(name: string | undefined | null): ImagesNotSent | undefined {
+  if (typeof name !== "string" || !name.startsWith(IMAGES_NOT_SENT_PREFIX)) return undefined;
+  const match = /^ sent=(\d{1,4}) over=(\d{1,4}) large=(\d{1,4}) limit=(\d{1,4})$/.exec(name.slice(IMAGES_NOT_SENT_PREFIX.length));
   if (!match) return undefined;
   const [sent, overCount, tooLarge, limit] = match.slice(1).map(Number) as [number, number, number, number];
   if (overCount + tooLarge === 0) return undefined;
@@ -44,16 +44,16 @@ export function imagesLeftOut(name: string | undefined | null): ImagesLeftOut | 
 }
 
 /** Which sentence a note gets, and the renderer catalog key that says it. */
-export type ImagesLeftOutKind = "overCount" | "overCountOne" | "tooLarge" | "tooLargeOne" | "both";
-export function imagesLeftOutKind(counts: ImagesLeftOut): ImagesLeftOutKind {
+export type ImagesNotSentKind = "overCount" | "overCountOne" | "tooLarge" | "tooLargeOne" | "both";
+export function imagesNotSentKind(counts: ImagesNotSent): ImagesNotSentKind {
   if (counts.overCount && counts.tooLarge) return "both";
   if (counts.overCount) return counts.overCount === 1 ? "overCountOne" : "overCount";
   return counts.tooLarge === 1 ? "tooLargeOne" : "tooLarge";
 }
 
 /** The English sentences, mirrored by the renderer's locale catalog
- * (imagesLeftOut.*; shared/turn-image-note.test.ts holds them equal). */
-export const IMAGES_LEFT_OUT_TEMPLATES: Record<ImagesLeftOutKind, string> = {
+ * (imagesNotSent.*; shared/turn-image-note.test.ts holds them equal). */
+export const IMAGES_NOT_SENT_TEMPLATES: Record<ImagesNotSentKind, string> = {
   overCount: "Only the first {limit} images were sent. The other {over} were left out.",
   overCountOne: "Only the first {limit} images were sent. The other one was left out.",
   tooLarge: "{sent} of {total} images were sent. The other {large} were too large and were left out.",
@@ -62,17 +62,17 @@ export const IMAGES_LEFT_OUT_TEMPLATES: Record<ImagesLeftOutKind, string> = {
 };
 
 /** The values every template reads. */
-export function imagesLeftOutParams(counts: ImagesLeftOut): Record<"sent" | "total" | "over" | "large" | "limit", number> {
+export function imagesNotSentParams(counts: ImagesNotSent): Record<"sent" | "total" | "over" | "large" | "limit", number> {
   return { sent: counts.sent, total: counts.sent + counts.overCount + counts.tooLarge, over: counts.overCount, large: counts.tooLarge, limit: counts.limit };
 }
 
 /** The plain-words line for surfaces without a renderer locale (the Markdown
  * export, the task timeline), or undefined for any other activity name. */
-export function imagesLeftOutDisplayName(name: string | undefined | null): string | undefined {
-  const counts = imagesLeftOut(name);
+export function imagesNotSentDisplayName(name: string | undefined | null): string | undefined {
+  const counts = imagesNotSent(name);
   if (!counts) return undefined;
-  const params = imagesLeftOutParams(counts);
-  return IMAGES_LEFT_OUT_TEMPLATES[imagesLeftOutKind(counts)].replace(/\{(\w+)\}/g, (match, key: string) => key in params ? String(params[key as keyof typeof params]) : match);
+  const params = imagesNotSentParams(counts);
+  return IMAGES_NOT_SENT_TEMPLATES[imagesNotSentKind(counts)].replace(/\{(\w+)\}/g, (match, key: string) => key in params ? String(params[key as keyof typeof params]) : match);
 }
 
 /** The composer's line before sending, when more images are attached than a

@@ -10,7 +10,7 @@ import { formatElapsed } from "@/lib/working-time";
 import { isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { browserUnavailableReason } from "../../shared/browser-unavailable";
-import { imagesLeftOut } from "../../shared/turn-image-note";
+import { imagesNotSent } from "../../shared/turn-image-note";
 import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
 import { routineRunMarker } from "../../shared/routine-run-marker";
 
@@ -45,7 +45,7 @@ function foldable(message: Message): boolean {
 function isQuietNote(name: string, message?: Message): boolean {
   if (message && routineRunMarker(message)) return true;
   if (name === TURN_STOPPED_NOTE || isStoppedMidDesktopAction(name)) return true;
-  return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name)) || Boolean(imagesLeftOut(name));
+  return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name)) || Boolean(imagesNotSent(name));
 }
 
 type TurnFold = Extract<TranscriptItem, { kind: "turn" }>;
