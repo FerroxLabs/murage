@@ -796,11 +796,16 @@ export class ImageGenerationService {
       }
       const base: GeneratedImageMetadata = { ...details, ...(typeof result.model === "string" && result.model.length <= 180 ? { reportedModel: result.model } : {}), ...(endpointTag ? { upstreamProvider: endpointTag } : {}), ...(safeUsage(result) ? { usage: safeUsage(result) } : {}) };
       const artifacts: T[] = [];
+      // Every image is handed over even when an earlier one fails to publish,
+      // so each is retained with its receipt and the same request_id can
+      // finish them all. The first failure is reported after the last image.
+      let publishFailure: { error: unknown } | undefined;
       for (const [index, item] of images.entries()) {
-        active();
         const metadata: GeneratedImageMetadata = { ...base, delivered: [item.delivered], ...(images.length > 1 ? { imageIndex: index } : {}) };
-        artifacts.push(await hooks.publish(item.image, { ...metadata, summary: imageResultSummary(metadata) }));
+        try { active(); artifacts.push(await hooks.publish(item.image, { ...metadata, summary: imageResultSummary(metadata) })); }
+        catch (error) { publishFailure ??= { error }; }
       }
+      if (publishFailure) throw publishFailure.error;
       outcome = "published";
       const metadata: GeneratedImageMetadata = { ...base, delivered: images.map(item => item.delivered) };
       return { artifact: artifacts[0]!, artifacts, metadata: { ...metadata, summary: imageResultSummary(metadata) } };
