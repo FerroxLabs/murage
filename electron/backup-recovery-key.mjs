@@ -495,6 +495,11 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
       if (pending) throw new Error("BACKUP_BUSY");
       if (!isUsable()) throw new Error("BACKUP_UNAVAILABLE");
       pending = true;
+      // The page is told a code, never a message that could carry a path.
+      const coded = error => {
+        const code = error instanceof Error ? error.message : "";
+        return /^BACKUP_[A-Z_]{1,64}$/.test(code) ? error : new Error("BACKUP_RECOVERY_KEY_MOVE_FAILED");
+      };
       try {
         // Read the saved references once, strictly: a Move that cannot tell
         // whether the backups use this key must not delete it.
@@ -525,8 +530,20 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
           catch (error) {
             // Take back only the copy this call made, unchanged.
             try { if (same(lstatSync(copied.file), made)) unlinkSync(copied.file); } catch { /* Left as a spare copy. */ }
-            throw error;
+            throw coded(error);
           }
+          // The copy the backups now read must still be the one made and
+          // checked; otherwise they go back to the original, which stays.
+          let intact = false;
+          try { intact = same(lstatSync(copied.file), made); } catch { /* gone */ }
+          if (!intact) {
+            try { await rebindKeyFile(file); } catch { /* the schedule names the missing key */ }
+            throw new Error("BACKUP_RECOVERY_KEY_UNVERIFIED");
+          }
+        } else {
+          let intact = false;
+          try { intact = same(lstatSync(copied.file), made); } catch { /* gone */ }
+          if (!intact) throw new Error("BACKUP_RECOVERY_KEY_UNVERIFIED");
         }
         remember(copied.file);
         // Delete only the key file that was copied, unchanged since: a file
@@ -534,7 +551,8 @@ export function createRecoveryKeyFlow({ chooseFile, installation, selectedDestin
         let oldRemoved = false;
         try { const stat = lstatSync(file); if (stat.isFile() && !stat.isSymbolicLink() && same(stat, original)) { unlinkSync(file); oldRemoved = true; } } catch { /* Said below. */ }
         return { moved: true, provider, label: copied.label, folder: path.basename(path.dirname(copied.file)), oldRemoved };
-      } finally { pending = false; }
+      } catch (error) { throw coded(error); }
+      finally { pending = false; }
     },
     /** Folder of the last key created or picked, to start the pickers in. */
     lastFolder,

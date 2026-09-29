@@ -548,3 +548,22 @@ test("a key is never made in a folder set aside for asking (Documents), even whe
     assert.match(main,/neverAutomatic:\(\)=>\{try\{return \[app\.getPath\("documents"\)\];\}catch\{return \[\];\}\}/);
   }finally{p.cleanup();}
 });
+// Astra r3 #1 and #3: the copy the backups now read must still be the one
+// made, or they go back to the original; the page only ever gets a code.
+test("Move keeps the original and points the backups back at it when the copy changes during the switch",async()=>{
+  const p=place();try{
+    const c=cloudKey(p);const before=readFileSync(c.old,"utf8");
+    const flow=c.flow({rebindKeyFile:async file=>{c.rebinds.push(file);c.bindings.keyFile=file;if(file!==c.old)rmSync(file);}});
+    await assert.rejects(flow.moveOffCloud(),/^Error: BACKUP_RECOVERY_KEY_UNVERIFIED$/);
+    assert.equal(readFileSync(c.old,"utf8"),before);
+    assert.equal(c.bindings.keyFile,c.old);
+  }finally{p.cleanup();}
+});
+test("a Move failure reaches the page as a code, never a message with a path",async()=>{
+  const p=place();try{
+    const c=cloudKey(p);
+    const flow=c.flow({rebindKeyFile:async()=>{throw new Error(`ENOSPC: no space left on device, write '${p.root}/credentials.json'`);}});
+    await assert.rejects(flow.moveOffCloud(),error=>error.message==="BACKUP_RECOVERY_KEY_MOVE_FAILED");
+    assert.ok(lstatSync(c.old).isFile());assert.deepEqual(readdirSync(p.safe),[]);
+  }finally{p.cleanup();}
+});

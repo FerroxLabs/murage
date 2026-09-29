@@ -278,3 +278,20 @@ it("P1: a reply made with the owner's corrected note is not withheld for the old
   captured("closing-chat", "m-finch-corrected", "finch", "The invoices go out on Monday.");
   expect([...roomReplayWithheld("closing-chat", [{ id: "m-finch-corrected" }])]).toEqual([]);
 });
+
+// Astra r3 #2: an approved copy of a candidate, then rewritten by the owner:
+// a reply made with only the owner's words is not withheld for the candidate.
+it("P1: a reply made with an owner's rewrite of an approved copy stays visible", () => {
+  reconcileMemoryRoster(roster);
+  const a = access("finch", "closing-chat");
+  captured("closing-chat", "m-seed", "owner", "Rows 83-86 went out on the 26th.");
+  const candidate = saveMemoryCandidate("Rows 83-86 went out on the 26th.", [{ sourceId: "message:closing-chat:m-seed", revision: 1, startByte: 0, endByte: Buffer.byteLength("Rows 83-86 went out on the 26th.") }], "k-candidate", a);
+  const scope = (database().prepare("SELECT scope_id FROM memory_records WHERE id=?").get(candidate) as { scope_id: string }).scope_id;
+  database().prepare("INSERT INTO memory_records VALUES('shared-copy',1,?,'fact','Rows 83-86 went out on the 26th.','owner-statement','active',0,?,NULL,NULL,?)").run(scope, Date.now(), Date.now());
+  database().prepare("INSERT INTO memory_derivations VALUES(?,?,'shared-copy',1)").run(candidate, version(candidate));
+  expect((database().prepare("SELECT state FROM memory_records WHERE id=?").get(candidate) as { state: string }).state).toBe("candidate");
+  const next = correctMemory(ownerMemoryTicket(), "shared-copy", 1, "The invoices go out on Monday.");
+  disclose("b-rewrite", "closing-chat", [{ id: "shared-copy", version: next }], ["m-finch-rewrite"]);
+  captured("closing-chat", "m-finch-rewrite", "finch", "The invoices go out on Monday.");
+  expect([...roomReplayWithheld("closing-chat", [{ id: "m-finch-rewrite" }])]).toEqual([]);
+});

@@ -176,7 +176,10 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
           const edges=db.prepare(`WITH RECURSIVE edges(parent_id,parent_version,child_id,child_version) AS (
             SELECT parent_id,parent_version,child_id,child_version FROM memory_derivations WHERE child_id=? AND child_version=?
             UNION SELECT d.parent_id,d.parent_version,d.child_id,d.child_version FROM memory_derivations d
-            JOIN edges e ON d.child_id=e.parent_id AND d.child_version=e.parent_version LIMIT 1025)
+            JOIN edges e ON d.child_id=e.parent_id AND d.child_version=e.parent_version
+            -- not past an owner's correction: the version it replaced is history (Astra r3 #2)
+            LEFT JOIN memory_records child ON child.id=e.child_id AND child.version=e.child_version
+            WHERE NOT (COALESCE(child.assertion,'')='owner-statement' AND COALESCE(child.supersedes_id,'')=e.parent_id) LIMIT 1025)
             SELECT e.parent_id,e.parent_version,p.state,c.supersedes_id FROM edges e
             LEFT JOIN memory_records p ON p.id=e.parent_id AND p.version=e.parent_version
             LEFT JOIN memory_records c ON c.id=e.child_id AND c.version=e.child_version`).all(ref.id,ref.version);
