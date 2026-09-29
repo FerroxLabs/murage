@@ -625,6 +625,30 @@ describe("OpenAICompatDriver", () => {
     });
   });
 
+  it("sends every provider request through the dispatcher with no transport clock", async () => {
+    const { providerDispatcher } = await import("./openai-chat.ts");
+    let dispatcher: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit & { dispatcher?: unknown }) => {
+        if (String(input).endsWith("/models")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        dispatcher = init?.dispatcher;
+        return new Response('data: {"choices":[{"delta":{"content":"hi"}}]}\n' + "data: [DONE]\n", { status: 200, headers: { "content-type": "text/event-stream" } });
+      }),
+    );
+    const inst = await OpenAICompatDriver.create({ instanceId: "test-dispatcher", displayName: "Dispatcher", enabled: true, config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY" }, environment: { TEST_KEY: "secret" } });
+    const recorder = recordEvents(inst.adapter);
+    try {
+      await inst.adapter.sendTurn({ threadId: "thread-dispatcher", text: "prompt", model: "vendor/model" });
+      await recorder.until((event) => event.type === "turn.completed");
+      expect(providerDispatcher).toBeDefined();
+      expect(dispatcher).toBe(providerDispatcher);
+    } finally {
+      recorder.stop();
+      await inst.dispose();
+    }
+  });
+
   it("omits provider routing when none is configured", async () => {
     let sentBody: any = null;
     vi.stubGlobal(
