@@ -126,7 +126,12 @@ const HELPERS = [
   'io() {',
   '  local now="$J/io.now.$$" i=0',
   `  for p in $(members pids); do printf '%s %s\\n' "$p" "$(awk '/^(read|write)_bytes:/ { s += $2 } END { printf "%.0f", s }' "/proc/$p/io" 2>/dev/null || echo 0)"; done > "$now"`,
-  '  until mkdir "$J/io.lock" 2>/dev/null; do i=$((i + 1)); if [ $i -ge 20 ]; then rm -rf -- "$J/io.lock"; i=0; fi; sleep 0.1; done',
+  // (a lock over 3 s old is a killed request's; a record removed meanwhile ends the wait)
+  '  until mkdir "$J/io.lock" 2>/dev/null; do',
+  '    [ -d "$J" ] && [ $i -lt 100 ] || { echo 0; return; }',
+  '    [ -n "$(find "$J/io.lock" -maxdepth 0 -mmin +0.05 2>/dev/null)" ] && rmdir "$J/io.lock" 2>/dev/null',
+  '    i=$((i + 1)); sleep 0.1',
+  '  done',
   '  touch "$J/io.seen"',
   `  set -- $(awk -v base="$(cat "$J/io.base" 2>/dev/null || echo 0)" 'FILENAME == ARGV[1] { seen[$1] = $2; next } { now[$1] = $2 } END { for (p in seen) if (!(p in now)) base += seen[p]; t = base; for (p in now) t += now[p]; printf "%.0f %.0f\\n", base, t }' "$J/io.seen" "$now")`,
   '  echo "${1:-0}" > "$J/io.base"; mv -f "$now" "$J/io.seen"; rmdir "$J/io.lock" 2>/dev/null; echo "${2:-0}"',
@@ -135,11 +140,17 @@ const HELPERS = [
   // parent dies first is re-parented away and would no longer be found
   'sig() { sidok && sigS "$1"; return 0; }',
   // signal session $S as it stands (the supervisor knows its own)
+  // each process by id (no group-wide signal: a reused group id is not ours);
+  // KILL is repeated for a child forked while the list was taken
   'sigS() {',
-  '  set -- "$1" $(members pids)',
-  '  sg=$1; shift',
-  // each process by id (no group-wide signal: a reused group id is not ours)
-  '  for p in "$@"; do kill "-$sg" "$p" 2>/dev/null || sudo -n kill "-$sg" "$p" 2>/dev/null; done',
+  '  local sg=$1 n=0 p',
+  '  while :; do',
+  '    set -- $(members pids)',
+  '    [ $# -gt 0 ] || return 0',
+  '    for p in "$@"; do kill "-$sg" "$p" 2>/dev/null || sudo -n kill "-$sg" "$p" 2>/dev/null; done',
+  '    n=$((n + 1)); if [ "$sg" != KILL ] || [ $n -ge 3 ]; then return 0; fi',
+  '    sleep 0.1',
+  '  done',
   '}',
   'lease() { date +%s > "$J/lease.tmp" && mv -f "$J/lease.tmp" "$J/lease"; }',
   'expire() { echo 0 > "$J/lease.tmp" && mv -f "$J/lease.tmp" "$J/lease"; }',
@@ -183,7 +194,11 @@ function supervisorScript(): string {
     'kill "$M" 2>/dev/null',
     // an abandoned job's TERM ended its leader (and so the watcher before it
     // could send KILL): whatever of it ignored TERM is ended now
-    'if [ -f "$J/abandoned" ] || [ ! -d "$J" ]; then S=$P; sleep 1; sigS KILL; fi',
+    // (only processes listed at once, while the session id cannot yet be reused)
+    'if [ -f "$J/abandoned" ] || [ ! -d "$J" ]; then',
+    '  S=$P; left=" $(members pids | tr "\\n" " ") "; sleep 1',
+    '  for p in $(members pids); do case "$left" in *" $p "*) kill -KILL "$p" 2>/dev/null || sudo -n kill -KILL "$p" 2>/dev/null;; esac; done',
+    'fi',
     // the readers end on their own at EOF; a daemon the command left holding
     // the pipe gets one second, then loses it
     '( sleep 1; kill "$RO" "$RE" 2>/dev/null ) & K=$!',
@@ -257,7 +272,7 @@ function sweepShell(leaseSec: number): string {
     // next sweep, while something does)
     'if [ -n "$ended" ]; then',
     '  sleep 1',
-    '  for id in $ended; do J="$R/$id"; if sidok && [ -n "$(members pids)" ]; then continue; fi; rm -rf -- "${J:?}"; done',
+    '  for id in $ended; do case "$id" in ""|*[!a-f0-9]*) continue;; esac; J="$R/$id"; if sidok && [ -n "$(members pids)" ]; then continue; fi; rm -rf -- "${J:?}"; done',
     'fi',
     ')',
   ].join("\n");
@@ -431,9 +446,10 @@ export async function stopBoxJob(
   id: string,
   graceful: boolean,
   timeoutMs = graceful ? 25_000 : 5_000,
+  signal?: AbortSignal,
 ): Promise<ExecStatus | null> {
   try {
-    const out = await deps.run(stopScript(id, graceful), timeoutMs, undefined, false);
+    const out = await deps.run(stopScript(id, graceful), timeoutMs, signal, false);
     return parseStatus(out.stdout);
   } catch {
     return null;
@@ -503,7 +519,12 @@ export async function runBoxExec(
     }
     const limit = commandSilenceMs(deps.turnSilenceMs());
     if (now() - lastProgress >= limit) {
-      const final = await stopBoxJob(deps, id, true);
+      // Stop while this waits: the job is ending anyway; answer as stopped
+      const final = await stopBoxJob(deps, id, true, undefined, signal);
+      if (signal.aborted) {
+        await stopBoxJob(deps, id, false);
+        return { kind: "stopped" };
+      }
       if (final?.alreadyDone && final.state === "done") {
         return { kind: "done", exitCode: final.exitCode, stdout: final.stdout, stderr: final.stderr, dropped: final.dropped, abandoned: final.abandoned };
       }
