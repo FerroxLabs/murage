@@ -1,6 +1,7 @@
 // Transcript-replay driver for OpenRouter, Groq, Together, llama.cpp, and
 // other endpoints that speak the OpenAI chat-completions contract.
-import { assertProviderKey } from "../../electron/provider-connections.mjs";
+import { PROVIDER_PRESETS, assertProviderKey, keyIssuer } from "../../electron/provider-connections.mjs";
+import type { ProviderPreset } from "../../shared/provider-connections.ts";
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 import { requestMemoryExtraction, requestMemoryInference, requestMemoryGrounding } from "../memory/extract.ts";
@@ -43,6 +44,21 @@ function isOpenRouterUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** The named provider whose API this endpoint is (its host or a subdomain of
+ * it), or undefined for any other server. */
+function endpointProvider(url: string): ProviderPreset | undefined {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+  return (Object.keys(PROVIDER_PRESETS) as ProviderPreset[]).find((preset) => {
+    const presetHost = new URL(PROVIDER_PRESETS[preset].baseUrl).hostname;
+    return host === presetHost || host.endsWith(`.${presetHost}`);
+  });
 }
 
 function decodeConfig(raw: unknown): OpenAICompatConfig {
@@ -91,10 +107,13 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       process.env.OPENAI_COMPAT_API_KEY ??
       "";
     let credentialMismatch = false;
-    // Do not send recognizable vendor keys to the legacy OpenRouter default.
-    // Repair requires an explicit provider connection; never rewrite native config.
-    if (isOpenRouterUrl(config.url) && /^(sk-ant-|sk-flux-|sk-(?:proj|svcacct|admin)-|xai-|gsk_)/.test(apiKey)) {
-      try { assertProviderKey("openrouter", apiKey); }
+    // Never send a key whose own prefix names another provider (Google's
+    // included) to a named provider's endpoint. Repair requires an explicit
+    // provider connection; never rewrite native config. Opaque keys and any
+    // other server are left as configured.
+    const endpoint = endpointProvider(config.url);
+    if (endpoint && (keyIssuer(apiKey) || apiKey.trim().startsWith("sk-admin-"))) {
+      try { assertProviderKey(endpoint, apiKey.trim()); }
       catch { credentialMismatch = true; apiKey = ""; }
     }
     // Spec E4: a server on this machine needs no key. The shared runtime

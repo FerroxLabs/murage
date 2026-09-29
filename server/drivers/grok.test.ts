@@ -333,3 +333,32 @@ describe("GrokDriver usage request", () => {
     expect("stream_options" in plain!).toBe(false);
   });
 });
+
+// A restored workspace xAI slot can hold another provider's key. Its own
+// prefix says where it belongs, so the Grok engine never sends it to xAI.
+describe("GrokDriver key issuer guard", () => {
+  let previousFetch: typeof globalThis.fetch;
+  beforeEach(() => {
+    ensureDirs();
+    previousFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = previousFetch;
+  });
+  it.each([`AIza${"g".repeat(35)}`, "sk-proj-fixture-key-private", " sk-or-v1-fixture-key-private "])("sends no request with %s and says the key belongs elsewhere", async (key) => {
+    const auths: Array<string | null> = [];
+    // SAFETY: the stub only returns real Response objects.
+    globalThis.fetch = (async (_url: string | URL, init?: RequestInit) => {
+      auths.push(new Headers(init?.headers).get("authorization"));
+      return sseResponse(SSE_BODY("should not answer"));
+    }) as typeof fetch;
+    const instance = await GrokDriver.create({ instanceId: "grok-issuer", displayName: "Grok", environment: { XAI_API_KEY: key }, enabled: true, config: { url: "https://api.x.ai/v1", apiKeyEnv: "XAI_API_KEY" } });
+    expect(await instance.snapshot()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("different provider") });
+    const recorder = recordEvents(instance.adapter);
+    const turn = instance.adapter.sendTurn({ threadId: "t-issuer", text: "hi" }).then(() => recorder.until((e) => e.type === "turn.completed"), (error: unknown) => error);
+    expect(String(await turn)).toContain("different provider");
+    expect(auths).toEqual([]);
+    recorder.stop();
+    await instance.dispose();
+  });
+});

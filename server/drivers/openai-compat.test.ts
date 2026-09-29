@@ -701,3 +701,40 @@ describe("OpenAICompatDriver", () => {
     await inst.dispose();
   });
 });
+
+// A restored or hand-edited config can hold another provider's key on a
+// named provider's endpoint. Its own prefix says where it belongs, so it is
+// never sent to the endpoint, Google's included, padded or not.
+describe("OpenAICompatDriver key issuer guard", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+  const GOOGLE = `AIza${"g".repeat(35)}`;
+  it.each([
+    ["https://openrouter.ai/api/v1", GOOGLE],
+    ["https://openrouter.ai/api/v1", `  ${GOOGLE}  `],
+    ["https://api.groq.com/openai/v1", "sk-or-v1-fixture-key-private"],
+    ["https://api.x.ai/v1", GOOGLE],
+    ["https://generativelanguage.googleapis.com/v1beta/openai", "xai-fixture-key-private-0000"],
+  ])("sends no key to %s when the key names another provider", async (url, key) => {
+    const seen: Array<string | null> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get("authorization"));
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }));
+    const inst = await OpenAICompatDriver.create({ instanceId: "guard-1", displayName: "Guard", enabled: true, config: { url, key, apiKeyEnv: "OPENAI_COMPAT_API_KEY" }, environment: {} });
+    const snap = await inst.snapshot();
+    expect(snap).toMatchObject({ state: "unavailable", reason: expect.stringContaining("does not match") });
+    expect(seen.filter(auth => auth?.includes(key.trim()))).toEqual([]);
+    await inst.dispose();
+  });
+  it("keeps an opaque key, and the provider's own key, on its endpoint", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })));
+    for (const [url, key] of [["https://openrouter.ai/api/v1", "opaque-fixture-key"], ["https://generativelanguage.googleapis.com/v1beta/openai", GOOGLE], ["https://api.groq.com/openai/v1", "gsk_fixture-key-private"]] as const) {
+      const inst = await OpenAICompatDriver.create({ instanceId: "guard-2", displayName: "Guard", enabled: true, config: { url, key, apiKeyEnv: "OPENAI_COMPAT_API_KEY" }, environment: {} });
+      expect((await inst.snapshot()).state).not.toBe("unavailable");
+      await inst.dispose();
+    }
+  });
+});

@@ -2,6 +2,7 @@
 // adds the shared transient-failure retry policy.
 import type { ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { keyIssuer } from "../../electron/provider-connections.mjs";
 
 const DRIVER_KIND = "grok";
 const DEFAULT_URL = "https://api.x.ai/v1";
@@ -39,7 +40,12 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
 
   async create(input) {
     const { config } = input;
-    const apiKey = input.environment[config.apiKeyEnv] ?? process.env[config.apiKeyEnv] ?? "";
+    const saved = input.environment[config.apiKeyEnv] ?? process.env[config.apiKeyEnv] ?? "";
+    // A key whose own prefix names another provider (a restored workspace
+    // slot, say) is never sent to xAI; the person replaces it in Models.
+    const issuer = keyIssuer(saved);
+    const mismatch = Boolean(issuer && issuer !== "xai");
+    const apiKey = mismatch ? "" : saved;
     return createOpenAIChatRuntime({
       input,
       driverKind: DRIVER_KIND,
@@ -55,8 +61,8 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
         ...(stream ? { stream_options: { include_usage: true } } : {}),
       }),
       httpErrorLabel: "xAI",
-      missingKeyError: "This engine has no xAI key yet. Add one in App Settings → Models.",
-      unavailableReason: "No xAI key yet: add one in App Settings → Models.",
+      missingKeyError: mismatch ? "The saved xAI key belongs to a different provider. Replace it in App Settings → Models." : "This engine has no xAI key yet. Add one in App Settings → Models.",
+      unavailableReason: mismatch ? "The saved xAI key belongs to a different provider. Replace it in App Settings → Models." : "No xAI key yet: add one in App Settings → Models.",
       timeoutMs: 120_000,
       retryScale: Number(process.env.FAKE_GROK_RETRY_SCALE ?? "1"),
       generateModel: () => "grok-3-mini",
