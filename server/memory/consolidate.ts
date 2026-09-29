@@ -50,7 +50,10 @@ export function refreshMemoryCheckpoint(completedJobId:string){
     const id=threadCheckpointId(String(source.scope_id),String(source.thread_id));
     const previous=db.prepare("SELECT * FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1").get(id);
     if(previous?.owner_pinned===1||previous?.assertion==="owner-statement")return {status:"deferred" as const,reason:"owner-controlled-checkpoint"};
-    const handles:Handle[]=previous?db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=?").all(id,previous.version) as unknown as Handle[]:[];
+    // Notes the owner forgot are not carried into the next ones: their quotes
+    // stay in the room, not in memory (forget.ts, N2).
+    const forgotten=previous&&db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(id,previous.version);
+    const handles:Handle[]=previous&&!forgotten?db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=?").all(id,previous.version) as unknown as Handle[]:[];
     if(source.kind!=="turn" && Number(source.bytes)>0){
       const raw=db.prepare("SELECT substr(CAST(json_extract(payload,'$.text') AS BLOB),1,96) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?").get(source.id,source.revision)!.bytes as Uint8Array;
       let length=raw.length;
