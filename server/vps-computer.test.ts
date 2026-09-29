@@ -102,7 +102,7 @@ function fixture({
     if (index >= 0) return provisioningArgs[index + 1] ?? "";
     return provisioningArgs.find((arg) => arg.startsWith(`${flag}=`))?.slice(flag.length + 1) ?? "";
   };
-  const calls: Array<{ args: string[]; options?: { input?: string; timeoutMs?: number } }> = [];
+  const calls: Array<{ args: string[]; options?: { input?: string; silenceMs?: number } }> = [];
   const state = { image, container, running, imageLabelsMatch, inspectedImageId, containerImageId };
   const runner: VpsCommandRunner = async (args, options) => {
     calls.push({ args, options });

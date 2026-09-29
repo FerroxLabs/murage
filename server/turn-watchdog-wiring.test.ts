@@ -136,4 +136,14 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
   it("a Stop during direct setup ends that setup's watch", () => {
     expect(fn("interruptDirectThread")).toContain("watchdog.settleSetup(threadId,run.generation)");
   });
+
+  it("a computer command still printing or working is the turn's activity, on the turn's own claim", () => {
+    // a computer route: minted per turn, checked active, owner-generation bound
+    expect(SOURCE).toContain('["/api/internal/computer-control", "/api/internal/computer-activity",');
+    const at = SOURCE.indexOf('if (path === "/api/internal/computer-activity") {');
+    expect(at).toBeGreaterThan(SOURCE.indexOf("requireActiveInternal();\n      const routeRefusal"));
+    const body = SOURCE.slice(at, SOURCE.indexOf("\n      }\n", at));
+    expect(body).toContain("watchdog.touch(internalClaim.threadId);");
+    expect(body).toContain("silenceMs: watchdog.silenceLimitMs(internalClaim.threadId)");
+  });
 });

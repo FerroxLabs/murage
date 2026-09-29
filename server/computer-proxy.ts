@@ -26,6 +26,7 @@
 //     type, Enter) in one round trip with one frame at the end.
 //
 // stdout is the MCP channel — never console.log here.
+import { randomBytes } from "node:crypto";
 import {
   normalizeBrowserUrl,
   normalizeCrop,
@@ -35,6 +36,7 @@ import {
   type BrowserTarget,
   type CropRegion,
 } from "./computer-observation.ts";
+import { boxExecOptionsFromEnv, runBoxExec, stopBoxJob, type BoxExecDeps } from "./box-exec.ts";
 import { CONTROL_REFUSAL, createControlClient } from "./control-client.ts";
 import {
   ensureRemoteCuaCommand,
@@ -60,6 +62,64 @@ const CONTROL_WAIT_MS = Math.max(Number(process.env.MURAGE_CONTROL_WAIT_MS) || 6
 // The cache must never outlive the poll cadence, or a hand-back would be
 // seen a stale cache-window late.
 const control = createControlClient({ cacheMs: Math.min(750, CONTROL_POLL_MS) });
+
+// computer_exec's long commands (box-exec.ts). The proxy tells the harness
+// while a command is printing or working, since a tool call in flight emits
+// no engine events and the turn's silence watch would otherwise stop it.
+const EXEC_OPTIONS = boxExecOptionsFromEnv();
+/** The direct turns' default silence limit, used until the harness answers. */
+const DEFAULT_TURN_SILENCE_MS = 20 * 60_000;
+const ACTIVITY_EVERY_MS = 15_000;
+const activity = (() => {
+  const controlUrl = process.env.MURAGE_CONTROL_URL ?? "";
+  const controlToken = process.env.MURAGE_CONTROL_TOKEN ?? "";
+  let url = "";
+  try {
+    if (controlUrl && controlToken) {
+      const parsed = new URL(controlUrl);
+      parsed.pathname = "/api/internal/computer-activity";
+      url = parsed.toString();
+    }
+  } catch {
+    url = "";
+  }
+  let silenceMs = DEFAULT_TURN_SILENCE_MS;
+  let lastSent = 0;
+  const post = async () => {
+    if (!url) return;
+    lastSent = Date.now();
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { authorization: `Bearer ${controlToken}`, "content-type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(2_000),
+      });
+      const body: any = res.ok ? await res.json().catch(() => null) : null;
+      const limit = Number(body?.silenceMs);
+      if (Number.isFinite(limit) && limit >= 1_000) silenceMs = limit;
+    } catch {
+      /* the harness keeps its own watch; the last known limit stands */
+    }
+  };
+  return {
+    silenceMs: () => silenceMs,
+    /** Learn the turn's current limit (and count the command's start as activity). */
+    refresh: post,
+    progress() {
+      if (Date.now() - lastSent >= ACTIVITY_EVERY_MS) void post();
+    },
+  };
+})();
+const activeJobs = new Set<string>();
+/** Calls in flight by request id, so a cancel can withdraw one. */
+const inFlight = new Map<string, AbortController>();
+const execDeps: BoxExecDeps = {
+  run: (command, timeoutMs, signal) => runOnBox(command, timeoutMs, true, signal),
+  turnSilenceMs: () => activity.silenceMs(),
+  progress: () => activity.progress(),
+  newId: () => randomBytes(12).toString("hex"),
+};
 
 /** The coordinate space the model sees: frames are downscaled to this
  * width, and clicks are scaled back up to the real display box-side. */
@@ -122,7 +182,7 @@ async function resumeBox(): Promise<boolean> {
   return false;
 }
 
-async function runOnBox(command: string, timeoutMs = 60_000, allowWake = true): Promise<RunOut> {
+async function runOnBox(command: string, timeoutMs = 60_000, allowWake = true, signal?: AbortSignal): Promise<RunOut> {
   // Old boxes may predate noEnv:true. Run every agent-issued command with an
   // explicit desktop-only environment so provider/account credentials cannot
   // leak through `computer_exec` or a child GUI process.
@@ -143,14 +203,14 @@ async function runOnBox(command: string, timeoutMs = 60_000, allowWake = true): 
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ command: isolatedCommand }),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
   });
   const body: any = await res.json().catch(() => null);
   if (res.status === 409 && allowWake) {
     const code = body?.code ?? body?.error?.code ?? "";
     if (/machine_not_running|box_starting|not_running|starting/i.test(String(code))) {
       const woke = await resumeBox();
-      if (woke) return runOnBox(command, timeoutMs, false);
+      if (woke) return runOnBox(command, timeoutMs, false, signal);
       return { ok: false, exitCode: null, stdout: "", stderr: "the computer is asleep and did not wake in time" };
     }
   }
@@ -629,7 +689,7 @@ const TOOLS = [
   {
     name: "computer_exec",
     description:
-      "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code and, unlike the UI tools, no screenshot unless you ask for one.",
+      "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code and, unlike the UI tools, no screenshot unless you ask for one. A long command (a build, an install) keeps running as long as it prints or works; one that goes quiet for the turn's silence limit is stopped.",
     inputSchema: {
       type: "object",
       properties: {
@@ -830,7 +890,7 @@ async function semanticActAndObserve(
  * told when they finish, and the two that read nothing from the screen. */
 const OPEN_WHILE_DRIVEN = new Set(["computer_request_help", "computer_status", "observation_metrics"]);
 
-async function call(id: unknown, name: string, args: any) {
+async function call(id: unknown, name: string, args: any, signal: AbortSignal = new AbortController().signal) {
   if (!OPEN_WHILE_DRIVEN.has(name) && (await control.state(true)).held) {
     return text(id, CONTROL_REFUSAL, true);
   }
@@ -1012,8 +1072,28 @@ async function call(id: unknown, name: string, args: any) {
   if (name === "computer_exec") {
     const command = String(args.command ?? "").slice(0, 4000);
     observations.noteAction();
-    const out = await runOnBox(command, 120_000);
-    const note = `exit ${out.exitCode}\n${out.stdout.slice(-6000)}${out.stderr ? `\n[stderr]\n${out.stderr.slice(-2000)}` : ""}`;
+    // Runs until it finishes, goes silent (no output, no processor use) for
+    // the owner's silence limit, or is stopped: never on a fixed clock.
+    await activity.refresh();
+    let job: string | null = null;
+    const outcome = await runBoxExec(command, execDeps, EXEC_OPTIONS, signal, (next) => {
+      if (next) activeJobs.add((job = next));
+      else if (job) activeJobs.delete(job);
+    });
+    // MCP: a request the client cancelled gets no response
+    if (outcome.kind === "stopped" || signal.aborted) return;
+    if (outcome.kind === "failed") return text(id, `the command could not be run to the end: ${outcome.detail}`, true);
+    const dropped = outcome.dropped ? "(earlier output was dropped to keep the computer's disk free)\n" : "";
+    const body = `${dropped}${outcome.stdout.slice(-6000)}${outcome.stderr ? `\n[stderr]\n${outcome.stderr.slice(-2000)}` : ""}`;
+    if (outcome.kind === "silent") {
+      const seconds = Math.round(outcome.silentMs / 1000);
+      return text(
+        id,
+        `stopped: no output and no work for ${seconds} seconds, so the command was ended. Output so far:\n${body}`,
+        true,
+      );
+    }
+    const note = `exit ${outcome.exitCode}\n${body}`;
     if (args.observe !== true) return text(id, note);
     const shot = await runOnBox([ENV, GEOMETRY, ensureRemoteCuaCommand(), captureBlock()].join("; "), 60_000);
     return observed(id, note, await frameFrom(shot));
@@ -1128,8 +1208,11 @@ async function handle(msg: any) {
   }
   if (msg.method === "tools/list") return send({ jsonrpc: "2.0", id: msg.id, result: { tools: TOOLS } });
   if (msg.method === "tools/call") {
+    const withdrawn = new AbortController();
+    const key = JSON.stringify(msg.id);
+    inFlight.set(key, withdrawn);
     try {
-      return await call(msg.id, msg.params?.name, msg.params?.arguments ?? {});
+      return await call(msg.id, msg.params?.name, msg.params?.arguments ?? {}, withdrawn.signal);
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e));
       const timedOut = error.name === "TimeoutError" || /timed?\s*out|timeout/i.test(error.message);
@@ -1140,7 +1223,15 @@ async function handle(msg: any) {
           : `computer tool failed: ${error.message}`,
         true,
       );
+    } finally {
+      if (inFlight.get(key) === withdrawn) inFlight.delete(key);
     }
+  }
+  // Stop: the engine withdraws a call it no longer wants (a running command
+  // is stopped with it)
+  if (msg.method === "notifications/cancelled") {
+    inFlight.get(JSON.stringify(msg.params?.requestId))?.abort();
+    return;
   }
   if (String(msg.method ?? "").startsWith("notifications/")) return;
   if (msg.id != null) {
@@ -1163,4 +1254,18 @@ process.stdin.on("data", (chunk) => {
     }
   }
 });
-process.stdin.on("end", () => process.exit(0));
+// The engine closing this tool (its stdin ends, or it is signalled when the
+// turn stops) ends any command still running on the box. The engine gives a
+// few seconds before it kills outright, so the stops are only sent here; the
+// box-side lease covers a proxy killed before it could send them.
+let closing = false;
+async function close(): Promise<void> {
+  if (closing) return;
+  closing = true;
+  for (const withdrawn of inFlight.values()) withdrawn.abort();
+  await Promise.allSettled([...activeJobs].map((job) => stopBoxJob(execDeps, job, false)));
+  process.exit(0);
+}
+process.stdin.on("end", () => void close());
+process.on("SIGTERM", () => void close());
+process.on("SIGINT", () => void close());

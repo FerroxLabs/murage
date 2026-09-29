@@ -11,6 +11,9 @@ export async function runHostComputerProxy(env: NodeJS.ProcessEnv = process.env)
   const stopped = "Stopped: this computer action was cancelled. An action already sent to the computer may still have taken effect. Inspect the screen before continuing.";
   // Requests still run one at a time, but stdin keeps being read while one is
   // in flight so the engine's `notifications/cancelled` can withdraw it.
+  // There is no clock on an action: it ends when it answers, when it is
+  // withdrawn (Stop, or the engine closing this tool), or when the harness
+  // revokes the turn (its Stop, or the turn's silence limit).
   const withdrawable = new Map<string, AbortController>();
   const key = (id: unknown) => JSON.stringify(id);
   const call = async (rpc: { id: number | string; method?: string; params?: Record<string, unknown> }, withdrawn: AbortController) => {
@@ -20,7 +23,7 @@ export async function runHostComputerProxy(env: NodeJS.ProcessEnv = process.env)
       if (rpc.method === "initialize") result = { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "murage-host-computer", version: "1" } };
       else if (rpc.method === "ping") result = {};
       else {
-        const response = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${env.MURAGE_CONTROL_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ method: rpc.method, params: rpc.params }), redirect: "error", signal: AbortSignal.any([withdrawn.signal, AbortSignal.timeout(65_000)]) });
+        const response = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${env.MURAGE_CONTROL_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ method: rpc.method, params: rpc.params }), redirect: "error", signal: withdrawn.signal });
         if ((!response.ok && response.status !== 409) || !response.body) throw new Error();
         const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
         try { for (;;) { const chunk = await reader.read(); if (chunk.done) break; size += chunk.value.length; if (size > 16 * 1024 * 1024) throw new Error(); chunks.push(chunk.value); } }
@@ -50,6 +53,9 @@ export async function runHostComputerProxy(env: NodeJS.ProcessEnv = process.env)
     queue = queue.then(() => call(request, withdrawn));
   }, 64 * 1024);
   for await (const chunk of process.stdin) splitter.push(chunk);
-  splitter.flush(); await queue;
+  splitter.flush();
+  // The engine closed this tool: withdraw what is in flight and queued.
+  for (const withdrawn of withdrawable.values()) withdrawn.abort();
+  await queue;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) void runHostComputerProxy().catch(() => { process.exitCode = 1; });

@@ -8048,7 +8048,8 @@ const approvalBus: ApprovalBus = { store, broadcast, onApproval: notifyApproval,
 }
 
 /** How long a host action waits on the one-time Auto confirmation before the
- * bot is told it is still waiting. Under the host proxy's 65 s deadline. */
+ * bot is told it is still waiting. A person's answer, not the action's work:
+ * the host proxy itself has no clock (0.1.61), this card wait keeps its own. */
 const HOST_CONSENT_WAIT_MS = Math.min(55_000, Math.max(1_000, Number(process.env.MURAGE_HOST_CONSENT_WAIT_MS) || 50_000));
 function rememberHostComputerConsent(botId: string, consent: "allowed" | "declined"): void {
   store.patchBot(botId, { hostComputerConsent: consent });
@@ -11721,7 +11722,7 @@ const server = createServer(async (req, res) => {
         return json(res, 401, { error: "unauthorized" });
       }
       const requiredKind: InternalCapabilityKind = path.startsWith("/api/internal/memory/") ? "memory" : path.startsWith("/api/internal/connectors/")
-        ? "connectors" : ["/api/internal/computer-control", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path) ? "computer" : "agents";
+        ? "connectors" : ["/api/internal/computer-control", "/api/internal/computer-activity", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path) ? "computer" : "agents";
       if (internalClaim.kind !== requiredKind) return json(res, 403, { error: "capability cannot access this service" });
       const requireActiveInternal = () => {
         assertHumanPrincipal(internalClaim.humanPrincipal??threadHumanPrincipal(internalClaim.threadId));
@@ -11993,8 +11994,8 @@ const server = createServer(async (req, res) => {
             const gone = new AbortController();
             const closed = () => gone.abort();
             res.once("close", closed);
-            // Answer before the proxy's own request deadline, so the bot is
-            // told why rather than handed a generic failure.
+            // A bounded wait for the person (HOST_CONSENT_WAIT_MS), so the
+            // bot is told it is still waiting rather than held silently.
             try { return await awaitHostComputerConsent(approvalBus, consentBot, internalClaim.threadId, HOST_CONSENT_WAIT_MS, gone.signal); }
             finally { res.off("close", closed); }
           })();
@@ -12899,6 +12900,15 @@ const server = createServer(async (req, res) => {
         return res.end(Buffer.from(upstream.bytes));
       }
       // ── computer control: proxies read the hold, bots plead for help ──
+      // A command the bot started on its computer (computer_exec) is still
+      // printing or working. A tool call in flight emits no engine events, so
+      // this is the turn's activity; the answer is the turn's silence limit,
+      // which the command's own quiet is measured against (box-exec.ts).
+      if (path === "/api/internal/computer-activity") {
+        if (method !== "POST") return json(res, 405, { error: "method not allowed" });
+        watchdog.touch(internalClaim.threadId);
+        return json(res, 200, { silenceMs: watchdog.silenceLimitMs(internalClaim.threadId) });
+      }
       if (path === "/api/internal/computer-control") {
         const botId = url.searchParams.get("botId") ?? "";
         const bot = store.bot(botId);

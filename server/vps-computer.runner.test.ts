@@ -57,6 +57,36 @@ describe("default VPS command runner", () => {
     expect(spawnMock).toHaveBeenCalledWith("docker", ["info"], expect.objectContaining({ shell: false }));
   });
 
+  // 0.1.61: a docker pull or build over a slow link runs as long as it keeps
+  // printing; only silence (or a failure) ends it, never a fixed clock.
+  it("keeps a command running while it prints, well past its silence limit", async () => {
+    vi.useFakeTimers();
+    const child = fakeChild();
+    const result = defaultRunner(["pull", "image"], { silenceMs: 1_000 });
+    for (let i = 0; i < 30; i++) {
+      await vi.advanceTimersByTimeAsync(900);
+      child.stdout.write(`layer ${i}\n`);
+    }
+    child.emit("close", 0, null);
+    await expect(result).resolves.toMatchObject({ stdout: expect.stringContaining("layer 29") });
+    expect(stopMock).not.toHaveBeenCalled();
+  });
+
+  it("stops a command that goes silent for its limit, counting from its last output", async () => {
+    vi.useFakeTimers();
+    const child = fakeChild();
+    const result = defaultRunner(["pull", "image"], { silenceMs: 1_000 });
+    const rejection = expect(result).rejects.toThrow("Docker-over-SSH command went silent for 1 seconds");
+    await vi.advanceTimersByTimeAsync(900);
+    child.stderr.write("progress\n");
+    await vi.advanceTimersByTimeAsync(900);
+    expect(stopMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(stopMock).toHaveBeenCalledWith(child, 5_000);
+    child.emit("close", null, "SIGTERM");
+    await rejection;
+  });
+
   it("turns stdin EPIPE into a rejected command and stops the whole command tree", async () => {
     const child = fakeChild();
     const result = defaultRunner(["build", "-"], { input: "Dockerfile" });
@@ -78,9 +108,9 @@ describe("default VPS command runner", () => {
     let finishCleanup!: (stopped: boolean) => void;
     stopMock.mockReturnValue(new Promise<boolean>((resolve) => { finishCleanup = resolve; }));
     let settled = false;
-    const result = defaultRunner(["info"], { timeoutMs: 100 });
+    const result = defaultRunner(["info"], { silenceMs: 100 });
     void result.then(() => { settled = true; }, () => { settled = true; });
-    const rejection = expect(result).rejects.toThrow("Docker-over-SSH command timed out");
+    const rejection = expect(result).rejects.toThrow("Docker-over-SSH command went silent");
 
     await vi.advanceTimersByTimeAsync(100);
     expect(stopMock).toHaveBeenCalledWith(child, 5_000);
@@ -108,8 +138,8 @@ describe("default VPS command runner", () => {
     const unrelatedClosed = new Promise<void>((resolve) => unrelated.once("close", () => resolve()));
     let helper = 0;
     const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-    const result = defaultRunner(["info"], { timeoutMs: failure === "timeout" ? 1_000 : 20_000 });
-    const rejected = expect(result).rejects.toThrow(failure === "timeout" ? "command timed out" : "stdin failed");
+    const result = defaultRunner(["info"], { silenceMs: failure === "timeout" ? 1_000 : 20_000 });
+    const rejected = expect(result).rejects.toThrow(failure === "timeout" ? "command went silent" : "stdin failed");
     try {
       helper = Number(await new Promise<string>((resolve) => docker.stdout!.once("data", (chunk) => resolve(String(chunk).trim()))));
       expect(alive(helper)).toBe(true);
