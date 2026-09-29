@@ -181,21 +181,47 @@ export interface AntigravityMcpServers {
 // lifetime so two Antigravity turns cannot see each other's computer, control,
 // or bot-communication tokens.
 let antigravityMcpLease: Promise<void> = Promise.resolve();
+/** True while the lease is held by a stopped turn whose process group could
+ * not be confirmed gone (it keeps the lease until restart). A turn queued
+ * behind it is then no longer waiting on work, and stops reporting so. */
+let antigravityLeaseRetained = false;
+/** How often a turn queued for the lease tells its thread it is waiting. */
+const leaseWaitBeatMs = (): number => {
+  const ms = Number(process.env.MURAGE_ANTIGRAVITY_LEASE_BEAT_MS);
+  return Number.isFinite(ms) && ms > 0 ? ms : 60_000;
+};
 
-async function acquireAntigravityMcpLease(): Promise<() => void> {
+class LeaseWaitCancelled extends Error {}
+
+/** Waits for the machine-wide lease. An aborted wait keeps its place in the
+ * queue only long enough to hand the lease straight on. */
+async function acquireAntigravityMcpLease(signal?: AbortSignal): Promise<() => void> {
   const previous = antigravityMcpLease;
   let unlock: (() => void) | undefined;
   const current = new Promise<void>((resolve) => {
     unlock = resolve;
   });
   antigravityMcpLease = previous.then(() => current);
-  await previous;
   let released = false;
-  return () => {
+  const release = () => {
     if (released) return;
     released = true;
     unlock?.();
   };
+  const cancelled = await new Promise<boolean>((resolve) => {
+    const onAbort = () => resolve(true);
+    if (signal?.aborted) return resolve(true);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    void previous.then(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(false);
+    });
+  });
+  if (cancelled) {
+    void previous.then(release);
+    throw new LeaseWaitCancelled("the wait for Antigravity's config was stopped");
+  }
+  return release;
 }
 
 // Keep every unknown key the user put in the file. A present-but-wrong
@@ -445,6 +471,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     // one active turn per thread; a second send while busy is a caller bug
     const active = new Map<string, { stop: () => void; turnId: string }>();
     const pending = new Set<string>();
+    // turns queued for the machine-wide config lease; a Stop ends the wait
+    const leaseWaits = new Map<string, AbortController>();
     let disposed = false;
     let verifiedVersion: string | null | undefined;
     const readVersion = () =>
@@ -547,6 +575,23 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       const resumeCursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
 
       let settled = false;
+      // Set when Murage stopped this turn (interruptTurn, stopAll). The
+      // child's exit is then the user's Stop, not a crash (STOP1).
+      let stopRequested = false;
+      // A step the chat does not show (planning, a response still being
+      // written) is still the turn working: report it, so the thread's
+      // silence watch never mistakes a long model step for a hang. A step
+      // seen before is not new work (a stuck retry loop re-sending its
+      // state), and nothing is reported once the turn settled or was stopped.
+      const shownSteps = new Set<string>();
+      const working = (step?: string) => {
+        if (settled || stopRequested) return;
+        if (step !== undefined) {
+          if (shownSteps.has(step)) return;
+          shownSteps.add(step);
+        }
+        emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
+      };
       // No clock of its own (0.1.61): a child that hangs without `result` and
       // without exiting goes quiet, and the thread's silence watch stops it
       // through interruptTurn like every other engine's turn.
@@ -570,7 +615,24 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // Murage tools — owns the mount for its complete child lifetime. This keeps
       // overlapping turns from inheriting, replacing, or removing each
       // other's tools and credentials.
-      const releaseMcpLease = await acquireAntigravityMcpLease();
+      // Queued behind another Antigravity turn: waiting, not silent, while
+      // that turn is working (it has its own watch); a Stop ends the wait.
+      const leaseWait = new AbortController();
+      leaseWaits.set(threadId, leaseWait);
+      const waitBeat = setInterval(() => { if (!antigravityLeaseRetained) working(); }, leaseWaitBeatMs());
+      waitBeat.unref?.();
+      let releaseMcpLease: () => void;
+      try {
+        releaseMcpLease = await acquireAntigravityMcpLease(leaseWait.signal);
+      } catch (error) {
+        if (!(error instanceof LeaseWaitCancelled)) throw error;
+        pending.delete(threadId);
+        settle(true, "cancelled");
+        return { turnId };
+      } finally {
+        clearInterval(waitBeat);
+        leaseWaits.delete(threadId);
+      }
       if (disposed) {
         releaseMcpLease();
         pending.delete(threadId);
@@ -648,6 +710,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       const finalizeMcp = () => {
         if (mcpFinalized) return;
         mcpFinalized = true;
+        antigravityLeaseRetained = false;
         try {
           restoreMcp();
         } catch (error) {
@@ -668,11 +731,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         }
         void awaitCliTreeStopped(child).then((stopped) => {
           if (stopped) closeFinalizers.get(child)?.();
+          else if (!mcpFinalized) antigravityLeaseRetained = true;
         });
       };
-      // Set when Murage stopped this turn (interruptTurn, stopAll). The
-      // child's exit is then the user's Stop, not a crash (STOP1).
-      let stopRequested = false;
       const requestStop = () => {
         stopRequested = true;
         stop();
@@ -689,11 +750,6 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // conversation_id from the init event → the resumeCursor (session.started
       // is what the harness persists as the cursor). Also seeds tool item ids.
       let conversationId: string | null = null;
-
-      // A step the chat does not show (planning, a response still being
-      // written) is still the turn working: report it, so the thread's
-      // silence watch never mistakes a long model step for a hang.
-      const working = () => emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
 
       const handleLine = (line: string) => {
         let o: any;
@@ -725,7 +781,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
               } else if (payload.state === "ERROR") {
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: false });
               } else {
-                working();
+                working(`${payload.step_index}:${payload.step_type}:${payload.state}`);
               }
             } else if (payload.step_type === "agent_response" && payload.usage) {
               emit({
@@ -735,7 +791,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 output: payload.usage.output_tokens || 0,
               });
             } else {
-              working();
+              working(`${payload.step_index}:${payload.step_type}:${payload.state}`);
             }
             break;
           }
@@ -840,7 +896,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         closeFinalizers.set(child, finalize);
         void awaitCliTreeStopped(child).then((stopped) => {
           if (stopped) finalize();
-          else emit({ ...base(threadId, turnId), type: "runtime.error", message: "Antigravity shutdown is still pending; its process group and MCP lease remain owned" });
+          else {
+            if (!mcpFinalized) antigravityLeaseRetained = true;
+            emit({ ...base(threadId, turnId), type: "runtime.error", message: "Antigravity shutdown is still pending; its process group and MCP lease remain owned" });
+          }
         });
       });
 
@@ -1005,10 +1064,15 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           agentsMcp: config.fullAuto,
         },
         sendTurn,
-        interruptTurn: async (threadId) => active.get(threadId)?.stop(),
+        interruptTurn: async (threadId) => {
+          const run = active.get(threadId);
+          if (run) return run.stop();
+          leaseWaits.get(threadId)?.abort();
+        },
         respondToRequest: async () => "unavailable" as const, // this engine has no asks to answer
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
+          for (const wait of leaseWaits.values()) wait.abort();
           for (const { stop } of active.values()) stop();
           await reapChildren(); // also reap children that hung post-result
         },
@@ -1020,6 +1084,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       generateText,
       dispose: async () => {
         disposed = true;
+        for (const wait of leaseWaits.values()) wait.abort();
         for (const { stop } of active.values()) stop();
         await reapChildren(); // retain listeners and MCP lease on uncertainty
         listeners.clear();
