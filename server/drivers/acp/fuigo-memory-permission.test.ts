@@ -54,7 +54,7 @@ async function fixture(scenario: string, tool = "memory_search", wrapped = false
 `;
     cli=join(root,"wrapped-memory-peer.mjs");writeFileSync(cli,source.replace(anchor,envelope+anchor));
   }
-  const driver = createAcpDriver({ driverKind: scenario === "other-engine" ? "other-fixture" : "fuigoAgent", displayName: "Memory wire fixture", defaultCli: process.execPath,
+  const driver = createAcpDriver({ driverKind: scenario === "other-engine" ? "other-fixture" : scenario === "grok" ? "grokAgent" : "fuigoAgent", displayName: "Memory wire fixture", defaultCli: process.execPath,
     nativeSource: "fuigo.acp", models: { default: "fixture", options: [{ id: "fixture", label: "Fixture" }] }, loginNote: "unused", isAuthenticated: () => true, pickAuthMethod: () => null, authFailure: "continue",
     spawnArgs: () => [cli, scenario, dump, tool], transformEnv: env => { env.HOME = home; env.USERPROFILE = home; env.FUIGO_HOME = home; } });
   const instance = await driver.create({ instanceId: "memory-wire", displayName: "Memory wire", environment: {}, enabled: true, config: { cli: process.execPath, fullAuto: false } }); instances.push(instance);
@@ -71,6 +71,7 @@ it.each(names)(`${wrapped?"wrapped ":""}native Fuigo allows only this injected m
   const f = await fixture("valid", tool, wrapped), sent = await f.instance.adapter.sendTurn(f.turn);
   await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
   const observed = JSON.parse(readFileSync(f.dump, "utf8"))[0];
+  expect(observed.prompt.map((part: { text?: string }) => part.text ?? "").join("\n")).toContain(`tool_name "${observed.alias}__memory_search"`);
   expect(observed.alias).toMatch(/^murage-memory-[a-f0-9]{20}$/);
   expect(observed.definitions[0].servers[0]).toEqual({ name: observed.alias, command: f.memory.command, args: f.memory.args, env: [{ name: "MURAGE_MEMORY_TOKEN", value: "synthetic-memory-capability" }] });
   expect(observed.decisions).toEqual([{ outcome: { outcome: "selected", optionId: "once" } }]);
@@ -78,7 +79,7 @@ it.each(names)(`${wrapped?"wrapped ":""}native Fuigo allows only this injected m
   expect(readFileSync(join(f.home, "config.toml"), "utf8")).toBe("# unchanged native settings\n");
 });
 
-it.each(["old-alias", "wrong-alias", "missing-meta", "wrong-version", "wrong-namespace", "missing-session", "wrong-session", "question", "no-once", "ambiguous-option", "before-prompt", "other-engine", "no-integration", "routed", "unregistered-tool"])(`${wrapped?"wrapped ":""}retains ordinary owner permission handling for %s`, async scenario => {
+it.each(["old-alias", "wrong-alias", "missing-meta", "wrong-version", "wrong-namespace", "missing-session", "wrong-session", "question", "no-once", "ambiguous-option", "before-prompt", "grok", "other-engine", "no-integration", "routed", "unregistered-tool"])(`${wrapped?"wrapped ":""}retains ordinary owner permission handling for %s`, async scenario => {
   const f = await fixture(scenario, scenario === "unregistered-tool" ? "memory_delete" : "memory_search", wrapped), sent = await f.instance.adapter.sendTurn(f.turn);
   const opened = await f.recorder.until(event => event.type === "request.opened");
   if (opened.type !== "request.opened" || typeof opened.requestId !== "string") throw Error("missing request");
@@ -86,7 +87,10 @@ it.each(["old-alias", "wrong-alias", "missing-meta", "wrong-version", "wrong-nam
   await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
   const observed = JSON.parse(readFileSync(f.dump, "utf8"))[0];
   expect(observed.decisions[0].outcome).toEqual({ outcome: "selected", optionId: "deny" });
-  if (scenario === "routed" || scenario === "other-engine") expect(observed.alias).toBe("murage-memory");
+  if (scenario === "routed" || scenario === "grok" || scenario === "other-engine") expect(observed.alias).toBe("murage-memory");
+  const prompt = observed.prompt.map((part: { text?: string }) => part.text ?? "").join("\n");
+  if (scenario === "routed" || scenario === "grok") expect(prompt).toContain(`tool_name "${observed.alias}__memory_search"`);
+  if (scenario === "other-engine" || scenario === "no-integration") expect(prompt).not.toContain("Call use_tool");
 });
 
 it(`${wrapped?"wrapped ":""}a resumed turn gets a fresh alias and cannot reuse the preceding turn's automatic permission`, async () => {

@@ -40,6 +40,7 @@ createInterface({ input: process.stdin }).on("line", line => {
       else send(result(message.id, { sessionId: session }));
     }
   } else if (message.method === "session/prompt") {
+    observed.prompt = message.params.prompt; save();
     promptId = message.id;
     if (scenario === "after-result") { observed.lateRequest = true; save(); send(result(promptId, { stopReason: "end_turn" }), permission()); }
     else if (scenario === "after-cancel") send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: session, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Ready for cancellation" } } } });

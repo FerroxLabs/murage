@@ -13,6 +13,7 @@
 // is never a security contract). session/load REPLAYS history as ordinary
 // session/update notifications, so updates are double-gated: nothing emits
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
+import { memoryToolAccessLine } from "../../capabilities-primer.ts";
 import { applyProviderRoute, grokResumeBinding, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
 import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
@@ -1366,7 +1367,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             : turn;
         const ownedMemoryAlias = support.driverKind === "fuigoAgent" && turn.integrations?.memory && !providerBinding
           ? newFuigoMemoryAlias() : null;
-        const mcpServers = acpMcpServers(turn, ownedMemoryAlias ?? "murage-memory");
+        const memoryName = ownedMemoryAlias ?? "murage-memory";
+        const mcpServers = acpMcpServers(turn, memoryName);
 
         // R1-T8: one bounded, allowlisted lifecycle trace per child generation.
         const lifecycle = createLifecycleRecorder({ threadId, driver: DRIVER_KIND, instanceId, turnId });
@@ -2479,13 +2481,22 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // persona that every other turn carries in front of the message
             // would turn the command into chat. Nothing is lost: the persona
             // rides in front of every ordinary turn, including the next one.
+            // The native Fuigo memory alias is minted per turn. Add its call
+            // instruction only here, from the exact name sent to ACP, including
+            // after a session replay. Never put the nonce in the cached primer.
+            const memoryInstruction = turn.integrations?.memory &&
+              (support.driverKind === "fuigoAgent" || support.driverKind === "grokAgent")
+              ? memoryToolAccessLine(memoryName) : "";
+            const instructedTurn = memoryInstruction
+              ? { ...promptTurn, system: [promptTurn.system, memoryInstruction].filter(Boolean).join("\n") }
+              : promptTurn;
             const text = turn.engineCommand
               ? engineCommandText(turn.engineCommand)
               : support.buildPromptText
-              ? support.buildPromptText(promptTurn)
-              : promptTurn.system
-                ? `${promptTurn.system}\n\n${promptTurn.text}`
-                : promptTurn.text;
+              ? support.buildPromptText(instructedTurn)
+              : instructedTurn.system
+                ? `${instructedTurn.system}\n\n${instructedTurn.text}`
+                : instructedTurn.text;
             if (support.driverKind === "grokAgent" && providerBinding) {
               turn.beforeSubmit?.();
               state.promptSent = true;

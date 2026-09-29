@@ -259,3 +259,9 @@ describe("chiefOfStaffSystemPrompt speaks only for the Chief", () => {
     expect(prompt).toContain("If a message is addressed to a teammate, hand it to them");
   });
 });
+
+it("uses engine-neutral agents tool instructions", () => {
+  const prompt = chiefOfStaffSystemPrompt("chief", [{ id: "chief", name: "Chief" }, { id: "peer", name: "Peer" }], true);
+  expect(prompt).toContain("Use Murage's agents tools (list_bots, ask_bot, delegate_bot)");
+  expect(prompt).not.toContain("mcp__agents");
+});

@@ -91,9 +91,7 @@ describe("capabilities primer", () => {
   });
 
   describe("engine and model awareness", () => {
-    it("never claims Fuigo hides Murage's tools behind a tool search", () => {
-      // FUIGO_TOOL_PRESENTATION defaults to `full` and Murage never sets it;
-      // even `adaptive` holds back only Fuigo's own native media schemas.
+    it("keeps direct and absent tool instructions unchanged", () => {
       for (const access of ["direct", "none"] as const) {
         expect(primer({ toolAccess: access })).not.toContain("search_tool");
       }
@@ -214,20 +212,22 @@ describe("turnCapabilityFacts", () => {
     expect(facts({ instance: { ...INSTANCE, adapter: { capabilities: { images: true, imagesInline: false } } } }).imageInput).toBe("file-reference");
   });
 
-  it("lists tools directly on every engine, Fuigo included", () => {
-    // End to end, not just the fact: a real Fuigo turn must not tell the model
-    // Murage's tools might be hidden behind a tool search. They never are —
-    // FUIGO_TOOL_PRESENTATION defaults to `full`, Murage never sets it, and
-    // `adaptive` withholds only Fuigo's own native media schemas.
-    const fuigoBlock = capabilitiesPrimer({
-      ...facts({ instance: { ...INSTANCE, driverKind: "fuigoAgent" } }),
-      memory: "off", imageProvider: false, folder: "trusted", peers: 1, canAskOwner: true,
-    });
-    expect(fuigoBlock).not.toMatch(/search_tool|use_tool|empty or short tool list/);
-    expect(fuigoBlock).toContain("listed to you directly");
-    expect(facts({ instance: { ...INSTANCE, driverKind: "fuigoAgent" } }).toolAccess).toBe("direct");
-    expect(facts().toolAccess).toBe("direct");
-    expect(facts({ integrations: {} }).toolAccess).toBe("none");
+  it.each(["fuigoAgent", "grokAgent"])("routes %s through qualified use_tool calls", (driverKind) => {
+    const instance = { ...INSTANCE, driverKind };
+    const block = capabilitiesPrimer(facts({ instance }));
+    expect(block).toContain("use_tool");
+    expect(block).toContain("agents__ask_bot");
+    expect(block).toContain("agents__delegate_bot");
+    expect(block).toContain("search_tool");
+    expect(block).not.toContain("listed to you directly");
+    expect(facts({ instance, integrations: {} }).toolAccess).toBe("none");
+    const memoryOnly = capabilitiesPrimer(facts({ instance, integrations: { memory: {} } }));
+    expect(memoryOnly).toContain("use_tool");
+    expect(memoryOnly).not.toContain("agents__ask_bot");
+  });
+
+  it.each(["claudeCode", "codex", "pi", "openaiCompatible"])("keeps %s direct", (driverKind) => {
+    expect(facts({ instance: { ...INSTANCE, driverKind } }).toolAccess).toBe("direct");
   });
 
   it("mirrors exactly the integrations that mounted", () => {
@@ -257,7 +257,7 @@ describe("golden blocks", () => {
   it("a Fuigo bot with everything connected", () => {
     expect(
       capabilitiesPrimer({
-        engine: "Fuigo", model: "grok-code-fast", toolAccess: "direct", imageInput: "inline",
+        engine: "Fuigo", model: "grok-code-fast", toolAccess: "use-tool", imageInput: "inline",
         mounted: { agents: true, composio: true, browser: true, memory: true, custom: true },
         memory: "active", imageProvider: true, folder: "trusted", peers: 4, canAskOwner: true,
       }),
