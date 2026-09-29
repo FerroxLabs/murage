@@ -72,7 +72,10 @@ const desktopTunnels = new Map<
 
 export interface VpsCommandOptions {
   input?: string;
-  timeoutMs?: number;
+  /** Stop the command after this long with no output. A command that keeps
+   * printing (a pull or build over a slow link) is never cut off by a clock
+   * (0.1.61). Defaults to two minutes. */
+  silenceMs?: number;
 }
 
 export type VpsCommandRunner = (
@@ -239,7 +242,7 @@ export function defaultRunner(args: string[], options: VpsCommandOptions = {}): 
     const stderr = tailCollector();
     let settled = false;
     let failure: Error | null = null;
-    let timeout: ReturnType<typeof setTimeout>;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const settle = (finish: () => void) => {
       if (settled) return;
       settled = true;
@@ -263,16 +266,28 @@ export function defaultRunner(args: string[], options: VpsCommandOptions = {}): 
       };
       void awaitCliTreeStopped(child, COMMAND_TIMEOUT_KILL_GRACE_MS).then(cleaned, cleaned);
     };
-    timeout = setTimeout(() => fail(new Error("Docker-over-SSH command timed out")), options.timeoutMs ?? 120_000);
-    timeout.unref?.();
+    const silenceMs = options.silenceMs ?? 120_000;
+    const arm = () => {
+      clearTimeout(timeout);
+      if (settled || failure) return;
+      timeout = setTimeout(
+        () => fail(new Error(`Docker-over-SSH command went silent for ${Math.round(silenceMs / 1000)} seconds`)),
+        silenceMs,
+      );
+      timeout.unref?.();
+    };
+    arm();
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
+    // any output is the command working: the silence clock starts over
     child.stdout.on("data", (chunk: string) => {
       stdout.push(chunk);
+      arm();
     });
     child.stderr.on("data", (chunk: string) => {
       stderr.push(chunk);
+      arm();
     });
     child.stdin.on("error", (error) => {
       fail(new Error(`Docker-over-SSH stdin failed: ${error.message}`));
@@ -412,8 +427,8 @@ async function computeVpsComputerStatus(
   const status = emptyStatus(botId, alias);
   if (!alias) return status;
   viewerConnections.delete(`${alias}:${status.container_name}`);
-  const run = (args: string[], timeoutMs = 10_000, input?: string) =>
-    runner(vpsDockerArgs(alias, args), { timeoutMs, input });
+  const run = (args: string[], silenceMs = 10_000, input?: string) =>
+    runner(vpsDockerArgs(alias, args), { silenceMs, input });
 
   let inspectedImageId: string | null = null;
   try {
@@ -663,10 +678,10 @@ function assertUsableContainer(status: VpsComputerStatus) {
 }
 
 async function prepareVpsImage(alias: string, runner: VpsCommandRunner) {
-  await runner(vpsDockerArgs(alias, ["pull", BASE_IMAGE]), { timeoutMs: 10 * 60_000 });
+  await runner(vpsDockerArgs(alias, ["pull", BASE_IMAGE]), { silenceMs: 10 * 60_000 });
   await runner(vpsDockerArgs(alias, ["build", "-t", VPS_IMAGE, "-"]), {
     input: managedImageDockerfile(),
-    timeoutMs: 10 * 60_000,
+    silenceMs: 10 * 60_000,
   });
 }
 
@@ -707,7 +722,7 @@ async function waitForVpsReady(
     const container = status.container_id ?? status.container_name;
     const driverAnswers = await runner(
       vpsDockerArgs(alias, cuaExecArgs(["status", "--socket", CUA_SOCKET], { container })),
-      { timeoutMs: 10_000 },
+      { silenceMs: 10_000 },
     ).then(
       () => true,
       () => false,
@@ -783,7 +798,7 @@ export async function vpsComputerAction(
       // is also the turn-start idempotency path, so leave an already-running
       // viewer alone when no start/replacement will occur.
       if (action !== "provision" || before.container !== "running") stopDesktopTunnel(botId);
-      const run = (args: string[], timeoutMs = 2 * 60_000) => runner(vpsDockerArgs(alias, args), { timeoutMs });
+      const run = (args: string[], silenceMs = 2 * 60_000) => runner(vpsDockerArgs(alias, args), { silenceMs });
 
       const containerRef = before.container_id ?? before.container_name;
       if (action === "provision") {
@@ -1014,7 +1029,7 @@ export async function vpsComputerScreenshot(
             { container: containerRef },
           ),
         ),
-        { timeoutMs: 30_000 },
+        { silenceMs: 30_000 },
       );
       const encoded = (await runner(vpsDockerArgs(alias, [
         "exec",
@@ -1026,7 +1041,7 @@ export async function vpsComputerScreenshot(
         "base64",
         "-w0",
         SCREENSHOT_PATH,
-      ]), { timeoutMs: 30_000 })).stdout.trim();
+      ]), { silenceMs: 30_000 })).stdout.trim();
       const checked = wholeScreenshot(Buffer.from(encoded, "base64"));
       if (!checked.ok) throw Object.assign(new Error("Cua Driver returned an incomplete VPS screenshot"), { status: 502 });
       return { png: encoded, format: checked.mime === "image/jpeg" ? "jpeg" : "png" };
@@ -1037,7 +1052,7 @@ export async function vpsComputerScreenshot(
       throw error;
     } finally {
       await runner(vpsDockerArgs(alias, ["exec", "-u", "cua", containerRef, "rm", "-f", SCREENSHOT_PATH]), {
-        timeoutMs: 10_000,
+        silenceMs: 10_000,
       }).catch(() => {});
     }
   });

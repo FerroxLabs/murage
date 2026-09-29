@@ -183,6 +183,13 @@ export class TurnWatchdog {
     if (turn) turn.lastEventAt = this.now();
   }
 
+  /** The silence a running turn on this thread is allowed (its own limit,
+   * else the default). A tool whose work emits no engine events, such as a
+   * long computer_exec, measures its own quiet against this. */
+  silenceLimitMs(threadId: string): number {
+    return this.turns.get(threadId)?.stallMs ?? this.opts.stallMs;
+  }
+
   /** request.opened → true (a human is deciding; not a stall however long
    * they take); request.resolved → false (the clock restarts once no card
    * is left open). Keyed by the card's request id; a caller without one
