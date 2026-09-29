@@ -485,7 +485,9 @@ it("image approval times out on the shared permission bound as not answered, nev
   try {
     expect(IMAGE_APPROVAL_TIMEOUT_MS).toBe(15 * 60_000);
     const f = generationFixture();
-    const job = f.run("late", f.request), refused = expect(job).rejects.toThrow("not approved");
+    // The bot is told the card closed unanswered, not that the owner said no,
+    // and not to point the owner at a card that is no longer there.
+    const job = f.run("late", f.request), refused = expect(job).rejects.toThrow("Nobody answered the approval card within 15 minutes, so it was closed and nothing was sent. If the owner still wants this image, ask for it again; a new card will show.");
     const card = await f.card();
     await vi.advanceTimersByTimeAsync(IMAGE_APPROVAL_TIMEOUT_MS);
     await refused;
@@ -497,7 +499,7 @@ it("image approval times out on the shared permission bound as not answered, nev
 });
 it("the owner's own deny stays a denial and their allow dispatches exactly once", async () => {
   const f = generationFixture();
-  const job = f.run("owner", f.request), refused = expect(job).rejects.toThrow("not approved");
+  const job = f.run("owner", f.request), refused = expect(job).rejects.toThrow("Image generation was not approved by the owner, so nothing was sent.");
   const card = await f.card();
   expect(f.operations.resolve(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected"); await refused;
   const settled = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;

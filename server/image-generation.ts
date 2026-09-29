@@ -883,7 +883,9 @@ export class ImageGenerationService {
       active();
       reservationStarted = true;
       const card: ImageApprovalCardInput = { prompt: assembled.prompt, ...(nativeNegative ? { negativePrompt: nativeNegative } : {}) };
-      try { reservation = await hooks.reserve(details, card); } catch { fail("permission-denied", "Image generation was not approved."); }
+      // The reservation's own refusal says how the card ended (the owner said
+      // no, or nobody answered in time); anything else stays the plain line.
+      try { reservation = await hooks.reserve(details, card); } catch (e) { fail("permission-denied", (e as { status?: number }).status === 403 && e instanceof Error && e.message ? e.message : "Image generation was not approved."); }
       // The render's own limits start after the separately bounded owner review.
       // OpenAI renders several large images in one buffered answer: it gets the full ceiling.
       const renderSignal = () => AbortSignal.timeout(delivery === "buffered" && connection.provider !== "openai" ? BUFFERED_DEADLINE_MS : RENDER_CEILING_MS);
