@@ -182,7 +182,7 @@ test("an OpenAI image key states create-and-edit, and switching connections swit
   await expect(images.getByText("Image settings saved.")).toBeVisible();
   await shot(images, "03-openai-creates-and-edits");
 
-  await expect(images.getByText(/^Images use OpenAI image key\. /)).toBeVisible();
+  await expect(images.getByText(/^Images use OpenAI image key, with that connection’s account\. /)).toBeVisible();
   await connection.selectOption({ label: "Flux Router" });
   // Both connections now create and edit, so the switch shows in the model
   // and the connection named for charges. Was:
@@ -191,7 +191,7 @@ test("an OpenAI image key states create-and-edit, and switching connections swit
   //   toHaveText(/^Creates images only\. /);
   await expect(images.getByRole("combobox", { name: "Image model" })).toHaveValue("flux-image");
   await expect(line).toHaveAttribute("data-image-capability", "edits");
-  await expect(images.getByText(/^Images use Flux Router\. /)).toBeVisible();
+  await expect(images.getByText(/^Images use Flux Router, with that connection’s account\. /)).toBeVisible();
   await shot(images, "04-switched-back-to-flux");
 });
 
