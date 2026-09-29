@@ -13,6 +13,7 @@ import {
 } from "./image-delivery.ts";
 import { loadCrop, type CropImage } from "./image-fit.ts";
 import { sniffMedia } from "./media-assets.ts";
+import { IMAGE_PROMPT_BLOCKS_MAX } from "./image-library.ts";
 
 export type ImageProvider = "openai" | "flux" | "openrouter" | "xai" | "google";
 /** Only the server connection resolver constructs this object. Never serialize it. */
@@ -20,7 +21,9 @@ export interface ImageConnection { id: string; provider: ImageProvider; apiKey: 
 export interface ImageReference { bytes: Buffer; mime: "image/png" | "image/jpeg" | "image/webp" }
 export const imageGenerationRequestSchema = z.object({
   connectionId: z.string().min(1).max(160), model: z.string().min(1).max(180).optional(),
-  operation: z.enum(["generate", "edit"]).default("generate"), prompt: z.string().trim().min(1).max(IMAGE_PROMPT_HARD_MAX),
+  operation: z.enum(["generate", "edit"]).default("generate"),
+  /** The scene. Optional when saved prompt blocks carry the prompt. */
+  prompt: z.string().trim().max(IMAGE_PROMPT_HARD_MAX).optional(),
   quality: z.enum(IMAGE_QUALITIES).optional(),
   /** Legacy "WxH": width and height with fit nearest. */
   size: z.string().regex(/^\d{2,5}x\d{2,5}$/).optional(),
@@ -36,7 +39,14 @@ export const imageGenerationRequestSchema = z.object({
 export type ImageGenerationRequest = z.infer<typeof imageGenerationRequestSchema>;
 export interface ImageModelOption {
   id: string; label: string; generate: boolean; edit: boolean;
-  availability: "unverified" | "catalog-listed"; disabledReason?: string;
+  /** "verified" / "failed": the model's own last check on this connection
+   * (a failed model is marked, never hidden); "catalog-listed": the provider
+   * lists it; "unverified": not checked yet. */
+  availability: "unverified" | "catalog-listed" | "verified" | "failed"; disabledReason?: string;
+  /** When the last check worked or failed, and why it failed. */
+  lastGoodAt?: number; lastFailedAt?: number; lastError?: string;
+  /** Flux: false when the key's own model list does not name it. */
+  offeredToKey?: boolean;
   /** Kept for older views; `capabilities` is the full statement. */
   qualities: string[]; sizes: string[]; outputFormat?: "png" | "jpeg" | "webp";
   /** Most reference images this adapter sends for one edit. 0 when editing is unavailable. Never above Murage's shared cap. */
@@ -85,6 +95,8 @@ export interface ImageOperationDetails {
   /** Phase 2 seams: a saved reference pack and saved prompt blocks. */
   referencePack?: { name: string; version: number; count: number };
   promptBlocks?: Array<{ name: string; version: number; scope: string; chars: number }>;
+  /** False when saved blocks are the whole prompt (no scene was sent). */
+  promptScene?: boolean;
   delivery?: ImageDelivery;
   /** Flux edits stop at the router after this many seconds today. */
   editTimeoutSeconds?: number;
@@ -142,6 +154,10 @@ const PREFLIGHT_TIMEOUT_MS = 180_000;
 const ENDPOINT_TIMEOUT_MS = 15_000;
 const FLUX_CATALOGUE_URL = "https://api.fluxrouter.ai/v1/images/models";
 const FLUX_JOBS_URL = "https://api.fluxrouter.ai/v1/images/jobs";
+/** Free: the model ids this key may use. Read only on the list and Settings paths. */
+const FLUX_MODELS_URL = "https://api.fluxrouter.ai/v1/models";
+/** A model check (A.8): the smallest render a model takes. Its bytes are discarded. */
+export const IMAGE_PROBE_PROMPT = "A plain grey square.";
 /** Contract section 1: at most once per 6 hours per key; a failed read is retried sooner. */
 const FLUX_CATALOGUE_TTL_MS = 6 * 60 * 60_000;
 const FLUX_CATALOGUE_RETRY_MS = 30 * 60_000;
@@ -455,7 +471,7 @@ export function imageApprovalSubtitle(details: ImageOperationDetails): string {
     lines.push(pack ? `References: ${pack.count} from pack ${pack.name} v${pack.version} + ${details.referenceCount - pack.count} attached = ${details.referenceCount} of ${details.referenceCap}.` : `References: ${details.referenceCount} of ${details.referenceCap}.`);
   }
   if (details.promptChars !== undefined) {
-    const blocks = details.promptBlocks?.length ? `: ${details.promptBlocks.map(block => `${block.name} v${block.version}`).join(" + ")} + scene` : "";
+    const blocks = details.promptBlocks?.length ? `: ${details.promptBlocks.map(block => `${block.name} v${block.version}`).join(" + ")}${details.promptScene === false ? "" : " + scene"}` : "";
     lines.push(`Prompt: ${fmt(details.promptChars)} characters${blocks}.`);
   }
   if (details.condensedFromChars !== undefined && details.promptChars !== undefined) lines.push(`Condensed from ${fmt(details.condensedFromChars)} to ${fmt(details.promptChars)} characters for ${details.model}.`);
@@ -488,6 +504,18 @@ export function imageResultSummary(metadata: GeneratedImageMetadata): string {
   return facts.filter(Boolean).join(" ");
 }
 
+/** Flux: a model the key's own list names (itself or one of its alias ids)
+ * is catalog-listed; one it does not name is marked, never hidden. */
+function markOffered(catalog: ImageCatalog, offered: ReadonlySet<string>): ImageCatalog {
+  return { ...catalog, models: catalog.models.map(model => {
+    const caps = model.capabilities;
+    const ids = [model.id, ...Object.values(caps.qualityAliases ?? {}), ...Object.values(caps.sizeAliases ?? {}).flatMap(sizes => Object.values(sizes))];
+    if (!ids.some(id => offered.has(id))) return { ...model, offeredToKey: false };
+    return { ...model, offeredToKey: true, ...(model.availability === "unverified" ? { availability: "catalog-listed" as const } : {}) };
+  }) };
+}
+export interface ImageProbeResult { ok: boolean; free: boolean; durationMs: number; errorCode?: string; errorMessage?: string; costUsd?: number }
+
 /** What list_image_models hands a bot: every model's own limits, compact.
  * An older alias id is one line naming its base, quality and size (the bot
  * passes quality on the base instead); the router's alias maps stay here. */
@@ -495,6 +523,8 @@ export function imageModelsForBots(catalog: ImageCatalog): unknown[] {
   return catalog.models.map(model => {
     const { qualityAliases: _aliases, sizeAliases: _sizes, sizeRule, ...capabilities } = model.capabilities;
     const common = { id: model.id, label: model.label, generate: model.generate, edit: model.edit, availability: model.availability,
+      ...(model.lastGoodAt !== undefined ? { lastGoodAt: new Date(model.lastGoodAt).toISOString() } : {}), ...(model.lastFailedAt !== undefined ? { lastFailedAt: new Date(model.lastFailedAt).toISOString() } : {}),
+      ...(model.lastError ? { lastError: model.lastError } : {}), ...(model.offeredToKey === false ? { offeredToKey: false } : {}),
       ...(model.status ? { status: model.status } : {}), ...(model.disabledReason ? { disabledReason: model.disabledReason } : {}), ...(model.editUnavailableReason ? { editUnavailableReason: model.editUnavailableReason } : {}) };
     if (model.aliasOf) return { ...common, aliasOf: model.aliasOf, quality: model.qualities[0], sizes: model.sizes };
     return { ...common, capabilities: { ...capabilities, sizeRule, ...(model.editQualities ? { editQualities: model.editQualities } : {}) } };
@@ -515,6 +545,7 @@ export class ImageGenerationService {
   private readonly fetcher: typeof fetch;
   private readonly options: ImageGenerationServiceOptions;
   private readonly fluxCatalogues = new Map<string, { at: number; ttl: number; value: FluxCatalogue | null }>();
+  private readonly fluxOffered = new Map<string, { at: number; ttl: number; value: Set<string> | null }>();
   constructor(options: ImageGenerationServiceOptions) { this.options = options; this.fetcher = options.fetch ?? fetch; }
   private connection(id: string): ImageConnection {
     // No connection, or no key on it, means nothing was ever sent and nothing
@@ -554,6 +585,27 @@ export class ImageGenerationService {
     this.fluxCatalogues.set(connection.revision, { at: now, ttl, value });
     return value;
   }
+  /** The image model ids Flux lists for this key (free), cached like the
+   * catalogue. null when the list could not be read or names no image model:
+   * then nothing is marked either way. */
+  private async fluxOfferedIds(connection: ImageConnection, signal?: AbortSignal, refresh = false): Promise<Set<string> | null> {
+    const now = Date.now(), cached = this.fluxOffered.get(connection.revision);
+    if (!refresh && cached && now - cached.at < cached.ttl) return cached.value;
+    let value: Set<string> | null = null, ttl = FLUX_CATALOGUE_TTL_MS;
+    try {
+      assertCredentialOrigin("flux", FLUX_MODELS_URL);
+      const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
+      const response = await this.fetcher(FLUX_MODELS_URL, { headers: { authorization: `Bearer ${connection.apiKey}` }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
+      if (response.ok) {
+        const body = await boundedJson(response, MAX_CATALOG_BYTES);
+        const ids = record(body) && Array.isArray(body.data) ? body.data.flatMap(item => record(item) && typeof item.id === "string" && /^flux-image[a-z0-9._-]{0,110}$/.test(item.id) ? [item.id] : []) : [];
+        value = ids.length ? new Set(ids) : null;
+      } else { void response.body?.cancel(); ttl = FLUX_CATALOGUE_RETRY_MS; }
+    } catch { value = null; ttl = FLUX_CATALOGUE_RETRY_MS; }
+    if (signal?.aborted) return value;
+    this.fluxOffered.set(connection.revision, { at: now, ttl, value });
+    return value;
+  }
   listConnections(): Array<{ id: string; provider: ImageProvider; defaultModel: string | null }> {
     // 32 named connections plus the existing default keys.
     return [...new Set(this.options.connectionIds())].slice(0, 40).flatMap(id => {
@@ -572,13 +624,16 @@ export class ImageGenerationService {
    * pinned endpoint. A failed check keeps generation and shows editing unavailable.
    * `refresh` rereads the Flux catalogue now (the owner's Refresh).
    */
-  async getCatalog(connectionId: string, options: { signal?: AbortSignal; discoverEdits?: boolean; refresh?: boolean } = {}): Promise<ImageCatalog> {
+  async getCatalog(connectionId: string, options: { signal?: AbortSignal; discoverEdits?: boolean; refresh?: boolean; offered?: boolean } = {}): Promise<ImageCatalog> {
     const { signal, discoverEdits = true } = options;
     const connection = this.connection(connectionId); const catalog = staticCatalog(connection);
     if (connection.provider === "flux") {
       if (!this.options.fluxCatalogue) return catalog;
       const catalogue = await this.fluxCatalogue(connection, signal, options.refresh);
-      return catalogue?.entries.length ? fluxCatalogFrom(connection, catalogue) : catalog;
+      const full = catalogue?.entries.length ? fluxCatalogFrom(connection, catalogue) : catalog;
+      // `offered` is asked only by the list and Settings paths, never by a render.
+      const offered = options.offered ? await this.fluxOfferedIds(connection, signal, options.refresh) : null;
+      return offered ? markOffered(full, offered) : full;
     }
     if (connection.provider !== "openrouter") return catalog;
     const response = await this.fetcher("https://openrouter.ai/api/v1/images/models", { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000), redirect: "error" });
@@ -597,6 +652,45 @@ export class ImageGenerationService {
     }
     return { ...catalog, models };
   }
+  /**
+   * One owner-started or scheduled check of a model (A.8). Uses Flux's free
+   * probe when its catalogue says it has one; otherwise one real render at the
+   * lowest quality and smallest legal square, never published, bytes
+   * discarded, never retried. Failures are the result, not a throw.
+   */
+  async probe(connectionId: string, modelId: string, options: { signal?: AbortSignal } = {}): Promise<ImageProbeResult> {
+    const now = this.options.now ?? Date.now, started = now();
+    const done = (result: Omit<ImageProbeResult, "durationMs">): ImageProbeResult => ({ ...result, durationMs: Math.max(0, now() - started) });
+    try {
+      const connection = this.connection(connectionId);
+      if (connection.provider === "flux" && this.options.fluxCatalogue && (await this.fluxCatalogue(connection, options.signal))?.probe) {
+        const url = URLS.flux;
+        assertCredentialOrigin("flux", url);
+        const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
+        const response = await this.fetcher(url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}` },
+          body: JSON.stringify({ model: modelId, probe: true }), signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout, redirect: "error" });
+        if (!response.ok) return done({ ok: false, free: true, errorCode: "provider-error", errorMessage: `Flux answered HTTP ${response.status}${await providerErrorDetail(response)}.` });
+        const body = await boundedJson(response, 64 * 1024);
+        if (!record(body) || body.contract !== 1 || body.kind !== "image-probe" || !["ok", "down"].includes(String(body.state))) return done({ ok: false, free: true, errorCode: "invalid-response", errorMessage: "Flux's check answer was not understood." });
+        const detail = typeof body.detail === "string" ? redactSecretsInText(body.detail.replace(/\s+/g, " ").trim()).slice(0, 300) : "";
+        return body.state === "ok" ? done({ ok: true, free: true }) : done({ ok: false, free: true, errorCode: "down", errorMessage: detail || "Flux reports this model is down." });
+      }
+      const catalog = await this.getCatalog(connectionId, { signal: options.signal, discoverEdits: false });
+      const model = catalog.models.find(item => item.id === modelId);
+      if (!model?.generate || model.disabledReason) return done({ ok: false, free: false, errorCode: "unsupported-model", errorMessage: "This model is not available for image generation here." });
+      const caps = model.capabilities;
+      const quality = IMAGE_QUALITIES.find(item => caps.qualities.includes(item));
+      const square = resolveImageSize(caps.sizeRule, { aspectRatio: "1:1", resolution: "small" }, caps.defaultSize);
+      const request = { connectionId, model: modelId, prompt: IMAGE_PROBE_PROMPT, n: 1, ...(quality ? { quality } : {}), ...(square.ok ? { aspectRatio: "1:1", resolution: "small" as const } : {}) };
+      const result = await this.generate<number>(request, { signal: options.signal, assertActive: () => {}, reserve: async () => ({ finish: () => {} }), publish: async image => image.bytes.length });
+      const costUsd = result.metadata.usage?.costUsd;
+      return done({ ok: true, free: false, ...(costUsd !== undefined ? { costUsd } : {}) });
+    } catch (error) {
+      if (error instanceof ImageGenerationError) return done({ ok: false, free: false, errorCode: error.code, errorMessage: error.message });
+      const transport = describeTransportFailure(error);
+      return done({ ok: false, free: false, errorCode: transport.code, errorMessage: transport.message });
+    }
+  }
   async generate<T>(raw: unknown, hooks: ImageGenerationHooks<T>, references: readonly ImageReference[] = [], assembly: ImagePromptAssembly = {}): Promise<{ artifact: T; artifacts: T[]; metadata: GeneratedImageMetadata }> {
     const parsed = imageGenerationRequestSchema.safeParse(raw);
     if (!parsed.success) {
@@ -604,6 +698,8 @@ export class ImageGenerationService {
       throw new ImageGenerationError("invalid-request", `Choose a connection, a supported model and a prompt of at most ${fmt(IMAGE_PROMPT_HARD_MAX)} characters${field ? ` (check ${field})` : ""}. URLs and keys are not accepted.`, "not-dispatched", true);
     }
     const request = parsed.data!; const connection = this.connection(request.connectionId);
+    if ((assembly.blocks?.length ?? 0) > IMAGE_PROMPT_BLOCKS_MAX) throw new ImageGenerationError("invalid-request", `One image request takes at most ${IMAGE_PROMPT_BLOCKS_MAX} prompt blocks. Nothing was sent.`, "not-dispatched", true);
+    if (!request.prompt && !assembly.blocks?.length) throw new ImageGenerationError("invalid-request", "Send a prompt, saved prompt_blocks, or both. Nothing was sent.", "not-dispatched", true);
     let signal = hooks.signal ? AbortSignal.any([hooks.signal, AbortSignal.timeout(PREFLIGHT_TIMEOUT_MS)]) : AbortSignal.timeout(PREFLIGHT_TIMEOUT_MS);
     let outcome: ImageAttemptOutcome = "not-dispatched"; let reservation: Awaited<ReturnType<ImageGenerationHooks<T>["reserve"]>> | undefined;
     let reservationStarted = false, externalReadStarted = false;
@@ -738,7 +834,7 @@ export class ImageGenerationService {
         ...(assembled.avoidLine ? { avoidLine: true } : {}), ...(request.outputFormat ? { outputFormat: request.outputFormat } : {}),
         ...(request.outputCompression !== undefined ? { outputCompression: request.outputCompression } : {}), ...(request.background ? { background: request.background } : {}),
         ...(request.seed !== undefined ? { seed: request.seed } : {}), ...(edit || references.length ? { referenceCap: model!.maxReferences } : {}),
-        ...(assembly.referencePack ? { referencePack: assembly.referencePack } : {}), ...(promptBlocks?.length ? { promptBlocks } : {}),
+        ...(assembly.referencePack ? { referencePack: assembly.referencePack } : {}), ...(promptBlocks?.length ? { promptBlocks, promptScene: Boolean(request.prompt) } : {}),
         delivery, ...(connection.provider === "flux" && edit && caps.editTimeoutSeconds ? { editTimeoutSeconds: caps.editTimeoutSeconds } : {}),
         ...(hooks.resumeJob ? { jobId: hooks.resumeJob.id } : {}) };
       const outbound = serializeImageRequest(connection.provider, request.operation, payload, references);

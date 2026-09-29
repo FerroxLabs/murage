@@ -442,7 +442,12 @@ import { captureOutsideHumanControl } from "./private-screen-capture.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import { ImageGenerationError, ImageGenerationService, imageModelsForBots, type ImageConnection } from "./image-generation.ts";
 import { IMAGE_NEGATIVE_PROMPT_MAX, IMAGE_PROMPT_HARD_MAX } from "../shared/image-capabilities.ts";
+import { IMAGE_GENERATION_REFERENCE_MAX } from "../shared/media-assets.ts";
 import { ImageOperations, imageReferences } from "./image-operations.ts";
+import {
+  IMAGE_PROMPT_BLOCKS_MAX, applyImageAvailability, deletePromptBlock, deleteReferencePack, getPromptBlock, imageProbes, listPromptBlocksForBot, listPromptBlocksForOwner,
+  listReferencePacksForBot, listReferencePacksForOwner, promptBlockById, recordImageProbe, resolvePromptBlocks, resolveReferencePack, savePromptBlock, saveReferencePack, scheduledProbeDue,
+} from "./image-library.ts";
 import { screenFrameHash, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { createRoutineWatchFileAdapter } from "./routine-watch-file.ts";
@@ -3491,7 +3496,9 @@ function imageConnectionFacts(): ImageConnectionFact[] {
     return { label: connection.label, inUse, ...(model ? { model } : {}) };
   });
 }
-async function imageSettings(connectionId = cfg.imageGen?.connectionId) {
+/** `availability`: the list and Settings paths also read Flux's free model
+ * list for this key and mark each model with its last check. A render never does. */
+async function imageSettings(connectionId = cfg.imageGen?.connectionId, options: { availability?: boolean } = {}) {
   const connections = labelledImageConnections();
   const chosen = defaultImageConnection(connections, connectionId);
   // The connection list is local; only the chosen catalog may need its
@@ -3499,13 +3506,41 @@ async function imageSettings(connectionId = cfg.imageGen?.connectionId) {
   // connection and says why the models are missing.
   let catalog: Awaited<ReturnType<typeof imageService.getCatalog>> | null = null, catalogError: string | undefined;
   if (chosen && imageConnection(chosen)) {
-    try { catalog = await imageService.getCatalog(chosen); }
+    try {
+      catalog = await imageService.getCatalog(chosen, { offered: options.availability });
+      if (options.availability) catalog = { ...catalog, models: applyImageAvailability(catalog.models, imageProbes(database(), chosen)) };
+    }
     catch (error) { catalogError = error instanceof ImageGenerationError ? error.message : "Could not load this connection's image models. Try again later."; }
   }
   const model = cfg.imageGen?.connectionId === chosen ? cfg.imageGen?.model ?? catalog?.defaultModel : catalog?.defaultModel;
   const selected = chosen && model && catalog?.models.some(item => item.id === model && item.generate && !item.disabledReason) ? { connectionId: chosen, model } : null;
-  return { enabled: cfg.imageGen?.enabled !== false && !!selected, connections, selected, catalog, ...(catalogError ? { catalogError } : {}) };
+  return { enabled: cfg.imageGen?.enabled !== false && !!selected, connections, selected, catalog, dailyProbe: cfg.imageGen?.dailyProbe === true, ...(catalogError ? { catalogError } : {}) };
 }
+/** Model checks (A.8): one at a time, never retried. The owner's "Check this
+ * model now" and the opt-in daily check of the default model both come here. */
+let imageProbeRunning = false;
+async function runImageProbe(connectionId: string, model: string) {
+  if (imageProbeRunning) throw Object.assign(new Error("A model check is already running. Wait for it to finish."), { status: 409 });
+  imageProbeRunning = true;
+  try {
+    const at = Date.now();
+    const result = await imageService.probe(connectionId, model);
+    return { ...result, record: recordImageProbe(database(), { connectionId, model, at, ...result }) };
+  } finally { imageProbeRunning = false; }
+}
+/** The daily check: off unless the owner turned it on, only while image
+ * generation is on, only the default model, at most once per model per day
+ * and three checks a day in all. Driven by an hourly timer, so never a burst
+ * at startup. */
+async function runScheduledImageProbe(): Promise<void> {
+  if (cfg.imageGen?.dailyProbe !== true || !imageGenerationOn() || imageProbeRunning) return;
+  const settings = await imageSettings();
+  const selected = settings.enabled ? settings.selected : null;
+  if (!selected || !scheduledProbeDue(database(), selected.connectionId, selected.model)) return;
+  await runImageProbe(selected.connectionId, selected.model);
+}
+const IMAGE_PROBE_SWEEP_MS = 60 * 60_000;
+setInterval(() => { void runScheduledImageProbe().catch(() => { /* recorded as a failed check or skipped; never retried */ }); }, IMAGE_PROBE_SWEEP_MS).unref?.();
 
 /** The one per-MODEL image fact Murage holds: a BYOK provider catalog's
  * `capabilities.vision`. Until now it was displayed in Settings and nowhere
@@ -11516,8 +11551,8 @@ const server = createServer(async (req, res) => {
     }
 
     if (path === "/api/images/settings" && (method === "GET" || method === "POST")) {
-      if (method === "GET") return json(res, 200, await imageSettings());
-      const patch = z.object({ enabled: z.boolean().optional(), connectionId: z.string().max(160).optional(), model: z.string().max(180).optional() }).strict().parse(await readBody(req));
+      if (method === "GET") return json(res, 200, await imageSettings(undefined, { availability: true }));
+      const patch = z.object({ enabled: z.boolean().optional(), connectionId: z.string().max(160).optional(), model: z.string().max(180).optional(), dailyProbe: z.boolean().optional() }).strict().parse(await readBody(req));
       const next = { ...cfg.imageGen, ...patch };
       if (patch.connectionId && patch.connectionId !== cfg.imageGen?.connectionId) delete next.model;
       if (patch.connectionId || patch.model || patch.enabled === true) {
@@ -11529,7 +11564,34 @@ const server = createServer(async (req, res) => {
       }
       const { key: _imageKey, ...preferences } = next;
       saveConfig({ imageGen: preferences }); cfg.imageGen = next;
-      return json(res, 200, await imageSettings());
+      return json(res, 200, await imageSettings(undefined, { availability: true }));
+    }
+    // The owner's "Check this model now": one check, started by a click.
+    if (path === "/api/images/probe" && method === "POST") {
+      const body = z.object({ connectionId: z.string().min(1).max(160), model: z.string().min(1).max(180) }).strict().parse(await readBody(req));
+      if (!imageConnection(body.connectionId)) return json(res, 409, { error: "Choose a configured image connection first." });
+      const result = await runImageProbe(body.connectionId, body.model);
+      return json(res, 200, { probe: { ok: result.ok, free: result.free, durationMs: result.durationMs, ...(result.errorCode ? { errorCode: result.errorCode, errorMessage: result.errorMessage } : {}) }, settings: await imageSettings(body.connectionId, { availability: true }) });
+    }
+    // Saved prompt blocks and reference packs, every scope, for the owner.
+    // The owner saves into the workspace, or a new version of a bot's block.
+    if (path === "/api/images/library" && method === "GET") {
+      const botName = (botId?: string) => botId ? store.bot(botId)?.name ?? "A removed bot" : undefined;
+      const named = <T extends { botId?: string }>(item: T) => ({ ...item, ...(item.botId ? { botName: botName(item.botId) } : {}) });
+      return json(res, 200, { blocks: listPromptBlocksForOwner(database()).map(named), packs: listReferencePacksForOwner(database()).map(named) });
+    }
+    if (path === "/api/images/prompt-blocks" && method === "POST") {
+      const body = z.object({ name: z.string().max(64), text: z.string().max(IMAGE_PROMPT_HARD_MAX + 1_000), botId: z.string().max(160).optional() }).strict().parse(await readBody(req, 2_000_000));
+      if (body.botId && !store.bot(body.botId)) return json(res, 404, { error: "That bot is not here any more." });
+      const saved = savePromptBlock(database(), { scope: body.botId ? "bot" : "workspace", botId: body.botId, name: body.name, text: body.text, createdBy: "owner" });
+      return json(res, saved.created ? 201 : 200, { block: saved });
+    }
+    {
+      const m = path.match(/^\/api\/images\/prompt-blocks\/([0-9a-f-]{36})$/);
+      if (m && method === "GET") return json(res, 200, { block: promptBlockById(database(), m[1]!) });
+      if (m && method === "DELETE") return json(res, 200, { deleted: deletePromptBlock(database(), m[1]!) });
+      const p = path.match(/^\/api\/images\/reference-packs\/([0-9a-f-]{36})$/);
+      if (p && method === "DELETE") return json(res, 200, { deleted: deleteReferencePack(database(), p[1]!) });
     }
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
@@ -11670,14 +11732,44 @@ const server = createServer(async (req, res) => {
 
       if (path === "/api/internal/image-models" && method === "GET") {
         // The bot's view: each model's own limits, with alias ids as one line each.
-        const settings = await imageSettings(); requireActiveInternal();
+        const settings = await imageSettings(undefined, { availability: true }); requireActiveInternal();
         return json(res, 200, { ...settings, catalog: settings.catalog ? { ...settings.catalog, models: imageModelsForBots(settings.catalog) } : settings.catalog });
+      }
+      // Saved prompt blocks and reference packs, in this bot's own scope plus
+      // the workspace's. Mounted with the image tools and refused, like them,
+      // while image generation is off.
+      if (path.startsWith("/api/internal/image-prompt-block") || path.startsWith("/api/internal/image-reference-pack")) {
+        requireActiveInternal();
+        if (cfg.imageGen?.enabled === false) return json(res, 409, { error: "Image generation is off in Settings → Tools & Connections → Image generation." });
+        const actor = { kind: "bot" as const, botId: internalClaim.botId };
+        if (path === "/api/internal/image-prompt-blocks" && method === "GET") return json(res, 200, { blocks: listPromptBlocksForBot(database(), actor.botId) });
+        if (path === "/api/internal/image-prompt-blocks" && method === "POST") {
+          const body = z.object({ name: z.string().max(64), text: z.string().max(IMAGE_PROMPT_HARD_MAX + 1_000) }).strict().parse(await readBody(req, 2_000_000));
+          requireActiveInternal();
+          const saved = savePromptBlock(database(), { scope: "bot", botId: actor.botId, name: body.name, text: body.text, createdBy: `bot:${actor.botId}` });
+          return json(res, saved.created ? 201 : 200, { name: saved.name, version: saved.version, chars: saved.chars, scope: saved.scope, ...(saved.created ? {} : { unchanged: true }) });
+        }
+        if (path === "/api/internal/image-prompt-block" && method === "GET") {
+          const name = url.searchParams.get("name") ?? "", version = url.searchParams.get("version");
+          const block = getPromptBlock(database(), actor, version ? `${name}@${version}` : name);
+          return json(res, 200, { name: block.name, version: block.version, scope: block.scope, chars: block.chars, text: block.text });
+        }
+        if (path === "/api/internal/image-reference-packs" && method === "GET") return json(res, 200, { packs: listReferencePacksForBot(database(), actor.botId).map(({ id: _id, createdBy: _by, botId: _bot, ...pack }) => pack) });
+        if (path === "/api/internal/image-reference-packs" && method === "POST") {
+          const body = z.object({ name: z.string().max(64), referenceIds: z.array(z.string().max(180)).min(1).max(IMAGE_GENERATION_REFERENCE_MAX) }).strict().parse(await readBody(req));
+          requireActiveInternal();
+          const references = imageReferences(store, internalClaim.threadId, body.referenceIds);
+          const saved = saveReferencePack(database(), DATA_DIR, { scope: "bot", botId: actor.botId, name: body.name, references, createdBy: `bot:${actor.botId}` });
+          return json(res, saved.created ? 201 : 200, { name: saved.name, version: saved.version, count: saved.count, scope: saved.scope, ...(saved.created ? {} : { unchanged: true }) });
+        }
+        return json(res, 404, { error: `no route: ${method} ${path}` });
       }
       if (path === "/api/internal/generate-image" && method === "POST") {
         // Shapes only: every limit that depends on the model (prompt budget,
         // sizes, references, n, formats) is checked by imageService.generate
         // before the approval card, with the model named.
-        const body = z.object({ requestId: z.string().regex(/^[\w-]{1,80}$/), prompt: z.string().min(1).max(IMAGE_PROMPT_HARD_MAX), operation: z.enum(["generate", "edit"]).optional(),
+        const body = z.object({ requestId: z.string().regex(/^[\w-]{1,80}$/), prompt: z.string().max(IMAGE_PROMPT_HARD_MAX).optional(), operation: z.enum(["generate", "edit"]).optional(),
+          promptBlocks: z.array(z.string().max(80)).max(IMAGE_PROMPT_BLOCKS_MAX).optional(), referencePack: z.string().max(80).optional(),
           connectionId: z.string().max(160).optional(), model: z.string().max(180).optional(), quality: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
           size: z.string().max(12).optional(), aspectRatio: z.string().max(8).optional(), resolution: z.enum(["small", "standard", "large", "max"]).optional(),
           width: z.number().int().optional(), height: z.number().int().optional(), fit: z.enum(["nearest", "exact"]).optional(), n: z.number().int().optional(),
@@ -11696,13 +11788,22 @@ const server = createServer(async (req, res) => {
         const revoked = setInterval(() => { try { active(); } catch { controller.abort(); } }, 100);
         try {
           const actor = { botId: internalClaim.botId, threadId: internalClaim.threadId, generation: internalClaim.generation, signal: controller.signal, assertActive: active };
-          const refs = imageReferences(store, actor.threadId, body.referenceIds);
-          const { requestId: _requestId, referenceIds: _referenceIds, connectionId: _connectionId, model: _model, operation: _operation, ...options } = body;
+          // Saved blocks and a pack resolve in this bot's scope, then the
+          // workspace's, before anything else: a missing or changed one
+          // refuses the whole request before the card.
+          const blocks = resolvePromptBlocks(database(), { kind: "bot", botId: actor.botId }, body.promptBlocks ?? []);
+          const pack = body.referencePack ? resolveReferencePack(database(), DATA_DIR, { kind: "bot", botId: actor.botId }, body.referencePack) : null;
+          const attached = imageReferences(store, actor.threadId, body.referenceIds);
+          const refs = [...(pack?.references ?? []), ...attached];
+          if (refs.length > IMAGE_GENERATION_REFERENCE_MAX) return json(res, 400, { error: `${refs.length} reference images (${pack?.references.length ?? 0} from the pack, ${attached.length} attached); Murage takes at most ${IMAGE_GENERATION_REFERENCE_MAX}. Nothing was sent.` });
+          const { requestId: _requestId, referenceIds: _referenceIds, connectionId: _connectionId, model: _model, operation: _operation, promptBlocks: _promptBlocks, referencePack: _referencePack, ...options } = body;
           const request = { connectionId: chosen, model: body.model ?? state.selected?.model ?? state.catalog?.defaultModel ?? undefined,
             operation: body.operation ?? (refs.length ? "edit" : "generate"), ...options };
-          const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds }, (reserve, publish, context) =>
+          const assembly = { blocks: blocks.map(block => ({ name: block.name, version: block.version, scope: block.scope, text: block.text })),
+            ...(pack ? { referencePack: { name: pack.name, version: pack.version, count: pack.references.length } } : {}) };
+          const result = await imageOperations.execute(actor, body.requestId, { ...request, referenceIds: body.referenceIds, promptBlocks: body.promptBlocks, referencePack: body.referencePack }, (reserve, publish, context) =>
             imageService.generate(request, { signal: controller.signal, assertActive: active, reserve, publish, operationId: context.operationId, resumeJob: context.resumeJob, jobStarted: context.jobStarted,
-              connectionLabel: labelledImageConnections().find(connection => connection.id === chosen)?.label }, refs));
+              connectionLabel: labelledImageConnections().find(connection => connection.id === chosen)?.label }, refs, assembly));
           active(); return json(res, 200, result);
         } finally { clearInterval(revoked); res.off("close", disconnected); }
       }

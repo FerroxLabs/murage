@@ -15,6 +15,7 @@ import { decodeGeneratedImage } from "./generated-image.ts";
 import type { LocalOutputReceipt } from "../shared/output-publication.ts";
 import { completeImageOutput, outputReceipt, outputReceiptsForRun, retainImageOutput, type ImageOutputCompletion } from "./output-publication.ts";
 import { conversationImageAttachments } from "./image-reference-resolver.ts";
+import { recordRenderPrompt } from "./image-library.ts";
 
 export interface ImageActor { botId: string; threadId: string; generation: string; assertActive: () => void; signal: AbortSignal }
 interface Pending { threadId: string; botId: string; messageId: string; settle: (allow: boolean, source?: "user" | "system") => void; active: () => void;
@@ -196,6 +197,9 @@ export class ImageOperations {
       const approved = priorJob ? true : await this.approve(actor, details, request, card);
       actor.assertActive();
       if (!approved || actor.signal.aborted) { record("not-dispatched"); throw error(403, "Image generation was not approved; no image request was sent."); }
+      // The full prompt and the block versions it pinned, kept before the
+      // provider is asked, so an uncertain render still has them.
+      if (card?.prompt !== undefined) recordRenderPrompt(this.db(), { operationId: id, prompt: card.prompt, blocks: details.promptBlocks ?? [] });
       record("running");
       return { finish: (outcome: ImageAttemptOutcome) => record(outcome) };
     };
