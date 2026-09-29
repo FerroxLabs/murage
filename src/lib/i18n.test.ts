@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { localeVersion, resolveLocale, setLocale, subscribeLocale, t } from "./i18n";
+import { UI_LANGUAGE_KEY, bootLanguage, localeVersion, rememberLanguage, resolveLocale, setLocale, subscribeLocale, t } from "./i18n";
 import { en, loadLocalePack, localeChoices, localeCodes, localeLoaders } from "@/locales";
 import { allLocalePacks } from "@/locales/testing";
 
@@ -118,7 +118,8 @@ describe("language packs load on demand", () => {
       const slow = setLocale("zz-slow");
       expect(await setLocale("de")).toBe("de");
       release({ "engines.cloud": "Late" });
-      await slow;
+      // the overtaken call reports what is in effect, not what it asked for
+      expect(await slow).toBe("de");
       expect(t("engines.local")).toBe("Lokal");
     } finally {
       delete localeLoaders["zz-slow"];
@@ -155,5 +156,28 @@ describe("language packs load on demand", () => {
     } finally {
       stop();
     }
+  });
+});
+
+describe("the language the first paint starts in", () => {
+  const storage = (value: string | null) => {
+    const saved = new Map<string, string>(value === null ? [] : [[UI_LANGUAGE_KEY, value]]);
+    return { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, next: string) => void saved.set(key, next), saved };
+  };
+  it("is the owner's last choice on this device, else the system's", () => {
+    expect(bootLanguage(storage("fr"), "de-DE")).toBe("fr");
+    expect(bootLanguage(storage("en"), "de-DE")).toBe("en");
+    // "" is "follow the system", as in Settings
+    expect(bootLanguage(storage(""), "de-DE")).toBe("de-DE");
+    expect(bootLanguage(storage(null), "de-DE")).toBe("de-DE");
+    expect(bootLanguage(undefined, "ja")).toBe("ja");
+    const blocked = { getItem: () => { throw new Error("SecurityError"); } };
+    expect(bootLanguage(blocked, "ja")).toBe("ja");
+  });
+  it("remembers a choice, and a blocked storage is not an error", () => {
+    const store = storage(null);
+    rememberLanguage("pt-br", store);
+    expect(store.saved.get(UI_LANGUAGE_KEY)).toBe("pt-br");
+    expect(() => rememberLanguage("de", { setItem: () => { throw new Error("QuotaExceededError"); } })).not.toThrow();
   });
 });

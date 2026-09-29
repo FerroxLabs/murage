@@ -13,16 +13,18 @@ export function resolveLocale(tag: string | undefined, available: ReadonlySet<st
 }
 
 let activePack: LocalePack = en;
+let activeCode = "en";
 let version = 0;
 let latest = 0;
 const listeners = new Set<() => void>();
 
 /** Switch the active language (the settings picker calls this too). A pack
  * other than English is fetched first (src/locales/index.ts), so this
- * resolves once the strings are in place, to the locale that actually took
- * effect after fallback. The registry is read live, so a pack registered
- * after boot is immediately reachable. When calls overlap, the last one
- * wins; a pack that cannot be fetched leaves English. */
+ * resolves once the strings are in place, to the locale in effect after
+ * fallback. The registry is read live, so a pack registered after boot is
+ * immediately reachable. When calls overlap, the last one wins, and an
+ * overtaken call resolves to whatever is in effect; a pack that cannot be
+ * fetched leaves English. */
 export async function setLocale(tag: string | undefined): Promise<string> {
   const ticket = ++latest;
   const resolved = resolveLocale(tag, localeCodes());
@@ -33,7 +35,8 @@ export async function setLocale(tag: string | undefined): Promise<string> {
   } catch {
     took = "en";
   }
-  if (ticket !== latest) return took;
+  if (ticket !== latest) return activeCode;
+  activeCode = took;
   if (pack !== activePack) {
     activePack = pack;
     version += 1;
@@ -52,10 +55,30 @@ export function localeVersion(): number {
   return version;
 }
 
-/** The system language's pack, fetched as the app starts. main.tsx holds the
- * first render for it, briefly, so a German phone does not paint English
- * and then change under the reader's eyes. */
-export const systemLocaleReady: Promise<string> = setLocale(globalThis.navigator?.language);
+/** Where this device remembers the language the owner chose in Settings
+ * ("" follows the system), so the next start paints in it before config
+ * arrives. A convenience only: config.language stays the truth. */
+export const UI_LANGUAGE_KEY = "murage-ui-language";
+export function rememberLanguage(language: string, storage: Pick<Storage, "setItem"> | undefined = globalThis.localStorage): void {
+  try {
+    storage?.setItem(UI_LANGUAGE_KEY, language);
+  } catch {
+    /* private mode or blocked storage: the next start follows the system */
+  }
+}
+/** The tag the first paint starts in: the remembered choice, else the system's. */
+export function bootLanguage(storage: Pick<Storage, "getItem"> | undefined, system: string | undefined): string | undefined {
+  try {
+    return storage?.getItem(UI_LANGUAGE_KEY) || system;
+  } catch {
+    return system;
+  }
+}
+
+/** That language's pack, fetched as the app starts. main.tsx holds the first
+ * render for it, briefly, so a German phone does not paint English and then
+ * change under the reader's eyes. */
+export const bootLocaleReady: Promise<string> = setLocale(bootLanguage(globalThis.localStorage, globalThis.navigator?.language));
 
 /** Look up a catalog string. `{name}` placeholders interpolate from params;
  * a placeholder without a matching param stays verbatim so a bad pack shows

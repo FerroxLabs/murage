@@ -26,7 +26,7 @@ import { TeamMapPage } from "@/components/TeamMapPage";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { trackVisualViewport } from "@/lib/visual-viewport";
-import { localeVersion, setLocale, subscribeLocale } from "@/lib/i18n";
+import { localeVersion, rememberLanguage, setLocale, subscribeLocale } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { InstallPrompt } from "./components/InstallPrompt";
 import { useDeepLinks } from "@/components/useDeepLinks";
@@ -70,10 +70,15 @@ function Shell() {
   // chunk, and t() reads a module variable, so the app re-renders its
   // extracted strings when the locale version moves, not when this is asked.
   const language = state.config?.language ?? "";
+  const configLoaded = state.config !== undefined && state.config !== null;
   useSyncExternalStore(subscribeLocale, localeVersion);
   useEffect(() => {
+    // Before config arrives "" means "not known yet": the first paint's
+    // language (i18n.ts bootLanguage) stands until config says otherwise.
+    if (!configLoaded) return;
     void setLocale(language || globalThis.navigator?.language);
-  }, [language]);
+    rememberLanguage(language);
+  }, [language, configLoaded]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [localVmWorkspaceBotId, setLocalVmWorkspaceBotId] = useState<string | null>(null);
   // the Browser tab, expanded into the main column (the small preview in

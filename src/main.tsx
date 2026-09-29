@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
 import { browserChunkReloadDeps, installChunkReload } from "./lib/chunk-reload";
-import { systemLocaleReady } from "./lib/i18n";
+import { bootLocaleReady } from "./lib/i18n";
 import { inNativeShell, nativeHello } from "./lib/native-shell";
 import { routeNativeClicks } from "./lib/open-external";
 import { registerServiceWorker } from "./lib/register-sw";
@@ -41,10 +41,11 @@ if (inNativeShell()) routeNativeClicks();
 installChunkReload(browserChunkReloadDeps());
 
 // A language other than English is its own chunk (src/locales/index.ts).
-// Wait for it before the first render, but never long: past the cap the app
+// Wait for the one this device starts in (the owner's last choice, else the
+// system's) before the first render, but never long: past the cap the app
 // paints in English and switches when the pack arrives.
 const LOCALE_WAIT_MS = 1500;
-void Promise.race([systemLocaleReady, new Promise((done) => setTimeout(done, LOCALE_WAIT_MS))]).finally(() => {
+void Promise.race([bootLocaleReady, new Promise((done) => setTimeout(done, LOCALE_WAIT_MS))]).finally(() => {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <RootErrorBoundary>
