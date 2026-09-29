@@ -16,10 +16,16 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "computer-proxy.ts");
 const REQUEST_LIMIT_MS = 3_000;
+/** A killed process whose parent died first may linger as a zombie until
+ * the container's init reaps it: that is dead. */
 const alive = (pid: number) => {
   try {
     process.kill(pid, 0);
-    return true;
+  } catch {
+    return false;
+  }
+  try {
+    return readFileSync(`/proc/${pid}/stat`, "utf8").replace(/^.*\) /, "")[0] !== "Z";
   } catch {
     return false;
   }
@@ -191,7 +197,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
   }, 40_000);
 
   it("a quick command still answers in one round trip and leaves nothing on the computer", async () => {
-    start();
+    start({ MURAGE_EXEC_FIRST_WAIT_SEC: "5" });
     const before = requests;
     exec(2, "echo hello");
     const res = await waitFor(2);
@@ -260,6 +266,14 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
     expect(text).toContain("earlier output was dropped");
     expect(text.trimEnd().endsWith("END")).toBe(true);
   }, 40_000);
+
+  it("a quiet build of many short-lived steps is working, not silent", async () => {
+    silenceMs = 3_000;
+    start();
+    exec(11, "echo build; end=$((SECONDS+7)); while [ $SECONDS -lt $end ]; do bash -c 'x=0; while [ $x -lt 3000 ]; do x=$((x+1)); done'; done; echo built");
+    const res = await waitFor(11, 40_000);
+    expect(res.result.content[0].text).toContain("built");
+  }, 60_000);
 
   it("an idle foreground server is not working: it is stopped as silent", async () => {
     silenceMs = 4_000;

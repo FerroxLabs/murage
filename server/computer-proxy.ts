@@ -705,7 +705,7 @@ const TOOLS = [
   {
     name: "computer_exec",
     description:
-      "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code and, unlike the UI tools, no screenshot unless you ask for one. A long command (a build, an install) keeps running as long as it prints or works; one that goes quiet for the turn's silence limit is stopped. Start servers and other never-ending processes in the background (nohup ... &) and check them with wait_for.",
+      "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code and, unlike the UI tools, no screenshot unless you ask for one. A long command (a build, an install) keeps running as long as it prints or works; one that goes quiet for the turn's silence limit is stopped. Start servers and other never-ending processes in the background with their output sent to a file (nohup cmd > /tmp/app.log 2>&1 &) and check them with wait_for.",
     inputSchema: {
       type: "object",
       properties: {

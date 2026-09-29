@@ -87,6 +87,12 @@ describe("computer_exec on the box: silence, not a clock", () => {
     expect((await runBoxExec("crunch", deps, OPTS, new AbortController().signal)).kind).toBe("done");
   });
 
+  it("storage reads and writes with no output are progress (a quiet download)", async () => {
+    const polls = Array.from({ length: 60 }, (_, i) => `${status("running", 0, 10)}EXEC_IO ${(i + 1) * 1_000_000}\n`);
+    const { deps } = rig([status("running", 0, 10), ...polls, done(0, "")], 5 * 60_000);
+    expect((await runBoxExec("curl -so f url", deps, OPTS, new AbortController().signal)).kind).toBe("done");
+  });
+
   it("an idle server's timer ticks are not work: it is stopped as silent", async () => {
     const polls = Array.from({ length: 100 }, (_, i) => status("running", 5, 10 + i));
     const { deps, scripts } = rig([status("running", 5, 10), ...polls], 5 * 60_000);
@@ -212,10 +218,15 @@ describe.skipIf(process.platform !== "linux")("computer_exec's box-side records 
   const home = mkdtempSync(join(tmpdir(), "box-exec-"));
   const env = { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin" };
   const sh = (script: string) => parseStatus(spawnSync("bash", ["-c", script], { env, encoding: "utf8", timeout: 30_000 }).stdout);
+  // a zombie waiting for the container's init to reap it is dead
   const alive = (pid: number) => {
     try {
       process.kill(pid, 0);
-      return true;
+    } catch {
+      return false;
+    }
+    try {
+      return readFileSync(`/proc/${pid}/stat`, "utf8").replace(/^.*\) /, "")[0] !== "Z";
     } catch {
       return false;
     }

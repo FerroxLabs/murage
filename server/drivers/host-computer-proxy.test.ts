@@ -20,6 +20,7 @@ describe("host computer proxy", () => {
   let server: Server;
   let port = 0;
   let delayMs = 1_500;
+  let received = 0;
   const closed: IncomingMessage[] = [];
 
   beforeAll(async () => {
@@ -32,6 +33,7 @@ describe("host computer proxy", () => {
       let body = "";
       req.on("data", (c) => (body += c));
       req.on("end", () => {
+        received += 1;
         const timer = setTimeout(() => {
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ content: [{ type: "text", text: `done ${JSON.parse(body).method}` }] }));
@@ -105,8 +107,9 @@ describe("host computer proxy", () => {
     delayMs = 60_000;
     const before = closed.length;
     const { child, results, rpc } = start();
+    const seen = received;
     rpc({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "click", arguments: {} } });
-    await new Promise((r) => setTimeout(r, 500));
+    await expect.poll(() => received, { timeout: 10_000 }).toBe(seen + 1);
     rpc({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 2 } });
     await expect.poll(() => closed.length, { timeout: 5_000 }).toBe(before + 1);
     await new Promise((r) => setTimeout(r, 300));
@@ -119,8 +122,9 @@ describe("host computer proxy", () => {
     delayMs = 60_000;
     const before = closed.length;
     const { child, rpc } = start();
+    const seen = received;
     rpc({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "click", arguments: {} } });
-    await new Promise((r) => setTimeout(r, 500));
+    await expect.poll(() => received, { timeout: 10_000 }).toBe(seen + 1);
     const t0 = Date.now();
     child.stdin!.end();
     await exited(child);
