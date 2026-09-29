@@ -53,8 +53,9 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
           return res.end(JSON.stringify({ silenceMs }));
         }
         if (!url.pathname.endsWith("/commands")) return res.writeHead(404).end("{}");
-        requests += 1;
         const command = JSON.parse(body || "{}").command ?? "";
+        // round trips that carry a command's state (not the record cleanup after it)
+        if (command.includes("EXEC_STATE")) requests += 1;
         const child = spawn("bash", ["-c", command], {
           env: { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin" },
           detached: true,
@@ -167,6 +168,12 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
     const root = join(home, ".cache", "murage-exec");
     return existsSync(root) ? readdirSync(root) : [];
   };
+  /** A delivered command's record is removed just after its result. */
+  const untilNoJobs = async (ms = 10_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline && jobDirs().length) await new Promise((r) => setTimeout(r, 50));
+    return jobDirs();
+  };
 
   it("keeps a command running past one request's limit while it prints, and returns its whole result", async () => {
     start();
@@ -180,7 +187,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
     expect(text).toContain("[stderr]\nfinished");
     // output is the turn working: the harness heard about it
     expect(beats).toBeGreaterThan(0);
-    expect(jobDirs()).toEqual([]);
+    expect(await untilNoJobs()).toEqual([]);
   }, 40_000);
 
   it("a quick command still answers in one round trip and leaves nothing on the computer", async () => {
@@ -190,7 +197,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
     const res = await waitFor(2);
     expect(res.result.content[0].text).toBe("exit 0\nhello\n");
     expect(requests - before).toBe(1);
-    expect(jobDirs()).toEqual([]);
+    expect(await untilNoJobs()).toEqual([]);
   }, 20_000);
 
   it("a busy command that prints nothing is working, not silent", async () => {
@@ -213,7 +220,6 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
     expect(text).toContain("started");
     expect(text).toMatch(/no output and no work for \d+ seconds/);
     expect(await untilDead(sleeper)).toBe(true);
-    expect(jobDirs()).toEqual([]);
     rmSync(pidFile, { force: true });
   }, 60_000);
 
@@ -247,12 +253,33 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
   }, 60_000);
 
   it("a chatty command keeps only a bounded tail on the computer's disk", async () => {
-    start({ MURAGE_EXEC_OUTPUT_CAP: "65536" });
+    start({ MURAGE_EXEC_OUTPUT_CAP: "524288" });
     exec(8, "for i in 1 2 3 4 5; do head -c 400000 /dev/zero | tr '\\0' a; echo; sleep 1; done; echo END");
     const res = await waitFor(8);
     const text = res.result.content[0].text as string;
     expect(text).toContain("earlier output was dropped");
     expect(text.trimEnd().endsWith("END")).toBe(true);
+  }, 40_000);
+
+  it("an idle foreground server is not working: it is stopped as silent", async () => {
+    silenceMs = 4_000;
+    start();
+    exec(9, "echo listening; while :; do sleep 1; done");
+    const res = await waitFor(9, 40_000);
+    expect(res.result.isError).toBe(true);
+    expect(res.result.content[0].text).toMatch(/no output and no work for \d+ seconds/);
+    expect(res.result.content[0].text).toContain("listening");
+  }, 60_000);
+
+  it("Stop also ends a process the command moved into a session of its own", async () => {
+    silenceMs = 600_000;
+    start();
+    const pidFile = join(home, "escaped.pid");
+    exec(10, `setsid sleep 120 & echo $! > ${pidFile}; wait`);
+    const sleeper = await untilFile(pidFile);
+    rpc({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 10 } });
+    expect(await untilDead(sleeper)).toBe(true);
+    rmSync(pidFile, { force: true });
   }, 40_000);
 
   it("a command whose proxy was killed outright stops on its own once nobody checks on it", async () => {

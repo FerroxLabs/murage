@@ -1,6 +1,26 @@
 // Only scoped harness authority crosses into the model's MCP process.
+import { request as httpRequest } from "node:http";
 import { pathToFileURL } from "node:url";
 import { createLineSplitter, writeMcpLine } from "../mcp-bridge.ts";
+
+/** One loopback POST with no clock; `signal` withdraws it. At most 16 MB back. */
+function post(url: URL, token: string, body: string, signal: AbortSignal): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(url, { method: "POST", signal, agent: false, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      res.on("data", (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > 16 * 1024 * 1024) { req.destroy(new Error("too large")); return; }
+        chunks.push(chunk);
+      });
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
+      res.on("error", reject);
+    });
+    req.on("error", reject);
+    req.end(body);
+  });
+}
 
 export async function runHostComputerProxy(env: NodeJS.ProcessEnv = process.env) {
   const base = new URL(env.MURAGE_CONTROL_URL!);
@@ -23,13 +43,11 @@ export async function runHostComputerProxy(env: NodeJS.ProcessEnv = process.env)
       if (rpc.method === "initialize") result = { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "murage-host-computer", version: "1" } };
       else if (rpc.method === "ping") result = {};
       else {
-        const response = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${env.MURAGE_CONTROL_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ method: rpc.method, params: rpc.params }), redirect: "error", signal: withdrawn.signal });
-        if ((!response.ok && response.status !== 409) || !response.body) throw new Error();
-        const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
-        try { for (;;) { const chunk = await reader.read(); if (chunk.done) break; size += chunk.value.length; if (size > 16 * 1024 * 1024) throw new Error(); chunks.push(chunk.value); } }
-        catch (error) { await reader.cancel(); throw error; }
-        finally { reader.releaseLock(); }
-        const body = JSON.parse(Buffer.concat(chunks).toString());
+        // node:http, not fetch: fetch gives up on a reply that takes over five
+        // minutes (its default header and body timeouts)
+        const response = await post(url, env.MURAGE_CONTROL_TOKEN!, JSON.stringify({ method: rpc.method, params: rpc.params }), withdrawn.signal);
+        if (response.status !== 200 && response.status !== 409) throw new Error();
+        const body = JSON.parse(response.body);
         if (response.status === 409) result = { isError: true, content: [{ type: "text", text: body?.code === "cancelled" ? stopped : unavailable }] };
         else result = body;
       }

@@ -7,25 +7,30 @@
 // The box's REST command endpoint answers only when its command exits, and
 // one request cannot wait forever, so a long command used to be cut off at
 // the request's 120 s deadline however hard it was working. Now the command
-// runs detached on the box as a job with its own session, and every request
-// is short and bounded:
+// runs detached on the box as a job in a session of its own, and every
+// request is short and bounded:
 //
-//   start   writes the job and waits a few seconds, so a quick command still
-//           answers in ONE round trip with its output
-//   poll    waits up to one poll window for the job to finish and reports
-//           how much it has printed and how much processor time its
-//           processes have used; a change in either is progress
-//   stop    stops the job's whole session (TERM, then KILL) and collects
-//           what it printed
+//   start    writes the job and waits a few seconds, so a quick command still
+//            answers in ONE round trip with its output
+//   poll     waits up to one poll window for the job to finish and reports
+//            how much it has printed and how much processor time its
+//            processes (its session and everything descended from it) used
+//   stop     ends those processes (TERM, then KILL) and collects the output
+//   cleanup  removes a finished job once its result has been delivered
+//
+// Progress is new output, or processor use above a trickle (1% of the
+// window): an idle server's timer ticks are not work.
 //
 // Resource rules the box-side supervisor keeps on its own:
 //   - a lease: each start/poll writes the time; a job nobody has checked on
-//     for `leaseSec` (its proxy was killed outright) is stopped
+//     for `leaseSec` (its proxy was killed outright) is stopped, and a stop
+//     expires the lease too, so the supervisor ends a job even when the stop
+//     could not signal it itself
 //   - output goes through a pipe to capped files, so a chatty command keeps
 //     only a tail on disk, and a daemon it left running loses its output
 //     pipe once the command itself exits (as it did on the old endpoint)
-//   - finished jobs are collected and removed; one left behind is removed
-//     by a later start after an hour
+//   - a record from before a reboot is never signalled (its ids may belong
+//     to someone else now); stale and abandoned records are swept at start
 
 export interface BoxRun {
   ok: boolean;
@@ -52,6 +57,9 @@ export const DEFAULT_BOX_EXEC_OPTIONS: BoxExecOptions = {
   outputCapBytes: 32 * 1024 * 1024,
 };
 
+const KEEP_BYTES = 262_144;
+const MIN_OUTPUT_CAP = 2 * KEEP_BYTES;
+
 export function boxExecOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): BoxExecOptions {
   const int = (value: string | undefined, fallback: number, min: number) => {
     const n = Math.trunc(Number(value));
@@ -61,7 +69,7 @@ export function boxExecOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): Box
     firstWaitSec: int(env.MURAGE_EXEC_FIRST_WAIT_SEC, DEFAULT_BOX_EXEC_OPTIONS.firstWaitSec, 0),
     pollSec: int(env.MURAGE_EXEC_POLL_SEC, DEFAULT_BOX_EXEC_OPTIONS.pollSec, 1),
     leaseSec: int(env.MURAGE_EXEC_LEASE_SEC, DEFAULT_BOX_EXEC_OPTIONS.leaseSec, 3),
-    outputCapBytes: int(env.MURAGE_EXEC_OUTPUT_CAP, DEFAULT_BOX_EXEC_OPTIONS.outputCapBytes, 65_536),
+    outputCapBytes: int(env.MURAGE_EXEC_OUTPUT_CAP, DEFAULT_BOX_EXEC_OPTIONS.outputCapBytes, MIN_OUTPUT_CAP),
   };
 }
 
@@ -71,19 +79,53 @@ export function commandSilenceMs(turnSilenceMs: number): number {
   return Math.max(1_000, turnSilenceMs - Math.min(60_000, Math.floor(turnSilenceMs / 4)));
 }
 
+/** Processor time that counts as work over a window: 1% of it, at least a tick. */
+export function cpuProgressTicks(windowMs: number, hz: number): number {
+  return Math.max(1, Math.ceil((windowMs / 1000) * hz * 0.01));
+}
+
 const shq = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
 const JOB_ROOT = '"$HOME/.cache/murage-exec"';
 const STDOUT_TAIL = 6_000;
 const STDERR_TAIL = 2_000;
-const KEEP_BYTES = 262_144;
+/** Seconds past its lease after which a record with no result is abandoned. */
+const ABANDON_MARGIN_SEC = 120;
+
+/** Shell helpers every script shares. `$J` is the job folder, `$BOOT` this
+ * boot's id. */
+const HELPERS = [
+  'BOOT=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)',
+  // the job's processes: its session, and everything descended from it (sudo
+  // and job-control shells start new sessions or groups underneath)
+  'members() {',
+  `  cat /proc/[0-9]*/stat 2>/dev/null | awk -v s="$S" -v mode="$1" '{ p = $1; sub(/^.*\\) /, ""); pp[p] = $2; t[p] = $12 + $13; if ($4 == s) m[p] = 1 } END { c = 1; while (c) { c = 0; for (p in pp) if (!(p in m) && (pp[p] in m)) { m[p] = 1; c = 1 } } n = 0; for (p in m) { if (mode == "cpu") n += t[p]; else print p } if (mode == "cpu") print n + 0 }'`,
+  '}',
+  // a session id is trusted only when it is a real one from this boot
+  'sidok() {',
+  '  S=$(cat "$J/sid" 2>/dev/null)',
+  '  case "$S" in ""|*[!0-9]*) S=""; return 1;; esac',
+  '  if [ "$S" -le 1 ] || [ "$(cat "$J/boot" 2>/dev/null)" != "$BOOT" ]; then S=""; return 1; fi',
+  '}',
+  // the whole tree is listed before anything is signalled: a child whose
+  // parent dies first is re-parented away and would no longer be found
+  'sig() {',
+  '  sidok || return 0',
+  '  set -- "$1" $(members pids)',
+  '  sg=$1; shift',
+  '  kill "-$sg" -- "-$S" 2>/dev/null',
+  '  for p in "$@"; do kill "-$sg" "$p" 2>/dev/null || sudo -n kill "-$sg" "$p" 2>/dev/null; done',
+  '}',
+  'lease() { date +%s > "$J/lease.tmp" && mv -f "$J/lease.tmp" "$J/lease"; }',
+  'expire() { echo 0 > "$J/lease.tmp" && mv -f "$J/lease.tmp" "$J/lease"; }',
+].join("\n");
 
 /** Runs box-side as `bash sup <dir> <leaseSec> <capBytes>` in its own
- * session. The command gets a session of its own too, so its processor time
- * can be counted and the whole of it stopped by process group. */
+ * session. The command gets a session of its own too. */
 function supervisorScript(): string {
   return [
     'J=$1; LEASE=$2; CAP=$3',
+    HELPERS,
     'mkfifo "$J/o.fifo" "$J/e.fifo" || { echo 127 > "$J/rc"; exit 0; }',
     'cat "$J/o.fifo" >> "$J/out" & RO=$!',
     'cat "$J/e.fifo" >> "$J/err" & RE=$!',
@@ -92,11 +134,11 @@ function supervisorScript(): string {
     '(',
     '  while kill -0 "$P" 2>/dev/null; do',
     '    sleep 1',
-    '    now=$(date +%s); l=$(cat "$J/lease" 2>/dev/null); l=${l:-0}',
+    '    now=$(date +%s); l=$(cat "$J/lease" 2>/dev/null)',
+    '    case "$l" in ""|*[!0-9]*) continue;; esac',
     '    if [ $((now - l)) -gt "$LEASE" ]; then',
-    '      S=$(cat "$J/sid" 2>/dev/null); S=${S:-$P}',
     '      echo lease > "$J/abandoned"',
-    '      kill -TERM -- "-$S" 2>/dev/null; sleep 3; kill -KILL -- "-$S" 2>/dev/null',
+    '      sig TERM; sleep 3; sig KILL',
     '      break',
     '    fi',
     '    for f in out err; do',
@@ -120,31 +162,30 @@ function supervisorScript(): string {
   ].join("\n");
 }
 
-/** Shell that prints the job's state lines, and its output when finished. */
-function statusShell(): string {
-  return [
-    'st() {',
-    '  if [ ! -d "$J" ]; then echo "EXEC_STATE missing"; return; fi',
-    '  if [ -f "$J/rc" ]; then echo "EXEC_STATE done"; echo "EXEC_RC $(cat "$J/rc")"; else echo "EXEC_STATE running"; fi',
-    '  n=0; for f in out err; do s=$(stat -c %s "$J/$f" 2>/dev/null || echo 0); d=$(cat "$J/$f.dropped" 2>/dev/null || echo 0); n=$((n + s + d)); done',
-    '  echo "EXEC_BYTES $n"',
-    '  S=$(cat "$J/sid" 2>/dev/null)',
-    // utime+stime of every process in the command's session; the comm field
-    // may hold spaces, so fields are counted after its closing paren
-    `  if [ -n "$S" ]; then echo "EXEC_CPU $(cat /proc/[0-9]*/stat 2>/dev/null | awk -v s="$S" '{ sub(/^.*\\) /, ""); if ($4 == s) t += $12 + $13 } END { print t + 0 }')"; else echo "EXEC_CPU 0"; fi`,
-    '}',
-    'collect() {',
-    '  if [ -f "$J/out.dropped" ] || [ -f "$J/err.dropped" ]; then echo "EXEC_DROPPED yes"; fi',
-    `  echo "EXEC_STDOUT $(cat "$J/out.keep" "$J/out" 2>/dev/null | tail -c ${STDOUT_TAIL} | base64 -w0)"`,
-    `  echo "EXEC_STDERR $(cat "$J/err.keep" "$J/err" 2>/dev/null | tail -c ${STDERR_TAIL} | base64 -w0)"`,
-    '  rm -rf -- "${J:?}"',
-    '}',
-  ].join("\n");
-}
+/** Shell that prints the job's state lines (st) and its output (collect). */
+const STATUS = [
+  'st() {',
+  '  if [ ! -d "$J" ] || [ -f "$J/cancel" ] || [ "$(cat "$J/boot" 2>/dev/null)" != "$BOOT" ]; then echo "EXEC_STATE missing"; return; fi',
+  '  if [ -f "$J/rc" ]; then echo "EXEC_STATE done"; echo "EXEC_RC $(cat "$J/rc")"; else echo "EXEC_STATE running"; fi',
+  '  if [ -f "$J/abandoned" ]; then echo "EXEC_ABANDONED yes"; fi',
+  '  n=0; for f in out err; do s=$(stat -c %s "$J/$f" 2>/dev/null || echo 0); d=$(cat "$J/$f.dropped" 2>/dev/null || echo 0); n=$((n + s + d)); done',
+  '  echo "EXEC_BYTES $n"',
+  '  if sidok; then echo "EXEC_CPU $(members cpu)"; else echo "EXEC_CPU 0"; fi',
+  '  echo "EXEC_HZ $(getconf CLK_TCK 2>/dev/null || echo 100)"',
+  '}',
+  // the record stays until the proxy's cleanup (or the next start's sweep),
+  // so a poll whose answer was lost can be asked again
+  'collect() {',
+  '  if [ -f "$J/out.dropped" ] || [ -f "$J/err.dropped" ]; then echo "EXEC_DROPPED yes"; fi',
+  `  echo "EXEC_STDOUT $(cat "$J/out.keep" "$J/out" 2>/dev/null | tail -c ${STDOUT_TAIL} | base64 -w0)"`,
+  `  echo "EXEC_STDERR $(cat "$J/err.keep" "$J/err" 2>/dev/null | tail -c ${STDERR_TAIL} | base64 -w0)"`,
+  '  : > "$J/collected"',
+  '}',
+].join("\n");
 
 const jobDir = (id: string) => {
   if (!/^[a-f0-9]{16,64}$/.test(id)) throw new Error("invalid job id");
-  return `J=${JOB_ROOT}/${id}`;
+  return `R=${JOB_ROOT}; J="$R/${id}"`;
 };
 
 /** Wait (box-side) up to `sec` for the job to finish, then report. */
@@ -152,94 +193,161 @@ function waitShell(sec: number): string {
   return [
     `end=$((SECONDS + ${Math.max(0, Math.trunc(sec))}))`,
     'while [ -d "$J" ] && [ ! -f "$J/rc" ] && [ "$SECONDS" -lt "$end" ]; do sleep 0.25; done',
-    'st; if [ -f "$J/rc" ]; then collect; fi',
+    'st; if [ -f "$J/rc" ] && [ ! -f "$J/cancel" ]; then collect; fi',
+  ].join("\n");
+}
+
+/** Stale records: from another boot, delivered, finished over an hour ago,
+ * or abandoned (no result, lease long gone: its supervisor died). */
+function sweepShell(leaseSec: number): string {
+  return [
+    'for d in "$R"/*/; do',
+    '  [ -d "$d" ] || continue',
+    '  ( J=${d%/}',
+    '    old() { [ -n "$(find "$1" -maxdepth 0 -mmin +"$2" 2>/dev/null)" ]; }',
+    '    b=$(cat "$J/boot" 2>/dev/null); l=$(cat "$J/lease" 2>/dev/null)',
+    // a record still being written (by another start or stop) is left alone
+    '    if [ -z "$b" ]; then old "$J" 10 && rm -rf -- "${J:?}"; exit 0; fi',
+    '    if [ "$b" != "$BOOT" ]; then rm -rf -- "${J:?}"; exit 0; fi',
+    // a stop's tombstone outlives any start still in flight
+    '    if [ -f "$J/cancel" ]; then old "$J/cancel" 10 && rm -rf -- "${J:?}"; exit 0; fi',
+    '    if [ -f "$J/collected" ]; then rm -rf -- "${J:?}"; exit 0; fi',
+    '    if [ -f "$J/rc" ]; then old "$J/rc" 60 && rm -rf -- "${J:?}"; exit 0; fi',
+    '    case "$l" in ""|*[!0-9]*) old "$J" 10 && rm -rf -- "${J:?}"; exit 0;; esac',
+    `    if [ $(( $(date +%s) - l )) -gt ${Math.trunc(leaseSec) + ABANDON_MARGIN_SEC} ]; then sig KILL; rm -rf -- "\${J:?}"; fi`,
+    '  )',
+    'done',
   ].join("\n");
 }
 
 export function startScript(id: string, command: string, opts: BoxExecOptions): string {
   return [
     jobDir(id),
-    statusShell(),
-    "umask 077",
-    `mkdir -p ${JOB_ROOT} && mkdir "$J" || { echo "EXEC_START_FAILED"; exit 0; }`,
-    // a job whose proxy never collected it is removed an hour after it ended
-    `for d in ${JOB_ROOT}/*/; do if [ -f "\${d}rc" ] && [ -n "$(find "\${d}rc" -mmin +60 2>/dev/null)" ]; then rm -rf -- "\${d:?}"; fi; done`,
+    HELPERS,
+    STATUS,
+    // only the records are private; the command keeps the box's own umask
+    '( umask 077; mkdir -p "$R" ) || { echo "EXEC_START_FAILED"; exit 0; }',
+    'if ! mkdir -m 700 "$J" 2>/dev/null; then',
+    // a stop that arrived first leaves a tombstone, and the job never starts
+    '  if [ -f "$J/cancel" ]; then echo "EXEC_STATE cancelled"; else echo "EXEC_START_FAILED"; fi',
+    '  exit 0',
+    'fi',
+    "lease",
+    'echo "$BOOT" > "$J/boot"',
+    sweepShell(opts.leaseSec),
     `printf %s ${shq(b64(command))} | base64 -d > "$J/cmd"`,
     `printf %s ${shq(b64(supervisorScript()))} | base64 -d > "$J/sup"`,
-    'date +%s > "$J/lease"',
     `setsid bash "$J/sup" "$J" ${Math.trunc(opts.leaseSec)} ${Math.trunc(opts.outputCapBytes)} < /dev/null > /dev/null 2>&1 &`,
     // the command writes its session id first thing; wait for it briefly so
-    // an immediate stop always has a group to signal
+    // an immediate stop always has a session to signal
     'i=0; while [ ! -s "$J/sid" ] && [ ! -f "$J/rc" ] && [ $i -lt 40 ]; do sleep 0.05; i=$((i + 1)); done',
     waitShell(opts.firstWaitSec),
   ].join("\n");
 }
 
 export function pollScript(id: string, waitSec: number): string {
-  return [jobDir(id), statusShell(), 'if [ -d "$J" ]; then date +%s > "$J/lease"; fi', waitShell(waitSec)].join("\n");
+  return [
+    jobDir(id),
+    HELPERS,
+    STATUS,
+    'if [ -d "$J" ] && [ ! -f "$J/rc" ] && [ ! -f "$J/cancel" ]; then lease; fi',
+    waitShell(waitSec),
+  ].join("\n");
 }
 
-/** `graceful`: wait for the session to end and collect its output. Without
- * it (the proxy itself is closing) the signals are sent and it returns. */
+/** `graceful`: wait for the job to end and collect its output. Without it
+ * (the proxy itself is closing) the signals are sent and it returns at once;
+ * a follow-up in its own session finishes the job off. */
 export function stopScript(id: string, graceful: boolean): string {
   const lines = [
     jobDir(id),
-    statusShell(),
-    'if [ ! -d "$J" ]; then echo "EXEC_STATE missing"; exit 0; fi',
-    'S=$(cat "$J/sid" 2>/dev/null)',
-    'if [ -n "$S" ]; then kill -TERM -- "-$S" 2>/dev/null; fi',
+    HELPERS,
+    STATUS,
+    'mkdir -p "$R" 2>/dev/null',
+    // not started yet: leave a tombstone so a late start never runs it
+    'if mkdir -m 700 "$J" 2>/dev/null; then echo "$BOOT" > "$J/boot"; : > "$J/cancel"; : > "$J/collected"; echo "EXEC_STATE missing"; exit 0; fi',
+    // a start in progress writes the session id within two seconds
+    'i=0; while [ ! -s "$J/sid" ] && [ ! -f "$J/rc" ] && [ $i -lt 40 ]; do sleep 0.05; i=$((i + 1)); done',
+    'if [ -f "$J/rc" ]; then echo "EXEC_ALREADY_DONE yes"; st; collect; exit 0; fi',
+    'if [ "$(cat "$J/boot" 2>/dev/null)" != "$BOOT" ]; then echo "EXEC_STATE missing"; exit 0; fi',
+    // the supervisor also ends a job whose lease has run out
+    "expire",
+    "sig TERM",
   ];
   if (!graceful) {
-    // the follow-up runs in its own session so it outlives this request
+    const followUp = [
+      'J=$1',
+      HELPERS,
+      'sleep 3; [ -f "$J/rc" ] || sig KILL',
+      'sleep 2; [ -f "$J/rc" ] && : > "$J/collected"',
+    ].join("\n");
     lines.push(
-      `setsid bash -c 'sleep 3; [ -n "$1" ] && kill -KILL -- "-$1" 2>/dev/null; sleep 2; rm -rf -- "\${0:?}"' "$J" "$S" < /dev/null > /dev/null 2>&1 &`,
+      `printf %s ${shq(b64(followUp))} | base64 -d > "$J/stop"`,
+      'setsid bash "$J/stop" "$J" < /dev/null > /dev/null 2>&1 &',
       'echo "EXEC_STATE stopping"',
     );
     return lines.join("\n");
   }
   lines.push(
     'i=0; while [ ! -f "$J/rc" ] && [ $i -lt 20 ]; do sleep 0.25; i=$((i + 1)); done',
-    'if [ ! -f "$J/rc" ] && [ -n "$S" ]; then kill -KILL -- "-$S" 2>/dev/null; fi',
+    'if [ ! -f "$J/rc" ]; then sig KILL; fi',
     'i=0; while [ ! -f "$J/rc" ] && [ $i -lt 20 ]; do sleep 0.25; i=$((i + 1)); done',
     'st; collect',
   );
   return lines.join("\n");
 }
 
+/** Removes a finished job once its result has been delivered. */
+export function cleanupScript(id: string): string {
+  return [jobDir(id), 'if [ -f "$J/rc" ] || [ -f "$J/cancel" ]; then rm -rf -- "${J:?}"; fi'].join("\n");
+}
+
 export interface ExecStatus {
-  state: "done" | "running" | "missing" | "unknown";
+  state: "done" | "running" | "missing" | "cancelled" | "stopping" | "unknown";
   exitCode: number | null;
   bytes: number;
   cpu: number;
+  hz: number;
   stdout: string;
   stderr: string;
   dropped: boolean;
+  abandoned: boolean;
+  alreadyDone: boolean;
 }
 
 export function parseStatus(stdout: string): ExecStatus {
   const line = (key: string) => stdout.match(new RegExp(`^${key} ?(.*)$`, "m"))?.[1];
   const state = line("EXEC_STATE");
   const decode = (value: string | undefined) => (value ? Buffer.from(value.trim(), "base64").toString("utf8") : "");
+  const rc = line("EXEC_RC")?.trim();
+  const hz = Number(line("EXEC_HZ"));
   return {
-    state: state === "done" || state === "running" || state === "missing" ? state : "unknown",
-    exitCode: line("EXEC_RC") !== undefined && /^-?\d+$/.test(line("EXEC_RC")!.trim()) ? Number(line("EXEC_RC")) : null,
+    state:
+      state === "done" || state === "running" || state === "missing" || state === "cancelled" || state === "stopping"
+        ? state
+        : "unknown",
+    exitCode: rc !== undefined && /^-?\d+$/.test(rc) ? Number(rc) : null,
     bytes: Number(line("EXEC_BYTES") ?? 0) || 0,
     cpu: Number(line("EXEC_CPU") ?? 0) || 0,
+    hz: Number.isFinite(hz) && hz > 0 ? hz : 100,
     stdout: decode(line("EXEC_STDOUT")),
     stderr: decode(line("EXEC_STDERR")),
     dropped: line("EXEC_DROPPED") === "yes",
+    abandoned: line("EXEC_ABANDONED") === "yes",
+    alreadyDone: line("EXEC_ALREADY_DONE") === "yes",
   };
 }
 
 export type ExecOutcome =
-  | { kind: "done"; exitCode: number | null; stdout: string; stderr: string; dropped: boolean }
+  | { kind: "done"; exitCode: number | null; stdout: string; stderr: string; dropped: boolean; abandoned: boolean }
   | { kind: "silent"; silentMs: number; stdout: string; stderr: string; dropped: boolean }
   | { kind: "stopped" }
   | { kind: "failed"; detail: string };
 
 export interface BoxExecDeps {
-  /** One bounded round trip to the box. `timeoutMs` bounds the request, never the job. */
-  run(command: string, timeoutMs: number, signal?: AbortSignal): Promise<BoxRun>;
+  /** One bounded round trip to the box. `timeoutMs` bounds the request, never
+   * the job. Only a start may wake a sleeping box: a job cannot outlive one. */
+  run(command: string, timeoutMs: number, signal?: AbortSignal, wake?: boolean): Promise<BoxRun>;
   /** The turn's silence limit right now (the owner's setting). */
   turnSilenceMs(): number;
   /** The command printed or worked since the last poll. */
@@ -250,6 +358,7 @@ export interface BoxExecDeps {
 }
 
 const REQUEST_MARGIN_MS = 30_000;
+const MISSING = "the command's record disappeared from the computer (it may have restarted)";
 
 const defaultSleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -268,13 +377,22 @@ export async function stopBoxJob(
   deps: Pick<BoxExecDeps, "run">,
   id: string,
   graceful: boolean,
-  timeoutMs = graceful ? 20_000 : 2_500,
+  timeoutMs = graceful ? 25_000 : 5_000,
 ): Promise<ExecStatus | null> {
   try {
-    const out = await deps.run(stopScript(id, graceful), timeoutMs);
+    const out = await deps.run(stopScript(id, graceful), timeoutMs, undefined, false);
     return parseStatus(out.stdout);
   } catch {
     return null;
+  }
+}
+
+/** Remove a delivered job's record, best effort (the next start sweeps it otherwise). */
+export async function cleanupBoxJob(deps: Pick<BoxExecDeps, "run">, id: string): Promise<void> {
+  try {
+    await deps.run(cleanupScript(id), 15_000, undefined, false);
+  } catch {
+    /* swept later */
   }
 }
 
@@ -283,94 +401,99 @@ export async function runBoxExec(
   deps: BoxExecDeps,
   opts: BoxExecOptions,
   signal: AbortSignal,
-  onJob?: (id: string | null) => void,
+  onJob?: (id: string) => void,
 ): Promise<ExecOutcome> {
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? defaultSleep;
   const id = deps.newId();
   onJob?.(id);
+  // the turn's clock was last touched before this request; so is this one's
+  let lastProgress = now();
+  let first: BoxRun;
   try {
-    let first: BoxRun;
-    try {
-      first = await deps.run(startScript(id, command, opts), opts.firstWaitSec * 1000 + REQUEST_MARGIN_MS);
-    } catch (error) {
-      // the request may have started the job before it failed
-      await stopBoxJob(deps, id, false);
-      return { kind: "failed", detail: error instanceof Error ? error.message : String(error) };
-    }
-    if (/^EXEC_START_FAILED$/m.test(first.stdout)) {
-      return { kind: "failed", detail: "the computer could not create the command's working folder" };
-    }
-    let status = parseStatus(first.stdout);
-    if (status.state === "unknown") {
-      await stopBoxJob(deps, id, false);
-      return { kind: "failed", detail: first.stderr.slice(0, 300) || `exit ${first.exitCode ?? "unknown"}` };
-    }
-    let lastBytes = status.bytes;
-    let lastCpu = status.cpu;
-    let lastProgress = now();
-    let failingSince: number | null = null;
-    if (status.state === "running" && lastBytes > 0) deps.progress();
-    while (status.state === "running") {
-      if (signal.aborted) {
-        await stopBoxJob(deps, id, false);
-        return { kind: "stopped" };
-      }
-      const limit = commandSilenceMs(deps.turnSilenceMs());
-      if (now() - lastProgress >= limit) {
-        const final = await stopBoxJob(deps, id, true);
-        return {
-          kind: "silent",
-          silentMs: limit,
-          stdout: final?.stdout ?? "",
-          stderr: final?.stderr ?? "",
-          dropped: final?.dropped ?? false,
-        };
-      }
-      // never wait past the silence limit inside one poll
-      const waitSec = Math.max(1, Math.min(opts.pollSec, Math.floor((limit - (now() - lastProgress)) / 1000)));
-      let out: BoxRun;
-      try {
-        out = await deps.run(pollScript(id, waitSec), waitSec * 1000 + REQUEST_MARGIN_MS, signal);
-      } catch (error) {
-        if (signal.aborted) continue;
-        failingSince ??= now();
-        // the box-side lease has stopped the job by now
-        if (now() - failingSince >= opts.leaseSec * 1000) {
-          return {
-            kind: "failed",
-            detail: `lost contact with the computer for ${Math.round(opts.leaseSec / 60) || 1} minutes, so the command was stopped (${error instanceof Error ? error.message : String(error)})`,
-          };
-        }
-        await sleep(2_000, signal);
-        continue;
-      }
-      const next = parseStatus(out.stdout);
-      if (next.state === "unknown") {
-        failingSince ??= now();
-        if (now() - failingSince >= opts.leaseSec * 1000) {
-          return { kind: "failed", detail: out.stderr.slice(0, 300) || `exit ${out.exitCode ?? "unknown"}` };
-        }
-        await sleep(2_000, signal);
-        continue;
-      }
-      failingSince = null;
-      if (next.state === "missing") {
-        return { kind: "failed", detail: "the command's record disappeared from the computer (it may have restarted)" };
-      }
-      if (next.bytes !== lastBytes || next.cpu !== lastCpu) {
-        lastBytes = next.bytes;
-        lastCpu = next.cpu;
-        lastProgress = now();
-        deps.progress();
-      }
-      status = next;
-    }
-    if (status.state === "missing") {
-      return { kind: "failed", detail: "the command's record disappeared from the computer (it may have restarted)" };
-    }
-    return { kind: "done", exitCode: status.exitCode, stdout: status.stdout, stderr: status.stderr, dropped: status.dropped };
-  } finally {
-    onJob?.(null);
+    first = await deps.run(startScript(id, command, opts), opts.firstWaitSec * 1000 + REQUEST_MARGIN_MS, signal, true);
+  } catch (error) {
+    // the request may have started the job before it failed (or was stopped)
+    await stopBoxJob(deps, id, false);
+    if (signal.aborted) return { kind: "stopped" };
+    return { kind: "failed", detail: error instanceof Error ? error.message : String(error) };
   }
+  if (/^EXEC_START_FAILED$/m.test(first.stdout)) {
+    return { kind: "failed", detail: "the computer could not create the command's working folder" };
+  }
+  let status = parseStatus(first.stdout);
+  if (status.state === "cancelled") return { kind: "stopped" };
+  if (status.state === "unknown") {
+    await stopBoxJob(deps, id, false);
+    return { kind: "failed", detail: first.stderr.slice(0, 300) || `exit ${first.exitCode ?? "unknown"}` };
+  }
+  let lastBytes = status.bytes;
+  let lastCpu = status.cpu;
+  let lastPollAt = now();
+  let failingSince: number | null = null;
+  if (status.state === "running" && (lastBytes > 0 || lastCpu >= cpuProgressTicks(lastPollAt - lastProgress, status.hz))) {
+    lastProgress = lastPollAt;
+    deps.progress();
+  }
+  const giveUp = async (detail: string): Promise<ExecOutcome> => {
+    await stopBoxJob(deps, id, false);
+    return { kind: "failed", detail };
+  };
+  while (status.state === "running") {
+    if (signal.aborted) {
+      await stopBoxJob(deps, id, false);
+      return { kind: "stopped" };
+    }
+    const limit = commandSilenceMs(deps.turnSilenceMs());
+    if (now() - lastProgress >= limit) {
+      const final = await stopBoxJob(deps, id, true);
+      if (final?.alreadyDone && final.state === "done") {
+        return { kind: "done", exitCode: final.exitCode, stdout: final.stdout, stderr: final.stderr, dropped: final.dropped, abandoned: final.abandoned };
+      }
+      return { kind: "silent", silentMs: limit, stdout: final?.stdout ?? "", stderr: final?.stderr ?? "", dropped: final?.dropped ?? false };
+    }
+    // never wait past the silence limit inside one poll
+    const waitSec = Math.max(1, Math.min(opts.pollSec, Math.floor((limit - (now() - lastProgress)) / 1000)));
+    let out: BoxRun;
+    try {
+      out = await deps.run(pollScript(id, waitSec), waitSec * 1000 + REQUEST_MARGIN_MS, signal, false);
+    } catch (error) {
+      if (signal.aborted) continue;
+      failingSince ??= now();
+      // the box-side lease has stopped the job by now
+      if (now() - failingSince >= opts.leaseSec * 1000) {
+        return giveUp(`lost contact with the computer for ${Math.max(1, Math.round(opts.leaseSec / 60))} minutes, so the command was stopped (${error instanceof Error ? error.message : String(error)})`);
+      }
+      await sleep(2_000, signal);
+      continue;
+    }
+    const next = parseStatus(out.stdout);
+    if (next.state === "unknown") {
+      failingSince ??= now();
+      if (now() - failingSince >= opts.leaseSec * 1000) return giveUp(out.stderr.slice(0, 300) || `exit ${out.exitCode ?? "unknown"}`);
+      await sleep(2_000, signal);
+      continue;
+    }
+    failingSince = null;
+    if (next.state !== "running" && next.state !== "done") return { kind: "failed", detail: MISSING };
+    const at = now();
+    const worked = next.cpu - lastCpu >= cpuProgressTicks(at - lastPollAt, next.hz);
+    if (next.bytes !== lastBytes || worked) {
+      lastProgress = at;
+      deps.progress();
+    }
+    lastBytes = next.bytes;
+    lastCpu = next.cpu;
+    lastPollAt = at;
+    status = next;
+  }
+  if (status.state !== "done") return { kind: "failed", detail: MISSING };
+  return {
+    kind: "done",
+    exitCode: status.exitCode,
+    stdout: status.stdout,
+    stderr: status.stderr,
+    dropped: status.dropped,
+    abandoned: status.abandoned,
+  };
 }

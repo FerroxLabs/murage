@@ -36,7 +36,7 @@ import {
   type BrowserTarget,
   type CropRegion,
 } from "./computer-observation.ts";
-import { boxExecOptionsFromEnv, runBoxExec, stopBoxJob, type BoxExecDeps } from "./box-exec.ts";
+import { boxExecOptionsFromEnv, cleanupBoxJob, runBoxExec, type BoxExecDeps } from "./box-exec.ts";
 import { CONTROL_REFUSAL, createControlClient } from "./control-client.ts";
 import {
   ensureRemoteCuaCommand,
@@ -85,8 +85,11 @@ const activity = (() => {
   }
   let silenceMs = DEFAULT_TURN_SILENCE_MS;
   let lastSent = 0;
+  let trailing: ReturnType<typeof setTimeout> | null = null;
   const post = async () => {
     if (!url) return;
+    if (trailing) clearTimeout(trailing);
+    trailing = null;
     lastSent = Date.now();
     try {
       const res = await fetch(url, {
@@ -106,16 +109,28 @@ const activity = (() => {
     silenceMs: () => silenceMs,
     /** Learn the turn's current limit (and count the command's start as activity). */
     refresh: post,
+    // throttled, but the latest progress is always reported: the turn's
+    // clock must not start before the command's own
     progress() {
-      if (Date.now() - lastSent >= ACTIVITY_EVERY_MS) void post();
+      const wait = ACTIVITY_EVERY_MS - (Date.now() - lastSent);
+      if (wait <= 0) void post();
+      else if (!trailing) {
+        trailing = setTimeout(() => void post(), wait);
+        trailing.unref?.();
+      }
+    },
+    stop() {
+      if (trailing) clearTimeout(trailing);
+      trailing = null;
     },
   };
 })();
-const activeJobs = new Set<string>();
+/** Commands running on the box, so closing can wait for their stops. */
+const activeExecs = new Set<Promise<unknown>>();
 /** Calls in flight by request id, so a cancel can withdraw one. */
 const inFlight = new Map<string, AbortController>();
 const execDeps: BoxExecDeps = {
-  run: (command, timeoutMs, signal) => runOnBox(command, timeoutMs, true, signal),
+  run: (command, timeoutMs, signal, wake = false) => runOnBox(command, timeoutMs, wake, signal),
   turnSilenceMs: () => activity.silenceMs(),
   progress: () => activity.progress(),
   newId: () => randomBytes(12).toString("hex"),
@@ -167,13 +182,14 @@ interface RunOut {
  * which can happen mid-conversation — after that every command comes back
  * 409 machine_not_running. Wake it and carry on rather than handing the
  * agent a cryptic failure it can only guess at. */
-async function resumeBox(): Promise<boolean> {
+async function resumeBox(signal?: AbortSignal): Promise<boolean> {
   const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
-  await fetch(`${BOX_API}/boxes/${boxId}/resume`, { method: "POST", headers: auth }).catch(() => null);
+  const bounded = () => (signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000));
+  await fetch(`${BOX_API}/boxes/${boxId}/resume`, { method: "POST", headers: auth, signal: bounded() }).catch(() => null);
   const deadline = Date.now() + 90_000;
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && !signal?.aborted) {
     await new Promise((r) => setTimeout(r, 2000));
-    const res = await fetch(`${BOX_API}/boxes/${boxId}`, { headers: auth }).catch(() => null);
+    const res = await fetch(`${BOX_API}/boxes/${boxId}`, { headers: auth, signal: bounded() }).catch(() => null);
     const body: any = await res?.json().catch(() => null);
     const state = body?.box?.state;
     if (state && ["idle", "ready", "running"].includes(state)) return true;
@@ -209,7 +225,7 @@ async function runOnBox(command: string, timeoutMs = 60_000, allowWake = true, s
   if (res.status === 409 && allowWake) {
     const code = body?.code ?? body?.error?.code ?? "";
     if (/machine_not_running|box_starting|not_running|starting/i.test(String(code))) {
-      const woke = await resumeBox();
+      const woke = await resumeBox(signal);
       if (woke) return runOnBox(command, timeoutMs, false, signal);
       return { ok: false, exitCode: null, stdout: "", stderr: "the computer is asleep and did not wake in time" };
     }
@@ -689,7 +705,7 @@ const TOOLS = [
   {
     name: "computer_exec",
     description:
-      "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code and, unlike the UI tools, no screenshot unless you ask for one. A long command (a build, an install) keeps running as long as it prints or works; one that goes quiet for the turn's silence limit is stopped.",
+      "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code and, unlike the UI tools, no screenshot unless you ask for one. A long command (a build, an install) keeps running as long as it prints or works; one that goes quiet for the turn's silence limit is stopped. Start servers and other never-ending processes in the background (nohup ... &) and check them with wait_for.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1075,15 +1091,16 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     // Runs until it finishes, goes silent (no output, no processor use) for
     // the owner's silence limit, or is stopped: never on a fixed clock.
     await activity.refresh();
-    let job: string | null = null;
-    const outcome = await runBoxExec(command, execDeps, EXEC_OPTIONS, signal, (next) => {
-      if (next) activeJobs.add((job = next));
-      else if (job) activeJobs.delete(job);
-    });
+    let job = "";
+    const running = runBoxExec(command, execDeps, EXEC_OPTIONS, signal, (id) => (job = id));
+    activeExecs.add(running);
+    const outcome = await running.finally(() => activeExecs.delete(running));
+    // the result is delivered below; the record goes after it
+    if (outcome.kind === "done") queueMicrotask(() => void cleanupBoxJob(execDeps, job));
     // MCP: a request the client cancelled gets no response
     if (outcome.kind === "stopped" || signal.aborted) return;
     if (outcome.kind === "failed") return text(id, `the command could not be run to the end: ${outcome.detail}`, true);
-    const dropped = outcome.dropped ? "(earlier output was dropped to keep the computer's disk free)\n" : "";
+    const dropped = `${outcome.kind === "done" && outcome.abandoned ? "(the command was stopped because this tool lost track of it for too long)\n" : ""}${outcome.dropped ? "(earlier output was dropped to keep the computer's disk free)\n" : ""}`;
     const body = `${dropped}${outcome.stdout.slice(-6000)}${outcome.stderr ? `\n[stderr]\n${outcome.stderr.slice(-2000)}` : ""}`;
     if (outcome.kind === "silent") {
       const seconds = Math.round(outcome.silentMs / 1000);
@@ -1208,6 +1225,7 @@ async function handle(msg: any) {
   }
   if (msg.method === "tools/list") return send({ jsonrpc: "2.0", id: msg.id, result: { tools: TOOLS } });
   if (msg.method === "tools/call") {
+    if (closing) return text(msg.id, "the computer tools are closing: this call was not run", true);
     const withdrawn = new AbortController();
     const key = JSON.stringify(msg.id);
     inFlight.set(key, withdrawn);
@@ -1262,8 +1280,11 @@ let closing = false;
 async function close(): Promise<void> {
   if (closing) return;
   closing = true;
+  activity.stop();
+  // each withdrawn command sends its own stop; wait for them, within the
+  // engine's grace before it kills outright
   for (const withdrawn of inFlight.values()) withdrawn.abort();
-  await Promise.allSettled([...activeJobs].map((job) => stopBoxJob(execDeps, job, false)));
+  await Promise.race([Promise.allSettled([...activeExecs]), new Promise((r) => setTimeout(r, 2_500))]);
   process.exit(0);
 }
 process.stdin.on("end", () => void close());
