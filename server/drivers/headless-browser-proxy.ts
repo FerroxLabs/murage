@@ -17,7 +17,13 @@ export interface EngineClient {
    * `notifications/cancelled` naming it. The promise still settles only on the
    * peer's own reply or the watchdog, because a cancel is a request to stop,
    * not proof that the work stopped. */
-  request: (method: string, params?: Record<string, unknown>, options?: { signal?: AbortSignal }) => Promise<unknown>;
+  request: (method: string, params?: Record<string, unknown>, options?: {
+    signal?: AbortSignal;
+    /** The watchdog on the reply (default 60 s). `null`: no clock on the work
+     * itself (the host computer's actions); a withdrawn request still gets
+     * only a short grace to answer before the driver is stopped. */
+    timeoutMs?: number | null;
+  }) => Promise<unknown>;
   notify?: (method: string, params?: Record<string, unknown>) => Promise<void>;
   close: () => Promise<void>;
 }
@@ -79,12 +85,15 @@ export async function closeHeadlessAuthority(env: NodeJS.ProcessEnv, fetchImpl: 
 
 /** The binary receives exactly the trusted spec environment. Its stderr and
  * protocol errors never become model-visible diagnostics. */
+/** How long a withdrawn request with no clock may take to answer. */
+const WITHDRAW_GRACE_MS = 10_000;
+
 export function startHeadlessEngine(spec: AgentBrowserSpec): EngineClient {
   const child = spawn(spec.command, spec.args, { env: spec.env, shell: false, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   let serial = 0;
   let stopped = false;
   let closePromise: Promise<void> | undefined;
-  const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> | undefined }>();
   const fail = () => {
     stopped = true;
     for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new Error(FAILURE)); }
@@ -118,12 +127,16 @@ export function startHeadlessEngine(spec: AgentBrowserSpec): EngineClient {
       if (stopped || signal?.aborted) return Promise.reject(new Error(FAILURE));
       const id = ++serial;
       return new Promise((resolve, reject) => {
+        const kill = () => { fail(); child.kill("SIGKILL"); };
         const withdraw = () => {
-          if (stopped || !pending.has(id)) return;
+          const item = pending.get(id);
+          if (stopped || !item) return;
           void writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason: "The turn was stopped." } })).catch(fail);
+          // a request with no clock still ends after a Stop
+          if (options?.timeoutMs === null) { clearTimeout(item.timer); item.timer = setTimeout(kill, WITHDRAW_GRACE_MS); }
         };
         const settle = <T>(finish: (value: T) => void) => (value: T) => { signal?.removeEventListener("abort", withdraw); finish(value); };
-        const timer = setTimeout(() => { fail(); child.kill("SIGKILL"); }, 60_000);
+        const timer = options?.timeoutMs === null ? undefined : setTimeout(kill, options?.timeoutMs ?? 60_000);
         pending.set(id, { resolve: settle(resolve), reject: settle(reject), timer });
         void writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", id, method, params })).catch(fail);
         signal?.addEventListener("abort", withdraw, { once: true });
