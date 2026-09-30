@@ -178,7 +178,8 @@ test("an OpenAI image key states create-and-edit, and switching connections swit
   await expect(images.getByRole("combobox", { name: "Image model" })).toHaveValue("gpt-image-2");
   const line = images.locator("[data-image-capability]");
   await expect(line).toHaveAttribute("data-image-capability", "edits");
-  await expect(line).toHaveText("Creates and edits images. Up to 4 reference images per edit.");
+  // Image generation v2: OpenAI edits take up to 16 references (was 4).
+  await expect(line).toHaveText("Creates and edits images. Up to 16 reference images per edit.");
   await expect(images.getByText("Image settings saved.")).toBeVisible();
   await shot(images, "03-openai-creates-and-edits");
 

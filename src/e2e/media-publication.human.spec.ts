@@ -474,7 +474,8 @@ test("a received image whose attachment cannot be written is retained, shown as 
   const attached = (await messagesOf(imageBot)).filter(message => message.attachments?.length);
   expect(attached).toHaveLength(2);
   expect(attached.map(message => message.id)).toContain(recovered.message_id);
-  expect(attached.every(message => message.text === "Image created with gpt-image-2 through OpenAI.")).toBe(true);
+  // Image generation v2 adds what was delivered (the fixture PNG is 1x1).
+  expect(attached.every(message => message.text === "Image created with gpt-image-2 through OpenAI. 1x1 delivered.")).toBe(true);
   expect(pngsOnDisk(attachmentsDir()).sort()).toEqual([first.referenceId, recovered.attachment_id].sort());
   const artifacts = await imageArtifactsOf(imageBot);
   expect(artifacts.map(item => item.id).sort()).toEqual([first.artifactId, recovered.artifact_id].sort());
