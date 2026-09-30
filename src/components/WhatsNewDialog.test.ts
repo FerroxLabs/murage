@@ -12,11 +12,9 @@ Object.assign(globalThis, {
   requestAnimationFrame: (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; },
   document: { getElementById: (id: string) => elements.get(id) ?? null },
 });
-// Only an HTMLElement toggle is opened and focused.
+// Only an HTMLElement setting is scrolled to and focused.
 class FakeElement {
-  expanded = "false"; clicks = 0; focused = false; scrolled: unknown = null;
-  getAttribute(name: string) { return name === "aria-expanded" ? this.expanded : null; }
-  click() { this.clicks += 1; this.expanded = "true"; }
+  focused = false; scrolled: unknown = null;
   scrollIntoView(options: unknown) { this.scrolled = options; }
   focus() { this.focused = true; }
 }
@@ -162,7 +160,6 @@ describe("where the shortcuts go", () => {
       elements.set("image-settings-heading", heading);
       while (frames.length) frames.shift()!(0);
       expect(heading.scrolled, action).toEqual({ block: "start" });
-      expect(heading.clicks, action).toBe(0);
     }
   });
 

@@ -12,7 +12,8 @@
 // brand-new install of this version, which by design never opens the page.
 //
 // Screenshots of all three cards at 1280x860 and 420x860, dark and light
-// skin, land in WHATS_NEW_SHOTS_DIR when it is set, else in the test's output
+// skin, and at 1440x900 and 390x844 in the dark skin (the approved preview's
+// widths), land in WHATS_NEW_SHOTS_DIR when it is set, else in the test's output
 // directory.
 import { test, expect, type Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";

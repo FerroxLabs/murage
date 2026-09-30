@@ -24,6 +24,8 @@ function showSetting(element: Element): void {
   if (!(element instanceof HTMLElement)) return;
   element.scrollIntoView({ block: "start" });
   element.focus();
+  // Settings focuses its own dialog as it mounts; take focus back once.
+  if (document.activeElement !== element) requestAnimationFrame(() => element.focus());
 }
 
 /** The shortcuts, apart from the React tree so they can be tested. Returns
