@@ -101,8 +101,13 @@ export function loadBundledSkills(root = process.env.MURAGE_SKILLS_DIR || join(p
 export function shippedSkillCheck(bundled: readonly BundledSkill[]): (skill: BundledSkill) => boolean {
   const folders = new Set(bundled.map((skill) => skill.directory));
   const texts = new Map(bundled.map((skill) => [skill.manifest.id, skill.instructions]));
-  return (skill) => skill.shipped === true || folders.has(skill.directory) || texts.get(skill.manifest.id) === skillFileText(skill.instructions);
+  return (skill) => skill.shipped === true || folders.has(skill.directory) || texts.get(skill.manifest.id) === skillFileText(skill.instructions)
+    || (texts.has(skill.manifest.id) && SHIPPED_BEFORE_PINS.has(skill.manifest.id));
 }
+/** Skills Murage shipped before tasks pinned their skills, and every version
+ *  since: an unmarked pinned copy under one of these ids was always Murage's
+ *  (mergeSkills lets the shipped skill win), whatever its text then was. */
+const SHIPPED_BEFORE_PINS: ReadonlySet<string> = new Set(["create-verification-skill", "phone-harness"]);
 
 /** User-authored skills are hot-loaded on each turn so a just-recorded skill
  * works without restarting the desktop app. One hand-edited broken folder is

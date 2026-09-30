@@ -16,14 +16,15 @@ import { createProcedurePin, preparePinnedProcedures, readProcedureBundle } from
 import { loadBundledSkills, loadUserSkills, mergeSkills, shippedSkillCheck, type BundledSkill } from "./skill-library.ts";
 import { skillLayers } from "./bot-shapes.ts";
 import { workspaceDir } from "./workspace.ts";
+import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { IMAGE_LIBRARY_TOOLS } from "../shared/image-library-audience.ts";
 import { MURAGE_MCP_TOOLS, phoneMountName, toolCallStyleFor } from "../shared/murage-tool-names.ts";
 
 const SHIPPED = join(import.meta.dirname, "..", "skills");
 const bundled = loadBundledSkills(SHIPPED);
 const murageSkill = shippedSkillCheck(bundled);
-/** Every engine kind a turn can run on (murage-tool-names.test.ts ENGINES, plus the API engines). */
-const ENGINE_KINDS = ["claude", "codex", "pi", "fuigoAgent", "grokAgent", "kimiAgent", "geminiAgent", "cursorAgent", "droidAgent", "opencodeGo", "customAcp", "grok", "boxAgent"];
+/** Every engine kind a turn can run on. */
+const ENGINE_KINDS = BUILT_IN_DRIVERS.map(driver => driver.driverKind);
 const ALL_NAMES = [...new Set(Object.values(MURAGE_MCP_TOOLS).flat() as string[])];
 const bare = new RegExp(`(?<![A-Za-z0-9_"])(${ALL_NAMES.join("|")})(?![A-Za-z0-9_"])`);
 
@@ -102,6 +103,18 @@ describe("a task's pinned copy of a shipped skill", () => {
     const contact = layer(crlf, "fuigoAgent", false);
     for (const tool of IMAGE_LIBRARY_TOOLS) expect(contact).not.toContain(tool);
     expect(contact).toContain('use_tool with tool_name "agents__generate_image"');
+  });
+});
+
+describe("a copy pinned by an earlier version, with an earlier text", () => {
+  it("is Murage's for a skill shipped since before pins, and not for one that shipped later", () => {
+    const edited = (id: string): BundledSkill => {
+      const { shipped: _shipped, ...skill } = byId(bundled, id);
+      return { ...skill, directory: join(DATA_DIR, "workspaces", "b", ".murage-procedures", "x", "catalogue", id), instructions: `${skill.instructions}\nAn earlier line.` };
+    };
+    for (const id of ["phone-harness", "create-verification-skill"]) expect(murageSkill(edited(id)), id).toBe(true);
+    for (const id of ["image-generation", "chief-of-staff"]) expect(murageSkill(edited(id)), id).toBe(false);
+    expect(layer(edited("phone-harness"), "codex", true)).toContain("Use the `murage_phone` tools");
   });
 });
 

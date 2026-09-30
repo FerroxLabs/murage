@@ -6279,7 +6279,9 @@ async function startTurn(
         [
           ...(instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : []),
           ...(skillAuthoring ? ["skillAuthoring"] : []),
-          ...(imageGenerationOn() ? ["imageGeneration"] : []),
+          // the image guide teaches generate_image: only where the agents
+          // tools are mounted, as the images line (imagePromptFor)
+          ...(imageGenerationOn() && instance.adapter.capabilities.agentsMcp === true ? ["imageGeneration"] : []),
         ],
         pinnedProcedures.catalogue,
       ), ...attachedSkillsFor(bot, pinnedProcedures.catalogue)];
@@ -8261,7 +8263,7 @@ async function runGroupMemberTurn(
     ),
     [...selectBundledSkills(
       latestUser?.text ?? "",
-      [...(skillAuthoring ? ["skillAuthoring"] : []), ...(imageGenerationOn() ? ["imageGeneration"] : [])],
+      [...(skillAuthoring ? ["skillAuthoring"] : []), ...(imageGenerationOn() && instance.adapter.capabilities.agentsMcp === true ? ["imageGeneration"] : [])],
       skills,
     ), ...attachedSkillsFor(bot, skills)],
   );
