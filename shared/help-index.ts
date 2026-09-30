@@ -237,24 +237,124 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- A backup that stops tells you. If a backup can't finish, an Inbox item and a notification say what stopped it and what to do.\n- Backups tell you what they wait for. If a bot is waiting for your answer when a backup is due, the Backups page and the Inbox name the bot, and the backup starts as soon as you answer.\n- Turning an engine off stops only that engine's work, and says so in plain words. A routine waiting for your answer no longer holds up the bot's other conversations.\n- Stalled turns. A turn that stops making progress is noticed from the moment it starts, with allowances for waits that are expected.\n- VPS turns.…"
   },
   {
-    "id": "changelog/v0-1-61#rooms-in-0-1-61",
+    "id": "changelog/v0-1-61#room-replies-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Bots in a room always see each other's replies, withheld replies stay withheld, long rooms keep working, and every image-capable key appears in Image generation.",
-    "heading": "Rooms in 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Room replies in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "url": "https://murage.app/docs/changelog/v0-1-61#rooms-in-0-1-61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#room-replies-in-0-1-61",
     "text": "- Bots in a room always see each other's replies. Every member of a room now reads what its teammates said there, also after you add or remove a member or change a setting. Before, a change like that could hide earlier replies from the bots, so a teammate would redo work that was already done.\n- A reply that used something you deleted is shown as withheld. When a room reply drew on something you have since deleted or changed, bots see a short note that the reply was withheld instead of its text, and you see \"Bots no longer see this reply\" under it. The same holds when that reply would come back through memory, through a copy of it in another conversation or through a delegated result.…"
   },
   {
-    "id": "changelog/v0-1-61#image-generation-in-0-1-61",
+    "id": "changelog/v0-1-61#room-memory-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Bots in a room always see each other's replies, withheld replies stay withheld, long rooms keep working, and every image-capable key appears in Image generation.",
-    "heading": "Image generation in 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Room memory in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#room-memory-in-0-1-61",
+    "text": "- A pinned note that uses a withheld reply is left out. If you pin a room's notes and later forget a reply they rest on, bots are no longer given that pinned note. Murage says once in the room that the pinned note uses a reply the bots no longer see, so you can unpin it and pin a newer one. Replies made after that stay visible to every teammate.\n- Forgetting a room's notes forgets only the notes. When you forget a room's notes in Memory, the earlier replies they quoted stay visible to the bots. Only a reply that was made with those notes is withheld.\n- Room memory recall reaches every bot in the room, and a small pin no longer stops the room.…"
+  },
+  {
+    "id": "changelog/v0-1-61#room-turns-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Room turns in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#room-turns-in-0-1-61",
+    "text": "- Room replies keep going while a bot is working. A room reply no longer stops at a fixed five minutes. It stops only after the set number of minutes with no activity (20 by default), or when you press Stop.\n- Murage says when a bot could not answer. When a bot in a room could not answer or stopped part way, Murage says so in its own line with the reason, so it never reads as the bot's own words.\n- A bot that cannot start its turn frees the room. If a bot cannot start its turn in a room, the room is freed and a plain line says so, instead of staying busy.\n- Each teammate gets its turn.…"
+  },
+  {
+    "id": "changelog/v0-1-61#long-rooms-and-unconfirmed-messages-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Long rooms and unconfirmed messages in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#long-rooms-and-unconfirmed-messages-in-0-1-61",
+    "text": "- Rooms with long histories keep working. A room with a very long history no longer stops answering.\n- Messages Murage cannot confirm stay outside your memory. A room message whose sender Murage cannot confirm no longer gives bots what they remember about you, your preferences or your teams, and the same goes for the handoffs it starts."
+  },
+  {
+    "id": "changelog/v0-1-61#teams-and-tools-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Teams and tools in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#teams-and-tools-in-0-1-61",
+    "text": "- Bots on Fuigo can reach their teammates again. A bot that runs on Fuigo can now ask a teammate, hand work off and use Murage's own tools, in a room and in a direct chat. Before, those calls failed, so a lead on Fuigo ended up doing the work alone.\n- Every engine gets tool names it can call. The names of Murage's tools in what bots read, including image tools and error lines, now match the engine each bot runs on, so a bot no longer gets \"Tool not found\" when it follows them."
+  },
+  {
+    "id": "changelog/v0-1-61#image-keys-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Image keys in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Settings → Models",
-    "url": "https://murage.app/docs/changelog/v0-1-61#image-generation-in-0-1-61",
-    "text": "Every saved image-capable key appears in Image generation. A key you saved under Settings → Models for a provider that makes images now also shows in Image generation, including xAI keys and keys saved with a slash at the end of their address."
+    "url": "https://murage.app/docs/changelog/v0-1-61#image-keys-in-0-1-61",
+    "text": "- Every saved image-capable key appears in Image generation. A key you saved under Settings → Models for a provider that makes images now also shows in Image generation, including xAI keys and keys saved with a slash at the end of their address.\n- Your Google Gemini key works for chat and images. Add a Google Gemini key under Settings → Models and bots can chat on Gemini models, and Image generation can use it too. A key saved under the wrong provider is never sent to another one; Settings shows it for you to review."
+  },
+  {
+    "id": "changelog/v0-1-61#images-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Images in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#images-in-0-1-61",
+    "text": "- Sending more than 10 images no longer fails the turn. The first 10 go to the bot, and one plain line says how many were not sent. The message box tells you before you send.\n- Image generation takes longer prompts and more shapes. Each image model now has its own prompt length, so a model that takes a long, detailed prompt gets all of it. You can ask for portrait and landscape shapes such as 9:16, and the approval card shows the prompt length, the model and the size that will be made. When a model cannot make what you asked, Murage says so before anything is sent.\n- Images that take a while are never cut off.…"
+  },
+  {
+    "id": "changelog/v0-1-61#long-work-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Long work in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#long-work-in-0-1-61",
+    "text": "- A working bot is never stopped by a fixed clock. A turn that is still working stops only when it goes quiet for the time you set, when you press Stop, or when it reaches a budget you set. This holds on every engine, including Antigravity and Box.\n- Long commands on a bot's computer run to the end. A command that takes a long time keeps running as long as it shows activity, and stops when it finishes, goes quiet, or you press Stop.\n- Clear stop lines. When a turn does stop, the line in the chat says what happened in plain words, without setting names or internal codes."
+  },
+  {
+    "id": "changelog/v0-1-61#languages-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Languages in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#languages-in-0-1-61",
+    "text": "- Translations are up to date and load when you pick them. The seven translated languages cover the newest screens, and each one loads only when you choose it, so Murage opens faster."
+  },
+  {
+    "id": "changelog/v0-1-61#mac-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Mac in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#mac-in-0-1-61",
+    "text": "- The first-run step bar clears the window buttons. On a Mac, the steps across the top of the first run no longer sit under the close, minimize and zoom buttons."
+  },
+  {
+    "id": "changelog/v0-1-61#recovery-key-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Recovery key in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#recovery-key-in-0-1-61",
+    "text": "- Your recovery key stays out of folders that sync to the cloud. When Murage chooses where to save your backup recovery key, it no longer uses a folder that syncs to OneDrive, iCloud Drive, Dropbox or Google Drive, and it starts with your home folder instead of Documents. If you pick a folder that syncs, Murage tells you and asks before it saves anything there.\n- A recovery key already in a folder that syncs is pointed out once. If an earlier version saved your recovery key in a folder that syncs to the cloud, the Backups page tells you once and offers Move and Keep here. Move puts a checked copy in your home folder, points your daily backups at it and then removes the old file.…"
+  },
+  {
+    "id": "changelog/v0-1-61#backups-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Backups in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#backups-in-0-1-61",
+    "text": "- Your pre-update backup choice is kept. If you tick \"Back up before installing an in-app update\" under Advanced before you first turn on backups, that choice is now kept. Where this install cannot take a backup before an update, setup tells you so.\n- The off-site password file follows the same rule. The password file for off-site backups is saved in your home folder, never in a folder that syncs to the cloud, and Murage asks first if you pick one that does."
   },
   {
     "id": "computers/cloud-and-vps#box-cloud-computer",
