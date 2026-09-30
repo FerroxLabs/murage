@@ -314,7 +314,8 @@ test("one approved generation is one attachment, one receipt and one saved versi
   expect(attached[0].attachments).toHaveLength(1);
   const attachmentPath = attached[0].attachments[0].path as string;
   expect(attachmentPath.split(/[\\/]/).at(-1)).toBe(referenceId);
-  expect(attached[0].text).toBe("Image created with gpt-image-2 through OpenAI.");
+  // Image generation v2 adds what was delivered (the fixture PNG is 1x1).
+  expect(attached[0].text).toBe("Image created with gpt-image-2 through OpenAI. 1x1 delivered.");
   expect(pngsOnDisk(attachmentsDir())).toEqual([referenceId]);
   expect(sha256(readFileSync(attachmentPath))).toBe(FIXTURE_SHA);
   const managedRoot = join(dataRoot, "workspaces", imageBot.id, "generated-images", imageBot.threadId);
