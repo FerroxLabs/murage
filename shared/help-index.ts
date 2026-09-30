@@ -354,7 +354,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "url": "https://murage.app/docs/changelog/v0-1-61#backups-in-0-1-61",
-    "text": "- Your pre-update backup choice is kept. If you tick \"Back up before installing an in-app update\" under Advanced before you first turn on backups, that choice is now kept. Where this install cannot take a backup before an update, setup tells you so.\n- The off-site password file follows the same rule. The password file for off-site backups is saved in your home folder, never in a folder that syncs to the cloud, and Murage asks first if you pick one that does."
+    "text": "- Your pre-update backup choice is kept. If you tick \"Back up before installing an in-app update\" under Advanced before you first turn on backups, that choice is now kept. Where this install cannot take a backup before an update, setup tells you so.\n- The off-site password file follows the recovery key's rule. The password file for off-site backups is saved in your home folder, never in a folder that syncs to the cloud, and Murage asks first if you pick one that does."
   },
   {
     "id": "computers/cloud-and-vps#box-cloud-computer",

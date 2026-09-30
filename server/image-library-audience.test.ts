@@ -157,6 +157,13 @@ describe("the image skill on a contact turn", () => {
   afterAll(() => rmSync(crlf, { recursive: true, force: true }));
   const load = (root: string) => loadBundledSkills(root).find(item => item.manifest.id === "image-generation")!;
   const layer = (root: string, kind: string, ownerAudience?: boolean) => { const skill = load(root); return skillLayers([skill], { toolCallStyle: toolCallStyleFor(kind), murageSkill: item => item === skill, ownerAudience })[0]!.text; };
+  it("cuts the guide that a task pinned by an earlier version kept with CRLF", () => {
+    const skill = load(bundled), pinned = { ...skill, instructions: skill.instructions.replace(/\n/g, "\r\n") };
+    const contact = skillLayers([pinned], { toolCallStyle: toolCallStyleFor("claude"), murageSkill: item => item === pinned, ownerAudience: false })[0]!.text;
+    for (const tool of IMAGE_LIBRARY_TOOLS) expect(contact).not.toContain(tool);
+    expect(contact).not.toMatch(/prompt_blocks|reference_pack/);
+    expect(contact).toContain("Send the lock first, then the scene");
+  });
   it("reads the CRLF copy as CRLF on disk", () => expect(readFileSync(join(crlf, "image-generation", "SKILL.md"), "utf8")).toContain("\r\n"));
   it.each([["claude", "LF"], ["fuigoAgent", "LF"], ["claude", "CRLF"], ["fuigoAgent", "CRLF"]])("%s, %s file: teaches no saved library, and the owner's copy keeps all of it", (kind, eol) => {
     const root = eol === "CRLF" ? crlf : bundled;

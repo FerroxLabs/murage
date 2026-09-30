@@ -135,7 +135,9 @@ const IMAGE_LIBRARY_PASSAGES: ReadonlyArray<[from: string, to: string, instead: 
   ["counts: saved blocks, the scene and any Avoid: line.", "", "counts: the scene and any Avoid: line."],
 ];
 function withoutImageLibrary(body: string): string {
-  let text = body;
+  // Loaded skills are LF already (skillFileText); a task pinned by an earlier
+  // version on Windows carries the guide as it read it, with CRLF.
+  let text = body.replace(/\r\n/g, "\n");
   for (const [from, to, instead] of IMAGE_LIBRARY_PASSAGES) {
     const start = text.indexOf(from);
     const stop = to ? text.indexOf(to, start) : start;
