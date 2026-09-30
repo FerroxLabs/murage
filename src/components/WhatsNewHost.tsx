@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Where each What's new shortcut goes. Mounted by Sidebar.tsx, which owns the
-// Tools menu entry that reopens the page.
-import { useStore, type Action, type AppState } from "@/state/store";
+// Tools menu entry that reopens the page. The dialog itself, art included,
+// loads the first time the page opens, so it stays out of the first paint.
+import { Suspense } from "react";
+import { useStore, type Action } from "@/state/store";
 import { whatsNewPage } from "@/lib/whats-new";
-import { botRole } from "@/lib/bot-role";
-import { FOCUS_COMPOSER_EVENT } from "@/lib/composer-focus";
-import { WhatsNewDialog, type WhatsNewAction } from "./WhatsNewDialog";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import type { WhatsNewAction } from "./WhatsNewDialog";
+
+const Dialog = retryableLazy(() => import("./WhatsNewDialog").then((module) => ({ default: module.WhatsNewDialog })));
 
 /** Wait for an element that the next render puts on screen, then run. */
 function whenRendered(find: () => Element | null, then: (element: Element) => void, frames = 60): void {
@@ -16,50 +19,39 @@ function whenRendered(find: () => Element | null, then: (element: Element) => vo
   else if (frames > 0) requestAnimationFrame(() => whenRendered(find, then, frames - 1));
 }
 
-/** The off-site section of Settings > Backups: opened, in view and focused. */
-function showOffsite(toggle: Element): void {
-  if (!(toggle instanceof HTMLElement)) return;
-  if (toggle.getAttribute("aria-expanded") === "false") toggle.click();
-  toggle.scrollIntoView({ block: "start" });
-  toggle.focus();
-}
-
-/** Who "Help, built in" opens: the Chief of Staff, else the first bot on the
- *  list, else nobody (the page just closes). */
-export function helpBot(bots: AppState["bots"]): AppState["bots"][number] | null {
-  const visible = bots.filter((bot) => !bot.hidden);
-  return visible.find((bot) => botRole(bot) === "chief") ?? visible[0] ?? null;
+/** A setting in an open Settings section: in view, and focused when it can take focus. */
+function showSetting(element: Element): void {
+  if (!(element instanceof HTMLElement)) return;
+  element.scrollIntoView({ block: "start" });
+  element.focus();
 }
 
 /** The shortcuts, apart from the React tree so they can be tested. Returns
  *  false when the shortcut goes nowhere, so the host keeps the view as it is. */
-export function runWhatsNewAction(action: WhatsNewAction, dispatch: (action: Action) => void, bots: AppState["bots"] = []): boolean {
+export function runWhatsNewAction(action: WhatsNewAction, dispatch: (action: Action) => void): boolean {
   switch (action) {
-    case "backups":
-      dispatch({ type: "toggleAppSettings", open: true, section: "backups" });
+    // Every team and who is on it, rooms included.
+    case "teams":
+    case "rooms":
+      dispatch({ type: "showTeamMap" });
       return true;
-    case "offsite":
-      dispatch({ type: "toggleAppSettings", open: true, section: "backups" });
-      whenRendered(() => document.getElementById("backup-offsite-toggle"), showOffsite);
+    // Settings > Tools & Connections > Image generation: the model and its
+    // limits, and the library of saved blocks and reference packs.
+    case "blocks":
+    case "packs":
+    case "shapes":
+      dispatch({ type: "toggleAppSettings", open: true, section: "connections" });
+      whenRendered(() => document.getElementById("image-settings-heading"), showSetting);
       return true;
-    case "routines":
-      dispatch({ type: "showRoutines" });
+    case "gemini":
+      dispatch({ type: "toggleAppSettings", open: true, section: "models" });
       return true;
-    case "help": {
-      const bot = helpBot(bots);
-      if (!bot) return false;
-      dispatch({ type: "select", id: bot.id });
-      // after that bot's chat has rendered, as the tray's Compose does
-      requestAnimationFrame(() => requestAnimationFrame(() => window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT, { detail: { botId: bot.id } }))));
+    // Settings > General > Channel turns: the no activity limit, the one
+    // clock left, which counts silence rather than working time.
+    case "longwork":
+      dispatch({ type: "toggleAppSettings", open: true, section: "general" });
+      whenRendered(() => document.getElementById("room-turn-timeout"), showSetting);
       return true;
-    }
-    case "aboutMe":
-      dispatch({ type: "toggleAppSettings", open: true, section: "aboutMe" });
-      return true;
-    case "delete":
-      // Nothing in the app explains deleting, and the docs section on it
-      // does not cover engine history, so this one only closes the page.
-      return false;
   }
 }
 
@@ -71,18 +63,22 @@ export function WhatsNewHost({
   /** Closes the sidebar drawer on a narrow window, so the destination shows. */
   onNavigate: () => void;
 }) {
-  const { state, dispatch } = useStore();
+  const { dispatch } = useStore();
   const page = whatsNewPage();
-  if (!page) return null;
+  if (!page || !whatsNew.open) return null;
   return (
-    <WhatsNewDialog
-      open={whatsNew.open}
-      releaseNotesUrl={page.releaseNotesUrl}
-      onClose={whatsNew.close}
-      onAction={(action) => {
-        whatsNew.close();
-        if (runWhatsNewAction(action, dispatch, state.bots)) onNavigate();
-      }}
-    />
+    <LazyBoundary onRetry={Dialog.retry} onDismiss={whatsNew.close}>
+      <Suspense fallback={null}>
+        <Dialog.Component
+          open
+          releaseNotesUrl={page.releaseNotesUrl}
+          onClose={whatsNew.close}
+          onAction={(action) => {
+            whatsNew.close();
+            if (runWhatsNewAction(action, dispatch)) onNavigate();
+          }}
+        />
+      </Suspense>
+    </LazyBoundary>
   );
 }

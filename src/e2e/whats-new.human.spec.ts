@@ -9,7 +9,7 @@
 // asking as 0.1.59 on a fresh server is the brand-new-install path (skipped,
 // recorded), which leaves 0.1.59 behind as the last version, exactly what a
 // real 0.1.59 install that asked would. A second, untouched server is the
-// brand-new 0.1.60 install, which by design never opens the page.
+// brand-new install of this version, which by design never opens the page.
 //
 // Screenshots of all three cards at 1280x860 and 420x860, dark and light
 // skin, land in WHATS_NEW_SHOTS_DIR when it is set, else in the test's output
@@ -38,7 +38,7 @@ test.beforeAll(async () => {
   const secret = ((await (await fetch(harness.info.url + "/api/desktop-secret")).json()) as { secret: string }).secret;
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret, "content-type": "application/json" };
   // a 0.1.59 install: started fresh on 0.1.59 (skipped and recorded) and
-  // closed that page, so 0.1.60 is an update
+  // closed that page, so this version is an update
   expect(await (await fetch(`${harness.info.url}/api/whats-new?version=0.1.59`, { headers })).json()).toEqual({ version: "0.1.59", show: false });
   expect(await (await fetch(`${harness.info.url}/api/whats-new/seen`, { method: "POST", headers, body: JSON.stringify({ version: "0.1.59" }) })).json()).toEqual({ version: "0.1.59", show: false });
   const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -82,7 +82,7 @@ const shotsDir = (fallback: string) => {
 };
 const dialog = (page: Page) => page.locator("dialog[data-whats-new]");
 const card = (page: Page, name: string) => dialog(page).locator(`[data-whats-new-card="${name}"]`);
-const CARDS = ["backups", "highlights", "more"] as const;
+const CARDS = ["hero", "highlights", "more"] as const;
 const LAST = CARDS.length - 1;
 
 async function axe(page: Page) {
@@ -120,8 +120,8 @@ test("a 0.1.59 install updating sees the page once, walks all three cards, and a
   expect((await seen()).show).toBe(true);
 
   await page.goto(origin + "/__whats-new?skin=dark");
-  await expect(card(page, "backups")).toBeVisible();
-  await expect(dialog(page).getByRole("heading", { name: "Your work, kept." })).toBeFocused();
+  await expect(card(page, "hero")).toBeVisible();
+  await expect(dialog(page).getByRole("heading", { name: "Your team, in step." })).toBeFocused();
   // focus stays inside: Tab from the last control (the last pager dot) comes back round
   await dialog(page).getByRole("button", { name: "Card 3", exact: true }).focus();
   await page.keyboard.press("Tab");
@@ -140,9 +140,9 @@ test("a 0.1.59 install updating sees the page once, walks all three cards, and a
   await dialog(page).getByRole("button", { name: "Back", exact: true }).click();
   await expect(card(page, "highlights")).toBeVisible();
   await dialog(page).getByRole("button", { name: "Card 1", exact: true }).click();
-  await expect(card(page, "backups")).toBeVisible();
+  await expect(card(page, "hero")).toBeVisible();
   // back to the title (no ring) so the pictures show the resting state
-  await dialog(page).getByRole("heading", { name: "Your work, kept." }).focus();
+  await dialog(page).getByRole("heading", { name: "Your team, in step." }).focus();
 
   await walkCards(page, "dark", dir);
   await expect(dialog(page).getByRole("link", { name: "Read the full release notes" })).toHaveAttribute("href", `https://github.com/FerroxLabs/murage-releases/releases/tag/v${VERSION}`);
@@ -172,22 +172,22 @@ test("reopens from Tools in the light skin, closes on Escape, and each highlight
   await page.keyboard.press("Escape");
   await expect(dialog(page)).toHaveCount(0);
 
-  // the hero's shortcut opens Settings at Backups
+  // the hero's shortcut opens the Team map
   await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; });
   await page.getByRole("button", { name: "Tools" }).click();
   await page.getByRole("menuitem", { name: "What's new" }).click();
-  await dialog(page).getByRole("button", { name: "Open Backups" }).click();
+  await dialog(page).getByRole("button", { name: "Open Teams" }).click();
   await expect(dialog(page)).toHaveCount(0);
-  expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched)).toEqual([{ type: "toggleAppSettings", open: true, section: "backups" }]);
+  expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched)).toEqual([{ type: "showTeamMap" }]);
 
-  // the six highlights, each through the real host; Delete means gone only closes
+  // the six highlights, each through the real host
   const expected: Record<string, unknown[]> = {
-    backups: [{ type: "toggleAppSettings", open: true, section: "backups" }],
-    offsite: [{ type: "toggleAppSettings", open: true, section: "backups" }],
-    routines: [{ type: "showRoutines" }],
-    delete: [],
-    help: [{ type: "select", id: "chief" }],
-    aboutMe: [{ type: "toggleAppSettings", open: true, section: "aboutMe" }],
+    rooms: [{ type: "showTeamMap" }],
+    blocks: [{ type: "toggleAppSettings", open: true, section: "connections" }],
+    packs: [{ type: "toggleAppSettings", open: true, section: "connections" }],
+    shapes: [{ type: "toggleAppSettings", open: true, section: "connections" }],
+    gemini: [{ type: "toggleAppSettings", open: true, section: "models" }],
+    longwork: [{ type: "toggleAppSettings", open: true, section: "general" }],
   };
   for (const [tile, dispatched] of Object.entries(expected)) {
     await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; (window as unknown as { __navigated: number }).__navigated = 0; });
@@ -239,7 +239,24 @@ for (const skin of ["dark", "light"]) {
   });
 }
 
-test("a brand-new 0.1.60 install is never shown the page, and it stays shut", async () => {
+// The widths the approved preview (whats-new-art-0161/preview.html) was
+// judged at: a wide desktop window and a phone-width one.
+for (const [width, height] of [[1440, 900], [390, 844]] as const) {
+  test(`matches the approved preview at ${width}px`, async ({ page }, info) => {
+    test.skip(!HAS_PAGE, `${VERSION} has no What's new page`);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width, height });
+    const dir = shotsDir(info.outputPath("shots"));
+    await page.goto(origin + "/__whats-new?skin=dark");
+    await expect(page.getByText("The app behind the page.")).toBeVisible();
+    await page.getByRole("button", { name: "Tools" }).click();
+    await page.getByRole("menuitem", { name: "What's new" }).click();
+    await walkCards(page, "dark", dir, `-${width}`);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  });
+}
+
+test("a brand-new install is never shown the page, and it stays shut", async () => {
   test.skip(!HAS_PAGE, `${VERSION} has no What's new page`);
   const fresh = await launchVerificationServer(process.env);
   try {

@@ -26,6 +26,10 @@ describe("what's new pages", () => {
   it("has a page for 0.1.60", () => {
     expect(whatsNewPage("0.1.60")).toEqual({ kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.60" });
   });
+
+  it("has a page for 0.1.61", () => {
+    expect(whatsNewPage("0.1.61")).toEqual({ kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.61" });
+  });
 });
 
 describe("when the page opens by itself", () => {
