@@ -476,7 +476,7 @@ import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./
 import { memberTurnSelection } from "./member-turn.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
-import { attachedSkillOn, attachedSkillsFor, CHIEF_GUIDE_ID, isChiefForAttached, loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills, skillsWithMountedTools } from "./skill-library.ts";
+import { attachedSkillOn, attachedSkillsFor, CHIEF_GUIDE_ID, isChiefForAttached, loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills, shippedSkillCheck, skillsWithMountedTools } from "./skill-library.ts";
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { createBotPackageExport, getBotPackageExportSelectionCandidates } from "./package-export.ts";
 import { scanBotPackageContents } from "./bot-package-scan.ts";
@@ -751,10 +751,10 @@ const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
 const bundledSkills = loadBundledSkills();
 const availableSkills = () => mergeSkills(bundledSkills, loadUserSkills(join(DATA_DIR, "skills")));
-/** The skills Murage ships (skills/), by folder: only their text is Murage's
- * own to name tools in for an engine. An owner's or learned skill is theirs. */
-const bundledSkillFolders = new Set(bundledSkills.map(skill => skill.directory));
-const murageSkill = (skill: { directory: string }) => bundledSkillFolders.has(skill.directory);
+/** The skills Murage ships (skills/), and a task's pinned copy of one: only
+ * their text is Murage's own to name tools in for an engine and to cut on a
+ * contact turn. An owner's or learned skill is theirs (skill-library.ts). */
+const murageSkill = shippedSkillCheck(bundledSkills);
 
 /** GET /api/bots/:id/shapes: what goes into this bot's instructions, in the
  *  order the model reads it (bot-shapes.ts). What is known now is read now;

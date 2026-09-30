@@ -22,6 +22,10 @@ export interface BundledSkill {
   manifest: SkillManifest;
   instructions: string;
   directory: string;
+  /** Set only by loadBundledSkills: a skill Murage ships. A task's pinned
+   *  copy keeps it (procedure-bundles.ts), so the copy is still known as
+   *  Murage's own text in the task's folder. */
+  shipped?: true;
 }
 
 const SAFE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -81,9 +85,23 @@ export function loadBundledSkills(root = process.env.MURAGE_SKILLS_DIR || join(p
   for (const name of readdirSync(root).sort()) {
     const directory = join(root, name);
     const skill = loadSkillDirectory(directory);
-    if (skill) skills.push(skill);
+    if (skill) skills.push({ ...skill, shipped: true });
   }
   return skills;
+}
+
+/** Whether a skill is Murage's own text of a skill it ships: only that text
+ *  has its tool names spelled for an engine and its owner-only passages cut
+ *  (bot-shapes.ts skillLayers). A turn reads its skills from the task's
+ *  pinned copy, in a folder of that task, so the folder alone cannot tell.
+ *  A pinned copy is Murage's when its pin recorded it as shipped, or, for a
+ *  pin made before that was recorded, when it has a shipped skill's id and
+ *  exactly that skill's text. An owner's or learned skill, even one under a
+ *  shipped skill's id, is theirs word for word. */
+export function shippedSkillCheck(bundled: readonly BundledSkill[]): (skill: BundledSkill) => boolean {
+  const folders = new Set(bundled.map((skill) => skill.directory));
+  const texts = new Map(bundled.map((skill) => [skill.manifest.id, skill.instructions]));
+  return (skill) => skill.shipped === true || folders.has(skill.directory) || texts.get(skill.manifest.id) === skillFileText(skill.instructions);
 }
 
 /** User-authored skills are hot-loaded on each turn so a just-recorded skill
