@@ -532,6 +532,21 @@ describe("agents-proxy MCP surface", () => {
     expect(generateCalls.map(call => call.requestId)).toEqual(["r1", "r2"]);
   });
 
+  // Engines that do not enforce a tool's required fields (Fuigo's use_tool)
+  // can call generate_image without request_id. The answer names the field
+  // the bot sends, never the harness's own requestId, and says what to send.
+  it.each([{}, { request_id: "" }, { request_id: "has spaces" }, { request_id: 7 }])("refuses generate_image without a usable request_id (%o) in the tool's own words", async (id) => {
+    generateCalls.length = 0;
+    const missing = await callTool("generate_image", { prompt: "A lighthouse", ...id });
+    expect(missing.result.isError).toBe(true);
+    const text = missing.result.content[0].text as string;
+    expect(text).toContain("request_id");
+    expect(text).not.toMatch(/requestId|invalid_type|Required|expected string/);
+    expect(text).toMatch(/generate_image again with request_id/);
+    expect(text).toMatch(/letters, digits/);
+    expect(generateCalls).toHaveLength(0);
+  });
+
   // The proxy's own long wait for an image ends in words the bot can pass on:
   // what happened and what to do, never a control-channel code or a claim
   // that the connection failed.

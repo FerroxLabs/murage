@@ -766,6 +766,12 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     // waits (IMAGE_APPROVAL_TIMEOUT_MS, 15 minutes, in server/image-operations.ts)
     // and then while the provider renders. Giving up here first would close the
     // request, which cancels the card under the owner as "not answered".
+    // An engine that does not enforce required fields (Fuigo's use_tool) can
+    // leave request_id out: say so in the tool's own words, not the harness's
+    // requestId.
+    if (typeof args.request_id !== "string" || !/^[\w-]{1,80}$/.test(args.request_id)) {
+      return { text: authored('generate_image needs request_id: a short name you choose for this request, 1 to 80 letters, digits, "-" or "_", such as "harbor-sunset-1". Call generate_image again with request_id and the same prompt, and keep that request_id if you ask for this same image again.'), isError: true };
+    }
     const result = await apiLong("/api/internal/generate-image", JSON.stringify({
       requestId: args.request_id, prompt: args.prompt, promptBlocks: args.prompt_blocks, referencePack: args.reference_pack, operation: args.operation, connectionId: args.connection_id,
       model: args.model, quality: args.quality, size: args.size, aspectRatio: args.aspect_ratio, resolution: args.resolution,
