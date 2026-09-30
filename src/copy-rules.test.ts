@@ -15,10 +15,13 @@
 // reach a person.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+// fileURLToPath, not .pathname: on Windows the pathname is "/D:/..." and
+// join() turns it into "D:\D:\...".
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 type Rule = { name: string; pattern: RegExp };
 const EM_DASH: Rule = { name: "an em dash", pattern: /—/ };

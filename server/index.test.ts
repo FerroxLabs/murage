@@ -7511,7 +7511,7 @@ describe("harness HTTP API", () => {
       expect(readFileSync(pinnedSkill, "utf8")).toBe(staleUpdate.skillRequest.preview);
       expect(readFileSync(join(desk, ".murage-procedures", bundleId, "skills", "reviewed-skill-two", "SKILL.md"), "utf8"))
         .toBe(second.skillRequest.preview);
-      expect(realpathSync(nativeSkill)).toBe(realpathSync(pinnedSkill));
+      expect(realpathSync.native(nativeSkill)).toBe(realpathSync.native(pinnedSkill));
     } finally {
       await desktopApi("PATCH", "/api/config", { features: { skillRecorder: false } });
       await api("POST", `/api/bots/${bot.id}/interrupt`);

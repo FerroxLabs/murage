@@ -24,7 +24,9 @@ const graphOnly: Plugin = {
     // `@/…` is the app (tsconfig paths); every other bare specifier is a
     // package, recorded by name and not walked. (esbuild filters are Go
     // regular expressions, which have no lookahead, hence the check inside.)
-    build.onResolve({ filter: /^[^./]/ }, (args) => (args.path.startsWith("@/") ? undefined : { path: args.path, external: true }));
+    // The entry point is walked too: on Windows its absolute path starts with
+    // a drive letter, not "/".
+    build.onResolve({ filter: /^[^./]/ }, (args) => (args.kind === "entry-point" || args.path.startsWith("@/") ? undefined : { path: args.path, external: true }));
   },
 };
 

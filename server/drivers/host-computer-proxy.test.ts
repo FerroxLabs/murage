@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "host-computer-proxy.ts");
@@ -54,7 +54,7 @@ describe("host computer proxy", () => {
   });
 
   const start = () => {
-    const child = spawn(process.execPath, ["--experimental-strip-types", "--import", join(dir, "compress.mjs"), PROXY], {
+    const child = spawn(process.execPath, ["--experimental-strip-types", "--import", pathToFileURL(join(dir, "compress.mjs")).href, PROXY], {
       env: {
         ...process.env,
         MURAGE_CONTROL_URL: `http://127.0.0.1:${port}/api/internal/computer-control?botId=b1`,

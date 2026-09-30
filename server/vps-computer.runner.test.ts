@@ -17,6 +17,7 @@ vi.mock("./procs.ts", async () => ({
 }));
 
 import { defaultRunner } from "./vps-computer.ts";
+import { resolveCli } from "./procs.ts";
 
 type FakeChild = EventEmitter & {
   stdin: Writable;
@@ -54,7 +55,12 @@ describe("default VPS command runner", () => {
     child.emit("close", 0, null);
 
     await expect(result).resolves.toEqual({ stdout: "out", stderr: "err" });
-    expect(spawnMock).toHaveBeenCalledWith("docker", ["info"], expect.objectContaining({ shell: false }));
+    // spawnCli resolves the command first: bare "docker" on POSIX, the
+    // docker.exe on PATH on Windows.
+    const docker = resolveCli("docker", ["info"]);
+    expect(docker.command).toMatch(/(^|[\\/])docker(\.exe)?$/i);
+    expect(spawnMock).toHaveBeenCalledWith(docker.command, docker.args, expect.objectContaining({ shell: false }));
+    if (process.platform !== "win32") expect(spawnMock).toHaveBeenCalledWith("docker", ["info"], expect.objectContaining({ shell: false }));
   });
 
   // 0.1.61: a docker pull or build over a slow link runs as long as it keeps

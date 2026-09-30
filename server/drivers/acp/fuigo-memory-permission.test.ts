@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAcpDriver } from "./core.ts";
 import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
@@ -58,7 +58,7 @@ async function fixture(scenario: string, tool = "memory_search", wrapped = false
     nativeSource: "fuigo.acp", models: { default: "fixture", options: [{ id: "fixture", label: "Fixture" }] }, loginNote: "unused", isAuthenticated: () => true, pickAuthMethod: () => null, authFailure: "continue",
     spawnArgs: () => [cli, scenario, dump, tool], transformEnv: env => { env.HOME = home; env.USERPROFILE = home; env.FUIGO_HOME = home; } });
   const instance = await driver.create({ instanceId: "memory-wire", displayName: "Memory wire", environment: {}, enabled: true, config: { cli: process.execPath, fullAuto: false } }); instances.push(instance);
-  const recorder = recordEvents(instance.adapter), threadId = `memory-${root.split("/").at(-1)}`;
+  const recorder = recordEvents(instance.adapter), threadId = `memory-${basename(root)}`;
   const memory = { command: process.execPath, args: ["unused-fixture-proxy"], env: { MURAGE_MEMORY_TOKEN: "synthetic-memory-capability" } };
   const turn: SendTurnInput = { threadId, text: "Use scoped memory", cwd: root, ...(scenario === "no-integration" ? {} : { integrations: { memory } }),
     ...scenario.startsWith("load") ? { resumeCursor: "old-session" } : {},

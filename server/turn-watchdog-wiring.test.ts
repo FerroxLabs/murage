@@ -13,7 +13,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.ts"), "utf8");
+// A Windows checkout has CRLF line endings; the patterns below are written with LF.
+const SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.ts"), "utf8").replace(/\r\n/g, "\n");
 
 /** The text of one top-level `function name(` or `async function name(`. */
 function fn(name: string): string {
