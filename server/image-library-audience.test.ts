@@ -8,9 +8,10 @@
 // internal-route-authority.test.ts, and put the real decision in front of
 // every library route; the agents proxy is spawned the way a driver mounts it.
 import { spawn } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase } from "./database.ts";
@@ -144,11 +145,24 @@ describe("the images line on a contact turn", () => {
 });
 
 describe("the image skill on a contact turn", () => {
-  const skill = loadBundledSkills(join(import.meta.dirname, "..", "skills")).find(item => item.manifest.id === "image-generation")!;
-  const layer = (kind: string, ownerAudience?: boolean) => skillLayers([skill], { toolCallStyle: toolCallStyleFor(kind), murageSkill: item => item === skill, ownerAudience })[0]!.text;
-  it.each(["claude", "fuigoAgent"])("%s: teaches no saved library, and the owner's copy keeps all of it", kind => {
-    const contact = layer(kind, false), owner = layer(kind);
-    expect(layer(kind, true)).toBe(owner);
+  const bundled = join(import.meta.dirname, "..", "skills");
+  // A Windows checkout, and the Windows app built from it, ships the guide
+  // with CRLF line endings: the cut must find the same passages there.
+  const crlf = (() => {
+    const root = join(tmpdir(), `murage-crlf-skills-${process.pid}`), directory = join(root, "image-generation");
+    mkdirSync(directory, { recursive: true });
+    for (const name of ["SKILL.md", "manifest.json"]) writeFileSync(join(directory, name), readFileSync(join(bundled, "image-generation", name), "utf8").replace(/\r?\n/g, "\r\n"));
+    return root;
+  })();
+  afterAll(() => rmSync(crlf, { recursive: true, force: true }));
+  const load = (root: string) => loadBundledSkills(root).find(item => item.manifest.id === "image-generation")!;
+  const layer = (root: string, kind: string, ownerAudience?: boolean) => { const skill = load(root); return skillLayers([skill], { toolCallStyle: toolCallStyleFor(kind), murageSkill: item => item === skill, ownerAudience })[0]!.text; };
+  it("reads the CRLF copy as CRLF on disk", () => expect(readFileSync(join(crlf, "image-generation", "SKILL.md"), "utf8")).toContain("\r\n"));
+  it.each([["claude", "LF"], ["fuigoAgent", "LF"], ["claude", "CRLF"], ["fuigoAgent", "CRLF"]])("%s, %s file: teaches no saved library, and the owner's copy keeps all of it", (kind, eol) => {
+    const root = eol === "CRLF" ? crlf : bundled;
+    const contact = layer(root, kind, false), owner = layer(root, kind);
+    expect(owner).toBe(layer(bundled, kind)); expect(contact).toBe(layer(bundled, kind, false));
+    expect(layer(root, kind, true)).toBe(owner);
     for (const tool of IMAGE_LIBRARY_TOOLS) { expect(owner).toContain(tool); expect(contact).not.toContain(tool); }
     expect(contact).not.toMatch(/prompt_blocks|reference_pack/);
     // the rest of the guide is still there, lock plus scene included

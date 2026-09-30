@@ -58,12 +58,19 @@ export function parseSkillManifest(value: unknown, directory: string): SkillMani
   };
 }
 
+/** A SKILL.md as Murage reads it: LF line endings, trimmed. A Windows
+ *  checkout, and the Windows app built from it, has CRLF files; every cut
+ *  and match on a skill's text (bot-shapes.ts) is written against LF. */
+export function skillFileText(raw: string): string {
+  return raw.replace(/\r\n/g, "\n").trim();
+}
+
 function loadSkillDirectory(directory: string): BundledSkill | null {
   const manifestPath = join(directory, "manifest.json");
   const skillPath = join(directory, "SKILL.md");
   if (!existsSync(manifestPath) || !existsSync(skillPath)) return null;
   const manifest = parseSkillManifest(JSON.parse(readFileSync(manifestPath, "utf8")), directory);
-  const instructions = readFileSync(skillPath, "utf8").trim();
+  const instructions = skillFileText(readFileSync(skillPath, "utf8"));
   if (!instructions.startsWith("---")) throw new Error(`${skillPath} has no skill frontmatter`);
   return { manifest, instructions, directory };
 }

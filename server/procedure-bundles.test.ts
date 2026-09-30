@@ -5,7 +5,7 @@ import { afterEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { createProcedurePin, preparePinnedProcedures, readProcedureBundle } from "./procedure-bundles.ts";
 import { applyStagedSkillWrite, installSkill, migrateSkillDiscoveryToTasks, rollbackSkillRevision, setSkillEnabled, skillRevisionHistory, stageSkillWrite, syncSkillLinks, skillEvolutionDescriptor } from "./skills.ts";
-import { renderSkillInstructions, selectBundledSkills, type BundledSkill } from "./skill-library.ts";
+import { loadBundledSkills, renderSkillInstructions, selectBundledSkills, type BundledSkill } from "./skill-library.ts";
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { taskWorkspacePath, workspaceDir } from "./workspace.ts";
 const owned:string[]=[];
@@ -29,6 +29,18 @@ it("actual skill selection and playbook rendering stay frozen across definition 
   expect(renderSkillInstructions(selectBundledSkills("verify",[],restored.catalogue))).toContain("Original check");
   expect(installedPlaybookInstructions("verify",restored.playbooks)).toContain("Original playbook");
   expect(readFileSync(join(restored.catalogue[0]!.directory,"helper.py"),"utf8")).toContain("original");
+});
+// A Windows install ships bundled skills with CRLF line endings; the loader
+// reads them as LF, and the pin still matches the bytes on disk.
+it("pins a catalogue skill whose file has CRLF line endings",()=>{
+  const id=bot(),root=join(workspaceDir(id),"catalogue-crlf","check");mkdirSync(root,{recursive:true});
+  writeFileSync(join(root,"SKILL.md"),md("Line one\nLine two").replace(/\n/g,"\r\n"));
+  writeFileSync(join(root,"manifest.json"),JSON.stringify({id:"check",name:"Check",version:"1.0.0",description:"Check",defaultEnabled:true,triggerTerms:["verify"],requiredCapabilities:[]}));
+  const catalogue=loadBundledSkills(join(root,".."));
+  expect(catalogue).toHaveLength(1);expect(catalogue[0]!.instructions).not.toContain("\r");
+  const pin=createProcedurePin(id,"crlf-task",catalogue,[]);
+  const restored=preparePinnedProcedures(id,"crlf-task",pin,true);
+  expect(renderSkillInstructions(selectBundledSkills("verify",[],restored.catalogue))).toContain("Line one\nLine two");
 });
 it("copies complete imported support bytes and native links follow this task rather than live updates",()=>{
   const id=bot();expect(installSkill(id,"fixture",[{path:"SKILL.md",content:md("Original")}])).not.toHaveProperty("error");
@@ -73,7 +85,8 @@ it("custom folder is unchanged while prompt references immutable absolute bytes"
   const id=bot();learned(id,"Original");const custom=join(workspaceDir(id),"custom-project");mkdirSync(custom);writeFileSync(join(custom,"user.txt"),"keep");
   const before=readdirSync(custom),pin=createProcedurePin(id,"custom-task",[],[]);
   const result=preparePinnedProcedures(id,"custom-task",pin,false);
-  expect(result.importedPrompt).toContain(taskWorkspacePath(DATA_DIR,id,"custom-task"));
+  // The prompt names the path as a JSON string (backslashes doubled on Windows).
+  expect(result.importedPrompt).toContain(JSON.stringify(taskWorkspacePath(DATA_DIR,id,"custom-task")).slice(1,-1));
   expect(readdirSync(custom)).toEqual(before);expect(readFileSync(join(custom,"user.txt"),"utf8")).toBe("keep");
 });
 it("another room responder cannot consume this bot's pinned catalogue",()=>{

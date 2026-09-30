@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { taskWorkspacePath } from "./workspace.ts";
 import { listSkills, snapshotProceduralSkill, assertSkillProcedureEvidence, type SkillProcedureContext, type SkillProcedureEvidence, INDEX_MAX_BYTES, INDEX_MAX_SKILLS, nativeLinkPointsToSkill } from "./skills.ts";
-import type { BundledSkill } from "./skill-library.ts";
+import { skillFileText, type BundledSkill } from "./skill-library.ts";
 import type { InstalledPlaybook } from "./store.ts";
 
 export interface ProcedurePin { schema:1; bundleId:string; legacyRoomWorkspace?:true }
@@ -83,7 +83,7 @@ export function createProcedurePin(botId:string,threadId:string,catalogue:Bundle
     const directory=`catalogue/${skill.manifest.id}`;
     collectTree(skill.directory,directory,files);
     const content=files.find(file=>file.path===`${directory}/SKILL.md`);
-    if(!content||Buffer.from(content.bytes,"base64").toString("utf8").trim()!==skill.instructions)fail();
+    if(!content||skillFileText(Buffer.from(content.bytes,"base64").toString("utf8"))!==skill.instructions)fail();
     return {...structuredClone(skill),directory};
   });
   if(files.length>2000||files.reduce((sum,file)=>sum+Buffer.byteLength(file.bytes,"base64"),0)>64*1024*1024)fail();
