@@ -22,6 +22,8 @@ import { describe, expect, it } from "vitest";
 // fileURLToPath, not .pathname: on Windows the pathname is "/D:/..." and
 // join() turns it into "D:\D:\...".
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
+/** A repo-relative path with "/" on every OS: the exception lists below name files that way. */
+const rel = (file: string): string => file.slice(ROOT.length).replaceAll("\\", "/");
 
 type Rule = { name: string; pattern: RegExp };
 const EM_DASH: Rule = { name: "an em dash", pattern: /—/ };
@@ -98,7 +100,7 @@ export function copyStrings(file: string, source: string, { terminal = false }: 
 function hits(files: string[], rules: Rule[], allow: Record<string, string> = {}, options: { terminal?: boolean } = {}): string[] {
   const found: string[] = [];
   for (const file of files) {
-    const label = file.slice(ROOT.length);
+    const label = rel(file);
     if (allow[label]) continue;
     for (const { line, text: raw } of copyStrings(file, readFileSync(file, "utf8"), options)) {
       // A whole page kept in a template: only its visible text is read, not
@@ -117,7 +119,7 @@ function catalogueHits(file: string, rules: Rule[], allowKeys: Set<string>): str
   const found: string[] = [];
   for (const [key, value] of Object.entries(catalogue)) {
     if (typeof value !== "string" || allowKeys.has(key)) continue;
-    for (const rule of rules) if (rule.pattern.test(value)) found.push(`${file.slice(ROOT.length)}: ${key}: ${rule.name}`);
+    for (const rule of rules) if (rule.pattern.test(value)) found.push(`${rel(file)}: ${key}: ${rule.name}`);
   }
   return found;
 }
@@ -232,7 +234,7 @@ describe("product copy rules", () => {
     expect(hits(walk(join(ROOT, "electron")), RULES, DESKTOP_NOT_COPY)).toEqual([]);
     const found: string[] = [];
     for (const file of htmlFiles(join(ROOT, "electron"))) for (const text of htmlText(readFileSync(file, "utf8")))
-      for (const rule of RULES) if (rule.pattern.test(text)) found.push(`${file.slice(ROOT.length)}: ${rule.name}: ${text.slice(0, 120)}`);
+      for (const rule of RULES) if (rule.pattern.test(text)) found.push(`${rel(file)}: ${rule.name}: ${text.slice(0, 120)}`);
     expect(found).toEqual([]);
   });
 

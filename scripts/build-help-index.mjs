@@ -89,7 +89,8 @@ const EXCLUDED = ["contributing"];
 const entries = [];
 for (const file of walk(DOCS)) {
   if (EXCLUDED.some((dir) => relative(DOCS, file).split(sep)[0] === dir)) continue;
-  const raw = readFileSync(file, "utf8");
+  // A Windows checkout has CRLF files; the index is built from LF text on every OS.
+  const raw = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
   const frontmatter = raw.match(/^---\n([\s\S]*?)\n---\n?/);
   const head = frontmatter?.[1] ?? "";
   const body = frontmatter ? raw.slice(frontmatter[0].length) : raw;
@@ -155,7 +156,7 @@ export const HELP_INDEX: readonly HelpEntry[] = ${JSON.stringify(entries, null, 
 `;
 
 if (process.argv.includes("--check")) {
-  const current = readFileSync(OUT, "utf8");
+  const current = readFileSync(OUT, "utf8").replace(/\r\n/g, "\n");
   if (current !== generated) {
     console.error("shared/help-index.ts is stale — run `node scripts/build-help-index.mjs`");
     process.exit(1);
