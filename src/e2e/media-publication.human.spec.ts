@@ -227,11 +227,20 @@ async function approveNext(bot: Bot, title: string) {
 async function openApp(page: Page) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); });
+  // The seeded profile is an update, not a fresh install, so the release's
+  // What's New page would open over the sidebar (whats-new.human.spec.ts owns it).
+  await page.route("**/api/whats-new?*", route => route.fulfill({ json: { show: false } }));
   await page.goto(origin);
 }
 async function selectBot(page: Page, bot: Bot) {
   const sidebar = await openSidebar(page);
-  await sidebar.getByRole("button", { name: new RegExp(`^${bot.name}`) }).first().click();
+  // The row's name label sits over its select button's centre, so a pointer
+  // click lands on the label; sidebar-hit-areas.human.spec.ts owns pointer
+  // hit-testing, and this spec selects the row the keyboard way.
+  const row = sidebar.locator(`[data-sidebar-select="${bot.id}"]`).first();
+  await row.focus();
+  await page.keyboard.press("Enter");
+  await expect(row).toHaveAttribute("aria-pressed", "true");
   return sidebar;
 }
 const lightbox = (page: Page) => page.getByTestId("image-lightbox");
