@@ -239,7 +239,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-61#room-replies-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Room replies in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
@@ -249,7 +249,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-61#room-memory-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Room memory in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
@@ -259,7 +259,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-61#room-turns-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Room turns in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
@@ -269,7 +269,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-61#long-rooms-and-unconfirmed-messages-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Long rooms and unconfirmed messages in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
@@ -279,7 +279,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-61#teams-and-tools-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Teams and tools in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
@@ -289,7 +289,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-61#image-keys-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Image keys in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Settings → Models",
@@ -299,7 +299,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-61#images-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Images in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
@@ -307,19 +307,39 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Sending more than 10 images no longer fails the turn. The first 10 go to the bot, and one plain line says how many were not sent. The message box tells you before you send.\n- Image generation takes longer prompts and more shapes. Each image model now has its own prompt length, so a model that takes a long, detailed prompt gets all of it. You can ask for portrait and landscape shapes such as 9:16, and the approval card shows the prompt length, the model and the size that will be made. When a model cannot make what you asked, Murage says so before anything is sent.\n- Images that take a while are never cut off.…"
   },
   {
+    "id": "changelog/v0-1-61#saved-image-prompts-and-packs-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Saved image prompts and packs in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Settings → Tools & Connections → Image generation",
+    "url": "https://murage.app/docs/changelog/v0-1-61#saved-image-prompts-and-packs-in-0-1-61",
+    "text": "- Saved prompt blocks. Save a part of an image prompt you use again, such as a character or a brand look, as a named block. Bots send saved blocks first, then the scene. Every save is a new version, and earlier images keep the version they used. You and your bots can add them: find them under Settings → Tools & Connections → Image generation.\n- Reference packs. A bot can save up to 16 reference images from a conversation as a named pack and use the pack again later. Murage checks each image against its saved copy every time the pack is used."
+  },
+  {
+    "id": "changelog/v0-1-61#image-models-and-settings-in-0-1-61",
+    "title": "What changed in Murage 0.1.61",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "heading": "Image models and settings in 0.1.61",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
+    "url": "https://murage.app/docs/changelog/v0-1-61#image-models-and-settings-in-0-1-61",
+    "text": "- More control over each image. Where the model supports it, bots can ask for several images at once, PNG, JPEG or WebP, a seed, a transparent background, or an exact size in pixels.\n- Long renders are followed to the end. For models that send their images in parts or work as a longer job, Murage follows the render until it is done, and a render that was interrupted picks up where it was instead of starting again.\n- See what each model can do. Image generation in Settings shows each model's prompt length and sizes, when it last worked, and a Check this model now button. A daily check of the default model is off unless you turn it on.\n- Clearer cards and lines.…"
+  },
+  {
     "id": "changelog/v0-1-61#long-work-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Long work in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "url": "https://murage.app/docs/changelog/v0-1-61#long-work-in-0-1-61",
-    "text": "- A working bot is never stopped by a fixed clock. A turn that is still working stops only when it goes quiet for the time you set, when you press Stop, or when it reaches a budget you set. This holds on every engine, including Antigravity and Box.\n- Long commands on a bot's computer run to the end. A command that takes a long time keeps running as long as it shows activity, and stops when it finishes, goes quiet, or you press Stop.\n- Clear stop lines. When a turn does stop, the line in the chat says what happened in plain words, without setting names or internal codes."
+    "text": "- A working bot is never stopped by a fixed clock. A turn that is still working stops only when it goes quiet for the time you set, when you press Stop, or when it reaches a budget you set. This holds on every engine, including Antigravity and Box.\n- Bots on OpenAI-compatible engines, MiniMax and xAI wait for slow answers. A model that takes a while to answer is no longer cut off after two or three minutes of waiting.\n- Long commands on a bot's computer run to the end. A command that takes a long time keeps running as long as it shows activity, and stops when it finishes, goes quiet, or you press Stop.\n- Clear stop lines.…"
   },
   {
     "id": "changelog/v0-1-61#languages-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Languages in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
@@ -329,7 +349,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-61#mac-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Mac in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
@@ -339,7 +359,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-61#recovery-key-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Recovery key in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",
@@ -349,7 +369,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "changelog/v0-1-61#backups-in-0-1-61",
     "title": "What changed in Murage 0.1.61",
-    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation takes longer prompts and more shapes, and recovery keys stay out of folders that sync.",
+    "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Backups in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
     "where": "Murage docs → Changelog → What changed in Murage 0.1.61",

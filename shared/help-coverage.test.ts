@@ -74,6 +74,10 @@ const RELEASE_KEYWORDS: Readonly<Record<string, readonly string[]>> = {
     "folder that syncs",
     "pre-update backup",
     "off-site password",
+    "saved prompt blocks",
+    "reference packs",
+    "transparent background",
+    "check this model",
   ],
 };
 
