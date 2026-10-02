@@ -12,6 +12,10 @@ export function createBackgroundLifecycle(options) {
   let preferences=backgroundPreferences(options.loadPreferences(),options.platform);
   let tray=null,trayAvailable=false,quitting=false,suspended=false,automationsPaused=null,closePending=null,monitor=null;
   let probing=false,disposed=false;
+  // The tray's Inbox summary is re-read when the server says the Inbox changed (options.watch), with a slow
+  // fallback in case a notice was missed; the probe and automation status keep their own 5 s beat.
+  let summaryDirty=true,summaryAt=0,pollScale=1,stopWatch=null,changes=0;
+  const FALLBACK_MS=60000;
   const alive=()=>{const win=options.window();return win&&!win.isDestroyed()?win:null;};
   const canReopen=()=>trayAvailable||options.dockAvailable?.()===true;
   const shuttingDown=()=>quitting||options.isQuitting?.()===true;
@@ -45,7 +49,7 @@ export function createBackgroundLifecycle(options) {
     checkForUpdates:options.checkForUpdates?()=>{open();options.checkForUpdates();}:null,
     quit:()=>{quitting=true;options.quit();}});
   const refreshMenu=()=>{if(!tray||tray.isDestroyed())return;options.setTrayMenu(tray,menu());try{options.presentTray?.(tray,trayPresentation(summary?.needsYou,options.platform));}catch(error){report(error);}};
-  const refresh=async()=>{
+  const refresh=async(readSummary=true)=>{
     if(probing)return;probing=true;
     try{
       const candidate=tray;
@@ -55,7 +59,9 @@ export function createBackgroundLifecycle(options) {
       if(!canReopen()&&alive()&&!alive().isVisible()&&!shuttingDown())open();
       try{automationsPaused=(await options.automationStatus()).paused;}catch{automationsPaused=null;}
       // A failed read shows nothing rather than a stale count.
-      if(options.harness){try{summary=traySummaryValue(await options.harness.get("/api/desktop/tray"));}catch{summary=null;}}
+      // A notice that lands while this read is out may describe a write the read
+      // missed, so the summary stays dirty for the next beat.
+      if(options.harness&&readSummary){const seen=changes;try{summary=traySummaryValue(await options.harness.get("/api/desktop/tray"));}catch{summary=null;}summaryAt=(options.now??Date.now)();summaryDirty=changes!==seen;}
       refreshMenu();notify();
     }finally{probing=false;}
   };
@@ -66,7 +72,8 @@ export function createBackgroundLifecycle(options) {
       try{tray=options.createTray(open);refreshMenu();}catch(error){tray=null;report(error);}
       await refresh();
       if(disposed)return status();
-      monitor=(options.setInterval??setInterval)(()=>void refresh().catch(report),5000);monitor?.unref?.();
+      try{stopWatch=options.watch?.(change=>{summaryDirty=true;changes++;if(Number.isFinite(change?.scale)&&change.scale>=1)pollScale=change.scale;void refresh().catch(report);})??null;}catch(error){stopWatch=null;report(error);}
+      monitor=(options.setInterval??setInterval)(()=>void refresh(!stopWatch||summaryDirty||(options.now??Date.now)()-summaryAt>=FALLBACK_MS*pollScale).catch(report),5000);monitor?.unref?.();
       return status();
     },
     refresh,
@@ -113,7 +120,7 @@ export function createBackgroundLifecycle(options) {
     keepAliveWithoutWindows(){return preferences.keepRunning&&canReopen()&&!shuttingDown();},
     beginQuit(){quitting=true;notify();},
     setSuspended(value){suspended=value;notify();if(!value)void refresh().catch(report);},
-    dispose(){disposed=true;if(monitor)(options.clearInterval??clearInterval)(monitor);monitor=null;if(tray&&!tray.isDestroyed())tray.destroy();tray=null;trayAvailable=false;},
+    dispose(){disposed=true;try{stopWatch?.();}catch{}stopWatch=null;if(monitor)(options.clearInterval??clearInterval)(monitor);monitor=null;if(tray&&!tray.isDestroyed())tray.destroy();tray=null;trayAvailable=false;},
   };
 }
 

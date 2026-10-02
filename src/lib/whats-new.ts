@@ -21,6 +21,8 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   "0.1.59": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.59" },
   "0.1.60": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.60" },
   "0.1.61": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.61" },
+  // A patch: no page (release notes are written at publish).
+  "0.1.62": { kind: "none" },
 };
 
 /** The page for `version`, or null when it has none. */

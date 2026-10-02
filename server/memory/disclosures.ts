@@ -2,7 +2,7 @@ import { database, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
 import { accessIncludesRoom, assertMemoryAccess, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { assertMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
-import { databaseStamp, messageCopy, messageSourceForgotten, replayExclusions, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
+import { databaseStamp, messageCopy, messageMadeWithMemory, messageSourceForgotten, replayExclusions, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 
 /** Persist before dispatch; records contain references, never duplicated memory text. */
@@ -161,4 +161,55 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
     }
     return known;
   };
+}
+
+/** The replay check gave up on a long thread (too many receipts, nodes, depth
+ * or parents). Only that error: any other fault still fails the turn. */
+export function memoryReplayLimited(error: unknown): boolean {
+  return error instanceof Error && error.message.split(":")[0] === "MEMORY_REPLAY_LIMIT";
+}
+const degradedThreads = new Set<string>();
+/** Said once per conversation, so a long thread does not flood the log. */
+export function noteReplayLimitDegraded(threadId: string) {
+  if (degradedThreads.has(threadId) || degradedThreads.size > 256) return;
+  degradedThreads.add(threadId);
+  console.warn("[memory] replay check over limit, turn ran without recalled memory");
+}
+/** The transcript for a turn that runs WITHOUT memory because the replay check
+ * could not finish. Nothing it cannot verify crosses: a person's own words
+ * stay; a reply made under a memory receipt, a copy of one, or anything this
+ * cannot look up is left out. Only the newest lines are looked at. */
+export function replayWithoutMemory<T extends ReplayMessage>(threadId: string, messages: readonly T[]): T[] {
+  return messages.slice(-200).filter(message => {
+    if (message.role === "user") return true;
+    try { return !message.copyOf && !messageMadeWithMemory(threadId, message.id); } catch { return false; }
+  });
+}
+
+/** How many of a conversation's newest text lines a turn's replay check covers.
+ * A turn replays only the newest 40 (index.ts), and a withheld line is replaced
+ * by an older one, so three times that leaves room for most of them to be
+ * withheld and the transcript to still fill. Older lines are never replayed,
+ * so nothing outside this window reaches a bot or is recalled from it. */
+export const REPLAY_WINDOW_TEXT_LINES = 120;
+/** Hard cap on messages in the window, however many non-text lines (tool
+ * activity, cards) sit between the text lines. */
+export const REPLAY_WINDOW_MESSAGES = 1000;
+/** The newest messages a turn can replay: back to the REPLAY_WINDOW_TEXT_LINES-th
+ * text line from the end, never more than REPLAY_WINDOW_MESSAGES. */
+export function recentReplayWindow<T extends ReplayMessage & { kind?: string; text?: unknown }>(messages: readonly T[]): T[] {
+  let lines = 0, start = messages.length;
+  while (start > 0 && messages.length - start < REPLAY_WINDOW_MESSAGES) {
+    start--;
+    const message = messages[start];
+    if (message.kind === "text" && message.text && ++lines >= REPLAY_WINDOW_TEXT_LINES) break;
+  }
+  return messages.slice(start);
+}
+/** filterMemoryReplay for a direct chat's turn: only the recent window is
+ * checked, and a line whose check runs past its budget is withheld instead of
+ * failing the turn. A conversation of any length replays (and recalls) its
+ * recent lines in full; what it cannot verify it does not show. */
+export function filterMemoryReplayRecent<T extends ReplayMessage & { kind?: string; text?: unknown }>(threadId: string, messages: readonly T[], access: MemoryAccess, options: { persist?: boolean } = {}): T[] {
+  return filterMemoryReplay(threadId, recentReplayWindow(messages), access, { ...options, failClosed: true });
 }

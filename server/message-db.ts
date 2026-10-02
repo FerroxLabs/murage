@@ -10,6 +10,7 @@
 // Legacy JSON thread files import lazily: the first read of a thread with
 // no rows pulls the old file in, after which the DB is the source of
 // truth (the JSON file is left behind as a one-time backup).
+import { bumpForMessage, bumpMessagesVersion } from "./inbox-version.ts";
 import { chmodSync, readFileSync, renameSync } from "node:fs";
 
 import { database as db, closeDatabase, transaction } from "./database.ts";
@@ -183,6 +184,7 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
     }
     writeActiveLeaf(threadId, activeLeafId);
     db().exec("COMMIT");
+    bumpMessagesVersion();
   } catch (error) {
     db().exec("ROLLBACK");
     throw error;
@@ -203,6 +205,7 @@ function writeMessage(threadId: string, message: Message): void {
     .prepare("INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .run(threadId, message.id, message.at, message.role, message.kind, message.text ?? null, JSON.stringify(message));
   captureMessage(db(), threadId, message);
+  bumpForMessage(message);
 }
 
 export function insertMessage(threadId: string, message: Message): void {
@@ -224,6 +227,7 @@ export function updateMessage(threadId: string, message: Message): void {
     database.prepare("UPDATE messages SET at=?, role=?, kind=?, text=?, json=? WHERE thread_id=? AND id=?")
       .run(message.at,message.role,message.kind,message.text??null,JSON.stringify(message),threadId,message.id);
     captureMessage(database,threadId,message);
+    bumpForMessage(message);
   });
 }
 
@@ -333,6 +337,7 @@ export function deleteThread(threadId: string): void {
     captureThreadDeletion(database,threadId);
     database.prepare("DELETE FROM messages WHERE thread_id=?").run(threadId);
     database.prepare("DELETE FROM thread_state WHERE thread_id=?").run(threadId);
+    bumpMessagesVersion();
   });
 }
 

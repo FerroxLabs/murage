@@ -154,3 +154,33 @@ test("Allow on a card that stopped being quick answers nothing and opens the car
   assert.equal(posts.length,0);assert.deepEqual(opened,[{kind:"approval",botId:"b1",threadId:"t1",messageId:"m1"}]);
   assert.ok(f.events.some(event=>/changed/.test(event)));f.lifecycle.dispose();
 });
+test("the tray reads the Inbox on a change notice, with a slow fallback, not every 5 s",async()=>{
+  const f=fixture();let reads=0,notify=null,stopped=0,tick=null,clock=1_000_000;
+  const options={...f.options,now:()=>clock,harness:{get:async()=>{reads++;return {needsYou:0,items:[]};},post:async()=>({})},
+    watch:cb=>{notify=cb;return()=>{stopped++;};},setInterval:fn=>{tick=fn;return {unref(){}};}};
+  const lifecycle=createBackgroundLifecycle(options);await lifecycle.start();
+  assert.equal(reads,1,"one read at start");
+  for(let i=0;i<10;i++){clock+=5000;tick();await new Promise(resolve=>setImmediate(resolve));}
+  assert.equal(reads,1,"ten 5 s beats with no notice read nothing");
+  notify({});await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,2,"a change notice reads once");
+  clock+=61_000;tick();await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,3,"the 60 s fallback reads once");
+  notify({scale:2});await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,4);
+  clock+=61_000;tick();await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,4,"a backed-off server doubles the fallback");
+  clock+=61_000;tick();await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,5);
+  lifecycle.dispose();assert.equal(stopped,1);
+});
+test("a change notice that lands while a tray read is in flight is not lost",async()=>{
+  const f=fixture();let reads=0,notify=null,tick=null,clock=1_000_000,hold=null;
+  const options={...f.options,now:()=>clock,
+    harness:{get:async()=>{reads++;if(reads===2)await new Promise(resolve=>{hold=resolve;});return {needsYou:0,items:[]};},post:async()=>({})},
+    watch:cb=>{notify=cb;return()=>{};},setInterval:fn=>{tick=fn;return {unref(){}};}};
+  const lifecycle=createBackgroundLifecycle(options);await lifecycle.start();
+  notify({});await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,2,"the notice starts a read");
+  // The server writes again and says so while that read is still out: the
+  // read may have been answered before the write, so it cannot count as fresh.
+  notify({});await new Promise(resolve=>setImmediate(resolve));
+  hold();for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));
+  clock+=5000;tick();for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(reads,3,"the next beat reads again rather than waiting a minute");
+  lifecycle.dispose();
+});

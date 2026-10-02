@@ -26,6 +26,7 @@ import { remoteWorkDirectory,remoteSshDirectory,prepareRemoteFolder,remoteContro
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
+import { watchInboxChanges } from "./inbox-watch.mjs";
 import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
 import { createRequire } from "node:module";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -2544,6 +2545,13 @@ async function harnessJson(route,body){
   if(!response.ok)throw new Error(typeof value?.error==="string"?value.error:"Murage could not do that.");
   return value;
 }
+// The tray's Inbox change watcher (electron/inbox-watch.mjs), bound to this
+// process's server port and desktop surface proof.
+const watchTrayInbox=onChange=>watchInboxChanges(onChange,{
+  ready:()=>serverReady&&Boolean(desktopSurfaceSecret)&&!desktopShutdownStarted,
+  url:()=>`http://127.0.0.1:${SERVER_PORT}/api/events?screens=off`,
+  headers:()=>({accept:"text/event-stream","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret}),
+});
 function initializeBackgroundLifecycle(){
   const profileDir=desktopDataDir??(process.env.MURAGE_DATA_DIR&&process.env.MURAGE_USER_DATA?fs.realpathSync(process.env.MURAGE_DATA_DIR):null);
   const preferenceFile=profileDir?path.join(profileDir,"startup-background.json"):null;
@@ -2567,6 +2575,7 @@ function initializeBackgroundLifecycle(){
       else if(shown!==view.attention){tray.setImage(trayImage(view.attention));shown=view.attention;}
     };})(),
     harness:{get:route=>harnessJson(route),post:(route,body)=>harnessJson(route,body)},
+    watch:watchTrayInbox,
     openTarget:target=>sendWhenLoaded("tray:open",target),
     checkForUpdates:app.isPackaged?()=>{checkForUpdatesNow();}:undefined,
     setTrayMenu:(tray,items)=>tray.setContextMenu(Menu.buildFromTemplate(items)),

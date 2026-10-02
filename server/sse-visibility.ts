@@ -245,6 +245,7 @@ export const KNOWN_FRAME_KINDS = [
   "bot.deleted",
   "group.deleted",
   "config",
+  "inbox.changed",
 ] as const;
 
 /** Read the conversation a frame is about out of its payload.
@@ -297,6 +298,10 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
     // than left to the default branch so that "workspace" is a decision
     // somebody made about this kind, not a thing that happened to it.
     case "config":
+      return WORKSPACE;
+    // Content-free: says the Inbox changed and carries no conversation, bot or
+    // text, so reaching every open stream leaks nothing.
+    case "inbox.changed":
       return WORKSPACE;
     default: {
       // A frame this module has not been taught. Harness frames name their

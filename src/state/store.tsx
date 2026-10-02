@@ -3,6 +3,7 @@
 // stream from the harness server into local state. The reducer stays
 // pure; everything async lives in the wrapped dispatch + SSE fold.
 import { requestFailedSentence } from "@/lib/request-failed";
+import { emitInboxChanged } from "@/lib/inbox-changed";
 import type { TaskResourceWait } from "@/lib/resource-wait";
 import {
   createContext,
@@ -3003,6 +3004,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // server replays what we missed when it can, and re-downloading every
     // transcript on a reconnect it already covered is pure waste.
     handleFrame = (frame, replayed = false) => {
+      if (frame.kind === "inbox.changed") { emitInboxChanged(frame.pollScale); return; }
       if (frame.kind === "config") bumpPeripheralVersion("config", "instances");
       else if (frame.kind === "routine" || frame.kind === "routine.deleted" || frame.kind === "routine.run") {
         bumpPeripheralVersion("routines");

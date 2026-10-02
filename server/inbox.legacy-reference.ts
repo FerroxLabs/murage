@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// FROZEN COPY of server/inbox.ts at ad8975c7 (0.1.61), kept only so inbox.perf.test.ts can prove the rewritten queries return identical output. Do not edit or import from product code.
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InboxItem, InboxPage, InboxQuery, InboxStateUpdate } from "../shared/inbox.ts";
 import { INBOX_DECISION_STATUSES, INBOX_TO_READ_STATUSES } from "../shared/inbox.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { type RoutineRunFact, connectionsToRestore, rollUpRoutineRuns } from "./inbox-rollup.ts";
-import { bumpMessagesVersion, messagesVersion } from "./inbox-version.ts";
 
 /** The two status lists as SQL literals. Built from the shared constants so
  *  the query, the counts and the tabs cannot drift: a status added in one
@@ -45,9 +46,7 @@ const text = (value: unknown, limit = 280) => redactSecretsInText(typeof value =
 export function initializeInbox(db: DatabaseSync) {
   db.exec(`CREATE TABLE IF NOT EXISTS inbox_item_state (
     source_key TEXT PRIMARY KEY, read_version TEXT, read_at INTEGER, snoozed_until INTEGER);
-    CREATE INDEX IF NOT EXISTS messages_inbox_kind_thread_at ON messages(kind,thread_id,at DESC);
-    -- The projection starts from role='bot' and a kind list, so role leads.
-    CREATE INDEX IF NOT EXISTS messages_inbox ON messages(role,kind,thread_id,at);`);
+    CREATE INDEX IF NOT EXISTS messages_inbox_kind_thread_at ON messages(kind,thread_id,at DESC);`);
   // Cleared: set aside by the owner until something newer happens to it.
   // Added after the table shipped, so an existing database gains the column.
   const columns = db.prepare("PRAGMA table_info(inbox_item_state)").all() as Array<{ name: string }>;
@@ -58,16 +57,8 @@ export function initializeInbox(db: DatabaseSync) {
 // resolved copy wins over a replayed pending request with the same identity.
 // No secret/connector descriptions, option subtitles or tool commands enter
 // the projection. Run output is redacted again at the response boundary.
-//
-// DISK BURN (0.1.58 on): raw used to carry the whole message json, so the
-// window sort in `ranked` had to materialise every message body and spilled
-// SQLite temp files on every poll. It now carries only the columns extracted
-// from the json. The page query joins the json back for the rows it returns,
-// because the read mark is a hash of the full message.
-const buildSource = (rawFilter: string) => `WITH raw AS (
-  SELECT m.rowid AS source_row, m.thread_id, m.id AS message_id, m.at, m.kind,
-    COALESCE(json_extract(m.json,'$.card.expired'),0) AS expired,
-    json_extract(m.json,'$.routineRun.runId') AS run_id, json_extract(m.json,'$.routineRun.routineId') AS routine_id,
+const SOURCE = `WITH raw AS (
+  SELECT m.rowid AS source_row, m.thread_id, m.id AS message_id, m.at, m.kind, m.json,
     json_array(m.thread_id,m.kind,CASE m.kind
       WHEN 'options' THEN COALESCE(json_extract(m.json,'$.card.requestId'),json_extract(m.json,'$.card.routineRequest.requestId'),json_extract(m.json,'$.card.skillRequest.requestId'),m.id)
       WHEN 'secret' THEN COALESCE(json_extract(m.json,'$.secret.requestKey'),m.id)
@@ -140,7 +131,7 @@ const buildSource = (rawFilter: string) => `WITH raw AS (
       WHEN 'routine.run' THEN 'routine' WHEN 'goal.run' THEN 'routine'
       ELSE 'result' END AS kind_segment
   FROM messages m
-  WHERE m.role='bot' AND m.thread_id IN (SELECT value FROM json_each(?))${rawFilter}
+  WHERE m.role='bot' AND m.thread_id IN (SELECT value FROM json_each(?))
     AND m.kind IN ('options','secret','connector','routine.run','goal.run','activity','text')
     AND CASE m.kind
       WHEN 'options' THEN json_type(m.json,'$.card.requestId')='text' OR json_type(m.json,'$.card.routineRequest')='object' OR json_type(m.json,'$.card.skillRequest')='object'
@@ -210,15 +201,8 @@ const buildSource = (rawFilter: string) => `WITH raw AS (
   FROM ranked r LEFT JOIN inbox_item_state s ON s.source_key=r.source_key
   WHERE position=1 AND NOT(status='completed' AND length(trim(summary))=0)
 ) `;
-const SOURCE = buildSource("");
-/** Same projection restricted to the kinds that can be kind_segment
- *  'routine' (the only rows the rollup reads): routine and goal runs AND
- *  failed tool activity, which raw files under 'routine' (a provider error is
- *  routine news, and its 401s feed connectionsToRestore). Partitions never
- *  cross kinds, so the rows are identical. */
-const ROUTINE_SOURCE = buildSource("\n    AND m.kind IN ('routine.run','goal.run','activity')");
 interface Row {
-  source_key: string; thread_id: string; message_id: string; at: number; kind: string; expired: number; json: string;
+  source_key: string; thread_id: string; message_id: string; at: number; kind: string; json: string;
   status: string; title: string; summary: string; segment: string; decision: number; to_read: number; read_version: string | null; snoozed_until: number | null; cleared_at: number | null; copies: number;
 }
 /** Routine runs, oldest first, for the rollup. Bounded: a workspace that has
@@ -234,15 +218,12 @@ const ROUTINE_ROW_LIMIT = 2_000;
  *  which is the honest reading: a renamed routine is a different thing in the
  *  owner's head, and the alternative (matching loosely) would merge two real
  *  routines that happen to share a name across bots. */
-interface RoutineRow { thread_id: string; message_id: string; title: string; summary: string; status: string; at: number; decision: number; run_id: unknown; routine_id: unknown }
-/** The SQL half of routineFacts: the only part that reads the table, so the only part worth caching. */
-function routineRows(db: DatabaseSync, allowed: string, now: number): RoutineRow[] {
-  return db.prepare(ROUTINE_SOURCE + `SELECT thread_id, message_id, title, summary, status, at, decision, run_id, routine_id FROM items
+function routineFacts(db: DatabaseSync, allowed: string, threads: InboxAccess["threads"], now: number, records: readonly InboxRoutineRun[] = []): RoutineRunFact[] {
+  const rows = db.prepare(SOURCE + `SELECT thread_id, message_id, title, summary, status, at, decision,
+    json_extract(json,'$.routineRun.runId') AS run_id, json_extract(json,'$.routineRun.routineId') AS routine_id FROM items
     WHERE kind_segment='routine' AND at>=? ORDER BY at DESC LIMIT ?`)
-    .all(allowed, now - ROUTINE_WINDOW_MS, ROUTINE_ROW_LIMIT) as unknown as RoutineRow[];
-}
-function routineFacts(sqlRows: readonly RoutineRow[], threads: InboxAccess["threads"], now: number, records: readonly InboxRoutineRun[] = []): RoutineRunFact[] {
-  const rows = sqlRows.filter(row => row.at >= now - ROUTINE_WINDOW_MS);
+    .all(allowed, now - ROUTINE_WINDOW_MS, ROUTINE_ROW_LIMIT) as unknown as
+    Array<{ thread_id: string; message_id: string; title: string; summary: string; status: string; at: number; decision: number; run_id: unknown; routine_id: unknown }>;
   const carded = new Set(rows.map(row => row.run_id).filter((id): id is string => typeof id === "string"));
   return [...rows.map(row => ({
     // one routine is one row whichever record a run came from
@@ -320,61 +301,6 @@ function queryValues(query: InboxQuery) {
 }
 
 export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now = Date.now()): InboxPage {
-  return inboxPage(db, query, access, now, false);
-}
-
-/** What the SQL half of an Inbox answer holds: everything that costs a scan. */
-interface InboxData {
-  rows: Row[]; total: number; approvals: number; questions: number; connections: number; decisions: number; toRead: number;
-  questionThreads: Record<string, number>;
-  /** The first moment a snooze in the answer runs out, after which the answer is stale. */
-  wakeAt: number; filledAt: number;
-}
-const ENTRY_LIMIT = 32;
-/** Per database handle, for one messages version: the answers, and the
- *  routine rows by audience. The routine rows do not depend on the view, page
- *  or search, and can be thousands of rows with run summaries in them, so they
- *  are held once per audience rather than once per answer. */
-interface Held { version: number; entries: Map<string, InboxData>; routines: Map<string, RoutineRow[]> }
-const answers = new WeakMap<DatabaseSync, Held>();
-function heldFor(db: DatabaseSync): Held {
-  const version = messagesVersion();
-  let current = answers.get(db);
-  if (!current || current.version !== version) { current = { version, entries: new Map(), routines: new Map() }; answers.set(db, current); }
-  return current;
-}
-function cachedRoutineRows(db: DatabaseSync, allowed: string, now: number): RoutineRow[] {
-  const { routines } = heldFor(db);
-  let rows = routines.get(allowed);
-  if (!rows) {
-    rows = routineRows(db, allowed, now);
-    if (routines.size >= ENTRY_LIMIT) routines.delete(routines.keys().next().value as string);
-    routines.set(allowed, rows);
-  }
-  return rows;
-}
-
-/** The same answer as listInbox, with the scans memoised per (access, view,
- *  page) until a message or an Inbox mark changes (inbox-version.ts) or a
- *  snooze runs out. The sidebar, the tray, the push badge and the per-bot
- *  needs-you list all poll this; none of them should cost a scan when nothing
- *  happened. Only the SQL half is kept: roll-ups and restore rows are cheap
- *  and depend on the clock, so they are recomputed from the kept rows. */
-export function listInboxCached(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now = Date.now()): InboxPage {
-  return inboxPage(db, query, access, now, true);
-}
-
-function cachedAnswer(db: DatabaseSync, key: string, now: number, load: () => InboxData): InboxData {
-  const { entries } = heldFor(db);
-  const hit = entries.get(key);
-  if (hit && now >= hit.filledAt && now < hit.wakeAt) return hit;
-  const data = load();
-  if (entries.size >= ENTRY_LIMIT) entries.delete(entries.keys().next().value as string);
-  entries.set(key, data);
-  return data;
-}
-
-function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now: number, cache: boolean): InboxPage {
   const allowed = scope(access), { view, page, pageSize, search } = queryValues(query);
   const decisions = view === "decisions";
   // A DECISION IS A DECISION WHATEVER SHAPE IT ARRIVED IN.
@@ -401,7 +327,7 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
   // sidebar badge asks for `decisions` by name; narrowing it here would have
   // left that number silently missing every approval and every dead
   // connection.
-  const predicate = `${decisions ? "expired=0 AND" : ""}
+  const predicate = `${decisions ? "COALESCE(json_extract(json,'$.card.expired'),0)=0 AND" : ""}
     (?='all'
       OR (?='approvals' AND owed_or_over=1 AND segment='approval')
       OR (?='decisions' AND decision=1)
@@ -419,6 +345,10 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
   // pending status and returns the moment the snooze expires.
   const params = [allowed, view, view, view, view, view, view, view, view, query.includeSnoozed ? 1 : 0, now, search, search,
     JSON.stringify(access.threads.map(thread => ({ threadId: thread.threadId, label: text(thread.label, 100) }))), search];
+  const total = Number(db.prepare(SOURCE + `SELECT COUNT(*) AS total FROM items WHERE ${predicate}`).get(...params)?.total ?? 0);
+  // Owed first. A tab that holds both must not float a request that expired
+  // last week above one that is waiting now.
+  const rows = db.prepare(SOURCE + `SELECT * FROM items WHERE ${predicate} ORDER BY decision DESC,at DESC,source_key LIMIT ? OFFSET ?`).all(...params, pageSize, page * pageSize) as unknown as Row[];
   // Counts describe the visible page's filter, not hidden audiences. Reading
   // a request never removes it from the decisions count, because reading is
   // not answering; reading DOES clear it from the to-read count, because
@@ -430,47 +360,25 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
   // whole redesign: the owner's badge said thirty six because it counted
   // things that happened. A number he cannot act on is a number he stops
   // reading, and then the one he could act on is invisible inside it.
-  //
-  // All of them come from ONE statement grouped by conversation (the old code
-  // ran the projection once per number). The per-conversation question count
-  // the sidebar badges with is that grouping, so it costs nothing extra.
-  //
-  // Never opened, rather than "not current", for the to-read count. The read
-  // mark is a hash of the message computed in JS, and SQL cannot recompute it,
-  // so an item that was read and has since changed is counted as read here.
-  // Erring that way keeps the badge quiet rather than crying wolf, and the row
-  // itself still shows as unread once the list is open.
-  const load = (): InboxData => {
-    const grouped = db.prepare(SOURCE + `SELECT thread_id,
-      SUM(CASE WHEN ${predicate} THEN 1 ELSE 0 END) AS total,
-      SUM(CASE WHEN decision=1 AND segment='approval' AND ${live} THEN 1 ELSE 0 END) AS approvals,
-      SUM(CASE WHEN decision=1 AND segment='question' AND ${live} THEN 1 ELSE 0 END) AS questions,
-      SUM(CASE WHEN decision=1 AND segment='connection' AND ${live} THEN 1 ELSE 0 END) AS connections,
-      SUM(CASE WHEN decision=1 AND ${live} THEN 1 ELSE 0 END) AS decisions,
-      SUM(CASE WHEN to_read=1 AND read_version IS NULL AND ${live} THEN 1 ELSE 0 END) AS to_read
-      FROM items GROUP BY thread_id ORDER BY thread_id`)
-      .all(...params, now, now, now, now, now) as unknown as Array<Record<"thread_id" | "total" | "approvals" | "questions" | "connections" | "decisions" | "to_read", string | number | null>>;
-    const sum = (key: "total" | "approvals" | "questions" | "connections" | "decisions" | "to_read") => grouped.reduce((n, row) => n + Number(row[key] ?? 0), 0);
-    // Owed first. A tab that holds both must not float a request that expired
-    // last week above one that is waiting now. The json comes back only for the
-    // rows on this page: the read mark is a hash of the whole message.
-    const order = "decision DESC,at DESC,source_key";
-    const rows = db.prepare(SOURCE + `SELECT p.*, (SELECT json FROM messages WHERE rowid=p.source_row) AS json
-      FROM (SELECT * FROM items WHERE ${predicate} ORDER BY ${order} LIMIT ? OFFSET ?) p ORDER BY ${order}`)
-      .all(...params, pageSize, page * pageSize) as unknown as Row[];
-    // THE SAME QUESTIONS, SPLIT BY CONVERSATION, so a row can carry a question
-    // badge that attributes part of this number and never adds to it; only the
-    // view the sidebar polls.
-    const questionThreads = decisions ? Object.fromEntries(grouped.filter(row => Number(row.questions ?? 0) > 0).map(row => [String(row.thread_id), Number(row.questions)])) : {};
-    const next = db.prepare("SELECT MIN(snoozed_until) AS next FROM inbox_item_state WHERE snoozed_until>?").get(now)?.next;
-    return { rows, total: sum("total"), approvals: sum("approvals"), questions: sum("questions"), connections: sum("connections"),
-      decisions: sum("decisions"), toRead: sum("to_read"), questionThreads,
-      wakeAt: typeof next === "number" ? next : Infinity, filledAt: now };
-  };
-  const data = cache ? cachedAnswer(db, JSON.stringify([view, page, pageSize, search, query.includeSnoozed === true, allowed, params[params.length - 2]]), now, load) : load();
-  const { rows, total } = data;
-  const approvalCount = data.approvals, questionCount = data.questions, questionThreads = decisions ? data.questionThreads : undefined;
-  const connectionCount = data.connections, decisionCount = data.decisions, toReadCount = data.toRead;
+  const segmentCount = (segment: string) => Number(db.prepare(SOURCE
+    + `SELECT COUNT(*) AS n FROM items WHERE decision=1 AND segment=? AND ${live}`).get(allowed, segment, now)?.n ?? 0);
+  const approvalCount = segmentCount("approval");
+  const questionCount = segmentCount("question");
+  // THE SAME QUESTIONS, SPLIT BY CONVERSATION, so a row can carry a question
+  // badge that attributes part of this number and never adds to it. Same
+  // predicate as `questionCount`, grouped; only the view the sidebar polls.
+  const questionThreads = decisions ? Object.fromEntries((db.prepare(SOURCE
+    + `SELECT thread_id, COUNT(*) AS n FROM items WHERE decision=1 AND segment='question' AND ${live} GROUP BY thread_id ORDER BY thread_id`)
+    .all(allowed, now) as Array<{ thread_id: string; n: number }>).map(row => [row.thread_id, Number(row.n)])) : undefined;
+  const connectionCount = segmentCount("connection");
+  const decisionCount = Number(db.prepare(SOURCE
+    + `SELECT COUNT(*) AS n FROM items WHERE decision=1 AND ${live}`).get(allowed, now)?.n ?? 0);
+  // Never opened, rather than "not current". The read mark is a hash of the
+  // message computed in JS, and SQL cannot recompute it, so an item that was
+  // read and has since changed is counted as read here. Erring that way keeps
+  // the badge quiet rather than crying wolf, and the row itself still shows
+  // as unread once the list is open.
+  const toReadCount = Number(db.prepare(SOURCE + `SELECT COUNT(*) AS n FROM items WHERE to_read=1 AND read_version IS NULL AND ${live}`).get(allowed, now)?.n ?? 0);
   // THE DEAD CREDENTIAL NOTHING ELSE IN THE SYSTEM IS LOOKING FOR.
   //
   // A connector is checked when somebody is watching it being authorized and
@@ -489,7 +397,7 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
   // and `connections`, and those counts label every tab. Reading it on three
   // views only made the same Inbox say "Needs you (1)" on Results and "(2)" on
   // Needs you. The rows themselves are still listed only where they belong.
-  const rollups = rollUpRoutineRuns(routineFacts(cache ? cachedRoutineRows(db, allowed, now) : routineRows(db, allowed, now), access.threads, now, access.routineRuns), now);
+  const rollups = rollUpRoutineRuns(routineFacts(db, allowed, access.threads, now, access.routineRuns), now);
   const listsRestore = view === "routines" || view === "connections" || decisions;
   // AND IT ASKS ONLY WHEN NOBODY ELSE IS ASKING.
   //
@@ -534,21 +442,8 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
 export function owedThreads(db: DatabaseSync, access: InboxAccess): Set<string> {
   const allowed = scope(access);
   const rows = db.prepare(SOURCE + `SELECT DISTINCT thread_id FROM items
-    WHERE decision=1 AND expired=0`).all(allowed) as Array<{ thread_id: string }>;
+    WHERE decision=1 AND COALESCE(json_extract(json,'$.card.expired'),0)=0`).all(allowed) as Array<{ thread_id: string }>;
   return new Set(rows.map(row => row.thread_id));
-}
-
-const owedAnswers = new WeakMap<DatabaseSync, { version: number; entries: Map<string, Set<string>> }>();
-/** owedThreads, kept until a message or an Inbox mark changes. The snooze
- *  sweep asks on every beat while any snooze exists; the answer only moves
- *  when something is written. A fresh copy each call, so callers may keep it. */
-export function owedThreadsCached(db: DatabaseSync, access: InboxAccess): Set<string> {
-  const allowed = scope(access), version = messagesVersion();
-  let held = owedAnswers.get(db);
-  if (!held || held.version !== version) { held = { version, entries: new Map() }; owedAnswers.set(db, held); }
-  let hit = held.entries.get(allowed);
-  if (!hit) { hit = owedThreads(db, access); if (held.entries.size >= ENTRY_LIMIT) held.entries.clear(); held.entries.set(allowed, hit); }
-  return new Set(hit);
 }
 
 /** State updates cannot change source status, approve requests or run tools. */
@@ -561,7 +456,7 @@ export function updateInboxState(db: DatabaseSync, update: InboxStateUpdate, acc
     || (update.snoozedUntil !== undefined && update.snoozedUntil !== null && (!Number.isSafeInteger(update.snoozedUntil) || update.snoozedUntil <= now || update.snoozedUntil > now + 30 * 24 * 60 * 60 * 1000))
     || (update.read === undefined && update.snoozedUntil === undefined && update.cleared === undefined)) reject(400, "Invalid Inbox update.");
   const sourceKey = Buffer.from(update.id, "base64url").toString("utf8");
-  const row = db.prepare(SOURCE + "SELECT items.*, (SELECT json FROM messages WHERE rowid=items.source_row) AS json FROM items WHERE source_key=?").get(allowed, sourceKey) as unknown as Row | undefined;
+  const row = db.prepare(SOURCE + "SELECT * FROM items WHERE source_key=?").get(allowed, sourceKey) as unknown as Row | undefined;
   if (!row) throw new InboxError(404, "Inbox item is unavailable.");
   if (version(row.json) !== update.version) reject(409, "This item changed. Refresh Inbox before updating it.");
   // Clearing is never answering: something still waiting on the owner is
@@ -575,16 +470,15 @@ export function updateInboxState(db: DatabaseSync, update: InboxStateUpdate, acc
       cleared_at=CASE WHEN ? THEN excluded.cleared_at ELSE inbox_item_state.cleared_at END`)
     .run(sourceKey, update.read === true ? update.version : null, update.read === true ? now : null, update.snoozedUntil ?? null, update.cleared ? now : null,
       update.read !== undefined ? 1 : 0, update.read !== undefined ? 1 : 0, update.snoozedUntil !== undefined ? 1 : 0, update.cleared ? 1 : 0);
-  bumpMessagesVersion();
   return { ok: true as const };
 }
 
 /** Root supplies its existing desktop proof and exact permitted task roster.
  * Kept transport-independent so HTTP fixtures exercise this same boundary. */
-export function inboxRequest(db: DatabaseSync, request: { method: string; path: string; query?: InboxQuery; body?: InboxStateUpdate }, access: InboxAccess, options: { cache?: boolean } = {}) {
+export function inboxRequest(db: DatabaseSync, request: { method: string; path: string; query?: InboxQuery; body?: InboxStateUpdate }, access: InboxAccess) {
   try {
     scope(access);
-    if (request.method === "GET" && request.path === "/api/inbox") return { status: 200, body: (options.cache ? listInboxCached : listInbox)(db, request.query ?? {}, access) };
+    if (request.method === "GET" && request.path === "/api/inbox") return { status: 200, body: listInbox(db, request.query ?? {}, access) };
     if (request.method === "POST" && request.path === "/api/inbox/state") return { status: 200, body: updateInboxState(db, request.body!, access) };
     return { status: 404, body: { error: "Inbox is unavailable." } };
   } catch (error) {

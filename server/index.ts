@@ -44,7 +44,7 @@ import { buildMemoryBundle } from "./memory/bundle.ts";
 import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfterReset, pinnedMemoryFailure, withheldPinLine } from "./memory/dispatch.ts";
 import { memoryAccess, backgroundMemoryAudience, type MemoryAccess } from "./memory/policy.ts";
 import { memoryState } from "./memory/repository.ts";
-import { continuationMemoryRevoked, filterMemoryReplay, readerWithheldMessage } from "./memory/disclosures.ts";
+import { continuationMemoryRevoked, filterMemoryReplayRecent, memoryReplayLimited, noteReplayLimitDegraded, readerWithheldMessage, replayWithoutMemory } from "./memory/disclosures.ts";
 import { roomTranscriptForTurn, roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import { memoryAgentRoute } from "./memory/routes.ts";
 import { MemoryWorkerController } from "./memory/worker-controller.ts";
@@ -66,7 +66,9 @@ import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PE
 import { requiresDesktopAuthority } from "./desktop-policy.ts";
 import { assertBrowserProfilePrecondition } from "./browser-profile-precondition.ts";
 import { database } from "./database.ts";
-import { inboxRequest, owedThreads, type InboxRoutineRun } from "./inbox.ts";
+import { inboxRequest, owedThreadsCached, type InboxRoutineRun } from "./inbox.ts";
+import { frameChangesInbox, onMessagesChanged } from "./inbox-version.ts";
+import { ioBudget } from "./io-budget.ts";
 import { companionInboxRoute, inboxAccessFor, inboxDoor, inboxThreads } from "./inbox-access.ts";
 import { withBackupNotices } from "./inbox-backup-notices.ts";
 import { hasThreadSnooze, sweepThreadSnoozes, threadSnoozeRequest, unsnoozeThread, type ThreadSnoozeDeps } from "./thread-snooze.ts";
@@ -3306,6 +3308,21 @@ function broadcast(payload: Record<string, unknown>) {
   }
 }
 
+// THE INBOX POLLERS LISTEN INSTEAD OF ASKING. A message the Inbox can show, or
+// an Inbox mark, was written: say so once (content-free, desktop stream only)
+// and let the sidebar and the tray re-read. Coalesced to one frame a second so
+// a burst of writes is one re-read. The frame also carries the watchdog's
+// poll scale (io-budget.ts) so the fallback polls slow down when the budget is blown.
+let inboxChangedTimer: ReturnType<typeof setTimeout> | null = null;
+function announceInboxChanged() {
+  if (inboxChangedTimer) return;
+  inboxChangedTimer = setTimeout(() => { inboxChangedTimer = null; broadcast({ kind: "inbox.changed", pollScale: ioBudget.pollScale() }); }, 1000);
+  inboxChangedTimer.unref?.();
+}
+onMessagesChanged(announceInboxChanged);
+ioBudget.setOnScale(() => broadcast({ kind: "inbox.changed", pollScale: ioBudget.pollScale() }));
+ioBudget.start();
+
 // ── server-side event folding (upstream's ingestion worker, miniature) ──
 // The canonical stream is the source of truth; the persisted transcript
 // and every client view are projections of it.
@@ -3351,7 +3368,7 @@ function inboxRoutineRuns(): InboxRoutineRun[] {
 const threadSnoozeDeps: ThreadSnoozeDeps = {
   now: () => Date.now(),
   threads: () => new Set(inboxAccessThreads().map(thread => thread.threadId)),
-  owed: () => owedThreads(database(), { owner: true, threads: inboxAccessThreads() }),
+  owed: () => owedThreadsCached(database(), { owner: true, threads: inboxAccessThreads() }),
   wake: (threadId) => {
     const bot = store.botByThread(threadId);
     if (bot) { store.patchTask(bot.id, threadId, { unread: true }); return; }
@@ -6694,6 +6711,7 @@ async function startTurn(
       await pendingCancelledProviderHandshakes.waitForClear(threadId);
       let memoryReceipt: MemoryDispatchReceipt | undefined;
       if(memoryState().mode==="active") {
+        try {
         const access=turnMemoryAccess(bot.id,threadId,dispatchClaimId);
         const revoked=Boolean(resumeCursor && continuationMemoryRevoked(threadId,instanceId,String(resumeCursor),access));
         // Transcript-replay drivers hold no session at all, so they always
@@ -6702,7 +6720,7 @@ async function startTurn(
         // "openai-compat"; the driver set is now asserted against the drivers.
         const needsReplay=!resumeCursor || revoked || replaysTranscriptNatively(instance.driverKind);
         if(needsReplay) {
-          const allowed=filterMemoryReplay(threadId,activeMessages,access);
+          const allowed=filterMemoryReplayRecent(threadId,activeMessages,access);
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
@@ -6714,7 +6732,7 @@ async function startTurn(
           // A resumed turn still carries its transcript: an ACP engine whose
           // session/load fails replays it into the new session (#1705), so
           // it must be the authorized history, never the raw branch.
-          const allowed=filterMemoryReplay(threadId,activeMessages,access);
+          const allowed=filterMemoryReplayRecent(threadId,activeMessages,access);
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
@@ -6732,7 +6750,7 @@ async function startTurn(
         let memoryRefreshed=revoked;
         if(resumeCursor && memoryContinuationChanged(bundle,threadId,instanceId,String(resumeCursor))) {
           memoryRefreshed=true;
-          const allowed=filterMemoryReplay(threadId,activeMessages,access);
+          const allowed=filterMemoryReplayRecent(threadId,activeMessages,access);
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
@@ -6750,7 +6768,7 @@ async function startTurn(
           },memoryOptions);
           // The same await can invalidate disclosed history; re-filter with the
           // original authority rather than replaying a pre-reset snapshot.
-          const allowed=filterMemoryReplay(threadId,activeMessages,access);
+          const allowed=filterMemoryReplayRecent(threadId,activeMessages,access);
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
@@ -6761,6 +6779,23 @@ async function startTurn(
         memoryReceipt=new MemoryDispatchReceipt(bundle,access,instanceId);
         memoryDispatches.set(threadId,memoryReceipt);
         if(instance.adapter.capabilities.memoryMcp)integrations.memory=memoryIntegration(bot.id,threadId,dispatchClaimId);
+        } catch (error) {
+          // A long conversation can outgrow what the replay check may read. That
+          // must not fail every turn: run this one without recalled memory and
+          // without disclosures, so nothing crosses an audience it cannot verify.
+          if(!memoryReplayLimited(error))throw error;
+          noteReplayLimitDegraded(threadId);
+          memoryReceipt=undefined;memoryDispatches.delete(threadId);delete integrations.memory;
+          // A resumed session may hold what memory put in it: start a clean one.
+          if(resumeCursor){resumeCursor=undefined;if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);}
+          sessionReset=true;
+          const kept=replayWithoutMemory(threadId,activeMessages);
+          const keptById=new Map(kept.map(message=>[message.id,message]));
+          transcript=kept.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
+            .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,keptById,cfg.profile?.name?.trim()||"User")}));
+          turnText=buildTurnContext({text:turnPrompt,transcript,
+            rewound,memoryRefreshed:true,fresh:false,externallyUpdated:false,replaysNatively:replaysTranscriptNatively(instance.driverKind)}).turnText;
+        }
       }
       if (!markDirectTurnDispatching(bot.id, dispatchClaimId, threadId)) {
         throw new DirectTurnSetupCancelled("turn stopped before dispatch");
@@ -7368,7 +7403,8 @@ routines = new RoutineManager({
   isChannelCurrent: (origin, botId) => !dataWritersStopped && (
     (origin.platform === "slack" && slackBinding?.connectionId === origin.connectionId && slackBinding.chiefBotId === botId && slack?.isCurrent(slackBinding) === true) ||
     (origin.platform === "discord" && discordBinding?.connectionId === origin.connectionId && discordBinding.chiefBotId === botId && discord?.isCurrent(discordBinding) === true)),
-  emit: broadcast,
+  // A run record changes Inbox numbers without a message (frameChangesInbox).
+  emit: (payload) => { broadcast(payload); if (frameChangesInbox(payload)) announceInboxChanged(); },
   channelThread: (botId,principal) => {
     if(!principal)throw new Error("HUMAN_LINK_REQUIRED");
     return humanTask(store,botId,principal);
@@ -11545,13 +11581,14 @@ const server = createServer((req, res) => withToolCallScope(async () => {
       // names the missing folder the way Settings does (0.1.60 Windows final L1).
       const input=z.object({action:z.enum(["report","clear"]),stage:z.string().max(40).optional(),code:z.string().max(80).optional(),path:z.string().max(1024).optional(),folder:z.string().max(120).optional(),notify:z.boolean().optional()}).strict().safeParse(await readBody(req));
       if(!input.success)return json(res,400,{error:"INVALID_BACKUP_FAILURE_NOTICE"});
-      if(input.data.action==="clear"){backupFailedNotice=null;return json(res,200,{cleared:true});}
+      // The notice counts in the Inbox `decisions` badge: say it changed.
+      if(input.data.action==="clear"){backupFailedNotice=null;announceInboxChanged();return json(res,200,{cleared:true});}
       const failure=normalizeCaptureFailure({stage:input.data.stage,code:input.data.code,path:input.data.path});
       if(!failure)return json(res,400,{error:"INVALID_BACKUP_FAILURE_NOTICE"});
       // Backups that can't run at all say what to do in their own words;
       // there is nothing to clear (0.1.60 Windows final D1).
       const sentence=BACKUP_UNAVAILABLE_CODES.includes(failure.code)?captureFailureSentence(failure):`${captureFailureSentence(failure,{folderName:input.data.folder})} Open Settings, then Backups, to clear it and back up again.`;
-      backupFailedNotice={sentence,at:Date.now()};
+      backupFailedNotice={sentence,at:Date.now()};announceInboxChanged();
       // The desktop shows the one notification itself (it owns the window
       // and knows it is the first report of this failure); a banner routed
       // through the window was dropped while the Chief's conversation was
@@ -11633,7 +11670,7 @@ const server = createServer((req, res) => withToolCallScope(async () => {
         query: { view: (url.searchParams.get("view") ?? "decisions") as InboxView, query: url.searchParams.get("query") ?? "",
           page: Number(url.searchParams.get("page") ?? 0), pageSize: Number(url.searchParams.get("pageSize") ?? 25), includeSnoozed: url.searchParams.get("includeSnoozed") === "true" },
         body: method === "POST" ? await readBody(req) : undefined,
-      }, { ...inboxAccessFor(store, inboxDoor(req.headers, url.searchParams)), routineRuns: inboxRoutineRuns() });
+      }, { ...inboxAccessFor(store, inboxDoor(req.headers, url.searchParams)), routineRuns: inboxRoutineRuns() }, { cache: true });
       // A backup held up by a waiting card is said here too, on the desktop,
       // beside the card itself (0.1.60 Linux D6). Not counted: the card is.
       // A backup that stopped is owed and counted (server/inbox-backup-notices.ts).
@@ -11663,7 +11700,7 @@ const server = createServer((req, res) => withToolCallScope(async () => {
     // ordinary approval through /api/threads/:id/respond like the app does.
     if (method === "GET" && path === "/api/desktop/tray") {
       if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "the tray menu is available on the desktop app" });
-      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads: inboxThreads(store), routineRuns: inboxRoutineRuns() });
+      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads: inboxThreads(store), routineRuns: inboxRoutineRuns() }, { cache: true });
       if (result.status !== 200) return json(res, result.status, result.body);
       return json(res, 200, traySummary({
         page: result.body as InboxPage,
@@ -18155,7 +18192,7 @@ const server = createServer((req, res) => withToolCallScope(async () => {
             .map((threadId) => ({ threadId, label: [bot.name, bot.tasks?.find((task) => task.threadId === threadId)?.title].filter(Boolean).join(" · "), botId: bot.id }));
           const scoped = inboxAccessFor(store, door);
           const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: 10 } },
-            { ...scoped, threads: scoped.threads.filter((thread) => threads.some((own) => own.threadId === thread.threadId)) });
+            { ...scoped, threads: scoped.threads.filter((thread) => threads.some((own) => own.threadId === thread.threadId)) }, { cache: true });
           const items = (result.body as { items?: Array<{ title: string; summary: string; at: number; botId?: string }> })?.items ?? [];
           return items.filter((item) => item.botId === botId).map(({ title, summary, at }) => ({ title, summary, at }));
         },

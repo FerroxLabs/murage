@@ -281,7 +281,7 @@ it("uses post-reset bundle preparation in both real dispatch paths before receip
     expect(reset).toBeGreaterThan(-1);
     // the room path reads its transcript through room-transcript.ts, which
     // keeps filterMemoryReplay for every turn that is not an owner audience
-    expect(Math.max(block.lastIndexOf("filterMemoryReplay("),block.lastIndexOf("roomTranscriptForTurn("))).toBeGreaterThan(reset);
+    expect(Math.max(block.lastIndexOf("filterMemoryReplay("),block.lastIndexOf("filterMemoryReplayRecent("),block.lastIndexOf("roomTranscriptForTurn("))).toBeGreaterThan(reset);
     expect(block.indexOf("new MemoryDispatchReceipt(")).toBeGreaterThan(reset);
   }
 });
@@ -293,13 +293,13 @@ it("filters the transcript of a resumed direct turn before dispatch, not only a 
   const source=readFileSync(new URL("../index.ts",import.meta.url),"utf8");
   const direct=source.slice(source.indexOf("      let memoryReceipt: MemoryDispatchReceipt | undefined;"),source.indexOf("      if (!markDirectTurnDispatching"));
   const replay=direct.indexOf("if(needsReplay) {");
-  const resumed=direct.indexOf("} else {",replay);
+  const resumed=direct.indexOf("} else {\n          // A resumed turn",replay);
   const bundle=direct.indexOf("const query=",replay);
   expect(replay).toBeGreaterThan(-1);
   expect(resumed).toBeGreaterThan(replay);
   expect(resumed).toBeLessThan(bundle);
   const branch=direct.slice(resumed,bundle);
-  expect(branch).toContain("filterMemoryReplay(threadId,activeMessages,access)");
+  expect(branch).toContain("filterMemoryReplayRecent(threadId,activeMessages,access)");
   expect(branch).toMatch(/transcript=allowed\./);
 });
 
