@@ -79,6 +79,7 @@ const RELEASE_KEYWORDS: Readonly<Record<string, readonly string[]>> = {
     "transparent background",
     "check this model",
   ],
+  "0.1.62": ["idle murage", "inbox badge", "temporary files", "memory limit", "very long history"],
 };
 
 function changelogPage(release: string): string {
