@@ -213,3 +213,12 @@ export function recentReplayWindow<T extends ReplayMessage & { kind?: string; te
 export function filterMemoryReplayRecent<T extends ReplayMessage & { kind?: string; text?: unknown }>(threadId: string, messages: readonly T[], access: MemoryAccess, options: { persist?: boolean } = {}): T[] {
   return filterMemoryReplay(threadId, recentReplayWindow(messages), access, { ...options, failClosed: true });
 }
+/** A resumed session holds every line it produced. When the replay check
+ * withholds one of them (its receipt no longer holds, or it could not be
+ * verified within budget, which nothing persists), the session must not be
+ * resumed: it would carry what the transcript leaves out (0.1.62 review). */
+export function sessionHoldsWithheldLine<T extends ReplayMessage & { kind?: string; text?: unknown }>(threadId: string, driverInstance: string, nativeSession: string, messages: readonly T[], allowed: readonly T[]): boolean {
+  const kept = new Set(allowed.map(message => message.id));
+  const find = database().prepare("SELECT 1 FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? AND instr(output_message_ids,?)>0 LIMIT 1");
+  return recentReplayWindow(messages).some(message => message.role !== "user" && !kept.has(message.id) && Boolean(find.get(threadId, driverInstance, nativeSession, JSON.stringify(message.id))));
+}

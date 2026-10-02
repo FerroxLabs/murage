@@ -44,6 +44,11 @@ export interface ReplayAudience { policyRevision: number; deletionEpoch: number;
 /** A thread is read whole up to this many receipts, per message past it. */
 export const THREAD_RECEIPT_LIMIT = 2048;
 const COPY_HOPS = 4, COPY_ORIGINS = 64;
+/** Bytes of receipt output lists one check may read. Every output of a native
+ * session is linked to every receipt of that session (disclosures.ts), so the
+ * lists of a long chat grow with the square of its turns: they are bounded by
+ * what they cost to read, not counted as lineage nodes (0.1.62 review). */
+export const OUTPUT_LIST_BYTES = 32 * 1024 * 1024;
 const RECEIPT_COLUMNS = `bundle_id,thread_id,policy_revision,deletion_epoch,state,
   CASE WHEN length(record_versions)<=262144 THEN record_versions END AS record_versions,
   CASE WHEN length(source_versions)<=262144 THEN source_versions END AS source_versions,
@@ -104,14 +109,19 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
   const large = new Map<string,boolean>();
   const outputs = new Map<string,string[]>();
   const memo = new Map<string,boolean>();
-  let receiptCount = 0, nodes = 0;
+  let receiptCount = 0, nodes = 0, outputBytes = 0;
   const charge = (count=1) => { nodes+=count; if(nodes>10000) throw new Error("MEMORY_REPLAY_LIMIT"); };
-  const accept = (rows: Disclosure[]) => {
+  // Receipts found by a per-message lookup: counted once, their lists not read.
+  const matched = new Set<string>();
+  const accept = (rows: Disclosure[], parse = true) => {
     receiptCount+=rows.length;
     if(receiptCount>2*THREAD_RECEIPT_LIMIT)throw new Error("MEMORY_REPLAY_LIMIT");
     for(const row of rows){
       if(row.record_versions===null||row.source_versions===null||row.output_message_ids===null)throw new Error("MEMORY_REPLAY_LIMIT");
-      const ids:string[]=JSON.parse(String(row.output_message_ids));charge(ids.length);
+      if(!parse){charge();matched.add(String(row.bundle_id));continue;}
+      const list=String(row.output_message_ids);
+      outputBytes+=list.length;if(outputBytes>OUTPUT_LIST_BYTES)throw new Error("MEMORY_REPLAY_LIMIT");
+      const ids:string[]=JSON.parse(list);charge();
       outputs.set(String(row.bundle_id),ids);
     }
   };
@@ -125,12 +135,16 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
   /** The receipts that list `messageId` as one of their outputs. */
   const producing = (thread: string, messageId: string, whole: boolean): Disclosure[] => {
     if (whole && !isLarge(thread)) return loadThread(thread).filter(row=>outputs.get(String(row.bundle_id))!.includes(messageId));
-    // An exact quoted match in the JSON array text, confirmed after parsing;
-    // an array too long to read is returned too and refused by accept().
+    // An exact quoted match in the JSON array text; an array too long to read
+    // is returned too and refused by accept(). The lists are not parsed: a
+    // session's lists grow with the square of its turns (0.1.62 review). The
+    // quoted id always matches its own element; anything else it could match
+    // (an id holding an escaped quote) only adds a receipt, which can only
+    // withhold more, never less.
     const rows=db.prepare(`SELECT ${RECEIPT_COLUMNS} FROM memory_disclosures WHERE thread_id=? AND (length(output_message_ids)>262144 OR instr(output_message_ids,?)>0) LIMIT ?`).all(thread,JSON.stringify(messageId),THREAD_RECEIPT_LIMIT+1);
     if(rows.length>THREAD_RECEIPT_LIMIT)throw new Error("MEMORY_REPLAY_LIMIT");
-    accept(rows.filter(row=>!outputs.has(String(row.bundle_id))));
-    return rows.filter(row=>outputs.get(String(row.bundle_id))!.includes(messageId));
+    accept(rows.filter(row=>!outputs.has(String(row.bundle_id))&&!matched.has(String(row.bundle_id))),false);
+    return rows.filter(row=>outputs.get(String(row.bundle_id))?.includes(messageId)??true);
   };
   const visiting = new Set<string>();
   const invalid = (row:Disclosure,depth=0):boolean => {
@@ -274,7 +288,7 @@ export function replayExclusions(threadId: string, messages: readonly ReplayMess
       if(!failClosed)throw error;
       noteWithheldOnError(error);
       // The whole thread is past the read budget: check line by line instead.
-      threadReceipts.clear();outputs.clear();memo.clear();visiting.clear();receiptCount=0;nodes=0;
+      threadReceipts.clear();outputs.clear();memo.clear();visiting.clear();matched.clear();receiptCount=0;nodes=0;outputBytes=0;
     }
     if(rows)for(const row of rows){
       const relevant=outputs.get(String(row.bundle_id))!.filter(id=>wanted.has(id));

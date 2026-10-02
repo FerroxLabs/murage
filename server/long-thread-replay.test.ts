@@ -74,3 +74,78 @@ it("the limit is logged once per conversation", () => {
   expect(warn).toHaveBeenCalledWith("[memory] replay check over limit, turn ran without recalled memory");
   warn.mockRestore();
 });
+
+// Review 0.1.62: a real long chat is ONE native session, and every output in a
+// session is linked to every receipt of that session (linkMemoryDisclosureOutput),
+// so the receipts' output lists grow with the square of the turn count. The
+// replay check charged every listed id, so a few hundred turns ran the budget
+// out and every bot line was withheld: the bot forgot what it had said.
+function oneSession(turns: number) {
+  const a = access();
+  const insert = database().prepare(`INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
+    VALUES(?,'dax-direct','driver','s1','[]','[]',?,?,?,0,'delivered',?)`);
+  for (let k = 1; k <= turns; k++) {
+    const outputs = Array.from({ length: turns - k + 1 }, (_, i) => `m${(k + i) * 2}`);
+    insert.run(`s-${k}`, JSON.stringify(outputs), a.policyRevision, a.deletionEpoch, k);
+  }
+  const messages = Array.from({ length: turns * 2 }, (_, i) => ({ id: `m${i + 1}`, role: (i + 1) % 2 ? "user" : "bot", kind: "text", text: `line ${i + 1}` }));
+  return { a, messages };
+}
+
+it("a 400-turn chat in one session replays its recent bot lines with memory on", () => {
+  const { a, messages } = oneSession(400);
+  const kept = disclosures.filterMemoryReplayRecent("dax-direct", messages, a, { persist: false });
+  expect(kept).toHaveLength(disclosures.REPLAY_WINDOW_TEXT_LINES);
+  expect(kept.filter(m => m.role === "bot")).toHaveLength(disclosures.REPLAY_WINDOW_TEXT_LINES / 2);
+});
+
+it("in that chat a reply whose receipt fails its check is still withheld, with every reply after it in the session", () => {
+  const { a, messages } = oneSession(400);
+  database().prepare(`UPDATE memory_disclosures SET record_versions='[{"id":"forgotten","version":1}]' WHERE bundle_id='s-390'`).run();
+  const kept = disclosures.filterMemoryReplayRecent("dax-direct", messages, a, { persist: false }).map(m => m.id);
+  expect(kept).toContain("m778");
+  for (let turn = 390; turn <= 400; turn++) expect(kept).not.toContain(`m${turn * 2}`);
+  expect(kept).toContain("m799");
+});
+
+it("a 300-turn tool-heavy session (five outputs a turn) replays and checks recall lines in bounded time", async () => {
+  const { randomUUID } = await import("node:crypto");
+  const { capturedMessageWithheld } = await import("./memory/replay-lineage.ts");
+  const a = access();
+  const turns = 300, ids = Array.from({ length: turns * 5 }, () => randomUUID());
+  const insert = database().prepare(`INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
+    VALUES(?,'dax-direct','driver','s1','[]','[]',?,?,?,0,'delivered',?)`);
+  for (let k = 0; k < turns; k++) insert.run(`t-${k}`, JSON.stringify(ids.slice(k * 5)), a.policyRevision, a.deletionEpoch, k);
+  const messages = ids.flatMap((id, i) => i % 5 === 4 ? [{ id: `u-${i}`, role: "user", kind: "text", text: "ask" }, { id, role: "bot", kind: "text", text: "answer" }] : [{ id, role: "bot", kind: "tool", text: "" }]);
+  const started = performance.now();
+  const kept = disclosures.filterMemoryReplayRecent("dax-direct", messages, a, { persist: false });
+  const replayMs = performance.now() - started;
+  expect(kept.filter(m => m.kind === "text" && m.role === "bot")).toHaveLength(disclosures.REPLAY_WINDOW_TEXT_LINES / 2);
+  const recallStarted = performance.now();
+  for (const id of ids.slice(-100).filter((_, i) => i % 5 === 4)) expect(capturedMessageWithheld("dax-direct", id)).toBe(false);
+  const recallMs = performance.now() - recallStarted;
+  console.log(`replay ${replayMs.toFixed(0)} ms, 20 recall checks ${recallMs.toFixed(0)} ms`);
+  expect(replayMs).toBeLessThan(5000);
+});
+
+it("a resumed session that holds a withheld line is not resumed; one that holds none is", () => {
+  const { a, messages } = oneSession(50);
+  const kept = disclosures.filterMemoryReplayRecent("dax-direct", messages, a, { persist: false });
+  expect(disclosures.sessionHoldsWithheldLine("dax-direct", "driver", "s1", messages, kept)).toBe(false);
+  database().prepare(`UPDATE memory_disclosures SET record_versions='[{"id":"forgotten","version":1}]' WHERE bundle_id='s-45'`).run();
+  const after = disclosures.filterMemoryReplayRecent("dax-direct", messages, a, { persist: false });
+  expect(after.length).toBeLessThan(kept.length);
+  expect(disclosures.sessionHoldsWithheldLine("dax-direct", "driver", "s1", messages, after)).toBe(true);
+  // a line withheld from an older session does not hold this one back
+  expect(disclosures.sessionHoldsWithheldLine("dax-direct", "driver", "s2", messages, after)).toBe(false);
+});
+
+it("the resumed direct turn starts a clean session when it holds a withheld line, and the degraded path never keeps a retained one (wiring)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const direct = source.slice(source.indexOf("      let memoryReceipt: MemoryDispatchReceipt | undefined;"), source.indexOf("      if (!markDirectTurnDispatching"));
+  expect(direct).toMatch(/if\(sessionHoldsWithheldLine\(threadId,instanceId,String\(resumeCursor\),activeMessages,allowed\)\)\{withheldInSession=true;resumeCursor=undefined;sessionReset=true;\}/);
+  expect(direct).toContain("let memoryRefreshed=revoked||withheldInSession;");
+  const degraded = direct.slice(direct.indexOf("} catch (error) {"));
+  expect(degraded).toContain("MEMORY_SESSION_RESET_UNAVAILABLE");
+});

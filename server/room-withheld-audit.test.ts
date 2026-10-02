@@ -22,7 +22,7 @@ import { _loadPending, findDelegationReceipt, recordDelegationReceipt, summarize
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { roomTranscriptWithoutMemory } from "./room-transcript.ts";
-import { copyOriginWithheld, messageMadeWithMemory, recordRestsOnWithheldMessage, replayExclusions } from "./memory/replay-lineage.ts";
+import { copyOriginWithheld, messageMadeWithMemory, OUTPUT_LIST_BYTES, recordRestsOnWithheldMessage, replayExclusions } from "./memory/replay-lineage.ts";
 import { insertMessage } from "./message-db.ts";
 import type { Message } from "./store.ts";
 
@@ -168,10 +168,20 @@ it("finding 9: a thread whose receipts are too heavy to read whole falls back to
   const insert = database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,'d','s','[]','[]',?,?,?,0,'delivered',?)");
   for (let i = 0; i < 142; i++) insert.run(`c-${i}`, "closing-chat", JSON.stringify(ids.slice(i)), a.policyRevision, a.deletionEpoch, i);
   const messages = [{ id: "owner-1", role: "user" }, ...ids.map(id => ({ id, role: "bot" })), { id: "owner-2", role: "user" }];
-  expect(() => replayExclusions("closing-chat", messages, null)).toThrow("MEMORY_REPLAY_LIMIT");
-  const withheld = replayExclusions("closing-chat", messages, null, { failClosed: true });
+  // 0.1.62 review: session-linked lists are bounded by their bytes, not counted
+  // as lineage nodes, so a long session is read whole and nothing valid is withheld
+  expect([...replayExclusions("closing-chat", messages, null)]).toEqual([]);
+  // lists past the byte budget still fall back to per-line checks, fail closed
+  const padded = Array.from({ length: 100 }, (_, i) => `p-${i}-${"x".repeat(2600)}`);
+  const heavy = database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,'d','t','[]','[]',?,?,?,0,'delivered',?)");
+  for (let i = 0; i < Math.ceil(OUTPUT_LIST_BYTES / JSON.stringify(padded).length) + 1; i++) heavy.run(`h-${i}`, "closing-chat", JSON.stringify(padded), a.policyRevision, a.deletionEpoch, 1000 + i);
+  const lines = [{ id: "owner-1", role: "user" }, ...padded.slice(0, 10).map(id => ({ id, role: "bot" })), { id: "owner-2", role: "user" }];
+  expect(() => replayExclusions("closing-chat", lines, null)).toThrow("MEMORY_REPLAY_LIMIT");
+  const withheld = replayExclusions("closing-chat", lines, null, { failClosed: true });
   expect(withheld.has("owner-1")).toBe(false);
   expect(withheld.has("owner-2")).toBe(false);
+  // the per-line lookup does not read the lists, so valid lines are still verified
+  expect(withheld.has(padded[0])).toBe(false);
 });
 
 // Kimi K3 round 1

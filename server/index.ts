@@ -44,7 +44,7 @@ import { buildMemoryBundle } from "./memory/bundle.ts";
 import { MemoryDispatchReceipt, memoryContinuationChanged, buildMemoryBundleAfterReset, pinnedMemoryFailure, withheldPinLine } from "./memory/dispatch.ts";
 import { memoryAccess, backgroundMemoryAudience, type MemoryAccess } from "./memory/policy.ts";
 import { memoryState } from "./memory/repository.ts";
-import { continuationMemoryRevoked, filterMemoryReplayRecent, memoryReplayLimited, noteReplayLimitDegraded, readerWithheldMessage, replayWithoutMemory } from "./memory/disclosures.ts";
+import { continuationMemoryRevoked, filterMemoryReplayRecent, memoryReplayLimited, noteReplayLimitDegraded, readerWithheldMessage, replayWithoutMemory, sessionHoldsWithheldLine } from "./memory/disclosures.ts";
 import { roomTranscriptForTurn, roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import { memoryAgentRoute } from "./memory/routes.ts";
 import { MemoryWorkerController } from "./memory/worker-controller.ts";
@@ -6719,6 +6719,7 @@ async function startTurn(
         // ever used ("openai", "openai-compatible") and missed the real
         // "openai-compat"; the driver set is now asserted against the drivers.
         const needsReplay=!resumeCursor || revoked || replaysTranscriptNatively(instance.driverKind);
+        let withheldInSession=false;
         if(needsReplay) {
           const allowed=filterMemoryReplayRecent(threadId,activeMessages,access);
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
@@ -6736,6 +6737,9 @@ async function startTurn(
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=allowed.filter(m=>m.kind==="text" && m.text && !skipTranscript.has(m.id)).slice(-40)
             .map(m=>({role:m.role==="user"?"user" as const:"assistant" as const,text:transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")}));
+          // The session itself holds a line the check now withholds (nothing
+          // persists a line it could not verify): start a clean one.
+          if(sessionHoldsWithheldLine(threadId,instanceId,String(resumeCursor),activeMessages,allowed)){withheldInSession=true;resumeCursor=undefined;sessionReset=true;}
         }
         const query=Buffer.from(text).subarray(0,4093).toString("utf8").replace(/�+$/,"");
         const availableContextTokens=instance.models.options.find(option=>option.id===(model??instance.models.default))?.contextWindow??20480;
@@ -6747,7 +6751,7 @@ async function startTurn(
           // a turn that is not the owner's does not recall what its replay leaves out
           withheldMessage:readerWithheldMessage(access)};
         let bundle=await buildMemoryBundle(query,access,memoryWorker,memoryOptions);
-        let memoryRefreshed=revoked;
+        let memoryRefreshed=revoked||withheldInSession;
         if(resumeCursor && memoryContinuationChanged(bundle,threadId,instanceId,String(resumeCursor))) {
           memoryRefreshed=true;
           const allowed=filterMemoryReplayRecent(threadId,activeMessages,access);
@@ -6787,7 +6791,11 @@ async function startTurn(
           noteReplayLimitDegraded(threadId);
           memoryReceipt=undefined;memoryDispatches.delete(threadId);delete integrations.memory;
           // A resumed session may hold what memory put in it: start a clean one.
-          if(resumeCursor){resumeCursor=undefined;if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);}
+          if(resumeCursor || instance.adapter.hasSession(threadId)){
+            resumeCursor=undefined;
+            if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
+            else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
+          }
           sessionReset=true;
           const kept=replayWithoutMemory(threadId,activeMessages);
           const keptById=new Map(kept.map(message=>[message.id,message]));
