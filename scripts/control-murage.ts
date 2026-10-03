@@ -1,6 +1,7 @@
 #!/usr/bin/env -S node --experimental-strip-types
 // Thin, agent-friendly CLI over the same guarded MCP operations exposed to
 // external clients. It deliberately owns no second API client or wait loop.
+import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, mkdirSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -254,6 +255,9 @@ export interface VerificationServer {
   fixtureDumpPath: string;
   /** Writing a file named after a held fake CLI's pid here lets that turn finish normally. */
   fixtureFinishGateDir: string;
+  /** The launch credential this server shares with a paired-phone stand-in
+   * (`MURAGE_COMPANION_TOKEN`). Never part of `info`, which the CLI prints. */
+  companionToken: string;
   child: ChildProcess;
   /** Stop the owned process and reload its same isolated profile without reseeding. */
   restart(): Promise<void>;
@@ -270,7 +274,7 @@ export async function launchVerificationServer(
     instrumentationSource?: string;
     portRange?: { from: number; span: number };
     /** Extra MURAGE_ANNOUNCEMENTS_* variables, e.g. a loopback stub feed. */
-    env?: Partial<Record<"MURAGE_ANNOUNCEMENTS_URL" | "MURAGE_ANNOUNCEMENTS_TEST_KEY", string>>;
+    env?: Partial<Record<"MURAGE_ANNOUNCEMENTS_URL" | "MURAGE_ANNOUNCEMENTS_TEST_KEY" | "MURAGE_COMPANION_TOKEN", string>>;
     /** Give the child a HOME outside its data folder, so everything at the
      * data folder's root is Murage's own (data-dir-inventory.test.ts). */
     separateHome?: boolean;
@@ -319,6 +323,7 @@ export async function launchVerificationServer(
     HERMES_HOME: join(home, ".hermes"),
     MURAGE_DATA_DIR: dataDir,
     MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
+    MURAGE_COMPANION_TOKEN: randomBytes(32).toString("hex"),
     MURAGE_PORT: String(port),
     MURAGE_WEBHOOK_PORT: String(port + 1),
     FAKE_CLAUDE_MODE: "happy",
@@ -379,6 +384,7 @@ export async function launchVerificationServer(
     info: { url, pid: child.pid!, dataDir, logPath },
     fixtureDumpPath,
     fixtureFinishGateDir,
+    companionToken: childEnv.MURAGE_COMPANION_TOKEN!,
     child,
     async restart() {
       if (closed || restarting) throw new ControlMurageError("verification fixture is closed or restarting");

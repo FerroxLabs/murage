@@ -15,6 +15,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { loopbackFetch } from "./testing/conversation-proof.ts";
+
+/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
+ * credential (the server below is started with it), without the desktop proof. */
+const TEST_COMPANION_TOKEN = "c".repeat(64);
+const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -110,6 +116,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
+      MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
       MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
     };
     if (process.env.PATH) env.PATH = process.env.PATH;

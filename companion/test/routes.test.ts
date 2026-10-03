@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { BROWSER_DENIED, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isInboxRoute, needsLaunchProof, type Surface } from "../src/routes.ts";
+import { BROWSER_DENIED, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isInboxRoute, launchProofHeaders, needsLaunchProof, type Surface } from "../src/routes.ts";
 
 const ask = (method: string, path: string, authenticated = true, surface: Surface = "device") =>
   denyReason({ method, path, authenticated, surface });
@@ -592,6 +592,18 @@ describe("the Inbox reaches the browser door", () => {
     expect(isInboxRoute("POST", "/api/inbox/state")).toBe(true);
     expect(isInboxRoute("POST", "/api/inbox")).toBe(false);
     expect(isInboxRoute("GET", "/api/bots")).toBe(false);
+  });
+});
+
+describe("the launch proof on every forwarded request", () => {
+  const token = "a1".repeat(32);
+  it("adds the door's own credential to any route it forwards", () => {
+    for (const [method, path] of [["GET", "/api/bots"], ["GET", "/api/events"], ["GET", "/api/search"], ["POST", "/api/bots/b1/messages"], ["POST", "/api/bots/b1/interrupt"], ["GET", "/api/threads/t1/messages"], ["POST", "/api/groups/g1/interrupt"], ["GET", "/api/config"]] as const) {
+      expect(launchProofHeaders(method, path, token), `${method} ${path}`).toEqual({ "x-murage-companion-token": token });
+    }
+  });
+  it("adds nothing when the door was started without a usable credential", () => {
+    for (const bad of [undefined, "", "short", "G".repeat(64), "A1".repeat(32)]) expect(launchProofHeaders("GET", "/api/bots", bad)).toEqual({});
   });
 });
 

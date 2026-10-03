@@ -6,11 +6,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { openSse } from "./testing/sse.ts";
+import { fixtureFetch, fixtureSse } from "./testing/conversation-proof.ts";
 
 const FAKE_ACP=join(dirname(fileURLToPath(import.meta.url)),"testing","fake-acp-cli.ts");
 const processAlive=(pid:number)=>{try{process.kill(pid,0);return true;}catch(error){return (error as NodeJS.ErrnoException).code==="EPERM";}};
 let fixture:VerificationServer,headers:Record<string,string>,modelOne:string,modelTwo:string;
+/** Conversation routes answer only to a proven caller; a bare call here is the paired phone's credential, without the desktop proof. */
+const fetch = fixtureFetch(() => fixture);
+const openSse = fixtureSse(() => fixture);
 const acpFile=(name:string)=>join(fixture.info.dataDir,`close-confirmed-${name}`);
 const sockets:Socket[]=[];
 const api=async(method:string,path:string,body?:unknown,owner=true)=>{

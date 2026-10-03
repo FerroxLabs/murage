@@ -24,7 +24,16 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
-import { openSse, type SseRecorder } from "./testing/sse.ts";
+import { type SseRecorder } from "./testing/sse.ts";
+import { loopbackFetch, loopbackSse } from "./testing/conversation-proof.ts";
+
+/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
+ * credential (the server below is started with it), without the desktop proof. */
+const TEST_COMPANION_TOKEN = "c".repeat(64);
+const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
+/** The paired phone: the companion marker plus the launch credential. */
+const PHONE = { "x-murage-companion": "1", "x-murage-companion-token": TEST_COMPANION_TOKEN };
+const openSse = loopbackSse(TEST_COMPANION_TOKEN);
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -77,6 +86,7 @@ posixOnly("the events stream is scoped per client", () => {
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(port),
+      MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
       MURAGE_WEBHOOK_PORT: String(port + 1),
       // The desktop marker is not believed on its own any more — the harness
       // wants this launch's secret with it. Pinning it through the dev
@@ -122,7 +132,7 @@ posixOnly("the events stream is scoped per client", () => {
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "react to me" })).status).toBe(202);
 
     const desktop = DESKTOP_HEADERS;
-    const phone = { "x-murage-companion": "1" };
+    const phone = PHONE;
     let messageId = "";
     for (let attempt = 0; attempt < 100 && !messageId; attempt++) {
       const page = await api("GET", `/api/threads/${bot.threadId}/messages`, undefined, desktop);
@@ -166,12 +176,12 @@ posixOnly("the events stream is scoped per client", () => {
       let phone: SseRecorder | undefined;
       try {
         desktop = await openSse(`${BASE}/api/events?${DESKTOP_QUERY}`);
-        phone = await openSse(`${BASE}/api/events`, { "x-murage-companion": "1" });
+        phone = await openSse(`${BASE}/api/events`, PHONE);
         await desktop.until((frame) => frame.kind === "hello");
         await phone.until((frame) => frame.kind === "hello");
 
         // Everything the hidden bot's whole turn broadcasts happens here.
-        expect((await api("POST", `/api/bots/${secret.id}/messages`, { text: "the passphrase is hunter2" })).status)
+        expect((await desktopApi("POST", `/api/bots/${secret.id}/messages`, { text: "the passphrase is hunter2" })).status)
           .toBe(202);
         // The renderer sees it — both what was sent and what came back.
         await desktop.until(
@@ -216,11 +226,11 @@ posixOnly("the events stream is scoped per client", () => {
       expect(secret, "the first test's hidden bot").toBeTruthy();
 
       // Connect, take a cursor, disconnect — the shape of a phone locking.
-      const first = await openSse(`${BASE}/api/events`, { "x-murage-companion": "1" });
+      const first = await openSse(`${BASE}/api/events`, PHONE);
       const hello = await first.until((frame) => frame.kind === "hello");
       first.close();
 
-      expect((await api("POST", `/api/bots/${secret.id}/messages`, { text: "and the vault code is 4815" })).status)
+      expect((await desktopApi("POST", `/api/bots/${secret.id}/messages`, { text: "and the vault code is 4815" })).status)
         .toBe(202);
       // Wait on an unscoped stream so the hidden turn is known to be in the
       // replay buffer before the scoped client asks for the gap.
@@ -235,7 +245,7 @@ posixOnly("the events stream is scoped per client", () => {
       }
 
       const resumed = await openSse(`${BASE}/api/events`, {
-        "x-murage-companion": "1",
+        ...PHONE,
         "last-event-id": hello.cursor,
       });
       try {

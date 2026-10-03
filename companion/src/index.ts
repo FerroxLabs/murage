@@ -81,6 +81,12 @@ import { answerDoorChallenge, takeDoorIdentity } from "./door-identity.ts";
 
 const companionToken = process.env.MURAGE_COMPANION_TOKEN;
 delete process.env.MURAGE_COMPANION_TOKEN;
+if (!companionToken || !/^[a-f0-9]{64}$/.test(companionToken)) {
+  // The harness answers its conversation routes (bots, threads, rooms, search
+  // and the live stream) only to a door carrying the launch credential both
+  // sides were started with. Without it a paired phone connects and sees nothing.
+  console.warn("[murage-companion] MURAGE_COMPANION_TOKEN is not set: start Murage and the companion together (the desktop app or `murage start`) so the phone can reach its conversations.");
+}
 /** The headless installer's door nonce, taken out of the environment for the
  * same reason as the token: no child of this process may inherit it. */
 const doorIdentity = takeDoorIdentity(process.env);

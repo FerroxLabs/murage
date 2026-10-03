@@ -75,16 +75,17 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
       expect(await joined.text()).not.toContain(PRIVATE_TOKEN);
       const normal = await fetch(`http://127.0.0.1:${port}/api/bots`,{headers:headers()});
       expect(normal.status).toBe(200);
-      expect(seen!["x-murage-companion-token"]).toBeUndefined();
+      // every forwarded request carries the launch proof, never the client's
+      expect(seen!["x-murage-companion-token"]).toBe(PRIVATE_TOKEN);
       expect(await normal.text()).not.toContain(PRIVATE_TOKEN);
       const events = await fetch(`http://127.0.0.1:${port}/api/events`,{headers:headers()});
       expect(events.status).toBe(200);
-      expect(seen!["x-murage-companion-token"]).toBeUndefined();
+      expect(seen!["x-murage-companion-token"]).toBe(PRIVATE_TOKEN);
       expect(await events.text()).not.toContain(PRIVATE_TOKEN);
     } finally { await close(door); await close(harness); }
   });
 
-  it("vouches for a paired device's card answers and own messages with the launch proof, and only for those", async () => {
+  it("vouches for every request a paired device sends with the launch proof, and never passes a client's own", async () => {
     const seen: Array<{url?: string; token?: string | string[]}> = [];
     const harness = createServer((req,res) => {
       seen.push({url:req.url,token:req.headers["x-murage-companion-token"]});
@@ -125,9 +126,14 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
         expect((await launched(path)).status).toBe(200);
         expect(seen.at(-1)).toEqual({url:path,token:PRIVATE_TOKEN});
       }
-      // anything else carries no proof
+      // every other forwarded request carries it too: the harness answers its
+      // conversation routes only to a caller that proves it came through the door
       expect((await launched("/api/bots/bot_1/interrupt")).status).toBe(200);
-      expect(seen.at(-1)).toEqual({url:"/api/bots/bot_1/interrupt",token:undefined});
+      expect(seen.at(-1)).toEqual({url:"/api/bots/bot_1/interrupt",token:PRIVATE_TOKEN});
+      for (const path of ["/api/bots/bot_1/read","/api/bots/bot_1/tasks"]) {
+        expect((await launched(path)).status).toBe(200);
+        expect(seen.at(-1)).toEqual({url:path,token:PRIVATE_TOKEN});
+      }
       // started on its own, the door has nothing to vouch with and never
       // passes a client's proof on; the harness then takes only a decline
       const manual = await open(undefined);

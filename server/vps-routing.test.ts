@@ -29,6 +29,12 @@ import {
 } from "./container-computer.ts";
 import { VPS_CONTAINER_LABEL, VPS_IMAGE, VPS_MANAGED_LABEL, VPS_VIEWER_LABEL } from "./vps-computer.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { loopbackFetch } from "./testing/conversation-proof.ts";
+
+/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
+ * credential (the server below is started with it), without the desktop proof. */
+const TEST_COMPANION_TOKEN = "c".repeat(64);
+const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -198,6 +204,7 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
+      MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
       MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
       MURAGE_EXTRA_PATH: fakeBin,
       FAKE_DOCKER_DIR: fakeBin,

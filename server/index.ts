@@ -348,6 +348,7 @@ import {
   visibleToCompanion,
   type FrameSubject,
 } from "./sse-visibility.ts";
+import { conversationSubject, isConversationRoute, missingConversationError } from "./conversation-gate.ts";
 import * as tts from "./tts/index.ts";
 import { admitVoiceNote, createVoiceNote, managedAudioOutputPath, rememberVoiceNote, takeVoiceNotes, VOICE_NOTE_MAX_CHARS, VOICE_NOTES_PER_TURN, VoiceNoteError } from "./voice/voice-notes.ts";
 import type { ChannelVoiceNote } from "./telegram-channel.ts";
@@ -11529,6 +11530,22 @@ const server = createServer((req, res) => withToolCallScope(async () => {
     const origin = req.headers.origin;
     if (origin && !isAllowedOrigin(origin)) {
       return json(res, 403, { error: "forbidden: cross-origin request" });
+    }
+    // Conversation gate: every route that reads a transcript, sends into a
+    // conversation or stops one answers only to the desktop app (this launch's
+    // secret) or the paired phone's companion (the launch credential). A bare
+    // loopback caller, a wrong proof and a bot's capability token all get the
+    // 404 an unknown route would. Bots keep their scoped /api/internal/*,
+    // /api/box, /api/repo and /api/opencode routes. The companion is then held
+    // to what the phone's sidebar shows, so a hidden bot or a direct-message
+    // room cannot be read, messaged or stopped through it either.
+    if (isConversationRoute(path)) {
+      const desktopCaller = requestSurface(req.headers, url.searchParams) === "desktop";
+      if (!desktopCaller && !companionAuthorized(req.headers)) return json(res, 404, { error: "no such route" });
+      const subject = desktopCaller ? null : conversationSubject(path);
+      if (subject && subjectResolves(store, subject) && !visibleToCompanion(store, subject)) {
+        return json(res, 404, { error: missingConversationError(subject) });
+      }
     }
     // The Inbox list and its state write also open to a request the companion
     // proved it forwarded; the route then scopes it to what the phone's sidebar

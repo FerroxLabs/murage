@@ -158,20 +158,21 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
   });
 
   it(
-    "a local caller with no desktop proof and no companion credential cannot approve a stop-line card, but may deny it",
+    "a local caller with no desktop proof and no companion credential cannot reach a stop-line card at all; the paired phone may deny it",
     async () => {
       const { bot, requestId } = await stoppedBot("Stopped deleter");
       for (const [label, headers] of unproven) {
         for (const route of [`/api/threads/${bot.threadId}/respond`, `/api/bots/${bot.id}/respond`]) {
           for (const answer of [{ behavior: "allow" }, { behavior: "allow", allowForTask: true }, { behavior: "answer", message: "go ahead" }]) {
             const tried = await request("POST", route, { threadId: bot.threadId, requestId, ...answer }, headers());
-            expect(tried.status, `${label} answered ${JSON.stringify(answer)} on ${route}: ${JSON.stringify(tried.body)}`).toBe(403);
+            expect(tried.status, `${label} answered ${JSON.stringify(answer)} on ${route}: ${JSON.stringify(tried.body)}`).toBe(404);
+            expect(tried.body).toEqual({ error: "no such route" });
           }
         }
       }
       expect((await cardById(bot.threadId, requestId))?.answered).toBeUndefined();
-      // saying no is never a grant, so anyone may do it
-      const denied = await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId, behavior: "deny" });
+      // saying no is never a grant; it comes from the owner's own surfaces like everything else here
+      const denied = await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId, behavior: "deny" }, pairedPhone);
       expect(denied.body).toMatchObject({ ok: true, outcome: "rejected" });
       expect(await waitIdle(bot.id, bot.threadId)).not.toBeNull();
       expect((await cardById(bot.threadId, requestId))?.answered).toBe("deny");
@@ -180,7 +181,7 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
   );
 
   it(
-    "a turn an unproven caller starts is judged like a webhook turn: Full access does not apply and the card holds",
+    "a turn an unproven caller tries to start is refused at the door; the owner's own turn runs under Full access",
     async () => {
       const made = async (name: string) => {
         const created = await desktopApi("POST", "/api/bots", { name, modelSelection: { instanceId: "cleaner", model: "fake-model" } });
@@ -196,26 +197,22 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
       expect(await waitIdle(owned.id, owned.threadId), `stderr: ${stderr.slice(-1500)}`).not.toBeNull();
       expect((await threadMessages(owned.threadId)).filter((m) => m.card?.requestId)).toHaveLength(0);
 
-      // the same words from a caller with no proof: a card that waits, raised
-      // in a turn nobody is watching
+      // the same words from a caller with no proof never start a turn: the
+      // conversation door is shut to it, so no card is raised and nothing lands
       for (const [label, headers] of unproven) {
         const bot = await made(`Unproven cleaner (${label})`);
-        expect((await request("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "clean the build" }, headers())).status).toBe(202);
-        const card = await poll(() => liveCard(bot.threadId), 20_000);
-        expect(card, `${label}: Full access ran it unasked. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
-        // the decision log records the card as raised in an unattended turn
-        const shown = await poll(async () => ((await desktopApi("GET", "/api/decisions")).body.decisions as any[])
-          .find((row) => row.requestId === card.card.requestId && row.decision === "card-shown") ?? null, 5_000);
-        expect(shown, label).toMatchObject({ unattended: true });
-        expect(await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card.requestId, behavior: "deny" })).toMatchObject({ status: 200 });
-        expect(await waitIdle(bot.id, bot.threadId)).not.toBeNull();
+        const refused = await request("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "clean the build" }, headers());
+        expect(refused, label).toEqual({ status: 404, body: { error: "no such route" } });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect((await threadMessages(bot.threadId)).filter((m) => m.role === "user"), label).toHaveLength(0);
+        expect(await liveCard(bot.threadId), label).toBeNull();
       }
     },
     180_000,
   );
 
   it(
-    "a room send from an unproven caller runs unattended too",
+    "a room send from an unproven caller is refused at the door",
     async () => {
       const room = async (name: string) => {
         const created = await desktopApi("POST", "/api/bots", { name, modelSelection: { instanceId: "cleaner", model: "fake-model" } });
@@ -237,14 +234,10 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
       expect((await threadMessages(owned.threadId)).filter((m) => m.card?.requestId)).toHaveLength(0);
 
       const forged = await room("Unproven room");
-      expect((await request("POST", `/api/groups/${forged.id}/messages`, { text: "clean the build" })).status).toBe(202);
-      const card = await poll(() => liveCard(forged.threadId), 20_000);
-      expect(card, `Full access ran an unproven room send unasked. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
-      const shown = await poll(async () => ((await desktopApi("GET", "/api/decisions")).body.decisions as any[])
-        .find((row) => row.requestId === card.card.requestId && row.decision === "card-shown") ?? null, 5_000);
-      expect(shown).toMatchObject({ unattended: true });
-      await request("POST", `/api/threads/${forged.threadId}/respond`, { requestId: card.card.requestId, behavior: "deny" });
-      expect(await roomIdle(forged.id)).not.toBeNull();
+      expect(await request("POST", `/api/groups/${forged.id}/messages`, { text: "clean the build" })).toEqual({ status: 404, body: { error: "no such route" } });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect((await threadMessages(forged.threadId)).filter((m) => m.role === "user")).toHaveLength(0);
+      expect(await liveCard(forged.threadId)).toBeNull();
     },
     180_000,
   );
@@ -269,15 +262,18 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
       const senders: Array<[string, Record<string, string>, string]> = [
         ["from the desktop", desktopHeaders, "desktop"],
         ["from the paired phone", pairedPhone, "companion"],
-        ["from nobody in particular", {}, "unproven"],
-        ["from the marker alone", { "x-murage-companion": "1" }, "unproven"],
       ];
+      // callers that prove nothing do not reach the chat at all
+      for (const headers of [{}, { "x-murage-companion": "1" }] as Array<Record<string, string>>) {
+        const refused = await request("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "from nobody", origin: "desktop" }, headers);
+        expect(refused).toEqual({ status: 404, body: { error: "no such route" } });
+      }
       for (const [text, headers] of senders) {
         const sent = await request("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text, origin: "desktop" }, headers);
         expect(sent.status, JSON.stringify(sent.body)).toBe(202);
         const card = await poll(() => liveCard(bot.threadId), 20_000);
         expect(card).not.toBeNull();
-        await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card.requestId, behavior: "skip" });
+        await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card.requestId, behavior: "skip" }, pairedPhone);
         expect(await waitIdle(bot.id, bot.threadId)).not.toBeNull();
       }
       const users = (await threadMessages(bot.threadId)).filter((m) => m.role === "user");
@@ -287,7 +283,7 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
   );
 
   it(
-    "only the owner's surfaces answer a question; anyone may skip it",
+    "only the owner's surfaces answer or skip a question",
     async () => {
       const created = await desktopApi("POST", "/api/bots", { name: "Asker", modelSelection: { instanceId: "asker", model: "fake-model" } });
       expect(created.status).toBe(201);
@@ -304,10 +300,10 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
       const first = await ask();
       for (const [label, headers] of unproven) {
         const tried = await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: first, behavior: "answer", answers }, headers());
-        expect(tried.status, `${label} answered a question: ${JSON.stringify(tried.body)}`).toBe(403);
+        expect(tried.status, `${label} answered a question: ${JSON.stringify(tried.body)}`).toBe(404);
       }
       expect((await cardById(bot.threadId, first))?.answered).toBeUndefined();
-      const skipped = await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: first, behavior: "skip" });
+      const skipped = await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: first, behavior: "skip" }, pairedPhone);
       expect(skipped.status, JSON.stringify(skipped.body)).toBe(200);
       expect(await waitIdle(bot.id, bot.threadId)).not.toBeNull();
 

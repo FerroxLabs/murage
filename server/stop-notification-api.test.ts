@@ -2,7 +2,8 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { openSse, type SseRecorder } from "./testing/sse.ts";
+import { type SseRecorder } from "./testing/sse.ts";
+import { fixtureFetch, fixtureSse } from "./testing/conversation-proof.ts";
 
 type Bot = { id: string; threadId: string };
 type BotState = { id: string; busy: boolean };
@@ -10,6 +11,8 @@ type ThreadMessage = { role: string; text?: string; turnId?: string };
 
 describe("Stop completion notification wiring", () => {
   let fixture: VerificationServer;
+  const fetch = fixtureFetch(() => fixture);
+  const openSse = fixtureSse(() => fixture);
   let headers: Record<string, string>;
   const api = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
     const response = await fetch(fixture.info.url + path, { method, headers: { ...headers, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
