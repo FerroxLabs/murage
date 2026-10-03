@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordinationBudget, MAX_HANDOFFS_PER_ROOT } from "./coordination-budget.ts";
@@ -41,8 +41,35 @@ describe("bounded Chief coordination", () => {
     expect(() => budget.advance(undefined, "chief", "target")).toThrow("ALLOWANCE_UNAVAILABLE");
     now = 24 * 60 * 60_000;
     expect(() => budget.advance(root, "chief", "target")).toThrow("ALLOWANCE_UNAVAILABLE");
+  });
+  it("never lets thousands of ordinary owner turns lock out the next one", () => {
+    const file = join(directory, "budget.json"), budget = new CoordinationBudget(file);
+    for (let i = 0; i < 5000; i++) budget.begin("routine-bot");
+    const root = budget.begin("owner-bot");
+    expect(budget.advance(root, "owner-bot", "lead").path).toEqual(["owner-bot", "lead"]);
+    expect(existsSync(file) ? readFileSync(file, "utf8").length : 0).toBeLessThan(2000);
+  });
+  it("prunes expired persisted records and still enforces the limit on real fan-out", () => {
+    let now = 0;
+    const file = join(directory, "budget.json"), budget = new CoordinationBudget(file, () => now);
+    budget.advance(budget.begin("a", "root-a"), "a", "x");
+    expect(JSON.parse(readFileSync(file, "utf8")).roots).toHaveLength(1);
+    now = 24 * 60 * 60_000;
+    budget.advance(budget.begin("b", "root-b"), "b", "y");
+    expect(JSON.parse(readFileSync(file, "utf8")).roots.map((r: { id: string }) => r.id)).toEqual(["root-b"]);
+    const root = budget.begin("c", "root-c");
+    for (let i = 0; i < MAX_HANDOFFS_PER_ROOT; i++) budget.advance(root, "c", `t-${i}`);
+    expect(() => budget.advance(root, "c", "extra")).toThrow("BUDGET_EXHAUSTED");
+  });
+  it("quarantines a malformed roots file and starts with defaults", () => {
+    const file = join(directory, "budget.json");
     writeFileSync(file, "{truncated");
-    expect(() => new CoordinationBudget(file)).toThrow("STATE_INVALID");
+    const budget = new CoordinationBudget(file, () => 1234);
+    expect(existsSync(file)).toBe(false);
+    const kept = readdirSync(directory).filter(name => name.startsWith("budget.json.invalid-"));
+    expect(kept).toHaveLength(1);
+    expect(readFileSync(join(directory, kept[0]), "utf8")).toBe("{truncated");
+    expect(budget.advance(budget.begin("chief"), "chief", "lead").path).toEqual(["chief", "lead"]);
   });
 });
 

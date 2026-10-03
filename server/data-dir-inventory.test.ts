@@ -151,6 +151,10 @@ describe("every top-level name Murage writes is classified for backup", () => {
     for (const name of Object.keys(DATA_DIR_ENTRIES)) expect(DATA_DIR_PATTERNS.some(item => item.pattern.test(name)), name).toBe(false);
   });
 
+  it("a quarantined handoff-budget file is classified and excluded, so backups keep working", () => {
+    expect(classifyDataDirEntry("coordination-roots.json.invalid-1790000000000")).toMatchObject({ backup: "excluded" });
+  });
+
   it("a refused name carries its stop code", () => {
     for (const [name, entry] of Object.entries(DATA_DIR_ENTRIES)) if (entry.backup === "refused") expect(entry.code, name).toMatch(/^[A-Z_]+$/);
   });

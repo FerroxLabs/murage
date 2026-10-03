@@ -174,6 +174,8 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   // A memory index that failed its integrity check is set aside and rebuilt
   // (memory/index.ts). The copy is derived from messages.db.
   { pattern: /^memory-index\.db\.corrupt-\d+$/, entry: excluded("Damaged memory search index set aside and rebuilt from messages.db; not restored"), example: "memory-index.db.corrupt-1790000000000" },
+  // An unreadable handoff-budget file set aside at startup (coordination-budget.ts).
+  { pattern: /^coordination-roots\.json\.invalid-\d+$/, entry: excluded("Unreadable handoff-budget file set aside; not restored"), example: "coordination-roots.json.invalid-1790000000000" },
 ]);
 
 /** What a backup does with this top-level data-folder name; undefined when unknown. */
