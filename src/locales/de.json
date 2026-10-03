@@ -726,5 +726,6 @@
   "imageSettings.rule.list": "Nur diese Größen: {sizes}.",
   "imageSettings.rule.providerDefault": "Nur die Standardgröße des Anbieters.",
   "imageSettings.limits.notPublished": "Limit nicht veröffentlicht, Murage verwendet 4.000.",
-  "imageSettings.limits.tokens": "Google zählt Tokens, nicht Zeichen; Murage verwendet vorsichtshalber 32.000 Zeichen."
+  "imageSettings.limits.tokens": "Google zählt Tokens, nicht Zeichen; Murage verwendet vorsichtshalber 32.000 Zeichen.",
+  "permissionMenu.cannotAsk": "{engine} kann nicht nachfragen, deshalb arbeitet es ohne Befehle, Teammitglieder, Gedächtnis oder verbundene Apps. Wähle eine Engine, die nachfragen kann, um diesem Bot das zu geben."
 }

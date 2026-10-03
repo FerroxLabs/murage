@@ -726,5 +726,6 @@
   "imageSettings.rule.list": "केवल ये आकार: {sizes}।",
   "imageSettings.rule.providerDefault": "केवल प्रदाता का डिफ़ॉल्ट आकार।",
   "imageSettings.limits.notPublished": "सीमा प्रकाशित नहीं है, Murage 4,000 का उपयोग करता है।",
-  "imageSettings.limits.tokens": "Google वर्णों की नहीं, टोकन की गिनती करता है; Murage सावधानी के तौर पर 32,000 वर्णों का उपयोग करता है।"
+  "imageSettings.limits.tokens": "Google वर्णों की नहीं, टोकन की गिनती करता है; Murage सावधानी के तौर पर 32,000 वर्णों का उपयोग करता है।",
+  "permissionMenu.cannotAsk": "{engine} रुककर पूछ नहीं सकता, इसलिए यह कमांड, टीम के साथी, मेमोरी या कनेक्टेड ऐप्स के बिना काम करता है। इस बॉट को ये देने के लिए ऐसा इंजन चुनें जो पूछ सके।"
 }

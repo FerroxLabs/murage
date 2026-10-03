@@ -726,5 +726,6 @@
   "imageSettings.rule.list": "Uniquement ces formats : {sizes}.",
   "imageSettings.rule.providerDefault": "Uniquement le format par défaut du fournisseur.",
   "imageSettings.limits.notPublished": "Limite non publiée, Murage utilise 4 000.",
-  "imageSettings.limits.tokens": "Google compte en tokens, et non en caractères ; Murage applique une limite prudente de 32 000 caractères."
+  "imageSettings.limits.tokens": "Google compte en tokens, et non en caractères ; Murage applique une limite prudente de 32 000 caractères.",
+  "permissionMenu.cannotAsk": "{engine} ne peut pas s'arrêter pour demander, donc il travaille sans commandes, coéquipiers, mémoire ni applis connectées. Choisis un moteur qui peut demander pour donner cela à ce bot."
 }

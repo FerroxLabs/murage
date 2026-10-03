@@ -1,4 +1,5 @@
 import { Check, Hand, ShieldCheck, ShieldOff, Zap } from "lucide-react";
+import { t } from "@/lib/i18n";
 import { FULL_ACCESS_DESKTOP_ONLY, NO_LIMITS_DESKTOP_ONLY, isDesktopOnlyMode, type PermissionMode } from "@/lib/permission-mode";
 
 export const PERMISSION_MODES: ReadonlyArray<{ mode: PermissionMode; label: string; chip: string; detail: string }> = [
@@ -18,13 +19,13 @@ export const PERMISSION_MODES: ReadonlyArray<{ mode: PermissionMode; label: stri
   },
 ];
 
-/** The engines whose headless mode has no way to ask before acting. Under
- *  Full access and No limits Murage runs them with file edits only (see
- *  sendTurn in server/drivers/antigravity.ts), rather than let them delete,
- *  pay or message with nobody asked. */
+/** The engines whose headless mode has no way to ask before acting. At every
+ *  level Murage runs them with file edits only (see sendTurn in
+ *  server/drivers/antigravity.ts), so they get no shell, teammates, memory or
+ *  connected apps, rather than let them act with nobody asked. */
 const ENGINES_THAT_CANNOT_ASK = new Set(["antigravityAgent"]);
 export const engineCannotAsk = (driverKind: string | undefined): boolean => Boolean(driverKind && ENGINES_THAT_CANNOT_ASK.has(driverKind));
-const cannotAskNote = (engine: string) => `${engine} cannot ask first, so it edits files here but runs no commands.`;
+const cannotAskNote = (engine: string) => t("permissionMenu.cannotAsk", { engine });
 
 export const PermissionModeIcon = ({ mode, size, className }: { mode: PermissionMode; size: number; className: string }) =>
   mode === "unlimited" ? <Zap size={size} className={className} /> : mode === "full" ? <ShieldOff size={size} className={className} /> : mode === "auto" ? <ShieldCheck size={size} className={className} /> : <Hand size={size} className={className} />;
@@ -88,7 +89,7 @@ export function PermissionModeMenu({
                   {current === entry.mode && <Check size={14} />}
                 </div>
                 <div className="text-[13px] text-ink-secondary">{unavailable ? (entry.mode === "unlimited" ? NO_LIMITS_DESKTOP_ONLY : FULL_ACCESS_DESKTOP_ONLY) : entry.detail}</div>
-                {!unavailable && cannotAskEngine && (entry.mode === "full" || entry.mode === "unlimited") && (
+                {!unavailable && cannotAskEngine && (
                   <div className="text-[13px] text-warning">{cannotAskNote(cannotAskEngine)}</div>
                 )}
               </div>

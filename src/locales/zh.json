@@ -726,5 +726,6 @@
   "imageSettings.rule.list": "仅支持以下尺寸：{sizes}。",
   "imageSettings.rule.providerDefault": "仅支持服务商的默认尺寸。",
   "imageSettings.limits.notPublished": "上限未公布，Murage 使用 4,000。",
-  "imageSettings.limits.tokens": "Google 按 token 而非字符计数；Murage 采用保守的 32,000 个字符。"
+  "imageSettings.limits.tokens": "Google 按 token 而非字符计数；Murage 采用保守的 32,000 个字符。",
+  "permissionMenu.cannotAsk": "{engine} 无法暂停询问，因此它在没有命令、队友、记忆或已连接应用的情况下工作。请选择可以询问的引擎，让这个机器人使用这些功能。"
 }

@@ -377,6 +377,26 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Your pre-update backup choice is kept. If you tick \"Back up before installing an in-app update\" under Advanced before you first turn on backups, that choice is now kept. Where this install cannot take a backup before an update, setup tells you so.\n- The off-site password file follows the recovery key's rule. The password file for off-site backups is saved in your home folder, never in a folder that syncs to the cloud, and Murage asks first if you pick one that does."
   },
   {
+    "id": "changelog/v0-1-62#lighter-in-the-background-in-0-1-62",
+    "title": "What changed in Murage 0.1.62",
+    "description": "Murage uses far less disk and CPU in the background, and long conversations keep going well past where most agents stop.",
+    "heading": "Lighter in the background in 0.1.62",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.62",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.62",
+    "url": "https://murage.app/docs/changelog/v0-1-62#lighter-in-the-background-in-0-1-62",
+    "text": "- Murage uses far less disk and CPU while it sits in the background. This matters most when you have a long history. The Inbox and approvals badge now update only when something changes. An idle Murage writes almost nothing to disk now."
+  },
+  {
+    "id": "changelog/v0-1-62#long-conversations-in-0-1-62",
+    "title": "What changed in Murage 0.1.62",
+    "description": "Murage uses far less disk and CPU in the background, and long conversations keep going well past where most agents stop.",
+    "heading": "Long conversations in 0.1.62",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.62",
+    "where": "Murage docs → Changelog → What changed in Murage 0.1.62",
+    "url": "https://murage.app/docs/changelog/v0-1-62#long-conversations-in-0-1-62",
+    "text": "- Long conversations keep going, well past where most agents stop. Keep one conversation running for weeks, like a sales thread or a long project, and your bot keeps answering with its memory and everything recent you have worked on together. There is no need to start over.\n- Bots take on far more work. A bot can now hand thousands of tasks a day to its helpers and keep going, well past the point where most agents stall. Murage also looks after itself better: it sorts out the unexpected on its own and always opens ready to work."
+  },
+  {
     "id": "computers/cloud-and-vps#box-cloud-computer",
     "title": "Cloud computer and your own VPS",
     "description": "Choose a managed Box desktop or a hardened container on a Linux server you own.",
@@ -756,7 +776,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
     "url": "https://murage.app/docs/features/approvals-and-inspector#engines-that-cannot-ask",
-    "text": "Some engines have no way to ask before acting when they run inside Murage. The permission menu says so on the levels where it matters, for example \"Antigravity cannot ask first, so it edits files here but runs no commands.\" Under Full access and No limits Murage runs such an engine with file edits only, rather than let it delete, pay or message with nobody asked."
+    "text": "Some engines have no way to ask before acting when they run inside Murage. The permission menu says so on every level, for example \"Antigravity can't stop to ask, so it works without commands, teammates, memory or connected apps.\" At every level Murage runs such an engine with file edits only, rather than let it act with nobody asked."
   },
   {
     "id": "features/approvals-and-inspector#pi-asks-first",

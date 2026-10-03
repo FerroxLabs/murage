@@ -729,7 +729,8 @@
       "imageSettings.rule.list": "d37424e78ddaeea2c6be5c281c600bc942f415e5c69b4999552b586afaa304a9",
       "imageSettings.rule.providerDefault": "df1c64dedbf1391c2e745efb8ce26165cd0ef016e7f0c237a3f5eb6d26356684",
       "imageSettings.limits.notPublished": "2f4474529a7dfa295f0f1e5d16ceab73db308b40b91bd2d7753df8c1b054c7db",
-      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6"
+      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6",
+      "permissionMenu.cannotAsk": "844625a5c6d61c86d48aa642b11ff420bccec1396503999b47434d2c33f39e12"
     },
     "es": {
       "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
@@ -1459,7 +1460,8 @@
       "imageSettings.rule.list": "d37424e78ddaeea2c6be5c281c600bc942f415e5c69b4999552b586afaa304a9",
       "imageSettings.rule.providerDefault": "df1c64dedbf1391c2e745efb8ce26165cd0ef016e7f0c237a3f5eb6d26356684",
       "imageSettings.limits.notPublished": "2f4474529a7dfa295f0f1e5d16ceab73db308b40b91bd2d7753df8c1b054c7db",
-      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6"
+      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6",
+      "permissionMenu.cannotAsk": "844625a5c6d61c86d48aa642b11ff420bccec1396503999b47434d2c33f39e12"
     },
     "fr": {
       "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
@@ -2189,7 +2191,8 @@
       "imageSettings.rule.list": "d37424e78ddaeea2c6be5c281c600bc942f415e5c69b4999552b586afaa304a9",
       "imageSettings.rule.providerDefault": "df1c64dedbf1391c2e745efb8ce26165cd0ef016e7f0c237a3f5eb6d26356684",
       "imageSettings.limits.notPublished": "2f4474529a7dfa295f0f1e5d16ceab73db308b40b91bd2d7753df8c1b054c7db",
-      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6"
+      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6",
+      "permissionMenu.cannotAsk": "844625a5c6d61c86d48aa642b11ff420bccec1396503999b47434d2c33f39e12"
     },
     "hi": {
       "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
@@ -2919,7 +2922,8 @@
       "imageSettings.rule.list": "d37424e78ddaeea2c6be5c281c600bc942f415e5c69b4999552b586afaa304a9",
       "imageSettings.rule.providerDefault": "df1c64dedbf1391c2e745efb8ce26165cd0ef016e7f0c237a3f5eb6d26356684",
       "imageSettings.limits.notPublished": "2f4474529a7dfa295f0f1e5d16ceab73db308b40b91bd2d7753df8c1b054c7db",
-      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6"
+      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6",
+      "permissionMenu.cannotAsk": "844625a5c6d61c86d48aa642b11ff420bccec1396503999b47434d2c33f39e12"
     },
     "ja": {
       "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
@@ -3649,7 +3653,8 @@
       "imageSettings.rule.list": "d37424e78ddaeea2c6be5c281c600bc942f415e5c69b4999552b586afaa304a9",
       "imageSettings.rule.providerDefault": "df1c64dedbf1391c2e745efb8ce26165cd0ef016e7f0c237a3f5eb6d26356684",
       "imageSettings.limits.notPublished": "2f4474529a7dfa295f0f1e5d16ceab73db308b40b91bd2d7753df8c1b054c7db",
-      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6"
+      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6",
+      "permissionMenu.cannotAsk": "844625a5c6d61c86d48aa642b11ff420bccec1396503999b47434d2c33f39e12"
     },
     "pt-br": {
       "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
@@ -4379,7 +4384,8 @@
       "imageSettings.rule.list": "d37424e78ddaeea2c6be5c281c600bc942f415e5c69b4999552b586afaa304a9",
       "imageSettings.rule.providerDefault": "df1c64dedbf1391c2e745efb8ce26165cd0ef016e7f0c237a3f5eb6d26356684",
       "imageSettings.limits.notPublished": "2f4474529a7dfa295f0f1e5d16ceab73db308b40b91bd2d7753df8c1b054c7db",
-      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6"
+      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6",
+      "permissionMenu.cannotAsk": "844625a5c6d61c86d48aa642b11ff420bccec1396503999b47434d2c33f39e12"
     },
     "zh": {
       "providerError.payment.title": "d80faa09ac8bb458a6f50c56dc2997ba1faa6d106de536e512195b2fee9cc3d9",
@@ -5109,7 +5115,8 @@
       "imageSettings.rule.list": "d37424e78ddaeea2c6be5c281c600bc942f415e5c69b4999552b586afaa304a9",
       "imageSettings.rule.providerDefault": "df1c64dedbf1391c2e745efb8ce26165cd0ef016e7f0c237a3f5eb6d26356684",
       "imageSettings.limits.notPublished": "2f4474529a7dfa295f0f1e5d16ceab73db308b40b91bd2d7753df8c1b054c7db",
-      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6"
+      "imageSettings.limits.tokens": "bc35cf10b418461e124f9d3059cd6745a2a500248aaa1ead9d86f2ed093164b6",
+      "permissionMenu.cannotAsk": "844625a5c6d61c86d48aa642b11ff420bccec1396503999b47434d2c33f39e12"
     }
   }
 }

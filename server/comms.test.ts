@@ -364,11 +364,13 @@ describe("comms e2e (fake ACP fleet)", () => {
   );
 
   it(
-    "lets a Gemini Antigravity bot call a peer through the temporary agents MCP mount",
+    "gives a Gemini Antigravity bot no agents MCP on Ask and Auto, because its print mode cannot ask",
     async () => {
-      // A unique section makes list_bots deterministic even though this
-      // suite deliberately keeps earlier bots around to exercise the real
-      // persisted fleet. Only these two teammates can see one another.
+      // Antigravity cannot stop to ask, so below Full access Murage runs it
+      // in accept-edits: file edits only, no mounted integrations. The peer
+      // call therefore finds no agents MCP, and nothing reaches the teammate.
+      // (Full access always worked this way.) A unique section keeps the
+      // two bots isolated from the rest of the suite's fleet.
       const section = "Gemini agents MCP e2e";
       const helper = (await api("POST", "/api/bots")).body.bot;
       await api("PATCH", `/api/bots/${helper.id}`, {
@@ -383,61 +385,38 @@ describe("comms e2e (fake ACP fleet)", () => {
         modelSelection: { instanceId: "geminiAsker", model: "gemini-3.7-flash-high" },
       });
 
-      const send = await api("POST", `/api/bots/${asker.id}/messages`, {
-        text: "Ask the other bot for a status check.",
-      });
-      expect(send.status).toBe(202);
+      for (const mode of ["ask", "auto"]) {
+        const set = await api("PATCH", `/api/bots/${asker.id}`, { autoApprove: mode === "auto", fullAccess: false });
+        expect(set.status, `could not set ${mode}`).toBeLessThan(300);
+        const before = ((await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === asker.id).messages as any[]).length;
+        const send = await api("POST", `/api/bots/${asker.id}/messages`, {
+          text: "Ask the other bot for a status check.",
+        });
+        expect(send.status).toBe(202);
 
-      const deadline = Date.now() + 30_000;
-      let state: any;
-      let askerBot: any;
-      let helperBot: any;
-      for (;;) {
-        state = (await api("GET", "/api/bots")).body;
-        askerBot = state.bots.find((bot: any) => bot.id === asker.id);
-        helperBot = state.bots.find((bot: any) => bot.id === helper.id);
-        const peerReply = askerBot.messages.some(
-          (message: any) =>
-            message.kind === "text"
-            && message.role === "bot"
-            && message.text?.includes("peer says: Gemini Helper replied:"),
-        );
-        const helperReplied = helperBot.messages.some(
-          (message: any) =>
-            message.kind === "text"
-            && message.role === "bot"
-            && message.text?.includes("hello from fake acp"),
-        );
-        if (peerReply && helperReplied && !askerBot.busy && !helperBot.busy) break;
-        if (Date.now() > deadline) {
-          throw new Error(
-            `Gemini never got its peer reply. asker tail: ${JSON.stringify(askerBot.messages.slice(-8))}\n`
-              + `helper tail: ${JSON.stringify(helperBot.messages.slice(-6))}\n`
-              + `stderr: ${stderr.slice(-2000)}`,
-          );
+        const deadline = Date.now() + 30_000;
+        let askerReply: any;
+        for (;;) {
+          const state = (await api("GET", "/api/bots")).body;
+          const askerBot = state.bots.find((bot: any) => bot.id === asker.id);
+          askerReply = askerBot.messages
+            .slice(before)
+            .findLast((message: any) => message.kind === "text" && message.role === "bot");
+          if (askerReply && !askerBot.busy) break;
+          if (Date.now() > deadline) {
+            throw new Error(`Gemini asker never replied on ${mode}. tail: ${JSON.stringify(askerBot.messages.slice(-6))}\nstderr: ${stderr.slice(-2000)}`);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
         }
-        await new Promise((resolve) => setTimeout(resolve, 250));
+        expect(askerReply.text, mode).toContain("peer error: agents MCP not mounted");
+        expect(askerReply.text, mode).not.toContain("peer says:");
       }
 
-      // This is the peer's actual depth-1 output, not a mocked bridge
-      // acknowledgement. The lack of a nested "peer says" also pins the
-      // one-hop recursion guard: the invoked helper received no agents MCP.
-      const askerReply = askerBot.messages.findLast(
-        (message: any) => message.kind === "text" && message.role === "bot",
-      );
-      expect(askerReply.text).toContain("peer says: Gemini Helper replied:");
-      expect(askerReply.text).toContain("hello from fake acp");
-      const helperReply = helperBot.messages.findLast(
-        (message: any) => message.kind === "text" && message.role === "bot",
-      );
-      expect(helperReply.text).toContain("hello from fake acp");
-      expect(helperReply.text).not.toContain("peer says:");
-
-      const inbound = helperBot.messages.find(
-        (message: any) => message.kind === "text" && message.role === "user",
-      );
-      expect(inbound.text).toContain("[Message from @Gemini Asker");
-      expect(inbound.text).toContain("ping from fake Gemini");
+      const helperBot = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === helper.id);
+      expect(
+        helperBot.messages.some((message: any) => message.role === "user" && message.text?.includes("[Message from @Gemini Asker")),
+        "the teammate must receive nothing",
+      ).toBe(false);
 
       // Antigravity's global MCP config briefly carries a bearer token for
       // this one process. It must be gone once the turn exits so neither a

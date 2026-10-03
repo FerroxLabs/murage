@@ -726,5 +726,6 @@
   "imageSettings.rule.list": "Only these sizes: {sizes}.",
   "imageSettings.rule.providerDefault": "The provider's default size only.",
   "imageSettings.limits.notPublished": "Limit not published, Murage uses 4,000.",
-  "imageSettings.limits.tokens": "Google counts tokens, not characters; Murage uses a conservative 32,000 characters."
+  "imageSettings.limits.tokens": "Google counts tokens, not characters; Murage uses a conservative 32,000 characters.",
+  "permissionMenu.cannotAsk": "{engine} can't stop to ask, so it works without commands, teammates, memory or connected apps. Pick an engine that can ask to give this bot those."
 }

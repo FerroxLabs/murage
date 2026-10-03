@@ -36,14 +36,14 @@ describe("composer approval-level menu", () => {
     for (const desktop of [true, undefined]) expect(item(render(desktop), "Full access")).not.toContain(' disabled=""');
   });
 
-  // Antigravity's print mode cannot ask, so under Full access and No limits
-  // Murage runs it with file edits only. The menu has to say so, or the bot
-  // just fails the first time it needs a command.
-  it("says when this bot's engine cannot ask, on the levels where that costs it commands", () => {
+  // Antigravity's print mode cannot ask, so at every level Murage runs it
+  // with file edits only: no shell, teammates, memory or connected apps. The
+  // menu has to say so on every level, Ask and Auto included.
+  it("says when this bot's engine cannot ask, on every level", () => {
     const markup = render(true, "Antigravity");
-    for (const label of ["Full access", "No limits"]) expect(item(markup, label)).toContain("Antigravity cannot ask first, so it edits files here but runs no commands.");
-    for (const label of ["Ask for approval", "Auto mode"]) expect(item(markup, label)).not.toContain("cannot ask first");
-    expect(render(true)).not.toContain("cannot ask first");
+    for (const label of ["Ask for approval", "Auto mode", "Full access", "No limits"])
+      expect(item(markup, label)).toContain("Antigravity can&#x27;t stop to ask, so it works without commands, teammates, memory or connected apps.");
+    expect(render(true)).not.toContain("stop to ask");
   });
 
   // 0.1.60 Mac pass: No limits chosen on the chip in Ember's chat left the

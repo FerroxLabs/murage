@@ -726,5 +726,6 @@
   "imageSettings.rule.list": "次のサイズのみ: {sizes}",
   "imageSettings.rule.providerDefault": "プロバイダーのデフォルトサイズのみ。",
   "imageSettings.limits.notPublished": "上限は公開されていないため、Murage では 4,000 を使用します。",
-  "imageSettings.limits.tokens": "Google は文字数ではなくトークン数で数えるため、Murage では控えめに 32,000 文字を使用します。"
+  "imageSettings.limits.tokens": "Google は文字数ではなくトークン数で数えるため、Murage では控えめに 32,000 文字を使用します。",
+  "permissionMenu.cannotAsk": "{engine} は確認のために止まれないため、コマンド、チームメイト、メモリ、連携アプリなしで動作します。これらをこのボットに使わせるには、確認できるエンジンを選んでください。"
 }
