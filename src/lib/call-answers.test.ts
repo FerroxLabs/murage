@@ -28,6 +28,41 @@ describe("approvalAnswer", () => {
     expect(approvalAnswer(said)).toBe(answer);
   });
 
+  // A negated answer is never consent (found 2026-10-03: "do not allow
+  // everything" used to grant the rest of the call).
+  it.each([
+    ["do not allow everything", "deny"],
+    ["Do not allow everything.", "deny"],
+    ["don't allow it", "deny"],
+    ["no, don't allow everything", "deny"],
+    ["never allow that", "deny"],
+    ["I don't want you to allow everything", "deny"],
+    ["I do not want you to approve this", "deny"],
+    ["yes, allow everything", "allow-for-call"],
+    ["don't ask me again", "allow-for-call"],
+    ["stop asking", "allow-for-call"],
+    ["no need to ask", "allow-for-call"],
+    ["no need to ask, just do it", "allow-for-call"],
+    ["wait, don't", "deny"],
+    ["wait", "deny"],
+    ["not for the whole call", "deny"],
+    ["don\u2019t allow everything", "deny"],
+    ["um no", "deny"],
+    ["sure", "allow"],
+    ["ok do it", "allow"],
+  ])("negation table: %s -> %s", (said, answer) => {
+    expect(approvalAnswer(said)).toBe(answer);
+  });
+
+  it.each([
+    "allow it but not the email",
+    "yes but don't send anything",
+    "go ahead, but never to my boss",
+    "stop asking but don't allow the email",
+  ])("a yes with a later no stays open: %s", (said) => {
+    expect(approvalAnswer(said)).toBeNull();
+  });
+
   it.each([
     "What is it searching for?",
     "Hmm",
