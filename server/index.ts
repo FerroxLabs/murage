@@ -7617,6 +7617,8 @@ const channelApprovalActions: (targetBotId: string, bindingId?:()=>string|undefi
         if (!card.tool) return [];
         const summary = redactSecretsInText(`${bot.name} requests approval\nTool: ${card.tool}\n${card.subtitle ?? ""}${card.held ? `\n${card.held}` : ""}`);
         if (summary.length > 3000) return []; // full review stays in-app
+        // Computer control (or any scope this chat code cannot classify) is exempt from the stop line, so a tap in a chat is never enough: it is told, not offered
+        if (card.approvalScope) return [{ id: message.id, fingerprint, summary, desktopOnly: true }];
         return [{ id: message.id, fingerprint, summary, ...(card.taskAllowKey ? { taskAllow: true } : {}) }];
       });
     };
@@ -7628,6 +7630,7 @@ const channelApprovalActions: (targetBotId: string, bindingId?:()=>string|undefi
       const card = store.messagesFor(bot.threadId).find(message => message.id === approval.id)?.card;
       // a question is never answered with allow/deny
       if (!card?.requestId || isQuestionCard(card)) return false;
+      if (card.approvalScope && behavior === "allow") return false; // answer-time recheck: computer control is approved on the desktop
       // "Allow for this task" records the card's own scoped grant
       const outcome = forTask && behavior === "allow" && card.taskAllowKey
         ? await answerRequest(bot.threadId, bot.modelSelection.instanceId, card.requestId, behavior, undefined, { id: bot.id, name: bot.name }, undefined, { allowForTask: true })

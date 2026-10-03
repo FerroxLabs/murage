@@ -15,6 +15,8 @@ export interface PermissionAction {
 export interface PermissionMessages {
   send(input: { dmId: string; text: string; approveId: string; denyId: string; signal: AbortSignal }): Promise<{ messageId: string }>;
   settle(input: { dmId: string; messageId: string; text: string; signal: AbortSignal }): Promise<void>;
+  /** A plain message with no buttons, for an approval that can only be given on the desktop. */
+  notify?(input: { dmId: string; text: string; signal: AbortSignal }): Promise<unknown>;
 }
 interface Options {
   provider: PermissionAction["provider"];
@@ -37,6 +39,7 @@ interface Offer {
   outcome?: string;
   editAttempted?: boolean;
 }
+export const DESKTOP_ONLY_LINE = "Approve this on your computer.";
 const HINT = "\n\nApprove once or deny this exact action. Expires in 10 minutes.";
 const TTL = 600_000;
 
@@ -86,6 +89,12 @@ export class PermissionApprovals {
         }
         const offer: Offer = { approval: { ...approval }, nonce: randomBytes(24).toString("hex"), expires: this.now() + TTL, consumed: false };
         this.offers.set(approval.id, offer); // Never repeat a send whose outcome is uncertain.
+        if (approval.desktopOnly) {
+          offer.consumed = true; offer.editAttempted = true; // no button exists to tap
+          // fail closed: without a plain-text path nothing is sent at all
+          await this.options.messages.notify?.({ dmId: this.options.dmId, text: `${approval.summary}\n\n${DESKTOP_ONLY_LINE}`, signal: this.abort.signal });
+          continue;
+        }
         const message = await this.options.messages.send({ dmId: this.options.dmId, text: approval.summary + HINT,
           approveId: `murage:${offer.nonce}:a`, denyId: `murage:${offer.nonce}:d`, signal: this.abort.signal });
         if (this.active() && this.offers.get(approval.id) === offer) offer.messageId = message.messageId;
