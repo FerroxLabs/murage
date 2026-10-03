@@ -124,7 +124,7 @@ export class SlackService {
       ? new PermissionApprovals({ provider: "slack", applicationId: binding.appId, teamId: binding.teamId,
         ownerUserId: binding.ownerUserId, dmId: binding.dmId, actions: this.options.approvals,
         active: () => this.live && this.isCurrent(binding), maxText: 3000, now: this.options.now,
-        messages: { send: async input => ({ messageId: (await transport.sendPermission!(input)).ts }), settle: input => transport.settlePermission!(input), notify: input => transport.sendText(input) } })
+        messages: { send: async input => ({ messageId: (await transport.sendPermission!(input)).ts }), settle: input => transport.settlePermission!(input) } })
       : undefined;
     this.ledger = new DurableDelivery({ file: join(this.options.dataDir, "channels", "slack", binding.connectionId + ".json"),
       bindingKey: digest(JSON.stringify(binding)), recipient: binding.dmId, isCurrent: () => this.live && this.isCurrent(binding),

@@ -45,7 +45,9 @@ type QuestionDraft = {
 type Offer = { approval: TelegramApproval; nonce: string; expires: number; messageId?: number; consumed: boolean; outcome?: string; editAttempted?: boolean; draft?: QuestionDraft };
 type ApprovalTransport = Pick<TelegramTransport, "sendMessage" | "answerCallbackQuery"> & Partial<Pick<TelegramTransport, "settleApprovalMessage" | "editQuestionMessage">>;
 
-export const DESKTOP_ONLY_LINE = "Approve this on your computer.";
+/** A computer-control card in a chat: approved on the desktop only, while a
+ * Deny tap is fine from anywhere (denying never widens what a bot can do). */
+export const DESKTOP_ONLY_LINE = "Approve this on your computer. You can deny it here. Expires in 10 minutes.";
 const PERMISSION_TTL = 600000;
 /** A question offer lives as long as the engine waits for the card. */
 const QUESTION_TTL = QUESTION_TIMEOUT_MS;
@@ -113,9 +115,10 @@ export class TelegramApprovals {
       const offer: Offer = { approval: { ...approval }, nonce: randomBytes(24).toString("hex"), expires: this.now() + PERMISSION_TTL, consumed: false };
       this.offers.set(approval.id, offer); // uncertain send must not auto-repeat
       if (approval.desktopOnly) {
-        offer.consumed = true; // no button exists, so no tap can ever match this offer
-        offer.editAttempted = true; // nothing to settle
-        await this.transport.sendMessage({ chatId: owner.chatId, text: `${approval.summary}\n\n${DESKTOP_ONLY_LINE}`, signal });
+        // Deny only: no Approve or Allow-for-task button exists for this offer
+        const message = await this.transport.sendMessage({ chatId: owner.chatId, text: `${approval.summary}\n\n${DESKTOP_ONLY_LINE}`,
+          buttons: [{ text: "Deny", data: `${offer.nonce}:d` }], signal });
+        if (active() && this.offers.get(approval.id) === offer) offer.messageId = message.messageId;
         continue;
       }
       // A stop-line card (deleting outside its folder, paying, messaging
@@ -308,7 +311,7 @@ export class TelegramApprovals {
     if (offer && !offer.consumed && offer.messageId === update.messageId && this.now() < offer.expires && this.stillPending(offer)) {
       if (question && offer.draft) {
         text = await this.answerQuestion(offer, Number(question[2]), question[3]!, owner, active, signal);
-      } else if (permission && !offer.draft && !offer.approval.desktopOnly && (permission[2] !== "t" || offer.approval.taskAllow === true)) {
+      } else if (permission && !offer.draft && (!offer.approval.desktopOnly || permission[2] === "d") && (permission[2] !== "t" || offer.approval.taskAllow === true)) {
         // Consume before invoking the engine; exceptions never authorize replay.
         offer.consumed = true;
         try {

@@ -87,7 +87,7 @@ it.each(["local-computer", "unknown-scope"])("a %s card is never allowable from 
   const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
   const message = { id: "card", card: { requestId: "request", tool: "mcp__computer__click", subtitle: "click (100, 200)", approvalScope: scope as string | undefined, answered: undefined as string | undefined } };
   const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message], projectBotForTask: () => bot };
-  const answerRequest = vi.fn(async () => "allowed-once");
+  const answerRequest = vi.fn(async (..._args: unknown[]) => _args[3] === "deny" ? "rejected" : "allowed-once");
   const actions = channelApprovalActions(store, new Map([["thread:request", "card"]]), answerRequest, () => ({ kind: "none" }), () => "owner");
   const owner = { senderId: "7", chatId: "7" }, signal = new AbortController().signal;
   // Telegram
@@ -103,18 +103,41 @@ it.each(["local-computer", "unknown-scope"])("a %s card is never allowable from 
   // an allow tap forged with the offered nonce is refused too
   const nonce = sent?.buttons?.[0]?.data.split(":")[0] ?? "0".repeat(48);
   for (const choice of ["a", "t"]) await telegram.answer({ updateId: 3, kind: "callback", callbackId: "c", senderId: "7", chatId: "7", messageId: 19, data: `${nonce}:${choice}` } as never, owner, () => true, signal);
-  // Slack / Discord
+  // Slack / Discord: one Deny button, never an Approve one
   const send = vi.fn(async (_input: any) => ({ messageId: "30" }));
-  const notify = vi.fn(async (_input: any) => ({}));
   const manager = new PermissionApprovals({ provider: "discord", applicationId: "10", ownerUserId: "20", dmId: "25", maxText: 2000,
-    actions: actions as never, messages: { send, settle: vi.fn(async () => {}), notify }, active: () => true });
+    actions: actions as never, messages: { send, settle: vi.fn(async () => {}) }, active: () => true });
   await manager.publish();
-  expect(send).not.toHaveBeenCalled(); // no Approve button is ever sent
-  expect(notify.mock.calls[0]?.[0].text ?? "").toContain("Approve this on your computer.");
-  const approveId = `murage:${"0".repeat(48)}:a`;
-  await manager.receive({ provider: "discord", applicationId: "10", userId: "20", channelId: "25", messageId: "30", actionId: approveId, ack: async () => {} });
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send.mock.calls[0]![0]).toMatchObject({ denyOnly: true });
+  expect(send.mock.calls[0]![0].text).toContain("Approve this on your computer.");
+  const approveId = send.mock.calls[0]![0].approveId as string;
+  const tap = (actionId: string) => manager.receive({ provider: "discord", applicationId: "10", userId: "20", channelId: "25", messageId: "30", actionId, ack: async () => {} });
+  expect(await tap(approveId)).toBe(false); // a forged Approve with the real nonce
   // the responder itself refuses, even when handed the offer directly
   const offered = actions.pending()[0];
   if (offered) expect(await actions.resolve(offered, "allow")).toBe(false);
   expect(answerRequest).not.toHaveBeenCalled();
+  // Deny is fine from anywhere
+  expect(await tap(send.mock.calls[0]![0].denyId)).toBe(true);
+  expect(answerRequest).toHaveBeenCalledTimes(1);
+  expect(answerRequest.mock.calls[0]).toContain("deny");
+});
+
+it("Telegram offers only Deny for a computer-control card, and the Deny tap answers it", async () => {
+  const { TelegramApprovals } = await import("./telegram-approvals.ts");
+  const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
+  const message = { id: "card", card: { requestId: "request", tool: "mcp__computer__click", subtitle: "click (100, 200)", approvalScope: "local-computer", answered: undefined as string | undefined } };
+  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message], projectBotForTask: () => bot };
+  const answerRequest = vi.fn(async (..._args: unknown[]) => _args[3] === "deny" ? "rejected" : "allowed-once");
+  const actions = channelApprovalActions(store, new Map([["thread:request", "card"]]), answerRequest, () => ({ kind: "none" }), () => "owner");
+  const owner = { senderId: "7", chatId: "7" }, signal = new AbortController().signal;
+  const sendMessage = vi.fn(async (_input: any) => ({ chatId: "7", messageId: 19 }));
+  const telegram = new TelegramApprovals(actions as never, { sendMessage, answerCallbackQuery: vi.fn(async () => {}) });
+  await telegram.publish(owner, () => true, signal);
+  const buttons = sendMessage.mock.calls[0]![0].buttons as Array<{ text: string; data: string }>;
+  expect(buttons.map(button => button.text)).toEqual(["Deny"]);
+  await telegram.answer({ updateId: 4, kind: "callback", callbackId: "c", senderId: "7", chatId: "7", messageId: 19, data: buttons[0]!.data } as never, owner, () => true, signal);
+  expect(answerRequest).toHaveBeenCalledTimes(1);
+  expect(answerRequest.mock.calls[0]).toContain("deny");
 });

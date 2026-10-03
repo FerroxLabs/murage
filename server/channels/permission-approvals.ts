@@ -13,10 +13,9 @@ export interface PermissionAction {
   ack: () => Promise<void>;
 }
 export interface PermissionMessages {
-  send(input: { dmId: string; text: string; approveId: string; denyId: string; signal: AbortSignal }): Promise<{ messageId: string }>;
+  /** `denyOnly`: show only the Deny button (a computer-control card, approved on the desktop). */
+  send(input: { dmId: string; text: string; approveId: string; denyId: string; denyOnly?: boolean; signal: AbortSignal }): Promise<{ messageId: string }>;
   settle(input: { dmId: string; messageId: string; text: string; signal: AbortSignal }): Promise<void>;
-  /** A plain message with no buttons, for an approval that can only be given on the desktop. */
-  notify?(input: { dmId: string; text: string; signal: AbortSignal }): Promise<unknown>;
 }
 interface Options {
   provider: PermissionAction["provider"];
@@ -39,7 +38,9 @@ interface Offer {
   outcome?: string;
   editAttempted?: boolean;
 }
-export const DESKTOP_ONLY_LINE = "Approve this on your computer.";
+/** A computer-control card in a chat: approved on the desktop only, while a
+ * Deny tap is fine from anywhere (denying never widens what a bot can do). */
+export const DESKTOP_ONLY_LINE = "Approve this on your computer. You can deny it here. Expires in 10 minutes.";
 const HINT = "\n\nApprove once or deny this exact action. Expires in 10 minutes.";
 const TTL = 600_000;
 
@@ -89,14 +90,10 @@ export class PermissionApprovals {
         }
         const offer: Offer = { approval: { ...approval }, nonce: randomBytes(24).toString("hex"), expires: this.now() + TTL, consumed: false };
         this.offers.set(approval.id, offer); // Never repeat a send whose outcome is uncertain.
-        if (approval.desktopOnly) {
-          offer.consumed = true; offer.editAttempted = true; // no button exists to tap
-          // fail closed: without a plain-text path nothing is sent at all
-          await this.options.messages.notify?.({ dmId: this.options.dmId, text: `${approval.summary}\n\n${DESKTOP_ONLY_LINE}`, signal: this.abort.signal });
-          continue;
-        }
-        const message = await this.options.messages.send({ dmId: this.options.dmId, text: approval.summary + HINT,
-          approveId: `murage:${offer.nonce}:a`, denyId: `murage:${offer.nonce}:d`, signal: this.abort.signal });
+        const message = await this.options.messages.send({ dmId: this.options.dmId,
+          text: approval.desktopOnly ? `${approval.summary}\n\n${DESKTOP_ONLY_LINE}` : approval.summary + HINT,
+          approveId: `murage:${offer.nonce}:a`, denyId: `murage:${offer.nonce}:d`,
+          ...(approval.desktopOnly ? { denyOnly: true } : {}), signal: this.abort.signal });
         if (this.active() && this.offers.get(approval.id) === offer) offer.messageId = message.messageId;
       }
     } finally { this.publishing = false; }
@@ -109,6 +106,8 @@ export class PermissionApprovals {
     if (!match) return false;
     const offer = [...this.offers.values()].find(item => item.nonce === match[1]);
     if (!offer || !offer.messageId || event.messageId !== offer.messageId || offer.consumed) return false;
+    // computer control: no Approve button was sent, and a forged one is refused
+    if (offer.approval.desktopOnly && match[2] !== "d") return false;
     if (this.now() >= offer.expires || !this.pending(offer)) {
       offer.consumed = true; offer.outcome = "No longer pending. Review this action in Murage.";
       await this.settle(offer); return false;

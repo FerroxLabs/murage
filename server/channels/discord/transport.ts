@@ -5,7 +5,7 @@ import { discordId } from "./event.ts";
 type Health = "connected" | "disconnected" | "error" | "blocked";
 export interface DiscordTransport {
   onPermissionAction?(receive: (event: PermissionAction) => void): void;
-  sendPermission?(input: { dmId: string; text: string; approveId: string; denyId: string; signal: AbortSignal }): Promise<{ channel: string; messageId: string }>;
+  sendPermission?(input: { dmId: string; text: string; approveId: string; denyId: string; denyOnly?: boolean; signal: AbortSignal }): Promise<{ channel: string; messageId: string }>;
   settlePermission?(input: { dmId: string; messageId: string; text: string; signal: AbortSignal }): Promise<void>;
   verifyBot(): Promise<{ applicationId: string; botUserId: string }>;
   start(receive: (event: unknown) => void, health: (state: Health) => void): Promise<void>;
@@ -117,7 +117,7 @@ export class DiscordGatewayTransport implements DiscordTransport {
     if (!active()) await sdk.destroy();
   }
   async stop() { this.stopped = true; this.generation++; if (this.sdk) await (await this.sdk).destroy(); }
-  async sendPermission(input: { dmId: string; text: string; approveId: string; denyId: string; signal: AbortSignal }) {
+  async sendPermission(input: { dmId: string; text: string; approveId: string; denyId: string; denyOnly?: boolean; signal: AbortSignal }) {
     if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);
     if (!discordId.safeParse(input.dmId).success || !input.text || input.text.length > 2000 ||
       !/^murage:[a-f0-9]{48}:a$/.test(input.approveId) || input.denyId !== input.approveId.slice(0, -1) + "d") throw new ChannelSendError("invalid-request", false);
@@ -126,7 +126,7 @@ export class DiscordGatewayTransport implements DiscordTransport {
     try {
       const result = object(await sdk.rest.post(`/channels/${input.dmId}/messages`, { signal: input.signal, body: {
         content: input.text, allowed_mentions: { parse: [], replied_user: false }, tts: false, flags: 4,
-        components: [{ type: 1, components: [{ type: 2, style: 3, label: "Approve once", custom_id: input.approveId },
+        components: [{ type: 1, components: [...(input.denyOnly ? [] : [{ type: 2, style: 3, label: "Approve once", custom_id: input.approveId }]),
           { type: 2, style: 4, label: "Deny", custom_id: input.denyId }] }] } }));
       if (result.channel_id !== input.dmId || !discordId.safeParse(result.id).success) throw new ChannelSendError("invalid-request", true);
       return { channel: result.channel_id as string, messageId: result.id as string };
