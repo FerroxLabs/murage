@@ -14,7 +14,9 @@ export interface ScreenFramePixels {
 
 async function fetchScreenFramePixels(path: string): Promise<ScreenFramePixels | null> {
   await ensureDesktopSurfaceSecret();
-  const res = await fetch(path, { headers: desktopSurfaceHeaders() });
+  // The marker and the secret together are the desktop's proof; the secret
+  // alone reads as an unproven caller, which the conversation gate refuses.
+  const res = await fetch(path, { headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } });
   if (!res.ok) return null;
   const blob = await res.blob();
   const bytes = new Uint8Array(await blob.arrayBuffer());

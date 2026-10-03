@@ -24,11 +24,18 @@ afterEach(() => {
 
 it("asks for the message's image route with no `w`, unlike the phone-capped paged fetch", async () => {
   const pixels = await fetchOriginalScreenFrame("t1", "m1");
-  expect(fetchMock).toHaveBeenCalledWith("/api/threads/t1/messages/m1/image", { headers: { "x-murage-surface-secret": "synthetic-proof" } });
+  expect(fetchMock).toHaveBeenCalledWith("/api/threads/t1/messages/m1/image", { headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } });
   expect(pixels?.mime).toBe("image/png");
 });
 
 it("returns null on a refused response, same as the capped fetch", async () => {
   fetchMock.mockResolvedValueOnce(new Response(null, { status: 404 }));
   expect(await fetchOriginalScreenFrame("t1", "m1")).toBeNull();
+});
+
+it("carries the desktop marker with the secret, so the conversation gate reads it as the desktop", async () => {
+  await fetchOriginalScreenFrame("t1", "m1");
+  const headers = fetchMock.mock.calls[0]![1].headers as Record<string, string>;
+  expect(headers["x-murage-surface"]).toBe("desktop");
+  expect(headers["x-murage-surface-secret"]).toBe("synthetic-proof");
 });
