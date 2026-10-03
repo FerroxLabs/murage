@@ -290,7 +290,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           ...CODEX_TOOL_SURFACE_ARGS,
         ];
         if (turn.integrations?.composio) {
-          mountMcpServer(appServerArgs, env, "murage_connectors", turn.integrations.composio);
+          // Connected apps are where a bot pays and messages: at Full (stopLine)
+          // and below it (routeAsks) their calls reach Murage's broker.
+          mountMcpServer(appServerArgs, env, "murage_connectors", turn.integrations.composio, !turn.stopLine && !turn.routeAsks);
         }
         if (turn.integrations?.agents) {
           mountMcpServer(appServerArgs, env, "agents", turn.integrations.agents);

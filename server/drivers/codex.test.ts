@@ -540,6 +540,20 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(JSON.parse(readFileSync(dump, "utf8")).env.CODEX_HOME).toBe(codexHome);
   });
 
+  // S3b: Ask, Auto and Full bots see their connected-app calls as approval cards.
+  it("leaves connected apps unquieted when the turn routes asks or has the stop line", async () => {
+    await create();
+    const composio = { command: process.execPath, args: ["-e", ""], env: {} };
+    for (const [name, flags] of [["plain", {}], ["routeAsks", { routeAsks: true as const }], ["stopLine", { stopLine: true as const }]] as const) {
+      const dump = join(scratch, `composio-${name}.json`);
+      process.env.FAKE_CODEX_DUMP = dump;
+      const sent = await instance.adapter.sendTurn({ threadId: `t-composio-${name}`, text: "hi", ...flags, integrations: { composio } });
+      await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
+      const argv = JSON.parse(readFileSync(dump, "utf8")).argv.join(" ");
+      expect(argv.includes("mcp_servers.murage_connectors.default_tools_approval_mode")).toBe(name === "plain");
+    }
+  });
+
   it("mounts connected apps without placing credential values in argv", async () => {
     await create();
     const dump = join(scratch, "composio.json");

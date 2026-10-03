@@ -455,3 +455,19 @@ describe("a script fed to an interpreter is judged by its delete calls, not its 
     expect(classifyStopLine("Bash", { command }, command, place())?.kind).toBe("delete");
   });
 });
+
+// S3b: a connected-app send from an Ask or Auto bot raises a card, once its asks reach Murage.
+it("holds a Composio send for the owner at Ask and Auto, and lets a read through at Auto", () => {
+  const tool = "mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL";
+  const send = { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", account: "a", arguments: { recipient_email: "new@x.com" } }] };
+  const read = { tools: [{ tool_slug: "GMAIL_FETCH_EMAILS", account: "a", arguments: {} }] };
+  const stop = classifyStopLine(tool, send, "Gmail send", place());
+  expect(stop).toMatchObject({ kind: "message" });
+  for (const bot of [{ autoApprove: false }, { autoApprove: true }]) {
+    expect(autoVerdict(bot, tool, "Gmail send", { stopLine: stop }).approve).toBeNull();
+  }
+  const readStop = classifyStopLine(tool, read, "Gmail fetch", place());
+  expect(readStop).toBeNull();
+  expect(autoVerdict({ autoApprove: true }, tool, "Gmail fetch", { stopLine: readStop }).approve).toEqual(expect.any(String));
+  expect(autoVerdict({ autoApprove: false }, tool, "Gmail fetch", { stopLine: readStop }).approve).toBeNull();
+});

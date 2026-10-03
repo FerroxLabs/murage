@@ -631,7 +631,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const gateSecret = !config.fullAuto || turn.stopLine === true || turn.routeAsks === true ? randomBytes(24).toString("hex") : null;
       // Connected-app calls are asked about only when the stop line has to
       // see them, as Claude pre-allows its connected-apps tool otherwise.
-      const gatePrefixes = turn.stopLine === true && turn.integrations?.composio ? [PI_COMPOSIO_TOOL_PREFIX] : [];
+      const gatePrefixes = (turn.stopLine === true || turn.routeAsks === true) && turn.integrations?.composio ? [PI_COMPOSIO_TOOL_PREFIX] : [];
       const childArgs = [
         ...PI_ARGS,
         ...(mcpServers ? ["-e", SPAWNED_PROXIES.piMcpExtension] : []),

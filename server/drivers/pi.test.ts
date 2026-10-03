@@ -1313,6 +1313,26 @@ describe("PiDriver approvals gate (fake CLI)", () => {
   });
 });
 
+describe("pi gate prefixes below Full", () => {
+  // S3b: a connected-app call from an Ask or Auto bot reaches the gate.
+  it("gates connected apps when the turn routes asks", async () => {
+    const dump = join(tmpdir(), `murage-pi-prefix-${newId()}.jsonl`);
+    const instance = await PiDriver.create({ instanceId: "pi-prefix", displayName: "pi", environment: { FAKE_PI_MODE: "happy", FAKE_PI_DUMP: dump }, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
+    const recorder = recordEvents(instance.adapter);
+    const composio = { command: "node", args: ["connector-proxy.js"], env: {} };
+    for (const [name, flags] of [["plain", {}], ["routeAsks", { routeAsks: true as const }]] as const) {
+      const sent = await instance.adapter.sendTurn({ threadId: `t-prefix-${name}-${newId()}`, text: "hi", ...flags, integrations: { composio } });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      const row = (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.argv).at(-1)) as { gate: { prefixes: string } | null };
+      if (name === "plain") expect(row.gate).toBeNull();
+      else expect(JSON.parse(row.gate!.prefixes)).toContain("composio_");
+    }
+    recorder.stop();
+    await instance.dispose();
+    rmSync(dump, { force: true });
+  });
+});
+
 describe("piGateAsk", () => {
   it("reads a file edit as a file the stop line can place", () => {
     expect(piGateAsk(JSON.stringify({ tool: "write", input: { path: "/Users/owner/notes.md" } }))).toEqual({

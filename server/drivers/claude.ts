@@ -1019,8 +1019,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // Connected apps are where a bot pays, deletes mail and messages
         // people. Under the stop line their calls reach Murage's broker so
         // those three can wait for the owner; every other call is answered
-        // at once.
-        if (!turn.stopLine) allowed.push("mcp__composio");
+        // at once. Below Full (routeAsks) the same holds: the stop line
+        // reads every ask whatever the mode, so a send or a payment from an
+        // Ask or Auto bot raises its card instead of being pre-approved.
+        if (!turn.stopLine && !turn.routeAsks) allowed.push("mcp__composio");
       }
       if (turn.integrations?.computer) {
         mcpServers.computer = {

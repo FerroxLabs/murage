@@ -2419,6 +2419,22 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   // Murage's Full access stops before deleting outside its folder, paying
   // and messaging someone new (server/stop-line.ts). A bypassPermissions
   // instance would never ask, so under the stop line it asks for this turn.
+  // S3b: Ask and Auto bots send connected-app calls (send, post, pay) to Murage too.
+  it("does not pre-allow connected apps on a turn that routes asks", async () => {
+    await create(undefined, {}, { permissionMode: "acceptEdits" });
+    const composio = { command: process.execPath, args: ["-e", ""], env: {} };
+    for (const [name, flags] of [["plain", {}], ["routeAsks", { routeAsks: true as const }]] as const) {
+      const dump = join(scratch, `dump-composio-${name}.json`);
+      process.env.FAKE_CLAUDE_DUMP = dump;
+      const sent = await instance.adapter.sendTurn({ threadId: `t-composio-${name}`, text: "hi", ...flags, integrations: { composio } });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1] ?? "";
+      if (name === "plain") expect(allowed).toContain("mcp__composio");
+      else expect(allowed).not.toContain("mcp__composio");
+    }
+  });
+
   it("routes a bypassPermissions instance's asks to Murage under the stop line", async () => {
     await create(undefined, {}, { permissionMode: "bypassPermissions" });
     const dump = join(scratch, "dump-stop-line.json");
