@@ -129,7 +129,7 @@ export class DiscordService {
       ? new PermissionApprovals({ provider: "discord", applicationId: binding.applicationId,
         ownerUserId: binding.ownerUserId, dmId: binding.dmId, actions: this.options.approvals,
         active: () => this.live && this.isCurrent(binding), maxText: 2000, now: this.options.now,
-        messages: { send: input => transport.sendPermission!(input), settle: input => transport.settlePermission!(input) } })
+        messages: { send: input => transport.sendPermission!(input), settle: input => transport.settlePermission!(input), notify: input => transport.sendText(input) } })
       : undefined;
     this.ledger = new DurableDelivery({ file: join(this.options.dataDir, "channels", "discord", binding.connectionId + ".json"),
       bindingKey: digest(JSON.stringify(binding)), recipient: binding.dmId, isCurrent: () => this.live && this.isCurrent(binding),

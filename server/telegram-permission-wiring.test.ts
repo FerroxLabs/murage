@@ -78,3 +78,43 @@ it("actual root approval actions publish a question with its questions and answe
   expect(await actions.answer(offered, { behavior: "skip" })).toEqual({ ok: false, error: "This question is no longer open." });
   expect(answerRequest).toHaveBeenCalledTimes(1);
 });
+
+// 0.1.62 release check: computer control is approved on the desktop only. The real
+// approval actions feed the real Telegram, Slack and Discord offer managers.
+it.each(["local-computer", "unknown-scope"])("a %s card is never allowable from Telegram, Slack or Discord", async scope => {
+  const { TelegramApprovals } = await import("./telegram-approvals.ts");
+  const { PermissionApprovals } = await import("./channels/permission-approvals.ts");
+  const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
+  const message = { id: "card", card: { requestId: "request", tool: "mcp__computer__click", subtitle: "click (100, 200)", approvalScope: scope as string | undefined, answered: undefined as string | undefined } };
+  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message], projectBotForTask: () => bot };
+  const answerRequest = vi.fn(async () => "allowed-once");
+  const actions = channelApprovalActions(store, new Map([["thread:request", "card"]]), answerRequest, () => ({ kind: "none" }), () => "owner");
+  const owner = { senderId: "7", chatId: "7" }, signal = new AbortController().signal;
+  // Telegram
+  const sendMessage = vi.fn(async (_input: any) => ({ chatId: "7", messageId: 19 }));
+  const telegram = new TelegramApprovals(actions as never, { sendMessage, answerCallbackQuery: vi.fn(async () => {}) });
+  await telegram.publish(owner, () => true, signal);
+  const sent = sendMessage.mock.calls[0]?.[0];
+  expect(sent?.text ?? "").toContain("Approve this on your computer.");
+  for (const button of sent?.buttons ?? []) {
+    if (button.data.endsWith(":d")) continue; // Deny may stay
+    await telegram.answer({ updateId: 2, kind: "callback", callbackId: "c", senderId: "7", chatId: "7", messageId: 19, data: button.data } as never, owner, () => true, signal);
+  }
+  // an allow tap forged with the offered nonce is refused too
+  const nonce = sent?.buttons?.[0]?.data.split(":")[0] ?? "0".repeat(48);
+  for (const choice of ["a", "t"]) await telegram.answer({ updateId: 3, kind: "callback", callbackId: "c", senderId: "7", chatId: "7", messageId: 19, data: `${nonce}:${choice}` } as never, owner, () => true, signal);
+  // Slack / Discord
+  const send = vi.fn(async (_input: any) => ({ messageId: "30" }));
+  const notify = vi.fn(async (_input: any) => ({}));
+  const manager = new PermissionApprovals({ provider: "discord", applicationId: "10", ownerUserId: "20", dmId: "25", maxText: 2000,
+    actions: actions as never, messages: { send, settle: vi.fn(async () => {}), notify }, active: () => true });
+  await manager.publish();
+  expect(send).not.toHaveBeenCalled(); // no Approve button is ever sent
+  expect(notify.mock.calls[0]?.[0].text ?? "").toContain("Approve this on your computer.");
+  const approveId = `murage:${"0".repeat(48)}:a`;
+  await manager.receive({ provider: "discord", applicationId: "10", userId: "20", channelId: "25", messageId: "30", actionId: approveId, ack: async () => {} });
+  // the responder itself refuses, even when handed the offer directly
+  const offered = actions.pending()[0];
+  if (offered) expect(await actions.resolve(offered, "allow")).toBe(false);
+  expect(answerRequest).not.toHaveBeenCalled();
+});

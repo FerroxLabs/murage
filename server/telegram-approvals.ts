@@ -15,6 +15,9 @@ export interface TelegramApproval {
    * allowed for the rest of this task, for the same kind of action in the
    * same place. */
   taskAllow?: boolean;
+  /** Computer control (any scoped card): shown with one plain line and no
+   * buttons; no chat can allow it. */
+  desktopOnly?: boolean;
 }
 /** What the owner decided about a question, in the desktop card's own terms. */
 export type TelegramQuestionReply = { behavior: "answer"; answers: QuestionAnswer[] } | { behavior: "skip" };
@@ -42,6 +45,7 @@ type QuestionDraft = {
 type Offer = { approval: TelegramApproval; nonce: string; expires: number; messageId?: number; consumed: boolean; outcome?: string; editAttempted?: boolean; draft?: QuestionDraft };
 type ApprovalTransport = Pick<TelegramTransport, "sendMessage" | "answerCallbackQuery"> & Partial<Pick<TelegramTransport, "settleApprovalMessage" | "editQuestionMessage">>;
 
+export const DESKTOP_ONLY_LINE = "Approve this on your computer.";
 const PERMISSION_TTL = 600000;
 /** A question offer lives as long as the engine waits for the card. */
 const QUESTION_TTL = QUESTION_TIMEOUT_MS;
@@ -108,6 +112,12 @@ export class TelegramApprovals {
       if (!approval.summary || approval.summary.length > 3000) continue;
       const offer: Offer = { approval: { ...approval }, nonce: randomBytes(24).toString("hex"), expires: this.now() + PERMISSION_TTL, consumed: false };
       this.offers.set(approval.id, offer); // uncertain send must not auto-repeat
+      if (approval.desktopOnly) {
+        offer.consumed = true; // no button exists, so no tap can ever match this offer
+        offer.editAttempted = true; // nothing to settle
+        await this.transport.sendMessage({ chatId: owner.chatId, text: `${approval.summary}\n\n${DESKTOP_ONLY_LINE}`, signal });
+        continue;
+      }
       // A stop-line card (deleting outside its folder, paying, messaging
       // someone new) can also be allowed for the rest of the task, for the
       // same kind of action in the same place. Nothing wider is offered here.
@@ -298,7 +308,7 @@ export class TelegramApprovals {
     if (offer && !offer.consumed && offer.messageId === update.messageId && this.now() < offer.expires && this.stillPending(offer)) {
       if (question && offer.draft) {
         text = await this.answerQuestion(offer, Number(question[2]), question[3]!, owner, active, signal);
-      } else if (permission && !offer.draft && (permission[2] !== "t" || offer.approval.taskAllow === true)) {
+      } else if (permission && !offer.draft && !offer.approval.desktopOnly && (permission[2] !== "t" || offer.approval.taskAllow === true)) {
         // Consume before invoking the engine; exceptions never authorize replay.
         offer.consumed = true;
         try {
