@@ -48,6 +48,13 @@ describe("approvalAnswer", () => {
     ["not for the whole call", "deny"],
     ["don\u2019t allow everything", "deny"],
     ["um no", "deny"],
+    // speech-to-text without the apostrophe (0.1.62 rc review)
+    ["dont allow everything", "deny"],
+    ["Dont allow it", "deny"],
+    ["I dont want you to allow everything", "deny"],
+    ["you cant allow everything", "deny"],
+    ["nah, allow everything", "deny"],
+    ["dont ask me again", "allow-for-call"],
     ["sure", "allow"],
     ["ok do it", "allow"],
   ])("negation table: %s -> %s", (said, answer) => {
@@ -59,6 +66,8 @@ describe("approvalAnswer", () => {
     "yes but don't send anything",
     "go ahead, but never to my boss",
     "stop asking but don't allow the email",
+    "allow nothing",
+    "always allow, dont send anything",
   ])("a yes with a later no stays open: %s", (said) => {
     expect(approvalAnswer(said)).toBeNull();
   });

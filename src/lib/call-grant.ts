@@ -23,9 +23,22 @@ export function coveredForCall(pending: Pending): boolean {
   if (card.taskAllowKey || card.approvalScope || card.folderTrust || card.held) return false;
   if (card.allowKey && card.allowKey.startsWith("stop:")) return false;
   if (PRIVATE_LOOKING.test(`${pending.tool}\n${pending.detail}`)) return false;
-  const action = knownToolAction(pending.tool, pending.detail);
-  return action !== null && COVERED.some((re) => re.test(action));
+  // The tool's own name decides first. `knownToolAction` also reads the
+  // detail, so a shell command that merely mentions "google" or "git fetch"
+  // would otherwise be worded, and covered, as a web lookup.
+  if (ACTING_TOOL.test(toolWords(pending.tool))) return false;
+  const byName = knownToolAction(pending.tool, "");
+  if (byName !== null && !covered(byName)) return false;
+  return covered(knownToolAction(pending.tool, pending.detail));
 }
+
+const covered = (action: string | null): boolean => action !== null && COVERED.some((re) => re.test(action));
+/** A tool name split into words: "mcp__gmail__send_email" -> "send email", "SendEmail" -> "Send Email". */
+const toolWords = (tool: string): string =>
+  tool.replace(/^mcp__[^_]+__/, "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ");
+/** A tool whose name says it acts rather than looks is never covered, whatever its detail says. */
+const ACTING_TOOL =
+  /\b(send|post|reply|email|message|delete|remove|drop|write|edit|patch|create|update|upload|pay|purchase|buy|transfer|exec|execute|run|bash|shell|terminal|command|computer|click|type|press|key|script)\b/i;
 
 /** Said aloud when a call-long yes is taken, and again each time it is used:
  *  what carries on by itself, and what still gets a question first. */

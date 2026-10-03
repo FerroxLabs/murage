@@ -8,7 +8,7 @@
 /** A yes as the first word. */
 const YES = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|go for it|do it|allow|approve|approved|fine|please do)\b/i;
 /** A no as the first word. */
-const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
+const NO = /^(no|nope|nah|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
 /** A yes that covers the ordinary requests until the call ends. */
 const YES_FOR_CALL =
   /\b(for (the )?rest of (the|this) call|for (the|this) (whole )?call|yes to (all|everything)|allow (it |them )?all|until (i|we) hang up|always allow|allow everything)\b/i;
@@ -17,7 +17,9 @@ const YES_FOR_CALL =
 const STOP_ASKING = /\b(don'?t (ask|keep asking)( me)?( again)?|stop asking|no need to ask)\b/i;
 /** Consent anywhere in a short answer: "you can go ahead", "sure, do it". */
 const YES_ANYWHERE = /\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|go for it|do it|allow( it)?|approve|approved|fine|please do|you can)\b/i;
-const NEGATED = /\b(no|nope|not|never|deny|denied|cancel|stop|wait|do not)\b|n't\b/i;
+/** Speech-to-text often drops the apostrophe ("dont allow everything"), so
+ *  the bare spellings count as a negation too. */
+const NEGATED = /\b(no|nope|nah|not|never|nothing|deny|denied|cancel|stop|wait|do not|dont|cant|wont|didnt|shouldnt)\b|n't\b/i;
 /** Longer than this is a question or a thought, not an answer. */
 const SHORT_WORDS = 8;
 
