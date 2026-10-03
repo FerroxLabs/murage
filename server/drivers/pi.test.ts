@@ -1304,6 +1304,13 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
     expect(argvOf(on).argv.join(" ")).toMatch(/pi-permission-gate/);
   });
+
+  it("is on when the instance skips asks and the bot is on Ask or Auto", async () => {
+    const on = await create(true, { FAKE_PI_MODE: "happy" });
+    const turn = await instance!.adapter.sendTurn({ threadId: `t-gate-route-${newId()}`, text: "hi", routeAsks: true });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turn.turnId);
+    expect(argvOf(on).argv.join(" ")).toMatch(/pi-permission-gate/);
+  });
 });
 
 describe("piGateAsk", () => {

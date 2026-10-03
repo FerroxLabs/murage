@@ -10,11 +10,16 @@ describe("which paths are conversation routes", () => {
     "/api/threads/t1/messages", "/api/threads/t1/export", "/api/threads/t1/respond", "/api/threads/t1/messages/m1/image",
     "/api/groups", "/api/groups/g1", "/api/groups/g1/messages", "/api/groups/g1/interrupt",
     "/api/search", "/api/events",
+    // 0.1.62 rc review: routine output and run/cancel, a call's room messages,
+    // the decision log, team instructions and team filing
+    "/api/routines", "/api/routines/r1/run", "/api/routine-runs/run1/cancel", "/api/routine-runs/seen-all",
+    "/api/calendar-calls", "/api/calendar-calls/c1/room", "/api/decisions", "/api/section-context", "/api/sidebar-sections",
   ])("%s is gated", (path) => expect(isConversationRoute(path)).toBe(true));
 
   it.each([
     "/api/health", "/api/config", "/api/internal/memory/save", "/api/box/exec", "/api/repo/status", "/api/opencode/x",
     "/api/botsx", "/api/threadsx/1", "/api/groupsx", "/api/searches", "/api/events/extra", "/api/desktop-secret", "/api/attachments/a.png",
+    "/api/routinesx", "/api/decisions/x", "/api/local-computer/interrupt", "/API/bots", "/api/bots%2Fx",
   ])("%s is not", (path) => expect(isConversationRoute(path)).toBe(false));
 });
 

@@ -12,7 +12,7 @@ import { openSse, type SseRecorder } from "./sse.ts";
  * proof, never overrides a proof the request already carries, and leaves every
  * other route alone. A test that means "no proof at all" calls
  * `globalThis.fetch` directly. */
-export const CONVERSATION_PATH = /^\/api\/(?:(?:bots|threads|groups)(?:\/|$|\?)|(?:search|events)(?:$|\?))/;
+export const CONVERSATION_PATH = /^\/api\/(?:(?:bots|threads|groups|routines|routine-runs|calendar-calls)(?:\/|$|\?)|(?:search|events|decisions|section-context|sidebar-sections)(?:$|\?))/;
 
 /** A request that already says who it is (any `x-murage-*` header, or a bearer)
  * is left exactly as the test wrote it: those tests are about that identity. */

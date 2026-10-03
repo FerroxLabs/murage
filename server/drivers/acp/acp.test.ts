@@ -785,6 +785,37 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.argv.slice(0, 2)).toEqual(["--permission-mode", "default"]);
   });
 
+  // Ask and Auto bots (below Full access) must ask too: the owner's mode
+  // decides what is asked, so a fullAuto instance hands this turn's asks to
+  // Murage (`routeAsks`), for grok and fuigo alike.
+  // (fuigo is the shared ACP core under the fuigo engine kind; the real
+  // Fuigo adapter needs its own CLI and key)
+  it.each([
+    ["grok", GrokAgentDriver],
+    ["fuigo", createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: FuigoAgentDriver.driverKind, selectModel: undefined })],
+  ] as const)(
+    "hands a fullAuto %s instance's asks to Murage for an Ask or Auto bot",
+    async (name, Driver) => {
+      process.env.FAKE_ACP_MODE = "permission";
+      instance = await Driver.create({
+        instanceId: `acp-route-asks-${name}`,
+        displayName: "ACP Route Asks",
+        environment: {},
+        enabled: true,
+        config: { cli: FAKE_CLI, fullAuto: true },
+      });
+      recorder = recordEvents(instance.adapter);
+      const dump = join(scratch, `route-asks-${name}.json`);
+      process.env.FAKE_ACP_DUMP = dump;
+      await instance.adapter.sendTurn({ threadId: `t-route-asks-${name}`, text: "go", routeAsks: true });
+      const opened = await recorder.until((e) => e.type === "request.opened");
+      expect(opened).toMatchObject({ requestType: "permission", tool: "shell" });
+      await instance.adapter.respondToRequest(`t-route-asks-${name}`, opened.requestId!, { behavior: "allow" });
+      await recorder.until((e) => e.type === "turn.completed");
+      if (name === "grok") expect(JSON.parse(readFileSync(dump, "utf8")).argv.slice(0, 2)).toEqual(["--permission-mode", "default"]);
+    },
+  );
+
   it("a fullAuto instance still answers its own asks without the stop line", async () => {
     process.env.FAKE_ACP_MODE = "permission";
     instance = await GrokAgentDriver.create({

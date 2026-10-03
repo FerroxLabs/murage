@@ -540,7 +540,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // no way to ask, so under it this engine never skips permissions: it
       // runs in accept-edits (file edits only, no shell, no mounted tools)
       // rather than doing those three without anyone asked.
-      const skipPermissions = config.fullAuto && !turn.stopLine;
+      const skipPermissions = config.fullAuto && !turn.stopLine && !turn.routeAsks;
       const { threadId } = turn;
       if (disposed) throw new Error("Antigravity instance is disposed");
       if (active.has(threadId) || pending.has(threadId)) throw new Error("a turn is already running on this thread");

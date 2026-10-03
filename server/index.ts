@@ -6960,7 +6960,7 @@ async function startTurn(
         // Full access still stops at the stop line (server/stop-line.ts), so
         // the engine must send its asks here even when its own instance is
         // set to skip them; Murage answers the rest at once.
-        ...(hasFullAccess(bot) ? { stopLine: true as const } : {}),
+        ...(hasFullAccess(bot) ? { stopLine: true as const } : { routeAsks: true as const }),
         // A scheduled or manual routine run: its cards wait for the owner
         // instead of the engine's 15-minute deny. At its run limit the run
         // ends as waiting on you (RoutineManager.enforceRunLimits) and the
@@ -8815,7 +8815,7 @@ async function runGroupMemberTurn(
         folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] }),
         ...memberTurnSelection(bot.modelSelection),
         // Full access still stops at the stop line, so the engine must ask
-        ...(hasFullAccess(bot) ? { stopLine: true as const } : {}),
+        ...(hasFullAccess(bot) ? { stopLine: true as const } : { routeAsks: true as const }),
       }), () => !providerRouteIsCurrent(providerRoute) || abandoned || Boolean(isCancelled?.()), async (accepted) => {
         // Retire before teardown so synchronous/late output cannot settle this
         // room or a replacement while accepted authority is being withdrawn.

@@ -657,3 +657,17 @@ describe("exactCommandForRequest", () => {
     expect(exactCommandForRequest({ ...base, toolCall: { name: "Bash", input: { command: "ls", cwd: "relative" } } })).toBeUndefined();
   });
 });
+
+// An Ask or Auto bot's engine now sends every ask to Murage (routeAsks), so
+// the answering side has to honour the mode on its own.
+describe("answering the asks an Ask or Auto bot's engine now sends", () => {
+  const stopLine = { kind: "delete" as const, what: "Delete files outside its folder", place: "/Users/ada/Documents" };
+  it("Ask raises a card for an ordinary command and for the stop line", () => {
+    expect(autoVerdict({}, "Bash", "ls -la")).toMatchObject({ approve: null, source: "no-grant" });
+    expect(autoVerdict({}, "Bash", "rm -rf ~/Documents", { stopLine })).toMatchObject({ approve: null, source: "stop-line" });
+  });
+  it("Auto approves an ordinary command and still holds the stop line", () => {
+    expect(autoVerdict({ autoApprove: true }, "Bash", "ls -la")).toMatchObject({ source: "auto-mode" });
+    expect(autoVerdict({ autoApprove: true }, "Bash", "rm -rf ~/Documents", { stopLine })).toMatchObject({ approve: null, source: "stop-line" });
+  });
+});

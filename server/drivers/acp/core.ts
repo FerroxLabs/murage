@@ -1356,7 +1356,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // holds only if the engine asks, so under it a fullAuto instance runs
         // this turn as a normal one (argv, session mode, permission replies)
         // and Murage answers every ask that is not one of the three at once.
-        const turnConfig: AcpConfig = turn.stopLine && config.fullAuto ? { ...config, fullAuto: false } : config;
+        const turnConfig: AcpConfig = (turn.stopLine || turn.routeAsks) && config.fullAuto ? { ...config, fullAuto: false } : config;
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
         if (support.driverKind === "grokAgent") {
           const closed = await teardowns.wait(threadId, undefined, acpStopBudget());

@@ -93,6 +93,16 @@ const ROUTES: Array<[string, string, () => string, unknown?]> = [
   ["POST", "send to a room", () => `/api/groups/${groupId}/messages`, { text: "matrix room send" }],
   ["POST", "stop a room", () => `/api/groups/${groupId}/interrupt`, {}],
   ["POST", "answer a card", () => `/api/threads/${threadId}/respond`, { requestId: "none", behavior: "deny" }],
+  // 0.1.62 rc review (Astra C2, C3, C5 to C7): routine output and run/cancel,
+  // a call's room messages, the decision log, team instructions and filing
+  ["GET", "the routine list (C2)", () => "/api/routines"],
+  ["POST", "run a routine (C2)", () => "/api/routines/no-such-routine/run", {}],
+  ["POST", "cancel a routine run (C2)", () => "/api/routine-runs/no-such-run/cancel", {}],
+  ["GET", "the calendar calls (C3)", () => "/api/calendar-calls"],
+  ["POST", "open a call's room (C3)", () => "/api/calendar-calls/no-such-call/room", {}],
+  ["GET", "the decision log (C5)", () => "/api/decisions?limit=5"],
+  ["GET", "a team's instructions (C6)", () => "/api/section-context?section="],
+  ["POST", "file bots into a team (C7)", () => "/api/sidebar-sections", { name: "Gate matrix team", botIds: [] }],
 ];
 
 describe("conversation routes by caller", () => {

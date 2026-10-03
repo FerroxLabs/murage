@@ -19,12 +19,16 @@
  * `/api/box`, `/api/repo` and `/api/opencode` routes, which this gate does
  * not touch. */
 
-const CONVERSATION_PREFIXES = /^\/api\/(?:bots|threads|groups)(?:\/|$)/;
-const CONVERSATION_EXACT = new Set(["/api/search", "/api/events"]);
+const CONVERSATION_PREFIXES = /^\/api\/(?:bots|threads|groups|routines|routine-runs|calendar-calls)(?:\/|$)/;
+const CONVERSATION_EXACT = new Set(["/api/search", "/api/events", "/api/decisions", "/api/section-context", "/api/sidebar-sections"]);
 
 /** Every route that reads a transcript, sends into a conversation, or stops
  * one: the bot, thread and room families, the search index and the event
- * stream. Method is deliberately not part of the question. */
+ * stream. Also the routines and their runs (prompts and run output; run and
+ * cancel start and stop work), calendar calls (a call's room hands back that
+ * room's messages), the approval decision log (tool commands and paths), a
+ * team's instructions and the sidebar filing that moves a bot between teams.
+ * Method is deliberately not part of the question. */
 export function isConversationRoute(path: string): boolean {
   return CONVERSATION_EXACT.has(path) || CONVERSATION_PREFIXES.test(path);
 }

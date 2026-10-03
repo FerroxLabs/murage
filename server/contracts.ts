@@ -328,6 +328,15 @@ export interface SendTurnInput {
    * stop line but keeps the key guard: that guard holds only if Murage sees
    * the asks. Absent: the instance's own setting stands, exactly as before. */
   stopLine?: true;
+  /** The bot is on Ask or Auto, below Full access. The owner's mode decides
+   * what is asked, and that only works if the engine sends its permission
+   * asks to Murage: Ask raises a card for the owner, Auto answers what Auto
+   * allows and still holds the stop line. A driver whose instance is set to
+   * skip asks therefore asks for this turn, exactly as it does under
+   * `stopLine`. Unlike `stopLine` it changes nothing on an instance that
+   * already asks (connected apps stay as they were). Absent (Full access and
+   * No limits send `stopLine`): the instance's own setting stands. */
+  routeAsks?: true;
   /** A scheduled or manual routine run. Its permission cards wait until the
    * owner answers them or the turn stops, instead of the drivers' 15-minute
    * deny: the routine manager ends the run as "waiting on you" at its run

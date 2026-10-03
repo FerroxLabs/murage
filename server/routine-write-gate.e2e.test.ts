@@ -25,6 +25,7 @@ const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const DESKTOP_SECRET = "0123456789abcdef".repeat(4);
+const COMPANION_TOKEN = "fedcba9876543210".repeat(4);
 const DESKTOP_HEADERS = {
   "x-murage-surface": "desktop",
   "x-murage-surface-secret": DESKTOP_SECRET,
@@ -99,6 +100,7 @@ beforeAll(async () => {
       MURAGE_WEBHOOK_PORT: String(port + 1),
       MURAGE_STATIC_DIR: staticDir,
       MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
+      MURAGE_COMPANION_TOKEN: COMPANION_TOKEN,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -194,10 +196,16 @@ describe("routine write routes are desktop-only", () => {
     expect((await desktop("DELETE", `/api/routines/${routine.id}`)).status).toBe(200);
   });
 
-  it("still lets a remote surface read the calendar", async () => {
-    // The gate is on writing a spawn schedule, not on seeing one. A phone
-    // that could not read its own routines would be a different product.
-    const listed = await api("GET", "/api/routines", undefined, { "x-murage-companion": "1" });
+  it("answers a caller with no proof as an unknown route, and lets the paired phone read the calendar", async () => {
+    // Routines carry prompts and run output, so the list is a conversation
+    // route: a caller that cannot prove who it is gets the 404, and a phone
+    // that holds the companion credential still reads its own routines.
+    for (const headers of [{}, { "x-murage-companion": "1" }, { "x-murage-surface": "desktop" }] as Array<Record<string, string>>) {
+      const blocked = await api("GET", "/api/routines", undefined, headers);
+      expect(blocked.status).toBe(404);
+      expect(blocked.body).toEqual({ error: "no such route" });
+    }
+    const listed = await api("GET", "/api/routines", undefined, { "x-murage-companion-token": COMPANION_TOKEN });
     expect(listed.status).toBe(200);
     expect(Array.isArray(listed.body.routines)).toBe(true);
   });

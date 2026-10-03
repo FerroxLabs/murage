@@ -484,7 +484,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // holds if Codex asks: under it a fullAuto instance keeps its
       // unsandboxed reach but asks (`untrusted`), and Murage answers every
       // ask that is not one of the three at once.
-      const autoAccept = config.fullAuto && !turn.stopLine;
+      const autoAccept = config.fullAuto && !turn.stopLine && !turn.routeAsks;
       const handleServerRequest = (msg: any) => {
         const method = msg.method as string;
         const params = msg.params ?? {};
@@ -982,7 +982,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             model: selection.model,
             ...(selection.modelProvider ? { modelProvider: selection.modelProvider } : {}),
             sandbox: config.fullAuto ? "danger-full-access" : "workspace-write",
-            approvalPolicy: turn.stopLine ? "untrusted" : config.fullAuto ? "never" : "on-request",
+            approvalPolicy: turn.stopLine || (turn.routeAsks && config.fullAuto) ? "untrusted" : config.fullAuto ? "never" : "on-request",
             ephemeral: false,
           });
           codexThreadId = started?.thread?.id ?? null;
@@ -1071,7 +1071,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           ...(turn.effort ? { effort: turn.effort } : {}),
           // a resumed thread keeps the policy it started with; the stop line
           // must hold on this turn whichever that was
-          ...(turn.stopLine ? { approvalPolicy: "untrusted" } : {}),
+          ...(turn.stopLine || (turn.routeAsks && config.fullAuto) ? { approvalPolicy: "untrusted" } : {}),
         }, 60_000, (result) => {
           // compaction answers `{}`; its first notification names the turn
           if (adoptFirstTurn) return;

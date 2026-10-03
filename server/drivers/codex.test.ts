@@ -1195,6 +1195,21 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.calls.find((c: { method: string }) => c.method === "turn/start").params.approvalPolicy).toBe("untrusted");
   });
 
+  // Ask and Auto bots (below Full access) ask too: the owner's mode decides.
+  it("asks instead of auto-accepting for an Ask or Auto bot on a fullAuto instance", async () => {
+    await create({ mode: "approval", fullAuto: true });
+    const dump = join(scratch, "dump-route-asks.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-route-asks", text: "clean up", routeAsks: true });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ requestType: "permission", tool: "shell", toolCall: { name: "shell", input: { command: "rm -rf scratch" } } });
+    await instance.adapter.respondToRequest("t-route-asks", opened.requestId!, { behavior: "allow" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.calls.find((c: { method: string }) => c.method === "thread/start").params).toMatchObject({ approvalPolicy: "untrusted" });
+    expect(seen.calls.find((c: { method: string }) => c.method === "turn/start").params.approvalPolicy).toBe("untrusted");
+  });
+
   it("reports an MCP tool call's server, name and arguments for the stop line", async () => {
     await create({ mode: "mcp-elicitation" });
     await instance.adapter.sendTurn({ threadId: "t-mcp-toolcall", text: "go" });

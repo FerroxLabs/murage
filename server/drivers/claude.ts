@@ -952,7 +952,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // the CLI asks, so a bypass instance runs this turn in acceptEdits with
       // the broker: Murage answers everything else at once. File edits stay
       // the CLI's own (acceptEdits), which is fine: an edit is not a delete.
-      const permissionMode = turn.stopLine && config.permissionMode === "bypassPermissions" ? "acceptEdits" : config.permissionMode;
+      const permissionMode = (turn.stopLine || turn.routeAsks) && config.permissionMode === "bypassPermissions" ? "acceptEdits" : config.permissionMode;
       if (controlsHost && permissionMode === "bypassPermissions") {
         throw new Error("local computer control requires the interactive approval broker");
       }

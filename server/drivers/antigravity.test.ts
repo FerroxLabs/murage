@@ -231,6 +231,22 @@ describe("Antigravity turns (fake CLI)", () => {
     }
   });
 
+  it("never skips permissions for an Ask or Auto bot (routeAsks)", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "murage-agy-route-asks-"));
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_AGY_DUMP = dump;
+    await create();
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-route-asks", text: "go", routeAsks: true });
+      await recorder.until((event) => event.type === "turn.completed");
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      expect(seen.argv).toContain("accept-edits");
+      expect(seen.argv).not.toContain("--dangerously-skip-permissions");
+    } finally {
+      await removeTempDir(scratch);
+    }
+  });
+
   it("sends a Windows-sized room prompt over stdin instead of argv", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-agy-long-prompt-"));
     const dump = join(scratch, "dump.json");

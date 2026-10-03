@@ -2439,7 +2439,23 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     delete process.env.FAKE_CLAUDE_PERM_INPUT;
   });
 
-  it("leaves a bypassPermissions instance as it was without the stop line", async () => {
+  it("routes a bypassPermissions instance's asks to Murage for an Ask or Auto bot", async () => {
+    await create(undefined, {}, { permissionMode: "bypassPermissions" });
+    const dump = join(scratch, "dump-route-asks.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "echo hi" });
+    await instance.adapter.sendTurn({ threadId: "t-route-asks", text: "__fixture_permission_tool__", routeAsks: true });
+    const opened = await recorder.until((e) => e.type === "request.opened" && e.tool === "Bash");
+    expect(opened).toMatchObject({ toolCall: { name: "Bash", input: { command: "echo hi" } } });
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv.join(" ")).toContain("--permission-mode acceptEdits");
+    expect(seen.argv).toContain("--permission-prompt-tool");
+    await expect(instance.adapter.respondToRequest("t-route-asks", opened.requestId!, { behavior: "deny" })).resolves.toBe("rejected");
+    await recorder.until((e) => e.type === "turn.completed");
+    delete process.env.FAKE_CLAUDE_PERM_INPUT;
+  });
+
+  it("leaves a bypassPermissions instance as it was when the turn carries neither stopLine (Full access, No limits) nor routeAsks (Ask, Auto)", async () => {
     await create(undefined, {}, { permissionMode: "bypassPermissions" });
     const dump = join(scratch, "dump-bypass.json");
     process.env.FAKE_CLAUDE_DUMP = dump;

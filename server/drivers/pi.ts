@@ -628,7 +628,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       // access could not stop before a delete, a payment or a new contact.
       // Off only when this instance is set to skip asks AND the bot is not on
       // Full access or No limits, exactly when Claude runs bypassPermissions.
-      const gateSecret = !config.fullAuto || turn.stopLine === true ? randomBytes(24).toString("hex") : null;
+      const gateSecret = !config.fullAuto || turn.stopLine === true || turn.routeAsks === true ? randomBytes(24).toString("hex") : null;
       // Connected-app calls are asked about only when the stop line has to
       // see them, as Claude pre-allows its connected-apps tool otherwise.
       const gatePrefixes = turn.stopLine === true && turn.integrations?.composio ? [PI_COMPOSIO_TOOL_PREFIX] : [];
