@@ -98,16 +98,23 @@ export const OWNER_VOICE_ROUTES = [
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/messages$/ },
 ] as const;
 
-/** The private launch proof to add when forwarding this request, if any. It
- * is only ever the value this door was started with, never the client's. A
- * cloud-desktop join has already been refused without a usable credential;
- * an owner-voice request without one is still forwarded, and the harness then
- * takes only a decline and records the words as unproven. */
-export function launchProofHeaders(method: string, path: string, token: string | undefined): Record<string, string> {
-  if (isCloudDesktopJoin(method, path)) return { "x-murage-companion-token": token! };
+/** The private launch proof to add when forwarding any request. It is only
+ * ever the value this door was started with, never the client's.
+ *
+ * Every request the door forwards carries it. The harness answers its
+ * conversation routes (bots, threads, rooms, search and the event stream) only
+ * to the desktop app or to a caller holding this credential, because any
+ * process on the computer can reach the harness's loopback port and a request
+ * with no proof is not the owner's phone. The door has already decided, from
+ * the paired device and the allowlist, that this request may go; the proof is
+ * how the harness learns it came through the door. A door started without a
+ * usable credential adds nothing, and the harness then answers those routes
+ * as it would an unknown one. A cloud-desktop join is refused earlier without
+ * a usable credential, and an owner-voice request is recorded by the harness
+ * as the owner's only because of this proof. */
+export function launchProofHeaders(_method: string, _path: string, token: string | undefined): Record<string, string> {
   const usable = typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
-  if (usable && OWNER_VOICE_ROUTES.some((route) => route.method === method && route.path.test(path))) return { "x-murage-companion-token": token };
-  return {};
+  return usable ? { "x-murage-companion-token": token } : {};
 }
 
 /** The two routine routes that can carry a `runOn` field.

@@ -133,7 +133,7 @@ describe("preparing a harness response for a device", () => {
     const { status, text } = await device();
     expect(status === 200 && text.includes("resumeCursors")).toBe(false);
     expect(text).not.toContain("cursor-value");
-    expect(companionProof).toBe("");
+    expect(companionProof).toBe(COMPANION_TOKEN);
   });
 
   it("answers 502 when scrubbing actually throws", async () => {

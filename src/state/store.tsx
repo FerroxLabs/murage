@@ -2254,9 +2254,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
     // fire-and-forget card persistence; the route is optional server-side
     const persistCard = (botId: string, messageId: string, patch: Partial<OptionCardData>) => {
-      fetch(`/api/bots/${botId}/cards/${messageId}`, {
+      api(`/api/bots/${botId}/cards/${messageId}`, {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify(patch),
       }).catch(() => {});
     };

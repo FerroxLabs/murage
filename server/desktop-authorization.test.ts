@@ -3,12 +3,17 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { fixtureFetch } from "./testing/conversation-proof.ts";
 
 let fixture: VerificationServer;
+/** Conversation routes answer only to a proven caller; a bare call here is the paired phone's credential, without the desktop proof. */
+const fetch = fixtureFetch(() => fixture);
 let desktop: Record<string, string>;
 let botId: string;
 let groupId: string;
-const remote = { "x-murage-companion": "1" };
+/** The paired phone: the marker plus the launch credential the fixture shares with its door. */
+let remote: Record<string, string> = { "x-murage-companion": "1" };
+const markerOnly = { "x-murage-companion": "1" };
 
 const administration: Array<[string, string]> = [
   ["PATCH", "/api/config"], ["PUT", "/api/config"],
@@ -51,6 +56,7 @@ async function api(method: string, path: string, body?: unknown, headers: Record
 
 beforeAll(async () => {
   fixture = await launchVerificationServer();
+  remote = { "x-murage-companion": "1", "x-murage-companion-token": fixture.companionToken };
   const proof = await api("GET", "/api/desktop-secret");
   expect(proof.status).toBe(200);
   expect(proof.body.secret).toBeTruthy();
@@ -145,10 +151,11 @@ describe("desktop authority at the actual harness boundary", () => {
     expect(proposed.status).toBe(201);
     expect((await api("POST", `/api/bots/${botId}/interrupt`, undefined, remote)).status).toBe(200);
     // The companion marker alone is not the paired phone: any local process
-    // can send it. It may not approve (the real phone door adds the launch
-    // credential; respond-authority.test.ts covers that path).
-    const unproven = await api("POST", `/api/threads/${sent.body.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" }, remote);
-    expect(unproven.status).toBe(403);
+    // can send it. It reaches no conversation route at all, so it cannot
+    // approve either (the real phone door adds the launch credential;
+    // respond-authority.test.ts covers that path).
+    const unproven = await api("POST", `/api/threads/${sent.body.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" }, markerOnly);
+    expect(unproven.status).toBe(404);
     expect((await api("GET", "/api/routines", undefined, desktop)).body.routines).toHaveLength(0);
     const approved = await api("POST", `/api/threads/${sent.body.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" }, desktop);
     expect(approved.status).toBe(200);

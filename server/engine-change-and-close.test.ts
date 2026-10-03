@@ -24,6 +24,12 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { loopbackFetch } from "./testing/conversation-proof.ts";
+
+/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
+ * credential (the server below is started with it), without the desktop proof. */
+const TEST_COMPANION_TOKEN = "c".repeat(64);
+const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
@@ -65,6 +71,7 @@ describe("an engine change or an app close around a run waiting for the person",
         HOME: home,
         USERPROFILE: home,
         MURAGE_PORT: String(port),
+        MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
       },

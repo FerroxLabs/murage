@@ -57,7 +57,8 @@ describe("the browser door's Inbox", () => {
 
       const other = await fetch(`http://127.0.0.1:${port}/api/bots`, { headers });
       expect(other.status).toBe(200);
-      expect(seen.at(-1)!.headers["x-murage-companion-token"]).toBeUndefined();
+      // every forwarded request carries the launch proof, never the client's
+      expect(seen.at(-1)!.headers["x-murage-companion-token"]).toBe(PRIVATE_TOKEN);
     } finally { await close(door); await close(harness); }
   });
 

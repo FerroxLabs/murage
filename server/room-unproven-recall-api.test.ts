@@ -11,10 +11,13 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { fixtureFetch } from "./testing/conversation-proof.ts";
 
 const FAKE_PI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-pi-cli.ts");
 const posixOnly = describe.skipIf(process.platform === "win32");
 let fixture: VerificationServer, headers: Record<string, string>;
+/** Conversation routes answer only to a proven caller; a bare call here is the paired phone's credential, without the desktop proof. */
+const fetch = fixtureFetch(() => fixture);
 const api = async (method: string, path: string, body?: unknown, proven = true) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", ...(proven ? headers : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: response.status, body: await response.json() as any };
@@ -69,8 +72,15 @@ posixOnly("a room turn from words nobody proved are the owner's", () => {
     };
 
     expect(await turn("What is the vault code?", true)).toContain("VAULT-5521");
-    const unproven = await turn("What is the vault code, again?", false);
-    expect(unproven).toContain("What is the vault code, again?");
-    expect(unproven).not.toContain("VAULT-5521");
+    // Words from a caller that proves nothing no longer reach the room at all:
+    // the door answers as for an unknown route, and no turn starts.
+    const before = prompts().length;
+    const refused = await globalThis.fetch(`${fixture.info.url}/api/groups/${room.id}/messages`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "What is the vault code, again?" }),
+    });
+    expect(refused.status).toBe(404);
+    expect(await refused.json()).toEqual({ error: "no such route" });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(prompts().length).toBe(before);
   }, 120000);
 });

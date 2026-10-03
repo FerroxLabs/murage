@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { openSse } from "./testing/sse.ts";
+import { fixtureFetch, fixtureSse } from "./testing/conversation-proof.ts";
 
 let fixture: VerificationServer, headers: Record<string,string>;
+/** Conversation routes answer only to a proven caller; a bare call here is the paired phone's credential, without the desktop proof. */
+const fetch = fixtureFetch(() => fixture);
+const openSse = fixtureSse(() => fixture);
 type BotResponse = { bot: { id: string; threadId: string } };
 async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   const res=await fetch(fixture.info.url+path,{method,headers:{...headers,"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body)});

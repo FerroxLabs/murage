@@ -3,8 +3,11 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { fixtureFetch } from "./testing/conversation-proof.ts";
 
 let fixture: VerificationServer, gate: string, dump: string, headers: Record<string,string>;
+/** Conversation routes answer only to a proven caller; a bare call here is the paired phone's credential, without the desktop proof. */
+const fetch = fixtureFetch(() => fixture);
 const api = async (method:string,path:string,body?:unknown) => {
   const response=await fetch(`${fixture.info.url}${path}`,{method,headers:{"content-type":"application/json",...headers},body:body===undefined?undefined:JSON.stringify(body)});
   expect(response.ok).toBe(true);

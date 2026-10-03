@@ -67,6 +67,14 @@ HTTP is rejected unless `ALLOW_INSECURE_HTTP=true`; HTTPS should be used outside
 explicit `MURAGE_URL` or `MURAGE_PORT` is required so the credential is never sent while probing unrelated
 local ports. `MURAGE_MCP_TIMEOUT_MS` can set an HTTP timeout between 1,000 and 120,000 milliseconds.
 
+Murage's conversation routes (bots, threads, rooms, search and the live event stream) answer only to the
+desktop app's per-launch secret or to the paired phone, so a plain local process cannot read or steer a
+conversation. A development or fixture server that offers its secret to loopback callers
+(`MURAGE_ALLOW_DEV_DESKTOP_SECRET=1`) is handled automatically. For a development server pinned with
+`MURAGE_DEV_DESKTOP_SECRET`, set the same value as `MURAGE_DESKTOP_SECRET` for this process. The secret
+is sent only to a loopback server, never to a remote origin. The packaged desktop app keeps its secret to
+itself, so this server cannot reach those routes there.
+
 ## Tools
 
 | Purpose | Tools |
