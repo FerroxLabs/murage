@@ -74,9 +74,14 @@ posixOnly("a handoff from a room turn nobody proved is the owner's", () => {
       await expect.poll(async () => { const state = await groupState(room.id); return !state.working && !state.busyBotId; }, { timeout: 30000 }).toBe(true);
       return prompts().slice(before).join("\n");
     };
-    const unproven = await handoff("Ember, hand this to Maple.", false);
-    expect(unproven).toContain("delegated task");
-    expect(unproven).not.toContain("VAULT-5521");
+    // 0.1.62: words nobody proved no longer reach a room over loopback at all.
+    // The conversation gate answers 404, as for an unknown route, and no turn
+    // starts, so neither bot is handed anything to delegate.
+    const before = prompts().length;
+    expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Ember, hand this to Maple." }, false)).status).toBe(404);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(prompts().length).toBe(before);
+    expect((await groupState(room.id)).working).toBeFalsy();
     const owner = await handoff("Ember, hand this to Maple again.", true);
     expect(owner).toContain("VAULT-5521");
   }, 120000);
