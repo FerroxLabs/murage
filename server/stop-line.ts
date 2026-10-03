@@ -1359,12 +1359,16 @@ function toolCalls(tool: string, input: unknown): ToolCall[] {
     if (ns) { app = ns[1]!.toLowerCase(); name = ns[2]!; }
   }
   // Composio's one tool carries every connected-app call it makes
-  if (/^composio_multi_execute_tool$/i.test(name) && Array.isArray(args.tools)) {
-    return (args.tools as unknown[]).flatMap((item) => {
-      if (!item || typeof item !== "object") return [];
+  if (/^composio_multi_execute_tool$/i.test(name) && args.tools !== undefined) {
+    // A batch it cannot read is not a batch it can wave through: it stops as a
+    // send to nobody it can name, so no mode covers it.
+    const unreadable: ToolCall = { app: "composio", name: "send_unreadable_batch", args: {} };
+    if (!Array.isArray(args.tools)) return [unreadable];
+    return (args.tools as unknown[]).flatMap((item): ToolCall[] => {
+      if (!item || typeof item !== "object") return [unreadable];
       const call = item as { tool_slug?: unknown; arguments?: unknown };
-      if (typeof call.tool_slug !== "string") return [];
-      const slug = call.tool_slug;
+      if (typeof call.tool_slug !== "string" || !call.tool_slug.trim()) return [unreadable];
+      const slug = call.tool_slug.trim();
       const inner = call.arguments && typeof call.arguments === "object" && !Array.isArray(call.arguments) ? (call.arguments as Record<string, unknown>) : {};
       return [{ app: slug.split("_")[0]!.toLowerCase(), name: slug.split("_").slice(1).join("_") || slug, args: inner }];
     });
@@ -1394,7 +1398,7 @@ export function normalizeRecipient(value: string): string {
   return v.replace(/^mailto:/i, "").trim().toLowerCase();
 }
 
-const RECIPIENT_KEYS = ["to", "recipient", "recipients", "recipient_email", "recipient_id", "to_email", "to_number", "email", "emails", "cc", "bcc",
+const RECIPIENT_KEYS = ["to", "recipient", "recipients", "recipient_email", "recipient_id", "to_email", "to_number", "email", "emails", "cc", "bcc", "extra_recipients", "to_emails", "cc_emails", "bcc_emails",
   "channel", "channel_id", "channel_name", "chat_id", "conversation_id", "user", "user_id", "users", "phone", "phone_number", "number",
   "target", "room", "room_id", "group", "group_id", "receiver", "receiver_id", "peer", "username"];
 const REPLY_KEYS = ["thread_ts", "thread_id", "threadid", "in_reply_to", "reply_to", "reply_to_message_id", "reply_to_id", "parent_id", "comment_id"];
