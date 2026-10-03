@@ -39,6 +39,7 @@ import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, openin
 import { WorkingPulse } from "@/lib/working-pulse";
 import { callMicKind, createCallMic, createFallbackMic, type CallMic } from "@/lib/call-mic";
 import { approvalAnswer } from "@/lib/call-answers";
+import { coveredForCall, FOR_CALL_OFFER, FOR_CALL_SPOKEN } from "@/lib/call-grant";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { usePushToTalk } from "@/lib/push-to-talk";
 import { CallAvatar } from "./CallAvatar";
@@ -151,11 +152,10 @@ export function Call({ bot }: { bot: Bot }) {
   /** Kinds of request the owner said yes to for the rest of this call. Held
    *  only here: never saved, gone when the call ends. Not the permanent
    *  "Always allow" the trust design rules out. */
-  /** "Yes for the rest of the call": every ordinary approval until hang-up.
-   *  It used to cover only the same kind of request, so a yes to a tool
-   *  search was asked again for the script and again for the connected
-   *  apps (heard live, 2026-09-23). Routines, skills and using this
-   *  computer are still always asked. */
+  /** "Yes for the rest of the call": everyday lookups until hang-up
+   *  (src/lib/call-grant.ts lists them). Anything else, including messages,
+   *  payments, deletes, commands, file changes, routines, skills and the
+   *  computer, always shows its own card and gets its own yes. */
   const allowedForCall = useRef(false);
   /** When the owner last cut the bot off. */
   const interruptedAt = useRef(0);
@@ -731,7 +731,7 @@ export function Call({ bot }: { bot: Bot }) {
           const forCall = answer === "allow-for-call" && pending && !open.routine && !open.skill && !isHostConsentApproval(pending);
           if (forCall) {
             allowedForCall.current = true;
-            void sayThenListen("Okay. I won't ask again until you hang up.");
+            void sayThenListen(FOR_CALL_SPOKEN);
           }
           move("working");
           hush();
@@ -923,8 +923,8 @@ export function Call({ bot }: { bot: Bot }) {
       askedApproval.current?.requestId !== approval.requestId &&
       !isRoutineApproval(approval) &&
       !isSkillApproval(approval) &&
-      !isHostConsentApproval(approval) &&
-      allowedForCall.current
+      allowedForCall.current &&
+      coveredForCall(approval)
     ) {
       // allowed for the rest of this call: answered without asking again
       askedApproval.current = { requestId: approval.requestId, routine: false, skill: false, submitted: true };
@@ -966,7 +966,7 @@ export function Call({ bot }: { bot: Bot }) {
         isSkillApproval(approval)
           ? skillPrompt
           : offerForCall
-            ? `${ask.replace(/ Yes or no\.$/, "")} Say yes, no, or yes for the rest of the call.`
+            ? `${ask.replace(/ Yes or no\.$/, "")} ${FOR_CALL_OFFER}`
             : ask,
       );
       return;

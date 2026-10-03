@@ -7,34 +7,44 @@
 
 /** A yes as the first word. */
 const YES = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|go for it|do it|allow|approve|approved|fine|please do)\b/i;
-/** A no as the first word. "stop" and "don't" are read after the call-long
- *  phrases, which include "stop asking" and "don't ask again". */
-const PLAIN_NO = /^(no|nope|deny|denied|cancel|never|skip it)\b/i;
+/** A no as the first word. */
 const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
-/** A yes that covers every ordinary request until the call ends. */
+/** A yes that covers the ordinary requests until the call ends. */
 const YES_FOR_CALL =
-  /\b(for (the )?rest of (the|this) call|for (the|this) (whole )?call|yes to (all|everything)|allow (it |them )?all|until (i|we) hang up|don'?t (ask|keep asking)( me)?( again)?|stop asking|(no|don'?t) need to ask|always allow|allow everything)\b/i;
+  /\b(for (the )?rest of (the|this) call|for (the|this) (whole )?call|yes to (all|everything)|allow (it |them )?all|until (i|we) hang up|always allow|allow everything)\b/i;
+/** Words whose negation is about asking, not about the request: "don't ask me
+ *  again" is a yes for the call, but only when nothing else is negated. */
+const STOP_ASKING = /\b(don'?t (ask|keep asking)( me)?( again)?|stop asking|no need to ask)\b/i;
 /** Consent anywhere in a short answer: "you can go ahead", "sure, do it". */
 const YES_ANYWHERE = /\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|go for it|do it|allow( it)?|approve|approved|fine|please do|you can)\b/i;
-const NEGATED = /\b(no|nope|not|don'?t|do not|never|deny|denied|cancel|stop|wait)\b/i;
+const NEGATED = /\b(no|nope|not|never|deny|denied|cancel|stop|wait|do not)\b|n't\b/i;
 /** Longer than this is a question or a thought, not an answer. */
 const SHORT_WORDS = 8;
 
 export type ApprovalAnswer = "allow" | "allow-for-call" | "deny";
 
 /** The owner's decision in `said`, or null when it is not one (a question
- *  about the request, say): consent is never guessed. */
+ *  about the request, say): consent is never guessed.
+ *
+ *  A negation that comes before a yes governs it ("do not allow everything",
+ *  "no, don't allow it") and is a no. A yes followed by a negation ("allow it
+ *  but not the email") is unclear, so the card stays open and the bot asks
+ *  again. */
 export function approvalAnswer(said: string): ApprovalAnswer | null {
-  const text = said.trim().replace(/^(um+|uh+|er+|so|well|oh)[,.\s]+/i, "");
+  const text = said.trim().replace(/[\u2018\u2019]/g, "'").replace(/^(um+|uh+|er+|so|well|oh)[,.\s]+/i, "");
   if (!text) return null;
-  if (PLAIN_NO.test(text)) return "deny";
-  if (YES_FOR_CALL.test(text)) return "allow-for-call";
-  if (NO.test(text)) return "deny";
-  if (YES.test(text)) return "allow";
-  const short = text.split(/\s+/).length <= SHORT_WORDS;
-  const yes = YES_ANYWHERE.test(text);
-  const no = NEGATED.test(text);
-  if (short && yes && !no) return "allow";
-  if (short && no && !yes) return "deny";
-  return null;
+  const asking = STOP_ASKING.exec(text);
+  // the asking phrase is blanked so its own "don't" or "no" is not a refusal
+  const rest = asking ? text.replace(STOP_ASKING, " ".repeat(asking[0].length)) : text;
+  const negAt = rest.search(NEGATED);
+  const callAt = text.search(YES_FOR_CALL);
+  const yesAts = [callAt, asking ? asking.index : -1, rest.search(YES_ANYWHERE)].filter((at) => at >= 0);
+  const yesAt = yesAts.length ? Math.min(...yesAts) : -1;
+  if (negAt >= 0) {
+    if (yesAt < 0) return NO.test(text) || text.split(/\s+/).length <= SHORT_WORDS ? "deny" : null;
+    return negAt < yesAt ? "deny" : null;
+  }
+  if (callAt >= 0 || asking) return "allow-for-call";
+  if (yesAt < 0) return null;
+  return YES.test(text) || text.split(/\s+/).length <= SHORT_WORDS ? "allow" : null;
 }
