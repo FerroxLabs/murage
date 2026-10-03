@@ -4,6 +4,15 @@ Thanks for wanting to help — community PRs have already shipped in this repo, 
 This file tells you how to get a working dev setup, what the codebase expects from a change, and what
 makes a PR easy to merge. Read it once before opening anything; it's short on purpose.
 
+## Contributor License Agreement
+
+Before we can merge your first pull request, you'll be asked to sign our
+[Contributor License Agreement](CLA.md). It takes one comment on your PR and covers all your future
+contributions. You keep the copyright in your work; the CLA lets Ferrox Labs keep Murage open source
+under the AGPL **and** offer it under other terms, such as a commercial licence for companies that
+can't use the AGPL. That's what funds the free app. Contributing for your employer? Email
+legal@murage.ai first.
+
 ## Ground rules
 
 - **Small, focused PRs.** One concern per PR. A PR that ports a platform *and* adds a feature *and*
