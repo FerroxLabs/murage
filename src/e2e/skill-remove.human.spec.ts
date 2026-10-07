@@ -57,6 +57,9 @@ test.describe("a skill the person wants gone", () => {
       app.on("request", record);
 
       await app.getByRole("button", { name: "Open E2E Remove Skill's profile" }).first().click();
+      // A bot's skills are their own section of Bot settings (51786fe3).
+      await app.getByRole("dialog", { name: "Bot settings" }).getByRole("navigation", { name: "Bot settings sections" })
+        .getByRole("button", { name: "Skills", exact: true }).click();
       const remove = app.getByRole("button", { name: "Remove chart-analysis" });
       await expect(remove).toBeVisible({ timeout: 30_000 });
 

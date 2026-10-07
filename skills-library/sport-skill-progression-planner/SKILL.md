@@ -6,7 +6,7 @@ description: |
   Do NOT use for team coaching or managing other athletes, professional/competitive training periodization, injury rehabilitation programs, or general fitness without a sport-specific skill focus (use health-wellness skills instead).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "planning workout-planning step-by-step guide"
   category: "hobbies-crafts"

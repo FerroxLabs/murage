@@ -6,6 +6,7 @@ import App from "./App";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
 import { browserChunkReloadDeps, installChunkReload } from "./lib/chunk-reload";
 import { bootLocaleReady } from "./lib/i18n";
+import { installCallDiagForward } from "./lib/call-diag-forward";
 import { inNativeShell, nativeHello } from "./lib/native-shell";
 import { routeNativeClicks } from "./lib/open-external";
 import { registerServiceWorker } from "./lib/register-sw";
@@ -31,6 +32,7 @@ registerServiceWorker();
 // The phone app's feature list. Asked now so that the synchronous checks a
 // tap makes (save, open a link) already have the answer; a plain browser
 // answers null at once and costs nothing.
+installCallDiagForward();
 void nativeHello();
 
 // Links that leave the page, and a[download] anchors, inside the phone app.

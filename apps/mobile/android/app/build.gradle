@@ -1,0 +1,61 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace = "com.murage.mobile"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.murage.mobile"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0.0"
+        // Play Integrity's cloud project, read from google-services.json (never committed).
+        def gs = file('google-services.json')
+        def projectNumber = gs.exists() ? new groovy.json.JsonSlurper().parse(gs).project_info.project_number : "0"
+        buildConfigField "long", "PLAY_CLOUD_PROJECT_NUMBER", "${projectNumber}L"
+        aaptOptions {
+            // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildFeatures {
+        buildConfig = true
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir {
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.activity:activity:$androidxActivityVersion"
+    implementation "androidx.core:core:$androidxCoreVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"
+    implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'
+    implementation 'com.google.firebase:firebase-messaging:25.0.1'
+    implementation 'com.google.android.play:integrity:1.4.0'
+    implementation project(':capacitor-android')
+    implementation project(':capacitor-cordova-android-plugins')
+    // The real org.json ahead of android.jar's stubs, so JVM tests exercise it.
+    testImplementation "junit:junit:$junitVersion"
+    testImplementation 'org.json:json:20250517'
+}
+
+apply from: 'capacitor.build.gradle'
+
+// FCM needs google-services.json, which android-remote.sh copies from
+// ~/.config/murage-mobile/. Without it the app builds with push off.
+if (file('google-services.json').exists()) {
+    apply plugin: 'com.google.gms.google-services'
+}

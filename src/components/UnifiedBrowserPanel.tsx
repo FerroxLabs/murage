@@ -1,13 +1,17 @@
+import { BrowserExtensionPanel, BrowserExtensionConsent } from "./BrowserExtensionPanel";
 import { useEffect, useRef, useState } from "react";
 import { acceptBrowserGeneration, expectedStaleBrowserFrame } from "@/lib/browser-view-state";
 import { Hand, Maximize2, RotateCcw } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
 import { BrowserLiveView, type LiveBrowserFrame } from "./BrowserLiveView";
+import { describeDesktopOnlyRouteError, routeErrorFrom } from "@/lib/desktop-only-route-error";
 /** Select value for "Use my Chrome"; "@" can never appear in a profile id. */
 export const MY_CHROME = "@my-chrome";
+export const MY_BROWSER = "@my-browser";
 /** The PATCH a browser choice sends, or null when it must be confirmed first. */
-export function browserChoicePatch(bot: Pick<Bot, "useMyChrome">, value: string): Record<string, unknown> | null {
-  if (value === MY_CHROME) return bot.useMyChrome ? {} : null;
+export function browserChoicePatch(bot: Pick<Bot, "useMyChrome" | "browserTransport">, value: string): Record<string, unknown> | null {
+  if (value === MY_BROWSER) return bot.useMyChrome && bot.browserTransport === "extension" ? {} : null;
+  if (value === MY_CHROME) return bot.useMyChrome && bot.browserTransport !== "extension" ? {} : null;
   return { ...(bot.useMyChrome ? { useMyChrome: false } : {}), browserProfile: value || null };
 }
 /** What choosing "Use my Chrome" means, said at the moment of choosing. */
@@ -36,7 +40,11 @@ export function BrowserPanelAlerts({ refusal, problem }: { refusal: string; prob
     {problem && <div role="alert" className="rounded-lg border border-danger/30 p-2 text-xs text-danger">{problem}</div>}
   </>;
 }
-export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: Bot; size?: "compact" | "expanded"; onExpand?: () => void; control?: unknown; controlPending?: boolean; onControl?: unknown; onCollapse?: () => void }) {
+type UnifiedBrowserPanelProps = { bot: Bot; size?: "compact" | "expanded"; onExpand?: () => void; control?: unknown; controlPending?: boolean; onControl?: unknown; onCollapse?: () => void };
+export function UnifiedBrowserPanel(props: UnifiedBrowserPanelProps) {
+  return props.bot.useMyChrome && props.bot.browserTransport === "extension" ? <BrowserExtensionPanel key={props.bot.id} bot={props.bot} /> : <LegacyBrowserPanel {...props} />;
+}
+function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserPanelProps) {
   const { state, dispatch } = useStore();
   const [status, setStatus] = useState<Status | null>(null);
   const [frame, setFrame] = useState<LiveBrowserFrame | null>(null);
@@ -47,6 +55,7 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
   const [refusal, setRefusal] = useState("");
   const [pending, setPending] = useState(false);
   const [confirmMyChrome, setConfirmMyChrome] = useState(false);
+  const [confirmMyBrowser, setConfirmMyBrowser] = useState(false);
   const current = useRef<Status | null>(null);
   const epoch = useRef(0);
   const queue = useRef(Promise.resolve());
@@ -77,7 +86,7 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
         setConnectionError("");
         if (next?.generation === generation) setFrame(old => old?.seq === next.seq ? old : next);
       } catch (cause) {
-        if (alive) { setConnectionError(cause instanceof Error ? cause.message : "Browser connection unavailable"); setFrame(null); lastStatus = 0; }
+        if (alive) { setConnectionError(describeDesktopOnlyRouteError(cause instanceof Error ? routeErrorFrom(cause) : { message: "Browser connection unavailable" })); setFrame(null); lastStatus = 0; }
       } finally { if (alive) timer = setTimeout(poll, document.hidden ? 1000 : 100); }
     };
     void poll();
@@ -85,17 +94,17 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
   }, [base, bot.browserProfile, bot.useMyChrome]);
   const chooseBrowser = async (body: Record<string, unknown>) => {
     setRefusal("");
-    try { const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); dispatch({ type: "botPatched", bot: result.bot }); setConfirmMyChrome(false); }
+    try { const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); dispatch({ type: "botPatched", bot: result.bot }); setConfirmMyChrome(false); setConfirmMyBrowser(false); }
     // Refused: close the confirmation (the picker falls back to the saved
     // choice) and say why where nothing else can cover it.
-    catch (cause) { setConfirmMyChrome(false); setRefusal(cause instanceof Error ? cause.message : "Profile change failed"); }
+    catch (cause) { setConfirmMyChrome(false); setConfirmMyBrowser(false); setRefusal(cause instanceof Error ? cause.message : "Profile change failed"); }
   };
   const action = async (name: string, extra: Record<string, unknown> = {}) => {
     const identity = epoch.current; setPending(true); setError("");
     try {
       const next = await api(base, { method: "POST", body: JSON.stringify({ action: name, generation: current.current?.generation, ...extra }) }) as Status;
       if (identity === epoch.current && next?.generation) accept(next);
-    } catch (cause) { if (identity === epoch.current) setError(cause instanceof Error ? cause.message : "Browser action failed"); }
+    } catch (cause) { if (identity === epoch.current) setError(describeDesktopOnlyRouteError(cause instanceof Error ? routeErrorFrom(cause) : { message: "Browser action failed" })); }
     finally { if (identity === epoch.current) setPending(false); }
   };
   const input = (event: Record<string, unknown>) => {
@@ -121,14 +130,15 @@ export function UnifiedBrowserPanel({ bot, size = "compact", onExpand }: { bot: 
     </form>}
     <div className="flex flex-wrap items-center justify-between gap-2"><span role="status" className="text-xs text-ink-secondary">{connectionError ? "Unavailable" : status?.connected ? "Live" : "Disconnected"} · {status?.held ? "Human control" : "Bot control"}</span><button disabled={!status || pending || (status.held && status.owned === false && !status.canReclaim)} onClick={() => void action(status?.held && status.owned === false ? "reclaim" : status?.held ? "release" : "take")} className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-accent-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><Hand size={14} />{pending ? "Please wait…" : status?.held && status.owned === false ? "Take control here" : status?.held ? "Return to bot" : "Take control"}</button></div>
     {status?.protectedDocument && <ProtectedBrowserNotice botName={bot.name} reason={status.protectedReason} held={status.held} pending={pending} onReopen={() => void action("reopen")} />}
-    <label className="flex min-w-0 items-center gap-2 text-sm">Profile<select aria-label="Browser profile" value={confirmMyChrome || bot.useMyChrome ? MY_CHROME : bot.browserProfile ?? ""} disabled={bot.busy || pending || status?.held} className="min-w-0 flex-1 rounded bg-inset p-2 focus-visible:ring-2 focus-visible:ring-accent" onChange={event => {
+    <label className="flex min-w-0 items-center gap-2 text-sm">Profile<select aria-label="Browser profile" value={confirmMyBrowser ? MY_BROWSER : confirmMyChrome || bot.useMyChrome ? MY_CHROME : bot.browserProfile ?? ""} disabled={bot.busy || pending || status?.held} className="min-w-0 flex-1 rounded bg-inset p-2 focus-visible:ring-2 focus-visible:ring-accent" onChange={event => {
       const patch = browserChoicePatch(bot, event.target.value);
       // Nothing changes until the owner confirms what attaching means.
-      if (!patch) { setConfirmMyChrome(true); return; }
-      setConfirmMyChrome(false);
+      if (!patch) { setConfirmMyBrowser(event.target.value === MY_BROWSER); setConfirmMyChrome(event.target.value === MY_CHROME); return; }
+      setConfirmMyChrome(false); setConfirmMyBrowser(false);
       if (Object.keys(patch).length) void chooseBrowser(patch);
-    }}><option value="">{bot.name}'s own</option>{(state.config?.browserProfiles ?? []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}<option value="guest">Guest</option><option value={MY_CHROME}>Use my Chrome</option></select></label>
-    {confirmMyChrome && !bot.useMyChrome && <MyChromeConsent botName={bot.name} pending={pending} onConfirm={() => void chooseBrowser({ useMyChrome: true })} onCancel={() => setConfirmMyChrome(false)} />}
+    }}><option value="">{bot.name}'s own</option>{(state.config?.browserProfiles ?? []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}<option value="guest">Guest</option><option value={MY_BROWSER}>Use my browser</option><option value={MY_CHROME}>Use my Chrome (remote debugging)</option></select></label>
+    {confirmMyBrowser && <BrowserExtensionConsent botName={bot.name} pending={pending} onConfirm={() => void chooseBrowser({ useMyChrome: true, browserTransport: "extension" })} onCancel={() => setConfirmMyBrowser(false)} />}
+    {confirmMyChrome && !bot.useMyChrome && <MyChromeConsent botName={bot.name} pending={pending} onConfirm={() => void chooseBrowser({ useMyChrome: true, browserTransport: null, browserExtensionProfileId: null })} onCancel={() => setConfirmMyChrome(false)} />}
     {bot.useMyChrome && <p className="text-xs text-ink-secondary">Using your Chrome, signed in as you. {bot.name} can see your open tabs.</p>}
     <p className="text-xs text-ink-secondary">Take control before interacting. Disconnecting keeps human control until you return it. Tab leaves the browser page.</p>
     <BrowserPanelAlerts refusal={refusal} problem={connectionError || error} />

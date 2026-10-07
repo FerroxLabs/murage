@@ -105,6 +105,21 @@ it("clears an image request abandoned at its approval card when the app restarts
  const card=await f.card();restarted.resolve(f.actor.threadId,card.card!.requestId!,"allow");await job;
  expect(f.fetcher).toHaveBeenCalledOnce();
 });
+it("preserves a newly admitted approval while deferred startup recovery clears abandoned operations",async()=>{
+ const f=generationFixture();f.operations.resumePendingPublications();
+ database().prepare("INSERT INTO image_operations VALUES(?,?,?,'awaiting',NULL,?)").run("abandoned","old-generation","old-request",0);
+ const operations=new ImageOperations({store:f.store,waiting:f.waiting});
+ const job=operations.execute(f.actor,"new-request",f.request,async reserve=>{await reserve(detail);return {ok:true};});
+ const settled=job.then(value=>value,error=>({error:error.message}));
+ const card=await f.card();
+ operations.resumePendingPublications();
+ const active=database().prepare("SELECT state FROM image_operations WHERE generation=?").get(f.actor.generation);
+ expect(database().prepare("SELECT id FROM image_operations WHERE id='abandoned'").get()).toBeUndefined();
+ operations.resolve(f.actor.threadId,card.card!.requestId!,"deny");
+ expect(await settled).toEqual({error:expect.stringContaining("not approved by the owner")});
+ expect(active).toMatchObject({state:"awaiting"});
+ expect(database().prepare("SELECT state FROM image_operations WHERE generation=?").get(f.actor.generation)).toMatchObject({state:"not-dispatched"});
+});
 it("leaves a dispatched image request fenced after a restart",async()=>{
  const f=generationFixture();f.operations.resumePendingPublications();
  const id=createHash("sha256").update(`${f.actor.botId}:${f.actor.threadId}:${f.actor.generation}:dispatched`).digest("hex");
@@ -557,6 +572,39 @@ it("a routine run holds its image card open past the bound and past its turn", a
     await run("carried-on", next);
     expect(f.fetcher).toHaveBeenCalledOnce();
     expect(f.store.messagesFor(f.bot.threadId).filter(m => m.card?.tool === "generate_image")).toHaveLength(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("project image decisions stay open without a routine continuation",async()=>{
+  vi.useFakeTimers();try{
+    const f=generationFixture();const held=new ImageOperations({store:f.store,waiting:f.waiting,holdProjectApproval:()=>true});
+    const service=new ImageGenerationService({resolveConnection:()=>({id:"flux",provider:"flux",apiKey:"FAKE_B15",revision:"1"}),connectionIds:()=>["flux"],fetch:f.fetcher});
+    const job=held.execute(f.actor,"project-held",f.request,(reserve,publish)=>service.generate(f.request,{reserve,publish,assertActive:f.actor.assertActive,signal:f.actor.signal},[]));const refused=expect(job).rejects.toThrow("not approved");
+    const card=await f.card();await vi.advanceTimersByTimeAsync(60*60000);
+    expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===card.id)!.card!.answered).toBeUndefined();
+    f.controller.abort(); f.revoke(); await refused;
+    expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===card.id)!.card!.answered).toBeUndefined();
+    expect(held.resolve(f.bot.threadId,card.card!.requestId!,"deny")).toBe("rejected");
+    expect(f.store.messagesFor(f.bot.threadId).find(m=>m.id===card.id)!.card!.answered).toBe("deny");
+  }finally{vi.useRealTimers();}
+});
+// Coordinator (imgflux report): a late Allow on a project-held card whose
+// tool call already ended showed "allowed" and made nothing. With nothing to
+// carry the approval on, the card closes as expired and the answer is
+// unavailable (the answer route adds its plain line, api test).
+it("a late Allow on a project-held card whose call ended closes it as expired, never allowed with nothing", async () => {
+  vi.useFakeTimers(); try {
+    const f = generationFixture(); const held = new ImageOperations({ store: f.store, waiting: f.waiting, holdProjectApproval: () => true });
+    const service = new ImageGenerationService({ resolveConnection: () => ({ id: "flux", provider: "flux", apiKey: "FAKE_B15", revision: "1" }), connectionIds: () => ["flux"], fetch: f.fetcher });
+    const job = held.execute(f.actor, "project-late", f.request, (reserve, publish) => service.generate(f.request, { reserve, publish, assertActive: f.actor.assertActive, signal: f.actor.signal }, []));
+    const refused = expect(job).rejects.toThrow("not approved");
+    const card = await f.card();
+    f.controller.abort(); f.revoke(); await refused;
+    expect(held.resolve(f.bot.threadId, card.card!.requestId!, "allow")).toBe("unavailable");
+    expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBe("unavailable");
+    expect(f.fetcher).not.toHaveBeenCalled();
+    // a second answer changes nothing
+    expect(held.resolve(f.bot.threadId, card.card!.requestId!, "allow")).toBe("unavailable");
   } finally { vi.useRealTimers(); }
 });
 // 0.1.61: a turn stops only on silence, Stop or a budget. While Murage itself

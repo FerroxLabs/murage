@@ -11,5 +11,10 @@ export function approvalSummary(text: string): string {
   let end = APPROVAL_SUMMARY_MAX;
   // never split an emoji in half
   if (/[\uD800-\uDBFF]/.test(text[end - 1] ?? "")) end--;
-  return `${text.slice(0, end)}…`;
+  return `${text.slice(0, end)}…[truncated, ${text.length - end} characters more]`;
+}
+
+/** True when `approvalSummary` cut this text: it ends in its truncation marker. */
+export function approvalSummaryIsCut(text: string | undefined): boolean {
+  return Boolean(text && /…\[truncated, \d+ characters more\]$/.test(text));
 }

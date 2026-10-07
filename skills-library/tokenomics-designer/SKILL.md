@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of tokenomics designer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "advanced blockchain stress-management checklist testing analysis networking contracts"
   category: "emerging-tech"

@@ -4,7 +4,7 @@ description: |
   Designing games that teach effectively, covering learning objectives integration, intrinsic motivation, Bloom's taxonomy in game design, assessment through play, age-appropriate design, accessibility, classroom integration strategies, and the distinction between edutainment and serious games. Use when the user asks about educational game designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design design teaching guide"
   category: "game-development"

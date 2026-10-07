@@ -12,7 +12,7 @@ description: |
   a specific job description (use job-description-analyzer).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "interview-prep career research"
   category: "career-development"

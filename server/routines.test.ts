@@ -1,9 +1,14 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
+import { CLOUD_ROUTINE_NOT_YET, type RoutineRunCardData } from "../shared/routine-run.ts";
+import { autoVerdict, type AutoApprover, type AutoVerdict } from "./auto-approve.ts";
+import * as routinePermissions from "./routine-permissions.ts";
+import * as routineExports from "./routines.ts";
 import {
   nextOccurrence,
   routineInstructionRevision,
@@ -197,6 +202,87 @@ describe("nextOccurrence", () => {
 });
 
 describe("RoutineManager", () => {
+  // Gap 2: refuse cloud dispatch at every level and carry the refusal into its card.
+  it("refuses cloud routine runs at every level at dispatch and shows the reason in the routine card", async () => {
+    // SEAM: export routineRunCard(run) from routines.ts, extracting the existing index.ts card projection used by syncRoutineRunToSource.
+    const cardFor = (routineExports as typeof routineExports & {
+      routineRunCard?: (run: RoutineRun) => RoutineRunCardData;
+    }).routineRunCard;
+    const cases = [
+      { ceiling: "ask", botAtStart: "unlimited", refused: true },
+      { ceiling: "unlimited", botAtStart: "ask", refused: true },
+      { ceiling: "auto", botAtStart: "unlimited", refused: true },
+      { ceiling: "full", botAtStart: "unlimited", refused: true },
+      { ceiling: "unlimited", botAtStart: "unlimited", refused: true },
+    ] as const;
+    for (const { ceiling, botAtStart, refused } of cases) {
+      const h = harness();
+      let currentMode: routinePermissions.RoutinePermissionMode = "ask";
+      h.options.botMode = () => currentMode;
+      const routine = h.manager.create({
+        name: "Cloud check", prompt: "Read the archive", botId: "cloud-bot", enabled: false,
+        runOn: "cloud", permissionMode: ceiling,
+        schedule: { type: "interval", everyMinutes: 30, anchorAt: h.nowValue() },
+      });
+      const queued = h.manager.runNow(routine.id)!;
+      expect(queued.status).toBe("queued");
+      // The decision belongs at dispatch, after the bot's mode can change.
+      currentMode = botAtStart;
+      await h.manager.tick();
+      const run = h.manager.listRuns().find((run) => run.id === queued.id)!;
+      if (!refused) {
+        expect(h.started).toHaveLength(1);
+        expect(h.runOns).toEqual(["cloud"]);
+        expect(run.status).toBe("running");
+        continue;
+      }
+      expect(h.started, `${ceiling} cloud turn must not reach the driver`).toEqual([]);
+      expect(run.status).toBe("failed");
+      expect(run.error).toMatch(/cloud/i);
+      expect(run.error).not.toMatch(/[\r\n\u2014]/);
+      expect(run.error!.length).toBeLessThanOrEqual(280);
+      expect(h.failed).toEqual([expect.objectContaining({ id: run.id, error: run.error })]);
+      expect(h.changed).toContainEqual(expect.objectContaining({ id: run.id, status: "failed", error: run.error }));
+      expect(cardFor, "the source card must project the dispatch refusal").toBeTypeOf("function");
+      const card = cardFor!(run);
+      expect(card).toMatchObject({ runId: run.id, status: "failed", error: run.error });
+      expect(card.error).toBe(CLOUD_ROUTINE_NOT_YET);
+    }
+  });
+
+  // Gap 3: an Ask room routine must judge its Auto speaker at Ask and open a permission card.
+  it("judges an Ask room routine's Auto speaker at Ask", async () => {
+    // SEAM: routineTurnApproval({bot, speaker, run, tool, summary}) in routine-permissions.ts, extracted from index.ts request.opened for both direct and room turns; returns mode/verdict.
+    const approval = (routinePermissions as typeof routinePermissions & {
+      routineTurnApproval?: (input: {
+        bot?: AutoApprover; speaker?: AutoApprover;
+        run: ReturnType<RoutineManager["routineRunForThread"]>;
+        tool: string; summary: string;
+      }) => { mode: routinePermissions.RoutinePermissionMode; verdict: AutoVerdict };
+    }).routineTurnApproval;
+    const h = harness();
+    h.options.botMode = () => "auto";
+    const speaker = { autoApprove: true, fullAccess: false, noLimits: false, alwaysAllow: [] };
+    const routine = h.manager.create({
+      name: "Room archive", prompt: "Read the archive", target: "room-goal", groupId: "room-1", botId: "chief-1",
+      enabled: false, permissionMode: "ask", schedule: { type: "interval", everyMinutes: 30, anchorAt: h.nowValue() },
+    });
+    h.manager.runNow(routine.id);
+    await h.manager.tick();
+    expect(h.started).toEqual([]);
+    expect(h.startedGoals).toHaveLength(1);
+    const threadId = h.startedGoals[0]!.threadId;
+    const run = h.manager.routineRunForThread(threadId);
+    expect(run).toMatchObject({ routineId: routine.id, botId: "chief-1", permissionMode: "ask", alwaysAllow: [] });
+    expect(autoVerdict(speaker, "Bash", "echo routine")).toMatchObject({ source: "auto-mode", approve: expect.any(String) });
+    expect(approval, "a room speaker must reach the routine permission decision without a direct-thread bot").toBeTypeOf("function");
+    const result = approval!({ bot: undefined, speaker, run, tool: "Bash", summary: "echo routine" });
+    expect(result).toMatchObject({ mode: "ask", verdict: { approve: null, source: "no-grant" } });
+    // A null approval is the request.opened branch that retains the owner's card.
+    h.manager.handleRuntimeEvent({ type: "request.opened", threadId, requestId: "room-ask", requestType: "permission", tool: "Bash", summary: "echo routine" } as never);
+    expect(h.manager.listRuns()[0]?.status).toBe("waiting");
+  });
+
   it("still enforces the run limit while a dispatch is wedged", async () => {
     // The run-limit scan used to sit inside `if (this.ticking) return`. One
     // dispatch that never settles — a provider wedged mid-handshake — left
@@ -331,7 +417,7 @@ describe("RoutineManager", () => {
     let failureWasPersistedBeforeCallback = false;
     h.options.onRunFailed = (run) => {
       h.failed.push(run);
-      failureWasPersistedBeforeCallback = readFileSync(routineFile, "utf8").includes('"status": "failed"');
+      failureWasPersistedBeforeCallback = JSON.stringify(readRoutinesWithRuns(routineFile).runs).includes('"status":"failed"');
     };
     const reloaded = new RoutineManager(h.options);
     expect(reloaded.listRoutines()).toHaveLength(1);
@@ -387,7 +473,7 @@ describe("RoutineManager", () => {
     expect(persisted.listRuns()[0]?.attachments).toEqual(persisted.listRoutines()[0]?.attachments);
 
     const file = h.options.file!;
-    const oldFile = JSON.parse(readFileSync(file, "utf8")) as {
+    const oldFile = readRoutinesWithRuns(file) as unknown as {
       routines: Array<{ attachments?: unknown; timeoutMinutes?: unknown }>;
       runs: Array<{ attachments?: unknown; timeoutMinutes?: unknown }>;
     };
@@ -415,7 +501,7 @@ describe("RoutineManager", () => {
     });
     h.manager.runNow(routine.id);
 
-    const stored = JSON.parse(readFileSync(h.options.file!, "utf8")) as {
+    const stored = readRoutinesWithRuns(h.options.file!) as unknown as {
       routines: Array<{ target?: unknown; groupId?: unknown }>;
       runs: Array<{ target?: unknown; groupId?: unknown }>;
     };
@@ -447,7 +533,7 @@ describe("RoutineManager", () => {
       botId: "ember-valid",
       schedule: { type: "interval", everyMinutes: 15, anchorAt },
     });
-    const stored = JSON.parse(readFileSync(h.options.file!, "utf8")) as {
+    const stored = readRoutinesWithRuns(h.options.file!) as unknown as {
       routines: Array<{ id: string; schedule: { anchorAt?: unknown } }>;
     };
     stored.routines.find((routine) => routine.id === malformed.id)!.schedule.anchorAt = Number.MAX_SAFE_INTEGER;
@@ -1573,19 +1659,19 @@ describe("RoutineManager", () => {
       name: "VM review",
       prompt: "Review the project on the virtual machine",
       botId: "ember-cloud",
-      runOn: "cloud",
+      runOn: "ember",
       schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() },
     });
     h.setNow(routine.nextRunAt!);
     await h.manager.tick();
-    h.manager.update(routine.id, { runOn: "ember" });
+    h.manager.update(routine.id, { runOn: "cloud" });
 
     h.setBot("ready");
     await h.manager.tick();
 
-    expect(h.runOns).toEqual(["cloud"]);
-    expect(h.manager.listRuns()[0]).toMatchObject({ runOn: "cloud" });
-    expect(h.manager.listRoutines()[0]).toMatchObject({ runOn: "ember" });
+    expect(h.runOns).toEqual(["ember"]);
+    expect(h.manager.listRuns()[0]).toMatchObject({ runOn: "ember" });
+    expect(h.manager.listRoutines()[0]).toMatchObject({ runOn: "cloud" });
   });
 
   it("opens webhook jobs in the assigned bot's live chat", async () => {
@@ -2029,5 +2115,118 @@ describe("long routine instructions reach the bot whole", () => {
       schedule: { type: "interval", everyMinutes: 30, anchorAt: h.nowValue() }, durationMinutes: 15 });
     expect(() => h.manager.update(routine.id, { prompt: over })).toThrow("up to 100,000 characters");
     expect(h.manager.listRoutines()[0].prompt).toBe("Do the thing");
+  });
+});
+
+it("routines in projects post into the chat without a new goal task", async () => {
+  const h = harness();
+  const delivered: RoutineRun[] = [];
+  h.options.projectRoutine = (run) => { delivered.push(run); return { threadId: "project-chat" }; };
+  const routine = h.manager.create({ name: "Project check", prompt: "Check progress", target: "room-goal", botId: "chief-1", groupId: "room-1", schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() } });
+  h.setNow(routine.nextRunAt!);
+  await h.manager.tick();
+  expect(delivered).toHaveLength(1);
+  expect(h.goalTasks).toHaveLength(0);
+  expect(h.startedGoals).toHaveLength(0);
+  expect(h.manager.listRuns()[0]).toMatchObject({ threadId: "project-chat", status: "completed" });
+});
+
+describe("startup readiness for scheduled and catch-up runs", () => {
+  const make = (h: ReturnType<typeof harness>, name: string, at: number) => h.manager.create({
+    name, prompt: `Run ${name}`, botId: "bot-a", target: "bot", runOn: "ember", enabled: true,
+    schedule: { type: "once", at }, durationMinutes: 15,
+  });
+
+  it("holds catch-up runs until the connected-apps inventory has loaded", async () => {
+    const h = harness();
+    const t0 = h.nowValue();
+    let loaded = false;
+    make(h, "sweep", t0 - 60_000);
+    h.options.startupReady = () => loaded;
+    h.manager.start();
+    await h.manager.tick();
+    expect(h.started).toHaveLength(0);
+    h.setNow(t0 + 30_000);
+    await h.manager.tick();
+    expect(h.started).toHaveLength(0);
+    loaded = true;
+    await h.manager.tick();
+    expect(h.started).toHaveLength(1);
+    expect(h.started[0].prompt).not.toContain("connected apps had not finished loading");
+    h.manager.stop();
+  });
+
+  it("runs anyway after the bound and tells the bot", async () => {
+    const h = harness();
+    const t0 = h.nowValue();
+    make(h, "sweep", t0 - 60_000);
+    h.options.startupReady = () => false;
+    h.options.startupWaitMs = 90_000;
+    h.manager.start();
+    await h.manager.tick();
+    expect(h.started).toHaveLength(0);
+    h.setNow(t0 + 91_000);
+    await h.manager.tick();
+    expect(h.started).toHaveLength(1);
+    expect(h.started[0].prompt).toContain("connected apps had not finished loading");
+    h.manager.stop();
+  });
+
+  it("never starts two catch-up runs at the same instant", async () => {
+    const h = harness();
+    const t0 = h.nowValue();
+    make(h, "one", t0 - 120_000);
+    make(h, "two", t0 - 110_000);
+    h.options.startupReady = () => true;
+    h.options.catchUpStaggerMs = 20_000;
+    h.manager.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(h.started).toHaveLength(1);
+    await h.manager.tick();
+    expect(h.started).toHaveLength(1);
+    h.setNow(t0 + 21_000);
+    await h.manager.tick();
+    expect(h.started).toHaveLength(2);
+    h.manager.stop();
+  });
+
+  it("defers a run whose connector tools are missing at step 0, then retries at 2 and 10 minutes", async () => {
+    const h = harness();
+    const t0 = h.nowValue();
+    let missing = true;
+    h.options.connectorsMissing = () => missing;
+    const routine = make(h, "sweep", t0 - 1_000);
+    await h.manager.tick();
+    expect(h.started).toHaveLength(0);
+    const run = h.manager.listRuns().find((r) => r.routineId === routine.id)!;
+    expect(run.status).toBe("queued");
+    expect(run.attention).toMatch(/Waiting for connected apps/);
+    h.setNow(t0 + 60_000);
+    await h.manager.tick();
+    expect(h.started).toHaveLength(0);
+    h.setNow(t0 + 121_000);
+    await h.manager.tick();
+    expect(h.started).toHaveLength(0);
+    expect(h.manager.listRuns().find((r) => r.id === run.id)!.attention).toMatch(/10 minutes/);
+    missing = false;
+    h.setNow(t0 + 121_000 + 601_000);
+    await h.manager.tick();
+    expect(h.started).toHaveLength(1);
+    expect(h.manager.listRuns().find((r) => r.id === run.id)).toMatchObject({ status: "running" });
+    expect(h.manager.listRuns().find((r) => r.id === run.id)!.attention).toBeUndefined();
+  });
+
+  it("after both deferrals runs anyway with a note instead of failing", async () => {
+    const h = harness();
+    const t0 = h.nowValue();
+    h.options.connectorsMissing = () => true;
+    make(h, "sweep", t0 - 1_000);
+    await h.manager.tick();
+    h.setNow(t0 + 121_000);
+    await h.manager.tick();
+    h.setNow(t0 + 121_000 + 601_000);
+    await h.manager.tick();
+    expect(h.started).toHaveLength(1);
+    expect(h.started[0].prompt).toContain("connected apps had not finished loading");
   });
 });

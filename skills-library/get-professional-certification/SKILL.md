@@ -20,7 +20,7 @@ trigger_phrases: >-
   should I get certification study plan prepare for a professional exam AWS
   certification guide PMP certification prep
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: study-skills career step-by-step planning
   category: career

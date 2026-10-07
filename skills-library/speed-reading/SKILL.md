@@ -6,7 +6,7 @@ description: |
   Do NOT use for study planning (use `study-plan`), for book summarization (use `book-summary`), or for note taking from reading (use `cornell-notes`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "study-skills step-by-step guide beginner-friendly"
   category: "education"

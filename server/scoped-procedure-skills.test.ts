@@ -5,6 +5,7 @@ import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
 import { captureSource } from "./memory/capture.ts";
+import { archiveMemoryRecord } from "./memory/retention.ts";
 import { memoryState, setMemoryMode } from "./memory/repository.ts";
 import { procedureCandidateHash, procedureSnapshotDigest, procedureTargetDigest, type ProcedureReviewSnapshot, type ProcedureEvaluationReceipt } from "./memory/procedure-review.ts";
 import { applyStagedSkillWrite, stageSkillWrite, skillEvolutionDescriptor, publishEvaluatedScopedSkill, wasEvaluatedScopedSkillPublished, readSkillFile, rollbackSkillRevision, rollbackScopedSkillRevision, scopedSkillRevisionHistory, skillRevisionHistory, type SkillProcedureContext, assertSkillProcedureEvidence } from "./skills.ts";
@@ -123,4 +124,19 @@ it("a committed owner correction can learn from retained superseded ancestry wit
   expect(()=>assertSkillProcedureEvidence(review.context,[{...corrected,revision:1}])).toThrow("PROCEDURE_EVIDENCE_REVOKED");
   db.prepare("UPDATE memory_records SET state='deleted' WHERE id=? AND version=1").run(id);
   expect(()=>assertSkillProcedureEvidence(review.context,[corrected])).toThrow("PROCEDURE_EVIDENCE_REVOKED");
+});
+
+// Fix round 2, hole 4: skill publication re-checks disclosure lineage. A reply
+// made with record R is the evidence; once the owner archives R the reply is
+// withheld on content, though its source stays active, and is not evidence.
+it("refuses a reply as skill evidence once a record it was made with is archived",()=>{
+  const threadId="lineage-thread";
+  transaction(db=>captureSource(db,{id:"message:lineage-thread:reply",threadId,messageId:"reply",kind:"text",speaker:"bot",outcome:"recorded",text:"Rotate the key first, then deploy."}));
+  const db=database(),scopeId=String(db.prepare("SELECT scope_id FROM memory_sources WHERE id='message:lineage-thread:reply'").get()!.scope_id),state=memoryState();
+  db.prepare("INSERT INTO memory_records VALUES('rotate-fact',1,?,'fact','Rotate the key first','owner-statement','active',0,1,NULL,NULL,1)").run(scopeId);
+  db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('made-with',?,'engine','s','[{\"id\":\"rotate-fact\",\"version\":1}]','[]','[\"reply\"]',?,?,1,'delivered',1)").run(threadId,state.policyRevision,state.deletionEpoch);
+  const context:SkillProcedureContext={audienceKey:"owner",allowedScopeIds:[scopeId]},item={kind:"source" as const,id:"message:lineage-thread:reply",revision:1,scopeId};
+  expect(()=>assertSkillProcedureEvidence(context,[item])).not.toThrow();
+  archiveMemoryRecord(ownerMemoryTicket(),"rotate-fact",1);
+  expect(()=>assertSkillProcedureEvidence(context,[item])).toThrow("PROCEDURE_EVIDENCE_REVOKED");
 });

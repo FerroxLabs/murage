@@ -11,14 +11,16 @@ import { backupWorkRoot, createBackupWork, removeBackupWork } from "./backup-loc
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function fixture() { const root = realpathSync(mkdtempSync(join(tmpdir(), "murage-work-win-"))); roots.push(root); const data = join(root, ".murage"); mkdirSync(data); return { root, data }; }
+function fixture() { const root = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-work-win-"))); roots.push(root); const data = join(root, ".murage"); mkdirSync(data); return { root, data }; }
 
 it("Windows: the work folder is restricted to the owner when it isn't already, then reused as is", () => {
   const f = fixture(); const checked: string[] = [], restricted: string[] = []; let ownerOnly = false;
   const acl = { ownerOnly: (folder: string) => { checked.push(folder); return ownerOnly; }, restrict: (folder: string) => { restricted.push(folder); ownerOnly = true; } };
   const run = createBackupWork(f.data, { acl, platform: "win32" });
   const top = dirname(backupWorkRoot(f.data));
-  expect(top).toBe(join(f.root, ".murage-backup-work")); expect(run.startsWith(backupWorkRoot(f.data))).toBe(true);
+  // On a Windows host the product case-folds canonical paths (NTFS names are case-insensitive).
+  const folded = (path: string) => process.platform === "win32" ? path.toLowerCase() : path;
+  expect(folded(top)).toBe(folded(join(f.root, ".murage-backup-work"))); expect(run.startsWith(backupWorkRoot(f.data))).toBe(true);
   expect(restricted).toEqual([top]); expect(checked).toEqual([top]);
   removeBackupWork(run);
   createBackupWork(f.data, { acl, platform: "win32" }); expect(restricted).toEqual([top]); expect(checked).toEqual([top, top]);

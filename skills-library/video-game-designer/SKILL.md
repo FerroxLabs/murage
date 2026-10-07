@@ -4,7 +4,7 @@ description: |
   Comprehensive video game design guidance covering Game Design Document (GDD) structure, core mechanics design, player motivation (Bartle types), level design principles, difficulty curves, playtesting methodology, monetization ethics, game feel and juice, and the full design-to-playtest pipeline. Use when the user asks about video game designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design design guide"
   category: "game-development"

@@ -6,7 +6,7 @@ description: |
   Do NOT use for full lesson plans (use `lesson-plan-design`), for discussion-only activities (use `discussion-questions`), or for online course modules (use `online-course-design`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching lesson-plan step-by-step guide"
   category: "education"

@@ -10,7 +10,7 @@ description: |
   employer-sponsored sabbaticals with fixed structure.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "travel planning career step-by-step guide"
   category: "cross-domain"

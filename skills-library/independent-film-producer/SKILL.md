@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of independent film producer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-industry design budgeting checklist research marketing performing-arts email"
   category: "design-creative"

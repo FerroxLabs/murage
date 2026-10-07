@@ -4,7 +4,7 @@ description: |
   Comprehensive motion graphics guidance covering title design, lower thirds, animated explainers, kinetic typography, logo animation, After Effects and Apple Motion workflows, design principles for motion, storyboarding for motion, and building a motion design practice. Use when the user asks about motion graphics or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "video-production design"
   category: "design-creative"

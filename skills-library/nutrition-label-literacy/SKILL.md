@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical dietary management, allergy identification (consult an allergist), macro calculation (use macro-calculation), or product recommendations.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "nutrition guide analysis"
   category: "health-wellness"

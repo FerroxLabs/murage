@@ -4,7 +4,7 @@ description: |
   Deep music theory guidance covering extended harmony (9th, 11th, 13th chords), chord substitutions (tritone, chromatic, modal interchange), counterpoint, form analysis, orchestration basics, analytical methodology, ear training exercises, and the practical application of theory to composition and improvisation. Use when the user asks about music theory deep or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design guide"
   category: "design-creative"

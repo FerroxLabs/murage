@@ -19,7 +19,7 @@ trigger_phrases: >-
   launch an email newsletter newsletter growth strategy build an email list how
   to get newsletter subscribers Substack strategy
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: >-
     newsletter email email-marketing content-marketing writing step-by-step

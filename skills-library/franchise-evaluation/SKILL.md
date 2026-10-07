@@ -19,7 +19,7 @@ trigger_phrases: >-
   franchisee franchise investment analysis is this franchise worth buying
   franchise due diligence
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: entrepreneurship step-by-step planning
   category: business-operations

@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
-import { openSidebar } from "./fixtures.ts";
+import { openSidebar, SEND_KEY } from "./fixtures.ts";
 
 const BOT = "STOP1 chat fixture";
 const TASK = "STOP1 stop thread";
@@ -108,7 +108,7 @@ test("Stop on a running Claude chat turn shows the normal stopped state, not an 
   rmSync(fixture.fixtureDumpPath, { force: true });
   const sent = page.waitForResponse((r) => r.url().endsWith(`/api/bots/${botId}/messages`) && r.request().method() === "POST");
   await page.getByRole("textbox", { name: composer, exact: true }).fill(text);
-  await page.getByRole("textbox", { name: composer, exact: true }).press("Enter");
+  await page.getByRole("textbox", { name: composer, exact: true }).press(SEND_KEY);
   const response = await sent;
   expect(response.status()).toBe(202);
   expect(response.request().postDataJSON().threadId).toBe(botThreadId);
@@ -137,7 +137,7 @@ test("Stop on a running Claude room turn leaves the room idle with no error chip
   const text = "__fixture_hold_authority__ STOP1 room request";
   rmSync(fixture.fixtureDumpPath, { force: true });
   await page.getByRole("textbox", { name: composer, exact: true }).fill(text);
-  await page.getByRole("textbox", { name: composer, exact: true }).press("Enter");
+  await page.getByRole("textbox", { name: composer, exact: true }).press(SEND_KEY);
   await engineHolds(text);
   const stop = page.getByRole("button", { name: "Stop this turn", exact: true });
   await expect(stop).toBeVisible();
@@ -160,7 +160,7 @@ test("a host stop shows why the turn ended in a 1:1 thread with Tool calls off",
   rmSync(fixture.fixtureDumpPath, { force: true });
   const sent = page.waitForResponse((r) => r.url().endsWith(`/api/bots/${botId}/messages`) && r.request().method() === "POST");
   await page.getByRole("textbox", { name: composer, exact: true }).fill(text);
-  await page.getByRole("textbox", { name: composer, exact: true }).press("Enter");
+  await page.getByRole("textbox", { name: composer, exact: true }).press(SEND_KEY);
   const response = await sent;
   expect(response.status()).toBe(202);
   expect(response.request().postDataJSON().threadId).toBe(hostThreadId);

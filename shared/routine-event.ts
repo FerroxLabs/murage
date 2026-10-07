@@ -1,14 +1,14 @@
 import { z } from "zod";
 
 const id = z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/);
-export const channelOriginSchema = z.object({ platform: z.enum(["slack", "discord"]), connectionId: id }).strict();
+export const channelOriginSchema = z.object({ platform: z.enum(["slack", "discord", "whatsapp"]), connectionId: id }).strict();
 export type ChannelOrigin = z.infer<typeof channelOriginSchema>;
 const common = { version: z.literal(1), id, definitionId: id, receivedAt: z.number().finite().nonnegative(), budgetId: id };
 const routineEventSchema = z.discriminatedUnion("source", [
   z.object({ ...common, source: z.literal("schedule"), origin: z.object({ kind: z.literal("local-schedule") }).strict() }).strict(),
   z.object({ ...common, source: z.literal("manual"), origin: z.object({ kind: z.literal("local-manual") }).strict() }).strict(),
   z.object({ ...common, source: z.literal("webhook"), origin: z.object({ kind: z.literal("external-webhook"), webhookId: id }).strict() }).strict(),
-  z.object({ ...common, source: z.literal("channel"), origin: z.object({ kind: z.literal("channel"), channel: z.enum(["telegram", "slack", "discord"]), connectionId: id }).strict() }).strict(),
+  z.object({ ...common, source: z.literal("channel"), origin: z.object({ kind: z.literal("channel"), channel: z.enum(["telegram", "slack", "discord", "whatsapp"]), connectionId: id }).strict() }).strict(),
 ]);
 export type RoutineEvent = z.infer<typeof routineEventSchema>;
 export function parseRoutineEvent(value: unknown): RoutineEvent | null {

@@ -1,0 +1,9 @@
+[
+  { "permission": "denied", "binding": null, "hasDetail": false, "fresh": false, "plan": "denied" },
+  { "permission": "undetermined", "binding": "B1", "hasDetail": true, "fresh": false, "plan": "denied" },
+  { "permission": "granted", "binding": null, "hasDetail": false, "fresh": false, "plan": "create" },
+  { "permission": "granted", "binding": "B1", "hasDetail": true, "fresh": false, "plan": "reuse" },
+  { "permission": "granted", "binding": "B1", "hasDetail": false, "fresh": false, "plan": "replace" },
+  { "permission": "granted", "binding": "B1", "hasDetail": true, "fresh": true, "plan": "replace" },
+  { "permission": "granted", "binding": null, "hasDetail": false, "fresh": true, "plan": "create" }
+]

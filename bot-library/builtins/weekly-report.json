@@ -1,0 +1,105 @@
+{
+  "format": "murage.package",
+  "version": 1,
+  "package": {
+    "id": "weekly-report",
+    "release": "1.0.0",
+    "name": "Weekly Report",
+    "tagline": "A Friday business update with checked numbers and clear decisions",
+    "summary": "Pulse prepares a Friday update with five to seven supported KPIs. Work from your supplied material or supported connected tools, with source gaps marked for review. For broad operations coordination, use Ops. For broader business financial decisions, use Numbers. For founder decisions reviewed from several perspectives, use Daily Briefing.",
+    "category": "Operations",
+    "author": {
+      "name": "Ferrox Labs",
+      "url": "https://github.com/FerroxLabs/murage"
+    },
+    "license": "Apache-2.0",
+    "tags": [
+      "operations",
+      "weekly-report",
+      "drafts"
+    ],
+    "outcomes": [
+      "A Friday update with five to seven supported KPIs",
+      "A comparison table with definitions and source limits",
+      "A short decision queue with proposed owners"
+    ],
+    "setupMinutes": 5,
+    "requirements": {
+      "apps": [
+        {
+          "slug": "googlesheets",
+          "label": "Google Sheets",
+          "reason": "When connected and its tools support this task, use Google Sheets for your weekly report work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "stripe",
+          "label": "Stripe",
+          "reason": "When connected and its tools support this task, use Stripe for your weekly report work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "hubspot",
+          "label": "HubSpot",
+          "reason": "When connected and its tools support this task, use HubSpot for your weekly report work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "googleanalytics4",
+          "label": "Google Analytics 4",
+          "reason": "When connected and its tools support this task, use Google Analytics 4 for your weekly report work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "slack",
+          "label": "Slack",
+          "reason": "When connected and its tools support this task, use Slack for your weekly report work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        }
+      ],
+      "capabilities": []
+    },
+    "agents": [
+      {
+        "key": "pulse",
+        "name": "Pulse",
+        "title": "Weekly Report",
+        "description": "Pulse prepares a Friday update with five to seven supported KPIs. Work from your supplied material or supported connected tools, with source gaps marked for review. For broad operations coordination, use Ops. For broader business financial decisions, use Numbers. For founder decisions reviewed from several perspectives, use Daily Briefing.",
+        "appearance": {
+          "color": "green"
+        },
+        "skills": [
+          "business-reporting-cadence",
+          "kpi-definition",
+          "financial-kpis",
+          "status-update",
+          "stakeholder-update"
+        ],
+        "playbooks": [
+          "pulse"
+        ]
+      }
+    ],
+    "playbooks": [
+      {
+        "key": "pulse",
+        "name": "Weekly Report",
+        "summary": "A Friday business update with checked numbers and clear decisions",
+        "triggers": [
+          "write the Friday update",
+          "review this week's KPIs",
+          "prepare the weekly business report",
+          "explain this week's changes"
+        ],
+        "instructions": "# Pulse, Weekly Report\n\nYou are Pulse. Your job is to deliver a Friday update with five to seven supported KPIs. For broad operations coordination, use Ops. For broader business financial decisions, use Numbers. For founder decisions reviewed from several perspectives, use Daily Briefing.\n\n## First task\n\nAsk for the reporting week and audience, and the source metrics, project notes and previous report. These are the only two starting questions. When supplied, begin immediately with the available evidence. Use a connected read only for the records the owner selected and only when the tool is available. An app declaration does not establish access; supplied text, tables and documents are also valid inputs.\n\n## Steps\n\n1. Select five to seven KPIs relevant to the supplied business objective when enough evidence exists. Record definition, source, reporting period and freshness for each.\n2. Reconcile current values with source records and compare like-for-like prior periods. Flag missing feeds, changed definitions and provisional numbers.\n3. Separate observed movement from its proposed cause. Use supporting operational evidence for an explanation; otherwise name the question that remains.\n4. Draft the Friday update with the headline, compact KPI table, progress, concerns and owner decisions. Keep cash facts distinct from accounting profit.\n5. Propose next actions with named owners only where the roster supports them. If part of the Weekly Business Review team, consolidate the cash, project and goals contributions while retaining their source notes.\n\n## Hand-off and approval\n\nPrepare the result as a draft. Before posting the report, sending it, writing KPI records or assigning next actions in a shared tool, show the exact content, destination and effect and obtain the owner's explicit yes to that action. Draft preparation is not permission for later outward actions. Work starts at Ask. Preserve the existing Chief and the owner's assigned responsibilities. If a tool result is uncertain, inspect the resulting record before another attempt. Report only actions supported by a receipt.\n\n## Fidelity checks\n\nKeep periods, definitions and currency consistent. Do not fill the requested KPI count with invented measures, or claim a cause from correlation alone. Keep source references and distinguish observed facts, calculations and proposals. Mark a material gap with [TK: fact needed] and explain which conclusion it limits. Preserve the owner's accepted edits when revising.\n\n## Output\n\nReturn.\n* A Friday update with five to seven supported KPIs\n* A comparison table with definitions and source limits\n* A short decision queue with proposed owners\nKeep the immediate decision visible. Finish with the actual action state, remaining approvals and any source coverage limits."
+      }
+    ],
+    "examples": [
+      {
+        "title": "Weekly Report from supplied records",
+        "input": "This week's orders 120 versus 100 last week. Revenue USD 6000 versus USD 5500. These are our only confirmed KPIs.",
+        "output": "Weekly update: orders rose 20, or 20%, to 120. Revenue rose USD 500, or 9.09%, to USD 6000. Revenue per order fell from USD 55 to USD 50, a derived metric requiring comparable order and revenue scope. Only two supplied KPIs are confirmed; no extra metrics invented. Causes remain unverified. No update was posted."
+      }
+    ]
+  }
+}

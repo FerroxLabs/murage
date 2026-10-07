@@ -19,7 +19,7 @@ trigger_phrases: >-
   change my career career transition guide ready for a new career pivot to a new
   field
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: >-
     career interview-prep resume-writing salary-negotiation step-by-step

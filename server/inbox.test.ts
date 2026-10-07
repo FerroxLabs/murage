@@ -21,6 +21,19 @@ function put(db: DatabaseSync, message: Record<string, unknown>, thread = "threa
     .run(thread, String(value.id), Number(value.at), String(value.role), String(value.kind), null, JSON.stringify(value));
 }
 
+it("puts a Murage daily digest in to-read, never decisions, and reading clears it", () => {
+  const { db } = fixture();
+  const roomAccess: InboxAccess = { owner: true, threads: [{ threadId: "room", label: "Project" }] };
+  put(db, { id: "digest", kind: "activity", actorKind: "murage", murage: { kind: "status", digestDay: "2026-09-29" }, tool: { name: "Daily digest for 29 Sep: 2 cards done.", ok: true } }, "room");
+  put(db, { id: "ordinary", kind: "activity", actorKind: "murage", murage: { kind: "status" }, tool: { name: "Working", ok: true } }, "room");
+  put(db, { id: "bot", kind: "activity", actorKind: "bot", murage: { kind: "status", digestDay: "2026-09-29" }, tool: { name: "Not a digest", ok: true } }, "room");
+  const page = listInbox(db, { view: "to-read" }, roomAccess);
+  expect(page).toMatchObject({ total: 1, decisions: 0, items: [{ title: "Daily digest", status: "digest", segment: "result", summary: "Daily digest for 29 Sep: 2 cards done.", decision: false, toRead: true }] });
+  expect(listInbox(db, { view: "decisions" }, roomAccess).total).toBe(0);
+  updateInboxState(db, { id: page.items[0].id, version: page.items[0].version, read: true }, roomAccess);
+  expect(listInbox(db, { view: "to-read" }, roomAccess).total).toBe(0);
+});
+
 it("groups repeat deliveries, survives restart and never answers a request when marked read", () => {
   const f = fixture(); put(f.db, {}); put(f.db, { id: "replay", at: 101 });
   const first = listInbox(f.db, {}, access).items[0];
@@ -500,6 +513,44 @@ it("an open request to connect an app can be set aside, and then stops being owe
   expect(listInbox(db, { view: "connections" }, access)).toMatchObject({ total: 0, connections: 0 });
   expect(listInbox(db, { view: "all" }, access).items.find(item => item.kind === "connection")).toMatchObject({ status: "resolved" });
   expect(listInbox(db, { view: "all" }, access).items.find(item => item.kind === "connection")?.dismissible).toBeUndefined();
+});
+
+it("a link server's sign-in card is a connection owed in the Inbox until the owner signs in or dismisses it", () => {
+  const { db } = fixture();
+  const card = { name: "comfy", host: "cloud.comfy.org", bot: "Sable", botId: "bot", reason: "sign-in-ended", status: "required", resumeKey: "mcp-abc",
+    title: "Sign in to cloud.comfy.org", body: "comfy needs you to sign in again before Sable can use it.", phone: "Finish sign-in on the computer running Murage." };
+  put(db, { id: "signin", at: 300, kind: "mcpSignIn", mcpSignIn: card });
+  const page = listInbox(db, { view: "connections" }, access);
+  expect(page).toMatchObject({ total: 1, connections: 1 });
+  expect(page.items[0]).toMatchObject({
+    kind: "connection", segment: "connection", status: "pending", decision: true, title: "Sign in to cloud.comfy.org",
+    summary: "comfy needs you to sign in again before Sable can use it.", dismissible: true, dismissVia: "mcp-sign-in", botId: "bot",
+    link: { threadId: "thread", messageId: "signin" },
+  });
+  expect(listInbox(db, { view: "decisions" }, access).decisions).toBe(1);
+  expect(owedThreads(db, access)).toEqual(new Set(["thread"]));
+  // the same card patched again (a second scope in the same turn) is still one row
+  put(db, { id: "signin", at: 300, kind: "mcpSignIn", mcpSignIn: { ...card, reason: "needs-more-access", scope: "tools:write" } });
+  expect(listInbox(db, { view: "connections" }, access).total).toBe(1);
+  // signed in: history, not owed
+  put(db, { id: "signin", at: 300, kind: "mcpSignIn", mcpSignIn: { ...card, status: "signed-in", resumed: true } });
+  expect(listInbox(db, { view: "connections" }, access)).toMatchObject({ total: 0, connections: 0 });
+  const done = listInbox(db, { view: "all" }, access).items.find((item) => item.link.messageId === "signin");
+  expect(done).toMatchObject({ status: "resolved" });
+  expect(done?.dismissible).toBeUndefined();
+  // dismissed: also not owed
+  put(db, { id: "signin", at: 300, kind: "mcpSignIn", mcpSignIn: { ...card, dismissed: true } });
+  expect(listInbox(db, { view: "decisions" }, access).decisions).toBe(0);
+});
+
+it("a sign-in card never puts a token or the card's phone note in a summary", () => {
+  const { db } = fixture();
+  put(db, { id: "signin", kind: "mcpSignIn", mcpSignIn: { name: "comfy", host: "cloud.comfy.org", bot: "Sable", reason: "sign-in-ended", status: "required", resumeKey: "k",
+    title: "Sign in to cloud.comfy.org", body: "Bearer at_0123456789abcdef0123456789abcdef", phone: "PHONE-NOTE", error: "sk-ant-api03-SECRETSECRETSECRET" } });
+  const shown = JSON.stringify(listInbox(db, { view: "all" }, access));
+  expect(shown).not.toContain("at_0123456789abcdef0123456789abcdef");
+  expect(shown).not.toContain("SECRETSECRETSECRET");
+  expect(shown).not.toContain("PHONE-NOTE");
 });
 
 it("a failure owing nothing can be cleared until it happens again; a waiting request cannot", () => {

@@ -1,8 +1,9 @@
 ---
 name: voiceprint-voice-compile
 description: "**Mode skill.** Default-enabled on the Voiceprint specialist. Compile produces the deliverable — the markdown file the user pastes into every model from now on."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "voiceprint"
 ---

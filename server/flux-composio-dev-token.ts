@@ -47,6 +47,7 @@ const documentSchema = z.object({
   fluxComposioBrokerTokenKeyFingerprint: z.string().optional(),
   fluxComposioAccountKind: z.enum(["personal", "shared"]).optional(),
   fluxComposioTokenError: z.string().optional(),
+  fluxComposioTokenRefusedKeyFingerprint: z.string().optional(),
 }).strict();
 
 export type DevFluxTokenDocument = FluxComposioTokenFields;
@@ -101,6 +102,8 @@ export interface DevFluxTokenOptions {
   log?: (line: string) => void;
   now?: number;
   force?: boolean;
+  /** Which token was rejected: a forced re-mint only replaces that one. */
+  rejectedTokenFingerprint?: string;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -161,6 +164,7 @@ export async function ensureDevFluxBrokerToken(options: DevFluxTokenOptions): Pr
         log: options.log,
         now,
         force: options.force,
+        rejectedTokenFingerprint: options.rejectedTokenFingerprint,
         onRateLimited: () => { rateLimited = true; },
         label: DEV_FLUX_TOKEN_LABEL,
       });

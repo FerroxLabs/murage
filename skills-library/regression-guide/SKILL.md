@@ -6,7 +6,7 @@ description: |
   Do NOT use for simple correlation between two variables (use correlation-analysis), A/B test result interpretation (use hypothesis-testing), or chart creation (use chart-type-selector).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "statistics analysis data-science"
   category: "data-analysis"

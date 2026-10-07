@@ -35,6 +35,17 @@ export function reviewedSkillSha256(request: SkillRequestCardData): string | und
   return request.sha256;
 }
 
+/** True when the displayed preview hashes (SHA-256 of its UTF-8 text) to the sha256 it carries. The phone runs
+ * this before signing an approval of a skill request, so a preview altered in transit never gets a proof. A
+ * card with no skill request is not this check's business and passes. */
+export async function skillPreviewMatchesHash(card: { skillRequest?: unknown }): Promise<boolean> {
+  const request = card.skillRequest as Partial<SkillRequestCardData> | null | undefined;
+  if (!request || typeof request !== "object") return true;
+  if (typeof request.preview !== "string" || typeof request.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(request.sha256)) return false;
+  const hash = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(request.preview)));
+  return Array.from(hash, (byte) => byte.toString(16).padStart(2, "0")).join("") === request.sha256.toLowerCase();
+}
+
 /** Map the server-authored affirmative labels explicitly and fail closed for
  * anything else. This keeps new Update/Apply wording working without turning
  * an unknown or corrupted card answer into approval. */

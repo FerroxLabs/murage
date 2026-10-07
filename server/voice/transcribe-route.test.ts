@@ -25,6 +25,8 @@ import {
   estimateBilledSeconds,
   BUDGET_WINDOW_MS,
   MAX_CLIP_BYTES,
+  MIN_CLIP_BYTES,
+  TOO_SHORT,
   createVoiceBudget,
   handleTranscribeRoute,
   isTranscriptionModel,
@@ -42,6 +44,8 @@ interface Seen {
   prompt?: string;
 }
 let seen: Seen[] = [];
+/** Lines the route wrote to its log. */
+let logged: string[] = [];
 /** What the stubbed transcribe should do next. */
 let answer: { ok: Transcript } | { throws: unknown } = {
   ok: { text: "ship it", language: "en", duration: 3.2, model: "flux-voice-fast", billedSeconds: 4 },
@@ -85,8 +89,10 @@ const awaitCompletions = (target: number, ms = 3_000): Promise<void> =>
     tick();
   });
 
-/** A token webm header. Nothing decodes it; the route only measures it. */
-const CLIP = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x02, 0x03, 0x04]);
+/** A token webm header padded past the too-short floor. Nothing decodes it;
+ *  the route only measures it. */
+const CLIP = new Uint8Array(MIN_CLIP_BYTES * 2);
+CLIP.set([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x02, 0x03, 0x04]);
 
 beforeAll(async () => {
   server = createServer(async (req, res) => {
@@ -106,6 +112,7 @@ beforeAll(async () => {
         return answer.ok;
       },
       budget,
+      log: (line) => logged.push(line),
     });
     // The dispatcher's own fall-through, reproduced: a false return has to
     // leave the response untouched for every route below.
@@ -122,6 +129,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   seen = [];
+  logged = [];
   completions = 0;
   releaseGate();
   releaseGate = () => {};
@@ -354,10 +362,26 @@ describe("the cap, enforced before the uplink is spent", () => {
     expect(seen[0].byteLength).toBe(MAX_CLIP_BYTES);
   });
 
+  it("never sends a header-only recording upstream, and says so in a plain sentence", async () => {
+    // What a very short press leaves behind: a container header and no audio.
+    const headerOnly = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x02, 0x03, 0x04]);
+    for (const type of ["audio/webm;codecs=opus", "audio/mp4"]) {
+      const res = await post(headerOnly, { type });
+      expect(res.status).toBe(400);
+      const body = await bodyOf(res);
+      expect(body.reason).toBe("too_short");
+      expect(body.error).toBe(TOO_SHORT);
+    }
+    expect(seen).toHaveLength(0);
+    // positive control: one byte over the floor goes through
+    expect((await post(new Uint8Array(MIN_CLIP_BYTES))).status).toBe(200);
+    expect(seen).toHaveLength(1);
+  });
+
   it("refuses an empty recording", async () => {
     const res = await post(new Uint8Array());
     expect(res.status).toBe(400);
-    expect((await bodyOf(res)).reason).toBe("format");
+    expect((await bodyOf(res)).reason).toBe("too_short");
     expect(seen).toHaveLength(0);
   });
 });
@@ -406,6 +430,24 @@ describe("refusals keep their meaning", () => {
     expect(rate.body.retryable).toBe(true);
     const format = await refuseWith("format", "unreadable");
     expect(format.body.retryable).toBe(false);
+  });
+
+  it("logs the upstream detail without the audio when a recording is refused", async () => {
+    const failure = Object.assign(new TranscriptionUnavailable("format", "That recording could not be read."), {
+      provider: "groq",
+      status: 400,
+      detail: "unsupported or unrecognized audio format",
+    });
+    answer = { throws: failure };
+    const res = await post(CLIP, { type: "audio/mp4" });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(await bodyOf(res))).not.toContain("unrecognized");
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain("provider=groq");
+    expect(logged[0]).toContain("status=400");
+    expect(logged[0]).toContain("mime=audio/mp4");
+    expect(logged[0]).toContain(`bytes=${CLIP.byteLength}`);
+    expect(logged[0]).toContain("unsupported or unrecognized audio format");
   });
 
   it("turns an unexpected throw into a 502 rather than a hang or a 500", async () => {

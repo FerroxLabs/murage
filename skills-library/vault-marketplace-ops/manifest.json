@@ -2,7 +2,7 @@
   "id": "vault-marketplace-ops",
   "name": "marketplace-ops",
   "version": "1.0.0",
-  "description": "As of: 2026-05-16",
+  "description": "Run your store on Amazon, Etsy, Walmart or another marketplace. Cover listings, reviews, ads and a weekly health check, from launch to a lost buy box.",
   "defaultEnabled": false,
   "triggerTerms": [
     "vault",

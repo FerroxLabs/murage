@@ -1,8 +1,9 @@
 ---
 name: vault-agentic-geo
-description: "As of: 2026-05-16"
+description: "Get your products recommended by AI shopping assistants and answer engines. Test where you appear today, make your catalog readable by machines and earn mentions elsewhere."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "vault"
 ---
@@ -15,14 +16,14 @@ As of: 2026-05-16
 
 ## When to use
 
-Use when the user wants to be found by AI shopping agents and generative answer engines — ChatGPT shopping, Perplexity, Gemini, and agentic-checkout flows that became material traffic sources in late 2025 / early 2026. Use alongside `seo-organic` (Beacon); this is the storefront-side complement.
+Use when the user wants to be found by AI shopping agents and generative answer engines, ChatGPT shopping, Perplexity, Gemini, and agentic-checkout flows that became material traffic sources in late 2025 / early 2026. Use alongside `seo-organic` (Beacon); this is the storefront-side complement.
 
 Trigger phrases:
 
 - "How do we show up in ChatGPT shopping results?"
 - "Optimize our products for AI search."
 - "We need to be discoverable to AI agents."
-- "Buyers ask AI for recommendations — how do we land in those answers?"
+- "Buyers ask AI for recommendations, how do we land in those answers?"
 
 ## Procedure
 
@@ -31,11 +32,11 @@ Trigger phrases:
 **2. Make the catalog machine-readable.** Agents read structured data more reliably than rendered HTML. Per priority SKU:
 
 - Product schema (JSON-LD): name, description, brand, sku, gtin, offers (price, currency, availability), aggregateRating, review.
-- Plain-prose description — declarative, specific, free of marketing fluff. Lead with what the product *is*.
+- Plain-prose description, declarative, specific, free of marketing fluff. Lead with what the product *is*.
 - Explicit "best-for" framing: who it serves, what use case, what it is *not* for. Agents extract these as filters.
 - Honest named comparisons ("comparable to X in feature Y; differs in Z"). Agents reason comparatively.
 
-**3. Optimize the product feed.** Agentic checkout flows (Shopify's March 2026 agentic-storefront release; Amazon Rufus; Walmart Sparky) route via feeds — Google Merchant Center, Shopify's agent feed, Meta's shop feed. Audit feed fields: title (front-load brand + product type + key spec), description (200-500 words, plain language), price, availability, GTIN, high-res image URL, category, attribute fields (color, size, material, age group). Missing fields silently exclude you.
+**3. Optimize the product feed.** Agentic checkout flows (Shopify's March 2026 agentic-storefront release; Amazon Rufus; Walmart Sparky) route via feeds, Google Merchant Center, Shopify's agent feed, Meta's shop feed. Audit feed fields: title (front-load brand + product type + key spec), description (200-500 words, plain language), price, availability, GTIN, high-res image URL, category, attribute fields (color, size, material, age group). Missing fields silently exclude you.
 
 **4. Earn citation surface outside your domain.** Generative engines weight third-party signals heavily. Priority sources: published reviews on category authority sites, Reddit and category-forum mentions, comparison articles, YouTube reviews with transcripts, podcast mentions with show notes. A Reddit thread where a buyer asks "what's the best X for Y" and your brand is named with a clear reason often outweighs any on-site move.
 
@@ -66,4 +67,4 @@ Trigger phrases:
 > *Add AI keywords to descriptions and write a blog post.*
 
 **After** (probe-first, structured, 2026-05-16):
-> *Step one: run 20 buyer queries through ChatGPT shopping, Perplexity, and Gemini; log appearance rate as baseline. Step two: audit Product JSON-LD on top 10 SKUs — confirm name, description, gtin, offers, aggregateRating populate. Rewrite descriptions in declarative prose with "best-for" framing. Step three: confirm Shopify agentic-storefront opt-in (released March 2026; many stores default off). Step four: identify three forums and one subreddit where buyers ask comparison questions; build a 90-day authentic-presence plan with Copy. Measure: re-run the probe set at days 30, 60, 90; report appearance-rate and framing-quality deltas per query.*
+> *Step one: run 20 buyer queries through ChatGPT shopping, Perplexity, and Gemini; log appearance rate as baseline. Step two: audit Product JSON-LD on top 10 SKUs, confirm name, description, gtin, offers, aggregateRating populate. Rewrite descriptions in declarative prose with "best-for" framing. Step three: confirm Shopify agentic-storefront opt-in (released March 2026; many stores default off). Step four: identify three forums and one subreddit where buyers ask comparison questions; build a 90-day authentic-presence plan with Copy. Measure: re-run the probe set at days 30, 60, 90; report appearance-rate and framing-quality deltas per query.*

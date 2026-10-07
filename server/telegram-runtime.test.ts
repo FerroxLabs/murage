@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -62,7 +63,7 @@ it("routes a paired private Telegram delivery through durable routines, event bu
     const run = manager.listRuns()[0];
     expect(run).toMatchObject({ triggerSource: "channel", telegramConnectionId: "123", deliveryId: "telegram:123:3", event: { id: run.id, origin: { kind: "channel", channel: "telegram", connectionId: "123" } }, eventBudget: { closed: false, limits: { create: 4, handoff: 4 } } });
     expect(calls[0]).toEqual({ threadId: run.threadId, source: "channel", eventId: run.id });
-    expect(JSON.parse(readFileSync(file, "utf8")).runs[0].event.id).toBe(run.id);
+    expect(readRoutinesWithRuns(file).runs[0].event.id).toBe(run.id);
     const base = { eventId: "fixture-event", provider: "fixture", threadId: run.threadId!, createdAt: new Date().toISOString() };
     manager.handleRuntimeEvent({ ...base, type: "request.opened", requestType: "permission", tool: "Write", summary: "Review in Murage" });
     updates = [message(4, "/approve yes")]; await poll();

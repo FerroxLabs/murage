@@ -6,7 +6,7 @@ description: |
   Do NOT use for executive summaries (different format), paper introductions (use research-paper-structure), or literature review summaries (use literature-review).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "academic-writing writing research"
   category: "writing"

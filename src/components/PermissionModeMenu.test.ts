@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 
 import { PermissionModeMenu } from "./PermissionModeMenu";
 
-const render = (desktop: boolean | undefined, engineCannotAsk?: string) =>
-  renderToStaticMarkup(createElement(PermissionModeMenu, { botName: "Ember", current: "auto", desktop, onPick: () => {}, engineCannotAsk }));
+const render = (desktop: boolean | undefined, engineCannotAsk?: string, engineOwnApprovals?: string) =>
+  renderToStaticMarkup(createElement(PermissionModeMenu, { botName: "Ember", current: "auto", desktop, onPick: () => {}, engineCannotAsk, engineOwnApprovals }));
 const item = (markup: string, label: string) => {
   const at = markup.indexOf(label);
   expect(at, `no "${label}" item`).toBeGreaterThan(-1);
@@ -54,5 +54,15 @@ describe("composer approval-level menu", () => {
     expect(menu()).toContain("Changes this conversation only. Routines use the level in Bot settings, Permissions, unless a routine has its own.");
     expect(menu({ routine: "Log tick" })).toContain("Changes the level of the routine Log tick. Every run of it works here.");
     expect(menu({ routine: "Log tick" })).toContain("How should runs of Log tick be approved?");
+  });
+});
+
+describe("an engine that runs on its own tools and approvals", () => {
+  it("says so once, as what it is, and leaves the Antigravity note alone", () => {
+    const markup = render(true, undefined, "OpenClaw");
+    expect(markup).toContain("OpenClaw runs on its own tools and approvals, so these levels do not change what it does.");
+    expect(markup).not.toContain("cannot ask first");
+    expect(markup).not.toMatch(/\u2014|\bunsafe\b/);
+    expect(render(true)).not.toContain("its own tools and approvals");
   });
 });

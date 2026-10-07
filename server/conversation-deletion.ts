@@ -24,6 +24,7 @@
 //  - The work is durable: a pending record is written before the rows go
 //    and cleared only after the files are gone; boot finishes any record a
 //    crash left behind.
+import { DEFAULT_HERMES_PROFILE, hermesHome, isHermesProfileName } from "./hermes-profiles.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, ftruncateSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
@@ -61,7 +62,7 @@ export interface DeletionLeftover { what: string; where: string }
 export const ENGINE_LABEL: Readonly<Record<string, string>> = {
   fuigoAgent: "Fuigo", grokAgent: "Grok", claudeAgent: "Claude Code", codex: "Codex", piAgent: "Pi", opencodeGo: "OpenCode",
   geminiAgent: "Gemini CLI", qwenAgent: "Qwen Code", kimiAgent: "Kimi", cursorAgent: "Cursor", droidAgent: "Droid",
-  antigravityAgent: "Antigravity", hermesAgent: "Hermes", customAcp: "your custom engine",
+  antigravityAgent: "Antigravity", hermesAgent: "Hermes", openclawAgent: "OpenClaw", customAcp: "your custom engine",
 };
 const engineLabel = (kind: string) => ENGINE_LABEL[kind] ?? "An engine";
 export interface DeletionReport { leftovers: DeletionLeftover[]; failed: string[] }
@@ -374,7 +375,8 @@ function removeFuigoSessions(home: string, folders: string[], memoryFolders: str
  * over it kept by triggers, whose deletes only add markers, so the index is
  * merged (`optimize`) to drop the old terms, with secure_delete zeroing the
  * freed pages. Fuigo may have the database open: WAL, a busy timeout, one
- * write transaction, then a checkpoint so the text leaves the -wal file too.
+ * write transaction, then a checkpoint so the text leaves the -wal file too,
+ * and a VACUUM for the copies Fuigo's own rewrites left in free pages.
  * Returns whether anything was removed. */
 export function scrubFuigoSearchIndex(path: string, sessionIds: readonly string[], folders: readonly string[]): boolean {
   const ids = [...new Set(sessionIds)], cwds = [...new Set(folders)];
@@ -389,17 +391,29 @@ export function scrubFuigoSearchIndex(path: string, sessionIds: readonly string[
     let changes = 0;
     try {
       changes = Number(db.prepare(`DELETE FROM session_docs WHERE ${where}`).run(...ids, ...cwds).changes);
-      if (changes && tables.has("session_docs_fts")) db.exec("INSERT INTO session_docs_fts(session_docs_fts) VALUES('optimize')");
+      // Every scrub merges the index, not only one that deleted rows: a
+      // conversation deleted before this fix left its terms in old segments.
+      if (tables.has("session_docs_fts")) db.exec("INSERT INTO session_docs_fts(session_docs_fts) VALUES('optimize')");
       db.exec("COMMIT");
     } catch (error) {
       try { db.exec("ROLLBACK"); } catch { /* already rolled back */ }
       throw error;
     }
-    if (changes) {
-      // A reader Fuigo holds open can keep a TRUNCATE from finishing; the
-      // rows are already gone and zeroed, and its next checkpoint takes them.
-      try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* see above */ }
-    }
+    // A reader Fuigo holds open can keep a TRUNCATE from finishing; the
+    // rows are already gone and zeroed, and its next checkpoint takes them.
+    try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* see above */ }
+    // Fuigo rewrites a session's row as the conversation grows, without
+    // secure_delete, so earlier copies of its text sit in free pages that no
+    // delete of ours can reach (0.1.60 low). VACUUM rebuilds the file without
+    // them. It runs whenever there are free pages, not only when this call
+    // deleted rows, so a conversation deleted before this fix, or a VACUUM
+    // that Fuigo's own lock refused last time, is cleared by the next scrub.
+    try {
+      if (Number((db.prepare("PRAGMA freelist_count").get() as { freelist_count?: number } | undefined)?.freelist_count ?? 0) > 0) {
+        db.exec("VACUUM");
+        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      }
+    } catch { /* Fuigo busy with it: the live rows are gone, and the next scrub tries again */ }
     return changes > 0;
   } finally {
     db.close();
@@ -633,7 +647,7 @@ function record(outcome: RemoveOutcome, path: string, removed: string[], failed:
 
 /** Where each supported engine keeps its own history, from the environment
  * it is started with (the same resolution as each engine). */
-export function engineHomeFor(engine: DeletionEngine, env: Record<string, string | undefined>, claudeConfigDir?: string): DeletionEngineHome[] {
+export function engineHomeFor(engine: DeletionEngine, env: Record<string, string | undefined>, claudeConfigDir?: string, hermesProfile: string = DEFAULT_HERMES_PROFILE): DeletionEngineHome[] {
   const home = env.HOME || env.USERPROFILE || homedir();
   const withReal = (path: string) => {
     try {
@@ -655,8 +669,11 @@ export function engineHomeFor(engine: DeletionEngine, env: Record<string, string
     case "kimi": return one(env.KIMI_CODE_HOME || nodePath.join(home, ".kimi-code"));
     case "droid": return one(nodePath.join(env.FACTORY_HOME_OVERRIDE || home, ".factory"));
     case "hermes": {
-      const native = env.HERMES_HOME || nodePath.join(home, ".hermes");
-      return [native, ...(env.HERMES_PROFILE && /^[\w.-]+$/.test(env.HERMES_PROFILE) ? [nodePath.join(native, "profiles", env.HERMES_PROFILE)] : [])].map((dir) => ({ engine, home: dir }));
+      // The home the instance's `hermes -p <profile>` child runs in: the root
+      // for `default`, `<root>/profiles/<name>` otherwise. The profile comes
+      // from the instance config, the selector Hermes honours, never from
+      // HERMES_PROFILE (Hermes ignores it when it picks a home).
+      return [{ engine, home: hermesHome(env, isHermesProfileName(hermesProfile) ? hermesProfile : DEFAULT_HERMES_PROFILE) }];
     }
     case "antigravity": return one(nodePath.join(home, ".gemini", "antigravity-cli"));
     case "cursor": return one(env.CURSOR_DATA_DIR || nodePath.join(home, ".cursor"), { secondary: env.CURSOR_CONFIG_DIR || (env.XDG_CONFIG_HOME ? nodePath.join(env.XDG_CONFIG_HOME, "cursor") : nodePath.join(home, ".cursor")) });

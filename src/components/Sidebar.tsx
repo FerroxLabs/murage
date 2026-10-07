@@ -1,11 +1,20 @@
+import { Suspense } from "react";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { LazyFallback } from "./LazyFallback";
+const NewProject = retryableLazy(() => import("./NewProjectDialog"));
+import { useProject } from "@/lib/use-project";
+import { projectSurfaceEnabled } from "@/lib/project-client";
 import { track } from "@/lib/analytics";
+import { prepareArchiveFlight } from "@/lib/archive-flight";
 import { errorPreview } from "@/lib/error-preview";
 import { hostStoppedLabel } from "@/lib/host-stop";
 import { folderTrustLabel } from "@/lib/folder-trust";
 import { plainText } from "@/lib/plain-text";
 import { useAnchoredMenu, type MenuAnchor } from "@/lib/menu-placement";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { closedDrawerInert, focusLeavesClosedDrawer } from "@/lib/drawer-close";
+import { useMediaQuery, useNarrowViewport } from "@/lib/media-query";
 import {
   Archive,
   ArrowDownToLine,
@@ -20,9 +29,12 @@ import {
   Crown,
   Eye,
   EyeOff,
+  Compass,
   Folder,
   FolderMinus,
   FolderPlus,
+  Keyboard,
+  LayoutTemplate,
   Loader2,
   Megaphone,
   MoreHorizontal,
@@ -37,20 +49,23 @@ import {
   Search,
   Sparkles,
   Settings,
+  Smartphone,
   Puzzle,
   Target,
   Trash2,
+  UserRound,
   Users,
   X,
 } from "lucide-react";
 import { SectionContextDialog } from "./SectionContextDialog";
-import { sidebarBotRowTone, sidebarGroupRowTone, sidebarNavRowTone } from "@/lib/sidebar-row-tone";
+import { sidebarBotRowTone, sidebarGroupRowTone } from "@/lib/sidebar-row-tone";
 import { SIDEBAR_BOT_DRAG_TYPE, moveSidebarBot, planSidebarBotDrop, sidebarBotDraggable } from "@/lib/sidebar-bot-drop";
-import { api, useStore, visibleMessages, type Bot, type Group } from "@/state/store";
+import { api, useStore, visibleMessages, type AppSettingsSection, type Bot, type Group } from "@/state/store";
 import { CHANNEL_PROJECT_GOAL_MAX } from "../../shared/project";
-import { formatListTime, formatTaskMoment } from "@/lib/task-list";
+import { formatRelativeListTime, formatTaskMoment } from "@/lib/task-list";
+import { useRelativeNow } from "@/lib/relative-now";
 
-import { BotAvatar, InitialsAvatar } from "./Avatar";
+import { BotAvatar } from "./Avatar";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { stateForBot } from "@/lib/mascot";
 import { useUpdaterState } from "@/lib/updater";
@@ -73,15 +88,21 @@ import { RoleIcon } from "./RoleBadge";
 import { botRole, botRolePatch, BOT_ROLE_BADGE, BOT_ROLE_TITLE } from "@/lib/bot-role";
 import { BotPickerList } from "./BotPickerList";
 import {
+  AUTO_RAIL_QUERY,
+  chooseAutoRail,
+  chooseSidebarDensity,
+  DEFAULT_SIDEBAR_DENSITY,
+  effectiveSidebarDensity,
   loadCollapsedSections,
   loadSectionOrder,
-  loadSidebarDensity,
   saveCollapsedSections,
   saveSectionOrder,
-  saveSidebarDensity,
+  sidebarDensityState,
+  subscribeSidebarDensity,
   toggleCollapsedSection,
   type SidebarDensity,
 } from "@/lib/sidebar-preferences";
+import { initialSectionOrderUpload, saveSectionOrderToComputer, shownSectionOrder } from "@/lib/sidebar-order-sync";
 import {
   BOT_CHATS_SECTION_ID,
   BOTS_SECTION_ID,
@@ -115,9 +136,16 @@ import { conversationNoun } from "@/lib/conversation-noun";
 import { botListItemPointerIntent, inlineArchiveAvailable, insideRenameField } from "@/lib/sidebar-selection";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { SidebarMoreMenu } from "./SidebarMoreMenu";
+import { SidebarMovedNote, SidebarPlaces, shouldShowMovedNote, type SidebarPlaceItem } from "./SidebarPlaces";
+import { SidebarYouMenu, type YouMenuItem } from "./SidebarYouMenu";
+import { t } from "@/lib/i18n";
+import { existingTeams, projectSection } from "@/lib/project-team";
+import { modShortcut } from "@/lib/mod-shortcut";
+import { OPEN_SHORTCUTS_EVENT, OPEN_WHATS_NEW_EVENT, openCommandPalette } from "@/lib/app-events";
+import { openFirstRun } from "@/lib/first-run";
 import { SidebarNeedsYou } from "./SidebarNeedsYou";
-import { KeyboardShortcutsDialog } from "./KeyboardShortcutsDialog";
+// The shortcut list loads when someone asks for it, not with the first paint.
+const ShortcutsDialog = retryableLazy(() => import("./KeyboardShortcutsDialog").then((module) => ({ default: module.KeyboardShortcutsDialog })));
 import { WhatsNewHost } from "./WhatsNewHost";
 import { AnnouncementsHost } from "./Announcements";
 import { useWhatsNew } from "@/lib/whats-new";
@@ -127,6 +155,8 @@ import { useTrayIntents } from "./useTrayIntents";
 import { FilesDialog } from "./FilesDialog";
 import type { FilesOpenDetail } from "./Files";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
+import { SidebarSharedRows } from "./SidebarSharedRows";
+import { SHARING_COPY } from "@/lib/shared-teams";
 import { QuestionBadge, SnoozedMarker, SnoozePopover } from "./ConversationSnooze";
 import { useThreadAttention } from "@/lib/thread-attention";
 import { formatSnoozedUntil, questionBadgeLabel, sidebarBotAttention, sidebarGroupAttention } from "@/lib/thread-snooze";
@@ -227,11 +257,13 @@ export function TeamFeedbackToast({
   onUndoTeam,
   onUndoBot,
   onUndoGroup,
+  onDismiss,
 }: {
   feedback: TeamFeedback;
   onUndoTeam: (undo: TeamImportResult) => void;
   onUndoBot: (bot: { id: string; name: string }) => void;
   onUndoGroup?: (group: { id: string; name: string }) => void;
+  onDismiss?: () => void;
 }) {
   // Pulled out of `feedback` so each handler closes over a value the type
   // system already knows is there, rather than re-reading a field it would
@@ -260,7 +292,7 @@ export function TeamFeedbackToast({
             onClick={() => onUndoBot(restoreBot)}
             className="rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised"
           >
-            Undo
+            Restore
           </button>
         )}
         {restoreGroup && onUndoGroup && (
@@ -271,12 +303,53 @@ export function TeamFeedbackToast({
             Undo
           </button>
         )}
+        {onDismiss && feedbackStays(feedback) && (
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label="Dismiss"
+            title="Dismiss"
+            className="ml-auto flex size-7 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
       {feedback.detail && (
         <p className="mt-1.5 text-[12px] leading-snug text-ink-secondary">{feedback.detail}</p>
       )}
     </div>
   );
+}
+
+/** A note that waits to be read. An archived bot's note carries Restore and
+ * stays until it is dismissed or replaced (G4); everything else times out. */
+export function feedbackStays(feedback: TeamFeedback): boolean {
+  return Boolean(feedback.restoreBot);
+}
+
+/** The note an archive leaves. The first one in this browser says what
+ * archiving keeps and where the bot went; after that, just where. */
+export function archiveFeedback(bot: { id: string; name: string }, firstTime: boolean): TeamFeedback {
+  return {
+    error: false,
+    text: `${bot.name} archived`,
+    detail: firstTime
+      ? `Archiving keeps ${bot.name}'s conversations, files and memory. ${bot.name} leaves the sidebar and waits in Archived bots, under + at the top of the sidebar. Restore brings ${bot.name} back.`
+      : `Find ${bot.name} in Archived bots, under +.`,
+    restoreBot: { id: bot.id, name: bot.name },
+  };
+}
+
+const ARCHIVE_NOTE_SEEN = "murage-archive-note-seen";
+/** First archive in this browser? A per-viewer convenience only: storage
+ * that throws or comes back empty just shows the fuller note again. */
+function firstArchiveNote(): boolean {
+  try {
+    if (localStorage.getItem(ARCHIVE_NOTE_SEEN)) return false;
+    localStorage.setItem(ARCHIVE_NOTE_SEEN, "1");
+  } catch { /* no storage: the fuller note is never wrong */ }
+  return true;
 }
 
 /** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
@@ -441,11 +514,12 @@ export function SidebarRowMark({ mark }: { mark: SidebarMark }) {
   return null;
 }
 
-/** Room avatar: 2–3 overlapping embers in the same 56px slot a bot gets. */
+/** Room avatar: 2–3 overlapping embers in the same slot a bot gets. */
 function StackedEmbers({ members, density }: { members: Bot[]; density: SidebarDensity }) {
-  const iconOnly = density === "icons";
-  const slotSize = iconOnly ? "size-12" : density === "compact" ? "size-10" : "size-14";
-  const singleSize = iconOnly ? 44 : density === "compact" ? 40 : 56;
+  // Standard and the rail: 36px, Roomy: 48px (0.1.62; was 40, 44 and 56).
+  const roomy = density === "comfortable";
+  const slotSize = roomy ? "size-12" : "size-9";
+  const singleSize = roomy ? 48 : 36;
   if (members.length <= 1) {
     const b = members[0];
     return (
@@ -454,15 +528,17 @@ function StackedEmbers({ members, density }: { members: Bot[]; density: SidebarD
       </div>
     );
   }
-  const shown = members.slice(0, 3);
-  const extra = members.length - shown.length;
+  // The faces overlap to fit the slot: three in Roomy's 48px, two in the
+  // 36px of Standard and the rail. The row's own text says how many bots.
+  const shown = members.slice(0, roomy ? 3 : 2);
+  const extra = roomy ? members.length - shown.length : 0;
   return (
     // Decoration: the row's own text names the channel and counts its bots,
     // so the members' avatar names must not run into it.
     <div aria-hidden="true" className={cn("flex shrink-0 items-center justify-center", slotSize)}>
-      <div className="flex items-center -space-x-3">
+      <div className={cn("flex items-center", roomy ? "-space-x-3.5" : "-space-x-2")}>
         {shown.map((b) => (
-          <BotAvatar key={b.id} bot={b} state="happy" size={30} animated={false} />
+          <BotAvatar key={b.id} bot={b} state="happy" size={roomy ? 26 : 22} animated={false} />
         ))}
         {extra > 0 && (
           <span className="z-10 flex size-[22px] items-center justify-center rounded-full border border-hairline/40 bg-raised text-[10px] font-medium text-ink-secondary">
@@ -495,10 +571,12 @@ function GroupListItem({
   // A snoozed open conversation holds back the channel's unread; questions
   // waiting in any of its conversations get their own badge.
   const now = Date.now();
+  const clockNow = useRelativeNow();
   const row = sidebarGroupAttention(group, useThreadAttention(), now);
-  const mark = sidebarGroupMark(row.group);
+  const project = useProject(group.id, !!group.channelProject && projectSurfaceEnabled(state.config));
+  const mark = sidebarGroupMark({ ...row.group, needsYou: project?.strip.needsYou });
   const markLabel = [sidebarMarkLabel(mark), questionBadgeLabel(row.questions),
-    row.snoozedUntil !== undefined ? formatSnoozedUntil(row.snoozedUntil, now) : ""].filter(Boolean).join(", ");
+    row.snoozedUntil !== undefined ? formatSnoozedUntil(row.snoozedUntil, now, {}, row.snoozedUntilActivity) : ""].filter(Boolean).join(", ");
   return (
     <div className="group relative">
     <button
@@ -517,8 +595,8 @@ function GroupListItem({
         onMenu({ groupId: group.id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
       }}
       className={cn(
-        "relative flex w-full items-center rounded-xl text-left",
-        density === "icons" ? "justify-center px-1 py-1.5" : density === "compact" ? "gap-2 px-2 py-1.5" : "gap-3 px-3 py-2.5",
+        "relative flex w-full items-center rounded-lg text-left",
+        density === "icons" ? "justify-center px-1 py-1.5" : density === "compact" ? "gap-2 px-2 py-1.5" : "gap-3 px-3 py-2",
         // Room on the right for the More-actions control, so a long name
         // never runs underneath it.
         density !== "icons" && "pr-12",
@@ -535,16 +613,16 @@ function GroupListItem({
       {density !== "icons" && markLabel && <span className="sr-only">{markLabel}</span>}
       <div className={cn("min-w-0 flex-1", density === "icons" && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
-          <span className={cn("flex min-w-0 items-center gap-1.5 text-[15px]", sidebarMarkNameClass(mark))}>
+          <span className={cn("flex min-w-0 items-center gap-1.5", density === "compact" ? "text-[14px] leading-5" : "text-[15px]", sidebarMarkNameClass(mark))}>
             <RowIcon size={13} className="shrink-0 text-ink-secondary" aria-hidden="true" />
             <span className="truncate">{group.name}</span>
           </span>
-          {selected && last && <span className="shrink-0 text-xs text-ink-secondary" title={formatTaskMoment(last.at)}>{formatListTime(last.at, Date.now())}</span>}
+          {selected && last && <time dateTime={new Date(last.at).toISOString()} className="shrink-0 text-xs text-ink-secondary" title={formatTaskMoment(last.at)}>{formatRelativeListTime(last.at, clockNow)}</time>}
         </div>
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-[13px] text-ink-secondary">{sidebarGroupPreview(group, state.bots)}</span>
+          <span className={cn("truncate text-ink-secondary", density === "compact" ? "text-[12.5px] leading-[18px]" : "text-[13px]")}>{sidebarGroupPreview(group, state.bots)}</span>
           <span className="flex shrink-0 items-center gap-1">
-            {row.snoozedUntil !== undefined && <SnoozedMarker until={row.snoozedUntil} now={now} iconOnly />}
+            {row.snoozedUntil !== undefined && <SnoozedMarker until={row.snoozedUntil} now={now} untilActivity={row.snoozedUntilActivity} iconOnly />}
             <QuestionBadge count={row.questions} labelled={false} />
             <SidebarRowMark mark={mark} />
           </span>
@@ -761,6 +839,7 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const bots = state.bots.filter((b) => !b.hidden);
   const project = kind === "project";
+  const teams = existingTeams(state.bots, state.groups);
   const toggle = (id: string) =>
     setPicked((prev) => {
       const next = new Set(prev);
@@ -778,21 +857,23 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
       type: "createGroup",
       memberIds: [...picked],
       name: name.trim() || undefined,
-      section: section.trim() || undefined,
+      section: project ? projectSection(section, teams) : section.trim() || undefined,
       ...(project ? { bulletin: goal.trim(), channelProject: { goal: goal.trim() } } : {}),
     });
-    track("room_created", { members: picked.size, context: Boolean(section.trim()), project });
+    track("room_created", { members: picked.size, context: Boolean(project ? projectSection(section, teams) : section.trim()), project });
     onClose();
   };
-  return (
+  // Portalled: the phone drawer is translated, so a fixed overlay inside it
+  // is laid out against the drawer, not the screen.
+  return createPortal(
     <div
-      className="fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
+      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div role="dialog" aria-modal="true" aria-labelledby="new-channel-title" className="max-h-[calc(100dvh-24px)] w-[340px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
+      <div role="dialog" aria-modal="true" aria-labelledby="new-channel-title" className="max-h-[calc(var(--vvh,100dvh)-24px)] w-[340px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
         <div id="new-channel-title" className="text-[15px] font-semibold text-ink">{project ? "New Project" : "New Channel"}</div>
         <p className="mb-3 mt-0.5 text-[12.5px] text-ink-secondary">
-          {project ? "A piece of work with its own goal, files and chat." : "A chat with some bots."}
+          {project ? "A place for work, files and chat. A goal is optional." : "A chat with some bots."}
         </p>
         <input
           autoFocus
@@ -828,6 +909,24 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
             <p className="mb-3 text-[12px] text-ink-secondary">This becomes the instructions every bot in here follows.</p>
           </>
         )}
+        {project ? (
+          <label className="mb-3 block text-[13px] font-semibold text-ink">
+            {t("project.team.label")}
+            <select
+              value={projectSection(section, teams) ?? ""}
+              onChange={(e) => setSection(e.target.value)}
+              aria-label="Project team"
+              className="mt-1 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] font-normal text-ink focus:outline-none"
+            >
+              <option value="">{t("project.team.none")}</option>
+              {teams.map((team) => (
+                <option key={team} value={team}>
+                  {team}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
         <input
           value={section}
           maxLength={60}
@@ -840,6 +939,7 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
           aria-label={project ? "Project team" : "Channel team"}
           className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
+        )}
         <BotPickerList
           bots={bots}
           picked={picked}
@@ -855,7 +955,8 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
           {picked.size ? ` · ${picked.size} ${picked.size === 1 ? "bot" : "bots"}` : ""}
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -868,7 +969,10 @@ function SectionPicker({
   anchor,
   onClose,
   onAssign,
+  allowCreate = true,
 }: {
+  /** false for a project: it may join an existing team but never invent one */
+  allowCreate?: boolean;
   /** the target's current section; undefined = none */
   current: string | undefined;
   anchor: MenuAnchor;
@@ -898,12 +1002,7 @@ function SectionPicker({
 
   // Hidden bots can carry a stale assignment; don't offer it as a context.
   // Channels and bots share one namespace, so Work or Personal can hold both.
-  const sections = [
-    ...new Set([
-      ...state.bots.filter((b) => !b.hidden && b.section).map((b) => b.section!),
-      ...state.groups.filter((g) => g.section).map((g) => g.section!),
-    ]),
-  ];
+  const sections = existingTeams(state.bots, state.groups);
 
   const assign = (section: string) => {
     onAssign(section);
@@ -937,6 +1036,7 @@ function SectionPicker({
           ))}
         </div>
       )}
+      {allowCreate && (
       <form
         className="flex items-center gap-1.5 px-2.5 py-1"
         onSubmit={(e) => {
@@ -965,6 +1065,7 @@ function SectionPicker({
           Add
         </button>
       </form>
+      )}
       {current && (
         <>
           <div className="mx-2 my-1 border-t border-hairline/40" />
@@ -992,9 +1093,11 @@ export function SidebarCreateMenu({
   onNewTeam,
   onNewChannel,
   onNewProject,
+  showNewProject = true,
   onExport,
   onArchived,
   onArchivedChannels,
+  onBrowseTemplates,
 }: {
   archivedCount: number;
   archivedChannelCount?: number;
@@ -1008,9 +1111,12 @@ export function SidebarCreateMenu({
    *  together, because a project IS a channel and the choice between them is
    *  the whole point of offering both here. */
   onNewProject: () => void;
+  showNewProject?: boolean;
   onExport: () => void;
   onArchived: () => void;
   onArchivedChannels?: () => void;
+  /** The template library: every team and bot template in one place. */
+  onBrowseTemplates?: () => void;
 }) {
   const row = "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70";
   return (
@@ -1033,14 +1139,18 @@ export function SidebarCreateMenu({
           <span className="text-[12px] text-ink-secondary">A chat with some bots.</span>
         </span>
       </button>
-      <button onClick={onNewProject} className={`${row} items-start`}>
+      {showNewProject && <button onClick={onNewProject} className={`${row} items-start`}>
         <Target size={16} className="mt-0.5 text-ink-secondary" />
         <span className="flex flex-col">
           New Project
-          <span className="text-[12px] text-ink-secondary">A piece of work with its own goal, files and chat.</span>
+          <span className="text-[12px] text-ink-secondary">A place for work, files and chat. A goal is optional.</span>
         </span>
-      </button>
+      </button>}
       <div role="separator" className="mx-2 my-1 border-t border-hairline/40" />
+      {onBrowseTemplates && <button onClick={onBrowseTemplates} className={row}>
+        <LayoutTemplate size={16} className="text-ink-secondary" />
+        {t("nav.browseTemplates")}
+      </button>}
       <button onClick={onExport} className={row}>
         <ArrowDownToLine size={16} className="text-ink-secondary" />
         Export bots…
@@ -1316,13 +1426,16 @@ function BotListItem({
   useEffect(() => {
     if (iconOnly) setRenaming(false);
   }, [iconOnly]);
-  const avatarSize = iconOnly ? 44 : density === "compact" ? 40 : 56;
+  // Standard and the rail: 36px, Roomy: 48px (0.1.62; was 40, 44 and 56).
+  // Rows come out at 48 and 64px, so a 1440x900 window shows about 14 bots.
+  const avatarSize = density === "comfortable" ? 48 : 36;
   // the visible branch, so a version switch changes the row with the chat
   const visible = visibleMessages(bot);
   const last = visible.at(-1);
   // A snoozed conversation's unread is held back from this row until it
   // wakes; anything owed in it wakes it at once (src/lib/thread-snooze.ts).
   const now = Date.now();
+  const clockNow = useRelativeNow();
   const row = sidebarBotAttention(bot, useThreadAttention(), now);
   const weighed = row.bot;
   const rowPreview = botRole(bot) === "member" || selected || weighed.unread || bot.busy || bot.activity === "waiting-on-you"
@@ -1330,14 +1443,14 @@ function BotListItem({
     : "";
   const mark = sidebarBotMark(weighed);
   const markLabel = [sidebarMarkLabel(mark), questionBadgeLabel(row.questions),
-    row.snoozedUntil !== undefined ? formatSnoozedUntil(row.snoozedUntil, now) : ""].filter(Boolean).join(", ");
+    row.snoozedUntil !== undefined ? formatSnoozedUntil(row.snoozedUntil, now, {}, row.snoozedUntilActivity) : ""].filter(Boolean).join(", ");
   const rowClass = cn(
-    "relative flex w-full items-center rounded-xl border text-left",
+    "relative flex w-full items-center rounded-lg border text-left",
     iconOnly
       ? "justify-center px-1 py-1.5"
       : density === "compact"
         ? "gap-2 px-2 py-1.5"
-        : "gap-2 px-3 py-2.5",
+        : "gap-2 px-3 py-2",
     !iconOnly && "group-hover:pr-[5.25rem] group-focus-within:pr-[5.25rem] max-md:pr-[5.25rem] [@media(hover:none)]:pr-[5.25rem]",
     // Role colour at rest (Chief orange, leader blue); the open row gets the
     // gold selected edge from sidebar-row-tone whatever its role.
@@ -1366,7 +1479,7 @@ function BotListItem({
         <div className="flex items-baseline justify-between gap-2">
           {/* Unread is the weight of this name now — it no longer gets a dot,
               because the dot belongs to "waiting on you" alone. */}
-          <span className={cn("flex min-w-0 items-center gap-1.5 truncate text-[15px]", sidebarMarkNameClass(mark))}>
+          <span className={cn("flex min-w-0 items-center gap-1.5 truncate", density === "compact" ? "text-[14px] leading-5" : "text-[15px]", sidebarMarkNameClass(mark))}>
             {bot.pinned && <Pin size={12} className="shrink-0 text-ink-secondary" />}
             {bot.sidebarHidden && <EyeOff size={12} className="shrink-0 text-ink-secondary" aria-label="Hidden from sidebar" />}
             <RenameTitle
@@ -1385,13 +1498,13 @@ function BotListItem({
               which is wide enough to miss `max-md:`, renders the archive
               button on top of the time. */}
           {selected && last && !renaming && (
-            <span title={formatTaskMoment(last.at)} className="shrink-0 text-xs text-ink-secondary transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0">
-              {formatListTime(last.at, Date.now())}
-            </span>
+            <time dateTime={new Date(last.at).toISOString()} title={formatTaskMoment(last.at)} className="shrink-0 text-xs text-ink-secondary transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0">
+              {formatRelativeListTime(last.at, clockNow)}
+            </time>
           )}
         </div>
         <div className="flex items-center justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-1.5 truncate text-[13px] text-ink-secondary">
+          <span className={cn("flex min-w-0 items-center gap-1.5 truncate text-ink-secondary", density === "compact" ? "text-[12.5px] leading-[18px]" : "text-[13px]")}>
             {/* All three tiers, not just the Chief: an individual assistant
                 reports straight to the Chief and reads as an ordinary team
                 member everywhere it is unmarked. */}
@@ -1405,11 +1518,12 @@ function BotListItem({
                 <RoleIcon bot={bot} size={11} decorative /> {BOT_ROLE_BADGE[botRole(bot)]}
               </span>
             )}
+            {bot.shared && <span className="shrink-0 rounded bg-control px-1 text-[10.5px] font-medium text-ink-secondary" title={SHARING_COPY.sharedMark}>{SHARING_COPY.sharedMark}</span>}
             {botRole(bot) !== "member" && rowPreview && <span className="shrink-0 text-ink-secondary/60">·</span>}
             <span className="truncate">{rowPreview}</span>
           </span>
           <span className="flex shrink-0 items-center gap-1">
-            {row.snoozedUntil !== undefined && <SnoozedMarker until={row.snoozedUntil} now={now} iconOnly />}
+            {row.snoozedUntil !== undefined && <SnoozedMarker until={row.snoozedUntil} now={now} untilActivity={row.snoozedUntilActivity} iconOnly />}
             <QuestionBadge count={row.questions} labelled={false} />
             <SidebarRowMark mark={mark} />
           </span>
@@ -1488,7 +1602,7 @@ function BotListItem({
             : [bot.name, botRole(bot) !== "member" ? BOT_ROLE_BADGE[botRole(bot)] : "", markLabel, rowPreview]
           ).filter(Boolean).join(" · ")}
           aria-pressed={selected}
-          className="absolute inset-0 z-0 rounded-xl bg-transparent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+          className="absolute inset-0 z-0 rounded-lg bg-transparent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
         />}
         {body}
       </div>
@@ -1542,7 +1656,13 @@ export function archivedBotDeleteDetail(bot: Bot, groups: Group[]): string {
   return `${going} Kept: ${channels.length === 1 ? "the channel" : `the ${channels.length} channels`} it was in (${names}), with every message it said there.`;
 }
 
-/** The bulk form of the above. The names go in the dialog's own list
+/** The same for a bot still in use, from its menu: the counts, then the
+ * gentler way out. The dialog adds the message count from the server. */
+export function botDeleteDetail(bot: Bot, groups: Group[]): string {
+  return `${archivedBotDeleteDetail(bot, groups)} Archive it instead if you might want it back.`;
+}
+
+/** The bulk form of archivedBotDeleteDetail. The names go in the dialog's own list
  * (archivedBotsDeleteItems), so this paragraph carries the totals and the
  * rule for a bot that cannot be deleted right now. */
 export function archivedBotsDeleteDetail(bots: Bot[], groups: Group[]): string {
@@ -1674,7 +1794,7 @@ function ArchivedBotsPanel({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
+      className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
       onMouseDown={(event) => event.target === event.currentTarget && !working && !pendingDelete && onClose()}
     >
       <div
@@ -1683,7 +1803,7 @@ function ArchivedBotsPanel({
         aria-modal="true"
         aria-labelledby="archived-bots-title"
         tabIndex={-1}
-        className="animate-pop-in flex max-h-[min(680px,calc(100dvh-2rem))] w-full max-w-[760px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
+        className="animate-pop-in flex max-h-[min(680px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[760px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
       >
         <header className="flex items-start justify-between gap-4 px-6 pb-4 pt-6 sm:px-8 sm:pt-7">
           <div>
@@ -1858,7 +1978,7 @@ function ArchivedChannelsPanel({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+      className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
       onMouseDown={(event) => event.target === event.currentTarget && !working && !pendingDelete && onClose()}
     >
       <div
@@ -1867,7 +1987,7 @@ function ArchivedChannelsPanel({
         aria-modal="true"
         aria-labelledby="archived-channels-title"
         tabIndex={-1}
-        className="animate-pop-in flex max-h-[min(680px,calc(100dvh-2rem))] w-full max-w-[640px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
+        className="animate-pop-in flex max-h-[min(680px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[640px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
       >
         <header className="flex items-start justify-between gap-4 px-6 pb-4 pt-6">
           <div>
@@ -1962,10 +2082,18 @@ function ArchivedChannelsPanel({
   );
 }
 
-export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClose: () => void; onReturnFocus?: () => void }) {
   // Selection is an explicit navigation event even when its id is unchanged.
   // Row menus and inline rename do not call this callback.
   const onNavigate = () => { if (open) onClose(); };
+  const narrow = useNarrowViewport();
+  const asideRef = useRef<HTMLElement>(null);
+  const wasOpen = useRef(open);
+  // Before paint, so focus moves before the now inert drawer drops it.
+  useLayoutEffect(() => {
+    if (focusLeavesClosedDrawer(wasOpen.current, open, Boolean(asideRef.current?.contains(document.activeElement)))) onReturnFocus?.();
+    wasOpen.current = open;
+  }, [open, onReturnFocus]);
   const { state, dispatch } = useStore();
   const desktop = useDesktopSurface();
   const { capabilities } = useDesktopCapabilities();
@@ -1998,10 +2126,22 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const threadAttention = useThreadAttention();
   const [snoozeTarget, setSnoozeTarget] = useState<({ threadId: string; name: string } & MenuAnchor) | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const toolsTriggerRef = useRef<HTMLButtonElement>(null);
+  const [movedNote, setMovedNote] = useState(() => shouldShowMovedNote());
+  const youTriggerRef = useRef<HTMLButtonElement>(null);
   // What's new: opens by itself once after an update (desktop only), and
-  // again from Tools whenever the person asks.
+  // again from the You menu or Settings > Help & updates whenever asked.
   const whatsNew = useWhatsNew(desktop, api);
+  const reopenWhatsNew = whatsNew.reopen;
+  useEffect(() => {
+    const showShortcuts = () => setShortcutsOpen(true);
+    const showWhatsNew = () => reopenWhatsNew();
+    window.addEventListener(OPEN_SHORTCUTS_EVENT, showShortcuts);
+    window.addEventListener(OPEN_WHATS_NEW_EVENT, showWhatsNew);
+    return () => {
+      window.removeEventListener(OPEN_SHORTCUTS_EVENT, showShortcuts);
+      window.removeEventListener(OPEN_WHATS_NEW_EVENT, showWhatsNew);
+    };
+  }, [reopenWhatsNew]);
   const [filesOpen, setFilesOpen] = useState<FilesOpenDetail | null>(null);
   useEffect(() => {
     const open = (event: Event) => {
@@ -2022,17 +2162,52 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     return () => { window.removeEventListener("murage:open-files", open); window.removeEventListener("murage:open-memory", memory); };
   }, [desktop, state.bots, state.selectedId, dispatch]);
   useEffect(()=>window.muragebox?.startup?.onOpenInbox(()=>setInboxOpen(true)),[]);
+  // The held-items line in a chat opens the same inbox the sidebar does.
+  useEffect(()=>{const open=()=>setInboxOpen(true);window.addEventListener("murage:open-inbox",open);return()=>window.removeEventListener("murage:open-inbox",open);},[]);
   useTrayIntents();
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
   const [query, setQuery] = useState("");
-  const [density, setDensityState] = useState<SidebarDensity>(() => loadSidebarDensity());
-  const [lastExpandedDensity, setLastExpandedDensity] = useState<Exclude<SidebarDensity, "icons">>(() => {
-    const saved = loadSidebarDensity();
-    return saved === "icons" ? "comfortable" : saved;
-  });
-  const [densityOpen, setDensityOpen] = useState(false);
+  // The chosen density is shared with Settings > General > Appearance. On a
+  // window 768 to 1100px wide the sidebar folds to the rail by itself, until
+  // the person picks a density this session (NAV-OVERHAUL.md 3.1).
+  const densityPrefs = useSyncExternalStore(subscribeSidebarDensity, sidebarDensityState, sidebarDensityState);
+  const narrowWindow = useMediaQuery(AUTO_RAIL_QUERY);
+  // A phone's drawer is never the rail: closing the drawer is its fold.
+  const density = narrow
+    ? densityPrefs.density === "icons" ? DEFAULT_SIDEBAR_DENSITY : densityPrefs.density
+    : effectiveSidebarDensity(densityPrefs.density, { narrowWindow, autoRail: densityPrefs.autoRail, pinned: densityPrefs.pinned });
+  const lastExpandedDensity = useRef<Exclude<SidebarDensity, "icons">>(densityPrefs.density === "icons" ? DEFAULT_SIDEBAR_DENSITY as Exclude<SidebarDensity, "icons"> : densityPrefs.density);
+  if (densityPrefs.density !== "icons") lastExpandedDensity.current = densityPrefs.density;
   const [collapsedSections, setCollapsedSections] = useState<string[]>(() => loadCollapsedSections());
+  // The section order is the computer's, the same on every device
+  // (lib/sidebar-order-sync.ts); localStorage is this device's cache of it.
+  // Collapsed sections stay per device on purpose.
   const [sectionOrder, setSectionOrder] = useState<string[]>(() => loadSectionOrder());
+  const initialOrderUploaded = useRef(false);
+  useEffect(() => {
+    const shown = shownSectionOrder(state.sidebarSectionOrder, sectionOrder);
+    if (!sameSectionOrder(shown, sectionOrder)) {
+      setSectionOrder(shown);
+      saveSectionOrder(shown);
+    }
+    const upload = initialSectionOrderUpload({
+      server: state.sidebarSectionOrder,
+      local: loadSectionOrder(),
+      desktop,
+      attempted: initialOrderUploaded.current,
+    });
+    if (!upload) return;
+    // The desktop's first load after the order moved to the computer: its
+    // arrangement is the person's real one. The harness broadcasts the
+    // result, so every other open device follows.
+    initialOrderUploaded.current = true;
+    void saveSectionOrderToComputer(upload, (path, init) => api(path, init), { initial: true }).then((order) => {
+      if (order) dispatch({ type: "sidebarSectionOrder", order });
+    });
+    // sectionOrder is deliberately not a dependency: a local drag must not
+    // be overwritten by the order it is about to replace on the computer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.sidebarSectionOrder, desktop, dispatch]);
   const [draggingSectionId, setDraggingSectionId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; place: SectionDropPlace } | null>(null);
   const [reorderAnnouncement, setReorderAnnouncement] = useState("");
@@ -2047,22 +2222,23 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     over: { id: string; place: SectionDropPlace } | null;
   }>({ from: null, over: null });
 
-  const setDensity = (next: SidebarDensity) => {
-    setDensityState(next);
-    if (next !== "icons") setLastExpandedDensity(next);
-    // Search is hidden in avatar-only mode. Keeping its value would silently
-    // filter bots, rooms, and message results with no visible way to clear it.
-    else setQuery("");
-    saveSidebarDensity(next);
-    setDensityOpen(false);
-  };
+  // Search is hidden on the rail. Keeping its value would silently filter
+  // bots, rooms, and message results with no visible way to clear it.
+  useEffect(() => {
+    if (density === "icons") setQuery("");
+  }, [density]);
 
+  /** One control: fold to the rail, or open back out to the density chosen
+   *  (the rail the window picked counts as folded). */
   const toggleCollapsed = () => {
-    if (density === "icons") setDensity(lastExpandedDensity);
-    else {
-      setLastExpandedDensity(density);
-      setDensity("icons");
+    // Opening out a rail the window chose is the person saying "keep it
+    // open on narrow windows": that sticks across launches (Sean,
+    // 2026-09-30), and Settings > General > Appearance shows the fold off.
+    if (density === "icons" && densityPrefs.density !== "icons") {
+      chooseAutoRail(false);
+      return;
     }
+    chooseSidebarDensity(density === "icons" ? lastExpandedDensity.current : "icons");
   };
 
   // Esc closes the drawer, mirroring ApiKeys.tsx:75-85. Bound only while the
@@ -2079,15 +2255,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   }, [open, onClose]);
 
   useEffect(() => {
-    if (!densityOpen) return;
-    const closeDensityMenu = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDensityOpen(false);
-    };
-    window.addEventListener("keydown", closeDensityMenu);
-    return () => window.removeEventListener("keydown", closeDensityMenu);
-  }, [densityOpen]);
-
-  useEffect(() => {
     return window.muragebox?.onPackageInstall?.((url) => {
       setTeamInstallUrl(url);
       dispatch({ type: "showTeamLibrary" });
@@ -2095,7 +2262,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   }, []);
 
   useEffect(() => {
-    if (!teamFeedback) return;
+    if (!teamFeedback || feedbackStays(teamFeedback)) return;
     const timer = window.setTimeout(() => setTeamFeedback(null), 5000);
     return () => window.clearTimeout(timer);
   }, [teamFeedback]);
@@ -2153,21 +2320,21 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     const activeBots = state.bots.filter((candidate) => !candidate.hidden);
     if (bot.chiefOfStaff || activeBots.length <= 1) return;
     setTeamFeedback(null);
+    // One click, no confirm: nothing is lost and Restore is right there (G4).
+    // The row is measured before the PATCH, while it is still on screen.
+    const flight = prepareArchiveFlight(document.querySelector(`[data-sidebar-bot-row="${CSS.escape(bot.id)}"]`), importReturnRef.current);
     try {
       const response = await api(`/api/bots/${bot.id}`, {
         method: "PATCH",
         body: JSON.stringify({ hidden: true }),
       });
       dispatch({ type: "botPatched", bot: response.bot });
+      flight.launch();
       if (state.selectedId === bot.id) {
         const next = activeBots.find((candidate) => candidate.id !== bot.id);
         if (next) dispatch({ type: "select", id: next.id });
       }
-      setTeamFeedback({
-        error: false,
-        text: `${bot.name} archived`,
-        restoreBot: { id: bot.id, name: bot.name },
-      });
+      setTeamFeedback(archiveFeedback(bot, firstArchiveNote()));
     } catch (cause) {
       setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
     }
@@ -2331,6 +2498,15 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     if (sameSectionOrder(next, sectionOrder)) return;
     setSectionOrder(next);
     saveSectionOrder(next);
+    shareSectionOrder(next);
+  };
+
+  /** A drag (or a rename) on any device saves the order on the computer,
+   * which tells every other open device. */
+  const shareSectionOrder = (next: string[]) => {
+    void saveSectionOrderToComputer(next, (path, init) => api(path, init)).then((order) => {
+      if (order) dispatch({ type: "sidebarSectionOrder", order });
+    });
   };
 
   const announceSectionPosition = (id: string, visibleOrder: string[]) => {
@@ -2346,6 +2522,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     const next = renameSidebarLayout(sectionOrder, collapsedSections, from, to);
     setSectionOrder(next.order);
     saveSectionOrder(next.order);
+    if (!sameSectionOrder(next.order, sectionOrder)) shareSectionOrder(next.order);
     setCollapsedSections(next.collapsed);
     saveCollapsedSections(next.collapsed);
   };
@@ -2452,17 +2629,81 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const archivedBots = state.bots.filter((bot) => bot.hidden);
   const sidebarHiddenCount = state.bots.filter((bot) => !bot.hidden && bot.sidebarHidden).length;
 
+  const places: SidebarPlaceItem[] = [
+    {
+      key: "routines",
+      label: t("nav.routines"),
+      name: t("nav.routines"),
+      tip: t("nav.tip.routines"),
+      icon: <CalendarDays size={18} />,
+      active: state.activeView === "routines",
+      attention: state.routineRuns.some(isUnseenRoutineProblem),
+      onSelect: () => { dispatch({ type: "showRoutines" }); onNavigate(); },
+    },
+    // Files reads the desktop's disk; a paired phone has no Files to open.
+    ...(desktop === true ? [{
+      key: "files" as const,
+      label: t("nav.files"),
+      name: t("nav.files"),
+      tip: t("nav.tip.files"),
+      icon: <Folder size={18} />,
+      // The Files dialog renders inside this drawer, so the drawer stays open.
+      onSelect: () => setFilesOpen({}),
+    }] : []),
+    {
+      key: "apps",
+      label: t("nav.apps"),
+      name: t("settings.section.connections"),
+      tip: t("nav.tip.apps"),
+      icon: <Puzzle size={18} />,
+      onSelect: () => dispatch({ type: "togglePlugins", open: true }),
+    },
+    {
+      key: "map",
+      label: t("nav.map"),
+      name: t("nav.mapName"),
+      tip: t("nav.tip.map"),
+      icon: <Network size={18} />,
+      active: state.activeView === "team-map",
+      onSelect: () => { dispatch({ type: "showTeamMap" }); onNavigate(); },
+    },
+  ];
+
+  // Settings opens over the drawer and hands focus back to it on close
+  // (lib/drawer-close.ts), as the gear always did.
+  const openSettings = (section?: AppSettingsSection) => {
+    dispatch(section ? { type: "toggleAppSettings", open: true, section } : { type: "toggleAppSettings", open: true });
+  };
+  const youItems: YouMenuItem[] = [
+    ...(desktop === true ? [
+      { key: "about-me", label: t("settings.section.aboutMe"), icon: <UserRound size={17} />, onSelect: () => openSettings("aboutMe") },
+      { key: "phone", label: t("nav.phone"), icon: <Smartphone size={17} />, onSelect: () => dispatch(phoneSettingsAction()) },
+    ] : []),
+    ...(whatsNew.available ? [{ key: "whats-new", label: t("settings.about.whatsNewTitle"), icon: <Megaphone size={17} />, onSelect: whatsNew.reopen }] : []),
+    { key: "keyboard-shortcuts", label: t("settings.about.shortcutsTitle"), icon: <Keyboard size={17} />, onSelect: () => setShortcutsOpen(true) },
+    ...(skillRecorderEnabled(state.config)
+      ? [{ key: "skill-recorder", label: t("nav.teachSkill"), icon: <Sparkles size={17} />, onSelect: () => { dispatch({ type: "showSkillRecorder" }); onNavigate(); } }]
+      : []),
+    ...(desktop === true ? [{ key: "get-set-up", label: t("nav.getSetUp"), icon: <Compass size={17} />, onSelect: () => { onNavigate(); openFirstRun(); } }] : []),
+    { key: "settings", label: t("settings.title"), icon: <Settings size={17} />, hint: modShortcut(","), onSelect: () => openSettings() },
+  ];
+  const profileName = state.config?.profile?.name?.trim() || state.config?.profile?.email?.trim() || t("nav.you");
+
   return (
     <aside
+      ref={asideRef}
       aria-label="Bots and navigation"
+      inert={closedDrawerInert(narrow, open) || undefined}
       data-native-view-overlay
       className={cn(
         "flex h-full shrink-0 flex-col border-r border-hairline/40 bg-panel transition-[width] duration-200",
-        density === "icons" ? "w-[80px]" : density === "compact" ? "w-[272px]" : "w-[320px]",
-        // 320px of a 390px screen leaves 70px of chat behind the drawer — not
+        // Rail 64px, Standard 280px, Roomy 320px (0.1.62; was 80, 272, 320).
+        density === "icons" ? "w-[64px]" : density === "compact" ? "w-[280px]" : "w-[320px]",
+        // A 320px drawer on a 390px screen left 70px of chat behind it, not
         // enough of an edge to aim at. Cap the drawer at 86vw below md so there
-        // is always a strip of conversation to tap back to.
-        density === "icons" ? "" : "max-md:w-[min(320px,86vw)]",
+        // is always a strip of conversation to tap back to. The phone never
+        // gets the rail: below md the drawer is the collapsed state.
+        "max-md:w-[min(300px,86vw)]",
         // In black-translucent standalone mode the drawer header sits under
         // the clock without this.
         "max-md:pt-[env(safe-area-inset-top)]",
@@ -2502,62 +2743,21 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <button
             type="button"
             onClick={toggleCollapsed}
-            aria-label={density === "icons" ? "Expand sidebar" : "Collapse sidebar to avatars"}
-            className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
-            title={density === "icons" ? "Expand sidebar" : "Collapse to avatars"}
+            aria-label={density === "icons" ? t("nav.expand") : t("nav.collapse")}
+            // The phone's drawer has no rail; closing the drawer is its fold.
+            className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink max-md:hidden"
+            title={density === "icons" ? t("nav.tip.expand") : t("nav.tip.collapse")}
           >
             {density === "icons" ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}
           </button>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setDensityOpen((value) => !value)}
-              aria-label="Choose sidebar density"
-              aria-expanded={densityOpen}
-              className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
-              title="Sidebar density"
-            >
-              <span aria-hidden="true" className="flex size-5 flex-col items-center justify-center gap-[3px]">
-                <span className="h-px w-3.5 rounded-full bg-current" />
-                <span className="h-px w-2.5 rounded-full bg-current" />
-                <span className="h-px w-3.5 rounded-full bg-current" />
-              </span>
-            </button>
-            {densityOpen && (
-              <>
-                <div className="fixed inset-0 z-30" onMouseDown={() => setDensityOpen(false)} />
-                <div className={cn(
-                  "absolute top-full z-40 mt-1 w-40 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60",
-                  // On a phone these buttons sit at the drawer's left edge, so the
-                  // menu opens rightwards or it would hang off the screen.
-                  density === "icons" ? "left-0" : "right-0 max-md:left-0 max-md:right-auto",
-                )}>
-                  {(["comfortable", "compact", "icons"] as const).map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => setDensity(option)}
-                      className={cn(
-                        "flex w-full items-center justify-between px-3 py-2 text-left text-[13px] capitalize hover:bg-raised/70",
-                        density === option ? "text-accent" : "text-ink",
-                      )}
-                    >
-                      {option === "icons" ? "Avatars only" : option}
-                      {density === option && <Check size={14} />}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
           <button
             ref={importReturnRef}
             onClick={() => setPlusOpen((o) => !o)}
-            aria-label="New or share"
+            aria-label={t("nav.newOrShare")}
             aria-expanded={plusOpen}
             aria-controls="sidebar-create-options"
             className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
-            title="New or share"
+            title={t("nav.tip.new")}
           >
             <Plus size={20} strokeWidth={2} />
           </button>
@@ -2575,6 +2775,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 density === "icons" ? "left-0" : "right-0 max-md:left-0 max-md:right-auto",
               )}>
                 <SidebarCreateMenu
+                  showNewProject={desktop !== undefined}
                   archivedCount={archivedBots.length}
                   onNewBot={() => {
                     setPlusOpen(false);
@@ -2589,6 +2790,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     setNewRoom("channel");
                   }}
                   onNewProject={() => {
+                    importReturnRef.current?.focus();
                     setPlusOpen(false);
                     setNewRoom("project");
                   }}
@@ -2605,10 +2807,43 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     setPlusOpen(false);
                     setArchivedChannelsOpen(true);
                   }}
+                  onBrowseTemplates={() => {
+                    setPlusOpen(false);
+                    dispatch({ type: "showTeamLibrary" });
+                  }}
                 />
               </div>
             </>
           )}
+        </div>
+      </div>
+
+      {/* Search: names and messages, filtered in place. The key hint opens
+          the command palette, which also finds settings. */}
+      <div className={cn("pt-1 pb-1.5", density === "icons" ? "hidden" : "px-3")}>
+        <div className="flex items-center gap-2 rounded-lg bg-raised/70 px-3 py-1.5">
+          <Search size={16} className="shrink-0 text-ink-secondary" aria-hidden="true" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+            placeholder={t("settings.search")}
+            aria-label={t("nav.searchAria")}
+            className="min-h-7 w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
+          />
+          {/* Keyboard people only: a phone has no ⌘K to learn. */}
+          <button
+            type="button"
+            onClick={() => {
+              onNavigate();
+              openCommandPalette();
+            }}
+            aria-label={t("nav.searchEverything")}
+            title={t("nav.searchEverythingTitle", { keys: modShortcut("K") })}
+            className="shrink-0 rounded-md border border-hairline/40 px-1.5 py-0.5 text-[11px] text-ink-secondary hover:bg-control hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus max-md:hidden [@media(hover:none)]:hidden"
+          >
+            <kbd className="font-sans">{modShortcut("K")}</kbd>
+          </button>
         </div>
       </div>
 
@@ -2626,19 +2861,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
       )}
 
-      {/* Search */}
-      <div className={cn("pt-2 pb-3", density === "icons" ? "hidden" : "px-3")}>
-        <div className="flex items-center gap-2 rounded-lg bg-raised/70 px-3 py-2">
-          <Search size={16} className="text-ink-secondary" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-            placeholder="Search"
-            aria-label="Search bots and messages"
-            className="w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
-          />
-        </div>
+      {/* The places: always on screen, never folded into a menu. */}
+      <div className={cn("pt-1.5 pb-2.5", density === "icons" ? "px-2" : "px-3")}>
+        <SidebarPlaces rail={density === "icons"} places={places} />
+        {movedNote && density !== "icons" && <SidebarMovedNote onDismiss={() => setMovedNote(false)} />}
       </div>
 
       {/* Bot list */}
@@ -2647,7 +2873,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         className="mx-3 mb-2 rounded-lg border border-hairline/40 px-2 py-2 text-[12px] text-ink-secondary hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
         {showHidden ? "Hide hidden bots" : "Show hidden"} ({sidebarHiddenCount})
       </button>}
-      <div className="flex-1 overflow-y-auto px-2">
+      {/* A hairline, not padding alone, between the fixed zones and the list. */}
+      <div className="flex-1 overflow-y-auto border-t border-hairline/30 px-2 pt-2">
         <div className="flex flex-col gap-0.5">
           {matchingBots.length === 0 && visibleGroups.length === 0 && q && q.length < MIN_QUERY && (
             <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">Nothing matches “{query}”</div>
@@ -2780,6 +3007,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                         onBotDragEnd={resetBotDrag}
                       />
                     ))}
+                    {sectionName && density !== "icons" && <SidebarSharedRows section={sectionName} onNavigate={onNavigate} />}
                   </>
                 )}
                 {dropTarget?.id === id && dropTarget.place === "after" && draggingSectionId !== id && (
@@ -2789,157 +3017,62 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             );
           })}
           <SearchResults query={query} onLanded={() => setQuery("")} />
+          {/* This box finds bots, channels and messages; Settings live in the
+              palette. One tap hands the word over, on touch too. */}
+          {q && density !== "icons" && (
+            <button
+              type="button"
+              onClick={() => {
+                onNavigate();
+                openCommandPalette(query.trim());
+              }}
+              className="mx-1 mt-2 flex min-h-11 items-center gap-2 rounded-lg px-3 text-left text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+            >
+              <Search size={14} aria-hidden="true" className="shrink-0" />
+              <span className="min-w-0 truncate">{t("nav.searchSettings", { query: query.trim() })}</span>
+            </button>
+          )}
         </div>
       </div>
       <p className="sr-only" aria-live="polite" aria-atomic="true">
         {reorderAnnouncement}
       </p>
 
-      {/* Footer */}
-      <div className={cn("pb-3 pt-2", density === "icons" ? "px-2" : "px-3")}>
+      {/* Footer. Below md the drawer runs to the bottom of the screen, so the
+          last row owes the home indicator its inset. */}
+      <div className={cn("pb-3 pt-2 max-md:pb-[calc(0.75rem+var(--inset-bottom))]", density === "icons" ? "px-2" : "px-3")}>
         {/* Announcements: an info notice is a banner here; an important or
             security one opens as a card, after What's new has closed. */}
         <AnnouncementsHost desktop={desktop} request={api} showBanner={density !== "icons"} suspended={whatsNew.open} onNavigate={onNavigate} />
-        {/* The icon rail is already one icon per destination, so folding those
-            icons behind a hover menu inside an icon rail helps nobody: in that
-            density the four rows stay exactly as they were. */}
-        {density === "icons" && (
-          <>
-            <button
-              onClick={() => dispatch({ type: "showTeamMap" })}
-              aria-label={density === "icons" ? "Team map" : undefined}
-              title={density === "icons" ? "Team map" : undefined}
-              className={cn(
-                "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
-                density === "icons" ? "justify-center px-2" : "gap-3 px-3",
-                sidebarNavRowTone(state.activeView === "team-map"),
-              )}
-            >
-              <Network size={20} className={state.activeView === "team-map" ? "text-accent" : "text-ink-secondary"} />
-              <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Team map</span>
-            </button>
-            {skillRecorderEnabled(state.config) && (
-              <button
-                onClick={() => dispatch({ type: "showSkillRecorder" })}
-                aria-label={density === "icons" ? "Teach a skill" : undefined}
-                title={density === "icons" ? "Teach a skill" : undefined}
-                className={cn(
-                  "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
-                  density === "icons" ? "justify-center px-2" : "gap-3 px-3",
-                  state.activeView === "skill-recorder" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
-                )}
-              >
-                <Sparkles size={20} className={state.activeView === "skill-recorder" ? "text-accent" : "text-ink-secondary"} />
-                <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Teach a skill</span>
-              </button>
-            )}
-            <button
-              onClick={() => dispatch({ type: "showRoutines" })}
-              aria-label={density === "icons" ? "Routines" : undefined}
-              title={density === "icons" ? "Routines" : undefined}
-              className={cn(
-                "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
-                density === "icons" ? "justify-center px-2" : "gap-3 px-3",
-                state.activeView === "routines" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
-              )}
-            >
-              <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
-              <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Routines</span>
-              {state.routineRuns.some(isUnseenRoutineProblem) && (
-                <span className="size-2 rounded-full bg-danger" />
-              )}
-            </button>
-            <button
-              onClick={() => dispatch({ type: "togglePlugins", open: true })}
-              className={cn("flex min-h-10 w-full items-center rounded-xl py-2 text-left hover:bg-raised/50", density === "icons" ? "justify-center px-2" : "gap-3 px-3")}
-              aria-label={density === "icons" ? "Connected apps" : undefined}
-              title={density === "icons" ? "Connected apps" : undefined}
-            >
-              <Puzzle size={20} className="text-ink-secondary" />
-              <span className={cn("text-[14px] text-ink", density === "icons" && "hidden")}>Connected apps</span>
-            </button>
-          </>
-        )}
-        {/* The only thing this button does is open Settings → Phone, and that
-            section does not exist on a phone — it is the setup screen for
-            getting Murage ONTO one. A dot that opens an empty pane is worse
-            than no dot. `undefined` hides it too: the neutral answer. */}
-        {density === "icons" && desktop === true && (
-          <SidebarPhoneButton
-            density={density}
-            onOpen={() => dispatch(phoneSettingsAction())}
+        <div className={cn("flex items-center border-t border-hairline/30 pt-2", density === "icons" && "flex-col gap-1")}>
+          <SidebarYouMenu
+            rail={density === "icons"}
+            name={profileName}
+            initials={profileInitials(state.config?.profile)}
+            items={youItems}
+            triggerRef={youTriggerRef}
           />
-        )}
-        {density !== "icons" && (
-          <SidebarMoreMenu
-            compact={density === "compact"}
-            triggerRef={toolsTriggerRef}
-            items={[
-              ...(desktop === true ? [{ key: "files", label: "Files", icon: <Folder size={18} />, onSelect: () => setFilesOpen({}) }] : []),
-              {
-                key: "team-map",
-                label: "Team map",
-                icon: <Network size={18} />,
-                active: state.activeView === "team-map",
-                onSelect: () => dispatch({ type: "showTeamMap" }),
-              },
-              ...(skillRecorderEnabled(state.config)
-                ? [
-                    {
-                      key: "skill-recorder",
-                      label: "Teach a skill",
-                      icon: <Sparkles size={18} />,
-                      active: state.activeView === "skill-recorder",
-                      onSelect: () => dispatch({ type: "showSkillRecorder" }),
-                    },
-                  ]
-                : []),
-              {
-                key: "routines",
-                label: "Routines",
-                icon: <CalendarDays size={18} />,
-                active: state.activeView === "routines",
-                // folded away, this dot would otherwise vanish with the row
-                attention: state.routineRuns.some(isUnseenRoutineProblem),
-                onSelect: () => dispatch({ type: "showRoutines" }),
-              },
-              {
-                key: "plugins",
-                label: "Connected apps",
-                icon: <Puzzle size={18} />,
-                onSelect: () => dispatch({ type: "togglePlugins", open: true }),
-              },
-              { key: "keyboard-shortcuts", label: "Keyboard shortcuts", icon: <BookOpen size={18} />, onSelect: () => setShortcutsOpen(true) },
-              ...(whatsNew.available ? [{ key: "whats-new", label: "What's new", icon: <Megaphone size={18} />, onSelect: whatsNew.reopen }] : []),
-            ]}
-          />
-        )}
-        <div className={cn("flex items-center", density === "icons" && "justify-center")}>
-          <button
-            onClick={() => dispatch({ type: "toggleAppSettings" })}
-            className={cn("flex min-w-0 items-center rounded-xl py-2 text-left hover:bg-raised/50", density === "icons" ? "justify-center px-2" : "flex-1 gap-3 px-3")}
-            aria-label={density === "icons" ? "App settings" : undefined}
-            title={density === "icons" ? (state.config?.profile?.name?.trim() || "App settings") : undefined}
-          >
-            <InitialsAvatar initials={profileInitials(state.config?.profile)} size={28} />
-            <span className={cn("truncate text-[14px] text-ink", density === "icons" && "hidden")}>
-              {state.config?.profile?.name?.trim() || state.config?.profile?.email?.trim() || "You"}
-            </span>
-          </button>
-          {density !== "icons" && desktop === true && (
+          {/* The only thing this button does is open Settings → Phone, and that
+              section does not exist on a phone — it is the setup screen for
+              getting Murage ONTO one. A dot that opens an empty pane is worse
+              than no dot. `undefined` hides it too: the neutral answer. */}
+          {/* Not on the rail, where the column is short: the You menu has Phone. */}
+          {desktop === true && density !== "icons" && (
             <SidebarPhoneButton
               density={density}
               onOpen={() => dispatch(phoneSettingsAction())}
             />
           )}
           {density !== "icons" && <UpdateButton />}
-          {density !== "icons" && <button
-            onClick={() => dispatch({ type: "toggleAppSettings" })}
-            className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
-            title="App settings"
+          <button
+            type="button"
+            onClick={() => dispatch({ type: "toggleAppSettings", open: true })}
+            aria-label={t("nav.appSettings")}
+            className="flex size-10 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+            title={t("nav.tip.settings", { keys: modShortcut(",") })}
           >
             <Settings size={18} />
-          </button>}
+          </button>
         </div>
       </div>
 
@@ -2960,6 +3093,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           key={snoozeTarget.threadId}
           {...snoozeTarget}
           until={sidebarSnoozedUntil(snoozeTarget.threadId, threadAttention.snoozes)}
+          untilActivity={threadAttention.untilActivity.has(snoozeTarget.threadId)}
           blocked={sidebarThreadOwed(snoozeTarget.threadId, state.bots, threadAttention.questions)}
           onDone={() => undefined}
           onClose={() => setSnoozeTarget(null)}
@@ -2970,7 +3104,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
       }} />}
       {inboxOpen && <InboxDialog onClose={() => setInboxOpen(false)} />}
-      <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} returnFocusRef={toolsTriggerRef} />
+      {/* Portalled: Settings > Help & updates opens these while a phone's
+          drawer is shut, and a shut drawer is inert, dialogs and all. */}
+      {shortcutsOpen && createPortal(<LazyBoundary onRetry={ShortcutsDialog.retry} onDismiss={() => setShortcutsOpen(false)}><Suspense fallback={null}><ShortcutsDialog.Component open onClose={() => setShortcutsOpen(false)} returnFocusRef={youTriggerRef} /></Suspense></LazyBoundary>, document.body)}
       {filesOpen && <FilesDialog key={`${filesOpen.botId ?? ""}:${filesOpen.threadId ?? ""}:${filesOpen.artifactId ?? ""}`} {...filesOpen} onClose={() => setFilesOpen(null)} />}
       {instructionsEditor && (
         <SectionContextDialog
@@ -3002,6 +3138,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       {roomSectionPicker && (
         <SectionPicker
           current={state.groups.find((g) => g.id === roomSectionPicker.groupId)?.section}
+          allowCreate={!state.groups.find((g) => g.id === roomSectionPicker.groupId)?.channelProject}
           anchor={roomSectionPicker}
           onClose={() => setRoomSectionPicker(null)}
           onAssign={(section) =>
@@ -3016,7 +3153,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           preview={pendingDelete.kind === "bot" ? { botId: pendingDelete.id } : { groupId: pendingDelete.id }}
           detail={
             pendingDelete.kind === "bot"
-              ? "Its entire conversation history goes with it, along with any skills it was given. This cannot be undone. Archive it instead if you might want it back."
+              ? botDeleteDetail(state.bots.find((bot) => bot.id === pendingDelete.id) ?? ({ id: pendingDelete.id, name: pendingDelete.name } as Bot), state.groups)
               : "Every message in this conversation is removed. The bots themselves are not deleted. This cannot be undone."
           }
           onCancel={() => setPendingDelete(null)}
@@ -3027,8 +3164,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           }}
         />
       )}
-      {newRoom && <NewRoomPanel kind={newRoom} onClose={() => setNewRoom(null)} />}
-      <WhatsNewHost whatsNew={whatsNew} onNavigate={onNavigate} />
+      {newRoom === "channel" && <NewRoomPanel kind="channel" onClose={() => setNewRoom(null)} />}
+      {newRoom === "project" && desktop === false && <NewRoomPanel kind="project" onClose={() => setNewRoom(null)} />}
+      {newRoom === "project" && desktop === true && <LazyBoundary onRetry={NewProject.retry}><Suspense fallback={<LazyFallback />}><NewProject.Component returnFocusRef={importReturnRef} onClose={() => setNewRoom(null)} /></Suspense></LazyBoundary>}
+      {whatsNew.open && createPortal(<WhatsNewHost whatsNew={whatsNew} onNavigate={onNavigate} />, document.body)}
       {archivedChannelsOpen && (
         <ArchivedChannelsPanel
           groups={archivedChannels}
@@ -3102,6 +3241,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             onUndoTeam={(undo) => void undoTeamLoad(undo)}
             onUndoBot={(bot) => void undoBotArchive(bot)}
             onUndoGroup={(group) => void undoGroupArchive(group)}
+            onDismiss={() => setTeamFeedback(null)}
           />,
           document.body,
         )}

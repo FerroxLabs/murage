@@ -4,7 +4,7 @@ description: |
   Guide to specialty coffee including brewing methods, grind size, water temperature, bean selection, home roasting, cupping technique, and equipment recommendations. Use when the user asks about coffee enthusiast or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide step-by-step"
   category: "hobbies-crafts"

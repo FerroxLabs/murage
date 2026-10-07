@@ -6,7 +6,7 @@ description: |
   Do NOT use for data schema design (use data-schema-design), data quality rule definitions (use data-quality-rules), or ETL pipeline documentation (use etl-pipeline-design).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science template checklist"
   category: "data-analysis"

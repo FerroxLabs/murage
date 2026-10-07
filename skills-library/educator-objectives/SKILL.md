@@ -6,7 +6,7 @@ description: |
   Do NOT use for student personal learning goals (use `learning-objectives`), for full lesson plan creation (use `lesson-plan-design`), or for curriculum-level outcomes (use `curriculum-mapping`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching lesson-plan curriculum step-by-step"
   category: "education"

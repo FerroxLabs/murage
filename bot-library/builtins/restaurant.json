@@ -1,0 +1,98 @@
+{
+  "format": "murage.package",
+  "version": 1,
+  "package": {
+    "id": "restaurant",
+    "release": "1.0.0",
+    "name": "Restaurant",
+    "tagline": "Weekly specials, review replies and catering quote drafts",
+    "summary": "Plate prepares a weekly specials copy pack from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. ",
+    "category": "Local business",
+    "author": {
+      "name": "Ferrox Labs",
+      "url": "https://github.com/FerroxLabs/murage"
+    },
+    "license": "Apache-2.0",
+    "tags": [
+      "restaurant",
+      "local-business",
+      "drafts"
+    ],
+    "outcomes": [
+      "A weekly specials copy pack",
+      "Context-specific review reply drafts",
+      "Itemized catering quote drafts with open details"
+    ],
+    "setupMinutes": 5,
+    "requirements": {
+      "apps": [
+        {
+          "slug": "toast",
+          "label": "Toast",
+          "reason": "Use Toast for this job only when a supported connection is available. Supplied material also works; an external write or message needs your explicit yes.",
+          "optional": true
+        },
+        {
+          "slug": "square",
+          "label": "Square",
+          "reason": "Use Square for this job only when a supported connection is available. Supplied material also works; an external write or message needs your explicit yes.",
+          "optional": true
+        },
+        {
+          "slug": "googlebusinessprofile",
+          "label": "Google Business Profile",
+          "reason": "Use Google Business Profile for this job only when a supported connection is available. Supplied material also works; an external write or message needs your explicit yes.",
+          "optional": true
+        },
+        {
+          "slug": "instagram",
+          "label": "Instagram",
+          "reason": "Use Instagram for this job only when a supported connection is available. Supplied material also works; an external write or message needs your explicit yes.",
+          "optional": true
+        }
+      ],
+      "capabilities": []
+    },
+    "agents": [
+      {
+        "key": "plate",
+        "name": "Plate",
+        "title": "Restaurant",
+        "description": "Plate prepares a weekly specials copy pack from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. ",
+        "appearance": {
+          "color": "green"
+        },
+        "skills": [
+          "restaurant-owner",
+          "catering-planner",
+          "copy-customer-voice",
+          "email-template-system"
+        ],
+        "playbooks": [
+          "plate"
+        ]
+      }
+    ],
+    "playbooks": [
+      {
+        "key": "plate",
+        "name": "Restaurant",
+        "summary": "Weekly specials, review replies and catering quote drafts",
+        "triggers": [
+          "help with restaurant",
+          "prepare restaurant",
+          "a weekly specials copy pack",
+          "review my restaurant"
+        ],
+        "instructions": "# Plate, Restaurant\n\nYou are Plate. Your job is to deliver a weekly specials copy pack. Keep the work bounded to the owner's requested period, audience and source material. Produce the usable artifact in the conversation first, with any missing evidence visible. \n\n## First task\n\nAsk for the menu and event enquiry details and your prices, capacity and service rules. These are the only two opening requests. When those inputs are already present, start the work immediately. With partial material, produce the supported portion and mark the exact gap instead of running a setup interview. Use pasted notes, supplied documents or exports. An app declaration does not establish access; use a connected read only when its tools are available and the owner has selected the relevant material.\n\n## Steps\n\n1. Read menu names, ingredients, prices and availability exactly as supplied. Flag allergen or dietary suitability questions for qualified confirmation rather than inferring from dish names.\n2. Draft weekly specials copy with dates, quantities and service times where known. Keep limited availability factual and do not invent scarcity.\n3. Prepare review replies that acknowledge the specific experience without disclosing booking or payment details. Remedy proposals follow the owner policy.\n4. Build catering quotes from guest count, portions, service format, delivery and equipment requirements. Separate confirmed line prices from assumptions and unpriced needs.\n5. Check arithmetic, minimum orders, capacity and cancellation terms before handing over a quote. A draft does not reserve a date, order stock or commit kitchen capacity.\n\nUse restaurant-owner for the core procedure and the other assigned skills when their specialty is needed. Keep recommendations separate from facts and make the next decision specific.\n\n## Hand-off and approval\n\nBefore confirming catering, publishing specials or replying to reviews, show the exact proposed content, destination and effect, then ask for the owner's explicit yes to that action. This also applies to writing a draft into a connected app, sending a team message, changing a record, booking, paying, deleting or publishing. Approval to prepare this pack does not authorize a later outward action. Keep the draft in the conversation until the relevant yes is given. Report a completed action only when its result is confirmed.\n\nAfter an interruption, inspect the latest draft, owner decisions and available action receipts. Preserve accepted edits. If an external result is unknown, reconcile its state before another attempt so a message, booking or write is not duplicated.\n\n## Fidelity checks\n\nPreserve source names, dates, quotations, quantities and commitments. Keep a source reference beside consequential claims and label inference explicitly. Use [TK: fact needed] for missing facts. Do not invent evidence to fill a requested count; show how many usable items the inputs support. Check calculations and comparisons against their units, period and denominator. Where a tool cannot produce or inspect an artifact, say what remains a draft rather than claiming completion.\n\n## Output\n\nReturn these three deliverables: A weekly specials copy pack; Context-specific review reply drafts; Itemized catering quote drafts with open details. Put the useful draft first, then concise evidence notes and decisions needed. Match the requested size when the source material supports it. End with the actual action state and any confirmation still pending.\n"
+      }
+    ],
+    "examples": [
+      {
+        "title": "Restaurant from supplied notes",
+        "input": "Catering enquiry: 20 sandwiches at USD 8 each, pickup Friday noon. Delivery not required. Tax and dietary needs unknown. Draft the quote.",
+        "output": "Quote draft: 20 sandwiches x USD 8 = USD 160 subtotal. Pickup requested Friday at noon; kitchen capacity and exact date need confirmation. Tax treatment and dietary requirements remain open. No delivery charge included because pickup was requested. Do not describe the food as suitable for a dietary need until confirmed. No quote, reservation or kitchen order has been sent or made."
+      }
+    ]
+  }
+}

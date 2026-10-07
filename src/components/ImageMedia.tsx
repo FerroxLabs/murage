@@ -17,6 +17,7 @@
 // The dialog is a native modal <dialog>, not a positioned <div>: the Files
 // browser is itself a modal <dialog>, and only another top-layer dialog can sit
 // above it without being made inert.
+import { desktopResourceUrl } from "@/lib/live-events";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, ImageOff, Maximize2, X } from "lucide-react";
@@ -34,7 +35,7 @@ import { UseAsReferenceButton } from "./UseAsReferenceButton";
 /** Where an enlarged image came from. `MediaAssetSource` from the frozen media
  * contract, plus `inline-data`: raster bytes embedded in the message text
  * itself, which exist nowhere else and are therefore not an asset. */
-export type ImageMediaSource = Extract<MediaAssetSource, "attachment" | "artifact" | "screen-frame" | "external-link" | "workspace"> | "inline-data";
+export type ImageMediaSource = Extract<MediaAssetSource, "attachment" | "artifact" | "screen-frame" | "external-link" | "workspace"> | "inline-data" | "avatar";
 
 export interface ImageMediaItem {
   /** Identity inside the set being shown. Load, failure and focus state reset
@@ -79,6 +80,7 @@ export function imageSourceLabel(source: ImageMediaSource): string {
     case "external-link": return t("media.source.external");
     case "inline-data": return t("media.source.inline");
     case "workspace": return t("media.source.workspace");
+    case "avatar": return t("media.source.avatar");
   }
 }
 
@@ -224,7 +226,7 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes
         // candidate's density on a live <img> after srcset is removed, so the
         // original drew at a fraction of its size (phone verification f2).
         key={srcSet ? "srcset" : "original"}
-        src={item.src}
+        src={desktopResourceUrl(item.src)}
         srcSet={srcSet}
         sizes={srcSet ? sizes : undefined}
         alt={item.alt}
@@ -344,7 +346,7 @@ function LightboxImage({ item }: { item: ImageMediaItem }) {
   }
   return (
     <img
-      src={item.src}
+      src={desktopResourceUrl(item.src)}
       alt={item.alt}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
@@ -463,7 +465,7 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
         // the dialog fills the viewport; only its bare backdrop area is itself
         if (event.target === event.currentTarget) closeRef.current();
       }}
-      className="fixed inset-0 m-0 hidden h-dvh max-h-none w-screen max-w-none items-center justify-center border-0 bg-transparent p-3 text-white outline-none open:flex backdrop:bg-black/80 backdrop:backdrop-blur-sm sm:p-6"
+      className="fixed inset-0 m-0 hidden h-dvh max-h-none w-screen max-w-none items-center justify-center border-0 bg-transparent p-3 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-[calc(0.75rem+env(safe-area-inset-bottom))] text-white outline-none open:flex backdrop:bg-black/80 backdrop:backdrop-blur-sm sm:p-6"
     >
       <div className="animate-pop-in flex h-full max-h-[900px] w-full max-w-[1200px] flex-col overflow-hidden rounded-2xl border border-white/15 bg-black/70 shadow-2xl motion-reduce:animate-none">
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-black/45 px-4 py-3">
@@ -498,7 +500,7 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
             )}
             {item.download && (
               <a
-                href={item.src}
+                href={desktopResourceUrl(item.src)}
                 download={item.name}
                 referrerPolicy="no-referrer"
                 className={HEADER_BUTTON}

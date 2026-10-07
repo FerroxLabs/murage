@@ -6,7 +6,7 @@ description: |
   Do NOT use for cleaning existing dirty data (use spreadsheet-data-cleaning), conditional formatting rules (use conditional-formatting-rules), or building lookup formulas (use excel-lookup-formulas).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "spreadsheets data-science checklist"
   category: "data-analysis"

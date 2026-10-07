@@ -6,7 +6,7 @@ description: |
   Do NOT use for exterior painting, painting furniture or cabinets, decorative techniques like murals or faux finishes, or choosing wall colors for design purposes (use interior-design-principles instead).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-maintenance step-by-step guide"
   category: "home-household"

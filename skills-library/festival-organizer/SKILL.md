@@ -4,7 +4,7 @@ description: |
   Complete guide to organizing festivals and multi-day events covering permits and regulations, lineup and programming curation, vendor management, safety and security planning, marketing and promotion, ticketing strategy, volunteer management, and weather contingency planning. Use when the user asks about festival organizer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "event-planning planning guide"
   category: "travel-experiences"

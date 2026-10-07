@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of autism workplace navigator or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness mental-wellness self-care analysis research safety neurodiversity performing-arts"
   category: "health-wellness"

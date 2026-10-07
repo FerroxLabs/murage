@@ -1,3 +1,9 @@
+import { threadHumanPrincipal } from "./human-principals.ts";
+import { isSharedWorkRow, drainSharedWork } from "./shared-work.ts";
+import { roomRequestByKey, isTerminalRoomRequestState } from "./room-requests.ts";
+import { database } from "./database.ts";
+import { defaultThreadId, audienceTask, authorizeWork, issueWorkAudience, issueExecutionAudience, validExecutionAudience } from "./execution-audience.ts";
+import type { ExecutionAudience } from "./work-admission.ts";
 // Async peer handoff (delegate_bot).
 //
 // A bot that finishes one task can hand the NEXT task to a peer without
@@ -23,9 +29,27 @@ import { getOrCreateChannel, mirrorExchange, type CommsBus } from "./comms-visib
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
 import { peerApprovalFailure, requestPeerApproval, type ApprovalBus } from "./peer-approval.ts";
-import { canReach, type BotRecord, type GroupRecord } from "./store.ts";
+import { ROUTINE_PERMISSION_MODES, type RoutinePeerSource } from "./routine-permissions.ts";
+
+import type { BotRecord, GroupRecord } from "./store.ts";
+
+/** Every row a handoff leaves in its source conversation names who handed
+ * off when that conversation is a room. Several bots delegate in a room, and
+ * a failure row without `from` rendered unattributed, so nobody could tell
+ * whose handoff failed (0.1.60 low). A bot's own thread is the sender's, so
+ * its rows stay as they were. */
+function appendDelegationRow(
+  bus: CommsBus,
+  threadId: string,
+  senderId: string | undefined,
+  message: Parameters<CommsBus["store"]["appendMessage"]>[1],
+): ReturnType<CommsBus["store"]["appendMessage"]> {
+  const sender = senderId && bus.store.groupByThread(threadId) ? bus.store.bot(senderId) : undefined;
+  return bus.store.appendMessage(threadId, sender ? { ...message, from: { botId: sender.id, name: sender.name, color: sender.color } } : message);
+}
 
 export interface DelegationItem {
+  executionAudience?: ExecutionAudience;
   toBotId: string;
   message: string;
   reason?: string;
@@ -37,10 +61,15 @@ export interface DelegationItem {
    * is skipped at drain time — if the sender's conversation is still on
    * Full access then. Never set for a webhook, channel or routine turn. */
   fullAccessWaived?: boolean;
-  /** Queued by a turn whose words were not proven to be the owner's: the
-   * target turn reads memory as a non-owner audience too (0.1.61 room privacy fix).
-   * Server-issued, never model-supplied. */
-  notOwnerAudience?: true;
+  /** Queued by a turn that was not owner audience (owner-audience.ts): the
+   *  peer's turn is not either, after a restart too. */
+  notOwnerAudience?: boolean;
+  /** Queued by an unattended turn (no one proved the owner was there): the
+   *  peer's turn runs unattended too, after a restart too, so Full access
+   *  keeps the owner's cards for it. */
+  unattended?: boolean;
+  /** The effective parent routine ceiling, captured before its turn ends. */
+  routineAuthority?: RoutinePeerSource;
   /** Trusted originating event identity. Survives handoff/retry/restart so
    * the harness can retain the event's budget and provenance boundary. */
   eventId?: string;
@@ -167,6 +196,15 @@ function saveReceipts(): void {
   }
 }
 
+/** One listener told of every terminal outcome after it is recorded: the
+ * turn engine completes the handoff's `ask` request with it (lane E1), so a
+ * handoff the ledger ends without a turn (cancelled, refused, target gone)
+ * still reaches the bot waiting on it. */
+let receiptListener: ((receipt: DelegationReceipt) => void) | undefined;
+export function onDelegationReceipt(listener: ((receipt: DelegationReceipt) => void) | undefined): void {
+  receiptListener = listener;
+}
+
 /** Record one terminal outcome. Newest first; pruned by count and age so the
  * drawer can never grow without bound. */
 export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finishedAt"> & { finishedAt?: number }): void {
@@ -188,6 +226,7 @@ export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finish
     .filter((existing) => now - existing.finishedAt <= RECEIPT_MAX_AGE_MS)
     .slice(0, MAX_RECEIPTS);
   saveReceipts();
+  try { receiptListener?.(bounded); } catch (error) { console.error("delegations: receipt listener failed", error); }
 }
 
 /** A deleted conversation takes its handoffs with it: queued ones and the
@@ -320,11 +359,28 @@ export function stopWaitingDelegation(bus: CommsBus, id: string): boolean {
       status: "cancelled",
       result: "the owner stopped this handoff while it was waiting",
     });
-    bus.store.appendMessage(threadId, {
+    appendDelegationRow(bus, threadId, item.fromBotId, {
       role: "bot",
       kind: "activity",
       tool: { name: `Delegation to @${name} stopped by you`, ok: false },
     });
+    return true;
+  }
+  return false;
+}
+
+/** Drop a queued handoff that has not started, whatever it waits on (lane
+ * E1: its room request was cancelled, or the owner stopped the project).
+ * False once it is draining or gone. */
+export function dropQueuedDelegation(bus: CommsBus, id: string, reason: string): boolean {
+  for (const [threadId, items] of pendingDelegations) {
+    const item = items.find((candidate) => candidate.id === id);
+    if (!item) continue;
+    if (drainingThreads.has(threadId)) return false;
+    const name = bus.store.bot(item.toBotId)?.name ?? item.toBotId;
+    acknowledgeDelegation(threadId, id, bus);
+    recordDelegationReceipt({ id, sourceThreadId: threadId, toBotId: item.toBotId, toBotName: name, status: "cancelled", result: reason });
+    appendDelegationRow(bus, threadId, item.fromBotId, { role: "bot", kind: "activity", tool: { name: `Delegation to @${name} was cancelled`, ok: false } });
     return true;
   }
   return false;
@@ -344,7 +400,7 @@ function clearWaitLine(bus: CommsBus | undefined, threadId: string, item: Pendin
 function parkWaiting(bus: CommsBus, sourceThreadId: string, item: PendingDelegationItem, targetName: string): void {
   item.waitingSince = Date.now();
   clearWaitLine(bus, sourceThreadId, item);
-  const line = bus.store.appendMessage(sourceThreadId, {
+  const line = appendDelegationRow(bus, sourceThreadId, item.fromBotId, {
     role: "bot",
     kind: "activity",
     tool: { name: `Delegation to @${targetName} waiting: they're busy (retry ${item.attempts}/${MAX_BUSY_ATTEMPTS} when they finish)` },
@@ -380,6 +436,10 @@ export function _loadPending(): void {
         ) return [];
         // A malformed present marker must never become an unmarked turn.
         if (Object.hasOwn(item, "eventId") && !validEventId(item.eventId)) return [];
+        if (Object.hasOwn(item, "executionAudience") && !validExecutionAudience(item.executionAudience)) return [];
+        if (item.routineAuthority !== undefined && (!item.routineAuthority ||
+          !ROUTINE_PERMISSION_MODES.includes(item.routineAuthority.permissionMode) ||
+          !["manual", "schedule"].includes(item.routineAuthority.triggerSource))) return [];
         if (item.coordination !== undefined && !coordinationTraceSchema.safeParse(item.coordination).success) return [];
         const loaded: PendingDelegationItem = {
           id: typeof item.id === "string" && item.id ? item.id : newId(),
@@ -390,11 +450,15 @@ export function _loadPending(): void {
           attempts: Number.isFinite(item.attempts) ? Math.max(0, Math.trunc(item.attempts!)) : 0,
           ...(typeof item.fromBotId === "string" && item.fromBotId ? { fromBotId: item.fromBotId } : {}),
           ...(item.eventId !== undefined ? { eventId: item.eventId } : {}),
+          ...(item.executionAudience ? { executionAudience: item.executionAudience } : {}),
           ...(item.coordination ? { coordination: coordinationTraceSchema.parse(item.coordination) } : {}),
         };
         if (item.approvalAlreadyGranted === true) loaded.approvalAlreadyGranted = true;
         if (item.fullAccessWaived === true) loaded.fullAccessWaived = true;
-        if (item.notOwnerAudience === true) loaded.notOwnerAudience = true;
+        // fails closed: anything but an explicit false-by-absence keeps the mark
+        if (Object.hasOwn(item, "notOwnerAudience")) loaded.notOwnerAudience = item.notOwnerAudience !== false;
+        if (Object.hasOwn(item, "unattended")) loaded.unattended = item.unattended !== false;
+        if (item.routineAuthority) loaded.routineAuthority = { ...item.routineAuthority };
         if (item.waitingOnBusy === true) {
           loaded.waitingOnBusy = true;
           // A queue written before this field existed restarts its clock.
@@ -475,7 +539,7 @@ export function queueDelegation(
   from: BotRecord,
   item: DelegationItem,
   maxDepth: number,
-  sourceThreadId = from.threadId,
+  sourceThreadId = defaultThreadId(from),
 ): QueuedDelegation {
   if (item.eventId !== undefined && !validEventId(item.eventId)) throw new Error("Invalid delegation event identity");
   if (item.toBotId === from.id) return { result: "self" };
@@ -489,7 +553,10 @@ export function queueDelegation(
   // and fan out into as many real turns on the next settle.
   if (list.length >= MAX_QUEUED_PER_THREAD) return { result: "too_many" };
   const id = newId();
-  list.push({ ...item, id, attempts: 0, fromBotId: from.id });
+  const executionAudience = issueWorkAudience(from.id, item.toBotId, sourceThreadId, item.executionAudience ?? issueExecutionAudience(from.id, sourceThreadId, id), id, item.notOwnerAudience !== true);
+  if (executionAudience && !validExecutionAudience(executionAudience)) throw new Error("Invalid execution audience");
+  bus.prepareDelegation?.(from.id, target.id, sourceThreadId, item.message, id);
+  list.push({ ...item, ...(executionAudience ? { executionAudience } : {}), id, attempts: 0, fromBotId: from.id });
   pendingDelegations.set(sourceThreadId, list);
   try { savePending(true); } catch (error) {
     if (previous) pendingDelegations.set(sourceThreadId, previous);
@@ -497,10 +564,12 @@ export function queueDelegation(
     throw error;
   }
   const label = `Delegated to @${target.name}${item.reason ? `: ${item.reason}` : ""}`;
-  bus.store.appendMessage(sourceThreadId, {
+  appendDelegationRow(bus, sourceThreadId, from.id, {
     role: "bot",
     kind: "activity",
     tool: { name: label },
+    // A room is several bots in one thread: name who delegated.
+    ...(bus.store.groupByThread(sourceThreadId) ? { from: { botId: from.id, name: from.name, color: from.color } } : {}),
   });
   return { result: "ok", id };
 }
@@ -526,6 +595,9 @@ export function drainDelegations(
     eventId?: string,
     coordination?: CoordinationTrace,
     notOwnerAudience?: boolean,
+    unattended?: boolean,
+    executionAudience?: ExecutionAudience,
+    routineAuthority?: RoutinePeerSource,
   ) => void | Promise<void>,
 ): void {
   if (drainingThreads.has(threadId)) {
@@ -575,7 +647,7 @@ export function drainDelegations(
           result: why.slice(0, 200),
         });
         try {
-          bus.store.appendMessage(threadId, {
+          appendDelegationRow(bus, threadId, item.fromBotId ?? from.id, {
             role: "bot",
             kind: "activity",
             tool: { name: `error: delegation failed: ${why.slice(0, 120)}`, ok: false },
@@ -660,7 +732,7 @@ export function discardDelegations(bus: CommsBus, threadId: string, fromBotId?: 
   // The chip lands in the source conversation, which is a bot's own thread
   // OR a room it spoke in — botByThread alone silenced the room case.
   if (!bus.store.botByThread(threadId) && !bus.store.groupByThread(threadId)) return;
-  bus.store.appendMessage(threadId, {
+  appendDelegationRow(bus, threadId, fromBotId ?? list[0]?.fromBotId, {
     role: "bot",
     kind: "activity",
     tool: { name: `${list.length} queued delegation${list.length > 1 ? "s" : ""} dropped: the turn did not finish`, ok: false },
@@ -684,6 +756,9 @@ async function processOne(
     eventId?: string,
     coordination?: CoordinationTrace,
     notOwnerAudience?: boolean,
+    unattended?: boolean,
+    executionAudience?: ExecutionAudience,
+    routineAuthority?: RoutinePeerSource,
   ) => void | Promise<void>,
 ): Promise<"settled" | "requeued"> {
   let sender = from;
@@ -697,12 +772,17 @@ async function processOne(
       status: "error",
       result: "no such bot",
     });
-    bus.store.appendMessage(sourceThreadId, {
+    appendDelegationRow(bus, sourceThreadId, sender.id, {
       role: "bot",
       kind: "activity",
       tool: { name: `error: delegation to ${item.toBotId} failed: no such bot`, ok: false },
     });
     return "settled";
+  }
+  const shared = roomRequestByKey(database(), `ask:delegation:${item.id}`);
+  if (shared && isSharedWorkRow(shared, bus.store)) {
+    if (isTerminalRoomRequestState(shared.state)) return "settled";
+    drainSharedWork(target.id); return "requeued";
   }
   if (dropIfUnreachable(bus, sender, target, sourceThreadId, item)) {
     return "settled";
@@ -723,7 +803,7 @@ async function processOne(
       status: "busy_gave_up",
       result: `@${target.name} stayed busy through ${MAX_BUSY_ATTEMPTS} retries`,
     });
-    bus.store.appendMessage(sourceThreadId, {
+    appendDelegationRow(bus, sourceThreadId, sender.id, {
       role: "bot",
       kind: "activity",
       tool: { name: `Delegation to @${target.name} canceled: still busy after ${MAX_BUSY_ATTEMPTS} retries`, ok: false },
@@ -734,7 +814,7 @@ async function processOne(
     delete item.waitingOnBusy;
     savePending();
   }
-  const fullAccessWaived = item.fullAccessWaived === true && approvalBus.fullAccessStanding?.(sender.id, sourceThreadId) === true;
+  const fullAccessWaived = item.fullAccessWaived === true && approvalBus.fullAccessStanding?.(sender.id, sourceThreadId, item.routineAuthority) === true;
   if (sender.approvePeerComms && !item.approvalAlreadyGranted && !fullAccessWaived) {
     const verdict = await requestPeerApproval(
       approvalBus,
@@ -743,6 +823,8 @@ async function processOne(
       item.message,
       "delegate_bot",
       sourceThreadId,
+      undefined,
+      item.routineAuthority,
     );
     if (verdict !== "allow") {
       // Only the user's own no is "denied"; an expired or cancelled card
@@ -757,7 +839,7 @@ async function processOne(
         status: denied ? "denied" : verdict,
         result: denied ? "the user denied this handoff" : failure.error,
       });
-      bus.store.appendMessage(sourceThreadId, {
+      appendDelegationRow(bus, sourceThreadId, sender.id, {
         role: "bot",
         kind: "activity",
         tool: { name: denied ? `Delegation to @${target.name} denied by user` : `Delegation to @${target.name}: ${failure.error}`, ok: false },
@@ -814,7 +896,7 @@ async function processOne(
         status: "busy_gave_up",
         result: `@${current.name} stayed busy through ${MAX_BUSY_ATTEMPTS} retries`,
       });
-      bus.store.appendMessage(sourceThreadId, {
+      appendDelegationRow(bus, sourceThreadId, sender.id, {
         role: "bot",
         kind: "activity",
         tool: { name: `Delegation to @${current.name} canceled: still busy after ${MAX_BUSY_ATTEMPTS} retries`, ok: false },
@@ -827,11 +909,11 @@ async function processOne(
   // Capacity waits are not failed attempts against a busy teammate. The
   // server redrains pending queues when an active handoff releases its slot.
   if (bus.canDispatch && !bus.canDispatch()) return "requeued";
-  const channel = getOrCreateChannel(bus.store, sender, target,sourceThreadId);
-  mirrorExchange(bus, sender, target, item.message, channel, sourceThreadId);
+  const channel = getOrCreateChannel(bus.store, sender, target,sourceThreadId,item.executionAudience);
+  mirrorExchange(bus, sender, target, item.message, channel, sourceThreadId, item.executionAudience);
   const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
   const prefixed = `[Delegated by @${sender.name}, another bot in this Murage workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;
-  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id, sender.id, item.eventId, item.coordination, item.notOwnerAudience === true);
+  await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id, sender.id, item.eventId, item.coordination, item.notOwnerAudience === true, item.unattended === true, item.executionAudience, ...(item.routineAuthority ? [item.routineAuthority] as const : [] as const));
   return "settled";
 }
 
@@ -857,7 +939,14 @@ function dropIfUnreachable(
   sourceThreadId: string,
   item: PendingDelegationItem,
 ): boolean {
-  if (canReach(sender, target)) return false;
+  // the same reach the handoff was queued under (message-allow.ts)
+  // project reach only for a handoff the owner's audience queued
+  const row = roomRequestByKey(database(), `ask:delegation:${item.id}`);
+  const targetThread = row ? row.targetThreadId ?? audienceTask(bus.store, target, threadHumanPrincipal(sourceThreadId), item.executionAudience ?? null)?.threadId : undefined;
+  const allowed = row && targetThread
+    ? authorizeWork({ edge: "dispatch", requestId: row.id, targetBotId: target.id, targetThreadId: targetThread, tag: item.executionAudience ?? null, kind: "delegation" })
+    : authorizeWork({ edge: "peer", requesterBotId: sender.id, requesterThreadId: sourceThreadId, targetBotId: target.id, verb: "delegate", tag: item.executionAudience ?? null, ownerAudience: !item.notOwnerAudience, unattended: item.unattended === true });
+  if (allowed.ok || allowed.retry === "queue") return false;
   const result = `@${sender.name} and @${target.name} now belong to different sections`;
   recordDelegationReceipt({
     id: item.id,
@@ -867,7 +956,7 @@ function dropIfUnreachable(
     status: "dropped",
     result,
   });
-  bus.store.appendMessage(sourceThreadId, {
+  appendDelegationRow(bus, sourceThreadId, item.fromBotId, {
     role: "bot",
     kind: "activity",
     tool: { name: `Delegation to @${target.name} canceled: bots now belong to different sections`, ok: false },

@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of blended family navigator or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "relationships beginner-friendly quick-reference testing planning game-design parenting cleaning"
   category: "family-relationships"

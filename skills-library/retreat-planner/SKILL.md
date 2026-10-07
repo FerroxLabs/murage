@@ -4,7 +4,7 @@ description: |
   Complete guide to planning corporate, wellness, and creative retreats covering venue selection, agenda balance between structured and free time, catering logistics, team building activities, transportation and logistics, budgeting, and outcomes measurement for different retreat types. Use when the user asks about retreat planner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "event-planning planning guide"
   category: "travel-experiences"

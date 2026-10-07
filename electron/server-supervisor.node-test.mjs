@@ -28,9 +28,25 @@ test("the crash that cost the owner an hour now costs a blink", () => {
   assert.equal(decision.delayMs, RESTART_DELAYS_MS[0]);
 });
 
-test("a clean exit is a decision and is never argued with", () => {
+test("an exit nobody asked for restarts even when the code is 0", () => {
+  // 2026-10-05: an outside SIGTERM to the helpers made the server exit 0 and
+  // the app sat black for 2.5 hours on "clean-exit".
   const supervisor = createServerSupervisor({ now: at().now });
-  assert.deepEqual(supervisor.decide({ code: 0 }), { action: "stay-down", reason: "clean-exit" });
+  const decision = supervisor.decide({ code: 0 });
+  assert.equal(decision.action, "restart");
+  assert.equal(decision.delayMs, RESTART_DELAYS_MS[0]);
+});
+
+test("repeated unasked clean exits still end in give-up", () => {
+  const clock = at();
+  const supervisor = createServerSupervisor({ now: clock.now });
+  for (let i = 0; i < MAX_CRASHES_IN_WINDOW; i++) { assert.equal(supervisor.decide({ code: 0 }).action, "restart"); clock.advance(1_000); }
+  assert.equal(supervisor.decide({ code: 0 }).action, "give-up");
+});
+
+test("an asked-for stop stays down even with code 0", () => {
+  const supervisor = createServerSupervisor({ now: at().now });
+  assert.deepEqual(supervisor.decide({ code: 0, intentional: true }), { action: "stay-down", reason: "intentional" });
 });
 
 test("an intentional shutdown stays down even when the code is not zero", () => {

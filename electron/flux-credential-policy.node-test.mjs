@@ -74,5 +74,7 @@ test("select and consolidate never make another provider's key the Flux key", ()
   assert.throws(() => change(saved, { action: "consolidate" }), /different provider/);
   const legacy = { ...state([], ""), fileWorkspaceKey: "xai-fixture-key-private-0000" };
   assert.throws(() => change(legacy, { action: "select", connectionId: "legacy-flux-file" }), /different provider/);
-  assert.equal(change(state([row("opaque", "opaque-legacy-flux-key")]), { action: "select", connectionId: "opaque" }).workspaceKey, "opaque-legacy-flux-key");
+  // Not an sk-flux- value: never selectable as the Flux key (2026-10-01 ingress).
+  assert.throws(() => change(state([row("opaque", "opaque-legacy-flux-key")]), { action: "select", connectionId: "opaque" }), /not a Flux Router key/);
+  assert.throws(() => change(state([row("opaque", "opaque-legacy-flux-key")]), { action: "consolidate" }), /not a Flux Router key/);
 });

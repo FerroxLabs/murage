@@ -6,7 +6,7 @@ description: |
   Do NOT use for lawn care issues (use lawn-care-schedule), vegetable garden planning (use vegetable-garden-planning), or any medical or health diagnosis of humans or animals.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "gardening troubleshooting planning"
   category: "home-household"

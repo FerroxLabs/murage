@@ -35,9 +35,21 @@ export const ANNOUNCEMENT_ACTIONS = [
   "settings-house-rules",
   "settings-backups",
   "check-for-updates",
+  // 0.1.62. A build before it rejects a notice that names one of these, so
+  // publish them only once 0.1.62 has reached most installs.
+  "settings-images",
+  "settings-web-search",
+  "settings-voice",
+  "settings-help",
 ] as const;
 
+/** Release switches the signed feed can turn on without a desktop release.
+ *  murage-for-chrome-listed: the Chrome Web Store listing is public, so the
+ *  app may link it (plan 2.6). Off (absent) until then. */
+export const ANNOUNCEMENT_FLAGS = ["murage-for-chrome-listed"] as const;
+
 export type AnnouncementKind = (typeof ANNOUNCEMENT_KINDS)[number];
+export type AnnouncementFlag = (typeof ANNOUNCEMENT_FLAGS)[number];
 export type AnnouncementLayout = (typeof ANNOUNCEMENT_LAYOUTS)[number];
 export type AnnouncementAccent = (typeof ANNOUNCEMENT_ACCENTS)[number];
 export type AnnouncementPlatform = (typeof ANNOUNCEMENT_PLATFORMS)[number];
@@ -48,6 +60,7 @@ export const ANNOUNCEMENT_LIMITS = {
   signatureBytes: 1024,
   imageBytes: 1024 * 1024,
   items: 20,
+  flags: 16,
   id: 64,
   title: 60,
   body: 400,
@@ -80,6 +93,8 @@ export interface AnnouncementFeed {
   version: 1;
   issuedAt: string;
   items: Announcement[];
+  /** Release switches that are on; absent when none are. */
+  flags?: AnnouncementFlag[];
 }
 
 export interface AnnouncementRules {
@@ -318,7 +333,7 @@ export function checkAnnouncementFeed(input: string | Uint8Array, rules: Announc
   if (!validAnnouncementDate(parsed.issuedAt)) return { ok: false, errors: ["issuedAt must be a date and time"] };
   if (!Array.isArray(parsed.items)) return { ok: false, errors: ["items must be a list"] };
   if (parsed.items.length > ANNOUNCEMENT_LIMITS.items) return { ok: false, errors: [`at most ${ANNOUNCEMENT_LIMITS.items} notices`] };
-  if (rules.strict) for (const key of Object.keys(parsed)) if (!["version", "issuedAt", "items"].includes(key)) return { ok: false, errors: [`unknown field "${key}"`] };
+  if (rules.strict) for (const key of Object.keys(parsed)) if (!["version", "issuedAt", "items", "flags"].includes(key)) return { ok: false, errors: [`unknown field "${key}"`] };
 
   const items: Announcement[] = [];
   const warnings: string[] = [];
@@ -332,8 +347,21 @@ export function checkAnnouncementFeed(input: string | Uint8Array, rules: Announc
     warnings.push(...checked.warnings);
     items.push(checked.value);
   }
+  // Flags: a flag the app does not know is left off, never guessed at.
+  let flags: AnnouncementFlag[] | undefined;
+  if (parsed.flags !== undefined) {
+    if (!Array.isArray(parsed.flags) || parsed.flags.length > ANNOUNCEMENT_LIMITS.flags || parsed.flags.some((flag) => typeof flag !== "string")) {
+      (rules.strict ? errors : warnings).push(`flags must be a list of at most ${ANNOUNCEMENT_LIMITS.flags} names`);
+    } else {
+      flags = [];
+      for (const flag of parsed.flags as string[]) {
+        if (!oneOf(ANNOUNCEMENT_FLAGS, flag)) { (rules.strict ? errors : warnings).push(`unknown flag "${flag}"`); continue; }
+        if (!flags.includes(flag)) flags.push(flag);
+      }
+    }
+  }
   if (errors.length) return { ok: false, errors };
-  return { ok: true, value: { version: 1, issuedAt: parsed.issuedAt, items }, warnings };
+  return { ok: true, value: { version: 1, issuedAt: parsed.issuedAt, items, ...(flags ? { flags } : {}) }, warnings };
 }
 
 // ── Who sees what ──────────────────────────────────────────────────────────

@@ -41,7 +41,7 @@ export function observeDockHeight(
 /** Pad the transcript so rest-at-bottom leaves one inter-bubble gap of
  * black above the docked composer, whose real height is measured.
  *
- * `ref` is a callback ref, not a RefObject. A project room opens on its
+ * `ref` is a callback ref, not a RefObject. A project room can open on its
  * Overview tab, where the dock is not mounted; with a RefObject the effect
  * ran once against `null` and never observed the dock that mounted on the
  * Chat tab, so the transcript kept the one-line fallback pad and a grown

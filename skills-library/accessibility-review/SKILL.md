@@ -6,7 +6,7 @@ description: |
   Do NOT use for general UX audits (use ux-audit), visual hierarchy critique (use visual-hierarchy-review), or responsive layout testing (use responsive-layout-design).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "accessibility design checklist"
   category: "design-creative"

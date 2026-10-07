@@ -185,3 +185,17 @@ test("an answer that arrives while the pid is still unknown is a foreign owner",
   });
   assert.equal(outcome.outcome, "foreign-owner");
 });
+
+test("polls a booting child every 100 ms at most, so a ready port is noticed within a tenth of a second", async () => {
+  const sleeps = [];
+  let calls = 0;
+  const outcome = await pollServerIdentity({
+    port: 8799,
+    pid: () => 4242,
+    bootTimeoutMs: 5_000,
+    sleep: async (ms) => { sleeps.push(ms); },
+    fetchImpl: async () => { if (++calls < 3) throw new Error("ECONNREFUSED"); return okFetch()(); },
+  });
+  assert.equal(outcome.outcome, "ready");
+  assert.deepEqual(sleeps.map((ms) => ms <= 100), [true, true]);
+});

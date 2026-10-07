@@ -4,7 +4,7 @@ description: |
   Complete research-to-manuscript workflow for non-fiction books, covering topic validation, audience definition, competitive analysis, research methodology, outline construction, writing schedule, manuscript structure, and citation management. Use when the user asks about non fiction author or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing research"
   category: "writing"

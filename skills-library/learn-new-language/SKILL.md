@@ -18,7 +18,7 @@ trigger_phrases: >-
   language language learning plan I want to speak another language teach me a
   foreign language
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: language-learning study-skills step-by-step planning
   category: life-event

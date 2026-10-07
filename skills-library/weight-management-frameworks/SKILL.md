@@ -6,7 +6,7 @@ description: |
   Do NOT use for eating disorder management, clinical weight management, specific diet prescriptions, supplement recommendations, or body dysmorphia concerns.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "nutrition guide strategy"
   category: "health-wellness"

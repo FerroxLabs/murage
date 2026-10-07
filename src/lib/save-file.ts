@@ -14,6 +14,7 @@
 //     because each piece is a string held in two processes at once;
 //   - a file on another site is never a native download: it opens in the
 //     system browser (`saveSource`).
+import { desktopResourceUrl } from "./live-events";
 import { callNative, nativeAvailable } from "./native-shell";
 
 export const NATIVE_SAVE_CHUNK_BYTES = 1024 * 1024;
@@ -33,7 +34,8 @@ const save = (request: NativeSaveRequest) => callNative("saveFile", request);
 /** The browser half: a temporary anchor, always removed. */
 export function clickDownload(url: string, filename: string): void {
   const link = document.createElement("a");
-  link.href = url;
+  // An /api route cannot send headers from an anchor: the proof rides in the query.
+  link.href = desktopResourceUrl(url);
   link.download = filename;
   link.rel = "noopener";
   link.referrerPolicy = "no-referrer";

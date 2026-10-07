@@ -1,3 +1,4 @@
+import { managedOutputWorkspace } from "./execution-audience.ts";
 // Automatic publication of trusted outputs.
 //
 // R3-T3 (U-02): a Murage-managed dedicated task workspace gets an `outputs/`
@@ -14,6 +15,7 @@
 // retained bytes. Recovery never re-dispatches a provider request.
 //
 // Contract: shared/output-publication.ts and docs/plans/0152-CONTRACTS.md.
+import { murageTool } from "./murage-tool-surface.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
@@ -29,7 +31,6 @@ import { GENERATED_IMAGE_MAX_BYTES, IMAGE_MAX_BYTES, saveImage, type SavedAttach
 import type { RuntimeEvent } from "./contracts.ts";
 import type { Store } from "./store.ts";
 import { turnSucceeded } from "./turn-outcome.ts";
-import { murageToolName, type ToolCallStyle } from "../shared/murage-tool-names.ts";
 
 export type TerminalTurnEvent = Extract<RuntimeEvent, { type: "turn.completed" }>;
 
@@ -67,15 +68,14 @@ export interface OutputPublisher {
 }
 
 /** Host facts only. Prose directs creation but never authorizes publication. */
-/** `toolCallStyle`: how this turn's engine calls Murage's tools (shared/murage-tool-names.ts). */
-export function outputDestinationInstructions(context: Pick<DispatchOutputContext, "workspaceRoot" | "managed"> | undefined, snapshotAdmitted: boolean, canRegister: boolean, toolCallStyle?: ToolCallStyle): string {
+export function outputDestinationInstructions(context: Pick<DispatchOutputContext, "workspaceRoot" | "managed"> | undefined, snapshotAdmitted: boolean, canRegister: boolean): string {
   if (!context?.workspaceRoot) return "";
   const destination = context.managed ? join(context.workspaceRoot, OUTPUT_NAMESPACE) : context.workspaceRoot;
   return `\n\nFile deliverables for this turn: save completed HTML, Markdown, text and other requested files in this server-selected folder, even when the request does not name a folder. This replaces earlier scratch-folder advice.\nMurage file destination: ${JSON.stringify(destination)}\n`
     + (context.managed && snapshotAdmitted
       ? "Create real files there. After successful completion Murage checks new or changed files for publication to Files and conversation cards; writing a path in prose is not proof that a file was saved."
       : canRegister
-        ? `After creating each file, call ${murageToolName("register_artifact", toolCallStyle)} with its path relative to the file workspace; wait for its verified result before saying it is saved to Files.`
+        ? `After creating each file, call ${murageTool("register_artifact")} with its path relative to the file workspace; wait for its verified result before saying it is saved to Files.`
         : "Automatic publication is unavailable for this turn and no registration tool is mounted. Report the actual file location without claiming a Files card was created.");
 }
 
@@ -421,10 +421,10 @@ export interface ImageOutputDeps { db: DatabaseSync; dataDir: string; store: Sto
 const inside = (root: string, path: string) => { const tail = relative(root, path); return tail !== ".." && !tail.startsWith(`..${sep}`) && !isAbsolute(tail); };
 const imageIdentityPattern = /^[\w-]{1,160}$/;
 
-/** DATA_DIR/workspaces/<bot>/generated-images/<thread>, without touching disk.
+/** <partitionRoot>/generated-images/<thread>, without touching disk.
  * Files authorizes saved rows under it with a `managedOutput` scope. */
 export function managedImageOutputPath(dataDir: string, botId: string, threadId: string): string {
-  return join(dataDir, "workspaces", botId, "generated-images", threadId);
+  return join(managedOutputWorkspace(dataDir, botId, threadId), "generated-images", threadId);
 }
 
 /** Creates (when asked) and verifies the private per-conversation image root:
@@ -433,7 +433,7 @@ export function managedImageOutputRoot(dataDir: string, botId: string, threadId:
   if (!imageIdentityPattern.test(botId) || !imageIdentityPattern.test(threadId)) throw Object.assign(new Error("Invalid image workspace."), { status: 403 });
   const root = realpathSync.native(dataDir);
   let directory = root;
-  for (const part of ["workspaces", botId, "generated-images", threadId]) {
+  for (const part of relative(dataDir, managedImageOutputPath(dataDir, botId, threadId)).split(sep)) {
     directory = join(directory, part);
     if (create) { try { mkdirSync(directory, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; } }
     const stat = lstatSync(directory);

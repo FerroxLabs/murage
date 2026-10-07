@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Product copy rules, held for every string a person can read: no em dash,
-// never "safe", "safely" or "safety", and never the connection service's
+// never "safe", "safely", "safety" or "unsafe", and never the connection service's
 // name. The Linux customer pass for 0.1.60 found each of them on screen
 // after a string-by-string fix, so this scans the source instead.
 //
@@ -13,21 +13,31 @@
 // mistaken for one. Tests and end-to-end specs describe copy; they are not
 // copy. Type positions, import paths, class names and console output never
 // reach a person.
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, sep } from "node:path";
 import ts from "typescript";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
 
-// fileURLToPath, not .pathname: on Windows the pathname is "/D:/..." and
-// join() turns it into "D:\D:\...".
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-/** A repo-relative path with "/" on every OS: the exception lists below name files that way. */
-const rel = (file: string): string => file.slice(ROOT.length).replaceAll("\\", "/");
+/** A file's repository path with "/" on every OS, as the allowlists spell it. */
+const rel = (file: string) => file.slice(ROOT.length).split(sep).join("/");
 
 type Rule = { name: string; pattern: RegExp };
 const EM_DASH: Rule = { name: "an em dash", pattern: /—/ };
-const SAFE: Rule = { name: "safe, safely or safety", pattern: /\b[Ss]af(?:e|ely|ety)\b(?!-area)/ };
+const SAFE_WORDS = /\bsaf(?:e|ely|ety)\b(?!-area)/i;
+// 0.1.61 G5: "unsafe" is held too. A lower-case code with no spaces (a status
+// value such as "unsafe" or a reason code such as "unsafe-driver-owner") is
+// compared, never read, and a quoted CSP keyword ('unsafe-inline',
+// 'wasm-unsafe-eval') goes to a browser; everything else, "unsafe-looking"
+// included, is a sentence.
+const UNSAFE_WORD = /\bunsafe\b/i;
+const CSP_KEYWORD = /'(?:wasm-)?unsafe-[a-z-]+'/g;
+const SAFE: Rule = { name: "safe, safely, safety or unsafe", pattern: { test: (text: string) => SAFE_WORDS.test(text) || (!/^[a-z0-9._-]+$/.test(text.trim()) && UNSAFE_WORD.test(text.replace(CSP_KEYWORD, ""))) } as RegExp };
+// On-screen text (JSX) has no codes: any "unsafe" there is held.
+const SHOWN_SAFE: Rule = { name: "safe, safely, safety or unsafe", pattern: { test: (text: string) => SAFE_WORDS.test(text) || UNSAFE_WORD.test(text) } as RegExp };
 const SERVICE: Rule = { name: "the connection service's name", pattern: /\bComposio\b/ };
 const RULES = [EM_DASH, SAFE, SERVICE];
 
@@ -77,19 +87,35 @@ function isQuiet(node: ts.Node, terminal = false): boolean {
 }
 
 /** Every piece of text in a file a person could read, with its line. */
-export function copyStrings(file: string, source: string, { terminal = false }: { terminal?: boolean } = {}): Array<{ line: number; end: number; text: string }> {
+export function copyStrings(file: string, source: string, { terminal = false }: { terminal?: boolean } = {}): Array<{ line: number; end: number; text: string; shown?: boolean }> {
   const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : /\.(?:mjs|cjs|js)$/.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
-  const out: Array<{ line: number; end: number; text: string }> = [];
+  const out: Array<{ line: number; end: number; text: string; shown?: boolean }> = [];
   const lineOf = (at: number) => sf.getLineAndCharacterOfPosition(at).line + 1;
-  const push = (node: ts.Node, text: string) => out.push({ line: lineOf(node.getStart(sf)), end: lineOf(node.getEnd()), text });
+  // `shown`: JSX text or a JSX attribute's value, on screen as written, so a
+  // single lower-case word there is a label, never a code.
+  const push = (node: ts.Node, text: string, shown = false) => out.push({ line: lineOf(node.getStart(sf)), end: lineOf(node.getEnd()), text, ...(shown ? { shown } : {}) });
+  // A literal is on screen when it is a JSX attribute's value or expression,
+  // or a branch of a condition (or `a && b`) that is one; never a condition,
+  // a comparison operand or a call's argument.
+  const onScreen = (node: ts.Node): boolean => {
+    let at = node;
+    for (;;) {
+      const parent = at.parent;
+      if (ts.isJsxAttribute(parent) || ts.isJsxExpression(parent)) return true;
+      if (ts.isParenthesizedExpression(parent)) at = parent;
+      else if (ts.isConditionalExpression(parent) && parent.condition !== at) at = parent;
+      else if (ts.isBinaryExpression(parent) && parent.right === at && [ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken].includes(parent.operatorToken.kind)) at = parent;
+      else return false;
+    }
+  };
   const visit = (node: ts.Node) => {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-      if (!isQuiet(node, terminal)) push(node, node.text);
+      if (!isQuiet(node, terminal)) push(node, node.text, onScreen(node));
     } else if (ts.isTemplateExpression(node)) {
-      if (!isQuiet(node, terminal)) push(node, [node.head.text, ...node.templateSpans.map(span => span.literal.text)].join(" "));
+      if (!isQuiet(node, terminal)) push(node, [node.head.text, ...node.templateSpans.map(span => span.literal.text)].join(" "), onScreen(node));
     } else if (ts.isJsxText(node)) {
-      if (node.text.trim()) push(node, node.text);
+      if (node.text.trim()) push(node, node.text, true);
     }
     ts.forEachChild(node, visit);
   };
@@ -102,19 +128,19 @@ function hits(files: string[], rules: Rule[], allow: Record<string, string> = {}
   for (const file of files) {
     const label = rel(file);
     if (allow[label]) continue;
-    for (const { line, text: raw } of copyStrings(file, readFileSync(file, "utf8"), options)) {
+    for (const { line, text: raw, shown } of copyStrings(file, readFileSync(file, "utf8"), options)) {
       // A whole page kept in a template: only its visible text is read, not
       // its inline script or style.
       const text = /^\s*<!doctype html>/i.test(raw) ? htmlText(raw).join(" ") : raw;
       if (PENDING.some(entry => entry.file === label && text === entry.text)) continue;
       if (MODEL_FACING_TEXT.some(entry => entry.file === label && text.startsWith(entry.starts))) continue;
-      for (const rule of rules) if (rule.pattern.test(text)) found.push(`${label}:${line}: ${rule.name}: ${text.trim().slice(0, 120)}`);
+      for (const rule of rules) if ((shown && rule === SAFE ? SHOWN_SAFE : rule).pattern.test(text)) found.push(`${label}:${line}: ${rule.name}: ${text.trim().slice(0, 120)}`);
     }
   }
   return found;
 }
 
-function catalogueHits(file: string, rules: Rule[], allowKeys: Set<string>): string[] {
+function catalogueHits(file: string, rules: Rule[], allowKeys: Set<string> = new Set()): string[] {
   const catalogue = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
   const found: string[] = [];
   for (const [key, value] of Object.entries(catalogue)) {
@@ -124,9 +150,20 @@ function catalogueHits(file: string, rules: Rule[], allowKeys: Set<string>): str
   return found;
 }
 
-// A person who brings their own key for connected apps has to be told which
-// service the key comes from; that is the one place the name is the label.
-const OWN_KEY_COPY = new Set(["connectedApps.lock.ownKey", "connectedApps.flux.ctaByok", "connectedApps.flux.notInBuild"]);
+/** Every message in an extension's `_locales/<lang>/messages.json` that breaks a rule. Descriptions are notes for translators, never shown, so they are not scanned. */
+export function extensionMessageHits(dir: string, rules: Rule[]): string[] {
+  const found: string[] = [];
+  const base = join(dir, "_locales");
+  if (!existsSync(base)) return found;
+  for (const lang of readdirSync(base).sort()) {
+    const file = join(base, lang, "messages.json");
+    if (!existsSync(file)) continue;
+    const catalogue = JSON.parse(readFileSync(file, "utf8")) as Record<string, { message?: string }>;
+    for (const [key, entry] of Object.entries(catalogue))
+      for (const rule of rules) if (typeof entry?.message === "string" && rule.pattern.test(entry.message)) found.push(`${lang}/messages.json: ${key}: ${rule.name}`);
+  }
+  return found;
+}
 
 // Copy another lane owns and is changing now. Each entry is exact, so the
 // string it names is still caught the moment it changes, and each one goes
@@ -141,6 +178,7 @@ const MODEL_FACING: Record<string, string> = {
   "shared/help-index.ts": "generated from apps/docs; its copy is fixed at the docs source",
   "shared/announcements.ts": "the announcement copy check names the words it refuses",
   "shared/intake-matches.ts": "keywords matched against what the owner types",
+  "shared/public-suffix-snapshot.ts": "generated Public Suffix List data (domain names such as safety.aero), matched against hostnames and never shown",
   "server/bot-shapes.ts": "a bot's system prompt",
   "server/section-context.ts": "a bot's system prompt",
   "server/installed-playbooks.ts": "a bot's system prompt",
@@ -224,6 +262,8 @@ const PRICE_KNOWN: Array<{ file: string; text: string; why: string }> = [
   { file: "src/lib/provider-model-picker.ts", text: "compatible chat model  · prices per million tokens", why: "model catalogue pricing column" },
   { file: "src/lib/usage.ts", text: "equivalent: on your subscription, not billed", why: "Usage page cost column caption, left for the owner in 0.1.60 fix3" },
   { file: "src/lib/usage.ts", text: "billed to your API key", why: "Usage page cost column caption, left for the owner in 0.1.60 fix3" },
+  { file: "src/components/BrowserActivityLog.tsx", text: "free", why: "the activity log's internal decision key `free` means no approval was needed; the owner sees \"no approval needed\", never a price" },
+  { file: "src/components/BrowserActivityLog.tsx", text: "browserExt.decision.free", why: "the activity log's internal decision key `free` means no approval was needed; the owner sees \"no approval needed\", never a price" },
 ];
 const PRICE_KNOWN_KEYS = new Set([
   "providerError.payment.summary", // names HTTP 402; ProviderErrorCard's tests pin it
@@ -235,6 +275,20 @@ describe("product copy rules", () => {
     const found: string[] = [];
     for (const file of htmlFiles(join(ROOT, "electron"))) for (const text of htmlText(readFileSync(file, "utf8")))
       for (const rule of RULES) if (rule.pattern.test(text)) found.push(`${rel(file)}: ${rule.name}: ${text.slice(0, 120)}`);
+    expect(found).toEqual([]);
+  });
+
+  // 0.1.61 G5: Murage for Chrome's side panel and service worker are read by
+  // the person too. The extension arrives with its own lane; until then there
+  // is nothing to scan.
+  it("Murage for Chrome shows no em dash, no safe and never the connection service's name", () => {
+    const dir = join(ROOT, "extensions/murage-browser");
+    if (!existsSync(dir)) return;
+    const ignore = (file: string) => file.includes("/store-assets/");
+    expect(hits(walk(dir).filter(file => !ignore(file)), RULES)).toEqual([]);
+    const found: string[] = [];
+    for (const file of htmlFiles(dir).filter(file => !ignore(file))) for (const text of htmlText(readFileSync(file, "utf8")))
+      for (const rule of RULES) if (rule.pattern.test(text)) found.push(`${file.slice(ROOT.length)}: ${rule.name}: ${text.slice(0, 120)}`);
     expect(found).toEqual([]);
   });
 
@@ -258,10 +312,60 @@ describe("product copy rules", () => {
     expect(hits(walk(join(ROOT, "src")), RULES)).toEqual([]);
   });
 
+  it("the browser extension follows the same visible copy rules", () => {
+    const files: string[] = [];
+    const collect = (directory: string) => {
+      for (const entry of readdirSync(directory)) {
+        const full = join(directory, entry);
+        if (statSync(full).isDirectory()) collect(full);
+        else if (/\.(?:mjs|js|ts|html|json)$/.test(entry)) files.push(full);
+      }
+    };
+    collect(join(ROOT, "extensions/murage-browser"));
+    const scripts = files.filter(file => /\.(?:mjs|js|ts)$/.test(file));
+    const markupHits = files.filter(file => /\.(?:html|json)$/.test(file)).flatMap(file => {
+      const source = readFileSync(file, "utf8").replace(/<!--[\s\S]*?-->/g, "");
+      return RULES.filter(rule => rule.pattern.test(source)).map(rule => `${file.slice(ROOT.length)}: ${rule.name}`);
+    });
+    expect([...hits(scripts, RULES), ...markupHits]).toEqual([]);
+  });
+
+  // 0.1.62 T09: Murage for Chrome's own catalogues (_locales), side panel and
+  // page overlay are read by the person: same rules, price talk included.
+  it("the extension's message catalogues, side panel and overlay follow the copy rules, price talk included", () => {
+    const dir = join(ROOT, "extensions/murage-browser");
+    expect(extensionMessageHits(dir, [...RULES, PRICE]).length).toBe(0);
+    expect(extensionMessageHits(dir, [...RULES, PRICE])).toEqual([]);
+    const shown = [join(dir, "presence.mjs"), ...readdirSync(join(dir, "sidepanel")).filter(name => /\.(?:js|mjs)$/.test(name)).map(name => join(dir, "sidepanel", name))];
+    expect(hits(shown, [PRICE])).toEqual([]);
+    const found: string[] = [];
+    for (const text of htmlText(readFileSync(join(dir, "sidepanel/index.html"), "utf8"))) if (PRICE.pattern.test(text)) found.push(text);
+    expect(found).toEqual([]);
+  });
+
+  it("the extension catalogue scan reaches a bad string in a _locales fixture", () => {
+    const root = mkdtempSync(join(tmpdir(), "murage-ext-copy-"));
+    try {
+      mkdirSync(join(root, "_locales/en"), { recursive: true });
+      mkdirSync(join(root, "_locales/de"), { recursive: true });
+      writeFileSync(join(root, "_locales/en/messages.json"), JSON.stringify({ ok: { message: "Pause" }, dash: { message: "Working — now" }, secure: { message: "Keep it safe" }, svc: { message: "Connect with Composio" }, cost: { message: "Only a low price" }, nested: { description: "ignored note", message: "Fine" } }));
+      writeFileSync(join(root, "_locales/de/messages.json"), JSON.stringify({ dash: { message: "Arbeitet \u2014 jetzt" } }));
+      const found = extensionMessageHits(root, [...RULES, PRICE]);
+      expect(found.length).toBe(5);
+      expect(found.join("\n")).toMatch(/en\/messages\.json: dash: an em dash/);
+      expect(found.join("\n")).toMatch(/en\/messages\.json: secure: safe, safely/);
+      expect(found.join("\n")).toMatch(/en\/messages\.json: svc: the connection service/);
+      expect(found.join("\n")).toMatch(/en\/messages\.json: cost: price talk/);
+      expect(found.join("\n")).toMatch(/de\/messages\.json: dash: an em dash/);
+    } finally {
+      safeWipeSync(root);
+    }
+  });
+
   it("no translated catalogue does either", () => {
     const dir = join(ROOT, "src/locales");
     const found = readdirSync(dir).filter(name => name.endsWith(".json"))
-      .flatMap(name => catalogueHits(join(dir, name), RULES, OWN_KEY_COPY));
+      .flatMap(name => catalogueHits(join(dir, name), RULES));
     expect(found).toEqual([]);
   });
 
@@ -271,7 +375,7 @@ describe("product copy rules", () => {
   // the installer is a command-line tool, so its console output is copy.
   it("the phone's door and the headless installer show no em dash and no safe", () => {
     expect(hits(walk(join(ROOT, "companion/src")), [EM_DASH, SAFE], COMPANION_NOT_COPY)).toEqual([]);
-    expect(hits(walk(join(ROOT, "installer")).filter(file => !file.includes("/test/")), [EM_DASH, SAFE], {}, { terminal: true })).toEqual([]);
+    expect(hits(walk(join(ROOT, "installer")).filter(file => !rel(file).includes("/test/")), [EM_DASH, SAFE], {}, { terminal: true })).toEqual([]);
   });
 
   it("the server hands the window no em dash and no safe", () => {
@@ -307,8 +411,23 @@ describe("product copy rules", () => {
     for (const line of fallbacks) expect(line, line.trim()).toContain("errorPreview(last.tool) ?? last.tool.name");
   });
 
+  it("the safe rule holds unsafe in a sentence, and not a status code or a CSP keyword", () => {
+    for (const text of ["The file location is unsafe or changed.", "Unsafe package bot addition", "unsafe support file", "The companion origin directory is unsafe", "Keep it safe", "This is an unsafe-looking file.", "This file is UNSAFE.", "This is SAFE."])
+      expect(SAFE.pattern.test(text), text).toBe(true);
+    for (const text of ["unsafe", "unsafe-driver-owner", "style-src 'self' 'unsafe-inline'", "pb-[env(safe-area-inset-bottom)]"])
+      expect(SAFE.pattern.test(text), text).toBe(false);
+  });
+
   it("reads literals and JSX text, never comments", () => {
     const found = copyStrings("x.tsx", '// a comment — here\nconst a = "one — two";\nconst b = <p className="pb-[env(safe-area-inset-bottom)]">Keep it safe</p>;');
     expect(found.map(entry => entry.text.trim())).toEqual(["one — two", "Keep it safe"]);
+    // audit round 3 (Astra r2 L6): a one-word label on screen is not a code
+    expect(copyStrings("y.tsx", 'const a = <p title="unsafe">unsafe</p>; const b = "unsafe";').map(entry => entry.shown ?? false)).toEqual([true, true, false]);
+    expect(copyStrings("z.tsx", 'const a = <p title={"unsafe"}>{"unsafe"}</p>;').map(entry => entry.shown ?? false)).toEqual([true, true]);
+    // audit round 4 (Astra r4 L2): a branch of a condition inside JSX is on screen too; a call's argument is not (a compared code is not read at all)
+    expect(copyStrings("w.tsx", 'const a = <p title={on ? "unsafe" : ("ready")}>{on && "unsafe"}{mode === "unsafe" ? label("unsafe") : null}</p>;').map(entry => [entry.text, entry.shown ?? false]))
+      .toEqual([["unsafe", true], ["ready", true], ["unsafe", true], ["unsafe", false]]);
+    // audit round 5 (Kimi L1): a template shown in JSX is on screen too
+    expect(copyStrings("t.tsx", 'const a = <p>{`unsafe ${kind}`}</p>; const b = `unsafe ${kind}`;').map(entry => entry.shown ?? false)).toEqual([true, false]);
   });
 });

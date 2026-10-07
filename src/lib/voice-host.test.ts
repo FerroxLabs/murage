@@ -23,3 +23,23 @@ describe("the opening of a long answer, when it cannot be told briefly", () => {
     expect(openingOf("## Heading\n\n- one\n- two\n\nPlain words here.")).toBe("Plain words here. The rest is in the chat.");
   });
 });
+
+describe("the host request body", () => {
+  it("a 1:1 turn sends no groupId key at all, and a room turn sends it", async () => {
+    const { vi } = await import("vitest");
+    const { hostTurn } = await import("./voice-host");
+    const fetchMock = vi.fn(async () => new Response(null, { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await hostTurn("moss", { text: "hi", history: [] }, () => undefined);
+      await hostTurn("moss", { text: "hi", history: [], groupId: "g1", roomHeard: [] }, () => undefined);
+      const calls = fetchMock.mock.calls as unknown as Array<[string, { body: string }]>;
+      const one = JSON.parse(calls[0][1].body);
+      expect("groupId" in one).toBe(false);
+      expect("roomHeard" in one).toBe(false);
+      expect(JSON.parse(calls[1][1].body).groupId).toBe("g1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

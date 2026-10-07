@@ -6,7 +6,7 @@ description: |
   Do NOT use for general budgeting (use budget-planning), student loan payoff strategy after graduation (use debt management skills), or career planning after college.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance budgeting planning analysis savings"
   category: "personal-finance"

@@ -4,7 +4,7 @@ description: |
   School-to-adult-life guide covering apartment hunting, budgeting on a first salary, building credit, understanding insurance (health, renters, auto), cooking basics, building a professional wardrobe, and navigating the evolution of social life after graduation. Use when the user asks about graduation transition or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events planning career"
   category: "family-relationships"

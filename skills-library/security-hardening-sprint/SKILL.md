@@ -21,7 +21,7 @@ trigger_phrases: >-
   I want to harden our security I need a security audit How do I improve our
   security posture I want to run a security sprint
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: security compliance penetration-testing step-by-step planning
   category: software-project

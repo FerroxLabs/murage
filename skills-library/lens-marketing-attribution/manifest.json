@@ -2,7 +2,7 @@
   "id": "lens-marketing-attribution",
   "name": "marketing-attribution",
   "version": "1.0.0",
-  "description": "As of: 2026-05-17",
+  "description": "Work out which marketing channels deserve credit for sales. Use it before moving budget, and see why platform numbers disagree.",
   "defaultEnabled": false,
   "triggerTerms": [
     "lens",

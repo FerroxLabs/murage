@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -13,7 +16,9 @@ import { awaitCliTreeStopped, spawnCli } from "./procs.ts";
 // Use real spawnCli admission bookkeeping with an explicit mocked OS seam.
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
 let child: ChildProcess;
+let base: string;
 beforeEach(() => {
+  base = mkdtempSync(join(tmpdir(), "pip-procs-win-"));
   vi.useFakeTimers();
   Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
   child = Object.assign(new EventEmitter(), {
@@ -32,6 +37,7 @@ afterEach(() => {
   child.emit("close", child.exitCode, child.signalCode);
   Object.defineProperty(process, "platform", platformDescriptor);
   vi.useRealTimers();
+  rmSync(base, { recursive: true, force: true });
 });
 
 describe("owned Windows close confirmation (simulated)", () => {
@@ -60,5 +66,41 @@ describe("owned Windows close confirmation (simulated)", () => {
     await expect(stopped).resolves.toBe(false);
     child.emit("close", 0, null);
     await expect(awaitCliTreeStopped(owned)).resolves.toBe(true);
+  });
+});
+
+
+describe("Windows PIP job ownership", () => {
+  it("spawns only the supervisor with CLI arguments in a JSON file", () => {
+    const args = ["", 'a "quoted" value', "trailing\\", "line\nnext"];
+    const argsFile = join(base, "job-args.json");
+    spawnCli("fixture.exe", args, { cwd: base, env: { FIXTURE: "value" }, stdio: ["pipe", "pipe", "pipe"] }, { name: "Local\\murage-pip-fixture", argsFile });
+    expect(native.spawn).toHaveBeenCalledOnce();
+    const [command, argv, options] = native.spawn.mock.calls[0];
+    expect(command).toBe("powershell.exe");
+    expect(argv).toEqual(expect.arrayContaining(["-JobName", "Local\\murage-pip-fixture", "-Cwd", base, "-ArgsFile", argsFile]));
+    expect(argv).not.toContain("fixture.exe");
+    expect(argv).not.toContain(args[1]);
+    expect(JSON.parse(readFileSync(argsFile, "utf8"))).toEqual({ command: "fixture.exe", args });
+    expect(options.env.FIXTURE).toBe("value");
+    native.execFile.mockImplementation((_command, _args, _options, callback) => callback(null, '{"state":"absent"}'));
+  });
+
+  it.each([0, 2])("root close requires job confirmation (members=%s)", async activeProcesses => {
+    native.execFile.mockImplementation((_command, _args, _options, callback) => callback(null, JSON.stringify({ state: "present", activeProcesses })));
+    const owned = spawnCli("fixture.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, { name: "Local\\murage-pip-fixture", argsFile: join(base, "args.json") });
+    child.emit("close", 0, null);
+    expect(await awaitCliTreeStopped(owned)).toBe(activeProcesses === 0);
+    expect(native.execFile).toHaveBeenCalledWith("powershell.exe", expect.arrayContaining(["-Stop", "-JobName", "Local\\murage-pip-fixture"]), expect.any(Object), expect.any(Function));
+  });
+
+  it("closes the exact supervisor before confirming a not-yet-created job", async () => {
+    native.execFile.mockImplementation((_command, _args, _options, callback) => callback(null, '{"state":"absent"}'));
+    const owned = spawnCli("fixture.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, { name: "Local\\murage-pip-fixture", argsFile: join(base, "args.json") });
+    const stopped = awaitCliTreeStopped(owned);
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(native.execFile).not.toHaveBeenCalled();
+    child.emit("close", null, "SIGTERM");
+    await expect(stopped).resolves.toBe(true);
   });
 });

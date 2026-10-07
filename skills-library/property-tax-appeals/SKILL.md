@@ -4,7 +4,7 @@ description: |
   Step-by-step guidance for property tax appeals including assessment review methodology, comparable property research, the appeal filing process, documentation preparation, hearing preparation strategies, common grounds for tax reduction, appeal timelines, and cost-benefit analysis to determine if appealing is worthwhile. Use when the user asks about property tax appeals or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance tax-planning guide"
   category: "personal-finance"

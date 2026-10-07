@@ -4,7 +4,7 @@ description: |
   Complete restaurant operations expertise covering menu engineering, food cost management, staffing models, health code compliance, POS selection, inventory control, marketing strategy, and seasonal planning for independent restaurant operators. Use when the user asks about restaurant owner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning"
   category: "business-strategy"

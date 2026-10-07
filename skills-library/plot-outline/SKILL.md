@@ -6,7 +6,7 @@ description: |
   Do NOT use for writing scenes (use scene-writing), writing complete short stories (use short-story-writing), or developing characters without plot context (use character-development).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing planning"
   category: "writing"

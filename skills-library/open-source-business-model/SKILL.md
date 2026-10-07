@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of open source business model or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "tech-industry strategy checklist guide python cloud planning"
   category: "business-strategy"

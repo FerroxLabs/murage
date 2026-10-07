@@ -6,7 +6,7 @@ description: |
   Do NOT use for grammar instruction (use `grammar-practice`), for vocabulary building (use `vocabulary-building`), or for translation exercises (use `translation-practice`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "language-learning study-skills step-by-step guide"
   category: "education"

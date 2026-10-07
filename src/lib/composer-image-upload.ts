@@ -3,7 +3,8 @@ import { imageAttachmentFromFile as uploadImage } from "./composer-attachments.t
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "./live-events.ts";
 
 export async function imageAttachmentFromFile(file: File, threadId?: string) {
-  if (!threadId) return uploadImage(file);
+  // POST /api/attachments is a conversation route: without the proof it is
+  // answered 404 no such route, with or without a thread.
   await ensureDesktopSurfaceSecret();
   return uploadImage(file, threadId, { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() });
 }

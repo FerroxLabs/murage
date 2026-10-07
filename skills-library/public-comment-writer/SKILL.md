@@ -6,7 +6,7 @@ description: |
   Do NOT use for writing political campaign materials, drafting legislation, legal briefs, or lobbying communications that require disclosure.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "civic-engagement writing guide template"
   category: "legal-civic"

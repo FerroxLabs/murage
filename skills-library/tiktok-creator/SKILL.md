@@ -4,7 +4,7 @@ description: |
   Short-form video mastery covering hook techniques, trending format adaptation, hashtag strategy, posting schedule optimization, algorithm understanding, cross-posting workflows, brand deal acquisition, and TikTok Shop integration. Use when the user asks about tiktok creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "tiktok social-media marketing content-marketing"
   category: "marketing-sales"

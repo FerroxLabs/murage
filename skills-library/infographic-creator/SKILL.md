@@ -4,7 +4,7 @@ description: |
   Complete infographic design guidance covering data storytelling, visual hierarchy, chart and graph selection, layout principles, icon design and usage, color for data visualization, tools (Canva, Figma, Illustrator), distribution strategies, and the process of transforming complex information into clear, compelling visual narratives. Use when the user asks about infographic creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design data-visualization guide"
   category: "creative-arts"

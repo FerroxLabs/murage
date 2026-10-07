@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- styles.css light: color-ink, color-ink-secondary, color-accent, color-accent-ink -->
+<resources>
+    <color name="murage_ink">#0d0d0d</color>
+    <color name="murage_ink_secondary">#555555</color>
+    <color name="murage_accent">#b8481f</color>
+    <color name="murage_accent_ink">#ffffff</color>
+</resources>

@@ -175,6 +175,8 @@ describe("browser MCP proxy", () => {
   });
 
   it("acts on refs and relays the host's own sentence when one is stale", async () => {
+    // The floor reads the snapshot the model was given, so the model has to have one (T39).
+    await callTool("browser_snapshot", {});
     hits.length = 0;
     await callTool("browser_click", { ref: "b1", double: true });
     await callTool("browser_fill", { ref: "b2", text: "boots" });
@@ -186,9 +188,11 @@ describe("browser MCP proxy", () => {
       ["/v1/bots/bot-1/press", { key: "enter", profile: "work" }],
       ["/v1/bots/bot-1/scroll", { direction: "down", amount: 300, profile: "work" }],
     ]);
+    // A ref the last snapshot does not hold cannot be read, so it is the owner's turn and nothing reaches the host (T39).
+    hits.length = 0;
     const stale = await callTool("browser_click", { ref: "b99" });
-    expect(stale.result.isError).toBe(true);
-    expect(text(stale)).toMatch(/stale or unknown/);
+    expect(text(stale)).toMatch(/^YOUR TURN:/);
+    expect(hits).toEqual([]);
     const missing = await callTool("browser_click", {});
     expect(missing.result.isError).toBe(true);
   });
@@ -293,7 +297,7 @@ describe("classifyWall", () => {
 
   it("adds the takeover instruction to an observed wall page", () => {
     const rendered = formatObserved({ url: "https://github.com/login", title: "Sign in to GitHub", elements: [], yaml: '- textbox "Password" [ref=e3]' });
-    expect(rendered).toContain("call browser_request_takeover");
+    expect(rendered).toContain('call MCP tool "browser_request_takeover" on this server');
     expect(rendered).toContain("Never type the user's password");
   });
 });

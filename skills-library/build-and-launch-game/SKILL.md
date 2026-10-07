@@ -21,7 +21,7 @@ trigger_phrases: >-
   I want to build a video game I want to make a game How do I develop and ship a
   game I want to launch an indie game
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: game-design step-by-step planning
   category: creative-project

@@ -1,11 +1,16 @@
+import { FUIGO_TOOL_SURFACE, CODEX_TOOL_SURFACE, NO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTools } from "./murage-tool-surface.ts";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { capabilitiesPrimer, roomToolAccessLine, turnCapabilityFacts, INTEGRATION_FACTS, type PrimerFacts } from "./capabilities-primer.ts";
+import { capabilitiesPrimer as authoredCapabilitiesPrimer, turnCapabilityFacts, INTEGRATION_FACTS, type PrimerFacts } from "./capabilities-primer.ts";
 import { TURN_PROMPTS } from "./bot-shapes.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt, type ChiefTeamMember } from "./chief-of-staff.ts";
 import { canReach, isIndividualAssistant } from "./store.ts";
+
+const capabilitiesPrimer = (facts: PrimerFacts) => renderMurageTools(authoredCapabilitiesPrimer(facts),
+  facts.toolAccess === "search-first" ? FUIGO_TOOL_SURFACE : facts.toolAccess === "none" ? NO_TOOL_SURFACE : facts.toolAccess === "neutral" ? NEUTRAL_TOOL_SURFACE : CODEX_TOOL_SURFACE,
+  {agents:facts.mounted.agents ? "agents" : undefined,memory:facts.mounted.memory ? "murage-memory" : undefined});
 
 const BASE: PrimerFacts = {
   engine: "Claude Code",
@@ -69,7 +74,7 @@ describe("capabilities primer", () => {
 
     it("says image requests are off, not missing, when connections exist but are switched off", () => {
       const text = primer({ imageProvider: false, imageConnections: [{ label: "xAI", inUse: true }] });
-      expect(text).toContain("image requests are switched off in Settings → Tools & Connections → Image generation");
+      expect(text).toContain("image requests are switched off in Settings → Images");
       expect(text).not.toContain("no image provider is connected");
       expect(text).not.toContain("Image connections set up");
     });
@@ -107,7 +112,9 @@ describe("capabilities primer", () => {
   });
 
   describe("engine and model awareness", () => {
-    it("keeps direct and absent tool instructions unchanged", () => {
+    it("never claims Fuigo hides Murage's tools behind a tool search", () => {
+      // FUIGO_TOOL_PRESENTATION defaults to `full` and Murage never sets it;
+      // even `adaptive` holds back only Fuigo's own native media schemas.
       for (const access of ["direct", "none"] as const) {
         expect(primer({ toolAccess: access })).not.toContain("search_tool");
       }
@@ -228,22 +235,14 @@ describe("turnCapabilityFacts", () => {
     expect(facts({ instance: { ...INSTANCE, adapter: { capabilities: { images: true, imagesInline: false } } } }).imageInput).toBe("file-reference");
   });
 
-  it.each(["fuigoAgent", "grokAgent"])("routes %s through qualified use_tool calls", (driverKind) => {
-    const instance = { ...INSTANCE, driverKind };
-    const block = capabilitiesPrimer(facts({ instance }));
-    expect(block).toContain("use_tool");
-    expect(block).toContain("agents__ask_bot");
-    expect(block).toContain("agents__delegate_bot");
-    expect(block).toContain("search_tool");
-    expect(block).not.toContain("listed to you directly");
-    expect(facts({ instance, integrations: {} }).toolAccess).toBe("none");
-    const memoryOnly = capabilitiesPrimer(facts({ instance, integrations: { memory: {} } }));
-    expect(memoryOnly).toContain("use_tool");
-    expect(memoryOnly).not.toContain("agents__ask_bot");
-  });
-
-  it.each(["claudeCode", "codex", "pi", "openaiCompatible"])("keeps %s direct", (driverKind) => {
-    expect(facts({ instance: { ...INSTANCE, driverKind } }).toolAccess).toBe("direct");
+  it("uses the adapter's actual MCP surface", () => {
+    const fuigo = {...INSTANCE, driverKind:"fuigoAgent", adapter:{...INSTANCE.adapter,mcpToolSurface:FUIGO_TOOL_SURFACE}};
+    const fuigoFacts=facts({instance:fuigo});
+    expect(fuigoFacts.toolAccess).toBe("search-first");
+    expect(capabilitiesPrimer({...fuigoFacts,memory:"off",imageProvider:false,folder:"trusted",peers:1,canAskOwner:true})).toContain("use_tool");
+    expect(facts({instance:{...INSTANCE,adapter:{...INSTANCE.adapter,mcpToolSurface:CODEX_TOOL_SURFACE}}}).toolAccess).toBe("direct");
+    expect(facts({instance:{...INSTANCE,adapter:{...INSTANCE.adapter,mcpToolSurface:NO_TOOL_SURFACE}}}).toolAccess).toBe("none");
+    expect(facts({integrations:{}}).toolAccess).toBe("none");
   });
 
   it("mirrors exactly the integrations that mounted", () => {
@@ -273,7 +272,7 @@ describe("golden blocks", () => {
   it("a Fuigo bot with everything connected", () => {
     expect(
       capabilitiesPrimer({
-        engine: "Fuigo", model: "grok-code-fast", toolAccess: "use-tool", imageInput: "inline",
+        engine: "Fuigo", model: "grok-code-fast", toolAccess: "search-first", imageInput: "inline",
         mounted: { agents: true, composio: true, browser: true, memory: true, custom: true },
         memory: "active", imageProvider: true, folder: "trusted", peers: 4, canAskOwner: true,
       }),
@@ -585,18 +584,74 @@ describe("the inline-image story matches the dispatch rule", () => {
   });
 });
 
-describe("room turns on engines that reach MCP tools through use_tool", () => {
-  it("tells a Fuigo or Grok room member how to call the agents tools", () => {
-    for (const kind of ["fuigoAgent", "grokAgent"]) {
-      const line = roomToolAccessLine(kind, true);
-      expect(line).toContain("use_tool");
-      expect(line).toContain("agents__delegate_bot");
-      expect(line).not.toContain("listed to you directly");
-    }
+describe("the owner's own MCP servers (MCP-LINK T14)", () => {
+  const OWNER_LINE = "If the owner wants a new tool server, tell them to open Connected apps, then MCP servers, and paste the link the service gives them. Murage handles sign-in. Do not write mcp-remote or npx commands for them.";
+
+  it("tells a bot talking to the owner where to add a server, and that it never writes the commands", () => {
+    expect(primer({ ownerAudience: true })).toContain(OWNER_LINE);
   });
 
-  it("says nothing for engines that list the tools, or with no agents tools", () => {
-    for (const kind of ["claude", "codex", "pi", "openaiCompat", "kimi", "hermes"]) expect(roomToolAccessLine(kind, true)).toBe("");
-    expect(roomToolAccessLine("fuigoAgent", false)).toBe("");
+  it("leaves that line out for anyone who is not the owner (a contact, a channel person)", () => {
+    expect(primer({ ownerAudience: false })).not.toContain("MCP servers");
+    expect(primer()).not.toContain("paste the link");
+    expect(primer()).not.toContain("mcp-remote");
+  });
+
+  it("names the engines that can use them on an engine that cannot, and stays quiet on one that can", () => {
+    expect(primer({ customMcpEngine: false })).toContain("the owner's own MCP servers (this engine cannot use them; Fuigo, Claude and Codex can)");
+    expect(primer({ customMcpEngine: true })).not.toContain("this engine cannot use them");
+    // engines that have not said either way (older callers) are not blamed
+    expect(primer()).not.toContain("this engine cannot use them");
+  });
+
+  it("does not say an engine that can mount them lacks them when a turn simply mounted none", () => {
+    expect(primer({ customMcpEngine: true, mounted: { agents: true } })).not.toContain("the owner's own MCP servers");
+  });
+
+  it("reads the engine's customMcp capability and the turn's audience into the facts", () => {
+    const capable = { ...INSTANCE, adapter: { capabilities: { customMcp: true } } };
+    const incapable = { ...INSTANCE, adapter: { capabilities: { customMcp: false } } };
+    const unspecified = { ...INSTANCE, adapter: { capabilities: {} } };
+    expect(facts({ instance: capable, ownerAudience: true })).toMatchObject({ customMcpEngine: true, ownerAudience: true });
+    expect(facts({ instance: incapable })).toMatchObject({ customMcpEngine: false });
+    expect(facts({ instance: unspecified }).customMcpEngine).toBe(false);
+    expect(facts({ instance: capable }).ownerAudience).toBe(false);
+  });
+
+  it("stays inside the primer's size and line budget with the owner line and everything mounted", () => {
+    const text = primer({ mounted: { agents: true, composio: true, browser: true, memory: true, custom: true, computer: true, phone: true, dweb: true, localComputer: true }, imageProvider: true, memory: "active", ownerAudience: true });
+    expect(text.trim().split("\n").length).toBeLessThanOrEqual(15);
+    expect(text.length).toBeLessThan(2600);
+  });
+
+  it("obeys the copy rules", () => {
+    const text = primer({ ownerAudience: true, customMcpEngine: false });
+    expect(text).not.toContain("\u2014");
+    expect(text).not.toMatch(/\b(safe|safely|safety|unsafe)\b|composio|price/i);
+  });
+});
+
+describe("an engine that runs on its own tools and approvals (OpenClaw)", () => {
+  const own = (overrides: Partial<PrimerFacts> = {}) => primer({ engine: "OpenClaw", toolAccess: "none", mounted: {}, runsOnOwnTools: true, ...overrides });
+  it("declares its own tools and approvals, and promises no Murage approval", () => {
+    const text = own();
+    expect(text).toContain("You run on your own tools and your own approvals");
+    expect(text).toContain("Murage's approval cards and stop-line do not apply to what you run");
+    expect(text).not.toContain("A tool call can stop for the owner's approval");
+    expect(text).toContain("You have no Murage tools mounted in this conversation");
+    expect(text).not.toMatch(/\u2014/);
+  });
+  it("leaves every other engine's approval line exactly as it was", () => {
+    expect(primer()).toContain("A tool call can stop for the owner's approval");
+    expect(primer()).not.toContain("your own approvals");
+  });
+  it("is derived from the engine's capability flag, with its label", () => {
+    const instance = { driverKind: "openclawAgent", models: { default: "m", options: [] }, adapter: { capabilities: { runsOnOwnTools: true } } };
+    const base = { instance, integrations: {}, peers: 0, memory: "off" as const, imageProvider: false, canAskOwner: true };
+    const derived = turnCapabilityFacts(base);
+    expect(derived.runsOnOwnTools).toBe(true);
+    expect(derived.engine).toBe("OpenClaw");
+    expect(derived.toolAccess).toBe("none");
+    expect(turnCapabilityFacts({ ...base, instance: { ...instance, adapter: { capabilities: {} } } }).runsOnOwnTools).toBeUndefined();
   });
 });

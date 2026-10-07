@@ -192,7 +192,7 @@ export class ProviderRegistry {
     if (dueOnly && this.now() - state.attemptedAt < MODEL_CATALOG_REFRESH_MS) return Promise.resolve();
     state.attemptedAt = this.now();
     state.pending = Promise.resolve().then(async () => {
-      if (this.get(instance.instanceId) === instance) await instance.refreshModels!();
+      if (this.get(instance.instanceId) === instance) await instance.refreshModels!({ manual: !dueOnly });
     }).finally(() => { state.pending = undefined; });
     this.catalogRefreshes.set(instance, state);
     return state.pending;
@@ -220,8 +220,15 @@ export class ProviderRegistry {
     return new Map(rows.filter((row): row is [InstanceId, ProviderSnapshot] => row !== undefined));
   }
 
-  /** instance snapshots for the model picker: id, driver, models, health */
-  async describe() {
+  /** instance snapshots for the model picker: id, driver, models, health.
+   *
+   * `catalogs: "fresh"` (the default) refreshes every catalog first, for a
+   * person asking right now (the picker, Check again). Background readers
+   * (the tray's minute-by-minute setup view, the setup poll) pass `"due"`:
+   * their forced refresh spawned `fuigo models` every minute, which is a
+   * GET /v1/models at Flux every 60 to 65 s, refused or not (2026-10-01). */
+  async describe(options: { catalogs?: "fresh" | "due" } = {}) {
+    const dueOnly = options.catalogs === "due";
     // Multiple instances may share a driver. Scan each default binary once
     // per response instead of repeating filesystem work for every row.
     const candidatesByName = new Map<string, string[]>();
@@ -259,7 +266,7 @@ export class ProviderRegistry {
         const inst = entry.live;
         let snapshot: ProviderSnapshot;
         try {
-          await this.refreshCatalog(inst);
+          await this.refreshCatalog(inst, dueOnly);
           snapshot = await inst.snapshot();
         } catch (e) {
           snapshot = { state: "unavailable", reason: e instanceof Error ? e.message : String(e) };

@@ -6,7 +6,7 @@ description: |
   Do NOT use for choosing a research methodology (use `research-methodology`), for finding sources (use `literature-search`), or for writing a thesis statement (use writing category skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research academic-writing study-skills step-by-step"
   category: "education"

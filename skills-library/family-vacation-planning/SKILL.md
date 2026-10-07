@@ -6,7 +6,7 @@ description: |
   Do NOT use for adult-only travel (use travel skills), business trip planning, or trip booking and reservations.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events travel planning"
   category: "family-relationships"

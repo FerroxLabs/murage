@@ -12,7 +12,7 @@ description: |
   a move context (use deep-cleaning-checklist), or post-construction cleaning.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "cleaning checklist analysis"
   category: "home-household"

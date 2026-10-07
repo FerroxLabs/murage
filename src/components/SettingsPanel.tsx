@@ -1,11 +1,13 @@
 import { ChevronDown, ChevronLeft, FolderOpen, X } from "lucide-react";
-import { useState } from "react";
+import { notebookLastWrittenLine } from "../lib/notebook-last-written";
+import { Suspense, useState } from "react";
 import { api, useStore, type Bot } from "@/state/store";
 import { stateForBot } from "@/lib/mascot";
 import { CloudBackendPicker } from "./CloudBackendPicker";
 import { ModelPicker } from "./ModelPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 import { effortLabel } from "@/lib/effort-label";
 import { builtInBrowserEnabled } from "@/lib/feature-flags";
 import { requestNotificationPermission } from "@/lib/notify";
@@ -15,13 +17,18 @@ import { shortPath } from "@/lib/short-path";
 import { autoNeedsLocalComputerWarning, instanceSupportsLocalComputer, localAutoHostPlatform, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
 import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
 import { BotRoleControl } from "./BotRoleControl";
+import { CanTalkToControl } from "./CanTalkToControl";
 import { BotSetupAction } from "./BotIntakeCard";
 import { BotSkillsPanel } from "./BotSkillsPanel";
 import { BotShapesPanel } from "./BotShapesPanel";
+import { PublishedSitesPanel } from "./PublishCard";
+import { LearningSettings } from "./LearningSettings";
+import { LearningOverviewLine } from "./LearningOverviewLine";
 import { FolderTrustNote } from "./FolderTrustNote";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
 import { BotPermissionDefault } from "./BotPermissionDefault";
+import { BotImageApproval } from "./BotImageApproval";
 import { RememberedApprovals } from "./RememberedApprovals";
 import { defaultModeStep, PEER_CONTACT_LABEL, peerContactHint, type PermissionMode } from "@/lib/permission-mode";
 import { VoiceSettings } from "./VoiceSettings";
@@ -29,9 +36,15 @@ import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
 import { BotAccessSettings } from "./BotAccessSettings";
 import { MemoryLauncher } from "./MemoryLauncher";
+import { ContinuityBlock } from "./ContinuityBlock";
 import { activeSettingsRole, settingsRoleLabel, type BotSettingsSection } from "./bot-settings-sections";
 import { botRoleTitle } from "@/lib/bot-role";
 import { useBotSettingsDraft, useBotSettingsNavigation } from "./bot-settings-drafts";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+
+// Bot settings > Teams loads on first open (SPEC-X 13.1): the owner's
+// sharing routes are desktop only, and none of it belongs in first paint.
+const TeamsSection = retryableLazy(() => import("./BotTeamsSection"));
 
 function SettingsSection({ id, active, children }: { id: BotSettingsSection; active?: BotSettingsSection; children: React.ReactNode }) {
   return <section hidden={active !== undefined && active !== id} data-settings-section={id} className="space-y-4">{children}</section>;
@@ -199,6 +212,7 @@ function MemoryCard({ bot }: { bot: Bot }) {
   const [text, setText] = useState("");
   const [dirty, setDirty] = useState(false);
   const [truncated, setTruncated] = useState(false);
+  const [lastWrittenAt, setLastWrittenAt] = useState<number | null>(null);
   const [topics, setTopics] = useState<MemoryTopic[]>([]);
   const [saving, setSaving] = useState(false);
   const [topic, setTopic] = useState<{ name: string; text: string } | null>(null);
@@ -209,11 +223,12 @@ function MemoryCard({ bot }: { bot: Bot }) {
     setError(null);
     setTopic(null);
     try {
-      const result: { text: string; truncated: boolean; topics: MemoryTopic[] } = await api(
+      const result: { text: string; truncated: boolean; lastWrittenAt?: number | null; topics: MemoryTopic[] } = await api(
         `/api/bots/${bot.id}/memory`,
       );
       setText(result.text);
       setTruncated(result.truncated);
+      setLastWrittenAt(typeof result.lastWrittenAt === "number" ? result.lastWrittenAt : null);
       setTopics(result.topics);
       setDirty(false);
     } catch (e) {
@@ -227,11 +242,13 @@ function MemoryCard({ bot }: { bot: Bot }) {
     setSaving(true);
     setError(null);
     try {
-      const result: { truncated: boolean } = await api(`/api/bots/${bot.id}/memory`, {
+      const result: { truncated: boolean; lastWrittenAt?: number | null } = await api(`/api/bots/${bot.id}/memory`, {
         method: "PUT",
         body: JSON.stringify({ text }),
       });
       setTruncated(result.truncated);
+      // the save is a write (Astra r1 #12)
+      setLastWrittenAt(typeof result.lastWrittenAt === "number" ? result.lastWrittenAt : null);
       setDirty(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -300,6 +317,8 @@ function MemoryCard({ bot }: { bot: Bot }) {
               setDirty(true);
             }}
           />
+          {/* O5: a notebook nobody wrote for a week reads as stale, not as "remembers nothing". */}
+          <div className="mt-1.5 text-[11.5px] text-ink-secondary">{notebookLastWrittenLine(lastWrittenAt, Date.now())}</div>
           <div className="mt-2 flex items-center gap-3">
             <button
               onClick={() => void save()}
@@ -377,6 +396,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
         | "noLimits"
         | "fullAccessChannelMessages"
         | "fullAccessSetupRequests"
+        | "imageApproval"
+        | "imageAskAfter"
         | "autoReview"
         | "speakReplies"
         | "voice"
@@ -384,6 +405,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
         | "approvePeerComms"
         | "composio"
         | "browser"
+        | "continuity"
         | "modelSelection"
       >
     > & { acknowledgeLocalAuto?: boolean; acknowledgeFullAccess?: boolean; acknowledgeNoLimits?: boolean; persona?: string },
@@ -435,6 +457,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
         // chat; its header already carries the "Collapse agent profile" back
         // button, so there is a way out.
         "max-md:absolute max-md:inset-0 max-md:z-40 max-md:w-full",
+        // Covering the chat means covering its header's status-bar inset too.
+        "max-md:pt-[var(--inset-top)] max-md:pb-[var(--inset-bottom)]",
       )}
     >
       {/* The native wrapper owns its own header. */}
@@ -472,15 +496,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           {/* What this bot is FOR comes first. The avatar studio used to open
               the panel, with the purpose and the role below the fold. */}
           <BotSetupAction bot={bot} />
-          <details className="rounded-xl bg-card p-3">
-            <summary className="cursor-pointer text-[13px] font-medium">Appearance</summary>
-          <BotProfileAvatarCard
-            bot={bot}
-            activeState={activeState}
-            mascotMotion={mascotMotion}
-            onPatch={patch}
-          />
-          </details>
+          {desktop === true && <LearningOverviewLine key={`learning-line-${bot.id}`} botId={bot.id} />}
           {/* An org chart needs an org. With one bot in the workspace there is
               nobody to lead and nobody to report to, so the role summary and
               the Role control below are both hidden until a second bot
@@ -499,6 +515,17 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           </div>}
           </SettingsSection>
           <SettingsSection id="identity" active={section}>
+          {/* Appearance opens Identity & instructions, always open: a bot's
+              looks sit with its name and instructions (Sean, 2026-10-03). */}
+          <div className="rounded-xl bg-card p-3">
+            <h3 className="mb-2 text-[13px] font-medium">{t("settings.appearance.title")}</h3>
+            <BotProfileAvatarCard
+              bot={bot}
+              activeState={activeState}
+              mascotMotion={mascotMotion}
+              onPatch={patch}
+            />
+          </div>
           <Field label="Name">
             <input
               className={inputCls}
@@ -570,6 +597,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
 
 
           <SettingsSection id="permissions" active={section}>
+          <CanTalkToControl bot={bot} />
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">
@@ -596,7 +624,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               <div className="text-[15px] font-medium text-ink">Connected apps</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 {!connectedAppsConfigured
-                  ? "Connect apps first (Tools → Connected apps), then give this bot access."
+                  ? "Connect apps first (Apps, in the sidebar), then give this bot access."
                   : !canUseConnectedApps
                     ? "This bot's current engine cannot use connected apps."
                     : connectedAppsEnabled
@@ -613,7 +641,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               onClick={() => patch({ composio: !connectedAppsEnabled })}
               title={
                 !connectedAppsEnabled && !connectedAppsConfigured
-                  ? "Connect apps first, under Tools → Connected apps"
+                  ? "Connect apps first, under Apps in the sidebar"
                   : !connectedAppsEnabled && !canUseConnectedApps
                     ? "This engine cannot use connected apps"
                     : undefined
@@ -772,6 +800,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           </SettingsSection>
           <SettingsSection id="access" active={section}>
           <WorkingFolder bot={bot} />
+          <PublishedSitesPanel bot={bot} />
           </SettingsSection>
 
 
@@ -782,6 +811,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             <p className="mt-1 text-[12px] text-ink-secondary">Search saved knowledge, inspect its source and manage what this bot remembers.</p>
             <MemoryLauncher key={`memory-${bot.id}`} botId={bot.id} botName={bot.name} />
           </section>
+          {desktop === true && <ContinuityBlock key={`continuity-${bot.id}`} bot={bot} />}
           <MemoryCard key={bot.id} bot={bot} />
           </SettingsSection>
 
@@ -800,6 +830,9 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <SettingsSection id="skills" active={section}>
           <BotSkillsPanel key={`skills-${bot.id}`} bot={bot} />
           </SettingsSection>
+          <SettingsSection id="learning" active={section}>
+          {desktop === true && <LearningSettings key={`learning-${bot.id}`} bot={bot} />}
+          </SettingsSection>
 
 
           <SettingsSection id="permissions" active={section}>
@@ -809,6 +842,13 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             desktop={desktop}
             onChoose={chooseDefaultMode}
             onOption={(key, value) => patch(key === "fullAccessChannelMessages" ? { fullAccessChannelMessages: value } : { fullAccessSetupRequests: value })}
+          />
+
+          <BotImageApproval
+            bot={bot}
+            desktop={desktop}
+            onChoose={(setting) => patch({ imageApproval: setting })}
+            onAskAfter={(value) => patch({ imageAskAfter: value })}
           />
 
           <RememberedApprovals bot={bot} desktop={desktop} />
@@ -876,6 +916,9 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           {state.routines.filter(routine => routine.botId === bot.id).map(routine => <div key={routine.id} className="rounded-xl bg-card p-4"><p className="text-[14px] font-medium">{routine.name}</p><p className="mt-1 text-[12px] text-ink-secondary">{routine.enabled ? "Enabled" : "Paused"}</p></div>)}
           {!state.routines.some(routine => routine.botId === bot.id) && <p className="text-[13px] text-ink-secondary">No routines assigned to this bot.</p>}
           <button type="button" onClick={() => navigate(() => dispatch({ type: "showRoutines" }))} className="min-h-10 rounded-lg bg-control px-3 py-2 text-[13px]">Open Routines</button>
+          </SettingsSection>
+          <SettingsSection id="teams" active={section}>
+          {desktop === true && section === "teams" && <LazyBoundary inline onRetry={TeamsSection.retry}><Suspense fallback={<p role="status" className="text-[13px] text-ink-secondary">Loading teams…</p>}><TeamsSection.Component key={`teams-${bot.id}`} bot={bot} /></Suspense></LazyBoundary>}
           </SettingsSection>
           <SettingsSection id="history" active={section}>
           {(bot.tasks ?? []).map(task => <button type="button" key={task.threadId} onClick={() => dispatch({ type: "switchTask", botId: bot.id, threadId: task.threadId })} className="block min-h-10 w-full rounded-xl bg-card p-4 text-left">

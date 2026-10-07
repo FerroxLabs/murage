@@ -4,7 +4,7 @@ description: |
   Comprehensive critical thinking toolkit covering 30+ logical fallacies with examples, evidence evaluation (sources, methodology, claims), argument mapping, Socratic questioning, media literacy, scientific thinking principles, and common cognitive biases that impair reasoning. Use when the user asks about critical thinker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decision-making analysis strategy frameworks"
   category: "productivity"

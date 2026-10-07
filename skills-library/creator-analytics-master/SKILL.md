@@ -4,7 +4,7 @@ description: |
   Cross-platform analytics mastery for content creators covering YouTube, Instagram, TikTok, Twitter/X, podcast, and newsletter metrics, audience demographic analysis, content performance patterns, revenue tracking, attribution modeling, dashboard design, and data-driven content strategy. Use when the user asks about creator analytics master or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis marketing social-media"
   category: "marketing-sales"

@@ -8,7 +8,9 @@ import { snapshotInstallationDatabase,withOfflineInstallation } from "./installa
 import { stageInstallationState,stageInstallationStateWhileOwned } from "./installation-state-snapshot.ts";
 const replacement=vi.hoisted(()=>({target:"",sentinel:"",kind:"",seen:0}));
 vi.mock("node:fs",async original=>{const fs=await original<typeof import("node:fs")>();return{...fs,lstatSync:(...args:Parameters<typeof fs.lstatSync>)=>{
- if(args[0]===replacement.target&&++replacement.seen===2){fs.renameSync(replacement.target,replacement.target+".retained");if(replacement.kind==="symlink")fs.symlinkSync(replacement.sentinel,replacement.target);else if(replacement.kind==="hardlink")fs.linkSync(replacement.sentinel,replacement.target);else fs.mkdirSync(replacement.target);}
+ // Windows: the product case-folds canonical paths, so the same file may be named in another case.
+ const named=(path:unknown)=>typeof path==="string"&&replacement.target!==""&&(process.platform==="win32"?path.toLowerCase()===replacement.target.toLowerCase():path===replacement.target);
+ if(named(args[0])&&++replacement.seen===2){fs.renameSync(replacement.target,replacement.target+".retained");if(replacement.kind==="symlink")fs.symlinkSync(replacement.sentinel,replacement.target);else if(replacement.kind==="hardlink")fs.linkSync(replacement.sentinel,replacement.target);else fs.mkdirSync(replacement.target);}
  return fs.lstatSync(...args);
 }};});
 const roots:string[]=[];
@@ -21,7 +23,7 @@ it("still refuses an unrelated root file added after the database snapshot",asyn
  const f=fixture();await expect(withOfflineInstallation(f.data,installation=>stageInstallationStateWhileOwned({...installation,snapshotDatabase:async destination=>{const result=await installation.snapshotDatabase(destination);writeFileSync(join(f.data,"unexpected.json"),"{}\n");return result;}},f.parent))).rejects.toMatchObject({code:"SOURCE_CHANGED"});expect(readFileSync(join(f.data,"unexpected.json"),"utf8")).toBe("{}\n");
 });
 it.each(["symlink","hardlink","directory"])("refuses a %s auxiliary replacement during source capture before publishing",async kind=>{
- const f=fixture();const sentinel=join(f.parent,"sentinel");writeFileSync(sentinel,"untouched-fixture");const originalShm=join(realpathSync(f.data),"messages.db-shm");writeFileSync(originalShm,Buffer.alloc(32768));Object.assign(replacement,{target:originalShm,sentinel,kind,seen:0});
+ const f=fixture();const sentinel=join(f.parent,"sentinel");writeFileSync(sentinel,"untouched-fixture");const originalShm=join(realpathSync.native(f.data),"messages.db-shm");writeFileSync(originalShm,Buffer.alloc(32768));Object.assign(replacement,{target:originalShm,sentinel,kind,seen:0});
  let failure:unknown;try{await snapshotInstallationDatabase(f.data,f.target);}catch(error){failure=error;}
  expect(replacement.seen).toBe(2);expect(failure).toMatchObject({code:"UNSAFE_DATABASE_FILE"});expect(existsSync(f.target)).toBe(false);expect(readFileSync(sentinel,"utf8")).toBe("untouched-fixture");
 });

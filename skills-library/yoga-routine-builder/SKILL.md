@@ -6,7 +6,7 @@ description: |
   Do NOT use for meditation-only practices, injury rehabilitation yoga (consult a qualified yoga therapist), or advanced inversion and arm-balance training.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "yoga fitness mental-wellness"
   category: "health-wellness"

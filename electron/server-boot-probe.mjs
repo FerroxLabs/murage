@@ -20,7 +20,13 @@
 //   undefined and our own freshly-bound child would fail the identity match
 //   and be reaped as a "foreign owner" on its very first health answer.
 
-export const BOOT_PROBE_INTERVAL_MS = 500;
+// A refused local connection costs next to nothing, and this interval is the
+// worst-case wait between the port opening and the window starting.
+export const BOOT_PROBE_INTERVAL_MS = 100;
+/** A running memory upgrade keeps the wait going in steps of this size ... */
+export const BOOT_EXTEND_STEP_MS = 5_000;
+/** ... but never past this, so a wedged child is still reaped. */
+export const BOOT_EXTEND_LIMIT_MS = 30 * 60_000;
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -33,6 +39,7 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  *   now?: () => number,
  *   sleep?: (ms: number) => Promise<void>,
  *   fetchImpl?: typeof fetch,
+ *   extendWhile?: () => boolean,
  * }} options
  * @returns {Promise<{ outcome: "ready" | "foreign-owner" | "timeout" | "exited" }>}
 */
@@ -44,13 +51,29 @@ export async function pollServerIdentity({
   now = Date.now,
   sleep = defaultSleep,
   fetchImpl = globalThis.fetch,
+  extendWhile = () => false,
 }) {
   const startedAt = now();
-  const deadline = startedAt + bootTimeoutMs;
+  let deadline = startedAt + bootTimeoutMs;
+  // The child upgrading the owner's memory cannot answer health checks until
+  // it finishes (a copy of a large messages.db can outlast the normal budget).
+  // While it says so, the budget moves forward in small steps up to a hard cap.
+  // When the upgrade ends past the normal budget, the child still has the rest
+  // of its boot ahead of it: give it one fresh budget from that moment, not
+  // whatever is left of the last 5 s step.
+  let extended = false;
+  let rebudgeted = false;
+  const expired = () => {
+    if (now() < deadline) return false;
+    if (now() >= startedAt + BOOT_EXTEND_LIMIT_MS) return true;
+    if (extendWhile()) { extended = true; deadline = now() + BOOT_EXTEND_STEP_MS; return false; }
+    if (extended && !rebudgeted) { rebudgeted = true; deadline = now() + bootTimeoutMs; return false; }
+    return true;
+  };
   for (;;) {
     if (isExited()) return { outcome: "exited" };
-    const remainingMs = Math.max(0, deadline - now());
-    if (remainingMs <= 0) return { outcome: "timeout" };
+    if (expired()) return { outcome: "timeout" };
+    const remainingMs = Math.max(1, deadline - now());
 
     let res;
     try {
@@ -67,7 +90,7 @@ export async function pollServerIdentity({
     // Body consumption is covered by the same abort signal as fetch. If it
     // reaches the deadline, a null body means the probe timed out—not that a
     // different process answered on the port.
-    if (now() >= deadline) return { outcome: "timeout" };
+    if (expired()) return { outcome: "timeout" };
     // Read the expected pid NOW, after the response landed: until the child's
     // `spawn` event fires the getter yields undefined, and a child that has
     // not spawned cannot be the one answering — so an answer during that
@@ -82,7 +105,7 @@ export async function pollServerIdentity({
     if (!identified) return { outcome: "foreign-owner" };
     // A response that finishes after the budget must not count as a healthy
     // boot — re-check the clock before declaring victory.
-    if (now() >= deadline) return { outcome: "timeout" };
+    if (expired()) return { outcome: "timeout" };
     return { outcome: "ready", latencyMs: now() - startedAt };
   }
 }

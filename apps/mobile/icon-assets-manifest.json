@@ -1,0 +1,318 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "path": "brand/app-icon.svg",
+      "commit": "bf996d42c3f6e9236f87dabbc62cf19ceee9d144",
+      "sha256": "20faa8afb58437ed002f5306999c33093b960a042d34c213667cc1d66dd06ddb"
+    },
+    {
+      "path": "brand/app-icon-maskable.svg",
+      "commit": "a8cd05d276dab647698589d726d92fc60113d850",
+      "sha256": "50ede5e9ace4c1ad5a874ac5050f35f4906c55da21ce48cde3c4b63de2e41110"
+    }
+  ],
+  "renderer": {
+    "engine": "Chromium",
+    "version": "143.0.7499.4",
+    "algorithm": "4x canvas supersampling; explicit RGB/RGBA PNG level9"
+  },
+  "outputs": [
+    {
+      "path": "ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png",
+      "width": 1024,
+      "height": 1024,
+      "colorType": 2,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "381951f87f564f733212d0128ab1b5e27c41e7292e89d58f444abf948a2da637"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
+      "width": 48,
+      "height": 48,
+      "colorType": 2,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "1ed48ab7db673ee16a4e39c382d111d4101af2430a4ee63e7cfe324d714dada2"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png",
+      "width": 48,
+      "height": 48,
+      "colorType": 6,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "e4aa391316f472e07f9d1e0768a3f0b1ad7fade6529be0507b953ab282b1a42f"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png",
+      "width": 108,
+      "height": 108,
+      "colorType": 6,
+      "safeCircleDp": 66,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "120820ddd558a976ef91b71ca9a48af573a87a5649d05ea11b4bdaeec3a0591f"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher_monochrome.png",
+      "width": 108,
+      "height": 108,
+      "colorType": 6,
+      "safeCircleDp": 66,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "037615c3abd9cb941f1e16f187e71763ad2fb6a40aa980c19fd3780cff12488e"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
+      "width": 72,
+      "height": 72,
+      "colorType": 2,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "d63644b86b4b3c8d61204e9bf4cbbd42bea9a5c9ae790613e1f10f6bc66b1683"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png",
+      "width": 72,
+      "height": 72,
+      "colorType": 6,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "3b707370e8b077e43395dff2fb6d729fa75aa0a22e170dfd9daf0725a4f9f34a"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
+      "width": 162,
+      "height": 162,
+      "colorType": 6,
+      "safeCircleDp": 66,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "0308989fab9c16cf0636044b7c906c11f3feb2e673073f16426154c041f9441f"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher_monochrome.png",
+      "width": 162,
+      "height": 162,
+      "colorType": 6,
+      "safeCircleDp": 66,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "7e39ff213dde12d38252f6543b0e3dcaae243f53bf0efa9c7a03886ac4f2ed5a"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+      "width": 96,
+      "height": 96,
+      "colorType": 2,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "7e089ae9834b2694d51c703f222dc81df9cfa642eb6a25f9f3d9f38cdac3dd9b"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png",
+      "width": 96,
+      "height": 96,
+      "colorType": 6,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "f73cab48ac60d4cfebe212e3177662064e4890f2c2969c76ae56f2bbec733eee"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png",
+      "width": 216,
+      "height": 216,
+      "colorType": 6,
+      "safeCircleDp": 66,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "4a2746468d33c0438c2cb9a3069efc2944d69858fa6e29018f86775e7470b9de"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher_monochrome.png",
+      "width": 216,
+      "height": 216,
+      "colorType": 6,
+      "safeCircleDp": 66,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "fd9a55fe0dc2cf2e68112b8c0ceeddd7e868635feb2c632346ab3fa5e8e8940c"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+      "width": 144,
+      "height": 144,
+      "colorType": 2,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "9496f1329bc1c312aaee5a03267e36a24acb7d03da64ce903f4ab66b34863106"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png",
+      "width": 144,
+      "height": 144,
+      "colorType": 6,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "0c8f6b3e12f5bab18cda730638cd357e19f1981ddd93f888bee1cb09026ba944"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png",
+      "width": 324,
+      "height": 324,
+      "colorType": 6,
+      "safeCircleDp": 66,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "0a8bd8ed2cbe4fed11443757801ab59e1394f7400f730944b706b40da15a5734"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_monochrome.png",
+      "width": 324,
+      "height": 324,
+      "colorType": 6,
+      "safeCircleDp": 66,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "2ba3ec7c19a2c131181893f61c98fb80e9dfe160470e10f94fef4c52c7f56309"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+      "width": 192,
+      "height": 192,
+      "colorType": 2,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "7dda4e0a54bea0e2750b14fa07d8df0f1371b5bd06f42aa1a2d6a9b86b687da3"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png",
+      "width": 192,
+      "height": 192,
+      "colorType": 6,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "def604212e93783b9460d4d4e421123867673786598a34f3ed12f0cedd026120"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png",
+      "width": 432,
+      "height": 432,
+      "colorType": 6,
+      "safeCircleDp": 66,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "2ccf9bd4d2540a4f3675842039c989aa0bf485358ba82762386d6cbb738a3849"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_monochrome.png",
+      "width": 432,
+      "height": 432,
+      "colorType": 6,
+      "safeCircleDp": 66,
+      "source": "brand/app-icon-maskable.svg",
+      "sha256": "5bd9267acaa94e08c59b4efb58075baf324d92137fa26b40d876315938ca4286"
+    },
+    {
+      "path": "android/app/src/main/res/drawable/splash.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-land-hdpi/splash.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-land-mdpi/splash.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-land-xhdpi/splash.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-land-xxhdpi/splash.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-land-xxxhdpi/splash.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-port-hdpi/splash.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-port-mdpi/splash.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-port-xhdpi/splash.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-port-xxhdpi/splash.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "android/app/src/main/res/drawable-port-xxxhdpi/splash.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732-2.png",
+      "width": 1,
+      "height": 1,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "1280e8de649805526731cc11672b0479f5ca25d9bd7ebf7a3375f8a9c966205e"
+    },
+    {
+      "path": "ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732-1.png",
+      "width": 2,
+      "height": 2,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "592b28a13e9ba5741f4af8ee7a20fb0489bcf8900efc51989300a580b7ff207a"
+    },
+    {
+      "path": "ios/App/App/Assets.xcassets/Splash.imageset/splash-2732x2732.png",
+      "width": 3,
+      "height": 3,
+      "colorType": 2,
+      "purpose": "plain native splash ground",
+      "sha256": "14db619683e618ae3ab007ff73a79968bbec31bb19364a58166fb621172f463f"
+    }
+  ],
+  "notes": [
+    "No desktop/browser assets regenerated.",
+    "iOS icon is RGB color-type2; adaptive glyphs fit centered66dp circle in108dp layer.",
+    "Monochrome is the canonical glyph recolored white; Android applies theme tint.",
+    "Source/build assets only; OS appearance and store qualification are separate."
+  ]
+}

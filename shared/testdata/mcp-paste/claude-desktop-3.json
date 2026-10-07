@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/Desktop"]
+    },
+    "brave-search": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": { "BRAVE_API_KEY": "YOUR_API_KEY_HERE" }
+    },
+    "notes": {
+      "command": "node",
+      "args": ["/opt/notes/server.js"],
+      "env": { "NOTES_DIR": "/Users/me/notes", "NOTES_TOKEN": "tok_live_abc123" }
+    }
+  }
+}

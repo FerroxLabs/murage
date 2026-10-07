@@ -4,7 +4,7 @@ description: |
   Neutral third-party facilitation for conflict resolution. Covers the complete mediation process including opening statements, ground rules establishment, issue identification, option generation, reality testing, agreement drafting, and follow-up procedures across workplace, family, and community contexts. Use when the user asks about mediation guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "writing relationships guide"
   category: "writing"

@@ -6,7 +6,7 @@ description: |
   Do NOT use for assessing psychological dynamics between siblings, diagnosing behavioral disorders, or replacing family therapy.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "parenting relationships strategy"
   category: "family-relationships"

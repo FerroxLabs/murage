@@ -62,3 +62,24 @@ describe("the gate inside pi", () => {
     expect(await handler({ toolName: "bash", input: { command: "ls" } }, { cwd: "/w", hasUI: false, ui: { confirm: async () => true } })).toMatchObject({ block: true });
   });
 });
+
+describe("R8-1 the Chief's proposal turn: one tool runs, everything else asks", () => {
+  const cwd = "/tmp/murage-proposal-x";
+  const only = "agents_project_propose";
+  it("asks before reads, searches and listings too, anywhere", () => {
+    expect(piGateAsks("read", { path: "/etc/hosts" }, cwd, [], only)).toBe(true);
+    for (const tool of ["read", "grep", "find", "ls", "bash", "edit", "write", "memory_search", "agents_project_propose_2", "AGENTS_PROJECT_PROPOSE"]) expect(piGateAsks(tool, { path: "note.md" }, cwd, [], only)).toBe(true);
+    expect(piGateAsks("agents_project_propose", { mode: "goal" }, cwd, [], only)).toBe(false);
+  });
+  it("the gate reads the mode from its environment and forgets it", async () => {
+    const asked: string[] = [];
+    process.env.MURAGE_PI_GATE = "secret"; process.env.MURAGE_PI_GATE_PREFIXES = "[]"; process.env.MURAGE_PI_GATE_ONLY = only;
+    let handler: ((event: { toolName: string; input: Record<string, unknown> }, ctx: { cwd: string; hasUI: boolean; ui: { confirm(t: string, m: string): Promise<boolean> } }) => Promise<unknown>) | undefined;
+    piPermissionGate({ on: (_event, h) => { handler = h as typeof handler; } });
+    expect(process.env.MURAGE_PI_GATE_ONLY).toBeUndefined();
+    const ctx = { cwd, hasUI: true, ui: { confirm: async (_t: string, message: string) => { asked.push(message); return false; } } };
+    expect(await handler!({ toolName: "read", input: { path: "/etc/hosts" } }, ctx)).toMatchObject({ block: true });
+    expect(await handler!({ toolName: "agents_project_propose", input: {} }, ctx)).toBeUndefined();
+    expect(asked).toEqual([JSON.stringify({ tool: "read", input: { path: "/etc/hosts" } })]);
+  });
+});

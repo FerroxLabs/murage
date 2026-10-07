@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { initialState, reducer } from "@/state/store";
+import { SETTINGS_SECTIONS, settingsSectionLabel } from "@/lib/settings-sections";
+import { SETTINGS_KEYWORDS } from "@/lib/settings-search";
 
 const read = (name: string) => readFileSync(fileURLToPath(new URL(name, import.meta.url)), "utf8");
 const modal = read("./SettingsModal.tsx");
@@ -18,17 +20,13 @@ function generalPane(source: string) {
 }
 
 describe("Backups settings section", () => {
-  it("is its own desktop-only section placed right after General", () => {
-    const general = modal.indexOf('{ id: "general"');
-    const backups = modal.indexOf('{ id: "backups"');
-    expect(backups, "no backups section").toBeGreaterThan(general);
-    const between = modal.slice(general, backups);
-    expect(between.match(/\{ id: "/g)).toHaveLength(1);
-    const entry = modal.slice(backups, modal.indexOf("\n", backups));
-    expect(entry).toContain('label: "Backups"');
-    expect(entry).toContain("desktopOnly: true");
-    expect(entry).toContain("icon: Archive");
-    for (const keyword of ["backup", "restore", "recovery", "schedule", "s3", "off-site", "remote", "restic", "age", "key"]) expect(entry).toContain(`"${keyword}"`);
+  it("is its own desktop-only section, first under App since the 0.1.62 groups", () => {
+    const entry = SETTINGS_SECTIONS.find((candidate) => candidate.id === "backups");
+    expect(entry, "no backups section").toMatchObject({ group: "app", desktopOnly: true });
+    expect(SETTINGS_SECTIONS.filter((candidate) => candidate.group === "app")[0]?.id).toBe("backups");
+    expect(settingsSectionLabel("backups")).toBe("Backups");
+    expect(modal).toContain("backups: Archive,");
+    for (const keyword of ["backup", "restore", "recovery", "schedule", "s3", "off-site", "remote", "restic", "age", "key"]) expect(SETTINGS_KEYWORDS.backups).toContain(keyword);
   });
 
   it("General no longer renders backups, and the Backups pane is surface-gated", () => {
@@ -316,6 +314,17 @@ describe("Your backups card", () => {
     const locked = renderToStaticMarkup(createElement(BackupStatusCard, { summary, s: controller({ status: on, bridge: { runNow: () => {} } as unknown as ScheduleController["bridge"], canRunNow: false }), r: remote, onRestore: () => {} }));
     expect(locked).toMatch(/disabled=""[^>]*>Back up now</);
   });
+
+  it("says a failed Back up now once when Needs attention already says it (0.1.60 Windows final 2 L1)", () => {
+    const missing = runNowError(new Error("BACKUP_FOLDER_MISSING"), { folderName: "Murage Backups" });
+    const attention = ["The last backup didn't finish; backups are paused until you clear it", `The last backup stopped while checking your backup folder and recovery key. ${missing}`];
+    const html = renderToStaticMarkup(createElement(BackupStatusCard, { summary: { last: "L", schedule: "S", offsite: "O", attention }, s: controller({ status: on, area: "summary", error: missing }), r: remote, onRestore: () => {} }));
+    const sentence = renderToStaticMarkup(createElement("i", null, missing)).slice(3, -4);
+    expect(html.split(sentence).length - 1).toBe(1);
+    // An error the list does not carry still shows beside the buttons.
+    const other = renderToStaticMarkup(createElement(BackupStatusCard, { summary: { last: "L", schedule: "S", offsite: "O", attention }, s: controller({ status: on, area: "summary", error: "Something else went wrong." }), r: remote, onRestore: () => {} }));
+    expect(other).toContain(">Something else went wrong.<");
+  });
 });
 
 describe("customer findings: plain words and reasons where the control is", () => {
@@ -323,12 +332,13 @@ describe("customer findings: plain words and reasons where the control is", () =
   // As React writes it into markup: the apostrophe is escaped.
   const REASON = "Your system didn&#x27;t let Murage register a background job, so backups run only while Murage is open.";
   const setup = (patch: Partial<Omit<ScheduleController, "status">>) => renderToStaticMarkup(createElement(ScheduleSetup, { s: controller({ ...patch, status: off, closedBridge: patch.closedBridge ?? closedBridge }), onSetLimits: () => {} }));
-  const checkboxTag = (html: string) => /<input type="checkbox"[^>]*aria-describedby="[^"]*backup-closed-help[^"]*"[^>]*>/.exec(html)?.[0] ?? "";
+  // A switch since 0.1.62 (one setting, one switch), with the same wiring.
+  const checkboxTag = (html: string) => /<button[^>]*aria-describedby="[^"]*backup-closed-help[^"]*"[^>]*role="switch"[^>]*>/.exec(html)?.[0] ?? "";
 
-  it("says under the closed-app checkbox why it is greyed out when the system refused the job", () => {
+  it("says under the closed-app switch why it is greyed out when the system refused the job", () => {
     const html = setup({ closed: { supported: true, state: "unavailable", closedApp: false } });
     expect(html).toContain(REASON);
-    // Tied to the checkbox, so a screen reader hears it with the control.
+    // Tied to the switch, so a screen reader hears it with the control.
     expect(checkboxTag(html)).toContain("backup-closed-reason");
     expect(checkboxTag(html)).toContain('disabled=""');
     expect(html.indexOf(REASON)).toBeLessThan(html.indexOf("Backup limits"));

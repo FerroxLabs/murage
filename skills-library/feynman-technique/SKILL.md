@@ -6,7 +6,7 @@ description: |
   Do NOT use for general concept explanation (the learner should do the explaining, not the AI), for flashcard creation (use `flashcard-generation`), or for note taking (use `cornell-notes`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "study-skills active-recall step-by-step teaching"
   category: "education"

@@ -1,0 +1,421 @@
+{
+  "extName": {
+    "message": "Murage for Chrome"
+  },
+  "extDescription": {
+    "message": "選んだブラウザのタブを Murage のボットと共有し、一時停止と停止で操作を握り続けられます。"
+  },
+  "groupTitle": {
+    "message": "Murage"
+  },
+  "groupTitleBot": {
+    "message": "Murage · $BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "groupSuffixPaused": {
+    "message": " · 一時停止中"
+  },
+  "groupSuffixStopped": {
+    "message": " · 停止"
+  },
+  "groupSuffixYourTurn": {
+    "message": " · あなたの番"
+  },
+  "groupSuffixFull": {
+    "message": " · 完全"
+  },
+  "groupSuffixWorking": {
+    "message": " · 作業中"
+  },
+  "groupSuffixDone": {
+    "message": " · 完了"
+  },
+  "overlayWorking": {
+    "message": "$BOT$ が作業中です",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPause": {
+    "message": "一時停止"
+  },
+  "overlayStop": {
+    "message": "停止"
+  },
+  "overlayWaiting": {
+    "message": "Murage であなたを待っています"
+  },
+  "overlayFull": {
+    "message": "完全許可"
+  },
+  "overlayAria": {
+    "message": "$BOT$ がこのタブを使っています。ここで一時停止または停止できます。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPointer": {
+    "message": "$BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHeader": {
+    "message": "Murage for Chrome"
+  },
+  "spConnected": {
+    "message": "Murage に接続済み"
+  },
+  "spNotConnected": {
+    "message": "Murage に接続されていません"
+  },
+  "spBotLine": {
+    "message": "$BOT$ は「$CONVERSATION$」で作業中",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      },
+      "conversation": {
+        "content": "$2"
+      }
+    }
+  },
+  "spStateWorking": {
+    "message": "作業中"
+  },
+  "spStateWaiting": {
+    "message": "あなたを待っています"
+  },
+  "spStatePaused": {
+    "message": "一時停止中"
+  },
+  "spStateStopped": {
+    "message": "停止"
+  },
+  "spStateYourTurn": {
+    "message": "あなたの番"
+  },
+  "spModeStep": {
+    "message": "毎ステップ確認"
+  },
+  "spModeTask": {
+    "message": "作業ごとに一度確認"
+  },
+  "spModeFull": {
+    "message": "完全許可"
+  },
+  "btnPause": {
+    "message": "一時停止"
+  },
+  "btnStop": {
+    "message": "停止"
+  },
+  "btnResume": {
+    "message": "再開"
+  },
+  "btnEndTask": {
+    "message": "作業を終了"
+  },
+  "btnContinue": {
+    "message": "続ける"
+  },
+  "btnShare": {
+    "message": "このタブを共有"
+  },
+  "btnUnshare": {
+    "message": "共有を解除"
+  },
+  "spTaskTitle": {
+    "message": "この作業"
+  },
+  "spAllowedForTask": {
+    "message": "この作業で許可:"
+  },
+  "spRevoke": {
+    "message": "取り消す"
+  },
+  "spActivityTitle": {
+    "message": "$BOT$ の操作",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spActivityEmpty": {
+    "message": "まだありません。"
+  },
+  "spSitesTitle": {
+    "message": "$BOT$ が使えるサイト",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spSiteAlways": {
+    "message": "常に"
+  },
+  "spSiteNever": {
+    "message": "許可しない"
+  },
+  "spSiteAsks": {
+    "message": "毎ステップ確認"
+  },
+  "spShareTitle": {
+    "message": "このタブを $BOT$ と共有しますか？",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spShare": {
+    "message": "共有"
+  },
+  "spNotNow": {
+    "message": "今はしない"
+  },
+  "spUnshareTitle": {
+    "message": "このタブの $BOT$ との共有をやめますか？",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshare": {
+    "message": "共有をやめる"
+  },
+  "spKeep": {
+    "message": "そのまま"
+  },
+  "spDebugNote": {
+    "message": "$BOT$ が作業している間、Chrome には「Murage for Chrome がこのブラウザのデバッグを開始しました」というバーが表示されます。これは、拡張機能がタブを操作できることを Chrome が知らせているものです。このバーで「キャンセル」を押すと $BOT$ が一時停止します。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUpdateWaiting": {
+    "message": "$BOT$ がこのステップを終えたら、Murage for Chrome が更新されます。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spOldExtension": {
+    "message": "新しい操作を使うには、Murage for Chrome を更新してください。"
+  },
+  "spOldApp": {
+    "message": "この版の Murage for Chrome を使うには、このパソコンの Murage を更新してください。"
+  },
+  "spShortcutHint": {
+    "message": "キーボードで一時停止: $SHORTCUT$",
+    "placeholders": {
+      "shortcut": {
+        "content": "$1"
+      }
+    }
+  },
+  "spYourTurn": {
+    "message": "あなたの番です: $LINE$",
+    "placeholders": {
+      "line": {
+        "content": "$1"
+      }
+    }
+  },
+  "spFullOn": {
+    "message": "完全許可はオンです。"
+  },
+  "spTurnOff": {
+    "message": "オフにする"
+  },
+  "spModeTitle": {
+    "message": "承認モード"
+  },
+  "spHintStep": {
+    "message": "サイトを変更する操作の前に、$BOT$ が毎回確認します。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintTask": {
+    "message": "サイトごとにカードを1枚確認した後、$BOT$ がタスクを進めます。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintFull": {
+    "message": "通常の操作ではカードを表示しません。あなたにしかできないことは、これまでどおりあなたに戻ります。"
+  },
+  "spRevokeAria": {
+    "message": "$SITE$ へのアクセスを取り消す",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshareAria": {
+    "message": "$SITE$ の共有を解除",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spNewTab": {
+    "message": "新しいタブ"
+  },
+  "spSharedTitle": {
+    "message": "共有中のタブ"
+  },
+  "spNoTabs": {
+    "message": "共有中のタブはありません。"
+  },
+  "spNoSites": {
+    "message": "まだサイトはありません。"
+  },
+  "spShareHint": {
+    "message": "ここで共有したタブだけがこのボットのものになります。タブをグループに移動しても共有にはなりません。"
+  },
+  "spSetupTitle": {
+    "message": "Murage に接続"
+  },
+  "spSetupBody": {
+    "message": "このコンピュータで Murage を開き、ブラウザ設定でブラウザコンパニオンをオンにしてください。"
+  },
+  "spCheckConnection": {
+    "message": "接続を確認"
+  },
+  "spProfile": {
+    "message": "Chrome プロファイル: $PROFILE$",
+    "placeholders": {
+      "profile": {
+        "content": "$1"
+      }
+    }
+  },
+  "spBodyWorking": {
+    "message": "共有したタブで作業中です。"
+  },
+  "spBodyPaused": {
+    "message": "再開するまでタブは非公開のままです。"
+  },
+  "spBodyStopped": {
+    "message": "このタスクは停止されました。新しい会話でもう一度開始するようボットに頼んでください。"
+  },
+  "spBodyReconnect": {
+    "message": "Murage がこのボットを再接続するのを待っています。"
+  },
+  "spErrHostOffline": {
+    "message": "Murage を開いてから、もう一度接続を確認してください。"
+  },
+  "spErrSiteDenied": {
+    "message": "Murage でこのサイトの許可を求めました。そこで許可してから、もう一度「共有」を押してください。"
+  },
+  "spErrHumanHandover": {
+    "message": "このサイトはあなた自身が直接操作する必要があります。"
+  },
+  "spErrBindingInactive": {
+    "message": "タブを共有する前に、Murage でこのボットを再開してください。"
+  },
+  "spErrTabOwned": {
+    "message": "このタブはすでに別のボットが使っています。"
+  },
+  "spErrUnknownBinding": {
+    "message": "先に Murage でブラウザのタスクを開始してください。"
+  },
+  "spErrBindingStopped": {
+    "message": "このタスクは停止されました。新しい会話でもう一度開始するようボットに頼んでください。"
+  },
+  "spErrGeneric": {
+    "message": "ブラウザの操作を完了できませんでした。接続を確認して、もう一度お試しください。"
+  },
+  "spHeaderBrand": {
+    "message": "Murage"
+  },
+  "spHeaderSuffix": {
+    "message": "for Chrome"
+  },
+  "spTaskAccess": {
+    "message": "タスクのアクセス"
+  },
+  "overlayYourTurn": {
+    "message": "あなたの番です: $BOT$ が待っています",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayStopTask": {
+    "message": "作業を停止"
+  },
+  "cmdPauseDescription": {
+    "message": "Murage for Chrome を一時停止"
+  },
+  "spSwitchTitle": {
+    "message": "ボット"
+  },
+  "spBodyYourTurn": {
+    "message": "この手順はブラウザーでご自身で行い、そのあとボットに続けてもらいます。"
+  },
+  "spPending": {
+    "message": "処理しています"
+  },
+  "spPhaseStarting": {
+    "message": "ボットを起動しています"
+  },
+  "spPhaseConnecting": {
+    "message": "ブラウザツールに接続しています"
+  },
+  "spPhaseReading": {
+    "message": "このページを読んでいます"
+  },
+  "spPhaseWaiting": {
+    "message": "あなたの操作を待っています"
+  },
+  "btnNewTask": {
+    "message": "新しいタスクを始める"
+  },
+  "spRecoveryReshare": {
+    "message": "Murage for Chrome は新しく始まりました。続けるには、タブをもう一度共有してください。"
+  },
+  "spErrHandoffUseContinue": {
+    "message": "ボットがあなたを待っています。このステップが終わったら「続ける」を押してください。"
+  },
+  "spErrNotHandoff": {
+    "message": "ボットは今あなたを待っていないので、続ける操作はありません。"
+  },
+  "spErrIncognitoDenied": {
+    "message": "Murage for Chrome はプライベートウィンドウでは動きません。通常のウィンドウでサイトを開いてから共有してください。"
+  },
+  "spErrPersistenceFailed": {
+    "message": "Chrome が変更を保存できませんでした。少し待ってからもう一度お試しください。"
+  },
+  "spErrUpdateRequired": {
+    "message": "このプロファイルは、より新しい Murage for Chrome で保存されています。続けるには拡張機能を更新してください。"
+  },
+  "spErrStorageUnavailable": {
+    "message": "Chrome のストレージを読み取れませんでした。Chrome を再起動してから、タブをもう一度共有してください。"
+  }
+}

@@ -1,0 +1,67 @@
+---
+title: MCP servers
+description: Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.
+icon: Plug
+---
+
+An MCP server gives your bots extra tools, such as running a workflow in ComfyUI or searching your notes. You add one in **Connected apps → MCP servers**. Tool calls still follow your normal approval settings, and new servers stay off until you turn them on.
+
+## Add a server
+
+Press Add server and paste one of three things into the box, then press Continue.
+
+- **A link.** Most services give you one, for example https://cloud.comfy.org/mcp. Murage connects to it and works out what it needs.
+- **A config snippet.** Paste the JSON from the service's own instructions. Murage reads it and shows any secret it needs as a labelled field.
+- **A command.** Paste a command such as npx -y @scope/server. It runs on this computer.
+
+You do not choose the type. Murage works it out from what you paste.
+
+## Sign in or use an API key
+
+If a link needs you to sign in, Murage shows a "Sign in to (site)" button. It opens your browser, you sign in there, and Murage takes it from there. Murage keeps the sign-in, renews it when it can, and never gives it to a bot.
+
+If the service takes an API key instead, press Use an API key instead, paste the key in the field and press Save and test. The key is kept by the Murage desktop app. Never paste a key into a chat.
+
+## Servers on this computer or your network
+
+A link that points at this computer, or at a device on your local network, asks you to confirm first. Only continue if you started that server yourself or you know what runs there. Murage checks the address again on every connection.
+
+## What Test tells you
+
+Test connects and lists the tools it finds. When it cannot, it says why in plain words.
+
+- **Needs you to sign in.** Press Sign in.
+- **Needs an API key, or did not accept it.** Check the key and try again.
+- **Sign-in has ended.** Sign in again. Some services end a sign-in after a while.
+- **Could not find it, or did not accept the connection.** Check the link and your internet connection.
+- **Nothing answers as an MCP server.** Check that you copied the whole link.
+- **Has moved.** Murage offers the new link.
+- **Did not answer in time.** Try again in a moment.
+
+The first time you run a command that downloads before it starts, such as npx or uvx, Test waits longer and shows how far it got. If it is still installing, press Keep waiting.
+
+## Turn it on, and who can use it
+
+When Test passes, press Turn on for my bots. Bots that can use your own MCP servers get the tools in your own chats: Fuigo, Claude, Codex and the other engines that mount tools. Each call asks you first unless the bot is on Full access.
+
+Only you can use them. People who message your bots on Telegram, Slack or Discord never get your servers.
+
+If a sign-in ends while a bot is working, the chat shows a Sign in card. On the computer running Murage the button signs you in and the bot carries on. On your phone the card says to finish sign-in on the computer running Murage.
+
+## Secrets in a command server
+
+A command server's environment values, such as a token, are kept by the Murage desktop app, not in your settings file. If you change the command or its arguments, Murage asks whether to keep those saved values for the new command or clear them. It never decides for you. Do not put a key in a command's arguments: they are saved as plain text. If you paste one there, Murage warns you and offers to move it to an environment value.
+
+## Antigravity and your own servers
+
+Antigravity reads its tools from one file shared by everything on this computer: the Antigravity config file in your home folder (.gemini/config/mcp_config.json). When Antigravity runs with full auto, Murage writes your servers into that file for the length of the turn, and that includes their environment values and the turn's own access token. Any Antigravity session you start yourself during that turn can read them. Murage puts the file back when the turn ends, and it removes anything it left behind if a turn ended in a crash. Entries of yours whose names start with murage-custom- are treated as Murage's and are not kept. If this does not suit you, leave Antigravity on accept edits, which does not mount your servers.
+
+## Script access for one bot
+
+A script or an outside agent on your computer, such as the Murage MCP server or the control command line, can reach one of your bots when you make script access for it. In Settings, switch on "Let scripts use a bot", pick the bot, and choose whether it may also send. Murage shows the token once, so copy it then. Turn the switch off, or remove a single access, and that token stops working at once.
+
+Script access reaches only the bot you picked. It cannot open other bots, rooms or search.
+
+## Remove a server
+
+Press Remove and confirm. Your bots lose its tools. Murage also signs you out of the service when the service allows it. When it does not, Murage forgets the sign-in on this computer and tells you how to cut access completely from the service's own account settings.

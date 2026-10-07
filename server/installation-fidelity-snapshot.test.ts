@@ -108,6 +108,19 @@ it("classifies every root name Murage writes, keeping owner state and leaving ca
     expect(stage.manifest.missing).not.toContain("queued-messages.json");expect(stage.manifest.missing).not.toContain("setup.json");
   });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });
+// What a bot learned from prospects stays on this computer (bot learning, B0).
+it("leaves learning-local out of the backup stage and the fidelity inventory, without failing the sweep",async()=>{
+  const f=backupFixture();mkdirSync(join(f.data,"learning-local","bot-1"),{recursive:true});writeFileSync(join(f.data,"learning-local","bot-1","guide.json"),"prospect-derived fixture");
+  try{await withOfflineInstallation(f.data,async installation=>{
+    const stage=await stageInstallationStateWhileOwned(installation,f.parent);
+    expect(stage.manifest.files.some(file=>file.path==="learning-local"||file.path.startsWith("learning-local/"))).toBe(false);
+    expect(stage.manifest.omitted.some(item=>item.path==="learning-local")).toBe(true);
+    const inventory=await inventoryFidelity(installation,stage,selection);inventory.assertUnchanged();
+    expect(inventory.coverage.components).toContainEqual(expect.objectContaining({path:"learning-local",status:"excluded"}));
+    expect(inventory.sources.some(file=>file.path==="learning-local"||file.path.startsWith("learning-local/"))).toBe(false);
+    expect(existsSync(join(f.data,"learning-local","bot-1","guide.json"))).toBe(true);
+  });}finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+});
 // An interrupted bot-package import is recovered at the next start. Until
 // then bots.json may be half-way between two rosters, so it stays refused.
 it("still refuses an unrecovered package-import transaction",async()=>{
@@ -169,5 +182,21 @@ it.each(["murage-skill-link","outside-link"])("backs up a bot with skills: %s",a
     const {stage}=await run();
     expect(stage.manifest.files.some(file=>file.path.replaceAll("\\","/")==="workspaces/bot-1/skills/brand-voice/SKILL.md")).toBe(true);
     expect(stage.manifest.omitted.filter(item=>item.path.replaceAll("\\","/").endsWith("/skills/brand-voice")).length).toBe(3);
+  }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
+});
+it("leaves the retired own connected-apps key out of the raw config copy and keeps the source",async()=>{
+  const f=backupFixture();try{
+    const config=JSON.stringify({profile:{name:"A"},composio:{apiKey:"ak_old_own_key_value",userId:"u"}});
+    writeFileSync(join(f.data,"config.json"),config);
+    await withOfflineInstallation(f.data,async installation=>{
+      const stage=await stageInstallationStateWhileOwned(installation,f.parent);
+      const inventory=await inventoryFidelity(installation,stage,selection);
+      const raw=inventory.sources.find(file=>file.path==="config.json")!;
+      const copy=readFileSync(raw.source,"utf8");
+      expect(copy).not.toContain("ak_old_own_key_value");
+      expect(JSON.parse(copy).profile.name).toBe("A");
+      expect(readFileSync(join(f.data,"config.json"),"utf8")).toBe(config);
+      stage.assertSourceUnchanged();inventory.assertUnchanged();
+    });
   }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });

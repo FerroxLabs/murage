@@ -72,10 +72,15 @@ function abandon(credentials, previous, nowIso) {
   return next;
 }
 
-async function remintAfterRevocation(credentials, { fluxBrokerUrl, fluxKey, fetchImpl, log, timeoutSignal, now }) {
-  const cleared = clearFluxComposioBrokerToken(credentials);
-  if (!fluxKey) return cleared;
-  return ensureFluxComposioBrokerToken({ fluxBrokerUrl, credentials: cleared, fluxKey, fetchImpl, log, timeoutSignal, now, force: true });
+async function remintAfterRevocation(credentials, { fluxBrokerUrl, fluxKey, fetchImpl, log, timeoutSignal, now, revokeSink }) {
+  // The dead token stays in the document until a new one is minted: deleting
+  // it first left the install holding no token at all whenever the mint failed
+  // offline. It is already dead at Flux, so keeping it costs nothing, and
+  // `ensureFluxComposioBrokerToken` replaces it (and ends it, best effort)
+  // the moment a mint succeeds. With no key there is nothing to mint with, so
+  // the token goes, as before.
+  if (!fluxKey) return clearFluxComposioBrokerToken(credentials);
+  return ensureFluxComposioBrokerToken({ fluxBrokerUrl, credentials, fluxKey, fetchImpl, log, timeoutSignal, now, force: true, revokeSink });
 }
 
 /** The three legs. Runs on the PluginsPanel button, on auto-claim, and on the
@@ -90,6 +95,7 @@ export async function claimLegacyComposioInstall({
   timeoutSignal = (milliseconds) => AbortSignal.timeout(milliseconds),
   now = Date.now(),
   onRateLimited = () => {},
+  revokeSink,
 }) {
   const flux = normalizeManagedComposioBrokerUrl(fluxBrokerUrl);
   const legacy = normalizeManagedComposioBrokerUrl(legacyBrokerUrl);
@@ -150,7 +156,7 @@ export async function claimLegacyComposioInstall({
       } else if (response.status === 409 && code && TERMINAL_FLUX_CONFLICTS.has(code)) {
         return transition(next, previous, { state: "conflict", code }, nowIso);
       } else if (response.status === 401 && code === "broker_token_revoked") {
-        next = await remintAfterRevocation(next, { fluxBrokerUrl: flux, fluxKey, fetchImpl, log, timeoutSignal, now });
+        next = await remintAfterRevocation(next, { fluxBrokerUrl: flux, fluxKey, fetchImpl, log, timeoutSignal, now, revokeSink });
         return transition(next, previous, { state: "pending" }, nowIso);
       } else {
         if (response.status === 429) onRateLimited();
@@ -204,12 +210,13 @@ export async function prepareLegacyComposioClaim({
   timeoutSignal = (milliseconds) => AbortSignal.timeout(milliseconds),
   now = Date.now(),
   onRateLimited = () => {},
+  revokeSink,
 }) {
   const flux = normalizeManagedComposioBrokerUrl(fluxBrokerUrl);
   let next = { ...credentials };
   const claim = readComposioLegacyClaim(next);
   if (!flux || !claimPreconditions(next, claim)) return next;
-  const options = { fluxBrokerUrl: flux, legacyBrokerUrl, fluxKey, fetchImpl, log, timeoutSignal, now, onRateLimited };
+  const options = { fluxBrokerUrl: flux, legacyBrokerUrl, fluxKey, fetchImpl, log, timeoutSignal, now, onRateLimited, revokeSink };
   if (claim.state === "claimed" && claim.confirmPending) return claimLegacyComposioInstall({ ...options, credentials: next });
 
   try {
@@ -229,7 +236,7 @@ export async function prepareLegacyComposioClaim({
     });
     me = await readJson(response);
     if (response.status === 401 && codeOf(me) === "broker_token_revoked") {
-      return remintAfterRevocation(next, { fluxBrokerUrl: flux, fluxKey, fetchImpl, log, timeoutSignal, now });
+      return remintAfterRevocation(next, { fluxBrokerUrl: flux, fluxKey, fetchImpl, log, timeoutSignal, now, revokeSink });
     }
     if (response.status === 429) onRateLimited();
     if (!response.ok || !me || typeof me !== "object") return next;

@@ -52,7 +52,17 @@ export function renameWithRetry(
   }
 }
 
+/** Completed atomic writes per path in this process. A test seam: it is how a
+ * store test counts file rewrites without spying on the filesystem. */
+const atomicWriteCounts = new Map<string, number>();
+export function atomicWriteCount(path: string): number { return atomicWriteCounts.get(path) ?? 0; }
+
 export function writeFileAtomic(path: string, data: string | Uint8Array, options: { mode?: number } = {}): void {
+  writeFileAtomicInner(path, data, options);
+  atomicWriteCounts.set(path, (atomicWriteCounts.get(path) ?? 0) + 1);
+}
+
+function writeFileAtomicInner(path: string, data: string | Uint8Array, options: { mode?: number } = {}): void {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd: number | null = null;
   try {
@@ -99,4 +109,111 @@ export function tightenOwnerOnlyFile(path: string, platform: NodeJS.Platform = p
   } catch {
     return false; /* absent, or not ours to change */
   }
+}
+
+// ── Coalesced writes ─────────────────────────────────────────────────────────
+// A store that changes many times a second (an unread badge, a task switch)
+// used to rewrite its whole file on every change. A coalesced write keeps only
+// the LAST requested state per key and writes it at most once per window.
+//
+// Durability contract, stated plainly:
+//  - The in-memory state is always the truth; callers never read the file back.
+//  - The last state is written within COALESCE_WINDOW_MS, and synchronously on
+//    flushCoalesced() (called before backups and snapshots), on process exit
+//    and on SIGTERM. A graceful stop therefore never loses the final state.
+//  - A hard crash (SIGKILL, power loss) between a change and its flush loses at
+//    most about COALESCE_WINDOW_MS of changes. Only cosmetic state may be
+//    deferred. Security, owner, consent and delivery records must keep using
+//    writeFileAtomic directly (an immediate, durable write).
+export const COALESCE_WINDOW_MS = 250;
+
+interface PendingWrite { flush: () => void; timer: ReturnType<typeof setTimeout> | null }
+const pendingWrites = new Map<string, PendingWrite>();
+let exitHooksInstalled = false;
+
+function installExitHooks(): void {
+  if (exitHooksInstalled) return;
+  exitHooksInstalled = true;
+  process.on("exit", () => { try { flushCoalesced(); } catch { /* exiting: nothing left to report to */ } });
+  // Only when nothing else handles SIGTERM: the process owner's own handler
+  // (index.ts) flushes through the exit hook above when it exits. Without any
+  // handler the default action would kill the process before "exit" fires.
+  if (process.listenerCount("SIGTERM") === 0) {
+    const onTerm = () => {
+      try { flushCoalesced(); } catch { /* best effort */ }
+      process.removeListener("SIGTERM", onTerm);
+      // Re-raise for the default action only when no handler was added since;
+      // a later owner's handler already saw this signal and closes the process.
+      if (process.listenerCount("SIGTERM") === 0) process.kill(process.pid, "SIGTERM");
+    };
+    process.on("SIGTERM", onTerm);
+  }
+}
+
+/** Ask for `flush` to run once within the window. A later call for the same
+ * key replaces the earlier closure (last value wins) without moving the timer,
+ * so a steady stream of changes still reaches disk every window. */
+export function scheduleCoalesced(key: string, flush: () => void, windowMs = COALESCE_WINDOW_MS): void {
+  installExitHooks();
+  const existing = pendingWrites.get(key);
+  if (existing) {
+    existing.flush = flush;
+    if (!existing.timer) arm(key, existing, windowMs);
+    return;
+  }
+  const entry: PendingWrite = { flush, timer: null };
+  pendingWrites.set(key, entry);
+  arm(key, entry, windowMs);
+}
+
+/** A failed deferred write stays pending (with no timer), so the next change,
+ * an explicit flush, a backup or exit retries it instead of losing it. */
+function arm(key: string, entry: PendingWrite, windowMs: number): void {
+  entry.timer = setTimeout(() => {
+    entry.timer = null;
+    try {
+      entry.flush();
+      if (pendingWrites.get(key) === entry && !entry.timer) pendingWrites.delete(key);
+    } catch (error) {
+      console.error(`atomic: deferred write for ${key} failed; kept pending, retried on the next change, flush or exit`, error);
+    }
+  }, windowMs);
+  entry.timer.unref?.();
+}
+
+/** Drop a pending write because the caller just wrote the same state now. */
+export function cancelCoalesced(key: string): void {
+  const entry = pendingWrites.get(key);
+  if (!entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  pendingWrites.delete(key);
+}
+
+export function hasPendingCoalesced(key?: string): boolean { return key === undefined ? pendingWrites.size > 0 : pendingWrites.has(key); }
+
+/** Run pending writes now (one key, or all). Every pending write is attempted;
+ * the first failure is rethrown afterwards. */
+export function flushCoalesced(key?: string): void {
+  const keys = key === undefined ? [...pendingWrites.keys()] : pendingWrites.has(key) ? [key] : [];
+  let failure: unknown;
+  let failed = false;
+  for (const k of keys) {
+    const entry = pendingWrites.get(k);
+    if (!entry) continue;
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = null;
+    pendingWrites.delete(k);
+    try { entry.flush(); } catch (error) {
+      // Still not on disk: keep it pending for the next attempt, and report.
+      if (!pendingWrites.has(k)) pendingWrites.set(k, entry);
+      if (!failed) { failed = true; failure = error; }
+    }
+  }
+  if (failed) throw failure;
+}
+
+/** writeFileAtomic, deferred and coalesced per path. `produce` runs at flush
+ * time, so the bytes always reflect the newest state and are built once. */
+export function writeFileCoalesced(path: string, produce: () => string | Uint8Array, options: { mode?: number } = {}): void {
+  scheduleCoalesced(path, () => writeFileAtomic(path, produce(), options));
 }

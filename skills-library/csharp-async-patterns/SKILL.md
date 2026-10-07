@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about C# modern idioms (use `csharp-modern-idioms`), C# performance (use `csharp-performance`), C# ASP.NET (use `csharp-aspnet-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "csharp backend optimization"
   category: "software-engineering"

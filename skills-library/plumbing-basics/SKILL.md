@@ -11,7 +11,7 @@ description: |
   or commercial plumbing systems.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-maintenance troubleshooting step-by-step"
   category: "home-household"

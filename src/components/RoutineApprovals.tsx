@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The routine editor's approval settings: the level this routine's runs are
-// judged at (its bot's own level unless the owner picks one here), and the
+// capped at, subject to the bot's current level, and the
 // approvals "Always allow for this routine" remembered, each removable. The
 // server decides what each covers (server/routine-permissions.ts); this only
 // shows it. Writing either is the desktop app's alone, like every routine edit.
@@ -13,11 +13,9 @@ import { PERMISSION_MODES } from "./PermissionModeMenu";
 import type { PermissionMode } from "@/lib/permission-mode";
 import type { Routine } from "@/lib/routines";
 
-export type RoutineLevelChoice = PermissionMode | "inherit";
+export type RoutineLevelChoice = PermissionMode;
 
-export function routineLevelHelp(choice: RoutineLevelChoice, botName: string, botMode: PermissionMode): string {
-  const chip = (mode: PermissionMode) => PERMISSION_MODES.find((entry) => entry.mode === mode)!.chip;
-  if (choice === "inherit") return `Runs use ${botName}'s level when they start, now ${chip(botMode)}.`;
+export function routineLevelHelp(choice: RoutineLevelChoice): string {
   const detail = PERMISSION_MODES.find((entry) => entry.mode === choice)!.detail;
   return `Every run of this routine: ${detail.charAt(0).toLowerCase()}${detail.slice(1).replace(/\.$/, "")}.`;
 }
@@ -25,15 +23,12 @@ export function routineLevelHelp(choice: RoutineLevelChoice, botName: string, bo
 export function RoutineApprovalLevel({
   value,
   onChange,
-  botName,
-  botMode,
 }: {
   value: RoutineLevelChoice;
   onChange: (value: RoutineLevelChoice) => void;
   botName: string;
   botMode: PermissionMode;
 }) {
-  const chip = PERMISSION_MODES.find((entry) => entry.mode === botMode)!.chip;
   return (
     <div>
       <label className="flex flex-wrap items-center gap-2 text-[12px] text-ink">
@@ -44,11 +39,10 @@ export function RoutineApprovalLevel({
           onChange={(event) => onChange(event.target.value as RoutineLevelChoice)}
           className="rounded-lg border border-hairline/50 bg-panel px-3 py-2 text-[12px] text-ink outline-none focus:border-accent"
         >
-          <option value="inherit">Same as {botName} ({chip})</option>
           {PERMISSION_MODES.map((entry) => <option key={entry.mode} value={entry.mode}>{entry.label}</option>)}
         </select>
       </label>
-      <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">{routineLevelHelp(value, botName, botMode)} Reading your keys always asks.</div>
+      <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">{routineLevelHelp(value)} Reading your keys always asks.</div>
     </div>
   );
 }
@@ -78,7 +72,7 @@ export function RoutineGrants({ routine }: { routine: Pick<Routine, "id" | "alwa
       <div className="text-[12px] text-ink">Always allowed for this routine</div>
       <div className="mt-0.5 text-[10.5px] leading-relaxed text-ink-secondary">
         {keys.length
-          ? "Runs of this routine do these without asking. A command still matches when only the dates and times in it change. Reading your keys still asks."
+          ? "Runs of this routine do these without asking. Each one covers exactly the command you approved. Reading your keys still asks."
           : "Nothing yet. Choose Always allow for this routine on an approval from one of its runs."}
       </div>
       {error && <div role="alert" className="mt-1.5 text-[11px] text-danger">{error}</div>}

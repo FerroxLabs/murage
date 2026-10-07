@@ -3,7 +3,7 @@ import { useBotSettingsDraft } from "./bot-settings-drafts";
 import { Check, ImagePlus, Loader2, Sparkles, Trash2 } from "lucide-react";
 
 import { api, useStore, type Bot, type ConfigStatus } from "@/state/store";
-import { imageAttachmentFromFile } from "@/lib/composer-attachments";
+import { imageAttachmentFromFile } from "@/lib/composer-image-upload";
 import { AVATAR_COPY, avatarGeneratorPlan, type AvatarGeneratorPlan } from "@/lib/avatar-generation";
 import { cn } from "@/lib/cn";
 import { AVATAR_IMAGE_TYPE_ERROR, FILE_DROP_ZONE_ATTRIBUTE, avatarDropHandlers } from "@/lib/file-drop-zone";
@@ -19,7 +19,8 @@ import {
   botAvatarUrlFromStoredPath,
   type BotAvatarCrop,
 } from "../../shared/bot-avatar";
-import { BotAvatar, EmberAvatar } from "./Avatar";
+import { EmberAvatar } from "./Avatar";
+import { ViewableBotAvatar } from "./BotAvatarViewer";
 import { MASCOT_BODY_IDS, MASCOT_BODY_NAMES, botMascotBody } from "../../shared/mascot-bodies";
 
 type AvatarPatch = Partial<
@@ -167,7 +168,7 @@ export function BotProfileAvatarCard({
 
       <div className="p-3">
         <AvatarDropZone active={dragActive} handlers={dropHandlers}>
-          <BotAvatar
+          <ViewableBotAvatar
             bot={bot}
             state={activeState}
             size={112}

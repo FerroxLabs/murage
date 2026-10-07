@@ -6,6 +6,9 @@ import {
   formatTaskTokenLabel,
   formatTaskWhen,
   formatListTime,
+  formatAgo,
+  formatRelativeListTime,
+  formatRelativeTaskWhen,
   groupTasksByDate,
   isHiddenEmptyTask,
   readableTaskTitle,
@@ -85,6 +88,38 @@ describe("formatListTime", () => {
     // a week ago today must not read as today's weekday
     expect(formatListTime(ny("2026-09-12T08:00:00-04:00"), now, NY)).toBe("Sep 12");
     expect(formatListTime(ny("2025-12-10T09:00:00-05:00"), now, NY)).toBe("Dec 10, 2025");
+  });
+});
+
+// Upstream #1854: the newest work reads as how long ago; the hover title
+// keeps the full date and time.
+describe("relative times", () => {
+  const now = ny("2026-09-19T15:00:00-04:00");
+  it("says how long ago for work from today, and keeps the date otherwise", () => {
+    expect(formatAgo(now - 10_000, now, NY)).toBe("Just now");
+    expect(formatAgo(now + 30_000, now, NY)).toBe("Just now");
+    expect(formatAgo(now - 60_000, now, NY)).toBe("1 min ago");
+    expect(formatAgo(now - 59 * 60_000, now, NY)).toBe("59 min ago");
+    expect(formatAgo(now - 60 * 60_000, now, NY)).toBe("1 hr ago");
+    expect(formatAgo(ny("2026-09-19T00:06:00-04:00"), now, NY)).toBe("14 hr ago");
+    expect(formatAgo(ny("2026-09-18T23:59:00-04:00"), now, NY)).toBeNull();
+    expect(formatAgo(now + 5 * 60_000, now, NY)).toBeNull();
+  });
+
+  it("keeps yesterday's words across midnight, even minutes ago", () => {
+    const justAfter = ny("2026-09-20T00:10:00-04:00");
+    expect(formatAgo(ny("2026-09-19T23:50:00-04:00"), justAfter, NY)).toBeNull();
+    expect(formatRelativeListTime(ny("2026-09-19T23:59:30-04:00"), justAfter, NY)).toBe("Yesterday");
+    expect(formatAgo(ny("2026-09-20T00:01:00-04:00"), justAfter, NY)).toBe("9 min ago");
+  });
+
+  it("falls back to each list's own date words", () => {
+    expect(formatRelativeListTime(now - 5 * 60_000, now, NY)).toBe("5 min ago");
+    expect(formatRelativeListTime(ny("2026-09-18T20:03:00-04:00"), now, NY)).toBe("Yesterday");
+    expect(formatRelativeListTime(ny("2026-09-15T08:00:00-04:00"), now, NY)).toBe("Tue");
+    expect(formatRelativeTaskWhen(now - 3 * 60 * 60_000, now, NY)).toBe("3 hr ago");
+    expect(formatRelativeTaskWhen(ny("2026-09-18T00:06:00-04:00"), now, NY)).toBe("12:06 AM");
+    expect(formatRelativeTaskWhen(ny("2026-09-12T00:06:00-04:00"), now, NY)).toBe("Sep 12");
   });
 });
 

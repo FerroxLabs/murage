@@ -4,7 +4,7 @@ description: |
   Strategic pricing guidance covering cost-plus, value-based, competitive, freemium, tiered, and usage-based models, with psychological pricing tactics, A/B testing frameworks, pricing page design, and price increase communication strategies. Use when the user asks about pricing strategist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy analysis entrepreneurship"
   category: "business-strategy"

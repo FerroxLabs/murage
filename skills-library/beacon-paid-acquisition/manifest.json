@@ -2,7 +2,7 @@
   "id": "beacon-paid-acquisition",
   "name": "paid-acquisition",
   "version": "1.0.0",
-  "description": "As of: 2026-05-16",
+  "description": "Plan paid ads on Meta, Google, TikTok or LinkedIn. Check your unit economics first, then set up campaigns, split the budget and test creative.",
   "defaultEnabled": false,
   "triggerTerms": [
     "beacon",

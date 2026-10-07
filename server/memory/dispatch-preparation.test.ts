@@ -55,6 +55,26 @@ it("prepares a bundle whose own-thread checkpoint rolled over during reset as st
   expect(JSON.parse(String(database().prepare("SELECT record_versions FROM memory_disclosures WHERE bundle_id=?").get(before.bundleId)?.record_versions))).toContainEqual({id:first.id,version:first.version});
 });
 
+// Recall awaits the worker that captures this very turn's prompt, so the
+// thread's checkpoint routinely rolls while the bundle is being built. The
+// version the bundle selected stays in it (stale, not revoked); before this it
+// was silently dropped and the turn ran without its conversation summary (CI
+// 36317693740, group-member-checkpoint-roll-api on every OS).
+it("keeps the thread's own checkpoint that rolls while recall runs",async()=>{
+  const f=fixture(),first=checkpoint("Verified initial result.");
+  const rolling={search:async()=>{checkpoint("The turn's own prompt, captured during recall.");return {hits:[],vectorRows:0};}};
+  const bundle=await buildMemoryBundle("result",f.access,rolling);
+  expect(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(first.id,first.version)?.state).toBe("archived");
+  expect(bundle.recordVersions).toContainEqual({id:first.id,version:first.version});
+  expect(bundle.degradedReason).toBeUndefined();
+  // Any other loss during recall is still dropped: an archived version with no successor.
+  const g=fixture(),second=checkpoint("Another result.");
+  const archiving={search:async()=>{database().prepare("UPDATE memory_records SET state='archived' WHERE id=? AND version=?").run(second.id,second.version);return {hits:[],vectorRows:0};}};
+  const dropped=await buildMemoryBundle("result",g.access,archiving);
+  expect(dropped.recordVersions).not.toContainEqual({id:second.id,version:second.version});
+  expect(dropped.degradedReason).toBe("MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE");
+});
+
 it("treats the thread's own checkpoint superseded inside the dispatch window as stale: the accepted turn runs and its reply stays replayable",async()=>{
   const f=fixture(),first=checkpoint("Verified initial result.");
   const bundle=await buildMemoryBundleAfterReset("result",f.access,bridge,async()=>{});
@@ -106,11 +126,72 @@ it("keeps every other revocation of a disclosed checkpoint fail-closed",async()=
     forgetMemory(ownerMemoryTicket(),{kind:"source",id:first.sourceId,revision:1});
     expect(()=>receipt.assertCurrent()).toThrow("MEMORY_CONTEXT_REVOKED");
     expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
-  // An owner archive moves the policy revision, successor or not.
+  // An owner archive refuses the record itself, successor or not. It is a
+  // change to one record, not to policy, so the refusal is the record's own.
   {const {first,receipt}=await prepared("Owner-archived.");
     archiveMemoryRecord(ownerMemoryTicket(),first.id,first.version);
-    expect(()=>receipt.assertCurrent()).toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(()=>receipt.assertCurrent()).toThrow("MEMORY_RECORD_UNAVAILABLE");
     expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
+});
+
+// A direct turn reaches every thread its bot owns for recall, but a sibling
+// thread's checkpoint is that thread's working state, not this turn's. It was
+// disclosed (newest ten checkpoints across all reachable scopes) and, since a
+// busy sibling rolls it on every capture, a routine that waited for a thread
+// slot was revoked at acceptance: "Context changed; previous attempt may have
+// started" (CI Windows, independent-threads-api). Only the dispatched thread's
+// own checkpoint is part of its bundle.
+it("discloses only the dispatched thread's own checkpoint, so a busy sibling rolling its own cannot revoke the turn",async()=>{
+  const sibling="5d3f7c1e-8a2b-4c6d-9e0f-1a2b3c4d5e6f";
+  const wider={bots:[{id:"bot",threadId,tasks:[{threadId:sibling}]}],groups:[]};
+  reconcileMemoryRoster(wider);
+  const own=checkpoint("Verified result in this thread.");
+  const siblingCheckpoint=(text:string)=>{
+    captureSource(database(),{id:`message:${sibling}:${randomUUID()}`,threadId:sibling,messageId:randomUUID(),kind:"text",speaker:"owner",outcome:"recorded",text});
+    const work=claimMemoryJob("dispatch-sibling-fixture");if(!work)throw Error("No actual capture job");
+    publishMemoryWork(work,"dispatch-sibling-fixture",captureWork(work));
+    const result=refreshMemoryCheckpoint(work.id);if(result.status!=="updated")throw Error("Expected actual checkpoint publication");
+    return {id:result.checkpointId,version:result.version};
+  };
+  const other=siblingCheckpoint("The sibling thread's working state.");
+  const registry=new InternalCapabilities(),generation=registry.begin("bot",threadId);
+  const token=registry.mint({botId:"bot",threadId,generation,depth:0,kind:"memory",skillAuthoring:false});
+  const access=memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>wider);
+  const bundle=await buildMemoryBundle("result",access,bridge);
+  expect(bundle.recordVersions).toContainEqual({id:own.id,version:own.version});
+  expect(bundle.recordVersions.map(record=>record.id)).not.toContain(other.id);
+  const receipt=new MemoryDispatchReceipt(bundle,access,"fixture");
+  // The sibling keeps working while this turn waits and starts.
+  expect(siblingCheckpoint("The sibling moved on.")).toMatchObject({id:other.id,version:other.version+1});
+  expect(()=>receipt.accepted()).not.toThrow();
+  expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
+});
+
+// The same sibling checkpoint must not come back in through recall: its text
+// matches the turn's query here, so search (or the recent-memory fallback)
+// returns it as a hit, and rolling it would revoke the turn just the same.
+it("keeps a sibling thread's checkpoint out of recall too, even when it matches the query",async()=>{
+  const sibling="6e4f8d2f-9b3c-4d7e-8f10-2b3c4d5e6f70";
+  const wider={bots:[{id:"bot",threadId,tasks:[{threadId:sibling}]}],groups:[]};
+  reconcileMemoryRoster(wider);
+  const own=checkpoint("Verified result in this thread.");
+  const siblingCheckpoint=(text:string)=>{
+    captureSource(database(),{id:`message:${sibling}:${randomUUID()}`,threadId:sibling,messageId:randomUUID(),kind:"text",speaker:"owner",outcome:"recorded",text});
+    const work=claimMemoryJob("dispatch-sibling-recall-fixture");if(!work)throw Error("No actual capture job");
+    publishMemoryWork(work,"dispatch-sibling-recall-fixture",captureWork(work));
+    const result=refreshMemoryCheckpoint(work.id);if(result.status!=="updated")throw Error("Expected actual checkpoint publication");
+    return {id:result.checkpointId,version:result.version};
+  };
+  const other=siblingCheckpoint("The sibling thread's result is its working state.");
+  const registry=new InternalCapabilities(),generation=registry.begin("bot",threadId);
+  const token=registry.mint({botId:"bot",threadId,generation,depth:0,kind:"memory",skillAuthoring:false});
+  const access=memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>wider);
+  const bundle=await buildMemoryBundle("result",access,bridge);
+  expect(bundle.recordVersions).toContainEqual({id:own.id,version:own.version});
+  expect(bundle.recordVersions.map(record=>record.id)).not.toContain(other.id);
+  const receipt=new MemoryDispatchReceipt(bundle,access,"fixture");
+  expect(siblingCheckpoint("The sibling moved on with another result.")).toMatchObject({id:other.id,version:other.version+1});
+  expect(()=>receipt.accepted()).not.toThrow();
 });
 
 it("recognizes only the current thread's own checkpoint as superseded",()=>{
@@ -221,10 +302,11 @@ it("keeps owner revocation of a disclosed room checkpoint fail-closed for the me
     forgetMemory(ownerMemoryTicket(),{kind:"source",id:first.sourceId,revision:1});
     expect(()=>receipt.assertCurrent()).toThrow("MEMORY_CONTEXT_REVOKED");
     expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
-  // An owner archive of the room checkpoint moves the policy revision.
+  // An owner archive of the room checkpoint refuses that record (a record
+  // change, not a policy change).
   {const {first,receipt}=await prepared("Owner-archived room checkpoint.");
     archiveMemoryRecord(ownerMemoryTicket(),first.id,first.version);
-    expect(()=>receipt.assertCurrent()).toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(()=>receipt.assertCurrent()).toThrow("MEMORY_RECORD_UNAVAILABLE");
     expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
   // Archived without a successor is not supersession.
   {const {first,receipt}=await prepared("Archived room checkpoint, no successor.");
@@ -280,8 +362,9 @@ it("uses post-reset bundle preparation in both real dispatch paths before receip
     const reset=block.indexOf("buildMemoryBundleAfterReset(");
     expect(reset).toBeGreaterThan(-1);
     // the room path reads its transcript through room-transcript.ts, which
-    // keeps filterMemoryReplay for every turn that is not an owner audience
-    expect(Math.max(block.lastIndexOf("filterMemoryReplay("),block.lastIndexOf("filterMemoryReplayRecent("),block.lastIndexOf("roomTranscriptForTurn("))).toBeGreaterThan(reset);
+    // keeps filterMemoryReplay for every turn that is not an owner audience;
+    // the direct path through filterDirectReplay (its replay window)
+    expect(Math.max(block.lastIndexOf("filterDirectReplay("),block.lastIndexOf("roomTranscriptForTurn("))).toBeGreaterThan(reset);
     expect(block.indexOf("new MemoryDispatchReceipt(")).toBeGreaterThan(reset);
   }
 });
@@ -293,14 +376,14 @@ it("filters the transcript of a resumed direct turn before dispatch, not only a 
   const source=readFileSync(new URL("../index.ts",import.meta.url),"utf8");
   const direct=source.slice(source.indexOf("      let memoryReceipt: MemoryDispatchReceipt | undefined;"),source.indexOf("      if (!markDirectTurnDispatching"));
   const replay=direct.indexOf("if(needsReplay) {");
-  const resumed=direct.indexOf("} else {\n          // A resumed turn",replay);
+  const resumed=direct.indexOf("} else {",replay);
   const bundle=direct.indexOf("const query=",replay);
   expect(replay).toBeGreaterThan(-1);
   expect(resumed).toBeGreaterThan(replay);
   expect(resumed).toBeLessThan(bundle);
   const branch=direct.slice(resumed,bundle);
-  expect(branch).toContain("filterMemoryReplayRecent(threadId,activeMessages,access)");
-  expect(branch).toMatch(/transcript=allowed\./);
+  expect(branch).toContain("filterDirectReplay(threadId,activeMessages,access,skipTranscript,replayOptions)");
+  expect(branch).toMatch(/transcript=replayed\b/);
 });
 
 it("retires an accepted provider and awaits interruption when true forgetting invalidates its memory receipt",async()=>{

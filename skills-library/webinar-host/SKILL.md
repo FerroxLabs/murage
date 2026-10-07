@@ -4,7 +4,7 @@ description: |
   Complete webinar production covering planning, presentation design, audience engagement through polls and Q&A, tech setup with Zoom and StreamYard, follow-up email sequences, conversion optimization, and replay strategy for maximum impact. Use when the user asks about webinar host or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "presentation marketing content-marketing"
   category: "marketing-sales"

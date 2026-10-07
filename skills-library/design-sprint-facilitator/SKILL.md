@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of design sprint facilitator or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management frameworks guide step-by-step beginner-friendly testing research energy-efficiency"
   category: "productivity"

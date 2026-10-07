@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of focus environment designer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management budgeting beginner-friendly analysis research planning neurodiversity performing-arts"
   category: "productivity"

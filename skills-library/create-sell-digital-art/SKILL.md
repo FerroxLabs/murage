@@ -20,7 +20,7 @@ trigger_phrases: >-
   digital art portfolio sell art online digital art marketplace start an art
   business license my artwork
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: design photography step-by-step planning
   category: creative-project

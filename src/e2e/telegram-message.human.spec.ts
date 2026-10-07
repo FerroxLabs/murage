@@ -5,7 +5,8 @@ const body = "Hello from Telegram\n> Keep this quote\n```ts\nconst count = 1;\n`
 const raw = `[UNTRUSTED TELEGRAM CHANNEL MESSAGE]\n${body}\n[/UNTRUSTED TELEGRAM CHANNEL MESSAGE]`;
 
 test("Telegram envelope becomes a source label while examples and editing stay literal", async ({ app }, testInfo) => {
-  await app.route("**/api/bots", async (route) => {
+  // Hydration asks for a page (/api/bots?messages=N), so match the path.
+  await app.route((url) => url.pathname === "/api/bots", async (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     const response = await route.fetch();
     const data = await response.json();

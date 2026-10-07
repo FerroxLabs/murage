@@ -1,18 +1,16 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// A routine's approval level. A routine run used to be judged as Auto
-// whatever the bot was on, because nobody starts it at the desktop: a No
-// limits bot's 30-minute sweep hit a card nobody was there to answer and died
-// at its run limit. The level now lives on the routine. Absent means the
-// routine inherits the bot's level at the moment the run starts; the owner
-// can pick a level for one routine in its editor.
+// A routine keeps the approval ceiling chosen at creation or by an owner
+// edit. Runs use the lower of that ceiling and the bot's current level.
+// Older routines receive a ceiling when the manager loads them.
 //
 // This only says WHICH level a routine run is judged at. What each level
 // lets through is still decided in one place, server/auto-approve.ts, where
-// the key guard holds at every level and the stop line holds below No limits.
+// the key guard and stop line hold at every level for routine runs.
 
-import type { AutoApprover } from "./auto-approve.ts";
+import { autoVerdict, type AutoApprover, type AutoContext, type AutoVerdict, type FullAccessOrigin } from "./auto-approve.ts";
+import type { SendTurnInput } from "./contracts.ts";
 import { isStopLineKey } from "./stop-line.ts";
 import { parseExactCommandKey } from "../shared/exact-command.ts";
 
@@ -36,12 +34,15 @@ export function botPermissionMode(bot: AutoApprover | null | undefined): Routine
   return bot.noLimits === true ? "unlimited" : "full";
 }
 
-/** The level a routine run is judged at: its own, or the bot's current one. */
+/** The lower of the stored ceiling and the bot's current level. A routine
+ * awaiting migration still uses the bot's current level. */
 export function effectiveRoutinePermissionMode(
   routine: { permissionMode?: RoutinePermissionMode },
   bot: AutoApprover | null | undefined,
 ): RoutinePermissionMode {
-  return routine.permissionMode ?? botPermissionMode(bot);
+  const current = botPermissionMode(bot);
+  const ceiling = loadRoutinePermissionMode(routine.permissionMode) ?? current;
+  return ROUTINE_PERMISSION_MODES[Math.min(ROUTINE_PERMISSION_MODES.indexOf(ceiling), ROUTINE_PERMISSION_MODES.indexOf(current))]!;
 }
 
 /** The same record judged at `mode`. Grants and every other field are kept. */
@@ -54,13 +55,61 @@ export function applyRoutinePermissionMode<T extends AutoApprover>(bot: T, mode:
   };
 }
 
-/** From routines.json: an older file has no level (inherit), and an unknown
- * value is treated the same way rather than dropping the routine. */
-export function loadRoutinePermissionMode(value: unknown): RoutinePermissionMode | undefined {
-  return isMode(value) ? value : undefined;
+/** Server-owned ancestry carried across an immediate or queued peer contact. */
+export interface RoutinePeerSource {
+  permissionMode: RoutinePermissionMode;
+  triggerSource: "manual" | "schedule";
 }
 
-/** From the editor: a level, or `inherit` / null to follow the bot. */
+/** A queued handoff keeps no more than the routine's level right now. */
+export function capQueuedPeerSource(queued: RoutinePeerSource, live: RoutinePermissionMode | null | undefined): RoutinePeerSource {
+  if (!live) return queued;
+  const i = Math.min(ROUTINE_PERMISSION_MODES.indexOf(queued.permissionMode), ROUTINE_PERMISSION_MODES.indexOf(live));
+  return { ...queued, permissionMode: ROUTINE_PERMISSION_MODES[i]! };
+}
+
+export function peerTurnAuthority(peer: AutoApprover, parentRun: RoutinePeerSource): {
+  mode: RoutinePermissionMode; origin: FullAccessOrigin; unattended: boolean;
+} {
+  return {
+    mode: effectiveRoutinePermissionMode(parentRun, peer),
+    origin: "routine",
+    unattended: parentRun.triggerSource === "schedule",
+  };
+}
+
+/** Every turn reaches the broker, without changing other instance modes. */
+export function turnPermissionEnforcement(bot: AutoApprover): Pick<SendTurnInput, "routeAsks" | "stopLine"> {
+  const mode = botPermissionMode(bot);
+  return mode === "ask" || mode === "auto" ? { routeAsks: true } : { stopLine: true };
+}
+
+/** Direct tasks and room speakers use the same routine permission decision. */
+export function routineTurnApproval(input: {
+  bot?: AutoApprover;
+  speaker?: AutoApprover;
+  run?: { permissionMode?: RoutinePermissionMode; alwaysAllow?: readonly string[] } | null;
+  tool: string;
+  summary: string;
+  context?: AutoContext;
+}): { mode: RoutinePermissionMode; verdict: AutoVerdict } {
+  const actor = input.bot ?? input.speaker ?? {};
+  const mode = input.run ? effectiveRoutinePermissionMode(input.run, actor) : botPermissionMode(actor);
+  return {
+    mode,
+    verdict: autoVerdict(input.run ? applyRoutinePermissionMode(actor, mode) : actor, input.tool, input.summary, {
+      ...input.context,
+      ...(input.run ? { automated: true, routineLevel: true, routineAllow: input.run.alwaysAllow } : {}),
+    }),
+  };
+}
+
+/** Missing levels are pinned by the manager. Invalid stored values use Ask. */
+export function loadRoutinePermissionMode(value: unknown): RoutinePermissionMode | undefined {
+  return value === undefined ? undefined : isMode(value) ? value : "ask";
+}
+
+/** From the editor: a level, or `inherit` / null to pin the bot's level now. */
 export function routinePermissionModeInput(value: unknown): RoutinePermissionMode | null {
   if (value === null || value === "inherit") return null;
   if (isMode(value)) return value;

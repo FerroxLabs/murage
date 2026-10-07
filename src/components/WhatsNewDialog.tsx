@@ -106,7 +106,7 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onBack, onGo, onC
   const titleId = `whats-new-title-${index + 1}`;
   if (index === 0) {
     return (
-      <section aria-labelledby={titleId} data-whats-new-card="hero" className="whats-new-card max-h-[calc(100dvh-32px)] w-[min(820px,calc(100vw-32px))] overflow-y-auto overflow-x-hidden rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]">
+      <section aria-labelledby={titleId} data-whats-new-card="hero" className="whats-new-card max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(820px,calc(100vw-32px))] overflow-y-auto overflow-x-hidden rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]">
         <div className="relative h-[342px] bg-[var(--wn-ground)] max-md:h-[260px] [@media(max-height:720px)]:h-[250px]">
           <img src={teamHero} alt="A constellation of orange orbs of light, each joined to every other by fine threads" width={820} height={342} className="block h-full w-full object-cover" />
           <div className="absolute left-[34px] top-[26px] flex gap-2">
@@ -129,7 +129,7 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onBack, onGo, onC
   }
   if (index === 1) {
     return (
-      <section aria-labelledby={titleId} data-whats-new-card="highlights" className="whats-new-card box-border flex max-h-[calc(100dvh-32px)] w-[min(1040px,calc(100vw-32px))] flex-col gap-5 overflow-y-auto rounded-[22px] border border-[var(--wn-edge-soft)] bg-[var(--wn-panel-deep)] px-8 pb-[26px] pt-[30px] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)] max-sm:px-5">
+      <section aria-labelledby={titleId} data-whats-new-card="highlights" className="whats-new-card box-border flex max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(1040px,calc(100vw-32px))] flex-col gap-5 overflow-y-auto rounded-[22px] border border-[var(--wn-edge-soft)] bg-[var(--wn-panel-deep)] px-8 pb-[26px] pt-[30px] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)] max-sm:px-5">
         <div className="flex flex-col gap-1.5">
           <span className="text-[12px] font-semibold tracking-[0.08em] text-[var(--wn-accent-ink)]">AND THERE'S MORE</span>
           <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 text-[42px] leading-[1.05]", headingFocus)}>Made for bigger work</h2>
@@ -164,7 +164,7 @@ export function WhatsNewCard({ index, releaseNotesUrl, onNext, onBack, onGo, onC
     );
   }
   return (
-    <section aria-labelledby={titleId} data-whats-new-card="more" className="whats-new-card relative box-border flex max-h-[calc(100dvh-32px)] w-[min(900px,calc(100vw-32px))] flex-col gap-[22px] overflow-y-auto overflow-x-hidden rounded-[22px] border border-[var(--wn-edge-soft)] bg-[var(--wn-panel)] px-[38px] pb-7 pt-[34px] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)] max-sm:px-5">
+    <section aria-labelledby={titleId} data-whats-new-card="more" className="whats-new-card relative box-border flex max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(900px,calc(100vw-32px))] flex-col gap-[22px] overflow-y-auto overflow-x-hidden rounded-[22px] border border-[var(--wn-edge-soft)] bg-[var(--wn-panel)] px-[38px] pb-7 pt-[34px] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)] max-sm:px-5">
       <svg width="420" height="420" viewBox="0 0 420 420" aria-hidden="true" className="pointer-events-none absolute -right-[120px] -top-[150px]">
         <g fill="none" stroke="var(--wn-accent)" strokeOpacity="0.18"><circle cx="210" cy="210" r="90" /><circle cx="210" cy="210" r="140" /><circle cx="210" cy="210" r="190" /></g>
       </svg>

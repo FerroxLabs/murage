@@ -19,7 +19,7 @@ trigger_phrases: >-
   sell products online open an online shop start a Shopify store sell my
   products on the internet
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: entrepreneurship sales marketing step-by-step planning
   category: business-operations

@@ -19,11 +19,12 @@
 // Membership decides reachability (canReach in store.ts), so every change
 // that moves a bot between teams or changes a lead calls
 // `reachabilityChanged`, which re-checks queued handoffs at once.
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
-import { renameMemoryTeam } from "./memory/authority.ts";
-import { readSectionContext, writeSectionContext } from "./section-context.ts";
+import { beginTeamJournal } from "./team-lifecycle.ts";
+import { assertSectionUnlocked, teamRenameStalled } from "./team-identities.ts";
+import { readSectionContext } from "./section-context.ts";
 import { isWorkspaceChief, sectionKey, type BotRecord, type GroupRecord, type Store } from "./store.ts";
 
 /** Sidebar headings that are not teams (src/lib/new-team.ts, plus the
@@ -144,8 +145,10 @@ export function describeTeam(store: Store, section: unknown): TeamView {
 
 const renameSchema = z.object({ section: sectionSchema, name: z.string().max(200), revision: z.string() }).strict();
 
-export function renameTeam(store: Store, input: unknown, deps: TeamDeps): { team: TeamView; changed: TeamChanges } {
+export function renameTeam(store: Store, input: unknown, _deps: TeamDeps): { team: TeamView; changed: TeamChanges } {
   const parsed = renameSchema.safeParse(input);
+  // renaming a stalled team again retries its journal (V5); every other change waits
+  if (!parsed.success || !teamRenameStalled(parsed.data.section)) assertSectionUnlocked();
   if (!parsed.success) return fail("Send the team, its new name and the revision you read.", 400);
   const from = existingKey(store, parsed.data.section);
   checkRevision(store, parsed.data.revision);
@@ -165,38 +168,9 @@ export function renameTeam(store: Store, input: unknown, deps: TeamDeps): { team
     if (archivedOnly) fail(`An archived bot or channel is still filed under ${to}. Choose another name, or restore it first.`);
   }
 
-  // Team memory moves first: once the bots carry the new label, the roster
-  // reconcile creates an empty scope under it and the move could not land.
-  let memoryMoved = false;
-  try {
-    renameMemoryTeam(deps.memoryTicket, from, to);
-    memoryMoved = true;
-  } catch (error) {
-    const code = error instanceof Error ? error.message : "";
-    if (code === "MEMORY_TEAM_EXISTS") fail(`Saved team memory already uses the name ${to}, from an earlier team. Choose another name.`);
-    // No team memory yet: nothing to carry.
-    if (code !== "MEMORY_TEAM_UNKNOWN") throw error;
-  }
-
-  const bots = new Map(teamBots(store, from).map((bot) => [bot.id, { section: to } as Partial<BotRecord>]));
-  const groups = new Map(
-    teamGroups(store, from).map((group) => [
-      group.id,
-      { section: to, ...(!group.dm && fold(group.name) === fold(from) ? { name: to } : {}) } as Partial<GroupRecord>,
-    ]),
-  );
-  try {
-    store.applyTeamChange(bots, groups);
-  } catch (error) {
-    if (memoryMoved) renameMemoryTeam(deps.memoryTicket, to, from);
-    throw error;
-  }
-  const instructions = readSectionContext(from);
-  if (instructions) {
-    writeSectionContext(to, instructions.text, instructions.updatedAt);
-    writeSectionContext(from, "");
-  }
-  return { team: describeTeam(store, to), changed: changesFor(store, bots.keys(), groups.keys()) };
+  const bots = teamBots(store, from).map(bot => bot.id), groups = teamGroups(store, from).map(group => group.id);
+  beginTeamJournal(store, from, to);
+  return { team: describeTeam(store, to), changed: changesFor(store, bots, groups) };
 }
 
 // ── members and lead ───────────────────────────────────────────────────
@@ -214,6 +188,7 @@ const membersSchema = z
 
 /** The team after the change (null when nothing is left in it) and what changed. */
 export function changeTeamMembers(store: Store, input: unknown, deps: TeamDeps): { team: TeamView | null; changed: TeamChanges } {
+  assertSectionUnlocked();
   const parsed = membersSchema.safeParse(input);
   if (!parsed.success) return fail("Send the team, the revision you read, and who to add, remove or lead.", 400);
   const key = existingKey(store, parsed.data.section);
@@ -287,6 +262,7 @@ const deleteSchema = z.object({ section: sectionSchema, revision: z.string(), bo
  * are at most 60 characters), so a later team with the same name starts
  * clean. */
 export function deleteTeam(store: Store, input: unknown, deps: TeamDeps): { bots: number; channels: number; changed: TeamChanges } {
+  assertSectionUnlocked();
   const parsed = deleteSchema.safeParse(input);
   if (!parsed.success) return fail("Choose whether to keep or archive the team's bots.", 400);
   const key = existingKey(store, parsed.data.section);
@@ -300,30 +276,13 @@ export function deleteTeam(store: Store, input: unknown, deps: TeamDeps): { bots
     const working = groups.find((group) => !group.hidden && !group.dm && deps.groupWorking(group));
     if (working) fail(`${working.name} is working. Let it finish or stop it, then archive the team.`);
   }
-  const botPatches = new Map<string, Partial<BotRecord>>(
-    bots.map((bot) => [
-      bot.id,
-      isWorkspaceChief(bot)
-        ? { section: undefined }
-        : { section: undefined, ...(isLead(bot) ? { chiefOfStaff: false } : {}), ...(archive ? { hidden: true } : {}) },
-    ]),
-  );
-  const archived = archive ? groups.filter((group) => !group.dm && !group.hidden) : [];
-  const groupPatches = new Map<string, Partial<GroupRecord>>(
-    groups.map((group) => [group.id, { section: undefined, ...(archived.includes(group) ? { hidden: true } : {}) }]),
-  );
-  try {
-    renameMemoryTeam(deps.memoryTicket, key, `deleted-team:${new Date().toISOString()}:${randomUUID()}:${key}`);
-  } catch (error) {
-    if (!(error instanceof Error && error.message === "MEMORY_TEAM_UNKNOWN")) throw error;
-  }
-  store.applyTeamChange(botPatches, groupPatches);
+  const archived = archive ? groups.filter(group => !group.dm && !group.hidden) : [];
+  beginTeamJournal(store, key, undefined, parsed.data.bots);
   for (const group of archived) deps.channelArchived(store.group(group.id) ?? group);
-  writeSectionContext(key, "");
   deps.reachabilityChanged();
   return {
     bots: bots.length,
     channels: groups.filter((group) => !group.dm).length,
-    changed: changesFor(store, botPatches.keys(), groupPatches.keys()),
+    changed: changesFor(store, bots.map(bot => bot.id), groups.map(group => group.id)),
   };
 }

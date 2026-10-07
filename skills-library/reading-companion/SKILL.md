@@ -4,7 +4,7 @@ description: |
   Guide for supporting children's reading development including book selection by age, interest, and reading level, understanding Lexile levels, discussion question frameworks, comprehension strategies, techniques for reluctant readers, reading log templates, book series recommendations by age, and tips for effective read-alouds. Use when the user asks about reading companion or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching parenting guide"
   category: "education"

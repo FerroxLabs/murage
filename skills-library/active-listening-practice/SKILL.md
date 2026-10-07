@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical communication disorders, speech therapy, or assessing hearing ability.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "relationships teaching planning"
   category: "family-relationships"

@@ -2,10 +2,25 @@
 export class TurnSubmissionBoundary {
   private state: "not-started" | "unknown" | "refused" = "not-started";
   private refusal: unknown;
+  private checks: Array<() => void> = [];
+  private accepted = false;
+  private onLateRefusal?: (refusal: unknown) => void;
   started() { this.state = "unknown"; }
+  /** A further check run on every submission, after the caller's own. */
+  alsoCheck(check: () => void) { this.checks.push(check); }
+  /** The server accepted the provider turn. An adapter that writes after
+   * handing its id back (ACP, Codex) can still be refused at that write;
+   * `onLateRefusal` hears of it (nothing was written, so it may re-run). */
+  acceptedBy(onLateRefusal?: (refusal: unknown) => void) { this.accepted = true; this.onLateRefusal = onLateRefusal; }
+  /** Every adapter write calls this, every time: validation is never skipped
+   * because an earlier write or acceptance passed. */
   beforeSubmit(validate: () => void) {
-    try { validate(); }
-    catch (error) { this.state = "refused"; this.refusal = error; throw error; }
+    try { validate(); for (const check of this.checks) check(); }
+    catch (error) {
+      this.state = "refused"; this.refusal = error;
+      if (this.accepted) { try { this.onLateRefusal?.(error); } catch { /* the refusal itself still stands */ } }
+      throw error;
+    }
   }
   assertNotRefused() { if (this.state === "refused") throw this.refusal; }
   get canRetry() { return this.state !== "unknown"; }

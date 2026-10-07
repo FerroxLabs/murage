@@ -94,3 +94,14 @@ test("sign-in profile arguments are explicit and cannot replace an existing over
   assert.equal(env.MURAGE_DATA_DIR,"/chosen");assert.equal(env.MURAGE_USER_DATA,"/user");assert.throws(()=>applyLoginProfileArguments(["--murage-login","--murage-data-dir","relative"],{}),/Invalid/);
   assert.equal(desktopExecArgument("100% done"),'"100%% done"');assert.throws(()=>desktopExecArgument("bad\npath"),/Unsupported/);
 });
+
+test("macOS reads SMAppService status alone: Electron 43 reports the Windows-only executable flag as false",async()=>{
+  let enabled=false;const writes=[];
+  const provider=createBackgroundLogin({platform:"darwin",installed:true,primaryProfile:true,profileDir:"/fixture/profile",userDataDir:"/fixture/user",executable:"/fixture/app",app:{getLoginItemSettings:()=>({openAtLogin:enabled,executableWillLaunchAtLogin:false,status:enabled?"enabled":"not-registered",wasOpenedAtLogin:false}),setLoginItemSettings:value=>{writes.push(value);enabled=value.openAtLogin;}}});
+  assert.equal(provider.read().openAtLogin,false);
+  await provider.write(true);
+  assert.deepEqual(writes,[{openAtLogin:true}]);
+  assert.equal(provider.read().openAtLogin,true);
+  await provider.write(false);
+  assert.equal(provider.read().openAtLogin,false);
+});

@@ -28,6 +28,11 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BundleImportDialog, type BundleImportResult } from "./BundleImportDialog";
+import { returnFocus } from "@/lib/return-focus";
+import { t } from "@/lib/i18n";
+import { ImportGuardFindings, guardBlockedNote, guardScanFromError, type GuardScan } from "./ImportGuardFindings";
+import { ImportScanProgress } from "./ImportScanProgress";
+import { isCheckStopped, useImportScan, withScanId } from "@/lib/importScan";
 
 const MAX_TEAM_FILE_BYTES = 1_000_000;
 
@@ -487,11 +492,18 @@ export function TeamLibraryPanel({
   const [catalogError, setCatalogError] = useState("");
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingTeamImport | null>(null);
+  // The import guard's answer to this file: findings to read, and the
+  // owner's choice to go ahead when they are warnings rather than blocks.
+  const [guard, setGuard] = useState<{ scan: GuardScan; status: number } | null>(null);
+  const [guardAcknowledged, setGuardAcknowledged] = useState(false);
   const [bundleFile, setBundleFile] = useState<{ path: string; name: string } | null>(null);
   const [source, setSource] = useState<ImportSource>("file");
   const [githubUrl, setGithubUrl] = useState("");
   const [githubLoading, setGithubLoading] = useState(false);
   const [importing, setImporting] = useState(false);
+  const check = useImportScan(importing);
+  // Closing the panel ends a check that is still reading the package.
+  const closePanel = () => { check.stop(); onClose(); };
   const [dragging, setDragging] = useState(false);
   const [search, setSearch] = useState("");
   // Ranked retrieval, served by the local FTS5 index (server/skill-search.ts).
@@ -633,17 +645,17 @@ export function TeamLibraryPanel({
 
   useEffect(() => {
     dialogRef.current?.focus();
-    return () => returnFocusRef.current?.focus();
+    return () => returnFocus(returnFocusRef.current);
   }, [returnFocusRef]);
 
   useEffect(() => {
     if (bundleFile) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !importing) {
+      if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        if (pending) setPending(null);
-        else onClose();
+        if (pending && !importing) setPending(null);
+        else { check.stop(); onClose(); }
         return;
       }
       if (event.key !== "Tab") return;
@@ -666,9 +678,10 @@ export function TeamLibraryPanel({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [importing, onClose, pending, bundleFile]);
+  }, [importing, onClose, pending, bundleFile, check]);
 
   const previewManifest = (preview: PendingTeamImport, nextSource: ImportSource) => {
+    setGuard(null); setGuardAcknowledged(false);
     setPending(preview);
     setSource(nextSource);
     setError("");
@@ -753,10 +766,13 @@ export function TeamLibraryPanel({
     if (!pending) return;
     setImporting(true);
     setError("");
+    setGuard(null);
     try {
       // SAFETY: this endpoint is owned by the app and returns imported bots.
-      const response = (await api("/api/teams/import?mode=add", {
+      const { scanId, signal } = check.begin();
+      const response = (await api(withScanId(`/api/teams/import?mode=add${guardAcknowledged ? "&acknowledgeWarnings=1" : ""}`, scanId), {
         method: "POST",
+        signal,
         body: JSON.stringify(pending.manifest),
       })) as {
         bots: Bot[];
@@ -783,7 +799,10 @@ export function TeamLibraryPanel({
         skillErrors: response.skillErrors ?? [],
       });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (isCheckStopped(cause)) return;
+      const refused = guardScanFromError(cause);
+      if (refused) setGuard(refused);
+      else setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setImporting(false);
     }
@@ -926,8 +945,8 @@ export function TeamLibraryPanel({
 
   return createPortal(
     <div
-      className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
-      onMouseDown={(event) => event.target === event.currentTarget && !importing && !bundleFile && onClose()}
+      className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
+      onMouseDown={(event) => event.target === event.currentTarget && !bundleFile && closePanel()}
     >
       <div
         ref={dialogRef}
@@ -967,9 +986,8 @@ export function TeamLibraryPanel({
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <button
-              onClick={onClose}
-              disabled={importing}
-              className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
+              onClick={closePanel}
+              className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"
               aria-label="Close"
             >
               <X size={21} />
@@ -1041,6 +1059,21 @@ export function TeamLibraryPanel({
                 </p>
               </div>
               {error && <div role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
+              {importing && <ImportScanProgress progress={check.progress} />}
+              {guard && (
+                <section aria-label={t("importGuard.listLabel")} className="mt-4 rounded-lg bg-inset px-3 py-2 text-[12.5px]">
+                  <p role={guard.status === 422 ? "alert" : undefined} className={guard.status === 422 ? "text-danger" : "text-ink-secondary"}>
+                    {guard.status === 422 ? guardBlockedNote(guard.scan) : t("importGuard.reviewNote")}
+                  </p>
+                  <ImportGuardFindings scan={guard.scan} />
+                  {guard.status === 409 && (
+                    <label className="mt-3 flex items-start gap-2">
+                      <input type="checkbox" checked={guardAcknowledged} onChange={(event) => setGuardAcknowledged(event.target.checked)} />
+                      {t("importGuard.acknowledge")}
+                    </label>
+                  )}
+                </section>
+              )}
             </div>
 
             <footer className="flex flex-col gap-3 border-t border-hairline/35 px-6 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
@@ -1055,7 +1088,7 @@ export function TeamLibraryPanel({
               </div>
               <button
                 onClick={() => void importTeam()}
-                disabled={importing}
+                disabled={importing || guard?.status === 422 || (guard?.status === 409 && !guardAcknowledged)}
                 className="flex shrink-0 items-center justify-center gap-2 rounded-full bg-accent px-5 py-2.5 text-[13.5px] font-medium text-white hover:bg-accent/90 disabled:opacity-60"
               >
                 {importing && <Loader2 size={15} className="animate-spin" />}

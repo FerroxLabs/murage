@@ -46,12 +46,13 @@ beforeAll(async () => {
   if (!address || typeof address === "string") throw new Error("no stub port");
   stubUrl = `http://127.0.0.1:${address.port}/v1`;
   // The fixture passes almost no parent environment through; set the stub
-  // endpoints inside the child before the server loads.
+  // endpoints inside the child before the server loads. The stub key must be
+  // Flux-shaped (sk-flux-): any other value is never treated as a Flux key.
   fixture = await launchVerificationServer(process.env, undefined, {
     instrumentationSource: [
       `process.env.MURAGE_VOICE_ROUTE_BASE=${JSON.stringify(stubUrl)};`,
       `process.env.MURAGE_FLUX_AUDIO_API=${JSON.stringify(stubUrl)};`,
-      `process.env.FLUX_API_KEY="stub-flux-key";`,
+      `process.env.FLUX_API_KEY="sk-flux-stub-key";`,
     ].join("\n"),
   });
   const proof = (await (await fetch(fixture.info.url + "/api/desktop-secret")).json()) as { secret: string };
@@ -150,7 +151,9 @@ it("with Flux as the voice engine all 41 Flux voices (OpenAI and Grok) are liste
   const requests = seen.length;
   const voices = await api("GET", "/api/tts/voices");
   expect(voices.body.voices).toHaveLength(41);
-  expect(voices.body.voices[0]).toMatchObject({ id: "marin", label: "Nora", gender: "female", provider: "openai" });
+  // Grok voices lead the list, since they are what a bot starts with
+  expect(voices.body.voices.slice(0, 28).every((v: { provider: string }) => v.provider === "grok")).toBe(true);
+  expect(voices.body.voices.find((v: { id: string }) => v.id === "marin")).toMatchObject({ label: "Nora", gender: "female", provider: "openai" });
   expect(voices.body.voices.find((v: { id: string }) => v.id === "ara")).toMatchObject({ gender: "female", provider: "grok" });
   expect(seen.length).toBe(requests);
 });

@@ -11,7 +11,7 @@ description: |
   already-complete chapter (use structural-editing or copy-editing directly).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "writing editing creative-writing step-by-step planning"
   category: "content-creation"

@@ -6,7 +6,7 @@ description: |
   Do NOT use for prose fiction scenes (use scene-writing), stage plays (different format), dialogue-only exercises (use dialogue-writing), or full screenplay structure (use plot-outline for structure first).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing technical-writing"
   category: "writing"

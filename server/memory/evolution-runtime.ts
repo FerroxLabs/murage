@@ -49,7 +49,7 @@ export function createMemoryEvolutionRuntime(options:EvolutionRuntimeOptions){
   const availability=()=>`${boot}:${options.availabilityIdentity()}`;
   const status=(kind:"recall"|"classification"="recall")=>{const {corpus}=descriptor(kind),job=read(undefined,corpus.id);return {authorized:Boolean(job&&database().prepare("SELECT 1 FROM memory_scope_bindings WHERE id=? AND state='granted'").get(job.grantId)),corpus:{id:corpus.id,version:corpus.version,kind:"synthetic" as const},policy:readMemoryEvolutionPolicy(),job:job?{
     id:job.id,status:job.status,reason:job.reason??null,started:Boolean(job.snapshot),decision:job.receipt?.decision??null,
-    publishedRevision:job.publishedRevision??null,costKnown:job.receipt?.accounting?.costKnown??false,actualCostUsd:job.receipt?.accounting?.actualCostUsd??null,heldout:job.receipt?.heldout??null,
+    publishedRevision:job.publishedRevision??null,heldout:job.receipt?.heldout??null,
   }:null};};
   const authorize=(ticket:object,kind:"recall"|"classification"="recall")=>{
     requireMemoryOwner(ticket);
@@ -96,7 +96,6 @@ export function createMemoryEvolutionRuntime(options:EvolutionRuntimeOptions){
           const published=receipt.decision==="accepted"?publishMemoryEvolutionPolicy(claim.snapshot!,receipt,admission):null;
           save({...job,status:"complete",reason:receipt.decision,...published?{publishedRevision:published.revision}:{}});});return status(kind);
       }
-      if(readMemoryLearning(database()).dailyCostUsd!==null){wait("GEPA_COST_AUTHORITY_REQUIRED");return status(kind);}
       const leased=await withMemoryInferenceLease(async lease=>{
         const resource=options.worker();worker=resource;if(!resource.available){wait(resource.reason);return;}
         const selected=options.modelIdentity();if(!selected){wait("MEMORY_EVOLUTION_MODEL_UNAVAILABLE");return;}

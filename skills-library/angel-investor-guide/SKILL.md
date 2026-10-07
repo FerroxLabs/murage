@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request requires professional financial advice or falls outside the scope of angel investor guide.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance investing guide"
   category: "personal-finance"

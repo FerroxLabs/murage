@@ -6,7 +6,7 @@ description: |
   Do NOT use for academic essays (use academic-argument), blog posts (use blog-post-writing), journalism without literary intent (not a creative skill), or fiction (use short-story-writing).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing design"
   category: "writing"

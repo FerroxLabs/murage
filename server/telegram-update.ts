@@ -5,10 +5,17 @@ export type TelegramUpdate =
   | { updateId: number; kind: "ignored"; reason: "unsupported-update" | "unsupported-message" | "unknown-sender" | "bot-message" }
   | { updateId: number; kind: "message"; transport: "telegram"; origin: "channel"; untrusted: true;
       chatId: string; chatType: "private" | "group" | "supergroup"; senderId: string; messageId: number;
-      timestampSeconds: number; topicId?: number; forwarded: boolean; text: string };
+      timestampSeconds: number; topicId?: number; forwarded: boolean; text: string; senderName?: string; senderUsername?: string };
 
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const integer = (value: unknown, positive = false): value is number => typeof value === "number" && Number.isSafeInteger(value) && (positive ? value > 0 : value >= 0);
+
+/** What Telegram calls the sender (first and last name, @username). Kept only to keep names out of customer turns; never an identity. */
+function senderDisplay(from: Record<string, unknown>): { senderName?: string; senderUsername?: string } {
+  const text = (value: unknown) => typeof value === "string" ? value.trim().slice(0, 80) : "";
+  const name = [text(from.first_name), text(from.last_name)].filter(Boolean).join(" "), username = text(from.username);
+  return { ...(name ? { senderName: name } : {}), ...(username ? { senderUsername: username } : {}) };
+}
 
 export function normalizeTelegramUpdate(value: unknown): TelegramUpdate {
   if (!object(value) || !Object.hasOwn(value, "update_id") || !integer(value.update_id)) throw new Error("Telegram returned an invalid update identity");
@@ -34,5 +41,5 @@ export function normalizeTelegramUpdate(value: unknown): TelegramUpdate {
     chatId: String(message.chat.id), chatType: message.chat.type as "private" | "group" | "supergroup",
     senderId: String(message.from.id), messageId: message.message_id, timestampSeconds: message.date,
     ...(message.message_thread_id === undefined ? {} : { topicId: message.message_thread_id }),
-    forwarded: message.forward_origin !== undefined, text: message.text };
+    forwarded: message.forward_origin !== undefined, text: message.text, ...senderDisplay(message.from) };
 }

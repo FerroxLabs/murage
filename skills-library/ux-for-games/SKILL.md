@@ -4,7 +4,7 @@ description: |
   Game UX design covering UI patterns and HUD design, menu systems, onboarding and tutorial flows, accessibility standards, player feedback systems, input design, information hierarchy, playtesting for UX, and the unique challenges of designing interfaces for interactive entertainment. Use when the user asks about ux for games or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design design"
   category: "game-development"

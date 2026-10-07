@@ -4,7 +4,7 @@ description: |
   Expert guidance for residential property flipping including acquisition strategies (MLS, auctions, wholesalers), renovation scope assessment, contractor management, budget tracking using the 70% rule, timeline planning, After Repair Value (ARV) calculation, and selling strategy for maximum profit. Use when the user asks about house flipper or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-buying personal-finance investing"
   category: "personal-finance"

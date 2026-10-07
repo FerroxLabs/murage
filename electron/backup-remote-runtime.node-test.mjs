@@ -21,6 +21,17 @@ test("restic lookup requires exact pinned bytes and rejects links",t=>{
  const root=realpathSync.native(mkdtempSync(path.join(tmpdir(),"murage-remote-tool-test-")));t.after(()=>safeWipeSync(root));const file=path.join(root,"restic"),link=path.join(root,"link");writeFileSync(file,"fake tool bytes",{mode:0o700});
  assert.equal(trustedBackupResticExecutable(file),false);symlinkSync(file,link);assert.equal(trustedBackupResticExecutable(link),false);
 });
+test("remote status reads checking while the host starts, unavailable once it settles without one",()=>{
+ const source=readFileSync(new URL("./main.mjs",import.meta.url),"utf8"),tree=ts.createSourceFile("main.mjs",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+ const loop=tree.statements.find(node=>ts.isForOfStatement(node)&&node.getText(tree).includes('`backup-remote:${action}`'));assert.ok(loop);
+ const handlers=new Map();
+ const context={ipcMain:{handle:(name,handler)=>handlers.set(name,handler)},backupRemoteHost:null,backupRemoteInitializing:true,backupRemoteOperations:new Set(),desktopShutdownStarted:false,desktopRecoveryMode:false,backupMode:{isPreparing:()=>false},backupScheduleHost:{isPreparing:()=>false}};
+ vm.runInNewContext(loop.getText(tree)+";globalThis.__set=v=>{backupRemoteInitializing=v;}",context);
+ const status=()=>JSON.parse(JSON.stringify(handlers.get("backup-remote:status")({})));
+ assert.deepEqual(status(),{supported:false,pending:false,configured:false,state:"unavailable",checking:true});
+ context.__set(false);
+ assert.deepEqual(status(),{supported:false,pending:false,configured:false,state:"unavailable"});
+});
 test("actual main remote handlers enforce arity and retain operations until settlement",async()=>{
  const source=readFileSync(new URL("./main.mjs",import.meta.url),"utf8"),tree=ts.createSourceFile("main.mjs",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
  const loop=tree.statements.find(node=>ts.isForOfStatement(node)&&node.getText(tree).includes('`backup-remote:${action}`'));assert.ok(loop);

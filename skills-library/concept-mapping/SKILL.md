@@ -6,7 +6,7 @@ description: |
   Do NOT use for Cornell-style note taking (use `cornell-notes`), for note synthesis (use `note-synthesis`), or for memory palace techniques (use `memory-palace`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "study-skills note-taking step-by-step guide"
   category: "education"

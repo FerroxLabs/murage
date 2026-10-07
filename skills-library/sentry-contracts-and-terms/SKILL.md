@@ -1,8 +1,9 @@
 ---
 name: sentry-contracts-and-terms
 description: "This skill explains common contract types and what their clauses mean. It does not draft binding language for execution. Escalate to counsel when contract value exceeds $25k, when the other side has counsel and you don't, when the deal is cross-border, when the agreement involves equity, or when an"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "sentry"
 ---

@@ -17,7 +17,7 @@ import type { MemoryRecord } from "../../shared/memory";
 import { BotAvatar } from "./Avatar";
 import { BotPickerList } from "./BotPickerList";
 import { nextMemberIds } from "@/lib/room-members";
-import { effectiveDefaultResponder } from "@/lib/group-routing";
+import { autoFallbackBot, deciderRoutesRooms, effectiveDefaultResponder } from "@/lib/group-routing";
 import { shortPath } from "@/lib/short-path";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
@@ -110,7 +110,7 @@ export function ChannelDetailsPanel({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3"
+      className="overlay-inset fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <div
@@ -118,7 +118,7 @@ export function ChannelDetailsPanel({
         role="dialog"
         aria-modal="true"
         aria-label={`${group.name} details`}
-        className="flex max-h-[min(760px,calc(100dvh-1.5rem))] w-[min(620px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-hairline/50 bg-card shadow-2xl"
+        className="flex max-h-[min(760px,calc(var(--vvh,100dvh)-1.5rem))] w-[min(620px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-hairline/50 bg-card shadow-2xl"
       >
         <div className="flex items-start justify-between gap-3 border-b border-hairline/40 px-4 py-3.5">
           <div className="min-w-0">
@@ -181,7 +181,7 @@ export function ChannelDetailsPanel({
 /** Instructions, the lead responder and the folder. The three things that
  * decide how this channel behaves, in the order a person asks about them. */
 function AboutSection({ group, members }: { group: Group; members: Bot[] }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const [instructions, setInstructions] = useState(group.bulletin);
   const [saved, setSaved] = useState(false);
@@ -191,6 +191,10 @@ function AboutSection({ group, members }: { group: Group; members: Bot[] }) {
 
   const responder = effectiveDefaultResponder(group, members);
   const responderValue = responder.kind === "member" ? `member:${responder.botId}` : responder.kind;
+  // Offered while the decision model routes rooms; kept while the room is
+  // already on it, so the select is never blank.
+  const showAuto = deciderRoutesRooms(state.config) || responder.kind === "auto";
+  const autoFallbackName = responder.kind === "auto" ? autoFallbackBot(responder, members)?.name : undefined;
   const pinned = group.pinnedCwd;
   const locked = pinned !== undefined;
   const folder = locked ? pinned ?? undefined : group.cwd;
@@ -207,6 +211,10 @@ function AboutSection({ group, members }: { group: Group; members: Bot[] }) {
     let next: GroupDefaultResponder;
     if (value === "everyone") next = { kind: "everyone" };
     else if (value === "mentions") next = { kind: "mentions" };
+    else if (value === "auto") {
+      const kept = group.defaultResponder?.kind === "auto" ? group.defaultResponder.fallbackBotId : undefined;
+      next = kept ? { kind: "auto", fallbackBotId: kept } : { kind: "auto" };
+    }
     else next = { kind: "member", botId: value.slice("member:".length) };
     dispatch({ type: "patchGroup", groupId: group.id, patch: { defaultResponder: next } });
   };
@@ -275,8 +283,14 @@ function AboutSection({ group, members }: { group: Group; members: Bot[] }) {
           <optgroup label="Or">
             <option value="everyone">Everyone responds</option>
             <option value="mentions">Only when mentioned</option>
+            {showAuto && <option value="auto">Murage picks who answers</option>}
           </optgroup>
         </select>
+        {responder.kind === "auto" && (
+          <p className={FIELD_NOTE}>
+            {`It picks the best bot for each message. If it can't decide, ${autoFallbackName ?? "the first bot"} answers.`}
+          </p>
+        )}
       </div>
 
       <div className={CARD}>
@@ -380,7 +394,7 @@ function MembersSection({ group, onSaved }: { group: Group; onSaved: () => void 
  * in, and the workspace each member keeps for the task it is on. Both are
  * listed here rather than only the first, because "where did that file go"
  * has both answers. */
-function FilesSection({ group, members }: { group: Group; members: Bot[] }) {
+export function FilesSection({ group, members }: { group: Group; members: Bot[] }) {
   const { capabilities } = useDesktopCapabilities();
   const [error, setError] = useState<string | null>(null);
   const folder = group.pinnedCwd === undefined ? group.cwd : group.pinnedCwd ?? undefined;
@@ -443,7 +457,7 @@ function FilesSection({ group, members }: { group: Group; members: Bot[] }) {
 
 /** What this channel remembers, in sentences, with the only two answers a
  * person ever wants: change it, or make it stop. */
-function MemorySection({ group }: { group: Group }) {
+export function MemorySection({ group }: { group: Group }) {
   const [records, setRecords] = useState<MemoryRecord[] | null>(null);
   const [scopeId, setScopeId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

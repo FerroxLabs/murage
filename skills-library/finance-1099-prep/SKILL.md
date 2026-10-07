@@ -3,7 +3,7 @@ name: finance-1099-prep
 description: "Run 1099 season end to end — W-9 collection, the worker-classification gate (IRS 20-factor plus state ABC test) that has to clear first, the 1099-NEC vs 1099-MISC vs 1099-K decision tree, TIN matching and backup-withholding triggers. Use when the user paid contractors last year and January is coming. Do NOT use for W-2 payroll returns (use finance-payroll-prep) or for drafting the contractor agreement itself (use legal-contractor). Preparation workflow only — misclassification carries six-figure exposure, so have a CPA, EA or tax attorney review before filing."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "1099 tax contractors finance smb"
   category: "finance"

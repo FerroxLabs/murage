@@ -4,7 +4,7 @@ description: |
   Structural editing methodology for manuscripts, covering plot hole detection, pacing analysis, character arc evaluation, scene necessity testing, manuscript assessment report writing, and revision letter composition. Use when the user asks about developmental editor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "editing creative-writing writing"
   category: "writing"

@@ -26,9 +26,13 @@ import { openSidebar } from "./fixtures.ts";
 import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE } from "../../shared/memory.ts";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { laneDataDir } from "./lane-data-dir";
+import { openSidebarPlace } from "./sidebar-nav";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const DATA_DIR = laneDataDir("this proof never uses ~/.murage");
+// Its own folder inside the lane dir, like composer-size-limit and
+// image-settings-capability: the lane dir itself is the shared rig's live
+// data dir, and safe-wipe rightly refused to wipe it under that harness.
+const DATA_DIR = join(laneDataDir("this proof never uses ~/.murage"), "memory-provenance-fuigo-data");
 const HARNESS_PORT = Number(process.env.MURAGE_E2E_PORT || 9980);
 const UI_PORT = Number(process.env.MURAGE_E2E_UI_PORT || 9982);
 const VERIFY_BUILT_UI = process.env.MURAGE_VERIFY_BUILT_UI === "1";
@@ -84,6 +88,9 @@ async function startHarness() {
   }
   const proof = await (await fetch(`${HARNESS_URL}/api/desktop-secret`, { headers: { "x-murage-surface": "desktop" } })).json() as { secret: string };
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
+  // This workspace reads as an update, so What's new would open over the
+  // page; a person sees it once, and so does this fixture.
+  await fetch(`${HARNESS_URL}/api/whats-new/seen`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ version: JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version }) });
 }
 async function stopHarness() {
   const child = harness; if (!child || child.exitCode !== null) return;
@@ -183,9 +190,7 @@ async function closeSettings(page: Page) {
 }
 async function openConnectedApps(page: Page) {
   const sidebar = await openSidebar(page);
-  const direct = sidebar.getByRole("button", { name: /^Connected apps/ });
-  if (await direct.first().isVisible().catch(() => false)) await direct.first().click();
-  else { await sidebar.getByRole("button", { name: /^Tools/ }).first().click(); await page.getByRole("menuitem", { name: "Connected apps", exact: true }).click(); }
+  await openSidebarPlace(sidebar, "apps");
   return page.getByRole("dialog", { name: "Connected apps" });
 }
 async function shot(page: Page, name: string) { const path = join(EVIDENCE, `${name}.png`); await page.screenshot({ path, fullPage: false }); return path; }
@@ -242,7 +247,9 @@ test("MEMJSON1: ten Fuigo (Flux Auto) turns answer normally and every prompt car
   const settings = await openSettings(page, "Engines");
   const fuigo = settings.locator("section").filter({ hasText: /^Fuigo/ }).first();
   await fuigo.scrollIntoViewIfNeeded();
-  await expect(fuigo).toContainText(/Selected source: \w+ · Installed: [\d.]+/, { timeout: 120_000 });
+  // With no staged bundle the Engines line says so honestly; the version is
+  // only there to read when MURAGE_SMOKE_FUIGO_DIR names one.
+  await expect(fuigo).toContainText(FUIGO_DIR ? /Selected source: \w+ · Installed: [\d.]+/ : /Selected source: \w+ · Installed: not detected/, { timeout: 120_000 });
   note(`Engines line: ${(await fuigo.innerText()).match(/Selected source: .*?(?=\n|$)/)?.[0] ?? ""}`);
   await closeSettings(page);
   if (!FUIGO_DIR || !haveKey) return;

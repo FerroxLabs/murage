@@ -6,7 +6,7 @@ description: |
   Do NOT use for science lesson plan creation (use `lesson-plan-design`), for exam preparation (use `exam-prep-plan`), or for non-science subjects (use subject-specific tutoring skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "tutoring teaching step-by-step study-skills"
   category: "education"

@@ -4,7 +4,7 @@ description: |
   Navigate cross-cultural communication effectively using Hofstede's cultural dimensions, high vs low context frameworks, region-specific business etiquette, meeting and negotiation styles, gift-giving and dining protocols, trust-building strategies, and practical guidance for working across diverse cultural contexts. Use when the user asks about cross cultural communicator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "business-writing writing guide"
   category: "writing"

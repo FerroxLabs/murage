@@ -1,9 +1,13 @@
+import { learningWriteDecision,learningSourceBot,learningEvidenceScopes } from "./learning-guard.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { database, transaction } from "../database.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
+import { capturedSourceWithheld, derivationAncestryCurrent, recordRestsOnWithheldMessage } from "./replay-lineage.ts";
 import { isGepaCallNotStarted } from "../gepa-worker.ts";
+import { recordAppliedChange, recordProcedureSuggestion, type AppliedChange, type LandingDecision } from "./procedure-landing.ts";
+import { inEligibilityPass } from "./eligibility-pass.ts";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export const procedureCandidateHash = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -16,7 +20,7 @@ export interface ProcedureReviewTarget {
 }
 export interface ProcedureReviewTrigger {
   kind:"turn-settled"|"owner-correction"; scopeId:string; threadId?:string; turnId?:string;
-  outcome?:string; evidence:ProcedureEvidence[];
+  outcome?:string; evidence:ProcedureEvidence[]; ownerAuthorized?:true;
 }
 export interface ProcedureReviewSnapshot {
   requestId:string; scopeId:string; target:ProcedureReviewTarget; evidenceDigest:string;
@@ -66,10 +70,14 @@ export interface ProcedureReviewHost {
   evaluate?(snapshot:ProcedureReviewSnapshot,signal:AbortSignal):Promise<ProcedureEvaluationReceipt>;
   /** Synchronous, idempotent by receipt.id, CAS against target.baseRevision. */
   publish?(snapshot:ProcedureReviewSnapshot,receipt:ProcedureEvaluationReceipt):void;
+  /** B7c landing rules (design 12): applies on its own with a notice, waits as a suggestion, or is dropped by a hard check. Absent means apply. */
+  landing?(snapshot:ProcedureReviewSnapshot,receipt:ProcedureEvaluationReceipt):LandingDecision;
+  /** What Undo needs to know about a change that just landed. */
+  appliedChange?(snapshot:ProcedureReviewSnapshot,receipt:ProcedureEvaluationReceipt,landing:Extract<LandingDecision,{mode:"auto"}>):Omit<AppliedChange,"via">;
 }
 interface Intent {
   schema:1; id:string; scopeId:string; status:"pending"|"running"|"deferred"|"complete"|"cancelled";
-  trigger?:ProcedureReviewTrigger; target?:ProcedureReviewTarget; evidence:ProcedureEvidence[];
+  trigger?:ProcedureReviewTrigger; target?:ProcedureReviewTarget; evidence:ProcedureEvidence[]; ownerAuthorized?:true;
   policyRevision:number; deletionEpoch:number; learningRevision:number;
   generation?:string; expiresAt?:number; retryAfter?:number|null; reason?:string;
   attempts?:number;
@@ -94,7 +102,7 @@ function unique(evidence:ProcedureEvidence[]) {
 }
 function enqueue(db:DatabaseSync,trigger:ProcedureReviewTrigger) {
   const v=versions(db);if(v.mode==="off")return;
-  const id=`procedure-trigger:${hash([trigger.kind,trigger.evidence])}`;
+  const id=`procedure-trigger:${hash([trigger.kind,trigger.evidence,...(trigger.ownerAuthorized?["owner-authorized"]:[])])}`;
   if(read(db,id))return;
   save(db,{schema:1,id,scopeId:trigger.scopeId,status:"pending",trigger,evidence:trigger.evidence,...v});
 }
@@ -105,9 +113,9 @@ export function enqueueProcedureSourceReview(db:DatabaseSync,sourceId:string,rev
   enqueue(db,{kind:"turn-settled",scopeId:String(row.scope_id),threadId:String(row.thread_id),turnId:String(row.turn_id),outcome:String(row.outcome),evidence:[{kind:"source",id:sourceId,revision}]});
 }
 /** Direct owner edits carry the new record itself; old source text is not proof of the edit. */
-export function enqueueProcedureCorrectionReview(db:DatabaseSync,recordId:string,version:number) {
+export function enqueueProcedureCorrectionReview(db:DatabaseSync,recordId:string,version:number,options?:{ownerAuthorized?:true}) {
   const row=db.prepare("SELECT scope_id FROM memory_records WHERE id=? AND version=? AND state='active' AND assertion='owner-statement'").get(recordId,version);
-  if(row)enqueue(db,{kind:"owner-correction",scopeId:String(row.scope_id),evidence:[{kind:"record",id:recordId,revision:version}]});
+  if(row)enqueue(db,{kind:"owner-correction",...(options?.ownerAuthorized?{ownerAuthorized:true as const}:{}),scopeId:String(row.scope_id),evidence:[{kind:"record",id:recordId,revision:version}]});
 }
 function hydrate(db:DatabaseSync,evidence:ProcedureEvidence[],scopeId:string,host:ProcedureReviewHost):ProcedureReviewSnapshot["evidence"] {
   let bytes=0;
@@ -116,11 +124,16 @@ function hydrate(db:DatabaseSync,evidence:ProcedureEvidence[],scopeId:string,hos
     if(item.kind==="source"){
       const row=db.prepare("SELECT s.*,v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision WHERE s.id=? AND s.revision=? AND s.state='active'").get(item.id,item.revision);
       if(!row||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(item.id,item.revision))throw Error("PROCEDURE_EVIDENCE_STALE");
+      // A reply made with something since archived, corrected, withheld or
+      // forgotten stays an active source; its disclosure lineage says it is
+      // withheld, and withheld evidence never reaches a review or publication.
+      if(capturedSourceWithheld(row))throw Error("PROCEDURE_EVIDENCE_STALE");
       evidenceScopeId=String(row.scope_id);if(!host.canReadEvidence(scopeId,evidenceScopeId,item))throw Error("PROCEDURE_EVIDENCE_FORBIDDEN");
       const payload=JSON.parse(String(row.payload));text=String(payload.text??"");speaker=String(row.speaker);outcome=String(row.outcome);
     }else{
       const row=db.prepare("SELECT * FROM memory_records WHERE id=? AND version=? AND state='active' AND version=(SELECT max(version) FROM memory_records WHERE id=?)").get(item.id,item.revision,item.id);
-      if(!row)throw Error("PROCEDURE_EVIDENCE_STALE");
+      if(!row||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(item.id,item.revision)
+        ||!derivationAncestryCurrent(db,item.id,item.revision,row.supersedes_id)||recordRestsOnWithheldMessage(item.id,item.revision))throw Error("PROCEDURE_EVIDENCE_STALE");
       evidenceScopeId=String(row.scope_id);if(!host.canReadEvidence(scopeId,evidenceScopeId,item))throw Error("PROCEDURE_EVIDENCE_FORBIDDEN");
       text=String(row.text);speaker=String(row.assertion);outcome="owner-correction";
     }
@@ -138,17 +151,29 @@ function assertCurrent(db:DatabaseSync,intent:Intent,host:ProcedureReviewHost) {
 let scanCursor=0;
 /** Bounded indexed polling; expired leases reuse persisted snapshots and receipts. */
 export function pendingProcedureReviews(limit=1,host?:ProcedureReviewHost):string[] {
+  return inEligibilityPass(database(),()=>pendingScan(limit,host));
+}
+function pendingScan(limit:number,host?:ProcedureReviewHost):string[] {
   const db=database(),now=Date.now(),v=versions(db),learning=readMemoryLearning(db);
   if(!["active","capture"].includes(v.mode)||!learning.automaticProcedures||learning.reviewMode)return [];
   const query=db.prepare("SELECT rowid,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id=? AND state='granted' AND rowid>? ORDER BY rowid LIMIT 64");
-  let rows=query.all(PENDING,scanCursor);if(!rows.length){scanCursor=0;rows=query.all(PENDING,0);}
+  const start=scanCursor;
+  let rows=query.all(PENDING,scanCursor),wrapped=false;if(!rows.length){scanCursor=0;wrapped=true;rows=query.all(PENDING,0);}
   const result:string[]=[];
-  for(const row of rows){scanCursor=Number(row.rowid);const intent=JSON.parse(String(row.intent)) as Intent;
+  const visit=(page:typeof rows)=>{for(const row of page){scanCursor=Number(row.rowid);const intent=JSON.parse(String(row.intent)) as Intent;
     let published=false;
     if(intent.status==="deferred"&&intent.snapshot&&intent.receipt&&host?.wasPublished){try{published=host.wasPublished(intent.snapshot,intent.receipt);}catch{/* No proven publication: leave explicit retry unchanged. */}}
     if(published||intent.status==="pending"||intent.status==="running"&&(intent.expiresAt??0)<=now||intent.status==="deferred"&&typeof intent.retryAfter==="number"&&intent.retryAfter<=now)result.push(intent.id);
     if(result.length>=Math.min(4,Math.max(1,limit)))break;
-  }
+  }};
+  visit(rows);
+  // Nothing due after the cursor: wrap once to the rows before it in this same visit, so a review made due
+  // there (an owner retry, an expired lease) is found now rather than on a later pass. Still two bounded pages.
+  // Cursor rule: the cursor is the FORWARD position reached before wrapping, whether or not the prefix pass finds
+  // anything. A found prefix row is returned and handled by the caller, and the forward sweep keeps advancing past
+  // page two on later scans, reaching the end and only then restarting from 0; so no later page is starved.
+  const forward=scanCursor;
+  if(!result.length&&!wrapped&&start>0){visit(query.all(PENDING,0).filter(row=>Number(row.rowid)<=start));scanCursor=forward;}
   return result;
 }
 function expand(db:DatabaseSync,intent:Intent,host:ProcedureReviewHost) {
@@ -176,12 +201,13 @@ function expand(db:DatabaseSync,intent:Intent,host:ProcedureReviewHost) {
     // Every original handle needs fresh authorization for this target audience.
     hydrate(db,canonical,target.scopeId,host);
     // Coalesce only unclaimed work. A claimed evaluation snapshot never changes.
-    const artifact=hash([target.scopeId,target.kind,target.ownerId,target.artifactId,target.baseRevision]);
+    // Explicit owner edits cannot coalesce with automatic learning evidence.
+    const artifact=hash([target.scopeId,target.kind,target.ownerId,target.artifactId,target.baseRevision,...(trigger.ownerAuthorized?["owner-authorized"]:[])]);
     const id=`procedure-review:${artifact}:${hash(canonical)}`;if(read(db,id))continue;
     const pending=db.prepare("SELECT intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id=? AND id LIKE ? ORDER BY rowid LIMIT 16").all(PENDING,`procedure-review:${artifact}:%`)
-      .map(row=>JSON.parse(String(row.intent)) as Intent).find(row=>!row.snapshot&&["pending","deferred"].includes(row.status)&&row.policyRevision===intent.policyRevision&&row.deletionEpoch===intent.deletionEpoch&&row.learningRevision===intent.learningRevision&&unique([...row.evidence,...canonical]).length<=MAX_EVIDENCE);
+      .map(row=>JSON.parse(String(row.intent)) as Intent).find(row=>!row.ownerAuthorized&&!row.snapshot&&["pending","deferred"].includes(row.status)&&row.policyRevision===intent.policyRevision&&row.deletionEpoch===intent.deletionEpoch&&row.learningRevision===intent.learningRevision&&unique([...row.evidence,...canonical]).length<=MAX_EVIDENCE);
     if(pending){save(db,{...pending,evidence:unique([...pending.evidence,...canonical]),status:"pending",retryAfter:undefined});continue;}
-    save(db,{schema:1,id,scopeId:target.scopeId,target:structuredClone(target),evidence:canonical,status:"pending",policyRevision:intent.policyRevision,deletionEpoch:intent.deletionEpoch,learningRevision:intent.learningRevision});
+    save(db,{schema:1,id,scopeId:target.scopeId,target:structuredClone(target),...(trigger.ownerAuthorized?{ownerAuthorized:true as const}:{}),evidence:canonical,status:"pending",policyRevision:intent.policyRevision,deletionEpoch:intent.deletionEpoch,learningRevision:intent.learningRevision});
   }
   const targetCursor=Math.min(cursor+16,targets.length);
   save(db,{...intent,evidence:canonical,targetCursor,targetSetDigest,status:targetCursor===targets.length?"complete":"pending"});
@@ -195,6 +221,18 @@ async function evaluateBounded(host:ProcedureReviewHost,snapshot:ProcedureReview
   const stopped=new Promise<never>((_resolve,reject)=>{rejectAbort=()=>reject(controller.signal.reason);controller.signal.addEventListener("abort",rejectAbort,{once:true});if(controller.signal.aborted)rejectAbort();});
   try{return await Promise.race([host.evaluate!(structuredClone(snapshot),controller.signal),stopped]);}
   finally{clearTimeout(timer);signal.removeEventListener("abort",abort);controller.signal.removeEventListener("abort",rejectAbort);}
+}
+function procedureLearningDecision(db:DatabaseSync,snapshot:ProcedureReviewSnapshot,ownerAuthorized?:true){
+ if(ownerAuthorized||snapshot.target.kind==="memory-policy")return;
+ const sources=snapshot.evidence.flatMap(evidence=>evidence.kind==="source"?[{id:evidence.id,revision:evidence.revision}]:db.prepare("SELECT source_id id,source_revision revision FROM memory_evidence WHERE record_id=? AND record_version=?").all(evidence.id,evidence.revision).map(row=>({id:String(row.id),revision:Number(row.revision)})));
+ if(!sources.length)throw Error("needs-owner-approval");
+ const evidenceScopeIds=snapshot.evidence.flatMap(evidence=>evidence.kind==="record"?learningEvidenceScopes(db,evidence.id,evidence.revision):[evidence.scopeId]);
+ for(const source of sources){
+  const row=db.prepare("SELECT thread_id FROM memory_sources WHERE id=?").get(source.id);
+  const threadId=row?.thread_id?String(row.thread_id):undefined,bot=learningSourceBot(threadId??null);
+  const decision=learningWriteDecision(db,{writer:"procedure-review",sourceId:String(source.id),sourceRevision:Number(source.revision),targetScopeId:snapshot.scopeId,evidenceScopeIds,botId:bot?.id,threadId,target:snapshot.target.kind==="skill"?"skill":"routine-instructions"});
+  if(decision.decision!=="auto")throw Error(decision.reason);
+ }
 }
 export async function processProcedureReview(id:string,host:ProcedureReviewHost,signal:AbortSignal) {
   const claim=transaction(db=>{
@@ -229,6 +267,7 @@ export async function processProcedureReview(id:string,host:ProcedureReviewHost,
     if(!host.evaluate&&!intent.receipt||!host.publish){save(db,{...intent,status:"deferred",reason:"procedure-evaluator-unavailable",retryAfter:Date.now()+60000});return undefined;}
     const evidence=hydrate(db,intent.evidence,intent.scopeId,host);
     const snapshot=intent.snapshot??{requestId:id,scopeId:intent.scopeId,target:intent.target!,evidenceDigest:hash(evidence),policyRevision:intent.policyRevision,deletionEpoch:intent.deletionEpoch,learningRevision:intent.learningRevision,evidence,outcomeBasis:"source-reported" as const};
+    try{procedureLearningDecision(db,snapshot,intent.ownerAuthorized);}catch(error){save(db,{...intent,status:"deferred",reason:error instanceof Error?error.message:"needs-owner-approval",retryAfter:null});return undefined;}
     if(!host.canPublish(snapshot)){save(db,{...intent,status:"deferred",reason:"scope-widening-unavailable",retryAfter:Date.now()+60000});return undefined;}
     const readiness=host.evaluationReadiness?.(snapshot);
     if(readiness&&!readiness.ready){save(db,{...intent,status:"deferred",reason:readiness.reason,retryAfter:Date.now()+60000});return undefined;}
@@ -243,7 +282,15 @@ export async function processProcedureReview(id:string,host:ProcedureReviewHost,
     transaction(db=>save(db,{...current(),receipt}));
     transaction(db=>{
       const saved=current();
-      if(receipt.decision==="accepted")host.publish!(structuredClone(snapshot),structuredClone(receipt));
+      procedureLearningDecision(db,snapshot,saved.ownerAuthorized);
+      if(receipt.decision==="accepted"){
+        const landing=host.landing?.(structuredClone(snapshot),structuredClone(receipt))??{mode:"auto" as const,beforeSha256:"",label:""};
+        if(landing.mode==="refuse"){save(db,{...saved,status:"complete",receipt,reason:`hard-check:${landing.reason}`});return;}
+        if(landing.mode==="suggest"){recordProcedureSuggestion(db,{snapshot,receipt,landing});save(db,{...saved,status:"complete",receipt,reason:"suggested"});return;}
+        host.publish!(structuredClone(snapshot),structuredClone(receipt));
+        const change=host.appliedChange?.(snapshot,receipt,landing);
+        if(change)recordAppliedChange(db,{...change,via:"automatic"});
+      }
       save(db,{...saved,status:"complete",receipt,reason:receipt.decision});
     });
     return {status:"complete" as const,decision:receipt.decision};
@@ -262,6 +309,6 @@ export function readProcedureReviewSnapshot(id:string,host:ProcedureReviewHost):
   const evidence=hydrate(db,intent.evidence,intent.scopeId,host);
   return {requestId:id,scopeId:intent.scopeId,target:intent.target,evidenceDigest:hash(evidence),policyRevision:current.policyRevision,deletionEpoch:current.deletionEpoch,learningRevision:current.learningRevision,evidence,outcomeBasis:"source-reported"};
 }
-export function wakeProcedureReview(id:string):void {
-  transaction(db=>{const intent=read(db,id);if(!intent?.target||["complete","cancelled","running"].includes(intent.status))throw Error("PROCEDURE_REVIEW_UNAVAILABLE");save(db,{...intent,status:"pending",reason:undefined,retryAfter:undefined});});
+export function wakeProcedureReview(id:string,options?:{ownerAuthorized?:true}):void {
+  transaction(db=>{const intent=read(db,id);if(!intent?.target||["complete","cancelled","running"].includes(intent.status))throw Error("PROCEDURE_REVIEW_UNAVAILABLE");save(db,{...intent,...(options?.ownerAuthorized?{ownerAuthorized:true as const}:{}),status:"pending",reason:undefined,retryAfter:undefined});});
 }

@@ -11,7 +11,7 @@ description: |
   technique guidance (use home-household cooking skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "travel itinerary planning research"
   category: "travel-experiences"

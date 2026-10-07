@@ -1,9 +1,10 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { Store, type BotRecord, type GroupRecord } from "./store.ts";
 import { RoutineManager, type Routine } from "./routines.ts";
+import { routineRunsDir, routineRunsFileName } from "./routine-runs-journal.ts";
 
 beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
 function fixture() {
@@ -22,6 +23,26 @@ function fixture() {
   const routine: Routine = { ...oldRoutine, id: "imported-routine", botId: added.id, enabled: false, nextRunAt: null };
   return { store, existing, added, group, emitted, file, manager, routineEvents, routine, oldRoutine };
 }
+
+describe("package import and an interrupted routine save", () => {
+  it("keeps an uncommitted journal line uncommitted after the import file is written", () => {
+    const f = fixture();
+    const committed = JSON.parse(readFileSync(f.file, "utf8")) as { runsCommit?: number };
+    expect(typeof committed.runsCommit).toBe("number");
+    // A save that crashed between its journal append and its routines.json write.
+    const journal = join(routineRunsDir(dirname(f.file)), routineRunsFileName(f.oldRoutine.id));
+    mkdirSync(dirname(journal), { recursive: true });
+    const stale = { id: "interrupted-run", routineId: f.oldRoutine.id, startedAt: 1, state: "done", $c: (committed.runsCommit as number) + 1 };
+    appendFileSync(journal, JSON.stringify(stale) + "\n");
+    const prepared = f.manager.preparePackageAddition([f.routine]);
+    writeFileSync(f.file, prepared.bytes);
+    prepared.publish();
+    const reloaded = new RoutineManager({ file: f.file, emit: () => {}, botState: () => "ready", createTask: () => ({ threadId: "t" }), startTurn: async () => {} });
+    expect(reloaded.listRoutines().map(routine => routine.id)).toContain(f.routine.id);
+    expect(JSON.stringify(reloaded)).not.toContain("interrupted-run");
+    expect(JSON.parse(readFileSync(f.file, "utf8")).runsCommit).toBe(committed.runsCommit);
+  });
+});
 
 describe("package batch preparation seams", () => {
   it("prepares old and inert new records without publishing or changing durable files", () => {
@@ -74,16 +95,16 @@ describe("package batch preparation seams", () => {
       { id: f.existing.id }, { threadId: f.existing.threadId }, { chiefOfStaff: true },
       { autoApprove: true }, { composio: true }, { browser: true }, { computer: "local" as const },
       { alwaysAllow: ["Bash:*"] },
-    ]) expect(() => f.store.preparePackageAddition([{ ...f.added, ...patch }], [])).toThrow("Unsafe package bot addition");
+    ]) expect(() => f.store.preparePackageAddition([{ ...f.added, ...patch }], [])).toThrow("A package bot must be new and start with no access");
     expect(f.emitted).not.toHaveBeenCalled();
     expect(f.store.bots).toHaveLength(1);
   });
   it("rejects reused or scheduled routine records and rooms reaching existing bots", () => {
     const f = fixture();
     for (const patch of [{ id: f.oldRoutine.id }, { enabled: true }, { nextRunAt: Date.now() }]) {
-      expect(() => f.manager.preparePackageAddition([{ ...f.routine, ...patch }])).toThrow("Unsafe package routine addition");
+      expect(() => f.manager.preparePackageAddition([{ ...f.routine, ...patch }])).toThrow("A package routine must be new and switched off");
     }
-    expect(() => f.store.preparePackageAddition([f.added], [{ ...f.group, memberIds: [f.existing.id] }])).toThrow("Unsafe package group addition");
+    expect(() => f.store.preparePackageAddition([f.added], [{ ...f.group, memberIds: [f.existing.id] }])).toThrow("A package team must be new and hold only its own new bots");
     expect(f.manager.listRoutines()).toEqual([f.oldRoutine]);
     expect(f.routineEvents).not.toHaveBeenCalled();
   });

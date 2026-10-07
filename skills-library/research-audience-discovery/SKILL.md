@@ -1,8 +1,9 @@
 ---
 name: research-audience-discovery
 description: "You have raw material (interview transcripts, sales-call notes, support tickets, churn surveys) and need to turn it into segments the team can write to, price to, and channel to. Or a teammate handed you a demographic and asked for a persona."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "research"
 ---

@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about basic type annotations (use `python-idioms`), data validation (use `python-data-modeling`), or project setup (use `python-project-setup`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "python best-practices clean-code"
   category: "software-engineering"

@@ -263,6 +263,9 @@ const DISPATCH: Record<string, Dispatch> = {
   qwenAgent: acp("qwenAgent"),
   hermesAgent: acp("hermesAgent", {}, scratch => ({ HOME: scratch, MURAGE_DATA_DIR: join(scratch, "state") })),
   customAcp: acp("customAcp"),
+  // Runs on OpenClaw's own tools and approvals (no Murage mounts), but the framed
+  // turn text still reaches the bridge as the ACP prompt, so it is observed here.
+  openclawAgent: acp("openclawAgent"),
   opencodeGo: { ...acp("opencodeGo", {}, scratch => ({ HOME: scratch, XDG_DATA_HOME: scratch, OPENCODE_API_KEY: "opencode-fixture-key", FAKE_ACP_MODELS: "opencode/fixture-model" })),
     turn: { model: "opencode/fixture-model" } },
   antigravityAgent: {

@@ -17,7 +17,7 @@ trigger_phrases: >-
   I want to start a food truck help me launch a food truck food truck business
   plan how to start a mobile food business food truck guide open a food truck
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: entrepreneurship step-by-step planning
   category: business-operations

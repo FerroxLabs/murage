@@ -67,5 +67,5 @@ export async function trustedBackupResticExecutableAsync(file,{currentExecutable
 /** Where a packaged restic for this platform lives, beside age. */
 export function packagedResticPath(resourcesPath,platform=process.platform,arch=process.arch){
  const pin=resticPinForTarget(platform,arch);if(!pin)return null;
- return (platform==="win32"?path.win32:path).join(resourcesPath,"backup-tools",arch,pin.executable);
+ return (platform==="win32"?path.win32:path.posix).join(resourcesPath,"backup-tools",arch,pin.executable);
 }

@@ -6,7 +6,7 @@ description: |
   Do NOT use for legal liability situations, corporate crisis communication, or assessing whether a relationship warrants an apology.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "relationships research strategy"
   category: "family-relationships"

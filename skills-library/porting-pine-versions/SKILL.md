@@ -1,7 +1,9 @@
 ---
 name: porting-pine-versions
 description: Migrate Pine Script v4 / v5 source to v6 — analyze, apply migration rules, compile-check, iterate until clean. Use when the user hands over an older script or asks to "upgrade to v6" / "port this Pine code".
-license: MIT
+license: Apache-2.0
+metadata:
+  author: Ferrox Labs
 ---
 
 # Porting Pine v4 / v5 → v6

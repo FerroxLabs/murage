@@ -6,7 +6,7 @@ description: |
   Do NOT use for professional or elite-level athletic programming, injury rehabilitation, general strength training (use beginner-strength-training), or running-specific plans (use running-training-plan).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "fitness workout-planning planning"
   category: "health-wellness"

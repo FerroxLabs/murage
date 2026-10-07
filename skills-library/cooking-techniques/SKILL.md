@@ -10,7 +10,7 @@ description: |
   baking (use baking-fundamentals), or knife technique (use knife-skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "cooking step-by-step guide"
   category: "home-household"

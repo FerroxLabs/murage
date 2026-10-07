@@ -18,7 +18,7 @@ import { claimMemoryJob, publishMemoryWork } from "./memory/jobs.ts";
 import { captureWork } from "./memory/chunks.ts";
 import { refreshMemoryCheckpoint } from "./memory/consolidate.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
-import { forgetMemory } from "./memory/forget.ts";
+import { forgetMemory, onMemoryMessagesForgotten } from "./memory/forget.ts";
 import { applyMemoryTombstones } from "./memory/restore.ts";
 import { roomReplayWithheld } from "./memory/disclosures.ts";
 import { messageSourceForgotten } from "./memory/replay-lineage.ts";
@@ -111,4 +111,17 @@ it("forgetting an ordinary memory still forgets the messages it rests on", () =>
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: notes.checkpointId!, revision: notes.version! });
   expect(sourceState("m-plain")).toBe("deleted");
   expect(messageSourceForgotten("closing-chat", "m-plain")).toBe(true);
+});
+
+it("derived project text is not marked stale by forgetting the notes, only by forgetting what they quoted", () => {
+  const told: string[][] = [];
+  onMemoryMessagesForgotten((_db, ids) => { told.push([...ids].sort()); });
+  try {
+    captured("m-ask", "owner", "Which rows went out on the 26th?");
+    const notes = captured("m-plain", "finch", "Rows 83 to 86 went out on the 26th.");
+    forgetMemory(ownerMemoryTicket(), { kind: "record", id: notes.checkpointId!, revision: notes.version! });
+    expect(told).toEqual([]);
+    forgetMemory(ownerMemoryTicket(), { kind: "source", id: "message:closing-chat:m-plain" });
+    expect(told).toEqual([["m-plain"]]);
+  } finally { onMemoryMessagesForgotten(null); }
 });

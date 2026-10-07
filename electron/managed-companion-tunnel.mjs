@@ -150,7 +150,7 @@ function ensurePrivateDirectory(directory, fileSystem, currentUid) {
   fileSystem.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const stat = fileSystem.lstatSync(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
-    throw new Error("The managed companion runtime path is unsafe");
+    throw new Error("The managed companion runtime folder is not a plain folder");
   }
   if (currentUid !== undefined && stat.uid !== currentUid) {
     throw new Error("The managed companion runtime path has an unexpected owner");

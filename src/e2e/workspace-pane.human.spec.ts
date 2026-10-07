@@ -93,7 +93,7 @@ import '/src/styles.css';
 const scope=${JSON.stringify(scope)};
 const joined=new URLSearchParams(location.search).has('joined');
 const base={color:'blue',messages:[],description:'',autoApprove:false,tasks:[],modelSelection:{instanceId:'fixture',model:'test'}};
-const bots=[{...base,id:'research',name:'Research bot',threadId:'task',tasks:[{threadId:'task',title:'Weekly report'}]},{...base,id:'other',name:'Other bot',threadId:'other-task'}];
+const bots=[{...base,id:'research',name:'Research bot',threadId:'task',tasks:[{threadId:'task',title:'Weekly report',createdAt:Date.now()}]},{...base,id:'other',name:'Other bot',threadId:'other-task'}];
 const state={...initialState,bots,selectedId:'research',config:{features:{},box:{configured:false}},instances:[]};
 const listeners=new Set();window.subscribeFixture=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
 function dispatch(action){if(action.type==='workspacePane')state.workspacePane=workspacePaneReducer(state.workspacePane,action.action);if(action.type==='select')state.selectedId=action.id;publish();}
@@ -187,8 +187,11 @@ for (const width of [390, 820, 1440]) for (const skin of ["light", "dark"]) test
   await page.addInitScript(saved => { (window as any).muragebox = {}; (window as any).savedFixture = saved; }, SAVED);
   const mode = width === 390 ? "off" : width === 820 ? "paused" : "active";
   const record = (botId: string) => ({ id: `memory-${botId}`, version: 1, scopeId: botId, text: `Private note for ${botId}`, state: "active", assertion: "owner-statement", validFrom: 1, ownerPinned: true });
-  await page.route("**/api/config", route => route.fulfill({ json: { features: {}, box: { configured: false } } }));
-  await page.route("**/api/memory/status", route => route.fulfill({ json: { mode, configuration: { excludedThreadIds: [], extractorInstanceId: null }, scopes: [{ id: "research", kind: "bot", ownerKey: "research", label: "Research bot" }, { id: "other", kind: "bot", ownerKey: "other", label: "Other bot" }], model: { state: "missing" }, records: { active: 2 }, backlog: {}, cost: {}, deletion: {}, extractors: [], workerError: null } }));
+  // The joined panel is desktop-only; the harness says which surface asked
+  // (src/lib/surface.ts), so the stub answers as it does for the desktop app.
+  await page.route("**/api/config", route => route.fulfill({ json: { surface: "desktop", features: {}, box: { configured: false } } }));
+  // The server now returns v2 learning settings and a token allowance, with no cost block.
+  await page.route("**/api/memory/status", route => route.fulfill({ json: { mode, configuration: { excludedThreadIds: [], extractorInstanceId: null }, scopes: [{ id: "research", kind: "bot", ownerKey: "research", label: "Research bot" }, { id: "other", kind: "bot", ownerKey: "other", label: "Other bot" }], model: { state: "missing" }, records: { active: 2 }, backlog: {}, learning: {revision:0,settings:{version:2,automaticFacts:true,automaticProcedures:true,reviewMode:false,perCallOutputTokens:{extraction:2000,grounding:64,reflection:8000},dailyInputTokens:400000,dailyOutputTokens:60000,callsPerMinute:6,learnFrom:{chats:true,channels:true},botsPaused:[]},connection:{instanceId:null,label:"No connection",source:"none"},allowance:{day:"2026-09-29",inputUsed:0,outputUsed:0,usedPercent:0},defaultOn:false}, deletion: {}, extractors: [], workerError: null } }));
   await page.route("**/api/memory/action", async route => {
     const body = route.request().postDataJSON(); actions.push(body);
     if (body.action === "list" && body.query === "delayed") await new Promise<void>(resolve => { releaseOld = resolve; });
@@ -214,7 +217,7 @@ for (const width of [390, 820, 1440]) for (const skin of ["light", "dark"]) test
   await page.getByRole("tab", { name: "Memory", exact: true }).click();
   await expect(page.getByTestId("memory-settings")).toHaveAttribute("data-compact", "true");
   await expect(page.getByText(`Private note for research`, { exact: true })).toBeVisible();
-  await expect(page.getByTestId("memory-settings")).toContainText(mode === "active" ? "Capture and recall are on." : mode === "off" ? "Memory is off." : "Memory is paused.");
+  await expect(page.getByTestId("memory-settings")).toContainText(mode === "active" ? "Capture and recall are on." : mode === "off" ? "Memory is off." : "Processing and recall are paused.");
   for (const view of ["Important", "Recent", "Needs review"]) { await page.getByRole("button", { name: view, exact: true }).click(); await expect(page.getByRole("button", { name: view, exact: true })).toBeEnabled(); }
   await page.getByRole("button", { name: "Inspect memory", exact: true }).click();
   await page.getByRole("checkbox", { name: "Confirm forgetting this memory" }).check();

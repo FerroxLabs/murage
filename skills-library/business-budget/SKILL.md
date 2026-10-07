@@ -5,7 +5,7 @@ description: |
   Do NOT use for personal household budgets (use budget-planning), financial modeling with P&L projections (use financial-model-structure), or pricing decisions (use pricing-strategy).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "planning strategy analysis spreadsheets checklist"
   category: "business-strategy"

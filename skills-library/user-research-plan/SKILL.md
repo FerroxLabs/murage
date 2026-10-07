@@ -5,7 +5,7 @@ description: |
   Do NOT use for customer discovery interviews for startups (use customer-discovery-interview), employee surveys (use employee-survey), or market research briefs (use market-research-brief).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research planning analysis strategy decision-making"
   category: "business-strategy"

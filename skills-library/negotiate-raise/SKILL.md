@@ -11,7 +11,7 @@ description: |
   start-freelancing workflow), or career pivots (use switch-careers workflow).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "salary-negotiation career step-by-step"
   category: "career"

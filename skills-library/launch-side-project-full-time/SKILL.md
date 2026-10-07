@@ -20,7 +20,7 @@ trigger_phrases: >-
   quit my job for my startup launch my product full-time side project to
   full-time transition monetize my side project should I go full-time on my idea
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: entrepreneurship career step-by-step planning
   category: career

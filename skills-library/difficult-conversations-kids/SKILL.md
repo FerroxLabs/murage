@@ -6,7 +6,7 @@ description: |
   Do NOT use for grief therapy, clinical assessment of a child's emotional state, or replacing a child psychologist's guidance.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "parenting relationships planning"
   category: "family-relationships"

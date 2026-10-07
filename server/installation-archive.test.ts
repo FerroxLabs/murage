@@ -77,7 +77,7 @@ it.each(["routines.json", "webhooks.json", "delegation-receipts.json"])("rejects
   expect(readFileSync(f.archive)).toEqual(original);
 });
 
-it.each(["companion/devices.json", "companion", "connection-profiles/old/credentials.bin", "restored-connections.json"])("an external archive cannot install connection authority at %s", async path => {
+it.each(["companion/devices.json", "companion", "connection-profiles/old/credentials.bin", "restored-connections.json", "browser-extension/clients.json", "browser-extension/native-host/registration-chrome.json", "browser-extension"])("an external archive cannot install connection authority at %s", async path => {
   const f = fixture();
   await crafted(f, [{ path, text: "injected-connection-authority" }]);
   await expect(prepareInstallationRestore(f.archive, f.parent)).rejects.toMatchObject({ code: "RESERVED_RESTORE_COMPONENT" });

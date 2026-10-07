@@ -6,7 +6,7 @@ description: |
   Do NOT use for investment advice, tax planning, business financial modeling, or debt consolidation strategy (use debt-consolidation-analysis instead).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "budgeting personal-finance expenses savings planning"
   category: "personal-finance"

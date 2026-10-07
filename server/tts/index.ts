@@ -22,17 +22,23 @@ import { isUnavailable, markUnavailable, resetUnavailable, type VoiceEndpoint, t
 let speechRoutes: () => VoiceEndpoint[] = () => [];
 let voiceRoutes: () => Record<VoicePart, string | null> | null = () => null;
 let xaiRoute: () => xaiSpeech.XaiSpeechEndpoint | null = () => null;
+let streamRoute: () => boolean = () => false;
 export function useVoiceRoutes(routes: {
   speech: () => VoiceEndpoint[];
   describe: () => Record<VoicePart, string | null>;
   /** An owner's own xAI key, for xAI's voices. */
   xai?: () => xaiSpeech.XaiSpeechEndpoint | null;
+  /** Streaming transcription is on and a Flux key is present. */
+  stream?: () => boolean;
 }) {
   speechRoutes = routes.speech;
   voiceRoutes = routes.describe;
   xaiRoute = routes.xai ?? (() => null);
+  streamRoute = routes.stream ?? (() => false);
   resetUnavailable();
 }
+/** What speaks when no voice was chosen at all (xAI's own default). */
+export const DEFAULT_GROK_VOICE = "eve";
 const hostedSpeech = () => speechRoutes().length > 0;
 /** xAI's voices through Flux, for an owner with a Flux key and no xAI key of
  *  their own. Null when Flux does not serve speech here. */
@@ -49,7 +55,7 @@ async function speakXai(text: string, voice: string | undefined, streamed: boole
   const flux = own ? null : fluxGrokRoute();
   if (!flux || isUnavailable(flux)) return xaiSpeech.synthesizeClip(text, voice, own, streamed);
   try {
-    return await fluxSpeech.synthesizeClip(text, voice ?? "eve", flux, streamed);
+    return await fluxSpeech.synthesizeClip(text, voice ?? DEFAULT_GROK_VOICE, flux, streamed);
   } catch (error) {
     if (error instanceof fluxSpeech.SpeechUnavailable) markUnavailable(flux);
     throw error;
@@ -185,6 +191,8 @@ export function describeVoice(cfg: AppConfig) {
     provider: voiceProvider(cfg),
     /** Which provider serves each part of a call; never a key. */
     routes: voiceRoutes(),
+    /** Whether the page may open a streaming transcription call. */
+    streamTranscribe: streamRoute(),
     /** Which voice services an agent can pick from here. */
     available: availableProviders(cfg),
     /** An xAI key of the owner's own. Without one, xAI's voices sit in the
@@ -201,7 +209,8 @@ export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner, own?
   const provider = effectiveProvider(cfg, own);
   // One Flux list: OpenAI's voices, plus xAI's through Flux's xAI alias
   // when Flux itself is connected (an own OpenAI key cannot reach them).
-  if (provider === "flux") return fluxGrokRoute() ? [...fluxSpeech.FLUX_VOICES, ...xaiSpeech.XAI_VOICES] : fluxSpeech.FLUX_VOICES;
+  // Grok voices lead the list, since they are what a bot starts with.
+  if (provider === "flux") return fluxGrokRoute() ? [...xaiSpeech.XAI_VOICES, ...fluxSpeech.FLUX_VOICES] : fluxSpeech.FLUX_VOICES;
   if (provider === "xai") return xaiSpeech.XAI_VOICES;
   if (provider === "system") {
     return windowsVoices.windowsVoicesAvailable()
@@ -229,10 +238,17 @@ export function speakStreamed(cfg: AppConfig, written: string, voiceId?: string,
 function speakClip(cfg: AppConfig, written: string, voiceId: string | undefined, run: systemVoices.Runner | undefined, own: VoiceProvider | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
   const text = pronounceable(written);
   const provider = effectiveProvider(cfg, own);
+  // A Grok voice on a bot with no service of its own is the default the app
+  // assigned (bot-voice.ts). It belongs to the Flux list, so where the
+  // workspace speaks another way (an own ElevenLabs key, the built-in
+  // voices) it is set aside and that way speaks as it always did.
+  if (!own && (provider === "elevenlabs" || provider === "system") && xaiSpeech.isXaiVoice(voiceId)) voiceId = undefined;
   if (provider === "xai") return speakXai(text, voiceId, streamed);
   if (provider === "flux") {
     if (!hostedSpeech()) throw new NoVoiceConfigured("key");
-    const voice = voiceId || cfg.tts?.voice || "marin";
+    // no voice chosen anywhere: Flux's Grok default where Flux serves it,
+    // else the OpenAI default
+    const voice = voiceId || cfg.tts?.voice || (fluxGrokRoute() ? DEFAULT_GROK_VOICE : "marin");
     // ids never collide between the two lists, so the voice says which
     if (xaiSpeech.isXaiVoice(voice)) return speakFluxGrok(text, voice, run, streamed);
     return speakHosted(text, voice, run, streamed);
@@ -255,3 +271,43 @@ function speakClip(cfg: AppConfig, written: string, voiceId: string | undefined,
 }
 
 export type { Voice, Audio, Clip, StreamedAudio } from "./elevenlabs.ts";
+
+/**
+ * Time one clip for the harness log: headers are when the service answered
+ * (this is called as speakStreamed resolves), first audio is the first chunk
+ * out of a streamed body (a whole-bytes clip has both at once). Logs once,
+ * numbers and the provider's name only, never the words.
+ */
+export function timedClip(
+  clip: elevenlabs.Clip,
+  startedAt: number,
+  log: (line: string) => void,
+  info: { length: number; via: string },
+): elevenlabs.Clip {
+  const headersMs = Date.now() - startedAt;
+  let logged = false;
+  const emit = () => {
+    if (logged) return;
+    logged = true;
+    const firstAudioMs = "bytes" in clip ? headersMs : Date.now() - startedAt;
+    log(`[tts] speak timing: headers ${headersMs} ms, first audio ${firstAudioMs} ms, length ${info.length}, via ${info.via}`);
+  };
+  if ("bytes" in clip) {
+    emit();
+    return clip;
+  }
+  const reader = clip.stream.getReader();
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      emit();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel(reason) {
+      // cancelled before any audio: there is no first audio to report
+      return reader.cancel(reason);
+    },
+  });
+  return { stream, mime: clip.mime };
+}

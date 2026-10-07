@@ -9,7 +9,7 @@ description: |
   fundraising pitch materials (those require a different skill set).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "email writing entrepreneurship"
   category: "writing"

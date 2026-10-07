@@ -1,17 +1,33 @@
+import { homeThread } from "./execution-audience.ts";
 import type { Store } from "./store.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { database, transaction } from "./database.ts";
 import { requireMemoryOwner } from "./memory/authority.ts";
+import { scopeRow } from "./memory/scope-id.ts";
+import { passLookup } from "./memory/eligibility-pass.ts";
+import { revokeAllDisclosures } from "./memory/revocation.ts";
 
 export const WORKSPACE_OWNER = "workspace-owner";
 export type HumanPrincipal = Readonly<{ personId: string; bindingId: string; revision: number }>;
-export type VerifiedHumanOrigin = { platform: "slack" | "discord" | "telegram"; connectionId: string; authorityId: string; userId: string };
-type Binding = { id: string; origin: VerifiedHumanOrigin; personId: string | null; revision: number; active: boolean };
-const OWNER: HumanPrincipal = Object.freeze({ personId: WORKSPACE_OWNER, bindingId: "local", revision: 1 });
+export type VerifiedHumanOrigin = { platform: "slack" | "discord" | "telegram" | "whatsapp"; connectionId: string; authorityId: string; userId: string };
+/** What the channel calls the sender. Kept so lessons can be kept away from customer turns that name a person (bot learning, R3-04). Not an identity: never compared, never grants anything. */
+export type SenderDisplay = { name?: string; username?: string };
+type Binding = { id: string; origin: VerifiedHumanOrigin; personId: string | null; revision: number; active: boolean; display?: SenderDisplay };
+const cleanDisplay = (value: SenderDisplay | undefined): SenderDisplay | undefined => {
+  const clean = (text: unknown) => typeof text === "string" ? text.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) : "";
+  const name = clean(value?.name), username = clean(value?.username).replace(/^@/, "");
+  return name || username ? { ...(name ? { name } : {}), ...(username ? { username } : {}) } : undefined;
+};
+export const OWNER: HumanPrincipal = Object.freeze({ personId: WORKSPACE_OWNER, bindingId: "local", revision: 1 });
 const PREFIX = "human-binding:";
+export const isGroupOrigin = (origin: VerifiedHumanOrigin) => origin.platform === "whatsapp" && origin.userId.endsWith("@g.us");
+export function isGroupPrincipal(principal: HumanPrincipal): boolean {
+  const value = binding(principal.bindingId);
+  return !!value && isGroupOrigin(value.origin);
+}
 function scope(db: DatabaseSync, kind: string, owner: string): string {
-  const old = db.prepare("SELECT id FROM memory_scopes WHERE kind=? AND owner_key=?").get(kind, owner);
+  const old = scopeRow(db, kind, owner);
   if (old) return String(old.id);
   const id = randomUUID(); db.prepare("INSERT INTO memory_scopes VALUES(?,?,?,'[]',0)").run(id, kind, owner); return id;
 }
@@ -24,15 +40,26 @@ function save(value: Binding, db = database()) {
   db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'human-binding',?,?,'granted',?) ON CONFLICT(id) DO UPDATE SET scope_id=excluded.scope_id,revision=excluded.revision,intent=excluded.intent")
     .run(value.id, scopeId, value.id, value.revision, JSON.stringify(value));
 }
-function revoke(db: DatabaseSync) { db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1; UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'"); }
+function revoke(db: DatabaseSync) { db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1"); revokeAllDisclosures(db,"human-principal"); }
 /** Call only from a channel service after its provider identity and sender binding were verified. */
-export function observeVerifiedHuman(origin: VerifiedHumanOrigin): string {
+export function observeVerifiedHuman(origin: VerifiedHumanOrigin, display?: SenderDisplay): string {
   for (const value of Object.values(origin)) if (typeof value !== "string" || !value || value.length > 200) throw new Error("HUMAN_ORIGIN_INVALID");
   const id = PREFIX + createHash("sha256").update(JSON.stringify([origin.platform, origin.authorityId, origin.userId, origin.connectionId])).digest("hex");
+  const shown = cleanDisplay(display);
   transaction(db => {
     const old = binding(id, db);
-    if (!old) save({ id, origin: { ...origin }, personId: null, revision: 1, active: true }, db);
-    else if (!old.active) { old.active = true; old.personId=null; old.revision++; save(old, db); revoke(db); }
+    if (isGroupOrigin(origin)) {
+      const personId = "whatsapp-group:" + id;
+      if (!old || !old.active || old.personId !== personId) {
+        save({ id, origin: { ...origin }, personId, revision: (old?.revision ?? 0) + 1, active: true, ...(shown ? { display: shown } : {}) }, db);
+        revoke(db);
+      }
+      return;
+    }
+    if (!old) save({ id, origin: { ...origin }, personId: null, revision: 1, active: true, ...(shown ? { display: shown } : {}) }, db);
+    else if (!old.active) { old.active = true; old.personId=null; old.revision++; if (shown) old.display = shown; save(old, db); revoke(db); }
+    // A new display name is not a new person: same revision, nothing revoked.
+    else if (shown && JSON.stringify(old.display) !== JSON.stringify(shown)) { old.display = shown; save(old, db); }
   });
   return id;
 }
@@ -52,8 +79,15 @@ export function linkHumanBinding(ticket: object, input: { bindingId: string; exp
     const value = binding(input.bindingId, db);
     if (!value || !value.active) throw new Error("HUMAN_BINDING_UNAVAILABLE");
     if (value.revision !== input.expectedRevision) throw new Error("MEMORY_VERSION_CONFLICT");
+    if (isGroupOrigin(value.origin)) throw new Error(input.as === "owner" ? "HUMAN_OWNER_INELIGIBLE" : "HUMAN_GROUP_IMMUTABLE");
+    if (input.personId?.startsWith("whatsapp-group:")) throw new Error("HUMAN_GROUP_IMMUTABLE");
     let personId: string | null = null;
-    if (input.as === "owner") personId = WORKSPACE_OWNER;
+    if (input.as === "owner") {
+      // WhatsApp: the owner is the linked number and nothing else (design 5.1). A contact or group binding names a
+      // different userId than the linking authority, so the server refuses it here whatever the caller asked for.
+      if (value.origin.platform === "whatsapp" && value.origin.userId !== value.origin.authorityId) throw new Error("HUMAN_OWNER_INELIGIBLE");
+      personId = WORKSPACE_OWNER;
+    }
     if (input.as === "person") {
       personId = input.personId ?? randomUUID();
       if (personId === WORKSPACE_OWNER || input.personId && !db.prepare("SELECT 1 FROM memory_scopes WHERE kind='preferences' AND owner_key=?").get("person:" + personId)) throw new Error("HUMAN_PERSON_UNKNOWN");
@@ -83,8 +117,11 @@ export function assertHumanPrincipal(principal: HumanPrincipal) {
   if (JSON.stringify(current) !== JSON.stringify(principal)) throw new Error("HUMAN_BINDING_REVOKED");
 }
 export function threadHumanPrincipal(threadId: string, db = database()): HumanPrincipal {
-  const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='human-thread'").get("human-thread:" + threadId);
-  return row ? Object.freeze(JSON.parse(String(row.intent))) : OWNER;
+  // Inside an eligibility pass the binding is read once; any write ends the memo, so a revoked binding is seen at once.
+  return passLookup(db, "human-thread:" + threadId, () => {
+    const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='human-thread'").get("human-thread:" + threadId);
+    return row ? Object.freeze(JSON.parse(String(row.intent))) as HumanPrincipal : OWNER;
+  });
 }
 export function bindHumanThread(threadId: string, principal: HumanPrincipal) {
   assertHumanPrincipal(principal);
@@ -97,12 +134,14 @@ export function bindHumanThread(threadId: string, principal: HumanPrincipal) {
     .run(id, scope(db, "conversation", threadId), threadId, principal.revision, JSON.stringify(principal));
 }
 export function sameHumanAudience(a: HumanPrincipal, b: HumanPrincipal) { return a.personId === b.personId; }
+export function isLocalOwner(principal: HumanPrincipal) { return principal.personId === OWNER.personId && principal.bindingId === OWNER.bindingId && principal.revision === OWNER.revision; }
 export function isWorkspaceOwner(principal: HumanPrincipal) { return principal.personId === WORKSPACE_OWNER; }
 
 /** Server-selected task; exact binding revision prevents old native-session reuse after relinking. */
 export function humanTask(store: Store, botId: string, principal: HumanPrincipal) {
   assertHumanPrincipal(principal);
   const bot=store.bot(botId); if(!bot)return null;
+  if (isLocalOwner(principal)) return homeThread(bot);
   const exact=(threadId:string)=>JSON.stringify(threadHumanPrincipal(threadId))===JSON.stringify(principal);
   let task=bot.tasks?.find(task=>exact(task.threadId));
   if(!task){task=store.createTask(botId,"Channel conversation",false)??undefined;if(!task)return null;bindHumanThread(task.threadId,principal);}
@@ -118,6 +157,7 @@ export function humanMayReadRecord(db: DatabaseSync,id:string,version:number,pri
 export function shareHumanScope(ticket:object,input:{personId:string;scopeId:string;granted:boolean}) {
   requireMemoryOwner(ticket);
   return transaction(db=>{
+    if(input.personId.startsWith("whatsapp-group:"))throw new Error("HUMAN_GROUP_IMMUTABLE");
     if(!db.prepare("SELECT 1 FROM memory_scopes WHERE kind='preferences' AND owner_key=?").get("person:"+input.personId))throw new Error("HUMAN_PERSON_UNKNOWN");
     if(!db.prepare("SELECT 1 FROM memory_scopes WHERE id=?").get(input.scopeId))throw new Error("MEMORY_SCOPE_UNKNOWN");
     const id="human-share:"+createHash("sha256").update(JSON.stringify([input.personId,input.scopeId])).digest("hex");
@@ -157,4 +197,16 @@ export function threadHumanChannelUserId(threadId: string, db = database()): str
   if (principal.bindingId === "local") return undefined;
   const value = binding(principal.bindingId, db);
   return value?.active ? value.origin.userId : undefined;
+}
+
+/** Names and usernames channel senders go by, with each part of a full name (R3-04): what a customer-turn guard must not let through. */
+export function knownHumanNames(db: DatabaseSync = database()): string[] {
+  const out = new Set<string>();
+  for (const row of db.prepare("SELECT intent FROM memory_scope_bindings WHERE subject_type='human-binding'").all()) {
+    let display: SenderDisplay | undefined;
+    try { display = (JSON.parse(String(row.intent)) as Binding).display; } catch { continue; }
+    if (display?.name) { out.add(display.name); for (const part of display.name.split(/\s+/)) if (part.length >= 2) out.add(part); }
+    if (display?.username) out.add(display.username);
+  }
+  return [...out];
 }

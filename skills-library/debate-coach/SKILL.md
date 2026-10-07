@@ -4,7 +4,7 @@ description: |
   Expert debate preparation and coaching covering argument construction (claim-evidence-warrant), major debate formats (Lincoln-Douglas, Parliamentary, Policy), rebuttal strategies, cross-examination techniques, logical fallacy identification, research methodology, flowing (note-taking), and judging criteria. Use when the user asks about debate coach or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "writing guide teaching"
   category: "writing"

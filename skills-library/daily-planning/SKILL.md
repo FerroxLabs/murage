@@ -6,7 +6,7 @@ description: |
   Do NOT use for weekly time blocking (use time-blocking), full GTD system setup (use gtd-workflow), or team sprint planning (use business project-management skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management planning checklist"
   category: "productivity"

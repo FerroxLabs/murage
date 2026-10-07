@@ -14,6 +14,13 @@
 import { useState } from "react";
 
 import { api } from "@/state/store";
+import { decideWithFreshAuth } from "@/lib/fresh-auth";
+import { allowNeedsComputer, approvalSurface, useComputerOnlyRefusal } from "@/lib/approval-surface";
+import { inNativeShell } from "@/lib/native-shell";
+import { useDecisionFeedback, type DecisionHooks } from "@/lib/approval-feedback";
+import { ApprovalBusyLabel, ApprovalConfirmLine, approvalButton } from "./ApprovalFeedback";
+import { useDesktopSurface } from "@/lib/use-surface";
+import { ComputerOnlyNotice } from "./ComputerOnlyNotice";
 import type { OptionCardData } from "@/state/store";
 import { isQuestionCard, questionsForCard, type QuestionAnswer } from "../../shared/questions";
 import { QuestionCardView } from "./QuestionCard";
@@ -68,7 +75,7 @@ export function requestHeadline(card: OptionCardData | undefined | null): string
 // background, text and border. Nothing overlaps, so nothing can be decided by
 // stylesheet order.
 const button =
-  "min-h-10 rounded-lg border px-3 py-2 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
+  `inline-flex min-h-10 items-center justify-center rounded-lg border px-3 py-2 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus`;
 
 /** The answer this panel exists to collect. Solid, and the only filled
  *  control here, so the eye lands on it before it reads anything. */
@@ -102,19 +109,52 @@ export function InboxRequestAnswer({
   const kind = inlineAnswerKind(card);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Allow once, Allow for this task and Deny: the tapped one works, the rest are held until it settles.
+  const feedback = useDecisionFeedback();
+  const desktop = useDesktopSurface();
+  const refused = useComputerOnlyRefusal(threadId, card.requestId ?? "");
+  const computerOnly = kind === "approval" && allowNeedsComputer(approvalSurface(desktop, inNativeShell()), card, refused);
+  // A phone's Allow on a card not rated low may meet fresh authentication, which signs the card's details.
+  const reviewFirst = kind === "approval" && desktop !== true && card.lowRisk !== true;
   if (!kind) return null;
 
-  const respond = async (body: Record<string, unknown>) => {
+  const respond = async (body: Record<string, unknown>, hooks?: DecisionHooks) => {
     setBusy(true);
     setError(null);
-    try {
-      await api(`/api/threads/${threadId}/respond`, { method: "POST", body: JSON.stringify({ requestId: card.requestId, ...body }) });
+    // An Allow may be met by a fresh-auth challenge on the phone (SEC-006):
+    // the helper asks for Face ID and re-posts once. A cancel leaves the card
+    // waiting with no error.
+    let failed = false;
+    let failure = "";
+    await decideWithFreshAuth(
+      (extra) => api(`/api/threads/${threadId}/respond`, { method: "POST", body: JSON.stringify({ requestId: card.requestId, ...body, ...extra }) }),
+      {
+        threadId,
+        requestId: card.requestId ?? "",
+        decision: body.behavior === "allow" ? (body.allowForTask ? "allow-task" : "allow") : undefined,
+        card,
+        botName,
+        onDevicePrompt: hooks?.devicePrompt,
+      },
+      { onError: (message, code) => { failed = true; failure = code === "cancelled" ? "" : message || "This answer could not be sent. Open the request instead."; }, showError: () => {} },
+    );
+    if (!failed) {
+      // Accepted: the buttons stay held until the refetch replaces this row.
+      hooks?.succeed();
       onSettled();
-    } catch (cause) {
-      setBusy(false);
-      setError(cause instanceof Error ? cause.message : "This answer could not be sent. Open the request instead.");
+      return;
     }
+    // A Deny that pre-empted this Allow owns the card now: this late failure says nothing to show.
+    if (hooks && !hooks.live()) return;
+    setBusy(false);
+    hooks?.settle();
+    if (failure) setError(failure);
   };
+  /** One tap on an approval button: buzz, show it working, hold the others. */
+  const decide = (choice: "allow" | "allow-task" | "deny", body: Record<string, unknown>) =>
+    feedback.run(choice, (hooks) => respond(body, hooks), choice === "deny" ? { preempt: true } : undefined);
+  // A Deny is never held by an Allow in flight; it goes out at once and takes over the card.
+  const btn = (choice: string, classes: string) => approvalButton(feedback, choice, classes, choice === "deny");
 
   if (kind === "question") {
     return (
@@ -136,34 +176,47 @@ export function InboxRequestAnswer({
 
   return (
     <div className="mt-3 rounded-xl border border-accent/30 bg-inset p-3">
-      {/* The command itself stays in the conversation. The Inbox is a place
-          to answer from, not a second reader of what a bot would run. */}
-      <p className="mb-2 text-[12px] text-ink-secondary">Open the request to see exactly what {botName || "this bot"} would run.</p>
+      {reviewFirst ? (
+        // SEC-006: an Allow on a card that may need fresh authentication signs a digest of the tool, command,
+        // summary and hold. So the owner sees exactly those, here, before the Allow that can start native auth.
+        <div data-testid="inbox-request-details" className="mb-2 space-y-1 text-[12.5px] text-ink">
+          {typeof card.tool === "string" && card.tool && <p className="font-mono text-[12px] text-ink-secondary">{card.tool}</p>}
+          {card.subtitle && <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-control p-2 font-mono text-[12px]">{card.subtitle}</pre>}
+          {typeof card.summary === "string" && card.summary && card.summary !== card.subtitle && <p className="break-words">{card.summary}</p>}
+          {typeof card.held === "string" && card.held && <p className="break-words text-ink-secondary">{card.held}</p>}
+        </div>
+      ) : (
+        // A low-rated card needs no proof, so the command stays in the conversation.
+        <p className="mb-2 text-[12px] text-ink-secondary">Open the request to see exactly what {botName || "this bot"} would run.</p>
+      )}
       {error && <p role="alert" className="mb-2 text-[12px] text-danger">{error}</p>}
-      <div className="flex flex-wrap gap-2">
-        <button
-          className={buttonPrimary}
-          disabled={busy}
-          onClick={() => void respond({ behavior: "allow" })}
-        >
-          Allow once
-        </button>
-        {card.taskAllowKey && (
-          <button
-            className={buttonQuiet}
-            disabled={busy}
-            title="Allow the same kind of action in the same place until this task ends"
-            onClick={() => void respond({ behavior: "allow", allowForTask: true })}
-          >
-            Allow for this task
-          </button>
+      {computerOnly && <ComputerOnlyNotice className="mb-2 text-[12.5px] text-ink-secondary" />}
+      <ApprovalConfirmLine prompting={feedback.prompting} className="mb-2 text-[12.5px] text-ink-secondary" />
+      <div role="group" aria-label="Answer" className="flex flex-wrap gap-2" aria-busy={feedback.busy !== null}>
+        {!computerOnly && (
+          <>
+            <button
+              {...btn("allow", buttonPrimary)}
+              onClick={() => decide("allow", { behavior: "allow" })}
+            >
+              <ApprovalBusyLabel busy={feedback.busy === "allow"}>Allow once</ApprovalBusyLabel>
+            </button>
+            {card.taskAllowKey && (
+              <button
+                {...btn("allow-task", buttonQuiet)}
+                title="Allow the same kind of action in the same place until this task ends"
+                onClick={() => decide("allow-task", { behavior: "allow", allowForTask: true })}
+              >
+                <ApprovalBusyLabel busy={feedback.busy === "allow-task"}>Allow for this task</ApprovalBusyLabel>
+              </button>
+            )}
+          </>
         )}
         <button
-          className={buttonDanger}
-          disabled={busy}
-          onClick={() => void respond({ behavior: "deny", message: "Denied by the user." })}
+          {...btn("deny", buttonDanger)}
+          onClick={() => decide("deny", { behavior: "deny", message: "Denied by the user." })}
         >
-          Deny
+          <ApprovalBusyLabel busy={feedback.busy === "deny"}>Deny</ApprovalBusyLabel>
         </button>
       </div>
     </div>

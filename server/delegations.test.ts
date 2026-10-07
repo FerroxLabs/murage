@@ -35,6 +35,7 @@ import {
   hasActiveDelegationWork,
   releaseParkedDelegations,
   stopWaitingDelegation,
+  dropQueuedDelegation,
 } from "./delegations.ts";
 import { cancelPeerApprovalsForThread, peerAllowKey, resolvePeerComms } from "./peer-approval.ts";
 import { Store, type BotRecord } from "./store.ts";
@@ -93,6 +94,23 @@ describe("queueDelegation", () => {
     const buses = setupBuses(store);
     commsBus = buses.commsBus;
     broadcasts = buses.broadcasts;
+  });
+
+  // B5: in a room several bots share the thread, so the chip names who
+  // delegated. A direct chat's chip needs no sender.
+  it("a delegation chip queued from a room names the delegating bot", () => {
+    const room = store.createGroup("Launch", [from.id, target.id]);
+    const result = queueDelegation(commsBus, from, { toBotId: target.id, message: "build it", depth: 0 }, 1, room.threadId);
+    expect(result.result).toBe("ok");
+    const chip = store.messagesFor(room.threadId).find((m) => m.tool?.name.startsWith("Delegated to @Helper"));
+    expect(chip?.from).toEqual({ botId: from.id, name: from.name, color: from.color });
+  });
+
+  it("a delegation chip in a direct chat stays without a sender", () => {
+    queueDelegation(commsBus, from, { toBotId: target.id, message: "build it", depth: 0 }, 1);
+    const chip = store.messagesFor(from.threadId).find((m) => m.tool?.name.startsWith("Delegated to @Helper"));
+    expect(chip).toBeDefined();
+    expect(chip?.from).toBeUndefined();
   });
 
   it("rejects a self-delegation without queueing", () => {
@@ -685,6 +703,35 @@ describe("busy retries and receipts", () => {
     expect(runTarget.mock.calls[0]![7]).toBe(eventId);
   });
 
+  it("keeps the routine ceiling and trigger after the parent ends and the queue reloads", async () => {
+    const routineAuthority = { permissionMode: "full" as const, triggerSource: "schedule" as const };
+    expect(queueDelegation(commsBus, from, { toBotId: target.id, message: "routine follow-up", depth: 0, routineAuthority }, 1).result).toBe("ok");
+    expect(JSON.parse(readFileSync(join(DATA_DIR, "delegations.json"), "utf8"))[from.threadId][0].routineAuthority).toEqual(routineAuthority);
+    _resetPending();
+    _loadPending();
+    const runTarget = vi.fn();
+    drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => runTarget.mock.calls.length === 1 && _pendingCount(from.threadId) === 0);
+    expect(runTarget.mock.calls[0]![12]).toEqual(routineAuthority);
+  });
+
+  // Audit final round (Astra H2): a handoff queued by a turn that was not
+  // owner audience keeps that mark through a restart.
+  // Audit round 5 (Kimi M1): and its unattended mark, so Full access keeps the owner's cards.
+  it("keeps a not-owner-audience mark through reload and hands it to the peer's turn", async () => {
+    store.patchBot(target.id, { busy: true });
+    expect(queueDelegation(commsBus, from, { toBotId: target.id, message: "unproven follow-up", depth: 0, notOwnerAudience: true, unattended: true }, 1).result).toBe("ok");
+    expect(JSON.parse(readFileSync(join(DATA_DIR, "delegations.json"), "utf8"))[from.threadId][0]).toMatchObject({ notOwnerAudience: true, unattended: true });
+    _resetPending();
+    _loadPending();
+    store.patchBot(target.id, { busy: false });
+    const runTarget = vi.fn();
+    drainDelegations(commsBus, approvalBus, from.threadId, runTarget);
+    await waitFor(() => runTarget.mock.calls.length === 1 && _pendingCount(from.threadId) === 0);
+    expect(runTarget.mock.calls[0]![9]).toBe(true);
+    expect(runTarget.mock.calls[0]![10]).toBe(true);
+  });
+
   it("rejects malformed persisted event markers instead of dispatching them as ordinary turns", async () => {
     const invalid = [null, "", " ", 42, {}, ["event"], "event with spaces", "x".repeat(129), "event\ninjection"];
     const items = invalid.map((eventId, index) => ({ id: "invalid-" + index, fromBotId: from.id, toBotId: target.id, message: "must not run", depth: 0, attempts: 0, eventId }));
@@ -874,6 +921,27 @@ describe("delegations queued from a room", () => {
     expect(
       store.messagesFor(room.threadId).some((message) => message.tool?.name === `Messaged @Rex`),
     ).toBe(true);
+  });
+
+  // 0.1.60 low: in a room several bots hand off, and a failure row with no
+  // `from` rendered unattributed, so nobody could tell whose handoff failed.
+  it("names the delegating bot on every row it leaves in the room, failures included", async () => {
+    expect(queueDelegation(buses.commsBus, chief, { toBotId: lead.id, message: "own the launch", depth: 0 }, 1, room.threadId).result).toBe("ok");
+    drainDelegations(buses.commsBus, buses.approvalBus, room.threadId, () => { throw new Error("engine went away"); });
+    const failed = await waitFor(() => store.messagesFor(room.threadId).find((m) => m.tool?.name.startsWith("error: delegation failed")));
+    expect(failed.from).toMatchObject({ botId: chief.id, name: "Ember" });
+    const queuedRow = store.messagesFor(room.threadId).find((m) => m.tool?.name.startsWith("Delegated to @Rex"));
+    expect(queuedRow?.from).toMatchObject({ botId: chief.id });
+
+    expect(queueDelegation(buses.commsBus, chief, { toBotId: lead.id, message: "again", depth: 0 }, 1, room.threadId).result).toBe("ok");
+    discardDelegations(buses.commsBus, room.threadId, chief.id);
+    const dropped = store.messagesFor(room.threadId).find((m) => m.tool?.name.includes("queued delegation dropped"));
+    expect(dropped?.from).toMatchObject({ botId: chief.id });
+  });
+
+  it("leaves a 1:1 thread's rows as they were: the thread is the sender's own", () => {
+    expect(queueDelegation(buses.commsBus, chief, { toBotId: lead.id, message: "x", depth: 0 }, 1, chief.threadId).result).toBe("ok");
+    expect(store.messagesFor(chief.threadId).find((m) => m.tool?.name.startsWith("Delegated to @Rex"))?.from).toBeUndefined();
   });
 
   it("names the sender per item, so two speakers in one room do not cross wires", async () => {
@@ -1462,5 +1530,15 @@ describe("a parked handoff whose wake-up already passed", () => {
     const queued = queueDelegation(bus, from, { toBotId: target.id, message: "run pwd", depth: 0 }, 1);
     expect(stopWaitingDelegation(bus, queued.id!)).toBe(false);
     expect(_pendingCount(from.threadId)).toBe(1);
+  });
+
+  // lane E1: a handoff whose room request was cancelled is taken out of the
+  // queue whatever it waits on, with a cancelled receipt, and never runs
+  it("drops a queued handoff that has not started, with a cancelled receipt", () => {
+    const queued = queueDelegation(bus, from, { toBotId: target.id, message: "run pwd", depth: 0 }, 1);
+    expect(dropQueuedDelegation(bus, queued.id!, "cancelled by you")).toBe(true);
+    expect(_pendingCount(from.threadId)).toBe(0);
+    expect(findDelegationReceipt(queued.id!)).toMatchObject({ status: "cancelled", result: "cancelled by you" });
+    expect(dropQueuedDelegation(bus, queued.id!, "again")).toBe(false);
   });
 });

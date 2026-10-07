@@ -6,7 +6,7 @@ description: |
   Do NOT use for creating new prompts from scratch (use model-specific prompting skills), style transfer (use ai-image-style-transfer), or upscaling (use ai-image-upscaling).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ai-image-generation analysis design"
   category: "design-creative"

@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { customMcpServers,
+import { customMcpServers, customMcpServerDescriptors,
   DATA_DIR,
   instanceConfigs,
   isValidSshAlias,
@@ -26,6 +26,7 @@ import { customMcpServers,
   browserProfileRoutingConflict,
   deleteEnvNames,
   stripRoutingEnv,
+  stripCliProbeCredentialEnv,
   stripWorkspaceCredentialEnv,
   syncCredentialEnv,
   vpsSshAlias,
@@ -768,6 +769,38 @@ describe("default fleet", () => {
     expect(config.instances?.custom.config).toBeUndefined();
   });
 
+  it("never sends the workspace router key to an instance with its own endpoint or key", () => {
+    const map = instanceConfigs({
+      openaiCompat: { key: "workspace-router-key", url: "https://router.example.test/v1" },
+      instances: {
+        openaiCompat: { driver: "openai-compat" },
+        ownUrl: { driver: "openai-compat", config: { url: "https://other-host.example.test/v1" } },
+        ownKeyEnv: { driver: "openai-compat", config: { apiKeyEnv: "OTHER_HOST_KEY" } },
+        ownEnvKey: { driver: "openai-compat", environment: { OPENAI_COMPAT_API_KEY: "instance-own-key" } },
+        sameUrl: { driver: "openai-compat", config: { url: "https://router.example.test/v1/" } },
+      },
+    });
+    expect(map.openaiCompat.environment?.OPENAI_COMPAT_API_KEY).toBe("workspace-router-key");
+    expect(map.sameUrl.environment?.OPENAI_COMPAT_API_KEY).toBe("workspace-router-key");
+    expect(map.ownUrl.environment?.OPENAI_COMPAT_API_KEY).toBeUndefined();
+    expect(map.ownKeyEnv.environment?.OPENAI_COMPAT_API_KEY).toBeUndefined();
+    expect(map.ownEnvKey.environment?.OPENAI_COMPAT_API_KEY).toBe("instance-own-key");
+  });
+
+  it("keeps the workspace xAI key off a Grok instance that brings its own endpoint or key", () => {
+    const map = instanceConfigs({
+      xai: { key: "workspace-xai-key" },
+      instances: {
+        grokPlain: { driver: "grok" },
+        grokOwnUrl: { driver: "grok", config: { url: "https://proxy.example.test/v1" } },
+        grokOwnKey: { driver: "grok", environment: { XAI_API_KEY: "grok-own" } },
+      },
+    });
+    expect(map.grokPlain.environment?.XAI_API_KEY).toBe("workspace-xai-key");
+    expect(map.grokOwnUrl.environment?.XAI_API_KEY).toBeUndefined();
+    expect(map.grokOwnKey.environment?.XAI_API_KEY).toBe("grok-own");
+  });
+
   it("adds missing custom-only engines onto an existing product fleet", () => {
     const map = instanceConfigs({ instances: { claude: { driver: "claudeAgent" } } });
     expect(map.claude.driver).toBe("claudeAgent");
@@ -1073,7 +1106,8 @@ describe("credential env preference", () => {
     // a saved value replaces the boot-time one; a cleared value drops it;
     // untouched sections change nothing
     expect(process.env.XAI_API_KEY).toBe("just-saved");
-    expect(process.env.COMPOSIO_API_KEY).toBe("ak_just_saved");
+    // The retired own key is no longer synced into the environment.
+    expect(process.env.COMPOSIO_API_KEY).toBe("boot-injected");
     expect(process.env.BOX_TOKEN).toBeUndefined();
     expect(process.env.MURAGE_TTS_KEY).toBeUndefined();
   });
@@ -1242,10 +1276,24 @@ describe("workspace credential env strip", () => {
     const start = src.indexOf("function cliProbeEnvironment(");
     expect(start).toBeGreaterThan(-1);
     const body = src.slice(start, src.indexOf("\n}\n", start));
-    expect(body).toContain("stripWorkspaceCredentialEnv(env)");
+    expect(body).toContain("stripCliProbeCredentialEnv(env)");
     expect(body).not.toMatch(/"MURAGE_COMPOSIO_BROKER_TOKEN"/);
     expect(body).not.toMatch(/"COMPOSIO_API_KEY"/);
-    expect(src).toMatch(/import \{[^}]*\bstripWorkspaceCredentialEnv\b[^}]*\} from "\.\/config\.ts"/s);
+    expect(src).toMatch(/import \{[^}]*\bstripCliProbeCredentialEnv\b[^}]*\} from "\.\/config\.ts"/s);
+  });
+
+  it("strips every listed vendor key, workspace secret and bearer token from a CLI probe env", () => {
+    const names = [...WORKSPACE_CREDENTIAL_ENV, ...PROVIDER_CREDENTIAL_ENV, "ANTHROPIC_AUTH_TOKEN"];
+    for (const required of ["GEMINI_API_KEY", "GOOGLE_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY", "MINIMAX_API_KEY", "FACTORY_API_KEY", "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "MISTRAL_API_KEY", "XAI_API_KEY", "OPENCODE_API_KEY"]) {
+      expect(names).toContain(required);
+    }
+    const env: Record<string, string | undefined> = { PATH: "/usr/bin", KEEP_ME: "yes" };
+    for (const name of names) env[name] = "secret";
+    stripCliProbeCredentialEnv(env);
+    expect(env).toEqual({ PATH: "/usr/bin", KEEP_ME: "yes" });
+    const folded: Record<string, string | undefined> = { Gemini_Api_Key: "secret", PATH: "p" };
+    stripCliProbeCredentialEnv(folded, "win32");
+    expect(folded).toEqual({ PATH: "p" });
   });
 
   it("is mirrored exactly by the bug-report redaction list", () => {
@@ -1366,6 +1414,28 @@ describe("customMcpServers", () => {
     expect(customMcpServers(cfg({ api: { url: "https://x/mcp" } }))).toEqual({});
   });
 
+  it("returns remote entries through the descriptor reader and leaves stdio alone", () => {
+    const config = cfg({
+      notes: { command: "npx", env: { NOTES_TOKEN: "t" } },
+      comfy: { url: "https://cloud.comfy.org/mcp", auth: "oauth", enabled: true },
+      keyed: { url: "https://x.example/mcp", headers: { "X-API-Key": "dev-only-value" } },
+      off: { url: "https://off.example/mcp", enabled: false },
+      bad: { url: "ftp://nope/mcp" },
+      offstdio: { command: "x", enabled: false },
+    });
+    const out = customMcpServerDescriptors(config);
+    expect(Object.keys(out.stdio)).toEqual(["notes"]);
+    expect(Object.keys(out.remote)).toEqual(["comfy", "keyed"]);
+    expect(out.remote.comfy).toEqual({
+      url: "https://cloud.comfy.org/mcp", auth: "oauth", headerNames: [], urlSecret: false,
+    });
+    expect(out.remote.keyed?.headerNames).toEqual(["X-API-Key"]);
+    // No header value ever rides a descriptor.
+    expect(JSON.stringify(out)).not.toContain("dev-only-value");
+    // The stdio-only reader is unchanged.
+    expect(Object.keys(customMcpServers(config))).toEqual(["notes"]);
+  });
+
   it("skips malformed entries without dropping the valid ones", () => {
     const out = customMcpServers(
       cfg({
@@ -1423,4 +1493,37 @@ describe("clearing a Composio key", () => {
     saveConfig({ composio: { apiKey: "", sessionId: "" } });
     expect(loadConfig().composio?.sessionId).toBe("");
   });
+});
+
+describe("the All apps rollback switch (0.1.61 plan 8.1)", async () => {
+  const { allAppsListEnabled, parseConfigPatch } = await import("./config.ts");
+  it("is on unless the switch is set", () => {
+    expect(allAppsListEnabled({})).toBe(true);
+    expect(allAppsListEnabled({ features: { catalogFeaturedOnly: false } })).toBe(true);
+    expect(allAppsListEnabled({ features: { catalogFeaturedOnly: true } })).toBe(false);
+  });
+  it("can be set through a config patch", () => {
+    expect(JSON.stringify(parseConfigPatch({ features: { catalogFeaturedOnly: true } }))).toContain("catalogFeaturedOnly");
+  });
+});
+
+describe("newBots effort default (triage row 23)", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+
+  it("is patchable through the config route and null clears it", () => {
+    saveConfig(parseConfigPatch({ newBots: { effort: "high" } }));
+    expect(loadConfig().newBots).toEqual({ effort: "high" });
+    saveConfig(parseConfigPatch({ newBots: { effort: null } }));
+    expect(loadConfig().newBots).toEqual({});
+    expect(() => parseConfigPatch({ newBots: { effort: "enormous" } })).toThrow();
+    expect(() => parseConfigPatch({ newBots: { effort: "high", grants: true } })).toThrow();
+  });
+});
+
+it("keeps the learning default flag typed and round trips explicit choices",()=>{
+ const cfg: AppConfig={features:{learningDefaultOn:true}};
+ expect(parseConfigPatch({features:{learningDefaultOn:true}})).toEqual(cfg);
+ expect(parseConfigPatch({features:{learningDefaultOn:false}})).toEqual({features:{learningDefaultOn:false}});
+ expect(()=>parseConfigPatch({features:{learningDefaultOn:"yes"}})).toThrow();
 });

@@ -108,11 +108,11 @@ describe("planExternalDelivery", () => {
   // a chip with no readable name resolves to nothing. Replaying the branch
   // cannot carry a chip either (the transcript keeps only settled text), so a
   // reset here would pay the whole session for zero delivered information.
-  it("clears the debt without a reset when nothing readable is left to deliver", () => {
+  it("retains debt when nothing readable is delivered", () => {
     const plan = planExternalDelivery({ pending: [{ id: "m1", text: "   " }], branchReplay: null });
     expect(plan.replay).toBe(false);
     expect(plan.preamble).toBe("");
-    expect(plan.consumedIds).toEqual(["m1"]);
+    expect(plan.consumedIds).toEqual([]);
   });
 });
 
@@ -140,12 +140,12 @@ describe("queueExternalUpdate", () => {
     expect(queueExternalUpdate(["m1", "m2"], "m1")).toEqual(["m2", "m1"]);
   });
 
-  it("caps a thread that delegates forever", () => {
+  it("retains every accepted item until delivery", () => {
     let queue: string[] = [];
     for (let index = 0; index < MAX_PENDING_EXTERNAL_UPDATES + 10; index += 1) {
       queue = queueExternalUpdate(queue, `m${index}`);
     }
-    expect(queue).toHaveLength(MAX_PENDING_EXTERNAL_UPDATES);
+    expect(queue).toHaveLength(MAX_PENDING_EXTERNAL_UPDATES + 10);
     expect(queue.at(-1)).toBe(`m${MAX_PENDING_EXTERNAL_UPDATES + 9}`);
   });
 });

@@ -8,7 +8,7 @@ import { t } from "@/lib/i18n";
 /** Open the exact persisted source of an Inbox item (or a tray menu item):
  * switch to its conversation, then page back to the message and focus it.
  * Shared by the Inbox dialog and the menu bar / tray menu. */
-export async function openInboxLink(link: Pick<InboxLink, "threadId" | "messageId">, state: Pick<AppState, "bots" | "groups">, dispatch: (action: Action) => void) {
+export async function openInboxLink(link: Pick<InboxLink, "threadId"> & { messageId?: string }, state: Pick<AppState, "bots" | "groups">, dispatch: (action: Action) => void) {
   const bot = state.bots.find(item => item.threadId === link.threadId || item.tasks?.some(task => task.threadId === link.threadId));
   const group = state.groups.find(item => item.threadId === link.threadId || item.tasks?.some(task => task.threadId === link.threadId));
   if (bot) {

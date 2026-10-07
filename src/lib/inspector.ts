@@ -101,6 +101,8 @@ export function summarizeRuntime(e: RuntimeEvent): { summary: string; tone: Insp
       return { summary: `tool ${e.ok ? "ok" : "failed"}`, tone: e.ok ? "plain" : "error" };
     case "content.delta":
       return { summary: `${e.streamKind}: ${clip(oneLine(e.delta))}`, tone: "plain" };
+    case "content.reset":
+      return { summary: e.streamKind === "reasoning_text" ? "reasoning restarted: engine retried, streamed thoughts dropped" : "reply restarted: engine retried, streamed text dropped", tone: "plain" };
     case "request.opened":
       return { summary: `${e.requestType}: ${e.tool}: ${clip(oneLine(e.summary))}`, tone: "plain" };
     case "request.resolved":

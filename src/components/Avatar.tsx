@@ -4,6 +4,7 @@
 // face/state for a moment, and the eyes follow the pointer. The previous
 // hand-built Ember body + face engine (ember-engine/face/driver) is gone;
 // EmberAvatar owns morphing, blinking, drift, body motion and effects.
+import { desktopResourceUrl } from "@/lib/live-events";
 import {
   forwardRef,
   memo,
@@ -204,8 +205,12 @@ function EmberAvatarComponent(
       onPointerMove={trackPointer && animated ? onPointerMove : undefined}
       onPointerLeave={trackPointer && animated ? onPointerLeave : undefined}
     >
+      {/* The drawing is rebuilt while it animates. A press on a path that is
+          replaced before release gets no click, so presses land on the
+          wrapper (which still tracks the pointer) or the button around it. */}
       <EmberMascot
         ref={inner}
+        className="pointer-events-none"
         state={motionState ?? state}
         expression={expression}
         size={size}
@@ -235,6 +240,10 @@ export type BotAvatarProps = Omit<EmberAvatarProps, "color"> & {
     avatarCrop?: BotAvatarCrop;
     mascotBody?: MascotBodyId | null;
   };
+  /** How the call screen shows an image it has looked at (CallAvatar.tsx):
+   *  a sprite with transparency is shown whole, uncropped and on no tile,
+   *  and pixel art keeps its pixels crisp. Lists and cards never set it. */
+  presentation?: { silhouette?: boolean; pixelArt?: boolean } | null;
 };
 
 /**
@@ -248,7 +257,7 @@ const MASCOT_IN_TILE = 0.78;
 /** Inset, so the edge never changes the avatar's footprint. */
 const MASCOT_TILE_EDGE = "shadow-[inset_0_0_0_1px_var(--color-hairline)]";
 
-export function BotAvatar({ bot, size = 44, label, ...mascotProps }: BotAvatarProps) {
+export function BotAvatar({ bot, size = 44, label, presentation, ...mascotProps }: BotAvatarProps) {
   const profile = botAvatarProfile(bot);
   const [imageFailed, setImageFailed] = useState(false);
 
@@ -286,14 +295,20 @@ export function BotAvatar({ bot, size = 44, label, ...mascotProps }: BotAvatarPr
 
   return (
     <img
-      src={profile.avatarUrl}
+      src={desktopResourceUrl(profile.avatarUrl)}
       alt={label ?? (bot.name ? `${bot.name} avatar` : "Bot avatar")}
       width={size}
       height={size}
       draggable={false}
       onError={() => setImageFailed(true)}
-      className="block shrink-0 bg-raised object-cover"
-      style={{ width: size, height: size, borderRadius: radius }}
+      data-avatar-silhouette={presentation?.silhouette ? "true" : undefined}
+      className={presentation?.silhouette ? "block shrink-0 object-contain" : "block shrink-0 bg-raised object-cover"}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: presentation?.silhouette ? 0 : radius,
+        imageRendering: presentation?.pixelArt ? "pixelated" : undefined,
+      }}
     />
   );
 }

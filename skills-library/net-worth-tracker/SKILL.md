@@ -6,7 +6,7 @@ description: |
   Do NOT use for budget creation (use budget-planning), investment advice, or business balance sheet preparation.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance budgeting analysis planning"
   category: "personal-finance"

@@ -1,3 +1,5 @@
+import { validateSharingPaused } from "./sharing-restore.ts";
+import { assertProjectTablesPaused } from "./project-tables.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, readlinkSync, readSync } from "node:fs";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, RESTORE_ADDED_FILES } from "../shared/backup-limits.ts";
@@ -13,6 +15,7 @@ import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts"
 import { parseStoredConfig } from "./config.ts";
 import type { JsonValue } from "./schema.ts";
 import { writeFileAtomic } from "./atomic.ts";
+import { readRoutineRuns } from "./routine-runs-journal.ts";
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -37,17 +40,21 @@ function inertMessage(value: unknown) {
   if (!object(value)) fail("INVALID_REVIEW_MESSAGE");
   if (value.queued === true || (object(value.goalRun) && value.goalRun.status === "working")) fail("RESTORE_WORK_NOT_PAUSED");
   if (object(value.card) && (value.card.requestId || value.card.routineRequest || value.card.skillRequest) && !value.card.answered) fail("RESTORE_WORK_NOT_PAUSED");
-  for (const key of ["secret", "connector"]) if (object(value[key]) && (value[key].dismissed !== true || value[key].resumed !== false)) fail("RESTORE_WORK_NOT_PAUSED");
+  if (object(value.card) && object(value.card.browserSetup) && value.card.browserSetup.resumed !== true && (!value.card.answered || value.card.browserSetup.continueRequested !== false)) fail("RESTORE_WORK_NOT_PAUSED");
+  for (const key of ["secret", "connector", "mcpSignIn"]) if (object(value[key]) && (value[key].dismissed !== true || value[key].resumed !== false)) fail("RESTORE_WORK_NOT_PAUSED");
 }
 function validatePaused(root: string) {
+  validateSharingPaused(records(json(join(root, "bots.json"))), records(json(join(root, "groups.json"))));
   const rawConfig = json(join(root, "config.json"));
   if (rawConfig === undefined) fail("RESTORE_WORK_NOT_PAUSED");
   const config = parseStoredConfig(rawConfig as JsonValue);
   if (config.engineDiscovery !== "explicit" || !config.instances || Object.values(config.instances).some(value => value.enabled !== false)) fail("RESTORE_WORK_NOT_PAUSED");
   for (const bot of records(json(join(root, "bots.json")))) {
     if (bot.busy !== false || bot.autoApprove !== false || bot.autoReview !== "off" || bot.approvePeerComms !== true ||
-        bot.computer !== "off" || bot.autoStartVps !== false || bot.browser !== false || bot.composio !== false ||
-        bot.speakReplies !== false || !Array.isArray(bot.alwaysAllow) || bot.alwaysAllow.length || !empty(bot.resumeCursors) || bot.lastInstanceId !== undefined) fail("RESTORE_WORK_NOT_PAUSED");
+        bot.computer !== "off" || bot.autoStartVps !== false || bot.browser !== false || bot.useMyChrome === true ||
+        bot.browserTransport !== undefined || bot.browserExtensionProfileId !== undefined || bot.browserExtensionBrowser !== undefined || bot.composio !== false ||
+        bot.speakReplies !== false || !Array.isArray(bot.alwaysAllow) || bot.alwaysAllow.length || !empty(bot.resumeCursors) || bot.lastInstanceId !== undefined ||
+        bot.messageAllow !== undefined || bot.imageApproval === "allow" || bot.browserApproval !== undefined) fail("RESTORE_WORK_NOT_PAUSED");
     for (const task of records(bot.tasks)) if (task.autoApprove !== false || !Array.isArray(task.alwaysAllow) || task.alwaysAllow.length || !empty(task.resumeCursors) || task.lastInstanceId !== undefined) fail("RESTORE_WORK_NOT_PAUSED");
   }
   for (const group of records(json(join(root, "groups.json")))) if (group.working !== false || group.busyBotId !== null) fail("RESTORE_WORK_NOT_PAUSED");
@@ -57,7 +64,7 @@ function validatePaused(root: string) {
     if (!object(value)) continue;
     // A restored routine follows its bot and holds no grants (audit A-06),
     // the same as the bots and tasks checked above.
-    if (name === "routines.json" && (records(value.routines).some(row => row.enabled !== false || row.permissionMode !== undefined || (row.alwaysAllow !== undefined && (!Array.isArray(row.alwaysAllow) || row.alwaysAllow.length > 0))) || records(value.runs).some(row => ["queued", "running", "waiting", "needs-you"].includes(String(row.status))))) fail("RESTORE_WORK_NOT_PAUSED");
+    if (name === "routines.json" && (records(value.routines).some(row => row.enabled !== false || row.permissionMode !== undefined || (row.alwaysAllow !== undefined && (!Array.isArray(row.alwaysAllow) || row.alwaysAllow.length > 0))) || [...records(value.runs), ...records(readRoutineRuns(root))].some(row => ["queued", "running", "waiting", "needs-you"].includes(String(row.status))))) fail("RESTORE_WORK_NOT_PAUSED");
     if (name === "calendar-calls.json" && records(value.calls).some(row => row.nextRunAt !== null)) fail("RESTORE_WORK_NOT_PAUSED");
     if (name === "webhooks.json" && records(value.webhooks).some(row => row.enabled !== false || row.verificationPending !== true)) fail("RESTORE_WORK_NOT_PAUSED");
   }
@@ -77,7 +84,9 @@ function validatePaused(root: string) {
   }
   if (entry(join(root, "messages.db"))) {
     const db = new DatabaseSync(join(root, "messages.db"), { readOnly: true });
-    try { inspectInstallationDatabase(db); if (db.prepare("SELECT 1 FROM sqlite_schema WHERE name=\'memory_meta\'").get() && db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode !== "paused") fail("RESTORE_MEMORY_NOT_PAUSED"); for (const row of db.prepare("SELECT json FROM messages").iterate()) inertMessage(JSON.parse(String(row.json))); }
+    try { inspectInstallationDatabase(db);
+      validateSharingPaused(records(json(join(root, "bots.json"))), records(json(join(root, "groups.json"))), db);
+      assertProjectTablesPaused(db, { groups: records(json(join(root, "groups.json"))).map(row => ({ id: String(row.id), channelProject: row.channelProject })), botIds: new Set(records(json(join(root, "bots.json"))).map(row => String(row.id))), now: Date.now() }); if (db.prepare("SELECT 1 FROM sqlite_schema WHERE name=\'memory_meta\'").get() && db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode !== "paused") fail("RESTORE_MEMORY_NOT_PAUSED"); for (const row of db.prepare("SELECT json FROM messages").iterate()) inertMessage(JSON.parse(String(row.json))); }
     finally { db.close(); }
   }
 }

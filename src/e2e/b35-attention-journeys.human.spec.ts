@@ -41,7 +41,7 @@ async function openPendingApprovals(page: Page) {
   // dialog opens on "Needs you"; this walk wants the approvals-only view.
   const sidebar = await openSidebar(page);
   await sidebar.locator("[data-sidebar-needs-you]").click();
-  await page.getByRole("button", { name: "Pending approvals", exact: true }).click();
+  await page.getByRole("button", { name: /^Approvals( \(\d+\))?$/ }).click(); // the Inbox's approvals tab (8e8a3afa)
 }
 
 test.beforeAll(async () => {

@@ -6,7 +6,7 @@ description: |
   Do NOT use for diagnosing anxiety disorders, treating panic disorder, clinical anxiety assessment, or replacing professional mental health support.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "mental-wellness self-care stress-management breathing"
   category: "health-wellness"

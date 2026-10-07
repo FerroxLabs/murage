@@ -85,3 +85,7 @@ it("offers reversible archival only for unpinned active records",()=>{
   expect(render({...active,record:{...active.record,ownerPinned:true}})).not.toContain("Archive memory");
   expect(render({...active,record:{...active.record,state:"archived" as const}})).toContain("Restore to current recall");
 });
+
+it("shows a candidate's plain review reason",()=>{
+ expect(render({...inspection,record:{...inspection.record,reviewReason:"Learning from this bot is paused."}})).toContain("Learning from this bot is paused.");
+});

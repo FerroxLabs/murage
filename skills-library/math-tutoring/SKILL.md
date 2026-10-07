@@ -6,7 +6,7 @@ description: |
   Do NOT use for math practice question generation (use `exam-practice`), for lesson plan creation (use `lesson-plan-design`), or for non-math tutoring (use subject-specific tutoring skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "tutoring teaching step-by-step study-skills"
   category: "education"

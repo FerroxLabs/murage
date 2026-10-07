@@ -4,15 +4,22 @@
 // is being asked, and the send row is replaced by the decisions.
 //
 // Faithful details worth keeping: one at a time with an "n of N" counter,
-// the detail printed raw in a monospace block that is NEVER truncated
-// (it scrolls instead), and the buttons ordered least-destructive-last so
+// the detail in plain words with every argument visible (a command stays
+// whole, in monospace; Show details reveals the original text), and the buttons ordered least-destructive-last so
 // the primary action sits under your thumb.
 import { memo } from "react";
 import { useStore, type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
+import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
+import { CollapsibleText } from "@/components/CollapsibleText";
 import { reviewedSkillSha256 } from "../../shared/skill-request";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { inNativeShell } from "@/lib/native-shell";
+import { allowNeedsComputer, approvalSurface, useComputerOnlyRefusal } from "@/lib/approval-surface";
+import { ComputerOnlyNotice } from "@/components/ComputerOnlyNotice";
+import { useDecisionFeedback, type DecisionHooks } from "@/lib/approval-feedback";
+import { ApprovalBusyLabel, ApprovalConfirmLine, PRESSED, approvalButton } from "@/components/ApprovalFeedback";
 
 interface ApprovalLabels {
   [tool: string]: string;
@@ -54,7 +61,8 @@ function needsRoutineReview(pending: Pending): boolean {
 /** Open approvals on a thread, oldest first — answered/dismissed drop out. */
 export function pendingApprovals(messages: Message[]): Pending[] {
   return messages
-    .filter((m) => m.kind === "options" && m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed)
+    // a publish card carries its own Publish / Not now buttons and is never answered by voice or from the composer
+    .filter((m) => m.kind === "options" && m.card?.kind !== "publish" && m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed)
     .map((m) => ({
       message: m,
       requestId: m.card!.requestId!,
@@ -167,7 +175,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
     <div
       role="region"
       aria-label={isSkillApproval(pending) ? "Pending skill confirmation" : isRoutineApproval(pending) ? "Pending routine confirmation" : "Pending approval"}
-      className="rounded-t-2xl border-b border-hairline/50 bg-control/40 px-4 py-3"
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-t-2xl border-b border-hairline/50 bg-control/40 px-4 py-3"
     >
       <div className="flex flex-wrap items-center gap-2" aria-live="polite">
         <span className="text-[11px] uppercase tracking-[0.18em] text-ink-secondary">Pending approval</span>
@@ -187,18 +195,17 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
             : pending.tool}
         </span>
       </div>
-      {/* never truncated — long commands wrap and scroll */}
-      <pre
-        tabIndex={0}
-        aria-label={isSkillApproval(pending) ? "Skill details to review" : isRoutineApproval(pending) ? "Routine details to review" : "Approval details to review"}
-        className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-ink"
-      >
-        {pending.detail}
-      </pre>
+      {/* every argument stays visible; long commands wrap and scroll */}
+      <ApprovalDetailBody
+        tool={isSkillApproval(pending) || isRoutineApproval(pending) ? undefined : pending.tool}
+        detail={pending.detail}
+        label={isSkillApproval(pending) ? "Skill details to review" : isRoutineApproval(pending) ? "Routine details to review" : "Approval details to review"}
+        preClassName="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-ink"
+      />
       {pending.message.card?.skillRequest && (
         <SkillRequestPreview request={pending.message.card.skillRequest} />
       )}
-      {pending.held && <div className="mt-2 text-[12px] text-warning">{pending.held}</div>}
+      {pending.held && <CollapsibleText text={pending.held} className="mt-2 text-[12px] text-warning" />}
       {!pending.held && needsRoutineReview(pending) && <p className="mt-2 text-[12px] text-warning">This older routine request needs a fresh review. Cancel it and ask the bot to propose it again.</p>}
     </div>
   );
@@ -254,7 +261,15 @@ export function PendingApprovalActions({
     ? reviewedSkillSha256(pending.message.card.skillRequest)
     : undefined;
   const grants = approvalGrants(pending, { desktop, hasBot: Boolean(bot) });
-  const decide = (behavior: "allow" | "deny", always: false | "program" | "exact" | "routine" = false, forTask = false) => {
+  const refused = useComputerOnlyRefusal(threadId, pending.requestId);
+  const computerOnly = allowNeedsComputer(approvalSurface(desktop, inNativeShell()), pending.message.card, refused);
+  // The tapped button works and the rest are held until the answer settles.
+  const feedback = useDecisionFeedback();
+  // A Deny and Cancel turn are never held by an Allow in flight: a Deny goes out at once and takes over the card.
+  const btn = (choice: string, classes: string) => approvalButton(feedback, choice, classes, choice === "deny");
+  const decide = (choice: "deny" | "program" | "task" | "routine" | "exact" | "allow", behavior: "allow" | "deny", always: false | "program" | "exact" | "routine" = false, forTask = false) =>
+    feedback.run(choice, (hooks) => send(behavior, always, forTask, hooks), choice === "deny" ? { preempt: true } : undefined);
+  const send = (behavior: "allow" | "deny", always: false | "program" | "exact" | "routine", forTask: boolean, hooks: DecisionHooks) => {
     const key = always === "exact" ? pending.exactAllowKey : always === "program" ? pending.allowKey : undefined;
     const card = pending.message.card;
     const routineGrant = always === "routine" && grants.forRoutine && card?.routineId && card.routineAllowKey
@@ -266,76 +281,87 @@ export function PendingApprovalActions({
       requestId: pending.requestId,
       behavior,
       message: behavior === "deny" ? "Denied by the user." : undefined,
+      card: pending.message.card,
+      botName: bot?.name,
       reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
       alwaysAllow: desktop === true && bot && key ? { botId: bot.id, key } : undefined,
       ...(routineGrant ? { alwaysAllowRoutine: routineGrant } : {}),
       ...(behavior === "allow" && forTask && grants.forTask ? { allowForTask: true } : {}),
+      // Success keeps the buttons held until the card goes; refusal, a cancelled device prompt or an error returns them.
+      onDevicePrompt: hooks.devicePrompt,
+      onSuccess: hooks.succeed,
+      onError: hooks.settle,
     });
   };
 
-  const base = "rounded-full px-3.5 py-1.5 text-[13.5px] transition-colors";
+  const base = "inline-flex items-center justify-center rounded-full px-3.5 py-1.5 text-[13.5px]";
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2 px-2 py-2">
+    <div role="group" aria-label="Approval" className="flex shrink-0 flex-wrap items-center justify-end gap-2 px-2 py-2" aria-busy={feedback.busy !== null}>
       {!durableRequest && (
-        <button onClick={onCancelTurn} className={cn(base, "text-ink-secondary hover:bg-control hover:text-ink")}>
+        <button onClick={onCancelTurn} className={cn(base, PRESSED, "text-ink-secondary hover:bg-control hover:text-ink")}>
           Cancel turn
         </button>
       )}
+      {computerOnly && <ComputerOnlyNotice className="w-full text-right text-[13px] text-ink-secondary" />}
+      <ApprovalConfirmLine prompting={feedback.prompting} className="w-full text-right text-[13px] text-ink-secondary" />
       <button
-        onClick={() => decide("deny")}
-        className={cn(base, "border border-danger/40 text-danger hover:bg-danger/10")}
+        onClick={() => decide("deny", "deny")}
+        {...btn("deny", cn(base, "border border-danger/40 text-danger hover:bg-danger/10"))}
       >
-        {isRoutineRequest ? "Cancel" : hostConsent ? "Don't allow" : "Deny"}
+        <ApprovalBusyLabel busy={feedback.busy === "deny"}>{isRoutineRequest ? "Cancel" : hostConsent ? "Don't allow" : "Deny"}</ApprovalBusyLabel>
       </button>
+      {!computerOnly && (
+        <>
       {grants.always && bot && pending.allowKey && (
         <button
-          onClick={() => decide("allow", "program")}
+          onClick={() => decide("program", "allow", "program")}
           title={`Stop asking ${bot.name} about ${pending.allowKey}`}
-          className={cn(base, "border border-hairline/50 text-ink hover:bg-control")}
+          {...btn("program", cn(base, "border border-hairline/50 text-ink hover:bg-control"))}
         >
-          {alwaysAllowLabel(pending)}
+          <ApprovalBusyLabel busy={feedback.busy === "program"}>{alwaysAllowLabel(pending)}</ApprovalBusyLabel>
         </button>
       )}
       {grants.forTask && (
         <button
-          onClick={() => decide("allow", false, true)}
+          onClick={() => decide("task", "allow", false, true)}
           title="Allow the same kind of action in the same place until this task ends"
-          className={cn(base, "border border-hairline/50 text-ink hover:bg-control")}
+          {...btn("task", cn(base, "border border-hairline/50 text-ink hover:bg-control"))}
         >
-          Allow for this task
+          <ApprovalBusyLabel busy={feedback.busy === "task"}>Allow for this task</ApprovalBusyLabel>
         </button>
       )}
       {grants.forRoutine && (
         <button
-          onClick={() => decide("allow", "routine")}
-          title="Stop asking about this in this routine's runs, only in the same place. A command still matches when only the dates and times in it change."
-          className={cn(base, "border border-accent/60 text-ink hover:bg-accent/10")}
+          onClick={() => decide("routine", "allow", "routine")}
+          title="Stop asking about this in this routine's runs, only for this exact command in the same place."
+          {...btn("routine", cn(base, "border border-accent/60 text-ink hover:bg-accent/10"))}
         >
-          Always allow for this routine
+          <ApprovalBusyLabel busy={feedback.busy === "routine"}>Always allow for this routine</ApprovalBusyLabel>
         </button>
       )}
       {/* the recommended remembered grant: nothing wider than this command */}
       {grants.exact && bot && (
         <button
-          onClick={() => decide("allow", "exact")}
+          onClick={() => decide("exact", "allow", "exact")}
           title={`Stop asking ${bot.name} about this command, only in this folder and only on this engine`}
-          className={cn(base, "border border-accent/60 text-ink hover:bg-accent/10")}
+          {...btn("exact", cn(base, "border border-accent/60 text-ink hover:bg-accent/10"))}
         >
-          Always allow this exact command here
+          <ApprovalBusyLabel busy={feedback.busy === "exact"}>Always allow this exact command here</ApprovalBusyLabel>
         </button>
       )}
       <button
-        onClick={() => decide("allow")}
+        onClick={() => decide("allow", "allow")}
         disabled={(isSkillRequest && !reviewedSha256) || needsRoutineReview(pending)}
-        className={cn(
-          base,
-          "bg-accent font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40",
-        )}
+        {...btn("allow", cn(base, "bg-accent font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"))}
       >
-        {isSkillRequest
-          ? pending.message.card?.skillRequest?.action === "update" ? "Update" : "Enable"
-          : isRoutineRequest ? "Confirm" : hostConsent ? "Allow for this bot" : "Allow once"}
+        <ApprovalBusyLabel busy={feedback.busy === "allow"}>
+          {isSkillRequest
+            ? pending.message.card?.skillRequest?.action === "update" ? "Update" : "Enable"
+            : isRoutineRequest ? "Confirm" : hostConsent ? "Allow for this bot" : "Allow once"}
+        </ApprovalBusyLabel>
       </button>
+        </>
+      )}
     </div>
   );
 }

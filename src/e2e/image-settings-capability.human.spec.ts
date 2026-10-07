@@ -1,4 +1,4 @@
-// IMGSET1: Settings → Tools & Connections → Image generation states the
+// IMGSET1: Settings → Images (Tools & Connections before 0.1.62) states the
 // selected model's real capability, driven in the real renderer against a
 // real isolated harness (server/index.ts with its own data dir and HOME).
 //
@@ -130,13 +130,13 @@ const shot = (target: Locator, name: string) => target.screenshot({ path: join(E
 
 test("a keyless install has no image connection, and claims no model capability", async ({ page }) => {
   await openApp(page);
-  const images = imageRegion(await openSettings(page, "Tools & Connections"));
+  const images = imageRegion(await openSettings(page, "Images"));
   await images.scrollIntoViewIfNeeded();
   await expect(images.getByText("No supported image connections are available.", { exact: false })).toBeVisible();
   await expect(images.getByRole("button", { name: "Refresh connections", exact: true })).toBeEnabled();
   await expect(images.getByText(CAPABILITY)).toHaveCount(0);
   await expect(images.locator("[data-image-capability]")).toHaveCount(0);
-  await expect(images.getByRole("checkbox", { name: "Allow image requests" })).toBeDisabled();
+  await expect(images.getByRole("switch", { name: "Allow image requests" })).toBeDisabled();
   await shot(images, "01-keyless-no-image-connection");
 });
 
@@ -148,7 +148,7 @@ test("a Flux Router key added in Settings → Models makes Image generation stat
   await settings.locator("#flux-router-connection").getByRole("button", { name: "Connect", exact: true }).click();
   await expect(settings.getByText("Key saved. Test the connection to check its model catalog.")).toBeVisible();
 
-  const images = imageRegion(await openSettings(page, "Tools & Connections"));
+  const images = imageRegion(await openSettings(page, "Images"));
   await images.scrollIntoViewIfNeeded();
   // The smoke's exact check, now against an install that has a connection.
   await expect(images.getByText(CAPABILITY).first()).toBeVisible({ timeout: 30_000 });
@@ -170,7 +170,7 @@ test("a Flux Router key added in Settings → Models makes Image generation stat
 test("an OpenAI image key states create-and-edit, and switching connections switches the statement", async ({ page }) => {
   expect((await fixtureRequest("/api/config?secretStorage=external", "PATCH", { imageGen: { key: "fixture-image-key" } })).status).toBe(200);
   await openApp(page);
-  const images = imageRegion(await openSettings(page, "Tools & Connections"));
+  const images = imageRegion(await openSettings(page, "Images"));
   await images.scrollIntoViewIfNeeded();
   const connection = images.getByRole("combobox", { name: "Image connection" });
   await expect(connection.locator("option", { hasText: "OpenAI image key" })).toHaveCount(1);
@@ -186,7 +186,7 @@ test("an OpenAI image key states create-and-edit, and switching connections swit
   await expect(images.getByText(/^Images use OpenAI image key, with that connection’s account\. /)).toBeVisible();
   await connection.selectOption({ label: "Flux Router" });
   // Both connections now create and edit, so the switch shows in the model
-  // and the connection named for charges. Was:
+  // and the connection named for the account (D13 copy, 4a7c66b3). Was:
   //   toHaveValue("flux-image-gpt2");
   //   toHaveAttribute("data-image-capability", "generates");
   //   toHaveText(/^Creates images only\. /);
@@ -204,7 +204,7 @@ test("every image-capable key saved in Models is an image connection", async ({ 
     expect((await fixtureRequest("/api/provider-connections/mutate", "POST", { action: "create", preset, key })).status).toBe(200);
   }
   await openApp(page);
-  const images = imageRegion(await openSettings(page, "Tools & Connections"));
+  const images = imageRegion(await openSettings(page, "Images"));
   await images.scrollIntoViewIfNeeded();
   const connection = images.getByRole("combobox", { name: "Image connection" });
   for (const label of ["Flux Router", "OpenAI image key", "OpenAI", "xAI", "OpenRouter", "Google"]) await expect(connection.locator("option", { hasText: new RegExp(`^${label}$`) })).toHaveCount(1);

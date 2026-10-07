@@ -6,7 +6,7 @@ description: |
   Do NOT use for lookup formulas (use excel-lookup-formulas), data cleaning (use spreadsheet-data-cleaning), or chart creation (use chart-type-selector).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "spreadsheets data-visualization analysis"
   category: "data-analysis"

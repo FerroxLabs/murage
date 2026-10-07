@@ -49,6 +49,12 @@ computer, and the two routes are not equivalent:
   everyone on the wifi: fine at home, not fine on a café or conference network.
   Pair over the tailnet there instead.
 
+Because of that, the device door does not listen on the local network unless
+you ask it to (`MURAGE_COMPANION_BIND=lan`, or **Pair on this Wi-Fi** in the
+desktop app). Left alone it listens on your Tailscale address when there is one
+and on this computer only when there is not. Choosing the local network shows
+a plain warning that pairing there is not encrypted.
+
 Turning on TLS is not a drop-in improvement. A certificate for a LAN address
 is one nothing can validate, so it would have to be pinned at pairing and
 re-pinned whenever the sidecar regenerated it — real machinery, whose benefit
@@ -84,10 +90,19 @@ pairing token, renderer setting, or value to paste into a client. A standalone
 companion without that proof returns an actionable error for desktop join.
 The `x-murage-companion` marker alone grants no join authority.
 
+The harness also answers its conversation routes (the fleet, transcripts,
+search, the event stream) only to a caller that proved who it is: the desktop,
+a bot's own credential (the local MCP server), or this companion. The companion
+proves itself by sending the same launch secret in an `x-murage-door-token`
+header on every request it forwards. That header says where the request came
+from and claims no owner authority; `x-murage-companion-token` stays the only
+owner proof. A standalone companion started without the launch secret therefore
+reaches only the health check, and every other harness route answers 404.
+
 It prints where to point the phone, and where you pair:
 
 ```text
-companion  http://0.0.0.0:8810  →  harness 127.0.0.1:8799
+companion  http://100.101.102.103:8810  →  harness 127.0.0.1:8799
 pair here  http://127.0.0.1:8811
 on your phone, enter  macbook.tail1234.ts.net:8810
 ```
@@ -111,6 +126,7 @@ it is switched on, so the opt-in is never implicit.
 | `MURAGE_PORT` | `8799` | where the harness is |
 | `MURAGE_WEBHOOK_PORT` | `MURAGE_PORT` + 1 | the harness's webhook receiver — refused, not used |
 | `MURAGE_COMPANION_PORT` | `8810` | where devices connect |
+| `MURAGE_COMPANION_BIND` | `auto` | where the device door listens: `auto` is your Tailscale address when there is one and this computer only (`127.0.0.1`) when there is not; `lan` is the whole local network over plain HTTP, and only by choice; `loopback`, `tailnet`, `off` narrow it further |
 | `MURAGE_CONTROL_PORT` | `8811` | the pairing page, loopback only |
 | `MURAGE_COMPANION_DIR` | `~/.murage-companion` | paired devices live here |
 | `MURAGE_COMPANION_NAME` | your name, from the harness | what the phone calls this computer |

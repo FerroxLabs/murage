@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -741,7 +742,7 @@ describe("applyKimiLocalModelEnv", () => {
       const injectDump = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string> };
       expect(injectDump.env).toMatchObject({
         KIMI_MODEL_NAME: "ornith:35b-bf16",
-        KIMI_MODEL_API_KEY: "ollama",
+        KIMI_MODEL_API_KEY: fixtureCredentialFingerprint("ollama"),
         KIMI_MODEL_BASE_URL: "http://127.0.0.1:11434/v1",
         KIMI_MODEL_PROVIDER_TYPE: "openai",
       });
@@ -853,7 +854,7 @@ describe("applyDroidLocalAuthEnv", () => {
         model: "ollama::ornith:35b-bf16",
       });
       await recorder.until((e) => e.type === "turn.completed");
-      expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).toBe("murage-local");
+      expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).toBe(fixtureCredentialFingerprint("murage-local"));
 
       await instance.adapter.sendTurn({
         threadId: "t-cloud",
@@ -862,7 +863,7 @@ describe("applyDroidLocalAuthEnv", () => {
       });
       await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-cloud");
       expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).not.toBe(
-        "murage-local",
+        fixtureCredentialFingerprint("murage-local"),
       );
     } finally {
       await instance.dispose();

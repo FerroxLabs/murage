@@ -1,7 +1,9 @@
 ---
 name: morning-prep
 description: Daily morning scan — load saved morning layout, screenshot watchlist symbols, and summarize overnight pre-market state. Use when the user says "good morning", "morning prep", or asks for a pre-open briefing.
-license: MIT
+license: Apache-2.0
+metadata:
+  author: Ferrox Labs
 ---
 
 # Morning Prep Workflow

@@ -6,7 +6,7 @@ description: |
   Do NOT use for medication recommendations, dosage adjustments, drug interaction assessments, or any guidance that replaces a pharmacist or prescribing provider.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "checklist template guide"
   category: "health-wellness"

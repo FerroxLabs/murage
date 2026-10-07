@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of street photographer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design photography guide quick-reference testing research emergency-preparedness performing-arts"
   category: "design-creative"

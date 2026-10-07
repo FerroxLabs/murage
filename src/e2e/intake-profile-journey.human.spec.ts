@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
+// The mobile project has a touch screen, where Return is a newline (composer-enter.ts).
+import { SEND_KEY } from "./fixtures.ts";
 let fixture:VerificationServer,vite:ViteDevServer,origin:string,headers:Record<string,string>,chiefId:string;
 let seeded:{id:string;threadId:string;chiefOfStaff?:boolean};
 const root=fileURLToPath(new URL("../../",import.meta.url));
@@ -13,6 +15,8 @@ async function api(method:string,path:string,body?:unknown){const response=await
 test.beforeAll(async()=>{
   fixture=await launchVerificationServer(process.env,undefined,{instrumentationSource:`const fetchOriginal=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))throw Error('External network disabled in intake journey');return fetchOriginal(input,init);};`});
   headers={"x-murage-surface":"desktop","x-murage-surface-secret":(await api("GET","/api/desktop-secret")).secret};
+  // This harness reads as an update, so What's new would open over every test; a person sees it once.
+  await api("POST","/api/whats-new/seen",{version:JSON.parse(readFileSync(join(root,"package.json"),"utf8")).version});
   const initialRoster=(await api("GET","/api/bots")).bots;expect(initialRoster).toHaveLength(1);const initial=initialRoster[0];seeded={id:initial.id,threadId:initial.threadId,chiefOfStaff:initial.chiefOfStaff};
   await api("PATCH",`/api/bots/${initial.id}`,{name:"Fixture Chief",chiefOfStaff:true,chiefScope:"workspace",computer:"off",browser:false});chiefId=initial.id;
   const catalog=(await api("GET","/api/team-library/catalog")).teams;const cowork=catalog.find((entry:any)=>entry.slug==="cowork");expect(cowork).toMatchObject({members:1,adaptable:true,profileReviewHash:expect.stringMatching(/^[a-f0-9]{64}$/)});expect(cowork.playbooks.length).toBeGreaterThan(0);
@@ -28,9 +32,10 @@ test("a fresh install opens on the welcome screen despite the seeded bot, and a 
   await page.setViewportSize({width:1440,height:1000});await page.goto(origin);
   // The only thing here is the untouched seeded bot, so this is a first run.
   // The first load compiles the app in this spec's own Vite server.
-  await expect(page.getByRole("main",{name:"Set up your workspace",exact:true})).toBeVisible({timeout:60_000});await expect(page.getByLabel("Choose your first outcome",{exact:true})).toBeVisible();
+  // Since 0.1.58 (311387b1) the first run is the Chief's conversation, and it opens on his first question.
+  await expect(page.getByText(/who am I working for/i).first()).toBeVisible({timeout:60_000});
   const before=(await api("GET","/api/bots")).bots;await fixture.restart();headers={"x-murage-surface":"desktop","x-murage-surface-secret":(await api("GET","/api/desktop-secret")).secret};
-  await page.reload();await expect(page.getByLabel("Choose your first outcome",{exact:true})).toBeVisible({timeout:60_000});
+  await page.reload();await expect(page.getByText(/who am I working for/i).first()).toBeVisible({timeout:60_000});
   const after=(await api("GET","/api/bots")).bots;expect(after.map((bot:any)=>({id:bot.id,threadId:bot.threadId}))).toEqual(before.map((bot:any)=>({id:bot.id,threadId:bot.threadId})));expect(after[0]).toMatchObject({id:seeded.id,threadId:seeded.threadId});
   expect(existsSync(fixture.fixtureDumpPath)).toBe(false);await page.screenshot({path:info.outputPath("seeded-welcome-after-restart.png"),fullPage:true});
 });
@@ -42,7 +47,7 @@ test("companion surface renders profile guidance without desktop installation ac
   const writes:string[]=[];page.on("request",request=>{if(request.method()!=="GET"&&/\/api\/bots\/[^/]+\/(assistant-profile|skills)/.test(request.url()))writes.push(request.url());});
   await page.setViewportSize({width:1440,height:1000});await page.goto(origin);await expect(page.getByText("Companion helper",{exact:true}).first()).toBeVisible();await page.getByText("Companion helper",{exact:true}).first().click();
   await expect(page.getByRole("textbox",{name:"Message Companion helper",exact:true})).toBeVisible();await expect(page.getByTestId("chat-scroll").getByText("Add this on your desktop",{exact:true})).toBeVisible();await expect(page.getByRole("button",{name:"Set that up",exact:true})).toHaveCount(0);expect(writes).toEqual([]);
-  await expect(page.getByRole("main",{name:"Set up your workspace",exact:true})).toHaveCount(0);expect(existsSync(fixture.fixtureDumpPath)).toBe(false);await page.screenshot({path:info.outputPath("companion-profile-guidance.png"),fullPage:true});
+  await expect(page.getByText(/who am I working for/i)).toHaveCount(0);expect(existsSync(fixture.fixtureDumpPath)).toBe(false);await page.screenshot({path:info.outputPath("companion-profile-guidance.png"),fullPage:true});
 });
 
 test("Tango keeps its identity/history/Chief while conversationally adopting reviewed Cowork",async({page},info)=>{
@@ -51,17 +56,19 @@ test("Tango keeps its identity/history/Chief while conversationally adopting rev
   await expect(page.getByRole("button",{name:"Open Fixture Chief's profile",exact:true}).first()).toBeVisible();
   const beforeRoster=(await api("GET","/api/bots")).bots;
   await page.getByRole("button",{name:"New or share",exact:true}).click();await page.getByRole("button",{name:"New Bot",exact:true}).click();
+  // New Bot opens the chooser (2274a095); Start blank makes the plain bot.
+  await page.getByRole("button",{name:"Start blank →",exact:true}).click();
   await expect.poll(async()=>(await api("GET","/api/bots")).bots.length).toBe(beforeRoster.length+1);
   const target=(await api("GET","/api/bots")).bots.find((bot:any)=>!beforeRoster.some((old:any)=>old.id===bot.id));
   await api("PATCH",`/api/bots/${target.id}`,{name:"Tango",computer:"off",browser:false,composio:false});
   const composer=page.getByRole("textbox",{name:"Message Tango",exact:true});await expect(composer).toBeVisible();
   await expect(page.getByTestId("chat-scroll").getByText("What do you actually want me for?",{exact:true})).toBeVisible();
-  await composer.fill("I want cowork");await composer.press("Enter");
+  await composer.fill("I want cowork");await composer.press(SEND_KEY);
   const current=async()=>(await api("GET","/api/bots")).bots.find((bot:any)=>bot.id===target.id);
   await expect.poll(async()=>(await current()).messages.findLast((message:any)=>message.card?.intake&&!message.card.answered)?.card.intake.step).toBe("narrow");
   const narrow=(await current()).messages.findLast((message:any)=>message.card?.intake&&!message.card.answered).card;
   expect(narrow.intake).toMatchObject({asked:2,candidate:{slug:"cowork"}});
-  await composer.fill("That's about right");await composer.press("Enter");
+  await composer.fill("That's about right");await composer.press(SEND_KEY);
   await expect(page.getByRole("button",{name:"Set that up",exact:true})).toBeVisible();
   const before=await current();const confirm=before.messages.findLast((message:any)=>message.card?.intake&&!message.card.answered).card;
   const catalog=(await api("GET","/api/team-library/catalog")).teams.find((entry:any)=>entry.slug==="cowork");

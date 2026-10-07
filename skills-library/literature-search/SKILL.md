@@ -6,7 +6,7 @@ description: |
   Do NOT use for evaluating source credibility (use `source-evaluation`), for writing the literature review itself (use writing category skills), or for citation formatting (use `citation-management`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research academic-writing study-skills step-by-step"
   category: "education"

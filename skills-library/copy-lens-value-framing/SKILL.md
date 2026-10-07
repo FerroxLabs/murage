@@ -1,8 +1,9 @@
 ---
 name: copy-lens-value-framing
 description: "**Lens mode.** Source authority: Alex Hormozi's value-equation discipline — perceived value as a function of dream outcome, perceived likelihood, time delay, and effort."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "copy"
 ---

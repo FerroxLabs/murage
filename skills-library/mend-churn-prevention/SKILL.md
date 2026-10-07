@@ -1,8 +1,9 @@
 ---
 name: mend-churn-prevention
 description: "Someone asks \"why are we losing accounts,\" \"what does our health score predict,\" \"how do we run a save call,\" or \"customer emailed cancellation — what now.\" Load for keeping or recovering an existing relationship — not signup activation (`onboarding-flow.md`), not in-flight tickets (`ticket-triage.m"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "mend"
 ---

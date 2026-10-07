@@ -19,6 +19,7 @@ import { join, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { createHarness, linkChannelOwner, promoteFixtureChief, ROOT, sleep, waitFor, type Harness } from "./channel-live-harness.ts";
 import { LIVE_MODEL_RUNS, loadEngine, loadManifestFile, loadSecrets, ManifestError, redactEngine, type AdmittedEngine, type Manifest, type Platform, type RedactedEngine } from "./channel-live-inputs.ts";
+import { scanFolderTrustSources } from "../server/folder-trust.ts";
 import { assertRealEngineIdentity, taskIdentityProblems, type B08EngineDescriptor, type DescribedInstance } from "../src/e2e/b08-template-behavior-fixture.ts";
 
 type Outcome = "pass" | "fail" | "observed" | "not-run";
@@ -513,26 +514,39 @@ export function fixtureFolderTrustProblems(harness: Pick<Harness, "root" | "data
     || card.questions[0].allowOther !== false || !card.questions[0].options?.some((option: any) => option.label === "Trust this folder"))
     return reject("unexpected approval; only a live host folderTrust question is fixture setup");
   const sources = card.folderTrust.sources;
-  if (!Array.isArray(sources) || !sources.length || sources.length > 2 || new Set(sources).size !== sources.length
-    || sources.some((source: unknown) => source !== ".agents/skills" && source !== ".claude/skills")) return reject("folder trust has unapproved sources");
+  if (!Array.isArray(sources) || !sources.length || sources.length > 2 || new Set(sources).size !== sources.length) return reject("folder trust has unapproved sources");
+  // Murage's own skill links are the only sources its scan may name. A card
+  // that names anything else is the engine's own description of what it gates
+  // (core.ts handleFolderTrustRequest, used when Murage's scan names nothing):
+  // since 0.1.54 no empty skill folders are made in a task folder, so a Chief
+  // with no linked skills gets that card. It is setup only while the task
+  // folder really holds nothing trust-sensitive (checked below).
+  const linked = (source: unknown) => source === ".agents/skills" || source === ".claude/skills";
+  const linkedSources = sources.every(linked);
+  if (!linkedSources && sources.some(linked)) return reject("folder trust has unapproved sources");
   if (task.autoApprove === true || task.alwaysAllow?.length) return reject("fixture task has standing tool grants");
+  // Long names and, on Windows, one case: the harness and the server may
+  // spell the same folder differently (8.3 temp, case-folded keys).
+  const real = (path: string) => realpathSync.native(path);
+  const same = (a: string, b: string) => process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
   try {
-    const owned = realpathSync(harness.root), data = realpathSync(harness.data);
+    const owned = real(harness.root), data = real(harness.data);
     const expected = join(data, "workspaces", chiefId, "threads", run.threadId);
-    if (!data.startsWith(owned + sep) || realpathSync(expected) !== expected || realpathSync(card.folderTrust.folder) !== expected
-      || realpathSync(card.folderTrust.key) !== expected || realpathSync(task.cwd) !== expected)
+    if (!data.startsWith(owned + sep) || !same(real(expected), expected) || !same(real(card.folderTrust.folder), expected)
+      || !same(real(card.folderTrust.key), expected) || !same(real(task.cwd), expected))
       return reject("folder trust path is not the canonical fixture task folder");
     const bundleId = task.procedurePin?.bundleId;
     if (!/^[a-f0-9]{64}$/.test(bundleId ?? "")) return reject("fixture task has no generated procedure pin");
     const bundle = join(expected, ".murage-procedures", bundleId);
-    if (realpathSync(bundle) !== bundle || readFileSync(join(bundle, ".complete"), "utf8") !== bundleId)
+    if (!same(real(bundle), bundle) || readFileSync(join(bundle, ".complete"), "utf8") !== bundleId)
       return reject("fixture procedure origin is not the completed task pin");
-    for (const source of sources) {
+    if (!linkedSources && scanFolderTrustSources(expected).sources.length) return reject("folder trust has unapproved sources");
+    for (const source of linkedSources ? sources : []) {
       const directory = join(expected, source);
-      if (realpathSync(directory) !== directory || !lstatSync(directory).isDirectory()) return reject("fixture skill source was replaced");
+      if (!same(real(directory), directory) || !lstatSync(directory).isDirectory()) return reject("fixture skill source was replaced");
       for (const name of readdirSync(directory)) {
         const link = join(directory, name), target = join(bundle, "skills", name);
-        if (!lstatSync(link).isSymbolicLink() || realpathSync(target) !== target || realpathSync(link) !== target)
+        if (!lstatSync(link).isSymbolicLink() || !same(real(target), target) || !same(real(link), target))
           return reject("folder trust includes a skill outside the task procedure pin");
       }
     }

@@ -5,7 +5,7 @@ description: |
   Do NOT use for statistical analysis of completed tests (use a statistics skill), survey design (use employee-survey or user-research-plan), or feature prioritization (use prioritization-framework).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis research strategy planning decision-making"
   category: "business-strategy"

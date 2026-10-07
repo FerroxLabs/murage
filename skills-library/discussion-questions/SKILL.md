@@ -6,7 +6,7 @@ description: |
   Do NOT use for assessment questions (use `assessment-design`), for student self-study questions (use `active-recall-practice`), or for full lesson plan creation (use `lesson-plan-design`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching lesson-plan step-by-step guide"
   category: "education"

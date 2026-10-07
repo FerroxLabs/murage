@@ -3,9 +3,12 @@ import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { migrateMemorySchema, validateMemorySchema } from "./schema.ts";
+import { reconcilePipStances } from "./pip-stance.ts";
 import { purgeForgottenEvolutionCopies } from "./evolution-forgetting.ts";
 import { RESTORE_REVIEW_FILE, readRestoreReview } from "../../electron/restore-review.mjs";
 import { writeFileAtomic } from "../atomic.ts";
+import { PARK_SQL, parkRetiredLeasedJobs } from "./park.ts";
+import { noteRevocation, revokeAllDisclosures } from "./revocation.ts";
 
 /** Main holds both stopped installations' leases until selection publication. */
 export function mergeOriginalMemoryDeletions(original: string, candidate: string) {
@@ -16,10 +19,20 @@ export function mergeOriginalMemoryDeletions(original: string, candidate: string
   return result;
 }
 
+/** Forgotten material leaves memory everywhere it went: records resting on
+ * it, records derived from those, and (0.1.61 lane M) a note brought into a
+ * project from it (bring-in.ts: its source names what it came from). */
 export function applyMemoryTombstones(db: DatabaseSync) {
+  reconcilePipStances(db);
   db.exec(`UPDATE memory_sources SET state='deleted' WHERE EXISTS (
     SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=memory_sources.id
     AND (t.revision IS NULL OR t.revision=memory_sources.revision));
+    UPDATE memory_sources SET state='deleted' WHERE kind='bring-in' AND state!='deleted' AND EXISTS (
+      SELECT 1 FROM memory_source_versions v, json_each(v.payload,'$.broughtFrom.sources') j
+      WHERE v.source_id=memory_sources.id AND v.revision=memory_sources.revision AND (
+        EXISTS (SELECT 1 FROM memory_sources o WHERE o.id=json_extract(j.value,'$.id') AND (o.state='deleted' OR o.revision!=json_extract(j.value,'$.revision')))
+        OR NOT EXISTS (SELECT 1 FROM memory_sources o WHERE o.id=json_extract(j.value,'$.id'))
+        OR EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=json_extract(j.value,'$.id') AND (t.revision IS NULL OR t.revision=json_extract(j.value,'$.revision')))));
     WITH RECURSIVE affected(id,version) AS (
       SELECT r.id,r.version FROM memory_records r WHERE EXISTS (
         SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=r.id AND (t.revision IS NULL OR t.revision=r.version))
@@ -28,22 +41,53 @@ export function applyMemoryTombstones(db: DatabaseSync) {
     ) UPDATE memory_records SET state='deleted',owner_pinned=0 WHERE (id,version) IN (SELECT id,version FROM affected);
     UPDATE memory_jobs SET status='cancelled',lease_generation=lease_generation+1,lease_owner=NULL,lease_until=0
       WHERE status!='cancelled' AND (source_id IN (SELECT id FROM memory_sources WHERE state='deleted') OR EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=memory_jobs.source_id AND (t.revision IS NULL OR t.revision=memory_jobs.source_revision)));
+    ${PARK_SQL.forgetTombstoned};
     UPDATE memory_projection_receipts SET lexical_status='delete-pending',embedding_status='delete-pending'
       WHERE (record_id,record_version) IN (SELECT id,version FROM memory_records WHERE state='deleted');
-    UPDATE memory_disclosures SET state='revoked' WHERE EXISTS (
+    `);
+  // Tombstones end exactly the receipts that cite forgotten material.
+  noteRevocation("records","tombstones",Number(db.prepare(`UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked' AND (EXISTS (
       SELECT 1 FROM json_each(memory_disclosures.record_versions) j JOIN memory_records r
       ON r.id=json_extract(j.value,'$.id') AND r.version=json_extract(j.value,'$.version') WHERE r.state='deleted'
     ) OR EXISTS (SELECT 1 FROM json_each(memory_disclosures.source_versions) j JOIN memory_sources s
-      ON s.id=json_extract(j.value,'$.id') WHERE s.state='deleted' OR EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=s.id AND (t.revision IS NULL OR t.revision=json_extract(j.value,'$.revision'))));`);
+      ON s.id=json_extract(j.value,'$.id') WHERE s.state='deleted' OR EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=s.id AND (t.revision IS NULL OR t.revision=json_extract(j.value,'$.revision')))))`).run().changes));
+  if(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_learning_events'").get())db.exec(`DELETE FROM memory_learning_events WHERE
+    source_id IN (SELECT id FROM memory_sources WHERE state='deleted')
+    OR EXISTS(SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=source_id AND (t.revision IS NULL OR t.revision=source_revision))
+    OR (record_id,record_version) IN (SELECT id,version FROM memory_records WHERE state='deleted')
+    OR (prior_id,prior_version) IN (SELECT id,version FROM memory_records WHERE state='deleted');`);
   purgeForgottenEvolutionCopies(db);
+}
+
+/** Bounded tombstone application for ONE record id (PIP owner delete): marks
+ * that record's versions (and anything derived from them) deleted, sets only
+ * their projection receipts to delete-pending where they have not already been
+ * deleted, and revokes only the disclosures that carried them. Nothing else is
+ * touched, so other records' completed deletion receipts stay `deleted`.
+ * applyMemoryTombstones keeps its installation-wide behaviour for every other
+ * caller. Caller owns the surrounding transaction. */
+export function applyRecordTombstone(db: DatabaseSync, recordId: string) {
+  const affected=`WITH RECURSIVE affected(id,version) AS (
+      SELECT id,version FROM memory_records WHERE id=?
+      UNION SELECT d.child_id,d.child_version FROM memory_derivations d JOIN affected a ON d.parent_id=a.id AND d.parent_version=a.version)`;
+  db.prepare(`${affected} UPDATE memory_records SET state='deleted',owner_pinned=0 WHERE (id,version) IN (SELECT id,version FROM affected)`).run(recordId);
+  db.prepare(`${affected} UPDATE memory_projection_receipts SET lexical_status='delete-pending',embedding_status='delete-pending'
+    WHERE lexical_status!='deleted' AND (record_id,record_version) IN (SELECT id,version FROM affected)`).run(recordId);
+  // and the receipts that were shown one of their evidence sources (a quoted
+  // reply, working context) without citing the record (revocation.ts)
+  noteRevocation("records","record-tombstone",Number(db.prepare(`${affected} UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked' AND (EXISTS (
+    SELECT 1 FROM json_each(memory_disclosures.record_versions) j WHERE json_extract(j.value,'$.id') IN (SELECT id FROM affected))
+    OR EXISTS (SELECT 1 FROM json_each(memory_disclosures.source_versions) j WHERE json_extract(j.value,'$.id') IN (
+      SELECT e.source_id FROM memory_evidence e JOIN affected a ON e.record_id=a.id AND e.record_version=a.version)))`).run(recordId).changes));
 }
 
 /** Caller owns the surrounding offline restore transaction. */
 export function pauseRestoredMemory(db: DatabaseSync) {
   if (!validateMemorySchema(db).size) return false;
   db.exec("UPDATE memory_meta SET mode='paused',policy_revision=policy_revision+1 WHERE id=1;");
+  parkRetiredLeasedJobs(db);
   db.prepare("UPDATE memory_jobs SET status='pending',lease_owner=NULL,lease_until=0,lease_generation=lease_generation+1 WHERE status='leased'").run();
-  db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();
+  revokeAllDisclosures(db,"restore");
   db.prepare("UPDATE memory_projection_receipts SET lexical_status=CASE WHEN (SELECT r.state FROM memory_records r WHERE r.id=record_id AND r.version=record_version)='active' THEN 'pending' ELSE 'pending-archive' END,embedding_status='pending' WHERE lexical_status!='delete-pending'").run();
   applyMemoryTombstones(db);return true;
 }
@@ -54,14 +98,21 @@ export function mergeDestinationMemoryDeletions(destination: string, candidate: 
   if(!existsSync(original))return {merged:0,history:"backup-only"};
   const stat=lstatSync(original);
   if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1)throw new Error("UNSAFE_MEMORY_LEDGER");
-  const source=new DatabaseSync(original,{readOnly:true});
   let rows: Array<Record<string,unknown>>, identity:string, epoch:number;
+  // A damaged or newer-schema destination is exactly the case the app tells
+  // people to restore for (audit A-2): the restore goes ahead, and the review
+  // says the destination's deletion ledger could not be read.
   try {
-    if(!validateMemorySchema(source).size)return {merged:0,history:"legacy-destination"};
-    rows=source.prepare("SELECT * FROM memory_tombstones").all();
-    const meta=source.prepare("SELECT installation_id,deletion_epoch FROM memory_meta WHERE id=1").get()!;
-    identity=String(meta.installation_id);epoch=Number(meta.deletion_epoch);
-  } finally {source.close();}
+    const source=new DatabaseSync(original,{readOnly:true});
+    try {
+      if(!validateMemorySchema(source).size)return {merged:0,history:"legacy-destination"};
+      rows=source.prepare("SELECT * FROM memory_tombstones").all();
+      const meta=source.prepare("SELECT installation_id,deletion_epoch FROM memory_meta WHERE id=1").get()!;
+      identity=String(meta.installation_id);epoch=Number(meta.deletion_epoch);
+    } finally {source.close();}
+  } catch {
+    return {merged:0,history:"destination-ledger-unreadable"};
+  }
   const db=new DatabaseSync(target);
   try {
     db.exec("PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");

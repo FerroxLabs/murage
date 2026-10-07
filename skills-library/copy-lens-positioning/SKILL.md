@@ -1,8 +1,9 @@
 ---
 name: copy-lens-positioning
 description: "**Lens mode.** Source authority: Justin Welsh's solopreneur-authority playbook — narrow audience, named belief shift, credentialed perspective without credentialism."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "copy"
 ---

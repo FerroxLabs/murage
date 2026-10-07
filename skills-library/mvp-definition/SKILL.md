@@ -5,7 +5,7 @@ description: |
   Do NOT use for idea validation experiments (use idea-validation), Lean Canvas creation (use lean-canvas), or feature specification (use feature-spec).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship planning strategy agile decision-making"
   category: "business-strategy"

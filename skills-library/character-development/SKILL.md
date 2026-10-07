@@ -6,7 +6,7 @@ description: |
   Do NOT use for world-building (use world-building), dialogue craft (use dialogue-writing), or writing a complete story (use short-story-writing).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing template"
   category: "writing"

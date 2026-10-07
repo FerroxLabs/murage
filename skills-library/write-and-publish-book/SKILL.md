@@ -19,7 +19,7 @@ trigger_phrases: >-
   how do I self-publish book writing process write and publish I have a book
   idea
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: writing content-marketing creative-writing step-by-step planning
   category: content-creation

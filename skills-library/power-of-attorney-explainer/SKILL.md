@@ -10,7 +10,7 @@ description: |
   user's situation, or healthcare directive details (use healthcare-directive-guide).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "estate-planning legal-literacy guide checklist"
   category: "legal-civic"

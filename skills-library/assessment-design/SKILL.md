@@ -6,7 +6,7 @@ description: |
   Do NOT use for rubric-only creation (use `rubric-creation`), formative assessment strategies (use `formative-assessment`), or student exam preparation (use `exam-prep-plan`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching lesson-plan curriculum step-by-step"
   category: "education"

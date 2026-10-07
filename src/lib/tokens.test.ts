@@ -216,7 +216,9 @@ describe("token drift", () => {
     const inbox = readFileSync(join(root, "src/components/Inbox.tsx"), "utf8");
     const INBOX_VIEW_IDS = ["read"];
     for (const id of INBOX_VIEW_IDS) expect(inbox, id).toContain(`"to-${id}"`);
-    const NOT_A_CLASS = new Set([...PROBE_OUTCOME_IDS, ...INBOX_VIEW_IDS]);
+    // `border-color` / `background-color` inside an arbitrary transition-[...]
+    // property list (ApprovalFeedback PRESSED) are CSS property names, not utilities.
+    const NOT_A_CLASS = new Set([...PROBE_OUTCOME_IDS, ...INBOX_VIEW_IDS, "color"]);
     // Tailwind's built-in palette. TeamLibraryPanel paints four categorical bot
     // glyphs from it on purpose — they are identity colours like the mascot's,
     // not theme surfaces, and Tailwind does generate them.
@@ -271,7 +273,7 @@ describe("token drift", () => {
       "src/components/PhoneSetupFlow.tsx":
         "QR code foreground/background — a scanner needs pure black on pure white",
       "src/components/CompanionSection.tsx":
-        "the same QR, on the WebUI page — a scanner needs pure black on pure white",
+        "the same QR, on the Phone and other devices page — a scanner needs pure black on pure white",
       "src/components/FirstRunPhoneCard.tsx":
         "the same QR again, in the first-run chat — a scanner needs pure black on pure white",
       "src/components/RoutineCalendarPage.tsx":

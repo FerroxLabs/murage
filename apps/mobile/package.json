@@ -1,0 +1,25 @@
+{
+  "name": "@murage/mobile",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "sync": "node scripts/sync-native.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/core": "8.5.2",
+    "@capacitor/ios": "8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2",
+    "@types/node": "^26.2.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.1.0",
+    "vitest": "^4.1.10"
+  }
+}

@@ -8,6 +8,7 @@
 // stdout is the MCP transport. Never log there.
 import readline from "node:readline";
 import { randomUUID } from "node:crypto";
+import { turnSecret } from "./turn-credential.ts";
 
 type Json = Record<string, unknown>;
 
@@ -15,14 +16,15 @@ const UPSTREAM = process.env.MURAGE_CONNECTOR_UPSTREAM_URL ?? "";
 const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
 const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
 const THREAD_ID = process.env.MURAGE_THREAD_ID ?? "";
-const TOKEN = process.env.MURAGE_CONNECTORS_TOKEN ?? "";
+const token = () => turnSecret("MURAGE_CONNECTORS_TOKEN");
 const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
 const INITIALIZE_RELAY_TIMEOUT_MS = 1_000;
 const RELAY_TIMEOUT_MS = 10 * 60_000;
+const REOPEN_TIMEOUT_MS = 15_000;
 
 function parsedHeaders(): Record<string, string> {
   try {
-    const value: unknown = JSON.parse(process.env.MURAGE_CONNECTOR_UPSTREAM_HEADERS ?? "{}");
+    const value: unknown = JSON.parse(turnSecret("MURAGE_CONNECTOR_UPSTREAM_HEADERS") || "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(
       Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
@@ -32,7 +34,6 @@ function parsedHeaders(): Record<string, string> {
   }
 }
 
-const upstreamHeaders = parsedHeaders();
 let upstreamSessionId = "";
 const send = (message: Json) => process.stdout.write(`${JSON.stringify(message)}\n`);
 
@@ -103,14 +104,32 @@ function parseUpstream(text: string, id: unknown): Json | null {
   return frames.findLast((frame) => frame.id === id) ?? null;
 }
 
-async function relay(message: Json, timeoutMs = RELAY_TIMEOUT_MS): Promise<Json | null> {
+/** The upstream forgot our session (a network drop, a restart there): open a
+ * new one. Best effort; the retry that follows reports any failure. */
+async function reopenUpstreamSession(): Promise<void> {
+  upstreamSessionId = "";
+  try {
+    await relay({
+      jsonrpc: "2.0",
+      id: randomUUID(),
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "murage-connectors", version: "1" } },
+    }, REOPEN_TIMEOUT_MS, true);
+    if (upstreamSessionId) await relay({ jsonrpc: "2.0", method: "notifications/initialized" }, REOPEN_TIMEOUT_MS, true);
+  } catch {
+    // the retry will say what is wrong
+  }
+}
+
+async function relay(message: Json, timeoutMs = RELAY_TIMEOUT_MS, retried = false): Promise<Json | null> {
   if (!UPSTREAM) throw new Error("connected apps are unavailable");
+  const sentSession = upstreamSessionId;
   const response = await fetch(UPSTREAM, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
-      ...upstreamHeaders,
+      ...parsedHeaders(),
       ...(upstreamSessionId ? { "mcp-session-id": upstreamSessionId } : {}),
     },
     body: JSON.stringify(message),
@@ -118,6 +137,13 @@ async function relay(message: Json, timeoutMs = RELAY_TIMEOUT_MS): Promise<Json 
   });
   const nextSession = response.headers.get("mcp-session-id");
   if (nextSession) upstreamSessionId = nextSession;
+  if (response.status === 404 && sentSession && !retried && message.method !== "initialize") {
+    // The session id we kept is dead. Forget it, open a new session, and try
+    // this request once more; never twice, so a broken upstream cannot loop.
+    await response.body?.cancel().catch(() => {});
+    await reopenUpstreamSession();
+    return relay(message, timeoutMs, true);
+  }
   if (!response.ok) {
     // The body, not just the number.
     //
@@ -174,7 +200,7 @@ function connectorAdds(args: unknown): ConnectorRequest[] {
 async function showConnectorCards(items: ConnectorRequest[]): Promise<void> {
   const response = await fetch(`${HARNESS}/api/internal/connectors/request`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${token()}` },
     body: JSON.stringify({ botId: BOT_ID, threadId: THREAD_ID, items, slugs: [...new Set(items.map((item) => item.slug))], resumeKey: randomUUID() }),
     signal: AbortSignal.timeout(30_000),
   });

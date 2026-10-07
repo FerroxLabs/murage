@@ -6,7 +6,7 @@ description: |
   Do NOT use for personalized diet prescriptions, clinical dietary therapy, eating disorder guidance, or macro calculations (use macro-calculation).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "nutrition planning research"
   category: "health-wellness"

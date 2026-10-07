@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user needs a different developer tools capability -- check sibling skills in the developer tools subcategory.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "clean-code best-practices code-review"
   category: "software-engineering"

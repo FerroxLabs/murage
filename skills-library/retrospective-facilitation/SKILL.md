@@ -5,7 +5,7 @@ description: |
   Do NOT use for incident post-mortems (different format), project status updates (use status-update), or meeting agendas unrelated to team improvement (use meeting-agenda).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "agile planning project-management template strategy"
   category: "business-strategy"

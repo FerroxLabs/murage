@@ -10,7 +10,7 @@ description: |
   start-freelancing workflow), or internal promotions (use negotiate-raise workflow).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "resume-writing interview-prep career linkedin salary-negotiation step-by-step planning"
   category: "career"

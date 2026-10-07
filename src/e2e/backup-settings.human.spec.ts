@@ -49,15 +49,18 @@ test("BackupSettings exposes truthful states and only zero-argument host actions
  //   await expect(page.getByRole("status")).toContainText("verified backup tool");
  await expect(page.getByRole("status").filter({hasText:"Encrypted backup requires"})).toContainText("verified backup tool");
 });
+// The recovery page speaks plainly since b7741f1a: "Projected recovery ZIP" is
+// "Older recovery files (.zip)", "Create encrypted backup" is "Make a backup now",
+// "Inspect encrypted backup" is "Choose backup to restore", and so on.
 test("actual recovery renderer distinguishes encrypted and ZIP actions with opaque selections",async({page},info)=>{
  await page.addInitScript(()=>{const w=window as any;w.recoveryCalls=[];w.recoveryState={context:{backupMode:true,skin:"dark",reason:"Intentional offline backup",dataDirectory:"Fixture installation"},available:true,encryptedAvailable:true,busy:false,separateAvailable:false,captureAvailable:false};w.murageRecovery={action:async(name:string,id?:string)=>{w.recoveryCalls.push({name,id});const state=w.recoveryState;if(name==="choose-encrypted-backup")state.selection={id:"encrypted-selection",name:"Fixture encrypted backup",encrypted:true,snapshotId:"snapshot-fixture",sha256:"a".repeat(64),coverage:{includedCount:4,excludedCount:2}};if(name==="choose-backup")state.selection={id:"zip-selection",name:"Fixture recovery ZIP",encrypted:false,snapshotId:"snapshot-zip",sha256:"b".repeat(64)};return structuredClone(state);}};});
- await page.goto(origin+"/__recovery/index.html");await expect(page.getByRole("heading",{name:"Backup mode",exact:true})).toBeVisible();await expect(page.getByRole("heading",{name:"Projected recovery ZIP",exact:true})).toBeVisible();
- await expect(page.getByText("not encrypted",{exact:false})).toBeVisible();
+ await page.goto(origin+"/__recovery/index.html");await expect(page.getByRole("heading",{name:"Backup mode",exact:true})).toBeVisible();await expect(page.getByRole("heading",{name:"Older recovery files (.zip)",exact:true})).toBeVisible();
+ await expect(page.getByText("unencrypted .zip recovery files",{exact:false})).toBeVisible();
  for(const width of [390,820,1440])await inspect(page,info,"recovery",width);
- await page.getByRole("button",{name:"Create encrypted backup",exact:true}).focus();await page.keyboard.press("Enter");
- await page.getByRole("button",{name:"Inspect encrypted backup",exact:true}).click();await expect(page.getByText("This is not a full installation copy.",{exact:false})).toBeVisible();
- await page.getByRole("button",{name:"Restore encrypted backup separately for review",exact:true}).click();
- await page.getByRole("button",{name:"Choose backup",exact:true}).click();await expect(page.getByRole("button",{name:"Restore encrypted backup separately for review",exact:true})).toBeHidden();await page.getByRole("button",{name:"Restore and keep paused",exact:true}).click();
+ await page.getByRole("button",{name:"Make a backup now",exact:true}).focus();await page.keyboard.press("Enter");
+ await page.getByRole("button",{name:"Choose backup to restore",exact:true}).click();await expect(page.getByText("Sign-ins to AI engines and messaging apps are not restored",{exact:false})).toBeVisible();
+ await page.getByRole("button",{name:"Restore this backup",exact:true}).click();
+ await page.getByRole("button",{name:"Choose .zip file",exact:true}).click();await expect(page.getByRole("button",{name:"Restore this backup",exact:true})).toBeHidden();await page.getByRole("button",{name:"Restore",exact:true}).click();
  const calls=await page.evaluate(()=>(window as any).recoveryCalls);expect(calls).toContainEqual({name:"restore-encrypted-new",id:"encrypted-selection"});expect(calls).toContainEqual({name:"restore",id:"zip-selection"});
  expect(calls.every((call:any)=>["state","backup-encrypted","choose-encrypted-backup","restore-encrypted-new","choose-backup","restore"].includes(call.name)&&[undefined,"encrypted-selection","zip-selection"].includes(call.id))).toBe(true);expect(await page.locator('input').count()).toBe(0);
 });

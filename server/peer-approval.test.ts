@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
+import { autoVerdict, type AutoApprover, type FullAccessOrigin } from "./auto-approve.ts";
+import * as routinePermissions from "./routine-permissions.ts";
 import {
   cancelPeerApprovalsFor,
   cancelPeerApprovalsForThread,
@@ -44,6 +46,57 @@ describe("peer approval card lifecycle", () => {
   afterEach(() => {
     closeMessageDb();
     rmSync(DATA_DIR, { recursive: true, force: true });
+  });
+
+  // Gap 1: an idle No-limits peer inherits the Full routine ceiling and routine origin.
+  it("caps a routine peer turn at Full and holds its payment for approval", () => {
+    // SEAM: peerTurnAuthority(peer, parentRun) in routine-permissions.ts, used by both index.ts peer dispatch paths, returns mode/origin/unattended.
+    const authority = (routinePermissions as typeof routinePermissions & {
+      peerTurnAuthority?: (peer: AutoApprover, parentRun: {
+        permissionMode: routinePermissions.RoutinePermissionMode;
+        triggerSource: "manual" | "schedule";
+      }) => { mode: routinePermissions.RoutinePermissionMode; origin: FullAccessOrigin; unattended: boolean };
+    }).peerTurnAuthority;
+    from = store.patchBot(from.id, { autoApprove: true, fullAccess: true, noLimits: false })!;
+    target = store.patchBot(target.id, { autoApprove: true, fullAccess: true, noLimits: true })!;
+    expect(target.busy).not.toBe(true);
+    const payment = { kind: "pay" as const, place: "stripe:cus_1", what: "Pay the named recipient" };
+    expect(autoVerdict(target, "mcp__stripe__create_charge", "Create charge", { stopLine: payment }))
+      .toMatchObject({ source: "no-limits", approve: expect.any(String) });
+    expect(authority, "peer dispatch needs to carry the parent routine authority").toBeTypeOf("function");
+    for (const triggerSource of ["manual", "schedule"] as const) {
+      const parent = { permissionMode: routinePermissions.effectiveRoutinePermissionMode({ permissionMode: "full" }, from), triggerSource };
+      const child = authority!(target, parent);
+      expect(child).toEqual({ mode: "full", origin: "routine", unattended: triggerSource === "schedule" });
+      expect(authority!(routinePermissions.applyRoutinePermissionMode(target, "ask"), parent).mode).toBe("ask");
+      expect(autoVerdict(routinePermissions.applyRoutinePermissionMode(target, child.mode), "mcp__stripe__create_charge", "Create charge", {
+        stopLine: payment, automated: child.origin !== "owner", routineLevel: child.origin === "routine", unattended: child.unattended,
+      })).toMatchObject({ approve: null, source: "stop-line", rule: "pay" });
+    }
+    expect(routinePermissions.botPermissionMode(target)).toBe("unlimited");
+  });
+
+  it("asks for a scheduled routine contact even with a remembered peer grant", async () => {
+    from = store.patchBot(from.id, { alwaysAllow: [peerAllowKey("ask_bot", target.id)] })!;
+    bus.unattended = () => true;
+    const verdict = requestPeerApproval(bus, from, target, "scheduled contact", "ask_bot");
+    const card = pendingCard(store, from);
+    expect(card).toBeTruthy();
+    expect(resolvePeerComms(bus, card!.card!.requestId!, "deny")).toBe(true);
+    expect(await verdict).toBe("deny");
+    bus.unattended = () => false;
+    expect(await requestPeerApproval(bus, from, target, "manual contact", "ask_bot")).toBe("allow");
+  });
+
+  it("keeps the scheduled contact gate when the parent is no longer active", async () => {
+    from = store.patchBot(from.id, { alwaysAllow: [peerAllowKey("delegate_bot", target.id)] })!;
+    const verdict = requestPeerApproval(bus, from, target, "queued contact", "delegate_bot", from.threadId, undefined, {
+      permissionMode: "ask", triggerSource: "schedule",
+    });
+    const card = pendingCard(store, from);
+    expect(card).toBeTruthy();
+    expect(resolvePeerComms(bus, card!.card!.requestId!, "allow")).toBe(true);
+    expect(await verdict).toBe("allow");
   });
 
   it("settles the card when the user allows, so the composer unblocks", async () => {
@@ -246,6 +299,15 @@ describe("peer approval card lifecycle", () => {
   // a permission card: no 15-minute expiry, the run waits on the owner, and
   // an allow given after the run's turn ended covers the same contact once
   // when the run carries on.
+  it("project peer decisions stay open past the ordinary timeout",async()=>{
+    vi.useFakeTimers();try{
+      bus={store,broadcast:()=>{},holdProjectApproval:()=>true};
+      const verdict=requestPeerApproval(bus,from,target,"ping","ask_bot");const card=pendingCard(store,from)!;
+      vi.advanceTimersByTime(60*60000);expect(pendingCard(store,from)?.id).toBe(card.id);
+      resolvePeerComms(bus,card.card!.requestId!,"deny");expect(await verdict).toBe("deny");
+    }finally{vi.useRealTimers();}
+  });
+
   describe("in a routine run", () => {
     const opened: string[] = [];
     const closed: Array<[string, string]> = [];

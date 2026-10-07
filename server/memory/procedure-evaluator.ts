@@ -57,7 +57,6 @@ export function createProcedureEvaluator(options:ProcedureEvaluatorBridgeOptions
     try{
       if(!model())return {ready:false,reason:"PROCEDURE_MODEL_UNAVAILABLE"};
       if(options.workerReady&&!options.workerReady())return {ready:false,reason:"GEPA_RESOURCE_UNAVAILABLE"};
-      if(readMemoryLearning(database()).dailyCostUsd!==null)return {ready:false,reason:"GEPA_COST_AUTHORITY_REQUIRED"};
       return {ready:true};
     }catch{return {ready:false,reason:"PROCEDURE_INSTRUCTION_UNAVAILABLE"};}
   };
@@ -91,7 +90,7 @@ export function createProcedureEvaluator(options:ProcedureEvaluatorBridgeOptions
       const key=targetKey(snapshot.target),id=`procedure-evaluation-grant:${hash([key,reviewed.seedHash,snapshot.target.baseRevision,model(),corpusDigest,state])}`;
       database().prepare("UPDATE memory_scope_bindings SET state='revoked' WHERE subject_type='system' AND subject_id=? AND json_extract(intent,'$.targetKey')=? AND id!=?").run(GRANT,key,id);
       persist(id,snapshot.target.scopeId,GRANT,{schema:1,id,targetKey:key,scopeId:snapshot.target.scopeId,kind:snapshot.target.kind,ownerId:snapshot.target.ownerId,artifactId:snapshot.target.artifactId,rootRevision:snapshot.target.baseRevision,currentRevision:snapshot.target.baseRevision,currentSeedHash:reviewed.seedHash,modelIdentity:reviewed.modelIdentity,corpusId:corpus.id,corpusVersion:corpus.version,corpusDigest,...state,evidence:reviewed.evidence} satisfies Grant);
-      wakeProcedureReview(reviewed.reviewId);return {authorized:true as const,reviewId:reviewed.reviewId};
+      wakeProcedureReview(reviewed.reviewId,{ownerAuthorized:true});return {authorized:true as const,reviewId:reviewed.reviewId};
     });}catch{throw Object.assign(Error("PROCEDURE_PREVIEW_CHANGED"),{status:409});}
   };
   const evaluate:NonNullable<ProcedureReviewHost["evaluate"]>=async(snapshot,signal)=>{
@@ -103,7 +102,7 @@ export function createProcedureEvaluator(options:ProcedureEvaluatorBridgeOptions
       change(value);db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system',?,0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent").run(chargesId,snapshot.target.scopeId,CHARGES,JSON.stringify(value));
     };
     // Charged inside the extract-budget reservation transaction; a refusal charges nothing and is counted by reason.
-    const observer:MemoryInferenceObserver={charged:(db,charge)=>tally(db,value=>{const part=value[charge.purpose];part.calls++;part.input+=charge.input;part.output+=charge.output;}),
+    const observer:MemoryInferenceObserver={charged:(db,charge)=>{const purpose=charge.purpose;if(purpose==="continuity")return;tally(db,value=>{const part=value[purpose];part.calls++;part.input+=charge.input;part.output+=charge.output;});},
       refused:reason=>transaction(db=>tally(db,value=>{value.refusals[reason]=(value.refusals[reason]??0)+1;}))};
     const leased=await withMemoryInferenceLease(async lease=>{
       const worker=options.worker();if(!worker.available)throw gepaCallNotStarted();
@@ -118,7 +117,7 @@ export function createProcedureEvaluator(options:ProcedureEvaluatorBridgeOptions
           assertCurrent(snapshot);const result=await lease.request(extractor,text,purpose==="reflection"?8000:2000,callSignal,messages,purpose);if(result.status==="notStarted")throw gepaCallNotStarted();return {text:result.text,costUsd:null};
         };
         return await (options.evaluate??evaluateProcedureWithGepa)(snapshot,{command:worker.command,workerDigest:worker.workerDigest,evaluatorId:`procedure-outcomes-v1:${hash(selected).slice(0,24)}`,seedInstruction:instruction,corpus,
-          budget:{totalUsd:readMemoryLearning(database()).dailyCostUsd,evaluationPerCaseUsd:null,reflectionUsd:null,authorityReference:grant.id},evaluate:procedureOutcomeEvaluator(instruction,snapshot.target.kind as "skill"|"routine",request),assertCurrent,
+          budget:{totalUsd:null,evaluationPerCaseUsd:null,reflectionUsd:null,authorityReference:grant.id},evaluate:procedureOutcomeEvaluator(instruction,snapshot.target.kind as "skill"|"routine",request),assertCurrent,
           reflect:(prompt,callSignal)=>request(prompt,Object.freeze([Object.freeze({role:"system",content:"Improve the supplied procedure against synthetic simulated outcomes. Preserve its frontmatter, compatibility and preconditions exactly. Do not add permissions, external actions, recipients or schedules. Return the complete instruction inside one outer triple-backtick envelope."}),Object.freeze({role:"user",content:prompt})]),callSignal,"reflection"),
         },signal);
       }finally{worker.cleanup?.();}
@@ -138,8 +137,8 @@ export function createProcedureEvaluator(options:ProcedureEvaluatorBridgeOptions
   const retry=(ticket:object,reviewId:string)=>{
     requireMemoryOwner(ticket);try{
       const row=database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='system' AND subject_id='procedure-review-pending' AND state='granted'").get(reviewId),intent=row?JSON.parse(String(row.intent)):null;
-      if(intent?.status!=="deferred"||!intent.snapshot)throw Error("PROCEDURE_REVIEW_NOT_RETRYABLE");
-      const snapshot=readProcedureReviewSnapshot(reviewId,options.host);if(!grantFor(snapshot,seed(snapshot)))throw Error("PROCEDURE_PREVIEW_CHANGED");wakeProcedureReview(reviewId);return {authorized:true as const,reviewId};
+      if(intent?.status!=="deferred")throw Error("PROCEDURE_REVIEW_NOT_RETRYABLE");
+      const snapshot=readProcedureReviewSnapshot(reviewId,options.host);if(!grantFor(snapshot,seed(snapshot)))throw Error("PROCEDURE_PREVIEW_CHANGED");wakeProcedureReview(reviewId,{ownerAuthorized:true});return {authorized:true as const,reviewId};
     }catch{throw Object.assign(Error("PROCEDURE_PREVIEW_CHANGED"),{status:409});}
   };
   return {status,preview,authorize,retry,available,readiness,evaluate,published};

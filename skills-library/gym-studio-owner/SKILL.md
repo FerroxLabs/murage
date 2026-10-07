@@ -4,7 +4,7 @@ description: |
   Complete operations guide for fitness facility owners covering membership models, class scheduling, instructor management, equipment maintenance, member retention, challenge and program design, community building, and liability management. Use when the user asks about gym studio owner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning fitness"
   category: "business-strategy"

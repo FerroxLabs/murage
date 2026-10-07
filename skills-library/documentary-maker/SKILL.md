@@ -4,7 +4,7 @@ description: |
   End-to-end documentary filmmaking guidance covering research methodology, interview techniques, story arc construction, ethical considerations, archival footage use, narration, B-roll strategy, release forms, and festival submission strategy. Use when the user asks about documentary maker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "video-production research"
   category: "design-creative"

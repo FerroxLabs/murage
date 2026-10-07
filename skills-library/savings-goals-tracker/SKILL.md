@@ -6,7 +6,7 @@ description: |
   Do NOT use for emergency fund planning (use emergency-fund-planner), investment allocation, or retirement planning.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "budgeting personal-finance savings goal-setting"
   category: "personal-finance"

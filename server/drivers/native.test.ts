@@ -128,6 +128,16 @@ describe("appendNative", () => {
     if (process.platform !== "win32") expect(mode).toBe(0o600);
   });
 
+  it("keeps lifecycle ids intact: a digit run inside a UUID is not a secret number", () => {
+    const ids = ["fb296783-4baa-4128-831c-b46042fa7ced", "40784341-8049-46ee-9f0b-fb6dcf07132f", "12345678-9012-4345-8678-901234567890"];
+    for (const id of ids) {
+      appendNative("t-lifecycle-ids", { dir: "lifecycle", source: "murage.engine-lifecycle", msg: { event: "mcp_ready_own", turnId: id, processGeneration: id } });
+    }
+    const rows = readFileSync(join(NATIVE_DIR, "t-lifecycle-ids.ndjson"), "utf8").trimEnd().split("\n").map((line) => JSON.parse(line));
+    expect(rows.map((row) => row.msg.turnId)).toEqual(ids);
+    expect(rows.map((row) => row.msg.processGeneration)).toEqual(ids);
+  });
+
   it("never throws, whatever it is handed", () => {
     expect(() => appendNative("t-bad", { dir: "in", source: "acp", msg: undefined })).not.toThrow();
     const cyclic: Record<string, unknown> = {};

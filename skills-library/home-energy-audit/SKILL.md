@@ -6,7 +6,7 @@ description: |
   Do NOT use for commercial building energy audits, HVAC system design or installation, solar panel evaluation as an investment, or utility-scale energy efficiency programs.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "energy-efficiency sustainability checklist planning"
   category: "sustainability"

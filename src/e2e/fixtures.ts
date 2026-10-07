@@ -40,5 +40,15 @@ export async function openSidebar(page: Page): Promise<Locator> {
   }
   const sidebar = page.getByRole("complementary", { name: "Bots and navigation" });
   await expect(sidebar).toBeVisible();
+  // 0.1.62: a window 768 to 1100px wide folds the sidebar to the rail until
+  // the person opens it out. A spec that reads names does what they would.
+  const expand = sidebar.getByRole("button", { name: "Expand sidebar", exact: true });
+  if (await expand.isVisible()) await expand.click();
   return sidebar;
 }
+
+/** The key that sends from the composer or the edit box on every project.
+ *  On a touch screen Return is a newline and the arrow button sends
+ *  (composer-enter.ts, 1f95efd7); Ctrl/⌘+Enter sends everywhere, as it does
+ *  on a tablet with a keyboard. The mobile project has a touch screen. */
+export const SEND_KEY = "ControlOrMeta+Enter";

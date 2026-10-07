@@ -194,6 +194,19 @@ describe("it promises only what this computer can do", () => {
   });
 });
 
+describe("it sends a new tool server to the MCP servers panel (MCP-LINK T14)", () => {
+  const flat = instructions.replace(/\s+/g, " ");
+  it("tells the Chief to point the owner at Connected apps, MCP servers, and to paste the link", () => {
+    expect(flat).toMatch(/Connected apps, then MCP servers/);
+    expect(flat).toMatch(/paste the link the service gives/);
+  });
+
+  it("never asks for a key or token in chat, and never writes mcp-remote or npx commands", () => {
+    expect(flat).toMatch(/[Nn]ever ask (?:them )?to (?:paste|type|send) an API key or a token into (?:the )?chat/);
+    expect(flat).toMatch(/[Dd]o not write mcp-remote or npx commands/);
+  });
+});
+
 describe("it obeys the house copy rules", () => {
   /** Read inside each test rather than at collection time, so a missing
    *  reference file fails the test that is about missing reference files

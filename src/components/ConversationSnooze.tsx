@@ -5,7 +5,7 @@
 // waiting in it. Rules in src/lib/thread-snooze.ts and shared/thread-snooze.ts.
 import { useEffect, useId, useState } from "react";
 import { createPortal } from "react-dom";
-import { BellOff, CalendarClock, MessageCircleQuestion } from "lucide-react";
+import { BellOff, CalendarClock, MessageCircleQuestion, MessagesSquare } from "lucide-react";
 import { api } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { changeThreadSnooze } from "@/lib/thread-attention";
@@ -40,8 +40,8 @@ export function QuestionBadge({ count, labelled = true, className }: { count: nu
 /** The small "this is snoozed" mark. Icon only in a sidebar row, whose own
  *  accessible name already says "Snoozed until ...", so there it is
  *  decoration with a tooltip; spelled out everywhere else. */
-export function SnoozedMarker({ until, now = Date.now(), clock, iconOnly = false }: { until: number; now?: number; clock?: SnoozeClock; iconOnly?: boolean }) {
-  const text = formatSnoozedUntil(until, now, clock);
+export function SnoozedMarker({ until, now = Date.now(), clock, iconOnly = false, untilActivity = false }: { until: number; now?: number; clock?: SnoozeClock; iconOnly?: boolean; untilActivity?: boolean }) {
+  const text = formatSnoozedUntil(until, now, clock, untilActivity);
   return (
     <span data-snoozed-until={until} title={text} aria-hidden={iconOnly ? true : undefined} className="inline-flex min-w-0 items-center gap-1 text-ink-secondary">
       <BellOff size={11} aria-hidden="true" className="shrink-0" />
@@ -51,11 +51,13 @@ export function SnoozedMarker({ until, now = Date.now(), clock, iconOnly = false
 }
 
 /** Presets, a picked time, and Unsnooze when it is already snoozed. */
-export function SnoozeChoices({ threadId, name, until, blocked, onDone, now: nowOverride, clock }: {
+export function SnoozeChoices({ threadId, name, until, untilActivity, blocked, onDone, now: nowOverride, clock }: {
   threadId: string;
   name: string;
   /** When it wakes, if it is snoozed now. */
   until?: number;
+  /** It is snoozed until its next new activity. */
+  untilActivity?: boolean;
   /** Something is waiting on the owner here, so it cannot be snoozed. */
   blocked?: boolean;
   onDone: () => void;
@@ -69,7 +71,7 @@ export function SnoozeChoices({ threadId, name, until, blocked, onDone, now: now
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const pickId = useId();
-  const apply = async (next: number | null) => {
+  const apply = async (next: number | "activity" | null) => {
     if (saving) return;
     setSaving(true); setError(null);
     try { await changeThreadSnooze(api, threadId, next); onDone(); }
@@ -85,7 +87,7 @@ export function SnoozeChoices({ threadId, name, until, blocked, onDone, now: now
     <div role="group" aria-label={`Snooze ${name}`} data-snooze-choices={threadId} className="flex flex-col gap-0.5">
       {until !== undefined && (
         <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-[12px]">
-          <SnoozedMarker until={until} now={now} clock={clock} />
+          <SnoozedMarker until={until} now={now} clock={clock} untilActivity={untilActivity} />
           <button type="button" disabled={saving} onClick={() => void apply(null)}
             className="shrink-0 rounded-md border border-hairline/60 px-2 py-1 text-[12px] font-medium text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">
             Unsnooze
@@ -104,6 +106,13 @@ export function SnoozeChoices({ threadId, name, until, blocked, onDone, now: now
               <span className="text-[12px] text-ink-secondary">{preset.detail}</span>
             </button>
           ))}
+          {/* Until new activity (adapted from OpenMausBot #1205): wakes at
+              the next reply or message the owner did not write. */}
+          <button type="button" disabled={saving} onClick={() => void apply("activity")} className={choice}
+            aria-label="Snooze until new activity, the next reply or message">
+            <span>New activity</span>
+            <MessagesSquare size={14} aria-hidden="true" className="text-ink-secondary" />
+          </button>
           {!picking ? (
             <button type="button" disabled={saving} onClick={() => setPicking(true)} className={choice}>
               <span>Pick a time</span>

@@ -18,6 +18,7 @@ const close = async (server: Server) => {
 };
 const devices: BrowserDeviceStore = {
   redeem: () => ({ error: "unused" }), openSession: () => null, closeSession: () => false, renewSession: () => null, signOutDevice: () => null,
+  issuePushTokens: () => null, pushBinding: () => null, approvalIdentity: () => null, authenticatePush: () => null,
   resolveSession: value => value === "paired-session" ? {
     device: { id: "paired", name: "Fixture", cloudDesktopAccess: false }, session: { expiresAt: Date.now() + 60_000 },
     sessionId: "paired-session-record",
@@ -57,8 +58,7 @@ describe("the browser door's Inbox", () => {
 
       const other = await fetch(`http://127.0.0.1:${port}/api/bots`, { headers });
       expect(other.status).toBe(200);
-      // every forwarded request carries the launch proof, never the client's
-      expect(seen.at(-1)!.headers["x-murage-companion-token"]).toBe(PRIVATE_TOKEN);
+      expect(seen.at(-1)!.headers["x-murage-companion-token"]).toBeUndefined();
     } finally { await close(door); await close(harness); }
   });
 
@@ -149,6 +149,21 @@ describe("the browser door's Inbox", () => {
       });
       expect(response.status).toBe(503);
       expect(await response.text()).toContain("calls require");
+    } finally { await close(door); }
+  });
+
+  it("explains presence refused because the sidecar was launched without the proof, in a plain sentence", async () => {
+    const door = createServer(createBrowserHandler({
+      harnessPort: 1, identity: () => ({ scheme: "http", hosts: new Set(["127.0.0.1"]) }), devices,
+    }));
+    const port = await listen(door);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/presence`, {
+        method: "POST", body: "{}",
+        headers: { "content-type": "application/json", origin: `http://127.0.0.1:${port}`, cookie: `${cookieName("http")}=paired-session` },
+      });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Presence needs Murage and its companion to be started together by the desktop app or murage start." });
     } finally { await close(door); }
   });
 

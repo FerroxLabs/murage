@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { APP_VERSION, WHATS_NEW_BY_VERSION, recordWhatsNewSeen, shouldOpenWhatsNew, whatsNewPage } from "./whats-new";
-import { SidebarMoreMenuPanel } from "@/components/SidebarMoreMenu";
+import { SidebarYouMenuPanel } from "@/components/SidebarYouMenuPanel";
 
 const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
 const sidebar = readFileSync(new URL("../components/Sidebar.tsx", import.meta.url), "utf8");
@@ -59,13 +59,13 @@ describe("when the page opens by itself", () => {
   });
 });
 
-describe("reopening from Tools", () => {
-  it("offers What's new in the Tools menu and reopens the page from it", () => {
-    expect(sidebar).toContain(`{ key: "whats-new", label: "What's new", icon: <Megaphone size={18} />, onSelect: whatsNew.reopen }`);
+describe("reopening from the You menu", () => {
+  it("offers What's new in the You menu and reopens the page from it", () => {
+    expect(sidebar).toContain(`{ key: "whats-new", label: t("settings.about.whatsNewTitle"), icon: <Megaphone size={17} />, onSelect: whatsNew.reopen }`);
     expect(sidebar).toContain("const whatsNew = useWhatsNew(desktop, api);");
     expect(sidebar).toContain(`<WhatsNewHost whatsNew={whatsNew} onNavigate={onNavigate} />`);
     const onSelect = vi.fn();
-    const html = renderToStaticMarkup(createElement(SidebarMoreMenuPanel, { items: [{ key: "whats-new", label: "What's new", icon: null, onSelect }] }));
+    const html = renderToStaticMarkup(createElement(SidebarYouMenuPanel, { items: [{ key: "whats-new", label: "What's new", icon: null, onSelect }] }));
     expect(html).toContain('role="menuitem"');
     expect(html).toContain("What&#x27;s new");
   });

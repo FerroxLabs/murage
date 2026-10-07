@@ -11,7 +11,7 @@ description: |
   administration, or Social Security disability claims.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "retirement-planning personal-finance estate-planning planning step-by-step"
   category: "life-event"

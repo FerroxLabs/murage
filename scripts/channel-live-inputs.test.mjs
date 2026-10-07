@@ -52,7 +52,7 @@ it("accepts a dedicated manifest for each platform and returns a redacted plan",
   expect(Object.keys(loadSecrets(slack.manifest, f.context))).toEqual(["MURAGE_SLACK_APP_TOKEN", "MURAGE_SLACK_BOT_TOKEN"]);
 });
 
-it("refuses a credential file with a broader mode", () => {
+it.skipIf(process.platform === "win32")("refuses a credential file with a broader mode", () => {
   const f = fixture(), manifest = f.telegram(); chmodSync(manifest.telegram.tokenFile, 0o644);
   const error = refusal(() => validateManifest(manifest, f.context));
   expect(error.message).toContain("mode 0600"); noSecrets(error);
@@ -182,7 +182,8 @@ it("refuses a fake engine, a secret in config, an unreadable descriptor and unsa
     [engineFixture(f, { config: { cli: join(f.root, "bin", "fake-claude-cli.ts") } }), "fake"],
     [engineFixture(f, { config: { cli: join(f.root, "bin", "engine-cli"), apiKey: "inline" } }), "looks like a secret"],
     [engineFixture(f, { credential: { env: "FLUX_API_KEY", file: join(f.repo, "engine.key") } }), "inside the repository"],
-    [engineFixture(f, {}, 0o644), "0600"],
+    // Windows has no mode bits; the credential keeps its folder's ACL there.
+    ...(process.platform === "win32" ? [] : [[engineFixture(f, {}, 0o644), "0600"]]),
     [engineFixture(f, { spend: undefined }), "spend is required"],
   ];
   for (const [e, expected] of cases) {

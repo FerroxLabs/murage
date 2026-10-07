@@ -1,8 +1,9 @@
 ---
 name: sales-partnerships
 description: "In sales mode and the conversation is about a *partner*, not a customer. Load on \"should we partner with X,\" \"they want a referral deal,\" \"we're being asked to do co-marketing,\" \"is this integration worth building,\" or \"how do I structure a BD call.\" If it's a sales call dressed as partnership, drop"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "sales"
 ---

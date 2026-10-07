@@ -15,7 +15,7 @@ const call = async (method: string, path: string, body?: unknown, extra: Record<
 
 describe.skipIf(process.platform === "win32")("what's new routes", () => {
   beforeAll(async () => {
-    fixture = await launchVerificationServer(process.env);
+    fixture = await launchVerificationServer(process.env, undefined, { whatsNew: "pending" });
     const secret = (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret;
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret };
   }, 60000);

@@ -6,7 +6,7 @@ description: |
   Do NOT use for assessing whether a relationship is abusive, diagnosing codependency, or replacing therapy for boundary difficulties.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "relationships planning strategy"
   category: "family-relationships"

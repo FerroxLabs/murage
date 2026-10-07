@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request requires professional financial advice or falls outside the scope of credit score guide.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance guide step-by-step"
   category: "personal-finance"

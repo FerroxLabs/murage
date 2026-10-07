@@ -26,6 +26,7 @@ import { join } from "node:path";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 import { axeScriptPath } from "./axe";
+import { accountMenuTrigger, chooseFromAccountMenu } from "./sidebar-nav";
 
 let server: ViteDevServer, origin: string, cache: string, harness: VerificationServer, headers: Record<string, string>;
 const VERSION = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version as string;
@@ -35,7 +36,7 @@ const HAS_PAGE = new RegExp(`"${VERSION.replace(/\./g, "\\.")}": \\{ kind: "page
 const seen = async () => (await (await fetch(`${harness.info.url}/api/whats-new?version=${VERSION}`, { headers })).json()) as { show: boolean };
 
 test.beforeAll(async () => {
-  harness = await launchVerificationServer(process.env);
+  harness = await launchVerificationServer(process.env, undefined, { whatsNew: "pending" });
   const secret = ((await (await fetch(harness.info.url + "/api/desktop-secret")).json()) as { secret: string }).secret;
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret, "content-type": "application/json" };
   // a 0.1.59 install: started fresh on 0.1.59 (skipped and recorded) and
@@ -157,7 +158,7 @@ test("a 0.1.59 install updating sees the page once, walks all three cards, and a
   await expect(dialog(page)).toHaveCount(0);
 });
 
-test("reopens from Tools in the light skin, closes on Escape, and each highlight goes somewhere", async ({ page }, info) => {
+test("reopens from the sidebar menu in the light skin, closes on Escape, and each highlight goes somewhere", async ({ page }, info) => {
   test.skip(!HAS_PAGE, `${VERSION} has no What's new page`);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 860 });
@@ -167,16 +168,14 @@ test("reopens from Tools in the light skin, closes on Escape, and each highlight
   await page.waitForTimeout(500);
   await expect(dialog(page)).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Tools" }).click();
-  await page.getByRole("menuitem", { name: "What's new" }).click();
+  await chooseFromAccountMenu(page, "What's new");
   await walkCards(page, "light", dir);
   await page.keyboard.press("Escape");
   await expect(dialog(page)).toHaveCount(0);
 
   // the hero's shortcut opens the Team map
   await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; });
-  await page.getByRole("button", { name: "Tools" }).click();
-  await page.getByRole("menuitem", { name: "What's new" }).click();
+  await chooseFromAccountMenu(page, "What's new");
   await dialog(page).getByRole("button", { name: "Open Teams" }).click();
   await expect(dialog(page)).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched)).toEqual([{ type: "showTeamMap" }]);
@@ -184,16 +183,16 @@ test("reopens from Tools in the light skin, closes on Escape, and each highlight
   // the six highlights, each through the real host
   const expected: Record<string, unknown[]> = {
     rooms: [{ type: "showTeamMap" }],
-    blocks: [{ type: "toggleAppSettings", open: true, section: "connections" }],
-    packs: [{ type: "toggleAppSettings", open: true, section: "connections" }],
-    shapes: [{ type: "toggleAppSettings", open: true, section: "connections" }],
+    // 0.1.62: image settings have their own page, Channel turns sit under Bot defaults
+    blocks: [{ type: "toggleAppSettings", open: true, section: "images" }],
+    packs: [{ type: "toggleAppSettings", open: true, section: "images" }],
+    shapes: [{ type: "toggleAppSettings", open: true, section: "images" }],
     gemini: [{ type: "toggleAppSettings", open: true, section: "models" }],
-    longwork: [{ type: "toggleAppSettings", open: true, section: "general" }],
+    longwork: [{ type: "toggleAppSettings", open: true, section: "botDefaults" }],
   };
   for (const [tile, dispatched] of Object.entries(expected)) {
     await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; (window as unknown as { __navigated: number }).__navigated = 0; });
-    await page.getByRole("button", { name: "Tools" }).click();
-    await page.getByRole("menuitem", { name: "What's new" }).click();
+    await chooseFromAccountMenu(page, "What's new");
     await dialog(page).getByRole("button", { name: "Next" }).click();
     await dialog(page).locator(`[data-whats-new-tile="${tile}"]`).click();
     await expect(dialog(page)).toHaveCount(0);
@@ -210,8 +209,7 @@ test("fits the smallest main window without clipping a card", async ({ page }, i
   const dir = shotsDir(info.outputPath("shots"));
   await page.goto(origin + "/__whats-new?skin=dark");
   await expect(page.getByText("The app behind the page.")).toBeVisible();
-  await page.getByRole("button", { name: "Tools" }).click();
-  await page.getByRole("menuitem", { name: "What's new" }).click();
+  await chooseFromAccountMenu(page, "What's new");
   for (const [index, name] of CARDS.entries()) {
     const box = await card(page, name).boundingBox();
     expect(box, name).not.toBeNull();
@@ -233,8 +231,7 @@ for (const skin of ["dark", "light"]) {
     const dir = shotsDir(info.outputPath("shots"));
     await page.goto(origin + `/__whats-new?skin=${skin}`);
     await expect(page.getByText("The app behind the page.")).toBeVisible();
-    await page.getByRole("button", { name: "Tools" }).click();
-    await page.getByRole("menuitem", { name: "What's new" }).click();
+    await chooseFromAccountMenu(page, "What's new");
     await walkCards(page, skin, dir, "-narrow");
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(420);
   });
@@ -250,8 +247,7 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
     const dir = shotsDir(info.outputPath("shots"));
     await page.goto(origin + "/__whats-new?skin=dark");
     await expect(page.getByText("The app behind the page.")).toBeVisible();
-    await page.getByRole("button", { name: "Tools" }).click();
-    await page.getByRole("menuitem", { name: "What's new" }).click();
+    await chooseFromAccountMenu(page, "What's new");
     await walkCards(page, "dark", dir, `-${width}`);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   });
@@ -271,13 +267,13 @@ test("a brand-new install is never shown the page, and it stays shut", async () 
   }
 });
 
-test("a version with no page opens nothing and hides the Tools entry", async ({ page }) => {
+test("a version with no page opens nothing and hides the menu entry", async ({ page }) => {
   test.skip(HAS_PAGE, `${VERSION} has a What's new page`);
   await page.goto(origin + "/__whats-new?skin=dark");
   await expect(page.getByText("The app behind the page.")).toBeVisible();
   await page.waitForTimeout(1500);
   await expect(dialog(page)).toHaveCount(0);
-  await page.getByRole("button", { name: "Tools" }).click();
+  await accountMenuTrigger(page).click();
   await expect(page.getByRole("menuitem", { name: "Keyboard shortcuts" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "What's new" })).toHaveCount(0);
 });

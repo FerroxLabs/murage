@@ -390,7 +390,7 @@ describe("the gate is actually wired into the spawn path", () => {
     const titleAt = indexSource.indexOf("store.titleTaskFromFirstMessage(bot.id, text, threadId)");
     const fluxAt = indexSource.indexOf("const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(");
     const effortAt = indexSource.indexOf("is not offered by this bot's engine: choose another level in settings");
-    const appendAt = indexSource.indexOf("let userMessage = opts?.userMessage;");
+    const appendAt = indexSource.indexOf("let userMessage = opts?.userMessage");
     expect(titleAt).toBeGreaterThan(-1);
     expect(appendAt).toBeGreaterThan(-1);
     expect(titleAt).toBeGreaterThan(effortAt);

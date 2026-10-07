@@ -10,17 +10,26 @@ import { formatElapsed } from "@/lib/working-time";
 import { isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { browserUnavailableReason } from "../../shared/browser-unavailable";
+import { imagesLeftOutCount } from "../../shared/images-left-out";
 import { imagesNotSent } from "../../shared/turn-image-note";
 import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
+import type { Subtask } from "@/lib/subtasks";
+import { settledTurnHelpers } from "../../shared/turn-helpers";
+import { t } from "@/lib/i18n";
 import { routineRunMarker } from "../../shared/routine-run-marker";
 
 export type ActivityTranscriptItem =
   | { kind: "message"; message: Message }
   | { kind: "run"; id: string; messages: Message[] };
 
+/** A settled turn's helpers (sub agents), shown as their own summary row when
+ * the turn has no "Worked for" fold to join. */
+export type HelpersItem = { kind: "helpers"; id: string; at: number; label: string; helpers: Subtask[] };
+
 export type TranscriptItem =
   | ActivityTranscriptItem
-  | { kind: "turn"; id: string; turnId: string; label: string; messages: Message[] };
+  | { kind: "turn"; id: string; turnId: string; label: string; messages: Message[]; helpers?: Subtask[] }
+  | HelpersItem;
 
 /** A step that may be folded away: finished, a real tool, and not a
  * bot⇄bot chip (those are navigation, not work) or a failed turn (that
@@ -29,14 +38,17 @@ export type TranscriptItem =
 function foldable(message: Message): boolean {
   const tool = message.tool;
   if (message.kind !== "activity" || !tool) return false;
-  if (message.comm) return false;
+  if (message.comm || message.actorKind === "murage") return false;
   if (tool.ok !== true) return false;
+  // an image made without an approval card keeps its record on screen: it is
+  // the one place the owner reads the prompt that was sent
+  if (tool.imageRecord) return false;
   if (isQuietNote(tool.name, message)) return false;
   return !tool.name.startsWith("error:");
 }
 
 /** A notice the transcripts render as their own row so it stays visible with
- * Settings → Tool calls off: a stop, a folder-trust notice, a turn that ran
+ * Settings → Bot defaults → Tool calls off: a stop, a folder-trust notice, a turn that ran
  * without its browser or with only some of its images. A run is hidden entirely by that same setting, and
  * these notices settle `ok: true` right after the tool calls they follow —
  * so folding one would put it straight back behind the setting its own row
@@ -45,7 +57,11 @@ function foldable(message: Message): boolean {
 function isQuietNote(name: string, message?: Message): boolean {
   if (message && routineRunMarker(message)) return true;
   if (name === TURN_STOPPED_NOTE || isStoppedMidDesktopAction(name)) return true;
-  return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name)) || Boolean(imagesNotSent(name));
+  return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name)) || imagesLeftOutCount(name) !== undefined || Boolean(imagesNotSent(name));
+}
+
+function workedLabel(elapsed: number): string {
+  return elapsed >= 1_000 ? t("chat.workedFor", { time: formatElapsed(elapsed) }) : t("chat.worked");
 }
 
 type TurnFold = Extract<TranscriptItem, { kind: "turn" }>;
@@ -86,7 +102,7 @@ function assistantTurnFolds(messages: Message[]): {
       }
     }
     const elapsed = Math.max(0, terminal.at - startedAt);
-    const label = elapsed >= 1_000 ? `Worked for ${formatElapsed(elapsed)}` : "Worked";
+    const label = workedLabel(elapsed);
     const fold: TurnFold = {
       kind: "turn",
       id: `turn:${terminal.turnId}`,
@@ -127,6 +143,7 @@ function group(messages: Message[], foldAssistantTurns: boolean): TranscriptItem
         first &&
         (first.role !== message.role ||
           first.from?.botId !== message.from?.botId ||
+          first.engine?.instanceId !== message.engine?.instanceId ||
           new Date(first.at).toDateString() !== new Date(message.at).toDateString())
       ) {
         flush();
@@ -141,12 +158,78 @@ function group(messages: Message[], foldAssistantTurns: boolean): TranscriptItem
   return items;
 }
 
-export function groupActivityRuns(messages: Message[]): ActivityTranscriptItem[] {
-  return group(messages, false) as ActivityTranscriptItem[];
+export function groupActivityRuns(messages: Message[]): ActivityTranscriptItem[];
+export function groupActivityRuns(messages: Message[], helperRuns: Subtask[][] | undefined): Array<ActivityTranscriptItem | HelpersItem>;
+export function groupActivityRuns(messages: Message[], helperRuns?: Subtask[][]): Array<ActivityTranscriptItem | HelpersItem> {
+  return attachHelperRuns(group(messages, false), helperRuns) as Array<ActivityTranscriptItem | HelpersItem>;
 }
 
-export function groupTranscript(messages: Message[]): TranscriptItem[] {
-  return group(messages, true);
+export function groupTranscript(messages: Message[], helperRuns?: Subtask[][]): TranscriptItem[] {
+  return attachHelperRuns(group(messages, true), helperRuns);
+}
+
+function isClosingReply(message: Message): boolean {
+  return message.role === "bot" && message.kind === "text" && Boolean(message.turnTerminal);
+}
+
+/** Put each settled turn's helpers into the transcript: onto the turn's
+ * "Worked for" fold when it has one, else as a summary row just before the
+ * closing reply. A run belongs to the first closing bot reply at or after
+ * its first helper started. */
+export function attachHelperRuns(items: TranscriptItem[], runs: Subtask[][] | undefined): TranscriptItem[] {
+  if (!runs?.length && !items.some((item) => item.kind === "message" && item.message.turnHelpers?.length)) return items;
+  const out = [...items];
+  const taken = new Set<string>();
+  for (const run of runs ?? []) {
+    if (!run.length) continue;
+    const from = Math.min(...run.map((row) => row.startedAt));
+    const index = out.findIndex((item) => item.kind === "message" && isClosingReply(item.message) && item.message.at >= from && !taken.has(item.message.id));
+    if (index < 0) continue;
+    const reply = (out[index] as { message: Message }).message;
+    taken.add(reply.id);
+    const before = out[index - 1];
+    if (before?.kind === "turn" && reply.turnId && before.turnId === reply.turnId) {
+      out[index - 1] = { ...before, helpers: run };
+      continue;
+    }
+    out.splice(index, 0, { kind: "helpers", id: `helpers:${run[0].id}`, at: reply.at, label: workedLabel(reply.at - from), helpers: run });
+  }
+  // What the server kept with the closing message covers every turn the live
+  // list above does not (a reload, another window): same rows, same place.
+  for (let index = 0; index < out.length; index += 1) {
+    const item = out[index];
+    if (item.kind !== "message" || !isClosingReply(item.message) || taken.has(item.message.id)) continue;
+    const reply = item.message;
+    const helpers = storedHelpers(reply);
+    if (!helpers.length) continue;
+    taken.add(reply.id);
+    const before = out[index - 1];
+    if (before?.kind === "turn" && reply.turnId && before.turnId === reply.turnId) {
+      out[index - 1] = { ...before, helpers };
+      continue;
+    }
+    let userAt: number | undefined;
+    for (let back = index - 1; back >= 0 && userAt === undefined; back -= 1) {
+      const prior = out[back];
+      if (prior.kind === "message" && prior.message.role === "user") userAt = prior.message.at;
+    }
+    const elapsed = userAt === undefined ? Math.max(...helpers.map((row) => (row.endedAt ?? 0) - row.startedAt)) : reply.at - userAt;
+    out.splice(index, 0, { kind: "helpers", id: `helpers:${reply.id}`, at: reply.at, label: workedLabel(elapsed), helpers });
+    index += 1;
+  }
+  return out;
+}
+
+/** A closing message's stored helper summary as rows the chat can draw. */
+function storedHelpers(message: Message): Subtask[] {
+  return settledTurnHelpers(message.turnHelpers).map((row, i) => ({
+    id: `${message.id}:${i}`,
+    label: row.label,
+    status: row.status,
+    startedAt: 0,
+    endedAt: row.durationMs,
+    toolCount: row.toolCount,
+  }));
 }
 
 const MAX_NAMES = 3;

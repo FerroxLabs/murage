@@ -221,10 +221,14 @@ function isRuntimeEvent(value: unknown): value is RuntimeEvent {
       return value.itemType === "assistant_text" ? typeof value.text === "string" : value.itemType === "tool" && typeof value.ok === "boolean";
     case "content.delta":
       return (value.streamKind === "assistant_text" || value.streamKind === "reasoning_text") && typeof value.delta === "string";
+    case "content.reset":
+      return value.streamKind === "assistant_text" || value.streamKind === "reasoning_text";
     case "plan.updated":
       return Array.isArray(value.entries);
     case "engine.commands":
       return Array.isArray(value.commands);
+    case "steer.confirmed":
+      return true;
     case "request.opened":
       return (
         (value.requestType === "permission" || value.requestType === "question") &&

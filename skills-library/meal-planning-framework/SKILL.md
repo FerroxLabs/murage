@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical dietary therapy, eating disorder management, macro calculation (use macro-calculation), or specific recipe creation.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "nutrition meal-planning template"
   category: "health-wellness"

@@ -18,7 +18,7 @@ trigger_phrases: >-
   I want to start a business help me launch a company new business checklist how
   to start a small business entrepreneur guide business launch plan
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: entrepreneurship planning marketing personal-finance step-by-step
   category: business-operations

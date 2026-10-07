@@ -4,7 +4,7 @@ description: |
   Comprehensive methodology for researching and evaluating neighborhoods before purchasing property, covering school district evaluation, crime statistics analysis, walkability and transit scores, future development plans, property value trends, community amenities assessment, noise evaluation, commute analysis, and demographic research tools. Use when the user asks about neighborhood researcher or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-buying personal-finance research"
   category: "personal-finance"

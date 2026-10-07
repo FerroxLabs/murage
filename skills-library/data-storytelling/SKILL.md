@@ -6,7 +6,7 @@ description: |
   Do NOT use for raw data exploration (use eda-framework), choosing a chart type (use chart-type-selector), or formatting a data report (use report-formatting).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-visualization analysis report"
   category: "data-analysis"

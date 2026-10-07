@@ -4,7 +4,7 @@ description: |
   Comprehensive negotiation guidance beyond salary talks -- covering real estate, business deals, disputes, and everyday situations. Includes BATNA, ZOPA, anchoring, integrative vs distributive approaches, Chris Voss tactical empathy techniques, multi-party negotiation, cultural considerations, and systematic preparation frameworks. Use when the user asks about negotiation master or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "business-writing strategy writing"
   category: "writing"

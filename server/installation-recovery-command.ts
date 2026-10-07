@@ -12,7 +12,7 @@ import { resolveWindowsBackupRuntime } from "./installation-backup-encryption.ts
 import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { MAX_BACKUP_BYTES } from "../shared/backup-limits.ts";
 
-export const usage = "Usage: installation-recovery backup --data-dir <stopped-installation> --output <new-backup.zip> | export-damaged --data-dir <stopped-installation> --output <private-preservation.zip> | inspect --archive <backup.zip> | plan-restore --archive <backup.zip> | restore --data-dir <stopped-installation> --archive <backup.zip> --sha256 <inspected-hash> | rollback --data-dir <installation> | memory-downgrade --data-dir <stopped-installation> | backup-encrypted --data-dir <stopped-installation> --output <new-backup.age> --age-tool <verified-age> --recipient <age-recipient> --credential-policy preserve-in-encrypted-fidelity | inspect-encrypted --archive <backup.age> --age-tool <verified-age> | restore-encrypted-new --data-dir <new-installation> --archive <backup.age> --sha256 <inspected-hash> --age-tool <verified-age>. Encrypted commands read the recovery identity from stdin.";
+export const usage = "Usage: installation-recovery backup --data-dir <stopped-installation> --output <new-backup.zip> | export-damaged --data-dir <stopped-installation> --output <private-preservation.zip> | inspect --archive <backup.zip> | plan-restore --archive <backup.zip> | restore --data-dir <stopped-installation> --archive <backup.zip> --sha256 <inspected-hash> | rollback --data-dir <installation> | memory-downgrade --data-dir <stopped-installation> [--to 1|2|3] | backup-encrypted --data-dir <stopped-installation> --output <new-backup.age> --age-tool <verified-age> --recipient <age-recipient> --credential-policy preserve-in-encrypted-fidelity | inspect-encrypted --archive <backup.age> --age-tool <verified-age> | restore-encrypted-new --data-dir <new-installation> --archive <backup.age> --sha256 <inspected-hash> --age-tool <verified-age>. Encrypted commands read the recovery identity from stdin.";
 
 async function identityFromStdin(): Promise<string> {
   let identity="";
@@ -86,8 +86,8 @@ export async function installationRecoveryCommand(args: string[], input: { readI
   if (command === "rollback" && options.size === 1 && options.has("--data-dir")) {
     return { ok: true, operation: "rollback", ...rollbackInstallationRestore(options.get("--data-dir")!) };
   }
-  if (command === "memory-downgrade" && options.size === 1 && options.has("--data-dir")) {
-    return { ok: true, operation: "memory-downgrade", ...downgradeInstallationMemorySchema(options.get("--data-dir")!) };
+  if (command === "memory-downgrade" && options.has("--data-dir") && (options.size === 1 || options.size === 2 && ["1", "2", "3", "4", "5"].includes(options.get("--to") ?? ""))) {
+    return { ok: true, operation: "memory-downgrade", ...downgradeInstallationMemorySchema(options.get("--data-dir")!, options.get("--to") === "5" ? 5 : options.get("--to") === "4" ? 4 : options.get("--to") === "3" ? 3 : options.get("--to") === "2" ? 2 : 1) };
   }
   if (command === "review" && options.size === 1 && options.has("--data-dir")) {
     return { ok: true, operation: "review", ...reviewInstallation(options.get("--data-dir")!) };

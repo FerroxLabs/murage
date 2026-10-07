@@ -1,5 +1,5 @@
 import {fileURLToPath} from "node:url";
-import { constants,copyFileSync,fstatSync,mkdirSync,mkdtempSync,openSync,readFileSync,readdirSync,readSync,realpathSync,renameSync,symlinkSync,truncateSync,writeFileSync } from "node:fs";
+import { constants,copyFileSync,fstatSync,mkdirSync,mkdtempSync,openSync,readFileSync,readdirSync,readSync,realpathSync,renameSync,statSync,symlinkSync,truncateSync,utimesSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join,sep } from "node:path";
 import { createHash,randomBytes,randomUUID } from "node:crypto";
@@ -82,8 +82,11 @@ it("restored archive hash uses one 64KiB buffer and bounded reads, never a whole
 it("restored short, oversized and wrong-digest data never becomes verified",async()=>{
  for(const mode of ["short","long","digest"]){const f=restoredFixture(path=>{if(mode==="digest")writeFileSync(path,Buffer.alloc(3*65536+17,38));else truncateSync(path,3*65536+17+(mode==="short"?-1:1));});expect(await f.adapter.store(f.input,f.receipt)).toMatchObject({state:"needs-review",error:mode==="digest"?"restore-mismatch":"operation-failed"});expect(readFileSync(f.input)).toEqual(f.bytes);}
 });
+// The rewrite lands a second later on the file's own clock, as any real one
+// does: the kernel stamps from a coarse tick, so a rewrite in the same tick as
+// the restore is not observable by any stat and the test raced it (Linux CI).
 it("held restored fd detects same-byte same-size mutation through identity timestamps",async()=>{
- const f=restoredFixture(),tracked=trackRestoredReads(path=>writeFileSync(path,f.bytes));expect(await f.adapter.store(f.input,f.receipt)).toMatchObject({state:"needs-review",error:"operation-failed"});expect(tracked.reads.length).toBeGreaterThan(0);expect(()=>fstatSync(tracked.fd())).toThrow();
+ const f=restoredFixture(),tracked=trackRestoredReads(path=>{const before=statSync(path);writeFileSync(path,f.bytes);utimesSync(path,before.atime,new Date(before.mtimeMs+1000));});expect(await f.adapter.store(f.input,f.receipt)).toMatchObject({state:"needs-review",error:"operation-failed"});expect(tracked.reads.length).toBeGreaterThan(0);expect(()=>fstatSync(tracked.fd())).toThrow();
 });
 it("held restored fd rejects pathname replacement after opening despite matching bytes",async()=>{
  const f=restoredFixture(),tracked=trackRestoredReads(path=>{renameSync(path,path+".held");writeFileSync(path,f.bytes);});expect(await f.adapter.store(f.input,f.receipt)).toMatchObject({state:"needs-review",error:"operation-failed"});expect(()=>fstatSync(tracked.fd())).toThrow();

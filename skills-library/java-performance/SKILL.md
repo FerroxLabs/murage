@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Java concurrency (use `java-concurrency-patterns`), Java modern idioms (use `java-modern-idioms`), general performance testing (use `performance-testing`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "java optimization debugging"
   category: "software-engineering"

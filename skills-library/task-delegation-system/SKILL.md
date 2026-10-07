@@ -6,7 +6,7 @@ description: |
   Do NOT use for team project management (use business project-management skills), hiring or staffing decisions (use business HR skills), or personal task prioritization (use task-prioritization).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "planning template checklist"
   category: "productivity"

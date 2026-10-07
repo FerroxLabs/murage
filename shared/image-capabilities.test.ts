@@ -120,7 +120,7 @@ describe("built-in tables", () => {
     expect((builtInImageCapabilities("google", "gemini-3.1-flash-image")!.sizeRule as { ratios: string[] }).ratios).toContain("1:8");
     expect(builtInImageCapabilities("google", "gemini-3.1-flash-lite-image")).toMatchObject({ sizeRule: { tiers: ["1K"] } });
     expect(builtInImageCapabilities("xai", "grok-imagine-image-2.0")).toMatchObject({ maxPromptChars: 4000, promptBudgetNote: "Limit not published, Murage uses 4,000.", maxReferences: 4 });
-    expect(builtInImageCapabilities("flux", "flux-image")).toMatchObject({ maxPromptChars: 32000, maxReferences: 4, delivery: { stream: true, streamEdits: false }, editTimeoutSeconds: 90 });
+    expect(builtInImageCapabilities("flux", "flux-image")).toMatchObject({ maxPromptChars: 32000, maxReferences: 4, delivery: { stream: true, streamEdits: false }, editTimeoutSeconds: 100 });
     expect(openRouterCapabilities("openai/gpt-image-2", ["1024x1024"], ["low"], 4, "png")).toMatchObject({ maxPromptChars: 32000 });
     expect(openRouterCapabilities("vendor/model", [], [], 0, "png")).toMatchObject({ maxPromptChars: 4000, promptBudgetSource: "default" });
   });

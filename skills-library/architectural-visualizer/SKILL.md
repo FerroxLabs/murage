@@ -4,7 +4,7 @@ description: |
   Comprehensive architectural visualization guidance covering floor plan creation, 3D rendering basics, mood board development for interiors and exteriors, material and finish selection, space planning principles, presentation board design, client communication workflows, and translating design intent into compelling visual presentations. Use when the user asks about architectural visualizer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design guide"
   category: "creative-arts"

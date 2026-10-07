@@ -6,7 +6,7 @@ description: |
   Do NOT use for full short stories (use short-story-writing), flash fiction under 1,000 words with specific formal constraints (use flash-fiction), or poetry prompts (use poetry-writing).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing fitness"
   category: "writing"

@@ -12,6 +12,8 @@ import {
   readThread,
   searchMessages,
   setActiveLeaf,
+  setAttachmentAdoptionObserver,
+  threadsReferencingAttachment,
   updateMessage,
 } from "./message-db.ts";
 import { Store, type Message } from "./store.ts";
@@ -157,5 +159,93 @@ describe("message-db", () => {
     expect(path.at(-1)?.text).toBe("edited");
     // both branches survive in the tree
     expect(reloaded.messagesFor(bot.threadId).filter((m) => m.parentId === first.parentId)).toHaveLength(2);
+  });
+});
+
+describe("attachment adoption", () => {
+  it("tells the observer which stored pictures a committed message names", () => {
+    const seen: string[][] = [];
+    setAttachmentAdoptionObserver(paths => seen.push(paths));
+    try {
+      insertMessage("t-adopt", msg("m1", "hi", { attachments: [{ kind: "image", path: "/data/attachments/a.png", mime: "image/png" }] }));
+      insertMessage("t-adopt", msg("m2", "no picture"));
+      expect(seen).toEqual([["a.png"]]);
+    } finally { setAttachmentAdoptionObserver(null); }
+  });
+  it("also reports text-only references: attached-image tags, markdown images and edited messages", () => {
+    const seen: string[][] = [];
+    setAttachmentAdoptionObserver(paths => seen.push(paths));
+    try {
+      insertMessage("t-adopt2", msg("m1", "<attached-image path=\"/data/attachments/tag-1.png\">"));
+      insertMessage("t-adopt2", msg("m2", "see ![x](/api/attachments/md-2.webp)"));
+      expect(seen.flat()).toEqual(expect.arrayContaining(["tag-1.png", "md-2.webp"]));
+    } finally { setAttachmentAdoptionObserver(null); }
+  });
+});
+
+
+describe("attachment adoption uses the visibility definition of a reference", () => {
+  beforeEach(() => {
+    closeMessageDb();
+    rmSync(DATA_DIR, { recursive: true, force: true });
+    mkdirSync(DATA_DIR, { recursive: true });
+  });
+  it("finds visible owners beyond repeated and substring-only attachment candidates", async () => {
+    const { attachmentVisibleToRemote, RemoteUploadGrants } = await import("./attachment-access.ts");
+    for (let i = 0; i < 220; i++) {
+      insertMessage("a-hidden", msg(`repeat-${i}`, "abc-123.png"));
+      insertMessage("a-substring", msg(`tail-${i}`, "prefix-def-456.png"));
+    }
+    for (const name of ["abc-123.png", "def-456.png"]) {
+      insertMessage("z-visible", msg(name, `/api/attachments/${name}`));
+      expect(attachmentVisibleToRemote({ visibleThreadIds: () => ["z-visible"], bots: [] }, name, threadsReferencingAttachment, new RemoteUploadGrants(), "companion")).toBe(true);
+    }
+    expect(threadsReferencingAttachment("abc-123.png")).toEqual(["a-hidden", "z-visible"]);
+    expect(threadsReferencingAttachment("def-456.png")).toEqual(["z-visible"]);
+  });
+  it("consumes both suffix-related grants using the same references as visibility", async () => {
+    const { RemoteUploadGrants } = await import("./attachment-access.ts");
+    const uploads = new RemoteUploadGrants(), seen: string[] = [];
+    for (const name of ["abc-123.png", "prefix-abc-123.png"]) uploads.grant(name, "companion");
+    setAttachmentAdoptionObserver(paths => { seen.push(...paths); for (const path of paths) uploads.consume(path); });
+    try {
+      insertMessage("t-suffix", msg("m1", "abc-123.png ABC-123.PNG", { attachments: [{ kind: "image", path: "/legacy/prefix-abc-123.png", mime: "image/png" }] }));
+      for (const name of ["abc-123.png", "prefix-abc-123.png"]) expect(threadsReferencingAttachment(name)).toEqual(["t-suffix"]);
+      expect(new Set(seen.map(name => name.toLowerCase()))).toEqual(new Set(["abc-123.png", "prefix-abc-123.png"]));
+      deleteThread("t-suffix");
+      for (const name of ["abc-123.png", "prefix-abc-123.png"]) {
+        expect(threadsReferencingAttachment(name)).toEqual([]);
+        expect(uploads.allows(name, "companion")).toBe(false);
+      }
+    } finally { setAttachmentAdoptionObserver(null); }
+  });
+  it("a text reference in different case is both visible-owned and consumed, by one function", async () => {
+    const { RemoteUploadGrants } = await import("./attachment-access.ts");
+    const uploads = new RemoteUploadGrants();
+    uploads.grant("abc-123.png", "companion");
+    setAttachmentAdoptionObserver(paths => { for (const path of paths) uploads.consume(path); });
+    try {
+      insertMessage("t-case", msg("m1", "see ![x](/api/attachments/ABC-123.PNG)"));
+      expect(threadsReferencingAttachment("abc-123.png")).toEqual(["t-case"]);
+      expect(uploads.allows("abc-123.png", "companion")).toBe(false);
+    } finally { setAttachmentAdoptionObserver(null); }
+  });
+  it("a name that is only the tail of a longer filename-shaped token is a reference to neither", () => {
+    const seen: string[][] = [];
+    setAttachmentAdoptionObserver(paths => seen.push(paths));
+    try {
+      insertMessage("t-tail", msg("m1", "see xyzabc-123.png"));
+      expect(threadsReferencingAttachment("abc-123.png")).toEqual([]);
+      expect(seen.flat()).not.toContain("abc-123.png");
+    } finally { setAttachmentAdoptionObserver(null); }
+  });
+  it("a legacy-import message adopts its pictures too", () => {
+    const seen: string[][] = [];
+    writeFileSync(legacy("t-legacy"), JSON.stringify({ activeLeafId: "a", messages: [msg("a", "![x](/api/attachments/imp-9.png)")] }));
+    setAttachmentAdoptionObserver(paths => seen.push(paths));
+    try {
+      readThread("t-legacy", legacy("t-legacy"));
+      expect(seen.flat()).toContain("imp-9.png");
+    } finally { setAttachmentAdoptionObserver(null); }
   });
 });

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The scheduler half of routine approval levels: the level is stored on the
-// routine (absent = inherit), survives a reload, and is reported for the run
+// routine as a concrete ceiling, survives a reload, and is reported for the run
 // working in a thread so the host can judge that run at it. Webhook and
 // channel work never carries one.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -12,6 +12,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { RoutineManager, type RoutineManagerOptions, type RoutineRun } from "./routines.ts";
 import { exactCommandKey } from "../shared/exact-command.ts";
+import { autoVerdict } from "./auto-approve.ts";
+import { applyRoutinePermissionMode, botPermissionMode, effectiveRoutinePermissionMode } from "./routine-permissions.ts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -43,21 +45,24 @@ const input = (at: number, extra: Record<string, unknown> = {}) => ({
 });
 
 describe("a routine's stored approval level", () => {
-  it("is absent (inherit) unless chosen, and survives a reload", () => {
+  it("pins the bot level at creation and keeps concrete levels across a reload", () => {
     const h = harness();
-    const inherit = h.manager.create(input(h.now()));
-    expect(inherit).not.toHaveProperty("permissionMode");
+    h.options.botMode = () => "auto";
+    const pinned = h.manager.create(input(h.now()));
+    expect(pinned.permissionMode).toBe("auto");
+    h.options.botMode = () => "unlimited";
     const chosen = h.manager.create(input(h.now(), { permissionMode: "full" }));
     expect(chosen.permissionMode).toBe("full");
     const reloaded = new RoutineManager({ ...h.options });
     expect(reloaded.listRoutines().find((routine) => routine.id === chosen.id)?.permissionMode).toBe("full");
-    expect(reloaded.listRoutines().find((routine) => routine.id === inherit.id)).not.toHaveProperty("permissionMode");
+    expect(reloaded.listRoutines().find((routine) => routine.id === pinned.id)?.permissionMode).toBe("auto");
   });
 
-  it("goes back to inherit, and refuses a level that does not exist", () => {
+  it("pins the current bot level on inherit input, and refuses a level that does not exist", () => {
     const h = harness();
     const routine = h.manager.create(input(h.now(), { permissionMode: "unlimited" }));
-    expect(h.manager.update(routine.id, { permissionMode: "inherit" })).not.toHaveProperty("permissionMode");
+    h.options.botMode = () => "auto";
+    expect(h.manager.update(routine.id, { permissionMode: "inherit" })?.permissionMode).toBe("auto");
     expect(h.manager.update(routine.id, { permissionMode: "ask" })?.permissionMode).toBe("ask");
     // an unrelated edit keeps it
     expect(h.manager.update(routine.id, { name: "Renamed" })?.permissionMode).toBe("ask");
@@ -65,18 +70,63 @@ describe("a routine's stored approval level", () => {
     expect(() => h.manager.create(input(h.now(), { permissionMode: "root" }) as never)).toThrow(/approval level/);
   });
 
-  it("loads an older file as inherit and drops an unknown level", () => {
+  it("loads missing and unknown levels pinned at Ask", () => {
     const h = harness();
-    const routine = h.manager.create(input(h.now()));
+    const legacy = h.manager.create(input(h.now()));
+    const unknown = h.manager.create(input(h.now()));
     const disk = JSON.parse(readFileSync(h.file, "utf8"));
-    disk.routines[0].permissionMode = "everything";
+    delete disk.routines.find((item: { id: string }) => item.id === legacy.id).permissionMode;
+    disk.routines.find((item: { id: string }) => item.id === unknown.id).permissionMode = "everything";
     writeFileSync(h.file, JSON.stringify(disk));
     const reloaded = new RoutineManager({ ...h.options });
-    expect(reloaded.listRoutines().find((item) => item.id === routine.id)).not.toHaveProperty("permissionMode");
+    for (const id of [legacy.id, unknown.id]) {
+      expect(reloaded.listRoutines().find((item) => item.id === id)?.permissionMode).toBe("ask");
+    }
+    const raised = new RoutineManager({ ...h.options, botMode: () => "unlimited" });
+    expect(raised.listRoutines().every((item) => item.permissionMode === "ask")).toBe(true);
   });
 });
 
 describe("the routine behind a working thread", () => {
+  // Gap 5: reassigning queued work must discard A's task flags and use B's current mode.
+  it("reassigns or cancels a queued routine before using the old bot's authority", async () => {
+    const h = harness();
+    const bots = {
+      a: { autoApprove: true, fullAccess: false, noLimits: false },
+      b: { autoApprove: true, fullAccess: true, noLimits: true },
+    };
+    let aBusy = true;
+    h.options.botState = (id) => id === "a" && aBusy ? "busy" : "ready";
+    h.options.botMode = (id) => botPermissionMode(bots[id as keyof typeof bots]);
+    const dispatched: Array<{ botId: string; threadId: string; run: ReturnType<RoutineManager["routineRunForThread"]> }> = [];
+    h.options.startTurn = async (botId, threadId) => {
+      dispatched.push({ botId, threadId, run: h.manager.routineRunForThread(threadId) });
+    };
+    const routine = h.manager.create(input(h.now(), { botId: "a", permissionMode: "ask", enabled: false }));
+    const queued = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    expect(h.manager.listRuns().find((run) => run.id === queued.id)?.status).toBe("queued");
+    expect(dispatched).toEqual([]);
+    // Routine PATCH calls this same manager update operation.
+    expect(h.manager.update(routine.id, { botId: "b" })?.botId).toBe("b");
+    bots.b.noLimits = false;
+    aBusy = false;
+    await h.manager.tick();
+    const run = h.manager.listRuns().find((run) => run.id === queued.id)!;
+    expect(["running", "cancelled"]).toContain(run.status);
+    if (run.status === "cancelled") {
+      expect(dispatched).toEqual([]);
+      return;
+    }
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]).toMatchObject({ botId: "b", run: { routineId: routine.id, botId: "b", permissionMode: "ask" } });
+    expect(run.botId).toBe("b");
+    const mode = effectiveRoutinePermissionMode(dispatched[0]!.run!, bots.b);
+    expect(mode).toBe("ask");
+    expect(autoVerdict(applyRoutinePermissionMode(bots.b, mode), "Bash", "echo routine", { automated: true, routineLevel: true }))
+      .toMatchObject({ approve: null, source: "no-grant" });
+  });
+
   it("names the routine and its level for a scheduled or manual run only while it works", async () => {
     const h = harness();
     const routine = h.manager.create(input(h.now(), { permissionMode: "full", enabled: false }));
@@ -88,13 +138,13 @@ describe("the routine behind a working thread", () => {
     expect(h.manager.routineRunForThread(threadId)).toBeNull();
   });
 
-  it("follows the routine's current level, and says inherit by leaving it out", async () => {
+  it("reports the concrete pinned level and follows the routine's current level", async () => {
     const h = harness();
     const routine = h.manager.create(input(h.now(), { enabled: false }));
     h.manager.runNow(routine.id);
     await h.manager.tick();
     const threadId = h.started[0]!.threadId;
-    expect(h.manager.routineRunForThread(threadId)).toEqual({ routineId: routine.id, botId: "dax", alwaysAllow: [] });
+    expect(h.manager.routineRunForThread(threadId)).toEqual({ routineId: routine.id, botId: "dax", permissionMode: "ask", alwaysAllow: [] });
     h.manager.update(routine.id, { permissionMode: "auto" });
     expect(h.manager.routineRunForThread(threadId)?.permissionMode).toBe("auto");
   });

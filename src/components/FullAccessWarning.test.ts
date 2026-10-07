@@ -18,7 +18,10 @@ describe("FullAccessWarning", () => {
     expect(markup).toContain("Turns started by webhooks still ask");
     // routines follow a level of their own now (server/routine-permissions.ts)
     expect(markup).not.toContain("routines still ask");
-    expect(markup).toContain("image generation still asks");
+    // images follow the level now: made without a card, with a record, and the setting says where to change it
+    expect(markup).not.toContain("image generation still asks");
+    expect(markup).toContain("makes images without asking in your own conversations and routines");
+    expect(markup).toContain("Change that under Images in Bot settings");
     expect(markup).toContain("messages from Telegram, Slack or Discord, and setup requests");
     expect(markup).toContain("unless you allow them in Bot Settings");
     expect(markup).not.toContain("your own screen");

@@ -12,9 +12,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, lstatSync, mkdirSync, mkdtempSync, openSync, closeSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, isAbsolute, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
+import { GRACEFUL_CLOSE_MESSAGE } from "../electron/server-child-lifecycle.mjs";
+import { seedWhatsNewSeen } from "./control-murage.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
 
 export const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -74,6 +76,7 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), `murage-channel-live-${options.label}-`));
   const data = join(root, "data"), staticDir = join(root, "static"), temp = join(root, "tmp");
   for (const dir of [data, join(staticDir, "assets"), temp]) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  seedWhatsNewSeen(data);
   writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>Channel qualification</title>");
   writeFileSync(join(staticDir, "assets", "qualification.css"), "body{}");
   writeFileSync(join(data, "config.json"), JSON.stringify(harnessConfig(options.engine)), { mode: 0o600 });
@@ -117,7 +120,7 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
     for (const key of ["SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "TZ"]) if (process.env[key]) env[key] = process.env[key];
     const log = openSync(join(options.evidenceDir, `server-boot-${boots}.log`), "a", 0o600);
     try {
-      child = spawn(process.execPath, ["--experimental-strip-types", ...(options.preload ? ["--import", options.preload] : []), join(ROOT, "server", "index.ts")],
+      child = spawn(process.execPath, ["--experimental-strip-types", ...(options.preload ? ["--import", isAbsolute(options.preload) ? pathToFileURL(options.preload).href : options.preload] : []), join(ROOT, "server", "index.ts")],
         { cwd: ROOT, env, stdio: ["ignore", log, log, ...(options.ipc ? ["ipc" as const] : [])], ...(options.detached ? { detached: true } : {}) });
     } finally { closeSync(log); }
     child.on("message", value => { for (const listener of listeners) listener(value); });
@@ -134,7 +137,10 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
   const stop = async (): Promise<Exit> => {
     const current = child;
     if (!current) return { exitCode: null, signal: null };
-    await waitForExit(current, { signal: "SIGTERM", graceMs: 10_000 });
+    // With an IPC channel, quit as the desktop does: ask, and the server
+    // exits by itself. Windows has no SIGTERM a process can catch.
+    if (current.connected) { current.send(GRACEFUL_CLOSE_MESSAGE); await waitForExit(current, { graceMs: 15_000 }); }
+    else await waitForExit(current, { signal: "SIGTERM", graceMs: 10_000 });
     const exit = { exitCode: current.exitCode, signal: current.signalCode };
     record("stop", { pid: current.pid, ...exit });
     return exit;

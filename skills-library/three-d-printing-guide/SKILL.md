@@ -4,7 +4,7 @@ description: |
   Comprehensive 3D printing guide covering printer selection between FDM and resin technologies, 3D modeling in TinkerCAD, Fusion 360, and Blender, slicing with Cura and PrusaSlicer, material properties for PLA, PETG, ABS, and TPU, troubleshooting common print issues, and post-processing techniques. Use when the user asks about three d printing guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide step-by-step guide"
   category: "hobbies-crafts"

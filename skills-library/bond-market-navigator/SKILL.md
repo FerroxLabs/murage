@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of bond market navigator or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance investing stress-management beginner-friendly analysis safety emergency-preparedness tax-planning"
   category: "personal-finance"

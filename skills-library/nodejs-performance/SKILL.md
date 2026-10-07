@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about JavaScript idioms (use `javascript-idioms`), Node.js async patterns (use `nodejs-async-patterns`), general performance testing (use `performance-testing`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "javascript backend optimization"
   category: "software-engineering"

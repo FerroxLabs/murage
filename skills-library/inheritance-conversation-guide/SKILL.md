@@ -12,7 +12,7 @@ description: |
   active family disputes, or providing therapy for grief or family conflict.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "estate-planning legal-literacy guide relationships"
   category: "legal-civic"

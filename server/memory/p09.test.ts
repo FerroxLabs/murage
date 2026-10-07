@@ -22,7 +22,7 @@ const roster={bots:[{id:"bot",threadId}],groups:[]};
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);setMemoryMode("capture");});
 function complete(text:string,options:{id?:string;speaker?:string;kind?:string;outcome?:string;turnId?:string}={}){
   const id=options.id??`message:${threadId}:${randomUUID()}`;
-  captureSource(database(),{id,threadId,messageId:randomUUID(),kind:options.kind??"text",speaker:options.speaker??"owner",outcome:options.outcome??"recorded",turnId:options.turnId,text});
+  captureSource(database(),{id,threadId,messageId:randomUUID(),origin:{kind:"attended"},kind:options.kind??"text",speaker:options.speaker??"owner",outcome:options.outcome??"recorded",turnId:options.turnId,text});
   const work=claimMemoryJob("p09-worker")!;if(!work)throw new Error("fixture did not claim a real capture job");
   publishMemoryWork(work,"p09-worker",captureWork(work));return {id,jobId:work.id,revision:work.revision};
 }

@@ -11,7 +11,7 @@ description: |
   or transitioning from side business to full-time (use switch-careers instead).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship planning strategy step-by-step"
   category: "business-operations"

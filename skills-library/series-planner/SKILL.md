@@ -4,7 +4,7 @@ description: |
   Multi-book arc management covering character continuity, timeline tracking, escalation patterns, series bible construction, standalone versus sequential design, reading order strategy, and recurring element management. Use when the user asks about series planner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing planning"
   category: "writing"

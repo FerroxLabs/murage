@@ -24,6 +24,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request, type Server } from "node:http";
+import { webcrypto } from "node:crypto";
 import { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +37,8 @@ import {
   countsAgainstSignIn,
   cookieName,
   createBrowserHandler,
+  createPairedSessions,
+  REQUEST_ID_SCRIPT,
   createSignInLimiter,
   normalizeCredential,
   signInClientKey,
@@ -49,7 +52,7 @@ import {
   type BrowserDeviceStore,
   type SignInLimiter,
 } from "../src/browser.ts";
-import { DeviceRegistry, MAX_DEVICES } from "../src/devices.ts";
+import { DeviceRegistry, MAX_DEVICES, PAIRING_REPLAY_MS } from "../src/devices.ts";
 import { DATA_DIR } from "../src/state.ts";
 
 /** The real registry, reset per test. Real rather than a fake, because the
@@ -59,15 +62,18 @@ let registry = new DeviceRegistry();
 /** Every credential `redeem` was asked about, so "the door never reached the
  * registry" is an assertion about calls rather than about status codes. */
 let asked: string[] = [];
+/** Every argument list `redeem` received. */
+const redeemArgs: unknown[][] = [];
 /** Every device the door asked to have its streams ended. */
 let disconnected: string[] = [];
 /** Swapped by the rate-limit tests; null means the door makes its own. */
 let limiter: SignInLimiter | null = null;
 
 const store: BrowserDeviceStore = {
-  redeem: (credential, name, pairRequestId, installId) => {
+  redeem: (credential, name, pairRequestId, installId, approvalKey, approvalStatement) => {
     asked.push(credential);
-    return registry.redeem(credential, name, pairRequestId, installId);
+    redeemArgs.push([credential, name, pairRequestId, installId, approvalKey, approvalStatement]);
+    return registry.redeem(credential, name, pairRequestId, installId, approvalKey, approvalStatement);
   },
   openSession: (deviceId, label) => registry.openSession(deviceId, label),
   resolveSession: (value) => registry.resolveSession(value),
@@ -75,6 +81,13 @@ const store: BrowserDeviceStore = {
   closeSession: (value) => registry.closeSession(value),
   renewSession: (value) => registry.renewSession(value),
   signOutDevice: (value) => registry.signOutDevice(value),
+  issuePushTokens: (deviceId, bindingId) => registry.issuePushTokens(deviceId, bindingId),
+  pushBinding: (deviceId) => registry.pushBinding(deviceId),
+    approvalIdentity: (deviceId) => registry.approvalIdentity(deviceId),
+  authenticatePush: (token, scope) => registry.authenticatePush(token, scope),
+  wasReplay: (result) => registry.wasReplay(result),
+  onDeviceRemoved: (listener) => registry.onDeviceRemoved(listener),
+  onSessionEnded: (listener) => registry.onSessionEnded(listener),
 };
 
 const identity: BoundIdentity = {
@@ -415,6 +428,10 @@ describe("repeated wrong codes from one client stop being free", () => {
     expect(countsAgainstSignIn("wrong")).toBe(true);
     expect(countsAgainstSignIn("expired")).toBe(true);
     expect(countsAgainstSignIn("used")).toBe(true);
+    // A replaced code is not spent for free at the door limiter either: it
+    // skips the pairing window's own attempt budget (devices.ts), not this
+    // per-client one, so it still counts here.
+    expect(countsAgainstSignIn("replaced")).toBe(true);
     // Fail closed on anything nobody has classified yet.
     expect(countsAgainstSignIn(undefined)).toBe(true);
     expect(countsAgainstSignIn("something-invented-next-year")).toBe(true);
@@ -584,7 +601,13 @@ interface StubNode {
 
 /** Run the served `/enter` script against a stub page with `hash` in the
  * address bar. `replies` answer its POSTs in order. */
-const runEnter = (html: string, hash: string, replies: Array<{ ok: boolean; body: Record<string, unknown> }>) => {
+const runEnter = (
+  html: string,
+  hash: string,
+  replies: Array<{ ok: boolean; body: Record<string, unknown>; unreachable?: boolean }>,
+  userAgent = "Mozilla/5.0 (iPhone) MurageApp/1.0 (ios)",
+  cryptoImpl: unknown = webcrypto,
+) => {
   const nodes = new Map<string, StubNode>();
   const node = (id: string): StubNode => {
     let found = nodes.get(id);
@@ -606,33 +629,270 @@ const runEnter = (html: string, hash: string, replies: Array<{ ok: boolean; body
     return found;
   };
   const posted: Array<Record<string, unknown>> = [];
+  const requestIds: unknown[] = [];
   const sandbox = {
     location: { hash, replace: () => {} },
     history: { replaceState: () => {} },
-    navigator: { userAgent: "Mozilla/5.0 (iPhone) MurageApp/1.0 (ios)" },
+    navigator: { userAgent },
     document: { getElementById: node },
     fetch: (_url: string, init: { body: string }) => {
-      posted.push(JSON.parse(init.body));
+      const sent = JSON.parse(init.body);
+      requestIds.push(sent.pairRequestId);
+      delete sent.pairRequestId;
+      posted.push(sent);
       const reply = replies.shift() ?? { ok: true, body: {} };
+      if (reply.unreachable) return Promise.reject(new TypeError("Failed to fetch"));
       return Promise.resolve({ ok: reply.ok, json: () => Promise.resolve(reply.body) });
     },
     setInterval: () => 0,
     clearInterval: () => {},
+    ...(cryptoImpl ? { crypto: cryptoImpl } : {}),
   };
   createContext(sandbox);
   runInContext(inlineScripts(html)[0], sandbox);
-  return { node, posted };
+  return { node, posted, requestIds };
 };
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
+describe("a pairing request carries a request id so a replay returns the first result", () => {
+  const wellFormed = /^[A-Za-z0-9._-]{16,128}$/;
+
+  it("the app's automatic sign-in posts a well-formed pairRequestId", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { requestIds } = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", []);
+    await settle();
+    expect(requestIds).toHaveLength(1);
+    expect(String(requestIds[0])).toMatch(wellFormed);
+  });
+
+  it("a retry from the same page load reuses the same id", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node, requestIds } = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", [{ ok: false, body: {}, unreachable: true }]);
+    await settle();
+    node("go").listeners.click();
+    await settle();
+    expect(requestIds).toHaveLength(2);
+    expect(requestIds[1]).toBe(requestIds[0]);
+  });
+
+  it("the typed-code box posts one too", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node, requestIds } = runEnter(page.body, "", []);
+    node("cc").value = "123456";
+    node("cb").listeners.click();
+    await settle();
+    expect(String(requestIds[0])).toMatch(wellFormed);
+  });
+
+  const post = (credential: string, extra: Record<string, unknown>) =>
+    knock("POST", "/session", { origin: `http://macbook.tailexample.ts.net:${doorPort}` }, JSON.stringify({ credential, ...extra }));
+
+  it("the door passes it to redeem, and a replay signs in the same device with the same session", async () => {
+    const credential = registry.openPairing().token;
+    const extra = { installId: "ios-install-0123456789abcdef", pairRequestId: "4c825d5b-cf40-4db7-aac5-2455f805a8ec" };
+    const first = await post(credential, extra);
+    const again = await post(credential, extra);
+    expect(first.status).toBe(201);
+    expect(again.status).toBe(201);
+    expect(redeemArgs.slice(-2).map((a) => a[2])).toEqual([extra.pairRequestId, extra.pairRequestId]);
+    expect(registry.count()).toBe(1);
+    // Same session cookie; Max-Age counts down from the same expiry, so a replay
+    // that lands a second later may read one lower.
+    const cookie = (h: unknown) => {
+      const [line] = h as string[];
+      const maxAge = Number(/Max-Age=(\d+)/.exec(line)?.[1]);
+      return { rest: line.replace(/; Max-Age=\d+/, ""), maxAge };
+    };
+    const a = cookie(first.headers["set-cookie"]);
+    const b = cookie(again.headers["set-cookie"]);
+    expect(b.rest).toBe(a.rest);
+    expect(a.maxAge - b.maxAge).toBeGreaterThanOrEqual(0);
+    expect(a.maxAge - b.maxAge).toBeLessThanOrEqual(1);
+  });
+
+  it("a replay with a different install id is refused and mints nothing", async () => {
+    const credential = registry.openPairing().token;
+    const pairRequestId = "4c825d5b-cf40-4db7-aac5-2455f805a8ec";
+    expect((await post(credential, { installId: "ios-install-0123456789abcdef", pairRequestId })).status).toBe(201);
+    const other = await post(credential, { installId: "ios-install-fedcba9876543210", pairRequestId });
+    expect(other.status).toBe(401);
+    expect(other.headers["set-cookie"]).toBeUndefined();
+    expect(registry.count()).toBe(1);
+  });
+});
+
+describe("RES-005: one deadline for a replayed pairing request", () => {
+  const post = (credential: string, extra: Record<string, unknown>) =>
+    knock("POST", "/session", { origin: `http://macbook.tailexample.ts.net:${doorPort}` }, JSON.stringify({ credential, ...extra }));
+  const pairRequestId = "4c825d5b-cf40-4db7-aac5-2455f805a8ec";
+  const extra = { installId: "ios-install-0123456789abcdef", pairRequestId };
+  const cookieOf = (answer: Answer) => String(answer.headers["set-cookie"]?.[0] ?? "").split(";")[0];
+
+  it("a replay after five minutes is refused as used and opens no new session", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const credential = registry.openPairing().token;
+      const first = await post(credential, extra);
+      expect(first.status).toBe(201);
+      vi.setSystemTime(Date.now() + PAIRING_REPLAY_MS - 1000);
+      const inside = await post(credential, extra);
+      expect(inside.status).toBe(201);
+      expect(cookieOf(inside)).toBe(cookieOf(first));
+      vi.setSystemTime(Date.now() + 2000);
+      const late = await post(credential, extra);
+      expect(late.status).toBe(401);
+      expect(JSON.parse(late.body)).toMatchObject({ reason: "used" });
+      expect(late.headers["set-cookie"]).toBeUndefined();
+      expect(registry.count()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a replay for a revoked device gets no 201 and no cookie", async () => {
+    const credential = registry.openPairing().token;
+    expect((await post(credential, extra)).status).toBe(201);
+    const [device] = registry.list();
+    expect(registry.revoke(device.id)).toBe(true);
+    const again = await post(credential, extra);
+    expect(again.status).toBe(401);
+    expect(again.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it("a replay after the browser signed out gets no 201 and no cookie", async () => {
+    const credential = registry.openPairing().token;
+    const first = await post(credential, extra);
+    expect(first.status).toBe(201);
+    const out = await knock("DELETE", "/session", { origin: `http://macbook.tailexample.ts.net:${doorPort}`, cookie: cookieOf(first) });
+    expect(out.status).toBe(200);
+    const again = await post(credential, extra);
+    expect(again.status).toBe(401);
+    expect(again.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it("the kept cookie is deleted by a timer at expiry, and the timer never holds the process open", () => {
+    vi.useFakeTimers();
+    try {
+      const kept = createPairedSessions();
+      const opened = { value: "raw-cookie", session: { expiresAt: Date.now() + 1000 } };
+      kept.put("pr-0123456789abcdef", "dev-1", opened, Date.now());
+      expect(kept.size()).toBe(1);
+      const timers = (vi as unknown as { getTimerCount(): number }).getTimerCount();
+      expect(timers).toBe(1);
+      vi.advanceTimersByTime(PAIRING_REPLAY_MS + 1);
+      expect(kept.size()).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+      kept.put("pr-0123456789abcdef", "dev-1", opened, Date.now());
+      kept.clear();
+      expect(kept.size()).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the kept timer is unref'd", () => {
+    const real = globalThis.setTimeout;
+    const unref = vi.fn();
+    globalThis.setTimeout = ((fn: () => void, ms?: number) => Object.assign(real(fn, ms), { unref })) as unknown as typeof setTimeout;
+    try {
+      const kept = createPairedSessions();
+      kept.put("pr-0123456789abcdef", "dev-1", { value: "v", session: { expiresAt: 1 } }, Date.now());
+      expect(unref).toHaveBeenCalled();
+      kept.clear();
+    } finally {
+      globalThis.setTimeout = real;
+    }
+  });
+
+  it("the page scripts never fall back to Math.random for the request id", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    expect(page.body).not.toContain("Math.random");
+    expect(REQUEST_ID_SCRIPT).not.toContain("Math.random");
+  });
+
+  it("with no crypto the page sends no pairRequestId, and with randomUUID it sends that", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const none = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", [], undefined, null);
+    await settle();
+    expect(none.requestIds).toEqual([undefined]);
+    const uuid = "4c825d5b-cf40-4db7-aac5-2455f805a8ec";
+    const withUuid = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", [], undefined, { randomUUID: () => uuid });
+    await settle();
+    expect(String(withUuid.requestIds[0])).toContain(uuid);
+  });
+});
+
 describe("pairing from the app replaces its own old record", () => {
   it("sends the install id from the fragment, and the credential without it", async () => {
     const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
-    const { node, posted } = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", []);
-    node("go").listeners.click();
+    // The app with an install id signs in by itself, so there is no tap here.
+    const { posted } = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", []);
     await settle();
     expect(posted).toEqual([{ credential: "murage_pair_abc", installId: "ios-install-0123456789abcdef" }]);
+  });
+
+  it("reads &approvalKey= after the install id and posts it with the credential", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const key = "B".repeat(87);
+    const { posted } = runEnter(page.body, `#murage_pair_abc&installId=ios-install-0123456789abcdef&approvalKey=${key}`, []);
+    await settle();
+    expect(posted).toEqual([{ credential: "murage_pair_abc", installId: "ios-install-0123456789abcdef", approvalKey: key }]);
+  });
+
+  it("reads &approvalStatement= after the key and posts it", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const key = "B".repeat(87);
+    const s = "a".repeat(40) + "." + "b".repeat(86);
+    const { posted } = runEnter(page.body, `#murage_pair_abc&installId=ios-install-0123456789abcdef&approvalKey=${key}&approvalStatement=${s}`, []);
+    await settle();
+    expect(posted).toEqual([{ credential: "murage_pair_abc", installId: "ios-install-0123456789abcdef", approvalKey: key, approvalStatement: s }]);
+  });
+
+  it("a statement with no key is not posted", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { posted } = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef&approvalStatement=" + "a".repeat(40) + "." + "b".repeat(86), []);
+    await settle();
+    expect(posted).toEqual([{ credential: "murage_pair_abc", installId: "ios-install-0123456789abcdef" }]);
+  });
+
+  it("a statement placed before the key is not posted, and the key it swallows is not either", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const key = "B".repeat(87);
+    const s = "a".repeat(40) + "." + "b".repeat(86);
+    const { posted } = runEnter(page.body, `#murage_pair_abc&installId=ios-install-0123456789abcdef&approvalStatement=${s}&approvalKey=${key}`, []);
+    await settle();
+    expect(posted).toEqual([{ credential: "murage_pair_abc", installId: "ios-install-0123456789abcdef" }]);
+  });
+
+  it("a repeated &approvalStatement= is sent whole as one value, never split into two", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const key = "B".repeat(87);
+    const s1 = "a".repeat(40) + "." + "b".repeat(86);
+    const s2 = "c".repeat(40) + "." + "d".repeat(86);
+    const { posted } = runEnter(page.body, `#murage_pair_abc&installId=ios-install-0123456789abcdef&approvalKey=${key}&approvalStatement=${s1}&approvalStatement=${s2}`, []);
+    await settle();
+    // the registry refuses this value (it is not one statement), so the key stays unattested
+    expect(posted).toEqual([{ credential: "murage_pair_abc", installId: "ios-install-0123456789abcdef", approvalKey: key, approvalStatement: `${s1}&approvalStatement=${s2}` }]);
+  });
+
+  it("the redeem route hands the statement to the registry as the sixth argument", async () => {
+    const key = "B".repeat(87);
+    const s = "a".repeat(40) + "." + "b".repeat(86);
+    redeemArgs.length = 0;
+    await knock("POST", "/session", { origin: `http://macbook.tailexample.ts.net:${doorPort}` }, JSON.stringify({ credential: registry.openPairing().token, installId: "ios-install-0123456789abcdef", approvalKey: key, approvalStatement: s }));
+    expect(redeemArgs).toHaveLength(1);
+    expect(redeemArgs[0][5]).toBe(s);
+  });
+
+  it("the redeem route hands the install id and key to the registry", async () => {
+    const key = "B".repeat(87);
+    redeemArgs.length = 0;
+    await knock("POST", "/session", { origin: `http://macbook.tailexample.ts.net:${doorPort}` }, JSON.stringify({ credential: registry.openPairing().token, installId: "ios-install-0123456789abcdef", approvalKey: key }));
+    expect(redeemArgs).toHaveLength(1);
+    expect(redeemArgs[0][3]).toBe("ios-install-0123456789abcdef");
+    expect(redeemArgs[0][4]).toBe(key);
   });
 
   it("sends exactly what it always sent when there is no install id", async () => {
@@ -648,13 +908,26 @@ describe("pairing from the app replaces its own old record", () => {
     const { node, posted } = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", [
       { ok: false, body: { error: "that code has expired" } },
     ]);
-    node("go").listeners.click();
     await settle();
     expect(node("cf").hidden).toBe(false);
     node("cc").value = "123456";
     node("cb").listeners.click();
     await settle();
     expect(posted[1]).toEqual({ credential: "123456", installId: "ios-install-0123456789abcdef" });
+  });
+
+  it("keeps the key and statement when the link fails and the person types the code instead", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const key = "B".repeat(87);
+    const s = "a".repeat(40) + "." + "b".repeat(86);
+    const { node, posted } = runEnter(page.body, `#murage_pair_abc&installId=ios-install-0123456789abcdef&approvalKey=${key}&approvalStatement=${s}`, [
+      { ok: false, body: { error: "that code has expired" } },
+    ]);
+    await settle();
+    node("cc").value = "123456";
+    node("cb").listeners.click();
+    await settle();
+    expect(posted[1]).toEqual({ credential: "123456", installId: "ios-install-0123456789abcdef", approvalKey: key, approvalStatement: s });
   });
 
   it("types a code exactly as it always did when there is no install id", async () => {
@@ -673,7 +946,7 @@ describe("pairing from the app replaces its own old record", () => {
     bare.node("cb").listeners.click();
     await settle();
     expect(bare.posted).toEqual([{ credential: "654321" }]);
-    expect(codeEntryScript()).toContain("JSON.stringify({ credential: code })");
+    expect(codeEntryScript()).toContain("var b = { credential: code }; if (requestId) b.pairRequestId = requestId;");
   });
 
   it("replaces the record at the door, so a reinstall does not take a second slot", async () => {
@@ -687,6 +960,141 @@ describe("pairing from the app replaces its own old record", () => {
     expect(second.status).toBe(201);
     expect(registry.count()).toBe(1);
     expect((await knock("GET", "/session", { cookie: `${cookieName("http")}=${oldCookie}` })).status).toBe(401);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// The app's scan is the deliberate act, so only the app skips the tap
+// ─────────────────────────────────────────────────────────────────────────
+describe("the Murage app signs in by itself, and nothing else does", () => {
+  const APP = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MurageApp/1.0.0 (ios)";
+  const WITH_INSTALL = "#murage_pair_abc&installId=ios-install-0123456789abcdef";
+  const SAFARI =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+  const CHROME_ANDROID =
+    "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.6723.58 Mobile Safari/537.36";
+  const CRAWLERS = [
+    "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)",
+    "WhatsApp/2.23.20.0",
+    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+    "TelegramBot (like TwitterBot)",
+  ];
+
+  const load = async () => (await knock("GET", "/enter", { "sec-fetch-mode": "navigate" })).body;
+
+  it("posts at once inside the app when the link carries an install id", async () => {
+    const { node, posted } = runEnter(await load(), WITH_INSTALL, [], APP);
+    await settle();
+    expect(posted).toEqual([{ credential: "murage_pair_abc", installId: "ios-install-0123456789abcdef" }]);
+    // The button is still there, already pressed, so a refusal can offer it again.
+    expect(node("go").hidden).toBe(false);
+    expect(node("go").disabled).toBe(true);
+  });
+
+  it("does it on Android too, whose webview also says `; wv)`", async () => {
+    const android =
+      "Mozilla/5.0 (Linux; Android 14; Pixel 7 Build/UQ1A.240205.004; wv) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Version/4.0 Chrome/130.0.6723.58 Mobile Safari/537.36 MurageApp/1.0.0 (android)";
+    const { posted } = runEnter(await load(), "#murage_pair_abc&installId=android-install-0123456789abcdef", [], android);
+    await settle();
+    expect(posted).toEqual([{ credential: "murage_pair_abc", installId: "android-install-0123456789abcdef" }]);
+  });
+
+  it("waits for a tap from a link-preview crawler, even one handed the whole link", async () => {
+    const html = await load();
+    for (const crawler of CRAWLERS) {
+      const { node, posted } = runEnter(html, WITH_INSTALL, [], crawler);
+      await settle();
+      expect(posted, crawler).toEqual([]);
+      expect(node("go").hidden, crawler).toBe(false);
+    }
+  });
+
+  it("waits for a tap after a camera scan, which opens the phone's own browser", async () => {
+    const html = await load();
+    for (const browser of [SAFARI, CHROME_ANDROID]) {
+      const plain = runEnter(html, "#murage_pair_abc", [], browser);
+      await settle();
+      expect(plain.posted, browser).toEqual([]);
+      // Even a browser handed the app's link does not sign in by itself.
+      const relayed = runEnter(html, WITH_INSTALL, [], browser);
+      await settle();
+      expect(relayed.posted, browser).toEqual([]);
+      relayed.node("go").listeners.click();
+      await settle();
+      expect(relayed.posted, browser).toHaveLength(1);
+    }
+  });
+
+  it("waits for a tap inside the app when there is no install id", async () => {
+    const html = await load();
+    for (const hash of ["#murage_pair_abc", "#murage_pair_abc&installId="]) {
+      const { node, posted } = runEnter(html, hash, [], APP);
+      await settle();
+      expect(posted, hash).toEqual([]);
+      expect(node("go").hidden, hash).toBe(false);
+      expect(node("go").disabled, hash).toBe(false);
+    }
+  });
+
+  it("does nothing by itself with no credential at all, even in the app", async () => {
+    const { posted } = runEnter(await load(), "", [], APP);
+    await settle();
+    expect(posted).toEqual([]);
+  });
+
+  it("keeps the served script free of backslashes and backticks", async () => {
+    const [script] = inlineScripts(await load());
+    expect(script).toContain('ua.indexOf("MurageApp/")');
+    expect(script).not.toContain("\\");
+    expect(script).not.toContain("`");
+  });
+});
+
+describe("a sign-in that cannot reach the computer is not a dead end", () => {
+  it("offers Try again and the code field, in the app with no tap and in a browser after one", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const app = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", [
+      { ok: false, body: {}, unreachable: true },
+      { ok: true, body: {} },
+    ]);
+    await settle();
+    await settle();
+    expect(app.node("t").textContent).toBe("Could not reach Murage");
+    expect(app.node("go").disabled).toBe(false);
+    expect(app.node("go").textContent).toBe("Try again");
+    expect(app.node("cf").hidden).toBe(false);
+    expect(app.posted).toHaveLength(1);
+    app.node("go").listeners.click();
+    await settle();
+    expect(app.posted).toHaveLength(2);
+
+    const safari = runEnter(
+      page.body,
+      "#murage_pair_abc",
+      [{ ok: false, body: {}, unreachable: true }],
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    );
+    safari.node("go").listeners.click();
+    await settle();
+    await settle();
+    expect(safari.node("go").disabled).toBe(false);
+    expect(safari.node("go").textContent).toBe("Try again");
+    expect(safari.node("cf").hidden).toBe(false);
+  });
+
+  it("drops the Try again label when a retry then fails for another reason", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node } = runEnter(page.body, "#murage_pair_abc&installId=ios-install-0123456789abcdef", [
+      { ok: false, body: {}, unreachable: true },
+      { ok: false, body: { error: "That pairing code has expired. Start pairing again.", reason: "expired" } },
+    ]);
+    await settle();
+    await settle();
+    node("go").listeners.click();
+    await settle();
+    expect(node("t").textContent).toBe("Could not sign in");
+    expect(node("go").textContent).toBe("Sign in on this device");
   });
 });
 
@@ -737,6 +1145,33 @@ describe("pairing into a full fleet", () => {
     node("go").listeners.click();
     await settle();
     expect(posted).toHaveLength(2);
+  });
+
+  it("offers Try again after the app signed in by itself into a full fleet, and does not retry on its own", async () => {
+    const page = await knock("GET", "/enter", { "sec-fetch-mode": "navigate" });
+    const { node, posted } = runEnter(
+      page.body,
+      "#murage_pair_abc&installId=ios-install-0123456789abcdef",
+      [
+        { ok: false, body: { error: "This computer already has the most devices it can pair. Replace an old one on your computer, then try again.", reason: "full", devices: [] } },
+        { ok: true, body: {} },
+      ],
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MurageApp/1.0.0 (ios)",
+    );
+    // No tap: the app's scan already was one.
+    expect(posted).toHaveLength(1);
+    await settle();
+    expect(node("go").textContent).toBe("Try again");
+    expect(node("go").disabled).toBe(false);
+    expect(node("t").textContent).toBe("This computer has too many devices");
+    // Nothing loops back into a second sign-in by itself.
+    await settle();
+    await settle();
+    expect(posted).toHaveLength(1);
+    node("go").listeners.click();
+    await settle();
+    expect(posted).toHaveLength(2);
+    expect(posted[1]).toEqual({ credential: "murage_pair_abc", installId: "ios-install-0123456789abcdef" });
   });
 
   it("drops the Try again label once a retry fails for another reason", async () => {

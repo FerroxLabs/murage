@@ -10,7 +10,7 @@ description: |
   setting (use freelance-rate-calculator), or general career planning (use career-pivot-roadmap).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "salary-negotiation career template"
   category: "career-development"

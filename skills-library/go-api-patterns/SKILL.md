@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Go idioms (use `go-idioms`), Go error handling (use `go-error-handling`), REST API design concepts (use `rest-api-design`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "go backend api-design"
   category: "software-engineering"

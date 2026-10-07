@@ -19,6 +19,8 @@ import { scanFolderTrustSources } from "../../folder-trust.ts";
 import type { ProviderTurnRoute } from "../../provider-routing.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
+import { buildRemoteMount } from "../../custom-mcp-mounts.ts";
 import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
 import { redactSecretsInText } from "../../redact.ts";
 import { redactSecretsInText as redactSecretsInTextShipped } from "../../testing/redact-release-0.1.53.ts";
@@ -256,6 +258,30 @@ describe("ACP turns (fake CLI)", () => {
     await removeTempDir(scratch);
   });
 
+  it("forwards bounded, redacted Fuigo stderr notices while the engine is live", async () => {
+    await create(FuigoDiagnosticDriver, "fuigo-live-notices");
+    await instance.adapter.sendTurn({ threadId: "t-live-notices", text: "hello" });
+    await recorder.until((e) => e.type === "item.started" && e.title?.startsWith("Fuigo: xxx") === true);
+    await recorder.until((e) => e.type === "content.delta" && e.delta === "notices written");
+    const notices = recorder.events.filter((e) => e.type === "item.started");
+    expect(notices).toHaveLength(3);
+    expect(notices[0]).toMatchObject({ title: "Fuigo: found memory from an older version at /home/u/.fuigo/memory/old. It belongs to another repository. Memory for this repository now lives at /home/u/.fuigo/memory/new. Nothing was deleted." });
+    expect(JSON.stringify(notices)).not.toContain("lowercase log line");
+    expect(JSON.stringify(notices)).not.toContain("fixture-secret-canary");
+    expect(notices[2]).toMatchObject({ title: "Fuigo: " + "x".repeat(1193) });
+    for (const notice of notices) expect(recorder.events).toContainEqual(expect.objectContaining({
+      type: "item.completed", itemId: notice.itemId, ok: true,
+    }));
+    expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
+  });
+
+  it("does not forward live stderr notices from other ACP engines", async () => {
+    await create(GrokAgentDriver, "fuigo-live-notices");
+    await instance.adapter.sendTurn({ threadId: "t-other-notices", text: "hello" });
+    await recorder.until((e) => e.type === "content.delta" && e.delta === "notices written");
+    expect(recorder.events.filter((e) => e.type === "item.started")).toEqual([]);
+  });
+
   // Grok Build sends available_commands_update right after session/new; the
   // prompt gate used to drop it with every other pre-prompt update.
   it("reports Grok Build's own commands, and sends a command turn bare", async () => {
@@ -310,6 +336,26 @@ describe("ACP turns (fake CLI)", () => {
       commands: [{ name: "init", description: "create/update AGENTS.md" }, { name: "compact", description: "compact the session" }],
     });
     expect(JSON.parse(readFileSync(promptDump, "utf8"))[0]).toEqual({ type: "text", text: "/init" });
+  });
+
+  it.each([["grokAgent without a provider binding", () => GrokAgentDriver], ["another ACP driver", () => SelectModelDriver]] as const)(
+    "memory r3: %s runs the submission fence before session/prompt and, refused after the id came back, writes nothing", async (_name, driver) => {
+    const rpcFile = join(scratch, "fence.json");
+    process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+    await create(driver());
+    let calls = 0;
+    // sendTurn hands the id back while setup continues; the revoke lands in that window
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-fence", text: "hi", beforeSubmit: () => { calls++; throw new Error("MEMORY_CONTEXT_REVOKED"); } });
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: false, stopReason: "submission_refused" });
+    expect(recorder.events.some((e) => e.type === "runtime.error" && e.turnId === turnId)).toBe(false);
+    expect(calls).toBe(1);
+    expect(JSON.parse(readFileSync(rpcFile, "utf8")) as string[]).not.toContain("session/prompt");
+    // a passing fence lets the next turn through, once per write
+    let passes = 0;
+    const next = await instance.adapter.sendTurn({ threadId: "t-fence", text: "hi", beforeSubmit: () => { passes++; } });
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === next.turnId)).toMatchObject({ ok: true });
+    expect(passes).toBe(1);
+    expect(JSON.parse(readFileSync(rpcFile, "utf8")) as string[]).toContain("session/prompt");
   });
 
   it("normalizes a full turn into the canonical event sequence", async () => {
@@ -399,6 +445,21 @@ describe("ACP turns (fake CLI)", () => {
     expect(log).toContain("agent_message_chunk");
     expect(log).toContain("[image data: ");
     expect(log).not.toContain("iVBOR");
+  });
+
+  it.each(["root", "fuigo"])("banks two prompt totals once (%s), never Fuigo last-call counts", async (shape) => {
+    process.env.FAKE_ACP_USAGE_ROOT = shape;
+    await create(shape === "fuigo" ? createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: FuigoAgentDriver.driverKind, selectModel: undefined }) as typeof GrokAgentDriver : GrokAgentDriver);
+    try {
+      for (let n = 0; n < 2; n++) {
+        const sent = await instance.adapter.sendTurn({ threadId: "t-bank", text: "go" });
+        await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
+      }
+      const completed = recorder.events.filter(e => e.type === "turn.completed");
+      expect(completed).toHaveLength(2);
+      for (const event of completed) expect(event).toMatchObject({ usage: { input: shape === "fuigo" ? 100 : 10, output: shape === "fuigo" ? 50 : 5 } });
+      if (shape === "fuigo") expect(completed).toEqual(expect.arrayContaining([expect.objectContaining({ charge: 0.25 })]));
+    } finally { delete process.env.FAKE_ACP_USAGE_ROOT; }
   });
 
   it("reads token usage from the root of the prompt result", async () => {
@@ -616,7 +677,7 @@ describe("ACP turns (fake CLI)", () => {
     const seen=JSON.parse(readFileSync(dump,"utf8"));
     expect(instance.adapter.capabilities.memoryMcp).toBe(true);
     expect(seen.mcpServers).toEqual([{name:"murage-memory",command:process.execPath,args:["/fake/memory-proxy.js"],env:[
-      {name:"MURAGE_HARNESS_URL",value:"http://127.0.0.1:1"},{name:"MURAGE_MEMORY_TOKEN",value:"memory-fixture-secret"},
+      {name:"MURAGE_HARNESS_URL",value:"http://127.0.0.1:1"},{name:"MURAGE_MEMORY_TOKEN",value:fixtureCredentialFingerprint("memory-fixture-secret")},
     ]}]);
   });
 
@@ -655,19 +716,48 @@ describe("ACP turns (fake CLI)", () => {
       name: "agents", command: process.execPath, args: ["/fake/agents-proxy.js"],
       env: [
         { name: "MURAGE_HARNESS_URL", value: "http://127.0.0.1:1" },
-        { name: "MURAGE_COMMS_TOKEN", value: "built-in-token" },
-        // Grok reaches MCP tools only through use_tool: the proxy is told so.
-        { name: "MURAGE_TOOL_CALL_STYLE", value: "use-tool" },
-        { name: "MURAGE_MCP_SERVER_NAME", value: "agents" },
+        { name: "MURAGE_COMMS_TOKEN", value: fixtureCredentialFingerprint("built-in-token") },
       ],
     });
     expect(seen.mcpServers).toContainEqual({
       name: "notes",
       command: "npx",
       args: ["-y", "@x/notes-mcp"],
-      env: [{ name: "NOTES_TOKEN", value: "tok-1" }],
+      env: [{ name: "NOTES_TOKEN", value: fixtureCredentialFingerprint("tok-1") }],
     });
     expect(instance.adapter.capabilities.customMcp).toBe(true);
+  });
+
+  it("mounts a link server as the proxy with its name in argv, and keeps the owner's environment apart from the harness's", async () => {
+    await create();
+    const dump = join(scratch, "remote-dump.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    const token = "c3".repeat(24);
+    const context = { execPath: process.execPath, proxyPath: "/fake/remote-mcp-proxy.js", harnessUrl: "http://127.0.0.1:1", token: () => token };
+    await instance.adapter.sendTurn({
+      threadId: "t-remote-mount",
+      text: "go",
+      integrations: {
+        custom: {
+          svc: buildRemoteMount("svc", context, token),
+          forged: { command: "attacker-mcp", args: [], env: { MURAGE_MCP_TOKEN: "forged" } },
+          notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-1" } },
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpServers.map((server: { name: string }) => server.name)).toEqual(["svc", "notes"]);
+    expect(seen.mcpServers[0]).toEqual({
+      name: "svc", command: process.execPath, args: ["/fake/remote-mcp-proxy.js", "--server", "svc"],
+      env: [
+        { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+        { name: "MURAGE_HARNESS_URL", value: "http://127.0.0.1:1" },
+        { name: "MURAGE_MCP_TOKEN", value: fixtureCredentialFingerprint(token) },
+      ],
+    });
+    expect(JSON.stringify(seen.mcpServers)).not.toContain("attacker-mcp");
+    expect(JSON.stringify(seen.mcpServers)).not.toContain(token);
   });
 
   // The host computer being attached does not make every ask a computer
@@ -676,6 +766,38 @@ describe("ACP turns (fake CLI)", () => {
   const hostComputer = {
     localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "darwin" as const, scope: "local-computer" as const },
   };
+  it("headlines the real target of a permission ask, not the tool's title", async () => {
+    for (const [id, toolCall, want] of [
+      ["t-acp-argv", { toolCallId: "a1", kind: "execute", title: "Tidy up the workspace", rawInput: { command: ["rm", "-rf", "build dir"] } }, "rm -rf 'build dir'"],
+      ["t-acp-edit", { toolCallId: "a2", kind: "edit", title: "Harmless formatting fix", locations: [{ path: "/w/src/a.ts" }, { path: "/w/src/b.ts" }] }, "/w/src/a.ts, /w/src/b.ts"],
+    ] as const) {
+      process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
+      await create(GrokAgentDriver, "permission");
+      await instance.adapter.sendTurn({ threadId: id, text: "go" });
+      const opened = await recorder.until((e) => e.type === "request.opened");
+      expect(opened).toMatchObject({ requestType: "permission", summary: want });
+      await instance.adapter.respondToRequest(id, (opened as any).requestId, { behavior: "deny" });
+      await recorder.until((e) => e.type === "turn.completed");
+    }
+  });
+
+  it("carries the tool input of a fetch ask and keeps the move title as the reason", async () => {
+    for (const [id, toolCall, check] of [
+      ["t-acp-fetch", { toolCallId: "f1", kind: "fetch", title: "Fetch docs", rawInput: { url: "https://x.test/a", method: "DELETE" } },
+        (e: any) => { expect(JSON.parse(e.toolInput)).toEqual({ url: "https://x.test/a", method: "DELETE" }); }],
+      ["t-acp-move", { toolCallId: "m1", kind: "move", title: "Move a.ts to /elsewhere/b.ts", locations: [{ path: "/w/a.ts" }] },
+        (e: any) => { expect(e.summary).toBe("/w/a.ts"); expect(e.reason).toBe("Move a.ts to /elsewhere/b.ts"); }],
+    ] as const) {
+      process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
+      await create(GrokAgentDriver, "permission");
+      await instance.adapter.sendTurn({ threadId: id, text: "go" });
+      const opened = await recorder.until((e) => e.type === "request.opened");
+      check(opened);
+      await instance.adapter.respondToRequest(id, (opened as any).requestId, { behavior: "deny" });
+      await recorder.until((e) => e.type === "turn.completed");
+    }
+  });
+
   it("scopes only computer tools as local-computer when the host computer is attached", async () => {
     process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify({
       toolCallId: "01a0d3c86935734f9da19c8d3ff2ed00",
@@ -764,6 +886,63 @@ describe("ACP turns (fake CLI)", () => {
   // and messaging someone new (server/stop-line.ts). A fullAuto ACP instance
   // would answer its own asks; under the stop line it hands them to Murage,
   // with the command itself, and spawns as a non-bypass engine.
+  // Gap 4: the shared ACP core must broker enforced asks instead of answering them itself.
+  it("routeAsks overrides only ACP core skip-all permission answers", async () => {
+    for (const fullAuto of [false, true]) {
+      if (fullAuto) { recorder.stop(); await instance.dispose(); }
+      instance = await EnvPolicyDriver.create({
+        instanceId: "acp-enforce", displayName: "ACP Enforce", enabled: true,
+        environment: { FAKE_ACP_MODE: "permission" }, config: { cli: FAKE_CLI, fullAuto },
+      });
+      recorder = recordEvents(instance.adapter);
+      for (const [turn, enforced] of [false, true, false].entries()) {
+        const threadId = `t-enforce-${fullAuto}-${turn}`;
+        const sent = await instance.adapter.sendTurn({ threadId, text: "go", ...(enforced ? { routeAsks: true as const } : {}) });
+        const event = await recorder.until((event) => event.turnId === sent.turnId &&
+          (event.type === "request.opened" || event.type === "turn.completed"));
+        const asks = !fullAuto || enforced;
+        expect(event.type).toBe(asks ? "request.opened" : "turn.completed");
+        if (event.type === "request.opened") {
+          expect(event).toMatchObject({ requestType: "permission", toolCall: { name: "shell", input: { command: "echo hi" } } });
+          await instance.adapter.respondToRequest(threadId, event.requestId!, { behavior: "deny" });
+          await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
+        }
+      }
+    }
+  });
+
+  // Gap 4: ACP turn config must reach Grok argv, Droid session mode and Cursor argv.
+  it.each([
+    ["Grok", GrokAgentDriver], ["Droid", DroidAgentDriver], ["Cursor", CursorAgentDriver],
+  ] as const)("routeAsks overrides only %s skip-all mode selection", async (engine, driver) => {
+    for (const fullAuto of [false, true]) {
+      if (fullAuto) { recorder.stop(); await instance.dispose(); }
+      instance = await driver.create({
+        instanceId: "acp-enforce-mode", displayName: engine, enabled: true,
+        environment: {}, config: { cli: FAKE_CLI, fullAuto },
+      });
+      recorder = recordEvents(instance.adapter);
+      const dump = join(scratch, `enforce-mode-${fullAuto}.json`);
+      process.env.FAKE_ACP_DUMP = dump;
+      for (const [turn, enforced] of [false, true, false].entries()) {
+        const sent = await instance.adapter.sendTurn({
+          threadId: `t-mode-${fullAuto}-${turn}`, text: "hi",
+          ...(enforced ? { routeAsks: true as const } : {}),
+        });
+        await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
+        const { argv } = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
+        const skips = fullAuto && !enforced;
+        if (engine === "Grok") expect(argv.slice(0, 2)).toEqual(["--permission-mode", skips ? "bypassPermissions" : "default"]);
+        if (engine === "Cursor") expect(argv.includes("--force")).toBe(skips);
+        if (engine === "Droid") {
+          const applied = JSON.parse(readFileSync(`${dump}.config.json`, "utf8"));
+          expect(applied.find((call: { method: string }) => call.method === "session/set_mode")?.params.modeId)
+            .toBe(skips ? "auto-high" : "normal");
+        }
+      }
+    }
+  });
+
   it("hands a fullAuto instance's asks to Murage under the stop line", async () => {
     process.env.FAKE_ACP_MODE = "permission";
     instance = await GrokAgentDriver.create({
@@ -1063,6 +1242,22 @@ createInterface({ input: process.stdin }).on("line", line => {
     });
   });
 
+  it("a project question stays open past its normal deadline", async () => {
+    await create(GrokAgentDriver, "fuigo-question");
+    const original = globalThis.setTimeout;
+    const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
+      original(callback, delay === QUESTION_TIMEOUT_MS ? 50 : delay, ...args)) as typeof setTimeout);
+    try {
+      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose", holdProjectAsks: true, holdPermissionAsks: true });
+      const opened = await recorder.until(event => event.type === "request.opened");
+      expect(opened).toMatchObject({ requestType: "question" });
+      await new Promise(resolve => original(resolve, 200));
+      expect(recorder.events.some(event => event.type === "request.resolved")).toBe(false);
+      await instance.adapter.respondToRequest("project-question", (opened as any).requestId, { behavior: "deny" });
+      expect(await recorder.until(event => event.type === "request.resolved")).toMatchObject({ source: "user" });
+    } finally { timer.mockRestore(); }
+  });
+
   it("maps Fuigo's _fuigo/ask_user_question to a question card and answers {outcome:accepted} by question text (ASK3)", async () => {
     const dump = join(scratch, "fuigo-q.json");
     process.env.FAKE_ACP_DUMP = dump;
@@ -1350,7 +1545,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     // The line is shown in the chat: it names the engine as Settings does (the
     // instance's name) and never an environment variable, a millisecond
     // figure or the driver's internal kind.
-    expect(error?.message).toBe("ACP Test went silent for 1 second, so the turn was stopped.");
+    expect(error?.message).toBe("ACP Test went silent for 1 second with no tool running, so the turn was stopped.");
     expect(instance.adapter.hasSession("t-stall")).toBe(false);
   });
 
@@ -1377,6 +1572,50 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(done).toMatchObject({ ok: true });
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
   });
+
+  // MOCA-260 (upstream #1920): a quiet `sleep` or build sends nothing while
+  // it runs, and the guard used to stop the turn as if the agent had hung.
+  it("does not expire an agent while a tool it started is still running", async () => {
+    process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
+    process.env.FAKE_ACP_TOOL_MS = "600";
+    try {
+      await create(GrokAgentDriver, "slow-tool");
+      await instance.adapter.sendTurn({ threadId: "t-slow-tool", text: "go" });
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+      expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+      expect(recorder.events.find((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool")).toMatchObject({ ok: true });
+    } finally {
+      delete process.env.FAKE_ACP_TOOL_MS;
+    }
+  });
+
+  it("still fails an agent that goes silent once its tool has finished", async () => {
+    process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
+    await create(GrokAgentDriver, "stall-after-tool");
+    await instance.adapter.sendTurn({ threadId: "t-stall-tool", text: "go" });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    expect((recorder.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined)?.message).toMatch(/no tool running/i);
+    expect(instance.adapter.hasSession("t-stall-tool")).toBe(false);
+  });
+
+  // The guard waits while a tool runs (upstream #1920); an engine that never
+  // reports the tool finished must still end the turn at the tool cap.
+  it("ends the turn when a tool never reports finished, at the tool-running cap", async () => {
+    process.env.MURAGE_ACP_PROMPT_IDLE_MS = "100";
+    process.env.MURAGE_ACP_TOOL_MAX_MS = "450";
+    process.env.FAKE_ACP_TOOL_NEVER_FINISHES = "1";
+    try {
+      await create(GrokAgentDriver, "stall-after-tool");
+      await instance.adapter.sendTurn({ threadId: "t-tool-cap", text: "go" });
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+      expect((recorder.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined)?.message)
+        .toMatch(/tool running .* without a word/i);
+      expect(instance.adapter.hasSession("t-tool-cap")).toBe(false);
+    } finally {
+      delete process.env.MURAGE_ACP_TOOL_MAX_MS;
+      delete process.env.FAKE_ACP_TOOL_NEVER_FINISHES;
+    }
+  }, 15_000);
 
   // An end_turn with nothing to show for it used to complete ok:true, so the
   // person's message went unanswered with no error card, Inbox item or
@@ -1987,6 +2226,162 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(rows.filter(row=>row.event==="rpc_requested"&&row.method==="session/prompt")).toHaveLength(1);
     expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|fake-private|billing\.invalid/);
     expect(errors[0]).not.toHaveProperty("setup");
+  });
+
+  it("a Fuigo retry resets the streamed text so only the last attempt is kept", async () => {
+    await create(FuigoDiagnosticDriver, "fuigo-retry:restream");
+    await instance.adapter.sendTurn({ threadId: "t-fuigo-restream", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
+    const shape = recorder.events.flatMap(event =>
+      event.type === "content.delta" ? [`d:${event.delta}`] : event.type === "content.reset" ? ["reset"]
+        : event.type === "item.completed" && event.itemType === "assistant_text" ? [`item:${event.text}`] : []);
+    expect(shape).toEqual(["d:A1", "reset", "d:A2", "reset", "d:A3", "item:A3"]);
+  });
+
+  it("a Fuigo retry keeps the tool row and the text before it, dropping only the failed attempt's text after it", async () => {
+    await create(FuigoDiagnosticDriver, "fuigo-retry:tool");
+    await instance.adapter.sendTurn({ threadId: "t-fuigo-retool", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
+    const shape = recorder.events.flatMap(event =>
+      event.type === "content.reset" ? ["reset"] : event.type === "item.started" && event.itemType === "tool" ? ["tool:started"]
+        : event.type === "item.completed" && event.itemType === "tool" ? [`tool:${event.ok ? "ok" : "failed"}`]
+          : event.type === "item.completed" && event.itemType === "assistant_text" ? [`item:${event.text}`] : []);
+    expect(shape).toEqual(["item:Before. ", "tool:started", "tool:ok", "reset", "item:Final answer."]);
+  });
+
+  it("after a retry, what the server persists and the memory capture reads is the final attempt's text plus the tool row", async () => {
+    await create(FuigoDiagnosticDriver, "fuigo-retry:tool");
+    await instance.adapter.sendTurn({ threadId: "t-fuigo-persist", text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
+    // The same rule server/index.ts applies: only item.completed assistant_text
+    // is persisted or handed to capture; content.delta never is.
+    const persisted = recorder.events.flatMap(event => event.type === "item.completed" && event.itemType === "assistant_text" ? [event.text] : []).join("");
+    const toolRows = recorder.events.filter(event => event.type === "item.completed" && event.itemType === "tool");
+    expect(persisted).toBe("Before. Final answer.");
+    expect(persisted).not.toContain("After one.");
+    expect(toolRows).toHaveLength(1);
+  });
+
+  describe("Fuigo 1.0.22 retryDiscard", () => {
+    const run = async (variant: string) => {
+      await create(FuigoDiagnosticDriver, `fuigo-retry:disc-${variant}`);
+      await instance.adapter.sendTurn({ threadId: `t-fuigo-disc-${variant}`, text: "fixture only" });
+      expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
+      return recorder.events.flatMap(event =>
+        event.type === "content.delta" ? [`${event.streamKind === "reasoning_text" ? "r" : "d"}:${event.delta}`]
+          : event.type === "content.reset" ? [event.streamKind === "reasoning_text" ? "rreset" : "reset"]
+            : event.type === "item.completed" && event.itemType === "assistant_text" ? [`item:${event.text}`] : []);
+    };
+
+    it("drops exactly the discarded streamStartMs attempt and keeps an earlier response's text as its own item", async () => {
+      // the completed earlier response is closed when the next response starts
+      expect(await run("exact")).toEqual(["d:Earlier. ", "item:Earlier. ", "d:BAD", "reset", "d:Final", "item:Final"]);
+    });
+
+    it("never resets without discardEmitted when the capability is present", async () => {
+      expect(await run("nodiscard")).toEqual(["d:A", "d:B", "d:C", "item:ABC"]);
+    });
+
+    it("without streamStartMs drops everything since the last response_completed, no further back", async () => {
+      expect(await run("boundary")).toEqual(["d:R1 ", "d:R2bad", "reset", "d:R1 ", "d:R2ok", "item:R1 R2ok"]);
+    });
+
+    it("keeps the fallback retryStatus chunk out of reasoning and out of the discard", async () => {
+      const shape = await run("status");
+      expect(shape).toEqual(["r:Think. ", "d:BAD", "reset", "rreset", "d:Final", "item:Final"]);
+      expect(shape.join("")).not.toContain("hiccup");
+    });
+
+    it("a later discard never brings back reasoning retired by a committed text item", async () => {
+      const shape = await run("resurrect");
+      const afterReset = shape.slice(shape.indexOf("rreset") + 1);
+      expect(shape).toContain("rreset");
+      expect(afterReset.some(entry => entry.startsWith("r:"))).toBe(false);
+      expect(shape.at(-1)).toBe("item:Final");
+    });
+
+    const hostedShape = () => recorder.events.flatMap(event =>
+      event.type === "content.reset" ? [event.streamKind === "reasoning_text" ? "rreset" : "reset"]
+        : event.type === "item.started" && event.itemType === "tool" ? [`start:${event.itemId}`]
+          : event.type === "item.completed" && event.itemType === "tool" ? [`${event.ok ? "ok" : "interrupted"}:${event.itemId}`]
+            : event.type === "item.completed" && event.itemType === "assistant_text" ? [`item:${event.text}`] : []);
+
+    it("text before a hosted tool row stays discardable: the resend's text shows once, both rows stay", async () => {
+      const live = await run("hosted");
+      // live, the text after the row reads as a new paragraph of the same bubble
+      expect(live).toEqual(["d:A", "reset", "d:A2", "d:\n\n", "d: Answer.", "item:A2", "item: Answer."]);
+      // the row shows at once; the text is committed when its response completes
+      expect(hostedShape()).toEqual(["start:ws-1", "ok:ws-1", "reset", "start:ws-2", "ok:ws-2", "item:A2", "item: Answer."]);
+      const items = recorder.events.flatMap(event => event.type === "item.completed" && event.itemType === "assistant_text" ? [event.text] : []);
+      expect(items).not.toContain("A");
+    });
+
+    it("a hosted row the discarded attempt left running ends interrupted, never in progress", async () => {
+      await run("hosted-open");
+      expect(hostedShape()).toEqual(["start:ws-1", "interrupted:ws-1", "reset", "start:ws-2", "ok:ws-2", "item:A2"]);
+      const interrupted = recorder.events.find(event => event.type === "item.completed" && event.itemType === "tool" && event.itemId === "ws-1");
+      expect(interrupted).toMatchObject({ ok: false, detail: "Interrupted when the reply restarted." });
+    });
+
+    it("a retry without discardEmitted changes nothing: no reset, the hosted row completes once", async () => {
+      const shape = await run("hosted-nodiscard");
+      expect(shape).not.toContain("reset");
+      expect(hostedShape()).toEqual(["start:ws-1", "ok:ws-1", "item:A", "item:B"]);
+    });
+
+    it("a client-executed tool row of an accepted response is untouched by a later discard", async () => {
+      await run("hosted-client");
+      expect(hostedShape()).toEqual(["item:R", "start:rd-1", "start:ws-2", "interrupted:ws-2", "reset", "ok:rd-1", "item:Y"]);
+    });
+
+    /** hostedShape plus each text item's row anchor and the untagged thought marker */
+    const anchoredShape = () => recorder.events.flatMap(event =>
+      event.type === "content.reset" ? [event.streamKind === "reasoning_text" ? "rreset" : "reset"]
+        : event.type === "content.delta" && event.streamKind === "reasoning_text" ? [`r:${event.delta}`]
+          : event.type === "item.started" && event.itemType === "tool" ? [`start:${event.itemId}`]
+            : event.type === "item.completed" && event.itemType === "tool" ? [`${event.ok ? "ok" : "interrupted"}:${event.itemId}`]
+              : event.type === "item.completed" && event.itemType === "assistant_text" ? [`item:${event.text}${event.beforeItemId ? `@${event.beforeItemId}` : ""}`] : []);
+
+    it("an ordinary hosted search saves its text at response_completed, the part before the row anchored to it", async () => {
+      await run("hosted-ok");
+      expect(anchoredShape()).toEqual(["start:ws-1", "ok:ws-1", "item:Let me search.@ws-1", "item:Here is what I found.", "r:mark"]);
+    });
+
+    it("text before two hosted rows in a row is anchored to the first", async () => {
+      await run("hosted-twin");
+      expect(anchoredShape()).toEqual(["start:ws-1", "start:ws-2", "ok:ws-1", "ok:ws-2", "item:Let me search.@ws-1", "item:Found."]);
+    });
+
+    it("a client-executed or untagged row commits the text before it at once, unanchored", async () => {
+      await run("hosted-local");
+      expect(anchoredShape()).toEqual(["item:Let me read.", "start:rd-1", "ok:rd-1", "item:A", "start:ws-1", "ok:ws-1", "item:B"]);
+    });
+
+    it("a discard without streamStartMs ends the dropped attempt's running hosted row interrupted", async () => {
+      await run("hosted-epoch");
+      expect(anchoredShape()).toEqual(["start:ws-1", "interrupted:ws-1", "reset", "item:A2"]);
+    });
+
+    it("a discard ends every running hosted row of the dropped attempt interrupted, past 512 rows", async () => {
+      await run("hosted-many");
+      const shape = anchoredShape();
+      const interrupted = shape.filter(entry => entry.startsWith("interrupted:"));
+      expect(interrupted).toHaveLength(600);
+      expect(interrupted.at(-1)).toBe("interrupted:ws-600");
+      expect(shape.at(-1)).toBe("item:A2");
+    });
+
+    it("accepts the replay carrier for live updates and drops its isReplay copies", async () => {
+      expect(await run("carrier")).toEqual(["d:X", "d:Y", "reset", "d:Y", "item:Y"]);
+    });
+  });
+
+  it("a normal Fuigo turn streams and completes with no reset", async () => {
+    await create(FuigoDiagnosticDriver);
+    await instance.adapter.sendTurn({ threadId: "t-fuigo-normal", text: "hello" });
+    expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(recorder.events.some(event => event.type === "content.reset")).toBe(false);
+    expect(recorder.events.some(event => event.type === "item.completed" && event.itemType === "assistant_text")).toBe(true);
   });
 
   it.each(["success", "unmatched"])("Fuigo observations never turn %s into a terminal error", async variant => {
@@ -3056,6 +3451,15 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
     recorder = recordEvents(instance.adapter);
   };
   const readDump = () => JSON.parse(readFileSync(dump, "utf8"));
+  // The engine writes its dump with a plain write, so a read can land on a
+  // half-written file; a late answer reaches it after turn.completed.
+  const dumpDecision = () => {
+    try {
+      return readDump().decision;
+    } catch {
+      return undefined;
+    }
+  };
   const assistantText = () =>
     recorder.events
       .filter((e): e is Extract<typeof e, { itemType: "assistant_text" }> => e.type === "item.completed" && (e as any).itemType === "assistant_text")
@@ -3389,6 +3793,12 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
   // (6) the late-request path when the turn completes before anyone answers
   it("late request, turn finishes first: the card closes as finished-untrusted and the withheld chip names what the engine asked about", async () => {
     process.env.FAKE_ACP_TRUST_PROMPT_FIRST = "1";
+    // The turn's end answers the engine and then stops it (this fixture
+    // process is not pooled). The real engine reads its stdin before it exits;
+    // the fake's default exit on SIGTERM is immediate and often came before
+    // it read the answer, so the dump never saw it.
+    process.env.FAKE_ACP_TERM = "linger";
+    process.env.FAKE_ACP_TERM_MS = "2000";
     try {
       await create();
       const { turnId } = await instance.adapter.sendTurn({
@@ -3410,9 +3820,12 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
       const doneAt = recorder.events.findIndex((e) => e.type === "turn.completed");
       expect(chipAt).toBeGreaterThan(-1);
       expect(chipAt).toBeLessThan(doneAt);
-      expect(readDump().decision).toEqual({ outcome: "reject" });
+      // the "reject" is sent as the turn settles; the engine reads it just after turn.completed
+      await expect.poll(dumpDecision, { timeout: 10000 }).toEqual({ outcome: "reject" });
     } finally {
       delete process.env.FAKE_ACP_TRUST_PROMPT_FIRST;
+      delete process.env.FAKE_ACP_TERM;
+      delete process.env.FAKE_ACP_TERM_MS;
     }
   });
 
@@ -3435,6 +3848,11 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
   // as failed, never "stopped before anyone answered"
   it("late request, the turn fails before anyone answers: the card closes as failed-untrusted with the withheld chip", async () => {
     process.env.FAKE_ACP_TRUST_FAIL_PROMPT = "1";
+    // A failed turn stops the engine right after answering it. The real engine
+    // reads its stdin before it exits; the fake's default exit on SIGTERM is
+    // immediate and, under load, came before it read the answer.
+    process.env.FAKE_ACP_TERM = "linger";
+    process.env.FAKE_ACP_TERM_MS = "2000";
     try {
       await create();
       const { turnId } = await instance.adapter.sendTurn({
@@ -3453,9 +3871,11 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
       const doneAt = recorder.events.findIndex((e) => e.type === "turn.completed");
       expect(chipAt).toBeGreaterThan(-1);
       expect(chipAt).toBeLessThan(doneAt);
-      await expect.poll(() => readDump().decision, { timeout: 3000 }).toEqual({ outcome: "reject" });
+      await expect.poll(dumpDecision, { timeout: 10000 }).toEqual({ outcome: "reject" });
     } finally {
       delete process.env.FAKE_ACP_TRUST_FAIL_PROMPT;
+      delete process.env.FAKE_ACP_TERM;
+      delete process.env.FAKE_ACP_TERM_MS;
     }
   });
 

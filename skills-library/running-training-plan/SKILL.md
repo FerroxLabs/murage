@@ -6,7 +6,7 @@ description: |
   Do NOT use for marathon or ultra training (requires specialized periodization), sprint training for track events, or injury rehabilitation running programs.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "running fitness workout-planning"
   category: "health-wellness"

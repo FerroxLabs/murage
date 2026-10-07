@@ -28,6 +28,14 @@ describe("readClaudeModelCatalog", () => {
       contextWindow: 1_000_000,
     });
     expect(STATIC_CLAUDE_MODELS.options[ids.indexOf("claude-opus-5")]).toEqual({ id: "claude-opus-5", label: "Claude Opus 5" });
+    // Sonnet 5.5 (upstream #2025): the id the Claude CLI 2.1.287 carries as its
+    // first-party id, with the 1M window it reports as native.
+    expect(STATIC_CLAUDE_MODELS.options[ids.indexOf("claude-sonnet-5-5")]).toEqual({
+      id: "claude-sonnet-5-5",
+      label: "Claude Sonnet 5.5",
+      contextWindow: 1_000_000,
+    });
+    expect(ids.indexOf("claude-sonnet-5-5")).toBe(ids.indexOf("claude-sonnet-5") - 1);
     expect(STATIC_CLAUDE_MODELS.default).toBe("claude-sonnet-5");
   });
 

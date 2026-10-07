@@ -6,7 +6,7 @@ description: |
   Do NOT use for individual KPI definitions with formulas (use kpi-definition), metric hierarchy design (use metric-framework), or data visualization chart selection (use chart-type-selector).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-visualization analysis template"
   category: "data-analysis"

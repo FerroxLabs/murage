@@ -9,12 +9,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { fixtureFetch } from "./testing/conversation-proof.ts";
 
 const posixOnly = describe.skipIf(process.platform === "win32");
 let fixture: VerificationServer, headers: Record<string, string> = {};
-/** Conversation routes answer only to a proven caller; a bare call here is the paired phone's credential, without the desktop proof. */
-const fetch = fixtureFetch(() => fixture);
 
 const api = async (method: string, path: string, body?: unknown, extra: Record<string, string> = headers) => {
   const response = await fetch(`${fixture.info.url}${path}`, {
@@ -73,19 +70,13 @@ posixOnly("engine commands", () => {
   });
 
   it("runs an engine command only for the owner's own surfaces", async () => {
-    // A caller that proves neither the desktop nor the paired phone does not
-    // reach the conversation at all: not for a command, not for plain words.
     for (const unproven of [{}, { "x-murage-companion": "1" }, { "x-murage-surface": "desktop" }] as Array<Record<string, string>>) {
-      for (const text of ["/review", "a plain note, not a command"]) {
-        const refused = await globalThis.fetch(`${fixture.info.url}/api/bots/${bot.id}/messages`, {
-          method: "POST", headers: { "content-type": "application/json", ...unproven }, body: JSON.stringify({ threadId: bot.threadId, text }),
-        });
-        expect([JSON.stringify(unproven), text, refused.status]).toEqual([JSON.stringify(unproven), text, 404]);
-      }
+      const refused = await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "/review" }, unproven);
+      expect(refused.status, JSON.stringify(unproven)).toBe(403);
     }
     const messages = (await api("GET", `/api/threads/${bot.threadId}/messages?limit=200`)).body.messages as Array<{ role: string; text?: string }>;
-    expect(messages.some((message) => message.role === "user" && (message.text === "/review" || message.text === "a plain note, not a command"))).toBe(false);
-    // the paired phone's ordinary words are taken, and its command runs
+    expect(messages.some((message) => message.role === "user" && message.text === "/review")).toBe(false);
+    // ordinary words from the same callers are still taken
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "a plain note, not a command" }, {})).status).toBe(202);
     await expect.poll(idle, { timeout: 20000 }).toBe(true);
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "/review" })).status).toBe(202);

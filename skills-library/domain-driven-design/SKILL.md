@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user needs a different architecture design capability -- check sibling skills in the architecture design subcategory.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "architecture backend design-patterns"
   category: "software-engineering"

@@ -8,7 +8,7 @@ description: |
   infrastructure, or performing security audits.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "web-development accessibility optimization clean-code best-practices"
   category: "engineering"

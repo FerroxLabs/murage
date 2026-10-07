@@ -1,6 +1,13 @@
 // Keep platform diagnostics in the updater log; the app surfaces a small,
 // consistent recovery step without changing any updater control flow.
+export const UPDATE_VERIFICATION_MESSAGE = "This update could not be verified, so Murage did not install it.";
+export function updateVerificationError(cause) {
+  return Object.assign(new Error(UPDATE_VERIFICATION_MESSAGE, { cause }), { code: "ERR_MURAGE_UPDATE_VERIFICATION" });
+}
+export const isUpdateVerificationError = (error) => error?.code === "ERR_MURAGE_UPDATE_VERIFICATION";
+
 export function updateErrorMessage(error) {
+  if (isUpdateVerificationError(error)) return UPDATE_VERIFICATION_MESSAGE;
   const message = String(error?.message ?? error);
   const detail = `${error?.code ?? ""} ${message}`;
 

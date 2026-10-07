@@ -90,9 +90,29 @@ export interface RuntimeEventBase {
   raw?: { source: string; payload: unknown };
 }
 
+/** One sub agent or background task of a running turn, in a shape no engine
+ * owns. Times are epoch milliseconds. `toolCount` is the tool calls the task
+ * has made so far (0 when the engine does not say). */
+export type SubtaskStatus = "started" | "running" | "done" | "failed";
+export interface Subtask {
+  id: string;
+  label: string;
+  status: SubtaskStatus;
+  startedAt: number;
+  endedAt?: number;
+  toolCount: number;
+}
+
+/** What became of a message steered into a running turn (ProviderAdapter.steer). */
+export type SteerDelivery = "delivered" | "rejected" | "uncertain";
+
 export type RuntimeEvent = RuntimeEventBase &
   (
     | { type: "session.started"; sessionId: string | null; model?: string | null }
+    /** A sub agent or background task started, progressed or ended. `subtasks`
+     * is the whole list for the turn after this change, so a client that joins
+     * late renders from the latest event alone. Owner-only on every stream. */
+    | { type: "turn.subtask"; subtask: Subtask; subtasks: Subtask[] }
     | { type: "session.exited"; reason?: string }
     | { type: "turn.started" }
     | {
@@ -108,6 +128,8 @@ export type RuntimeEvent = RuntimeEventBase &
         ok: boolean;
         stopReason?: string | null;
         cost?: number | null;
+        /** Actual provider-reported cost, distinct from subscription estimates. */
+        charge?: number | null;
         denials?: string[];
         /** THIS turn's token total, as the provider reports it at the end.
          * The one figure the harness accumulates — thread.token-usage.updated
@@ -118,18 +140,28 @@ export type RuntimeEvent = RuntimeEventBase &
     /** `summary` is a short human read of the tool's arguments, for engines
      * that hide the real call inside a wrapper tool — without it every chip
      * in the transcript is the same wrapper name. */
-    | { type: "item.started"; itemType: "tool" | "reasoning"; title?: string; summary?: string }
+    | { type: "item.started"; itemType: "tool" | "reasoning"; title?: string; summary?: string; input?: unknown;
+        /** Canonical tool kind and identity, separate from display text. */
+        toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string } }
     | { type: "item.updated"; itemType: "tool" | "reasoning"; tokens?: number | null }
     /** `detail` is why the tool failed, as the engine reported it. It reaches
      * the person, not only the model's context. */
-    | { type: "item.completed"; itemType: "tool"; ok: boolean; detail?: string }
-    | { type: "item.completed"; itemType: "assistant_text"; text: string }
+    | { type: "item.completed"; itemType: "tool"; ok: boolean; result?: unknown; detail?: string }
+    /** `beforeItemId` names a tool item already shown that this text came
+     * before (Fuigo hosted tools): the text is saved ahead of that row. */
+    | { type: "item.completed"; itemType: "assistant_text"; text: string; beforeItemId?: string }
     /** Provider-generated raster bytes. This event is folded into the
      * private attachment store and is never forwarded to renderer SSE: a
      * multi-megabyte base64 result belongs in one durable message URL, not
      * duplicated through every connected window. */
     | { type: "item.completed"; itemType: "assistant_image"; data: string; alt?: string }
     | { type: "content.delta"; streamKind: "assistant_text" | "reasoning_text"; delta: string }
+    /** The engine is resending its request mid-stream: the assistant text
+     * streamed since the last committed item (tool call or completed item) is
+     * void. Tool rows already emitted stay. Live only; renderers drop the
+     * in-progress bubble. With Fuigo's precise discard the driver re-sends
+     * whatever text of that stream survives as a content.delta right after. */
+    | { type: "content.reset"; streamKind: "assistant_text" | "reasoning_text" }
     /** The agent's to-do list for this turn, whole: each update replaces the
      * previous one (ACP `plan`). Live only — it is not a transcript message. */
     | { type: "plan.updated"; entries: AgentPlanEntry[] }
@@ -140,6 +172,9 @@ export type RuntimeEvent = RuntimeEventBase &
      * Not a transcript message: the harness caches it per bot for the
      * composer's "/" menu. */
     | { type: "engine.commands"; commands: EngineCommand[] }
+    /** A steer the driver reported "uncertain" was taken into the turn after
+     * all (Fuigo echoed it late). Names the steer by the id the server sent with it. */
+    | { type: "steer.confirmed"; interjectionId: string }
     | {
         type: "request.opened";
         requestType: "permission" | "question";
@@ -180,6 +215,25 @@ export type RuntimeEvent = RuntimeEventBase &
          * it leaves the stop line reading the card text, which for anything
          * but a shell command means it cannot tell and the card holds. */
         toolCall?: { name: string; input: unknown };
+        /** Additive (0.1.63): the Claude engine's WHOLE tool input as JSON
+         * text (credential values masked, about 16 KB, a cut marked with
+         * "[truncated, N bytes more]"), so a card shows `method: "DELETE"`
+         * and not only the url. Unlike `toolCall` it reaches the window,
+         * and it becomes the card text; `summary` stays the one-line form
+         * that policy keys read. Claude built-ins and mcp__ tools only. */
+        toolInput?: string;
+        /** Additive (0.1.63): the MODEL's own stated reason for the action
+         * (Codex's `reason`). `summary` is the real target, the command or
+         * the files; the card shows this under it, labelled as the model's. */
+        reason?: string;
+        /** Additive: the engine's STRUCTURED kind of the tool (ACP's
+         * `toolCall.kind`: read, edit, delete, move, search, execute, think,
+         * fetch, other), never display text. */
+        toolKind?: string;
+        /** Additive: the identity the engine stamped on the tool (Fuigo's
+         * `_meta["fuigo/tool"]`: namespace, name, kind). A title can be any
+         * text; this cannot come from the model. */
+        toolIdentity?: { namespace: string; name: string; kind?: string };
       }
     | {
         type: "request.resolved";
@@ -202,7 +256,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; errorKind?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
+    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -231,13 +285,34 @@ export type RequestOutcome = "allowed-once" | "rejected" | "answered" | "unavail
 // the first turn (the agentcal per-turn-process model) with resumeCursor
 // carrying the provider-native continuation (e.g. a claude session id).
 export interface SendTurnInput {
-  /** Server-only synchronous submission fence. Supporting adapters call after
-   * setup immediately before prompt handoff, without an intervening await.
-   * On refusal, do not submit; return the addressable turnId for cleanup. */
+  /** Routine, scheduled or memory work: not user activity. The warm pool
+   * releases this turn's engine as soon as it finishes and never keeps it as a spare. */
+  background?: boolean;
+  /** Driver-internal: this is an intent warm (prewarm), not a turn. The engine is
+   * started and parked idle; nothing is sent, no turn events are emitted. */
+  prewarm?: boolean;
+  /** Inspection observes what the model receives. `mounts` is what the SYSTEM
+   * text names (the stable memory label when F4b normalizes it); `body` carries
+   * the concrete per-turn mounts used for the message text and the per-turn
+   * binding line that rides in front of it. */
+  onToolSurface?: (surface: import("./murage-tool-surface.ts").McpToolSurface, mounts: import("./murage-tool-surface.ts").MurageToolMounts, body?: { mounts: import("./murage-tool-surface.ts").MurageToolMounts; binding: string }) => void;
+  /** Server-only synchronous submission fence, the one validation contract
+   * every adapter honours: called immediately before EVERY engine prompt
+   * write of this turn (a relaunch's write too), with no await between the
+   * call and the write, and called again each time (the server validates
+   * every call; only its delivery bookkeeping is idempotent). On refusal
+   * (it throws), write nothing. Before sendTurn resolved, either throw or
+   * return the addressable turnId for cleanup; after it resolved, settle the
+   * turn failed without writing, and the server re-runs it once on a reset
+   * session. */
   beforeSubmit?: () => void;
   /** Server-authorized reference bundle; the shared adapter consumes it once. */
   memoryContext?: MemoryBundle;
   threadId: ThreadId;
+  /** Who this turn runs for, stamped by the harness. A driver that keeps an
+   * engine process warm across turns keys reuse on it, so a process is never
+   * shared between bots or between the owner and any other audience. */
+  warmIdentity?: { botId: string; audience: "owner" | "non-owner"; decidedOwner?: boolean; humanPrincipal?: string };
   text: string;
   model?: string;
   /** Exact server-authorized incoming bytes; never resolve paths in drivers. */
@@ -253,8 +328,11 @@ export interface SendTurnInput {
    * in `text`/`transcript`, and replaying it on top of the old context would
    * hand the engine both branches (upstream #1562). */
   sessionReset?: boolean;
+  replayMetadata?: string;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
-  transcript?: Array<{ role: "user" | "assistant"; text: string }>;
+  transcript?: Array<{ role: "user" | "assistant"; text: string;
+    /** Run header (turn-context.ts runHeaders): on the first reply of a run written on an engine, the line saying so. */
+    header?: string }>;
   /** Bot persona (name/title/description) as a system prompt. */
   system?: string;
   /** This turn is one of the engine's own "/" commands, picked or typed by
@@ -295,7 +373,10 @@ export interface SendTurnInput {
     /** Peer-agent comms: an MCP proxy (list_bots / ask_bot) that routes back
      * through the harness so this bot can message other bots. The harness
      * owns turns, permissions, and recursion limits; the proxy only forwards. */
-    agents?: { command: string; args: string[]; env: Record<string, string> };
+    agents?: { command: string; args: string[]; env: Record<string, string>;
+      /** The MCP server name to mount it under (default "agents"): the Chief's
+       * proposal turn on Fuigo/Grok Build uses a per-turn alias. */
+      serverName?: string };
     /** Physical Android phone tools over authorized USB debugging. */
     phone?: { command: string; args: string[]; env: Record<string, string> };
     /** The app's built-in browser: an MCP proxy (server/drivers/browser-proxy)
@@ -306,11 +387,20 @@ export interface SendTurnInput {
      * opencode model access as tools. url is the dweb HTTP base. */
     dweb?: { url: string };
     /** User-configured MCP servers (config.json `mcpServers`), already
-     * validated and normalized by customMcpServers(). Mounted WITHOUT any
-     * pre-allow: their tools ride each driver's normal permission flow. */
-    custom?: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
+     * validated and normalized by customMcpServers(), plus link servers as a
+     * proxy mount (server/custom-mcp-mounts.ts). `env` is the owner's and is
+     * refused if it names a Murage variable; `harnessEnv` is Murage's and is
+     * merged after that check. Mounted WITHOUT any pre-allow: their tools ride
+     * each driver's normal permission flow. */
+    custom?: Record<string, { command: string; args: string[]; env: Record<string, string>; harnessEnv?: Record<string, string> }>;
   };
   cwd?: string;
+  /** Extra folders the owner granted this bot, already validated and made
+   * canonical by the server. The Claude driver passes them as `--add-dir` so
+   * reads there need no ask. Set only where the bot's mode already approves
+   * work for itself (Auto, Full access, No limits), never in Ask mode, and
+   * never from a project's write-leased roots. */
+  addDirs?: string[];
   /** 0.1.52 FUIGOTRUST1 (additive): Murage's folder-trust record for `cwd`,
    * handed only to drivers whose engine gates repo-local sources behind a
    * trust decision (`capabilities.folderTrust`). `decision` is the remembered
@@ -326,16 +416,13 @@ export interface SendTurnInput {
    * `--dangerously-skip-permissions`) asks for this turn instead, and Murage
    * answers everything else at once. Also set on No limits, which drops the
    * stop line but keeps the key guard: that guard holds only if Murage sees
-   * the asks. Absent: the instance's own setting stands, exactly as before. */
+   * the asks. When both stopLine and routeAsks are absent, the instance's
+   * own setting stands. */
   stopLine?: true;
-  /** The bot is on Ask or Auto, below Full access. The owner's mode decides
-   * what is asked, and that only works if the engine sends its permission
-   * asks to Murage: Ask raises a card for the owner, Auto answers what Auto
-   * allows and still holds the stop line. A driver whose instance is set to
-   * skip asks therefore asks for this turn, exactly as it does under
-   * `stopLine`. Unlike `stopLine` it changes nothing on an instance that
-   * already asks (connected apps stay as they were). Absent (Full access and
-   * No limits send `stopLine`): the instance's own setting stands. */
+  /** Ask and Auto turns must reach Murage's permission broker. For this turn
+   * only, replace a skip-all instance setting with its asking mode; preserve
+   * every other instance mode. Full access and No limits use stopLine above.
+   * Engines without a permission setting have nothing to override. */
   routeAsks?: true;
   /** A scheduled or manual routine run. Its permission cards wait until the
    * owner answers them or the turn stops, instead of the drivers' 15-minute
@@ -343,6 +430,14 @@ export interface SendTurnInput {
    * limit and answering the card later carries the same run on. Absent: the
    * ordinary 15-minute deny. */
   holdPermissionAsks?: true;
+  holdProjectAsks?: true;
+  /** The Chief's hidden New project proposal turn (lane N/N2): it answers
+   * with a proposal block in its reply; where the turn mounts the agents
+   * server, project_propose is the one Murage tool it may use. A driver that
+   * can narrow the engine further does: pi's gate asks before every other
+   * tool, reads included; Codex runs with no shell tool, no web search, no
+   * ChatGPT apps and a read-only sandbox. Sent together with `stopLine`. */
+  proposalOnly?: true;
 }
 
 /** See `SendTurnInput.folderTrust`. `sources` are display names from the
@@ -367,6 +462,7 @@ export interface TurnStartResult {
 
 export interface ProviderAdapter {
   readonly provider: DriverKind;
+  readonly mcpToolSurface?: import("./murage-tool-surface.ts").McpToolSurface;
   readonly capabilities: {
     memoryDelivery?: "prefixed-reference" | "unavailable";
     memoryMcp?: boolean;
@@ -384,6 +480,11 @@ export interface ProviderAdapter {
      * connected apps). Same rule again: a key in the config says the user
      * HAS those connections, not that this driver can reach them. */
     composioMcp?: boolean;
+    /** True when the engine runs on its OWN tools and its OWN approvals: Murage
+     * mounts nothing into it (it does not take Murage's MCP servers) and
+     * Murage's approval cards and stop-line never see what it runs. The primer
+     * and the permission menu say so instead of promising either. */
+    runsOnOwnTools?: boolean;
     /** True when the driver can mount the first-party physical-phone MCP. */
     phoneMcp?: boolean;
     /** True when the driver can mount the built-in browser MCP. Same rule:
@@ -428,8 +529,22 @@ export interface ProviderAdapter {
      * driver takes from `SendTurnInput.folderTrust` (Fuigo 1.0.13). The
      * server scans the folder and hands the record only to such drivers. */
     folderTrust?: boolean;
+    /** True when the adapter implements textOnlyTurn (PIP reflection): one
+     * tool-free structured call, no tools or MCP servers mounted. */
+    textOnlyTurn?: true;
   };
+  /** PIP reflection: one text-only structured call. Absent unless
+   * capabilities.textOnlyTurn is set. Settles only after the transport is
+   * confirmed closed. */
+  textOnlyExecutable?(): string;
+  prepareTextOnlyTurn?(model: string, providerRoute?: import("./provider-routing.ts").ProviderTurnRoute): { model: string; turn(input: import("./memory/pip-transport.ts").TextOnlyTurnInput): Promise<import("./memory/pip-transport.ts").TextOnlyTurnResult> };
+  textOnlyTurn?(input: import("./memory/pip-transport.ts").TextOnlyTurnInput): Promise<import("./memory/pip-transport.ts").TextOnlyTurnResult>;
   sendTurn(input: SendTurnInput): Promise<TurnStartResult>;
+  /** Intent warm: start this thread's engine from the spawn inputs of its last real
+   * turn (held in memory only), park it idle and hold it for one activity window.
+   * True when an engine was started; false when nothing was remembered, one is
+   * already live, or the thread is busy. Optional: drivers without a warm pool omit it. */
+  prewarm?(threadId: ThreadId): Promise<boolean>;
   /** Request a stop. A driver that can observe teardown resolves with a
    * ProviderStopResult (A2); `void` is the legacy "requested, not observed". */
   interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void | ProviderStopResult>;
@@ -471,9 +586,17 @@ export interface ProviderAdapter {
     decision: { behavior: "allow" | "deny" | "answer"; message?: string; answers?: QuestionAnswer[] },
   ): Promise<RequestOutcome>;
   /** Deliver a user message into the RUNNING turn on this thread. Resolves
-   * false when there is no live turn to steer (the caller then sends it as
-   * a normal turn). Only drivers with `capabilities.queueing` implement it. */
-  steer?(threadId: ThreadId, text: string): Promise<boolean>;
+   * false or "rejected" when there is no live turn to steer (the caller then
+   * sends it as a normal turn), true or "delivered" when the turn took it, and
+   * "uncertain" when the engine neither confirmed nor refused it in time: it
+   * may still arrive, so the caller must not send a copy (a later
+   * `steer.confirmed` event says it did). Only drivers with
+   * `capabilities.queueing` implement it.
+   * `beforeWrite` is the same fence as SendTurnInput.beforeSubmit for this
+   * message: called immediately before its write, however late (a steer
+   * queued until the engine is ready); when it throws, nothing is written
+   * and the steer resolves false or "rejected". */
+  steer?(threadId: ThreadId, text: string, beforeWrite?: () => void, interjectionId?: string): Promise<boolean | SteerDelivery>;
   hasSession(threadId: ThreadId): boolean;
   stopAll(): Promise<void>;
   onEvent(listener: RuntimeEventListener): () => void;
@@ -551,6 +674,12 @@ export interface DriverCreateInput<Config> {
   config: Config;
 }
 
+/** `manual`: a person asked (picker open, Check again), so a catalog may skip
+ *  its failure wait. Periodic and startup refreshes leave it unset. */
+export interface ModelRefreshOptions {
+  readonly manual?: boolean;
+}
+
 export interface ProviderInstance {
   readonly instanceId: InstanceId;
   readonly driverKind: DriverKind;
@@ -558,11 +687,13 @@ export interface ProviderInstance {
   readonly enabled: boolean;
   readonly models: ModelCatalog;
   /** Refresh a live catalog without recreating the provider instance. */
-  readonly refreshModels?: () => Promise<void>;
+  readonly refreshModels?: (options?: ModelRefreshOptions) => Promise<void>;
   readonly adapter: ProviderAdapter;
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */
   generateText?(prompt: string): Promise<string>;
+  /** One non-persisted owner proposal with tools and hooks disabled. */
+  proposeProject?(prompt: string, signal: AbortSignal, model: string): Promise<string>;
   /** Explicitly qualified tool-free bounded memory extraction. Absence means
    * unavailable; never infer it from chat, MCP, or generic text generation. */
   groundMemory?(input: import("./memory/extract.ts").MemoryGroundingInput, maximumOutputTokens: number, signal: AbortSignal): Promise<string>;

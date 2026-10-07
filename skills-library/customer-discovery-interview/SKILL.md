@@ -5,7 +5,7 @@ description: |
   Do NOT use for idea validation experiments (use idea-validation), user research for an existing product (use user-research-plan), or survey design (use employee-survey).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship research strategy planning analysis"
   category: "business-strategy"

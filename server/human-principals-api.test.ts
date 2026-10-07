@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
@@ -27,7 +27,7 @@ it("admits two human principals through authenticated-origin routing without own
   try{
     const env:NodeJS.ProcessEnv={HOME:home,USERPROFILE:home,MURAGE_DATA_DIR:data,MURAGE_STATIC_DIR:staticDir,MURAGE_PORT:String(port),MURAGE_WEBHOOK_PORT:String(port+1),MURAGE_DEV_DESKTOP_SECRET:secret,PATH:process.env.PATH,FAKE_CLAUDE_DUMP:dump,FAKE_CLAUDE_DUMP_EACH_TURN:"1"};
     if(process.env.SystemRoot)env.SystemRoot=process.env.SystemRoot;
-    child=spawn(process.execPath,["--import",join(root,"server/testing/slack-sdk-preload.mjs"),join(root,"server/index.ts")],{cwd:root,env,stdio:["ignore","ignore","pipe","ipc"]});
+    child=spawn(process.execPath,["--import",pathToFileURL(join(root,"server/testing/slack-sdk-preload.mjs")).href,join(root,"server/index.ts")],{cwd:root,env,stdio:["ignore","ignore","pipe","ipc"]});
     child.stderr!.on("data",chunk=>{stderr+=chunk;});child.on("message",value=>{if((value as any)?.kind==="slack-fixture")traces.push(value as any);});
     await expect.poll(async()=>{if(child!.exitCode!==null)throw new Error(stderr);try{return(await request("GET","/api/health")).status;}catch{return 0;}},{timeout:20000}).toBe(200);
     const bot=(await api("GET","/api/bots")).bots[0];

@@ -10,7 +10,7 @@ description: |
   design (use business operations or software development skills instead).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "automation planning checklist"
   category: "productivity"

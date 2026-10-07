@@ -20,7 +20,7 @@ trigger_phrases: >-
   modernize my legacy system how to refactor old code migrate legacy application
   reduce technical debt update old codebase legacy system migration plan
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: refactoring devops step-by-step planning
   category: software-project

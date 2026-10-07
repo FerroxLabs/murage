@@ -4,7 +4,7 @@ description: |
   Sales methodology mastery covering SPIN selling, Challenger Sale, consultative selling, sales funnel management, cold outreach templates, objection handling, discovery call frameworks, proposal writing, closing techniques, CRM best practices, and pipeline management. Use when the user asks about sales coach or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sales marketing strategy"
   category: "marketing-sales"

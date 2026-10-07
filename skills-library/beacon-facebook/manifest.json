@@ -1,12 +1,16 @@
 {
   "id": "beacon-facebook",
   "name": "facebook",
-  "version": "1.0.0",
-  "description": "**When to use.** When the channel mix includes Facebook — typically for community groups, older demographics, or as a Meta-ads optimization anchor — and you need a stage assignment for organic presence.",
+  "version": "1.1.0",
+  "description": "Decide what role Facebook plays in your marketing, such as a community group for existing customers. Use it when Facebook is on your channel list.",
   "defaultEnabled": false,
   "triggerTerms": [
-    "beacon",
-    "facebook"
+    "facebook",
+    "facebook group",
+    "facebook page",
+    "community group",
+    "facebook reels",
+    "meta organic"
   ],
   "requiredCapabilities": []
 }

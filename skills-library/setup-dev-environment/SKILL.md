@@ -6,7 +6,7 @@ description: |
   Do NOT use for production environment configuration, cloud infrastructure provisioning, or IDE-specific customization without a project context.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "devops beginner-friendly step-by-step guide"
   category: "software-development"

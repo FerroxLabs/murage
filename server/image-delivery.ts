@@ -14,7 +14,7 @@
  * outcome so the caller records it exactly as a 4xx or a timeout today.
  */
 import { redactSecretsInText } from "./redact.ts";
-import { murageTool } from "./tool-call-context.ts";
+import { murageToolOnThisServer } from "./murage-tool-surface.ts";
 
 export type DeliveryOutcome = "failed" | "uncertain";
 export class ImageDeliveryError extends Error {
@@ -154,7 +154,7 @@ export interface PollJobOptions {
 export async function pollImageJob(options: PollJobOptions): Promise<ImageResultBody> {
   const started = options.now(), ceiling = options.ceilingMs ?? RENDER_CEILING_MS;
   let delay = clampPollSeconds(options.firstDelaySeconds) * 1000, failingSince: number | undefined, backoff = 2_000;
-  const uncertain = (why: string) => new ImageDeliveryError("job-uncertain", `${why} The render may still finish on the provider's side. Call ${murageTool("generate_image")} again with the same request_id to check job ${options.id}; no new render will be sent.`, "uncertain");
+  const uncertain = (why: string) => new ImageDeliveryError("job-uncertain", `${why} The render may still finish on the provider's side. Call ${murageToolOnThisServer("generate_image")} again with the same request_id to check job ${options.id}; no new render will be sent.`, "uncertain");
   // The render's own 30 minute clock can fire mid-sleep: the job id and the
   // way back are still named.
   const timedOut = () => options.signal.aborted && (options.signal.reason as { name?: string } | undefined)?.name === "TimeoutError";

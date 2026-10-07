@@ -6,7 +6,7 @@ description: |
   Do NOT use for personal budgeting (use budget-planning in personal-finance), business strategy analysis (use SWOT or financial analysis in business category), or data visualization of financial data (use chart-type-selector).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "spreadsheets analysis template"
   category: "data-analysis"

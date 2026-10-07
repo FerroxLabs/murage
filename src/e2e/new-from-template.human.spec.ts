@@ -33,9 +33,9 @@ test.beforeAll(async () => {
       resolveId(id) { if (id === "/__skills.js") return "\0skills-settings"; if (id === "/__botskills.js") return "\0bot-skills"; if (id === "/skills-fixture-store") return "\0skills-store"; },
       load(id) {
         // The real api() contract: JSON in and out, and a refusal carries its status and body.
-        if (id === "\0skills-store") return "import React from 'react';export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json',...(init&&init.headers)}});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||r.statusText),{status:r.status,body:data});return data;}export function useStore(){return {state:{bots:window.fixtureBots||[]},dispatch(action){(window.dispatched=window.dispatched||[]).push(action.type)}};}";
+        if (id === "\0skills-store") return "import React from 'react';export async function api(path,init){const r=await fetch(path,{...init,headers:{'content-type':'application/json',...(init&&init.headers)}});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||r.statusText),{status:r.status,body:data});return data;}export function useStore(){return {state:{bots:window.fixtureBots||[],instances:[]},dispatch(action){(window.dispatched=window.dispatched||[]).push(action.type)}};}";
         if (id !== "\0skills-settings") return;
-        return "import React from 'react';import {createRoot} from 'react-dom/client';import {NewFromTemplateDialog} from '/src/components/NewFromTemplateDialog.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin='dark';window.events=[];createRoot(document.getElementById('root')).render(React.createElement(NewFromTemplateDialog,{kind:q.get('kind')||'bot',onClose(){window.events.push('close')},onBlank(){window.events.push('blank')},onOpenFile(){window.events.push('file')},onCreated(r){window.events.push('created:'+r.members)}}));";
+        return "import React from 'react';import {createRoot} from 'react-dom/client';import {NewFromTemplateDialog} from '/src/components/NewFromTemplateDialog.tsx';import '/src/styles.css';const q=new URLSearchParams(location.search);document.documentElement.dataset.skin='dark';window.events=[];import {trackVisualViewport} from '/src/lib/visual-viewport.ts';if(q.get('inset'))document.documentElement.style.setProperty('--inset-top',q.get('inset')+'px');if(q.get('drawer')){trackVisualViewport();const aside=document.createElement('aside');aside.id='drawer';aside.style.cssText='position:absolute;top:0;left:0;bottom:0;width:300px;translate:0 0;background:#222;overflow:hidden';document.body.appendChild(aside);createRoot(aside).render(React.createElement(NewFromTemplateDialog,{kind:q.get('kind')||'bot',onClose(){window.events.push('close')},onBlank(){},onOpenFile(){},onCreated(){}}));}else createRoot(document.getElementById('root')).render(React.createElement(NewFromTemplateDialog,{kind:q.get('kind')||'bot',onClose(){window.events.push('close')},onBlank(){window.events.push('blank')},onOpenFile(){window.events.push('file')},onCreated(r){window.events.push('created:'+r.members)}}));";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         const page = req.url === "/__skills" || req.url?.startsWith("/__skills?") ? "/__skills.js" : req.url?.startsWith("/__botskills?") ? "/__botskills.js" : null;
@@ -95,4 +95,55 @@ test("Start blank and Open a file are there, and quiet", async ({ page }) => {
   expect(await page.evaluate(() => (window as any).events)).toEqual(["blank", "file"]);
   await page.goto(origin + "/__skills?kind=team");
   await expect(page.getByRole("button", { name: "Pick from my bots →" })).toBeVisible();
+});
+
+// The sidebar drawer is translated on a phone, which makes it the containing
+// block of a fixed descendant: the panel used to be laid out against the
+// drawer, under the status bar. These cases render it inside a translated
+// drawer like the real Sidebar does.
+test("phone: the panel is a full-width sheet below the top inset and inside the screen", async ({ page }, info) => {
+  test.skip(info.project.name !== "mobile", "phone layout only");
+  await page.goto(origin + "/__skills?kind=bot&drawer=1&inset=47");
+  const dialog = page.getByRole("dialog", { name: "New Bot" });
+  await expect(dialog).toBeVisible();
+  const box = (await dialog.boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(box.y).toBeGreaterThanOrEqual(47 - 0.5);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 0.5);
+  expect(box.x).toBeLessThanOrEqual(0.5);
+  expect(box.width).toBeGreaterThanOrEqual(viewport.width - 1);
+  await expect(page.getByLabel("What should it do?")).toBeInViewport();
+  const close = (await page.getByRole("button", { name: "Close" }).boundingBox())!;
+  expect(close.width).toBeGreaterThanOrEqual(44);
+  await page.screenshot({ path: info.outputPath("phone-ui-after.png") });
+});
+
+test("phone: with the keyboard up the search field stays inside the visual viewport", async ({ page }, info) => {
+  test.skip(info.project.name !== "mobile", "phone layout only");
+  await page.goto(origin + "/__skills?kind=bot&drawer=1&inset=47");
+  const field = page.getByLabel("What should it do?");
+  await field.focus();
+  await page.evaluate(() => {
+    Object.defineProperty(window.visualViewport, "height", { configurable: true, get: () => 450 });
+    window.visualViewport!.dispatchEvent(new Event("resize"));
+  });
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.keyboard)).toBe("open");
+  await expect.poll(async () => { const b = await page.getByRole("dialog").boundingBox(); return b ? Math.round(b.y + b.height) : -1; }).toBeLessThanOrEqual(450);
+  const dialog = (await page.getByRole("dialog").boundingBox())!;
+  expect(dialog.y).toBeGreaterThanOrEqual(47 - 0.5);
+  const input = (await field.boundingBox())!;
+  expect(input.y).toBeGreaterThanOrEqual(47);
+  expect(input.y + input.height).toBeLessThanOrEqual(450);
+  await expect(field).toBeFocused();
+});
+
+test("above the phone breakpoint the panel stays a centred popover, even inside a translated drawer", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop", "desktop layout only");
+  await page.goto(origin + "/__skills?kind=bot&drawer=1");
+  const box = (await page.getByRole("dialog", { name: "New Bot" }).boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(box.width).toBeLessThanOrEqual(560.5);
+  expect(box.x).toBeGreaterThan(300);
+  expect(Math.abs(box.x + box.width / 2 - viewport.width / 2)).toBeLessThan(1);
 });

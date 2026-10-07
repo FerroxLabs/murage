@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { APP_VERSION } from "@/lib/whats-new";
 import type { Announcement, AnnouncementActionTarget } from "../../shared/announcements";
+import type { AppSettingsSection } from "@/lib/settings-sections";
 
 export {
   ANNOUNCEMENT_ACTIONS,
@@ -97,14 +98,22 @@ export function useAnnouncementImage(path: string | undefined, load: (path: stri
   return state.path === path ? { url: state.url, failed: state.failed } : { url: null, failed: false };
 }
 
-/** Where each in-app action goes, as settings sections and one updater call. */
-export const ANNOUNCEMENT_ACTION_SECTIONS: Readonly<Record<Exclude<AnnouncementActionTarget, "check-for-updates">, "general" | "models" | "connections" | "skills" | "houseRules" | "backups">> = {
+/** Where each in-app action goes, as settings sections and one updater call.
+ *  The six from 0.1.60 arrive in published notices, so they stay for good,
+ *  pointing where they always did. The four 0.1.62 targets are rejected by
+ *  older builds (shared/announcements.ts validates the whole notice), so a
+ *  notice uses them only once 0.1.62 has reached most installs. */
+export const ANNOUNCEMENT_ACTION_SECTIONS: Readonly<Record<Exclude<AnnouncementActionTarget, "check-for-updates">, AppSettingsSection>> = {
   "settings-general": "general",
   "settings-models": "models",
   "settings-connections": "connections",
   "settings-skills": "skills",
   "settings-house-rules": "houseRules",
   "settings-backups": "backups",
+  "settings-images": "images",
+  "settings-web-search": "webSearch",
+  "settings-voice": "voice",
+  "settings-help": "about",
 };
 
 /** A link in a notice opens in the system browser, never in the app. */

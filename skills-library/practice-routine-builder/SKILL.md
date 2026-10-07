@@ -12,7 +12,7 @@ description: |
   music-theory-fundamentals), or recording setup (use home-recording-starter).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "workout-planning planning checklist step-by-step"
   category: "hobbies-crafts"

@@ -6,7 +6,7 @@ import { Loader2 } from "lucide-react";
 
 export function LazyFallback() {
   return (
-    <div role="status" aria-label="Loading" className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
+    <div role="status" aria-label="Loading" className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/20">
       <Loader2 size={20} className="animate-spin text-ink-secondary" aria-hidden="true" />
     </div>
   );

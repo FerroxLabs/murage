@@ -13,7 +13,7 @@ description: |
   estate legal advice (consult an attorney for probate).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "elder-care mental-wellness strategy"
   category: "family-relationships"

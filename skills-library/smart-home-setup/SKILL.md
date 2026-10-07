@@ -6,7 +6,7 @@ description: |
   Do NOT use for specific device configuration or troubleshooting, home network infrastructure design (routers, switches, cabling), or commercial building automation systems.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-maintenance planning automation"
   category: "home-household"

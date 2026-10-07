@@ -6,7 +6,7 @@ description: |
   Do NOT use for entity formation filing, tax preparation, legal advice on which entity to choose, or multi-state or international entity structuring.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy entrepreneurship guide checklist"
   category: "legal-civic"

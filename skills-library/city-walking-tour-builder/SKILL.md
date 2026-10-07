@@ -11,7 +11,7 @@ description: |
   food-tourism-planner), or hiking trail planning (use hobbies-crafts skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "travel itinerary planning step-by-step"
   category: "travel-experiences"

@@ -17,7 +17,7 @@ trigger_phrases: >-
   I want to start a garden help me build a garden home vegetable garden how to
   start gardening backyard garden plan container gardening guide
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: gardening hiking home-maintenance step-by-step planning
   category: life-event

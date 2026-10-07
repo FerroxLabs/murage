@@ -4,7 +4,7 @@ description: |
   Comprehensive introductory guide to metalworking covering welding types including MIG, TIG, and stick, essential safety equipment, basic fabrication techniques, cutting and grinding tools, metal types and properties, project ideas, and shop setup requirements. Use when the user asks about metalworking intro or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide step-by-step beginner-friendly"
   category: "hobbies-crafts"

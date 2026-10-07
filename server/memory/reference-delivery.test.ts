@@ -44,6 +44,9 @@ function record(id:string,scopeId:string,text:string,{pinned=true,kind="fact",as
   db.prepare("INSERT INTO memory_records VALUES(?,1,?,?,?,?,'active',?,1,NULL,NULL,1)").run(id,scopeId,kind,text,assertion,pinned?1:0);
   db.prepare("INSERT INTO memory_sources VALUES(?,?,'private',?,NULL,1,'hash','text','assistant','settled',NULL,'active')").run(`source-${id}`,scopeId,messageId);
   db.prepare("INSERT INTO memory_source_versions VALUES(?,1,'hash',?,1)").run(`source-${id}`,JSON.stringify({text}));
+  // These direct inserts represent captured sources; agent corrections require
+  // the completed capture job that the real capture pipeline always records.
+  db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,policy_revision,deletion_epoch) VALUES(?,?,1,'capture','1','complete',0,0)").run(`capture-${id}`,`source-${id}`);
   db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,1,0,?)").run(id,`source-${id}`,Buffer.byteLength(text));
 }
 /** Frame lines between the open and close tags, parsed by the pinned grammar. */

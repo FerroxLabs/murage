@@ -79,7 +79,7 @@ it("combines WAL-backed receipts and app files in the same owned stage", async (
     db.exec("INSERT INTO thread_state VALUES('thread','receipt')");
     const stage = await stageInstallationState(f.data, f.parent);
     expect(stage.manifest.database).toMatchObject({ status: "copied", messages: 1, threads: 1 });
-    expect(stage.manifest.files.map(file => file.path)).toEqual(expect.arrayContaining(["config.json", "bots.json", "webhooks.json", "messages.db", join("attachments", "fixture.txt")]));
+    expect(stage.manifest.files.map(file => file.path)).toEqual(expect.arrayContaining(["config.json", "bots.json", "webhooks.json", "messages.db", "attachments/fixture.txt"]));
     const copied = new DatabaseSync(join(stage.directory, "state", "messages.db"), { readOnly: true });
     try { expect(JSON.parse(String(copied.prepare("SELECT json FROM messages").get()?.json)).goalRun.status).toBe("completed"); }
     finally { copied.close(); }
@@ -163,4 +163,30 @@ it.each(["vm-home", "vm-homes"])("refuses backup with %s instead of silently omi
   expect(readdirSync(f.parent).filter(name => name.startsWith(".murage-"))).toEqual([]);
   const lease = acquireDataDirLease(f.data);
   lease.release();
+});
+
+it("round trips an imported Hermes profile engine, its pin and the new-bot effort (0.1.61 L4 audit)", async () => {
+  const f = fixture();
+  const file = join(f.data, "config.json");
+  const current = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({
+    ...current,
+    hermesProfilesPinned: true,
+    newBots: { effort: "high" },
+    instances: { ...current.instances, "hermes-profile-fred": { driver: "hermesAgent", displayName: "Hermes · fred", config: { profile: "fred", cli: "/opt/hermes" } } },
+  }));
+  const staged = await stageInstallationState(f.data, f.parent);
+  const omitted = staged.manifest.omitted.map(item => item.path);
+  // Only what is left out is listed: the carried profile is not (Kimi 3).
+  expect(omitted).toContain("config.json/instances/hermes-profile-fred/config/cli");
+  expect(omitted).not.toContain("config.json/instances/hermes-profile-fred/config");
+  const archive = join(f.parent, "hermes.zip");
+  await writeInstallationArchive(f.data, archive);
+  // The restore gate accepts the imported engine's id (Astra 1).
+  const restored = await prepareInstallationRestore(archive, f.parent);
+  const config = JSON.parse(readFileSync(join(restored.stateDirectory, "config.json"), "utf8"));
+  expect(config.instances["hermes-profile-fred"]).toMatchObject({ driver: "hermesAgent", config: { profile: "fred" } });
+  expect(config.instances["hermes-profile-fred"].config).not.toHaveProperty("cli");
+  expect(config.hermesProfilesPinned).toBe(true);
+  expect(config.newBots).toEqual({ effort: "high" });
 });

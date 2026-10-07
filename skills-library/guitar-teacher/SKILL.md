@@ -4,7 +4,7 @@ description: |
   Structured guitar instruction from complete beginner through advanced levels. Covers open chords, barre chords, scale systems (pentatonic, major, minor, modes), strumming and rhythm patterns, fingerpicking techniques, song learning methodology, practice routines by skill level, tablature reading, and genre-specific techniques. Use when the user asks about guitar teacher or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching design guide"
   category: "design-creative"

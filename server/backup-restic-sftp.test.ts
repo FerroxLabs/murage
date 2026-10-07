@@ -44,7 +44,7 @@ describe("SFTP repository: init-or-open",()=>{
     expect(f.calls.map(call=>operation(call.args))).toEqual(["cat","init","cat"]);
     const first=f.calls[0].args;expect(first.slice(0,2)).toEqual(["--repo","sftp:murage-backup-server:murage-backups"]);expect(first[2]).toBe("-o");expect(first[3]).toMatch(/^"sftp\.command=""\/usr\/bin\/ssh"" ""-F"" ""none""/);
     expect(f.calls.every(call=>call.sftp===true&&call.s3===undefined&&!call.args.join(" ").includes("PRIVATE KEY"))).toBe(true);
-    expect(f.seen.every(item=>item.key===key.privateKey&&item.keyMode===0o600&&item.knownHosts===`murage-backup-server ssh-ed25519 ${target.hostKey!.key}\n`)).toBe(true);
+    expect(f.seen.every(item=>item.key===key.privateKey&&(process.platform==="win32"||item.keyMode===0o600)&&item.knownHosts===`murage-backup-server ssh-ed25519 ${target.hostKey!.key}\n`)).toBe(true);
     expect(f.probes).toHaveLength(1);expect(f.probes[0].folder).toBe("murage-backups");expect(f.probes[0].args).toContain("StrictHostKeyChecking=yes");
     expect(readdirSync(f.workDirectory).some(name=>name.startsWith("ssh-"))).toBe(false);expect(noKeyLeft(f.workDirectory)).toBe(true);
     expect(f.adapter().connectionStatus()).toEqual({remoteRef:"remote-one",revision:2,state:"connected",repositoryId});
@@ -100,7 +100,7 @@ describe("SFTP material in a shorter folder (Windows MAX_PATH)",()=>{
     const f=fixture({folder:"empty",sshDirectory:true});
     await f.adapter().prepareRepository();
     expect(f.seen.length).toBeGreaterThan(0);
-    for(const item of f.seen)expect(item.identity.startsWith(f.sshDirectory+"/ssh-")).toBe(true);
+    for(const item of f.seen)expect(item.identity.startsWith(join(f.sshDirectory!,"ssh-"))).toBe(true);
     expect(f.probes[0].cwd).toBe(f.sshDirectory);
     expect(readdirSync(f.sshDirectory!).filter(name=>name.startsWith("ssh-"))).toEqual([]);
     expect(noKeyLeft(f.workDirectory)).toBe(true);expect(noKeyLeft(f.sshDirectory!)).toBe(true);

@@ -1,4 +1,9 @@
-export type ProviderPreset = "anthropic" | "openai" | "openrouter" | "deepseek" | "mistral" | "flux" | "groq" | "xai" | "google";
+/** Presets a pasted API key can create. */
+export type KeyProviderPreset = "anthropic" | "openai" | "openrouter" | "deepseek" | "mistral" | "flux" | "groq" | "xai" | "requesty" | "google";
+/** Plan sign-in presets (ChatGPT, Grok). Created only by the desktop sign-in
+ * flow; never stored in the key bank and never carry a key. */
+export type SignInPreset = "chatgpt" | "supergrok";
+export type ProviderPreset = KeyProviderPreset | SignInPreset;
 export type ProviderProtocol = "openai" | "anthropic" | "responses";
 /** Private server/Electron record. Never include key in public responses. */
 export interface ProviderConnectionRecord { id: string; preset: ProviderPreset; label: string; enabled: boolean; key: string; revision: string }
@@ -8,7 +13,7 @@ export interface ProviderModel {
   outputModalities: string[]; contextWindow?: number;
   pricing?: { inputPerMillion?: number; outputPerMillion?: number; source: string; updatedAt: number };
 }
-export type ProviderCatalogError = "unauthorized" | "forbidden" | "rate-limited" | "offline" | "invalid-catalog" | "unavailable" | "connection-changed";
+export type ProviderCatalogError = "unauthorized" | "forbidden" | "rate-limited" | "offline" | "invalid-catalog" | "unavailable" | "connection-changed" | "needs-sign-in";
 export interface ProviderCatalog {
   connectionId: string; models: ProviderModel[]; fetchedAt?: number; stale: boolean;
   error?: { code: ProviderCatalogError; message: string };
@@ -19,8 +24,10 @@ export interface PublicProviderConnection {
   baseUrl: string; protocol: ProviderProtocol; configured: boolean; legacy?: boolean; managedIn?: "engines" | "connections" | "images";
   state: "saved" | "catalog-ready" | "needs-attention";
   catalog: ProviderCatalog;
+  /** Present only on a plan sign-in connection. Never carries a token. */
+  signIn?: import("./model-signin.ts").SignInConnectionInfo;
 }
 export type ProviderConnectionMutation =
-  | { action: "create"; preset: ProviderPreset; label?: string; key: string }
+  | { action: "create"; preset: KeyProviderPreset; label?: string; key: string }
   | { action: "update"; id: string; revision: string; label?: string; key?: string; enabled?: boolean }
   | { action: "remove"; id: string; revision: string };

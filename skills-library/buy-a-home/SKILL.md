@@ -10,7 +10,7 @@ description: |
   analysis, or commercial real estate purchases.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-buying personal-finance planning checklist step-by-step"
   category: "life-event"

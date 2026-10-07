@@ -4,10 +4,14 @@
 // initialize/thread/turn handshake, then plays a scripted turn. Like the
 // real app-server, it never exits on its own — the driver kills it.
 //
-//   FAKE_CODEX_MODE   happy (default) | approval | resume | stream | windows-command |
+//   FAKE_CODEX_MODE   happy (default) | project-propose (the Chief's New project proposal through
+//                     the mounted agents server; see fake-mcp-propose.ts) | text-propose (the proposal
+//                     as a block in the reply, after a declined command approval) | approval | resume | stream | windows-command |
 //                     mcp-elicitation | form-elicitation | user-input | image |
 //                     logged-in-stdout | logged-out | unauthorized
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
+//   FAKE_CUSTOM_TOOL_SERVER / FAKE_CUSTOM_TOOL_LOG  every turn calls the first tool
+//                     of that owner server (fake-custom-tool.ts)
 //   FAKE_CODEX_MCP_SERVER / FAKE_CODEX_MCP_TOOL  the server and tool an
 //                     mcp-elicitation approval names (default agents, list_bots)
 //   FAKE_CODEX_LAUNCH_CRASHES  N: die at thread/start (before turn/start is ever sent)
@@ -28,6 +32,17 @@
 //                     it, ACK plus one reasoning delta; then SIGKILL once
 //                     FAKE_CODEX_EXIT_MID_TURN_KILL (gate path) appears
 //                     Launch counts for these knobs go to FAKE_CODEX_STATE.
+//   (mode transient-503: every turn/start answers a transient 503 error; with FAKE_CODEX_MODE_FILE
+//                     it can be switched on for a process that is already running)
+//   FAKE_CODEX_CALL_LOG   file: one "<pid> <method>" line per request received
+//   (mode late-approval: turn/completed and an approval request arrive in one write)
+//   (mode split-approval: turn/completed, then an approval request split across two writes)
+//   FAKE_CODEX_RESUME_GATE  gate path: hold the thread/resume answer until that file exists (a slow start)
+//   FAKE_CODEX_SPAWN_LOG  file: one line (the pid) per app-server process started
+//   FAKE_CODEX_WARM    "1": each turn gets its own turn id and the reported thread
+//                     total accumulates (7/4/3 more per turn), as a retained
+//                     app-server reports it; the dump also carries the credential
+//                     file the agents server was mounted with, read at dump time
 //   FAKE_CODEX_STOP_RACE  marker file path: hold turn/start, append one line to
 //                     the marker (the launch count, and proof this phase was
 //                     reached), and answer the held request with a transient
@@ -36,10 +51,48 @@
 //                     Stop. POSIX-shaped: win32 has no SIGTERM handler.
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
+import { fixtureDumpEnvironment } from "./fixture-dump.ts";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFileAtomic } from "../atomic.ts";
+import { logProposalTurn, proposalFrom, proposalReply, proposeThroughMcp } from "./fake-mcp-propose.ts";
+import { fakeReviewReply } from "./fake-review.ts";
+import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
 
-const mode = process.env.FAKE_CODEX_MODE ?? "happy";
+/** project-propose mode's approval requests, answered by id. */
+const proposalAsks = new Map<number, (result: any) => void>();
+
+/** A server as codex mounts it: `-c mcp_servers.<name>.<key>=<json>`
+ * overrides, with the named environment variables passed through. */
+const mountedServer = (name: string) => {
+  const argv = process.argv.slice(2);
+  const value = (key: string): unknown => {
+    const prefix = `mcp_servers.${name}.${key}=`;
+    const arg = argv.find(item => item.startsWith(prefix));
+    try { return arg ? JSON.parse(arg.slice(prefix.length)) : undefined; } catch { return undefined; }
+  };
+  const command = value("command"), args = value("args"), names = value("env_vars");
+  if (typeof command !== "string") return null;
+  // static values from the server's own `env` table (`-c mcp_servers.<name>.env.KEY="v"`)
+  const own: Record<string, string> = {};
+  const envPrefix = `mcp_servers.${name}.env.`;
+  for (const arg of argv) {
+    if (!arg.startsWith(envPrefix)) continue;
+    const eq = arg.indexOf("=");
+    try { own[arg.slice(envPrefix.length, eq)] = JSON.parse(arg.slice(eq + 1)); } catch {}
+  }
+  const env = Object.fromEntries((Array.isArray(names) ? names : []).filter((name): name is string => typeof name === "string" && process.env[name] !== undefined).map(name => [name, process.env[name]!]));
+  return { command, args: Array.isArray(args) ? args.map(String) : [], env: { ...env, ...own } };
+};
+const mountedAgents = () => mountedServer("agents");
+
+// FAKE_CODEX_MODE_FILE: a file whose content, when present, replaces the mode
+// at every request, so a test can change what a RETAINED process does next.
+let mode = process.env.FAKE_CODEX_MODE ?? "happy";
+const refreshMode = () => {
+  const file = process.env.FAKE_CODEX_MODE_FILE;
+  if (!file || !existsSync(file)) return;
+  try { mode = readFileSync(file, "utf8").trim() || mode; } catch {}
+};
 
 // stdout and stderr are separate pipes, so the writer cannot order them for
 // the reader, and a fixed sleep only pretends to. A gated write waits until
@@ -85,12 +138,63 @@ if (process.argv[2] === "login" && process.argv[3] === "status") {
   statusStream.write("Logged in using ChatGPT\n");
   process.exit(0);
 }
+/** `__fixture_subagents__`: the parent spawns three helpers (collabAgentToolCall
+ * items, schema of codex-cli 0.14x), its turn completes while they run, each
+ * helper thread then asks to run a command, and they finish.
+ *   FAKE_CODEX_BG_ASKS  asks raised after the parent's turn/completed (default 2)
+ *   FAKE_CODEX_BG_HOLD  "1": the helpers never finish
+ *   FAKE_CODEX_BG_WAKE  "1": the parent starts a second turn that answers them
+ *   FAKE_CODEX_BG_LOG   one line per ask verdict and per finish */
+const bgLog = (line: string) => { if (process.env.FAKE_CODEX_BG_LOG) appendFileSync(process.env.FAKE_CODEX_BG_LOG, `${line}\n`); };
+async function playSubagents(ask: (id: number, method: string, params: Record<string, unknown>) => Promise<any>) {
+  const kids = ["child-1", "child-2", "child-3"];
+  const states = (status: string) => Object.fromEntries(kids.map(id => [id, { status, message: null }]));
+  const collab = (type: string, status: string) => ({ id: "spawn-1", type: "collabAgentToolCall", tool: "spawnAgent", status, senderThreadId: nativeThreadId, receiverThreadIds: kids, prompt: "Read the handoff files", agentsStates: states(type) });
+  notify("item/started", { item: collab("pendingInit", "inProgress") });
+  notify("item/completed", { item: collab("running", "completed") });
+  notify("item/completed", { item: { id: "m1", type: "agentMessage", text: "Three helpers are reading." } });
+  notify("turn/completed", { turn: { status: "completed" } });
+  const asks = Number(process.env.FAKE_CODEX_BG_ASKS ?? "2");
+  for (let i = 0; i < asks; i += 1) {
+    out({ jsonrpc: "2.0", method: "item/started", params: { threadId: "child-1", turnId: "child-turn", item: { id: `c${i}`, type: "commandExecution", command: "cat file" } } });
+    const answer = await ask(9500 + i, "item/commandExecution/requestApproval", { threadId: "child-1", turnId: "child-turn", itemId: `c${i}`, command: `cat /outside/cwd/file-${i}.md` });
+    bgLog(`verdict:${answer?.decision ?? JSON.stringify(answer)}`);
+  }
+  if (process.env.FAKE_CODEX_BG_HOLD === "1") { bgLog("held"); return; }
+  for (const id of kids) out({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: id, turn: { id: "child-turn", status: "completed", items: [], error: null } } });
+  if (process.env.FAKE_CODEX_BG_WAKE === "1") {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    out({ jsonrpc: "2.0", method: "turn/started", params: { threadId: nativeThreadId, turn: { id: "turn-2", status: "inProgress", items: [], error: null } } });
+    out({ jsonrpc: "2.0", method: "item/completed", params: { threadId: nativeThreadId, turnId: "turn-2", item: { id: "m2", type: "agentMessage", text: "All helpers reported." } } });
+    out({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: nativeThreadId, turn: { id: "turn-2", status: "completed", items: [], error: null } } });
+  }
+  bgLog("finished");
+}
+
+if (process.argv[2] === "app-server" && process.env.FAKE_CODEX_SPAWN_LOG) appendFileSync(process.env.FAKE_CODEX_SPAWN_LOG, `${process.pid}\n`);
+const warmMode = process.env.FAKE_CODEX_WARM === "1";
+let turnSeq = 0;
+const accumulated = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
 const calls: Array<{ method: string; params: unknown }> = [];
 let decision: unknown = null;
 
-const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
+// FAKE_CODEX_SKILLS_BATCHED holds every line from the skills/list answer
+// through turn/completed and writes them in ONE chunk, the way a busy pipe
+// coalesces them: the driver then reads the answer and the turn's end in the
+// same pass, before any promise callback runs.
+let batched: string[] | null = null;
+const out = (obj: unknown) => {
+  const line = JSON.stringify(obj) + "\n";
+  if (!batched) return process.stdout.write(line);
+  batched.push(line);
+  if ((obj as { method?: string }).method === "turn/completed") {
+    process.stdout.write(batched.join(""));
+    batched = null;
+  }
+  return true;
+};
 let nativeThreadId = "codex-thread-1";
-const nativeTurnId = "turn-1";
+let nativeTurnId = "turn-1";
 // v2 schema generated by codex-cli 0.144.4: items/usage/errors carry
 // threadId+turnId; turn lifecycle carries threadId+turn.id.
 const notification = (method: string, params: Record<string, any>) => ({
@@ -123,11 +227,19 @@ const fixtureRequested = (text: string, marker: string) => {
   return (lines.pop() ?? "").includes(marker);
 };
 
+/** The credential file the mounted agents server would read this turn, as the proxy reads it. */
+const readMountedCredFile = () => {
+  const agents = mountedAgents();
+  const path = agents?.env.MURAGE_CRED_FILE;
+  if (!path) return null;
+  try { return { path, server: agents!.env.MURAGE_CRED_SERVER, content: JSON.parse(readFileSync(path, "utf8")) }; } catch { return { path, content: null }; }
+};
+
 const dump = () => {
   if (process.env.FAKE_CODEX_DUMP) {
     writeFileAtomic(
       process.env.FAKE_CODEX_DUMP,
-      JSON.stringify({ pid: process.pid, argv: process.argv.slice(2), env: process.env, calls, decision }, null, 2),
+      JSON.stringify({ pid: process.pid, argv: process.argv.slice(2), env: fixtureDumpEnvironment(), calls, decision, ...(warmMode ? { credFile: readMountedCredFile() } : {}) }, null, 2),
     );
   }
 };
@@ -142,7 +254,7 @@ if (mode === "late-output") {
 }
 
 const finishTurn = () => {
-  notify("item/completed", { item: { id: "i1", type: "commandExecution", status: "completed" } });
+  notify("item/completed", { item: { id: "i1", type: "commandExecution", status: "completed", exitCode: 0, aggregatedOutput: "" } });
   notify("item/completed", { item: { id: "w1", type: "webSearch", status: "completed" } });
   if (mode === "stream") {
     // token deltas, then the whole message — the driver must not double-emit
@@ -164,7 +276,10 @@ const finishTurn = () => {
   // Publish PID/state before the observable message used by lifecycle tests.
   dump();
   notify("item/completed", { item: { id: "m1", type: "agentMessage", text: "done from fake codex" } });
-  notify("thread/tokenUsage/updated", { tokenUsage: { total: { inputTokens: 7, cachedInputTokens: 4, outputTokens: 3 } } });
+  if (warmMode) {
+    accumulated.inputTokens += 7; accumulated.cachedInputTokens += 4; accumulated.outputTokens += 3;
+    notify("thread/tokenUsage/updated", { tokenUsage: { total: { ...accumulated } } });
+  } else notify("thread/tokenUsage/updated", { tokenUsage: { total: { inputTokens: 7, cachedInputTokens: 4, outputTokens: 3 } } });
   dump();
   if (mode === "late-output") {
     // One write ensures the completion and late frame share the parser buffer.
@@ -172,6 +287,19 @@ const finishTurn = () => {
       notification("turn/completed", { turn: { status: "completed" } }),
       notification("item/agentMessage/delta", { itemId: "late-buffer", delta: "late buffered text must be ignored" }),
     ].map((message) => JSON.stringify(message)).join("\n") + "\n");
+  } else if (mode === "late-approval") {
+    // The completion and an approval request in ONE write: the request arrives after the turn ended
+    process.stdout.write([
+      notification("turn/completed", { turn: { status: "completed" } }),
+      { jsonrpc: "2.0", id: 4242, method: "item/commandExecution/requestApproval", params: { threadId: nativeThreadId, turnId: nativeTurnId, itemId: "late", command: "rm -rf /" } },
+    ].map((message) => JSON.stringify(message)).join("\n") + "\n");
+  } else if (mode === "split-approval") {
+    // The completion plus the FIRST HALF of an approval request, then the rest 400 ms later:
+    // the frame begins under this turn and would finish after it ended
+    const request = JSON.stringify({ jsonrpc: "2.0", id: 4343, method: "item/commandExecution/requestApproval", params: { threadId: nativeThreadId, turnId: nativeTurnId, itemId: "split", command: "rm -rf /" } });
+    const cut = Math.floor(request.length / 2);
+    process.stdout.write(JSON.stringify(notification("turn/completed", { turn: { status: "completed" } })) + "\n" + request.slice(0, cut));
+    setTimeout(() => process.stdout.write(request.slice(cut) + "\n"), 400);
   } else notify("turn/completed", { turn: { status: "completed" } });
 };
 
@@ -190,6 +318,7 @@ process.stdin.on("data", (chunk) => {
       continue;
     }
 
+    if (!msg.method && proposalAsks.has(msg.id)) { const answered = proposalAsks.get(msg.id)!; proposalAsks.delete(msg.id); answered(msg.result ?? { error: msg.error }); continue; }
     // response to our own server->client request (approval decision)
     if ((msg.id === 100 || msg.id === 101) && (msg.result !== undefined || msg.error !== undefined)) {
       decision = msg.result ?? { error: msg.error };
@@ -198,6 +327,8 @@ process.stdin.on("data", (chunk) => {
     }
 
     if (msg.method) calls.push({ method: msg.method, params: msg.params ?? null });
+    if (msg.method && process.env.FAKE_CODEX_CALL_LOG) appendFileSync(process.env.FAKE_CODEX_CALL_LOG, `${process.pid} ${msg.method}\n`);
+    refreshMode();
 
     switch (msg.method) {
       case "initialize":
@@ -238,6 +369,12 @@ process.stdin.on("data", (chunk) => {
         }
         break;
       case "thread/resume":
+        if (process.env.FAKE_CODEX_RESUME_GATE && !existsSync(process.env.FAKE_CODEX_RESUME_GATE)) {
+          // a slow start: answer only once the gate file exists
+          const resumeId = msg.id, resumeThread = msg.params?.threadId;
+          void waitForGate(process.env.FAKE_CODEX_RESUME_GATE).then(() => out({ jsonrpc: "2.0", id: resumeId, result: { thread: { id: resumeThread } } }));
+          break;
+        }
         if (mode === "resume") {
           out({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: msg.params?.threadId } } });
         } else {
@@ -263,6 +400,7 @@ process.stdin.on("data", (chunk) => {
         break;
       case "turn/start": {
         nativeThreadId = msg.params.threadId;
+        if (warmMode) nativeTurnId = `turn-${++turnSeq}`;
         if (process.env.FAKE_CODEX_STOP_RACE) {
           const heldId = msg.id;
           process.once("SIGTERM", () => {
@@ -343,6 +481,10 @@ process.stdin.on("data", (chunk) => {
           process.stdout.write(frames.map((frame) => JSON.stringify(frame)).join("\n") + "\n");
           break;
         }
+        if (mode === "transient-503") {
+          out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "provider returned 503: upstream capacity exceeded" } });
+          break;
+        }
         if (mode === "safety-rejection") {
           dump();
           out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "429 request blocked by our safety systems" } });
@@ -396,6 +538,66 @@ process.stdin.on("data", (chunk) => {
         out({ jsonrpc: "2.0", id: msg.id, result: turnResult() });
         // Bounded-ingress fixtures (A4), keyed on the prompt text.
         const promptText = String(msg.params?.input?.[0]?.text ?? "");
+        // lane review: a review run answers with its verdict (fake-review.ts)
+        const reviewText = fakeReviewReply(promptText);
+        if (reviewText !== null) {
+          notify("item/completed", { item: { id: "m1", type: "agentMessage", text: reviewText } });
+          notify("turn/completed", { turn: { status: "completed" } });
+          break;
+        }
+        if (fixtureRequested(promptText, "__fixture_subagents__")) {
+          void playSubagents((id, method, params) => new Promise<any>(resolve => { proposalAsks.set(id, resolve); out({ jsonrpc: "2.0", id, method, params }); }));
+          break;
+        }
+        // FAKE_CUSTOM_TOOL_SERVER (fake-custom-tool.ts): call the first tool of
+        // that owner server, started from its -c mcp_servers overrides.
+        const customServer = customToolServer(promptText);
+        if (customServer) {
+          const launch = mountedServer(customServer);
+          void (async () => {
+            const outcome = launch
+              ? await callFirstCustomTool("codex", customServer, launch, promptText)
+              : { tools: [], text: `no ${customServer} server was mounted`, isError: true };
+            notify("item/completed", { item: { id: "m1", type: "agentMessage", text: customToolReply(outcome) } });
+            notify("turn/completed", { turn: { status: "completed" } });
+          })();
+          break;
+        }
+        if (mode === "text-propose" && promptText.includes("<murage-project-proposal")) {
+          // Lane N2: the Chief answers with the proposal block, after asking to run a command
+          dump();
+          void new Promise<unknown>(resolve => {
+            proposalAsks.set(9401, resolve);
+            out({ jsonrpc: "2.0", id: 9401, method: "item/commandExecution/requestApproval", params: { threadId: nativeThreadId, turnId: nativeTurnId, itemId: "t-cmd", command: "cat /etc/hosts" } });
+          }).then(command => {
+            logProposalTurn({ engine: "codex", asks: { command }, agentsMounted: mountedAgents() !== null });
+            notify("item/completed", { item: { id: "m1", type: "agentMessage", text: proposalReply(promptText) } });
+            dump();
+            notify("turn/completed", { turn: { status: "completed" } });
+          });
+          break;
+        }
+        if (mode === "project-propose" && promptText.includes("project_propose")) {
+          // The Chief's New project proposal (lane N), through the mounted agents server
+          const agents = mountedAgents();
+          dump();
+          const say = (text: string) => { notify("item/completed", { item: { id: "m1", type: "agentMessage", text } }); dump(); notify("turn/completed", { turn: { status: "completed" } }); };
+          if (!agents) { say("propose error: no agents server"); break; }
+          // As codex asks under `untrusted`: a command, then the MCP tool approval for the propose call.
+          const ask = (id: number, method: string, params: Record<string, unknown>) => new Promise<unknown>(resolve => {
+            proposalAsks.set(id, resolve);
+            out({ jsonrpc: "2.0", id, method, params });
+          });
+          void (async () => ({
+            command: await ask(9301, "item/commandExecution/requestApproval", { threadId: nativeThreadId, turnId: nativeTurnId, itemId: "p-cmd", command: "cat /etc/hosts" }),
+            mcp: await ask(9302, "mcpServer/elicitation/request", { threadId: nativeThreadId, turnId: nativeTurnId, serverName: "agents", mode: "form",
+              message: 'Allow the agents MCP server to run tool "project_propose"?', requestedSchema: { type: "object", properties: {} },
+              _meta: { codex_approval_kind: "mcp_tool_call", tool_params: proposalFrom(promptText) } }),
+          }))()
+            .then(asks => proposeThroughMcp(agents, promptText, { asks }))
+            .then(say, (error: Error) => say(`propose error: ${error.message}`));
+          break;
+        }
         if (fixtureRequested(promptText, "__fixture_oversize_frame__")) {
           // a VALID frame one KiB over the limit, then a clean completion
           notify("item/agentMessage/delta", { itemId: "big", delta: fixtureOversizeText() });
@@ -433,7 +635,7 @@ process.stdin.on("data", (chunk) => {
               "-Command",
               `\"Get-Content -Raw -LiteralPath 'C:\\Users\\Ada\\workspaces\\${"very-long-folder\\".repeat(8)}NOTES.md'\"`,
             ].join(" ")
-          : "ls -la";
+          : mode === "action-guard" ? "printf hello > notes.txt" : "ls -la";
         notify("item/started", { item: { id: "i1", type: "commandExecution", command } });
         notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
         if (mode === "mcp-elicitation") {
@@ -444,7 +646,7 @@ process.stdin.on("data", (chunk) => {
             params: {
               serverName: process.env.FAKE_CODEX_MCP_SERVER ?? "agents",
               mode: "form",
-              _meta: { codex_approval_kind: "mcp_tool_call", tool_params: {} },
+              _meta: { codex_approval_kind: "mcp_tool_call", tool_params: { bot: "lena", limit: 3 } },
               message: `Allow the ${process.env.FAKE_CODEX_MCP_SERVER ?? "agents"} MCP server to run tool "${process.env.FAKE_CODEX_MCP_TOOL ?? "list_bots"}"?`,
               requestedSchema: { type: "object", properties: {} },
             },
@@ -514,7 +716,9 @@ process.stdin.on("data", (chunk) => {
           });
         } else if (mode === "approval" || mode === "windows-command") {
           const approvalCommand = mode === "windows-command" ? command : "rm -rf scratch";
-          out({ jsonrpc: "2.0", id: 100, method: "execCommandApproval", params: { command: approvalCommand } });
+          // FAKE_CODEX_APPROVAL = {method, params} replaces the default legacy shell ask
+          const custom = process.env.FAKE_CODEX_APPROVAL ? JSON.parse(process.env.FAKE_CODEX_APPROVAL) : null;
+          out({ jsonrpc: "2.0", id: 100, method: custom?.method ?? "execCommandApproval", params: custom?.params ?? { command: approvalCommand } });
           // turn continues from the approval response handler above
         } else {
           finishTurn();
@@ -525,6 +729,7 @@ process.stdin.on("data", (chunk) => {
       // generate-ts`). skills/list answers `{}` unless FAKE_CODEX_SKILLS
       // (a JSON SkillMetadata[]) is set, so older tests see no report.
       case "skills/list":
+        if (process.env.FAKE_CODEX_SKILLS_BATCHED) batched = [];
         out({
           jsonrpc: "2.0",
           id: msg.id,

@@ -10,7 +10,7 @@ description: |
   (use salary-negotiation-script), or resume bullet writing (use resume-bullet-writer).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "career planning template writing"
   category: "career-development"

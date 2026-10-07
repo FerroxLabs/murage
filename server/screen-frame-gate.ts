@@ -73,8 +73,18 @@ const TOOL_NAMESPACE = /^(?:mcp__.+?|[a-z][a-z0-9_-]{0,31})__/;
  * (server_tool, lowercased). A single-underscore server prefix is stripped
  * at most once, so pi's `computer_computer_exec` lands on `computer_exec`
  * — still a shell — and never on a bare `exec`. */
+/** Servers that drive a browser of their OWN (a Claude Code plugin, Playwright,
+ * Chrome DevTools, Puppeteer and kin). Their clicks never change Murage's
+ * screen, so they must not earn a settled frame: the frame photographs
+ * Murage's own browser, which sat untouched (2026-10-06: a white screenshot
+ * after every Playwright turn). */
+const FOREIGN_BROWSER_SERVER = /^(?:plugin_|.*(?:playwright|chrome[-_]?devtools|puppeteer|browserbase|browser[-_]?use|stagehand|selenium))/;
+
 export function screenTouchingTool(toolName: string): boolean {
-  const bare = toolName.toLowerCase().replace(TOOL_NAMESPACE, "");
+  const lower = toolName.toLowerCase();
+  const server = /^(?:mcp__(.+?)|([a-z][a-z0-9_-]{0,31}))__/.exec(lower);
+  if (server && FOREIGN_BROWSER_SERVER.test(server[1] ?? server[2] ?? "")) return false;
+  const bare = lower.replace(TOOL_NAMESPACE, "");
   return SCREEN_TOUCHING_TOOLS.has(bare) || SCREEN_TOUCHING_TOOLS.has(bare.replace(/^(?:computer|browser)_/, ""));
 }
 

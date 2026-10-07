@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of obsidian power user or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ai-ml template advanced automation research networking energy-efficiency time-management"
   category: "ai-machine-learning"

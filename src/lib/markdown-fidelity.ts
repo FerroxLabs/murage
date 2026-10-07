@@ -76,9 +76,42 @@ export function createMarkdownExtensions(options: { resizableTables?: boolean } 
     TaskItem.configure({ nested: true }),
     TableKit.configure({ table: false }),
     SourcePreservingTable.configure({ resizable: options.resizableTables === true }),
-    Markdown,
+    PlainTextMarkdown,
   ];
 }
+
+/** Text as Markdown with only the escapes it needs. @tiptap/markdown 3.31.3
+ * writes every `&`, `<` and `>` in prose as an HTML entity, so "Kiln & Co"
+ * was saved as "Kiln &amp; Co" and a bot read the entity. Those characters
+ * mean something in Markdown only in a few places: `&` that starts a
+ * character reference (`&amp;`, `&#39;`), `<` that could open a tag or an
+ * autolink, and `>` at the start of a line (a quote). Everything else is
+ * written as typed. Code keeps its literal text, as before. */
+export function minimalTextEscapes(encoded: string): string {
+  return encoded
+    .replace(/&amp;(?!#?[A-Za-z0-9]+;)/g, "&")
+    // An email autolink can start with a digit (`<123@example.com>`).
+    .replace(/&lt;(?![A-Za-z/!?]|[^\s<>&]+@[^\s<>&]+&gt;)/g, "<")
+    .replace(/(?<!^|\n)&gt;/g, ">");
+}
+
+type TextEncoderHook = (text: string, node: JSONContent, parentNode?: JSONContent) => string;
+
+/** The Markdown extension with `minimalTextEscapes` on prose. The manager's
+ * text encoder is private upstream, so it is wrapped on the instance: a probe
+ * `&` tells prose (entity-encoded) from code (kept literal). */
+const PlainTextMarkdown = Markdown.extend({
+  onBeforeCreate(event) {
+    this.parent?.(event);
+    const manager = this.editor.markdown as unknown as { encodeTextForMarkdown?: TextEncoderHook } | undefined;
+    const encode = manager?.encodeTextForMarkdown;
+    if (!manager || typeof encode !== "function") return;
+    manager.encodeTextForMarkdown = function (text, node, parentNode) {
+      const out = encode.call(this, text, node, parentNode);
+      return encode.call(this, "&", node, parentNode) === "&amp;" ? minimalTextEscapes(out) : out;
+    };
+  },
+});
 
 /** The table's source check parses with the analyzer, which uses this same
  *  extension set, so both sides of the comparison come from one parser. */

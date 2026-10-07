@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Copyright 2026 Ferrox Labs */
+.project-board { width: 100%; max-width: 100%; isolation: isolate; }
+.project-board-scroll { width: 100%; max-width: 100%; scrollbar-gutter: stable; }
+.project-board-columns { display: flex; align-items: stretch; gap: 12px; min-width: 0; }
+.project-board-column { flex: 0 0 280px; min-width: 0; }
+.project-board-cell { min-height: 160px; height: calc(100% - 60px); }
+.project-board-lane { margin-bottom: 16px; }
+.project-board[data-layout="phone"] .project-board-column { flex: 0 0 100%; width: 100%; }
+.project-board[data-layout="two"] .project-board-column { flex: 0 0 calc((100% - 12px) / 2); }
+.project-board-card { overflow-wrap: anywhere; }
+.project-board-card button { touch-action: pan-y; }
+.project-board-floating { pointer-events: none; position: fixed; left: 0; top: 0; z-index: 100; width: 260px; max-width: 80vw; overflow-wrap: anywhere; opacity: .92; }
+.project-board-placeholder { height: 5px; border: 2px solid var(--color-accent); border-radius: 3px; }
+.project-board-dialog { padding: 0; border-radius: 12px; width: min(560px, calc(100vw - 24px)); max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); overflow: auto; margin: auto; }
+.project-board-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.project-board-side { margin-right: 0; width: min(520px, 100vw); height: 100dvh; max-height: 100dvh; border-radius: 0; }
+@media (max-width: 639px) {
+  .project-board-side { width: 100vw; max-width: 100vw; }
+  .project-board-bottom { margin-bottom: 0; width: 100vw; max-width: 100vw; border-radius: 12px 12px 0 0; max-height: 80dvh; }
+}

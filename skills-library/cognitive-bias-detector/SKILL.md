@@ -4,7 +4,7 @@ description: |
   Comprehensive cognitive bias catalog covering anchoring, confirmation bias, survivorship bias, sunk cost fallacy, Dunning-Kruger effect, availability heuristic, bandwagon effect, framing, loss aversion, status quo bias, halo effect, and more. Includes detection techniques, debiasing strategies, and decision hygiene practices. Use when the user asks about cognitive bias detector or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decision-making analysis frameworks"
   category: "productivity"

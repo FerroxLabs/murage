@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.61 room transcript fix (O2). A chat round held every responder until the whole
+// 0.1.61 (O2). A chat round held every responder until the whole
 // round ended, so a teammate that had already answered could not take a
 // direct message or a handoff while the others were still speaking: the
 // handoff parked ("waiting, they're busy"), and in a long round was

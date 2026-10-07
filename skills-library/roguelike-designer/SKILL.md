@@ -4,7 +4,7 @@ description: |
   Roguelike and roguelite game design expertise covering procedural generation algorithms, run-based progression, permadeath design philosophy, meta-progression systems, item and synergy design, difficulty scaling, player agency in randomness, and the tension between fairness and challenge that defines the genre. Use when the user asks about roguelike designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design design"
   category: "game-development"

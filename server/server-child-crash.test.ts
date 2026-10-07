@@ -115,14 +115,16 @@ describe("the server child must say what killed it, and still die of it", () => 
 });
 
 describe("why the write is synchronous", () => {
-  it("survives a fatal exit with 4MB already queued on stderr", async () => {
+  it("survives a fatal exit with 32MB already queued on stderr", async () => {
     const observed = await spawnFixture("on", "throw", "sync", "backlog");
 
     expect(observed.code).not.toBe(0);
     expect(recordIn(observed.stderr)).toBe("event=server-child-failure origin=uncaughtException error=TypeError");
   }, 30_000);
 
-  it("NEGATIVE CONTROL: the identical line written to the async stream is lost", async () => {
+  // Windows writes to a pipe synchronously (Node's process.stderr), so there
+  // the async line survives and this control cannot fail by design.
+  it.skipIf(process.platform === "win32")("NEGATIVE CONTROL: the identical line written to the async stream is lost", async () => {
     const observed = await spawnFixture("on", "throw", "async", "backlog");
 
     // Same observer, same record, same crash. The only change is the writer,

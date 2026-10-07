@@ -6,7 +6,7 @@ description: |
   Do NOT use for event planning logistics (use family event skills), cultural or religious ceremony design, or school tradition creation.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events parenting planning"
   category: "family-relationships"

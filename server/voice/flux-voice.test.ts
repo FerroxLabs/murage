@@ -158,6 +158,18 @@ describe("refusals", () => {
     expect((await reasonFor(502, {})).reason).toBe("upstream");
   });
 
+  it("never hands an upstream format complaint to the person, and keeps it for the log", async () => {
+    for (const status of [400, 415, 422]) {
+      const failure = await reasonFor(status, { error: { message: "unsupported or unrecognized audio format" } });
+      expect(failure.reason).toBe("format");
+      expect(failure.message).not.toMatch(/unsupported|unrecognized/i);
+      expect(failure.message).toBe("That recording couldn’t be read. Hold the button a little longer and try again.");
+      expect(failure.status).toBe(status);
+      expect(failure.detail).toBe("unsupported or unrecognized audio format");
+      expect(failure.provider).toBe("flux");
+    }
+  });
+
   it("marks only the transient statuses retryable", async () => {
     expect((await reasonFor(429, {})).retryable).toBe(true);
     expect((await reasonFor(502, {})).retryable).toBe(true);

@@ -1,10 +1,13 @@
 import { DatabaseSync } from "node:sqlite";
 import { MemoryQueryCache } from "./cache.ts";
+import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 
-export const CURRENT_MEMORY = `r.state='active' AND NOT EXISTS (
+// The PIP kind list (brief, owner, lived, concern and episode rows) lives in pip-kinds.ts:
+// the exclusion below keeps every one of them out of search, recall and the index (PIP A1, I-15).
+export const CURRENT_MEMORY = `r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.state='active' AND NOT EXISTS (
   SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id
   WHERE e.record_id=r.id AND e.record_version=r.version AND (s.state!='active' OR s.revision!=e.source_revision))`;
-export const HISTORICAL_MEMORY = `r.state IN ('active','archived','superseded') AND NOT EXISTS (
+export const HISTORICAL_MEMORY = `r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.state IN ('active','archived','superseded') AND NOT EXISTS (
   SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=r.id AND e.record_version=r.version AND s.state='deleted')`;
 export class MemoryEligibility {
   private db:DatabaseSync;
@@ -28,6 +31,10 @@ export class MemoryEligibility {
       this.cache.set(key,rows);
     }
     return {allowed:rows.length<=12000?rows:rows.slice(0,12000),capacity:rows.length>12000,nextCursor:rows.length>12000?rows[11999].id:undefined};
+  }
+  /** Ids of every PIP record, any state: what the derived index must not hold. */
+  pipRecordIds():string[]{
+    return this.db.prepare(`SELECT DISTINCT r.id FROM memory_records r WHERE r.kind IN ${PIP_ALL_KINDS_SQL} ORDER BY r.id`).all().map(r=>String(r.id));
   }
   close(){this.db.close();this.cache.clear();}
 }

@@ -6,7 +6,10 @@
 // failure to read. These two helpers exist so the fix lives in one place
 // instead of being re-derived (or forgotten) per suite.
 import type { ChildProcess } from "node:child_process";
-import { rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { assertSafeToWipe, SafeWipeRefused } from "./safe-wipe.mjs";
 
@@ -130,4 +133,22 @@ export async function removeTempDir(dir: string): Promise<void> {
   console.warn(
     `test cleanup could not remove ${dir}: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
   );
+}
+
+/**
+ * A throwaway HOME that is outside the stop line's scratch roots.
+ *
+ * The stop line treats /tmp and /var/tmp as the bot's own scratch space
+ * (server/index.ts, stop-line roots), so on Linux, where tmpdir() is /tmp, a
+ * HOME made there puts ~/Documents inside it and "rm -rf ~/Documents/old"
+ * raises no card. A person's HOME is never under /tmp. There the home goes in
+ * the checkout's ignored .murage-scratch instead; elsewhere (macOS
+ * /var/folders, Windows %TEMP%) it stays in the OS temp dir.
+ */
+export function makeTestHome(prefix: string): string {
+  const temp = realpathSync.native(tmpdir());
+  const shared = ["/tmp", "/private/tmp", "/var/tmp"].some(root => temp === root || temp.startsWith(`${root}/`));
+  const base = shared ? join(fileURLToPath(new URL("../..", import.meta.url)), ".murage-scratch", "homes") : temp;
+  mkdirSync(base, { recursive: true });
+  return mkdtempSync(join(base, prefix));
 }

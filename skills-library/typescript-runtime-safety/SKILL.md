@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about TypeScript type system features (use `typescript-type-patterns`), project setup (use `typescript-project-setup`), testing (use `javascript-testing-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "typescript best-practices debugging"
   category: "software-engineering"

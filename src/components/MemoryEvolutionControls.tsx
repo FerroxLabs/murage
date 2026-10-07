@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { memoryButtonClass } from "./MemoryReview";
 import { ProcedureVersionHistory } from "./ProcedureVersionHistory";
-import { canRetryMemoryEvolution, memoryEvolutionCost, memoryEvolutionHistorySource, memoryEvolutionReason, runMemoryEvolutionAction, type MemoryEvolutionAction, type MemoryEvolutionStatus, type MemoryEvolutionKind } from "@/lib/memory-evolution-controls";
+import { canRetryMemoryEvolution, memoryEvolutionHistorySource, memoryEvolutionReason, runMemoryEvolutionAction, type MemoryEvolutionAction, type MemoryEvolutionStatus, type MemoryEvolutionKind } from "@/lib/memory-evolution-controls";
 const evolutionButtonClass=memoryButtonClass+" min-h-11";
 export function MemoryEvolutionControls({status,disabled=false,onRefresh,kind="recall"}:{status:MemoryEvolutionStatus|null;disabled?:boolean;onRefresh:()=>Promise<void>;kind?:MemoryEvolutionKind}) {
   const classification=kind==="classification",title=classification?"Tested classification improvements":"Tested recall improvements";
@@ -35,7 +35,6 @@ export function MemoryEvolutionControls({status,disabled=false,onRefresh,kind="r
         {canRetryMemoryEvolution(status)&&<button type="button" className={evolutionButtonClass} disabled={disabled||busy} onClick={()=>void run({action:"evolution-retry",jobId:status.job!.id})}>Retry interrupted check</button>}
         <button type="button" className={evolutionButtonClass} disabled={disabled||busy} onClick={()=>{setBusy(true);setError(null);void onRefresh().catch(()=>{if(mounted.current)setError(`Could not refresh ${kind} check status.`);}).finally(()=>{if(mounted.current)setBusy(false);});}}>{`Refresh ${kind} status`}</button>
       </div>
-      {status.job&&<p className="mt-2 text-[12px] text-ink-secondary">{memoryEvolutionCost(status)}.</p>}
       {heldout&&<div className="mt-3 space-y-1 text-[12px] text-ink-secondary"><p className="font-medium text-ink">Last held-out result</p><p>{heldout.cases} synthetic examples. {classification?"Classification":"Recall"} score: {heldout.baseline.toFixed(3)} before, {heldout.candidate.toFixed(3)} for the candidate.</p><p>Regressions: {heldout.regressions}. Scores describe the synthetic examples used in this check.</p></div>}
       {status.job?.reason&&<details className="mt-2 text-[12px] text-ink-secondary"><summary className={`${evolutionButtonClass} cursor-pointer`}>Check details</summary><p className="mt-1 break-all font-mono">{status.job.reason}</p></details>}
       <ProcedureVersionHistory source={history} label="Memory policy history" scopeLabel="Workspace memory policy" disabledReason={disabled||busy?"Wait for the current settings action to finish.":undefined}/>

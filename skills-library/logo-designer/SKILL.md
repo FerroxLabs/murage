@@ -4,7 +4,7 @@ description: |
   Complete logo design guidance covering the discovery process, concept development, sketching methodology, typography selection, color psychology, versatility testing across applications, file delivery formats, brand guidelines creation, client presentation techniques, and pricing strategies. Use when the user asks about logo designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design branding guide"
   category: "creative-arts"

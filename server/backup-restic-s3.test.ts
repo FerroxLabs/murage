@@ -36,9 +36,17 @@ it("one strict target supports four S3 configurations without credential URLs or
  for(const invalid of [{endpoint:"http://localhost:9000"},{endpoint:"https://user:secret@example.invalid"},{endpoint:"https://example.invalid/?token=secret"},{endpoint:"https://example.invalid/#secret"},{endpoint:"https://example.invalid/path"},{prefix:"../outside"},{prefix:"normal//outside"},{bucket:"bad/name"},{region:"auto\n--insecure-tls"},{bucketLookup:"arbitrary"},{options:["--no-lock"]}])expect(()=>resticS3TargetSchema.parse({...target,...invalid})).toThrow();
 });
 it("builds a fresh child-only environment and refuses incomplete credentials before runner use",async()=>{
- const s3={repository:resticS3Repository(target),region:target.region,bucketLookup:target.bucketLookup,credentials};const env=resticChildEnvironment("/synthetic",s3);expect(Object.keys(env).sort()).toEqual(["HOME","PATH","TMPDIR","RESTIC_REPOSITORY","AWS_DEFAULT_REGION","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN"].sort());expect(env.RESTIC_PASSWORD).toBeUndefined();expect(env.AWS_PROFILE).toBeUndefined();
+ const s3={repository:resticS3Repository(target),region:target.region,bucketLookup:target.bucketLookup,credentials};const env=resticChildEnvironment("/synthetic",s3);expect(Object.keys(env).sort()).toEqual(["HOME","PATH","TMPDIR","RESTIC_REPOSITORY","AWS_DEFAULT_REGION","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN",...(process.platform==="win32"?["TMP","TEMP","USERPROFILE","SystemRoot","ProgramData"].filter(name=>name.startsWith("T")||name==="USERPROFILE"||process.env[name]):[])].sort());expect(env.RESTIC_PASSWORD).toBeUndefined();expect(env.AWS_PROFILE).toBeUndefined();
  for(const value of [{accessKeyId:"",secretAccessKey:"secret"},{accessKeyId:"id",secretAccessKey:""},{...credentials,secretAccessKey:"private\nvalue"}]){const f=fixture({credentials:async()=>value});await expect(f.adapter.connect()).rejects.toThrow("CREDENTIALS_UNAVAILABLE");expect(f.run).not.toHaveBeenCalled();}
  expect(()=>resticChildEnvironment("/synthetic",{...s3,repository:"s3:https://user:secret@example.invalid/bucket/prefix"})).toThrow("CREDENTIALS_INVALID");
+});
+// On Windows the child gets TMP/TEMP/USERPROFILE in its own folder and only a
+// well-formed SystemRoot/ProgramData from the parent: a value with a quote or
+// a control character is dropped, never passed on.
+it.runIf(process.platform==="win32")("passes Windows SystemRoot and ProgramData on only when they are plain drive paths",()=>{
+ vi.stubEnv("SystemRoot","C:\\Windows");vi.stubEnv("ProgramData","C:\\Program\"Data");
+ try{const env=resticChildEnvironment("C:\\work");expect(env).toMatchObject({TMP:"C:\\work",TEMP:"C:\\work",USERPROFILE:"C:\\work",SystemRoot:"C:\\Windows"});expect(env.ProgramData).toBeUndefined();}
+ finally{vi.unstubAllEnvs();}
 });
 it("connect missing never initializes; initialization needs the exact host guard and tuple",async()=>{
  const f=fixture();f.config.exists=false;await expect(f.adapter.connect()).rejects.toThrow("REPOSITORY_MISSING");expect(f.calls.map(call=>operation(call.args))).toEqual(["cat"]);await expect(f.adapter.initialize()).rejects.toThrow("GUARD_REQUIRED");expect(f.calls).toHaveLength(1);

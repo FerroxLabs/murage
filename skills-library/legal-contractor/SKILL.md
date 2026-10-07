@@ -3,7 +3,7 @@ name: legal-contractor
 description: "Draft an independent contractor or consulting agreement behind a worker-classification gate (IRS 20-factor, state ABC test, UK IR35) — scope and deliverables, IP assignment, payment terms, confidentiality, exclusivity and termination. Use when the user is engaging a freelancer, agency or fractional operator. Do NOT use for issuing the 1099 at year end (use finance-1099-prep) or for employee offers and classification questions (use sentry-employment-and-classification). Template only — misclassifying an employee as a contractor carries six-figure back-tax and penalty exposure, so have an attorney review before signing."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "contractor ic-agreement abc-test legal smb"
   category: "legal"

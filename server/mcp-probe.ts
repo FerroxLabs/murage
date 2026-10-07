@@ -13,13 +13,58 @@ export interface McpProbeTool {
   description?: string;
 }
 
+/** Why a test failed. The stdio ones are this file's; the rest belong to a
+ * link server (server/remote-mcp-client.ts). Each has one fixed sentence. */
+export type McpProbeFailureReason =
+  | "spawn" | "timeout" | "closed" | "cancelled" | "initialize" | "protocol" | "still-installing"
+  | "needs-sign-in" | "needs-key" | "key-rejected" | "sign-in-ended" | "needs-more-access"
+  | "not-found" | "unreachable" | "wrong-address" | "moved" | "https-required" | "local-confirm"
+  | "address-changed" | "blocked-address" | "server-error" | "no-answer" | "session-gone";
+
 export type McpProbeResult =
-  | { ok: true; tools: McpProbeTool[] }
-  | { ok: false; error: string };
+  | { ok: true; tools: McpProbeTool[]; transport?: "http" | "sse" }
+  | {
+    ok: false;
+    error: string;
+    reason?: McpProbeFailureReason;
+    /** needs-sign-in: where to start (host and the server's own hints). */
+    signIn?: { host: string; resourceMetadataUrl?: string; scopeHint?: string };
+    /** needs-sign-in and needs-key: the header an API key goes in. */
+    apiKey?: { headerHint: "x-api-key" | "authorization" };
+    /** A masked form of the new address (never the address when it holds a secret). */
+    suggestUrl?: string;
+    /** The new address holds a secret, so acting on it goes through the desktop shell. */
+    suggestHoldsSecret?: boolean;
+    needs?: "this-computer" | "local-network";
+    scopes?: string[];
+  };
 
 const MAX_STDOUT_BYTES = 1_048_576;
 const MAX_TOOLS = 100;
 const DEFAULT_TIMEOUT_MS = 8_000;
+/** First-run windows for commands that download before they start (spec 3.6). */
+export const INSTALLER_WINDOW_MS = 150_000;
+export const DOCKER_WINDOW_MS = 300_000;
+
+/** Whether a command fetches what it runs before running it, and how long its
+ * first Test may take: npx, bunx, uvx, pipx, `pnpm dlx|exec`, `yarn dlx` get
+ * 150 s; `docker run|pull` gets 300 s; anything else is not an installer. */
+export function installerWindowMs(command: string, args: readonly string[]): number | null {
+  const base = (command.split(/[\\/]/).pop() ?? command).replace(/\.(cmd|exe|bat)$/i, "");
+  if (["npx", "bunx", "pnpx", "uvx", "pipx"].includes(base)) return INSTALLER_WINDOW_MS;
+  if (base === "pnpm" && (args[0] === "dlx" || args[0] === "exec")) return INSTALLER_WINDOW_MS;
+  if (base === "yarn" && args[0] === "dlx") return INSTALLER_WINDOW_MS;
+  if (base === "docker" && (args[0] === "run" || args[0] === "pull")) return DOCKER_WINDOW_MS;
+  return null;
+}
+
+export interface McpProbeOptions {
+  /** "first-run": an installer command gets its long window, and a timeout
+   * inside it is `still-installing` (the package cache is warm on the next try). */
+  patience?: "first-run";
+  /** Tests only: override the installer windows. */
+  installerWindowMs?: number;
+}
 
 function probeEnvironment(server: StoredMcpServer): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath() };
@@ -29,7 +74,8 @@ function probeEnvironment(server: StoredMcpServer): NodeJS.ProcessEnv {
   return env;
 }
 
-function publicProbeError(kind: "spawn" | "timeout" | "initialize" | "protocol" | "closed" | "cancelled"): string {
+function publicProbeError(kind: "spawn" | "timeout" | "initialize" | "protocol" | "closed" | "cancelled" | "still-installing"): string {
+  if (kind === "still-installing") return "It is still installing.";
   if (kind === "spawn") return "Could not start this command. Check that it is installed and executable.";
   if (kind === "timeout") return "The server did not answer in time.";
   if (kind === "closed") return "The server stopped before the MCP handshake finished.";
@@ -58,10 +104,16 @@ export function probeMcpServer(
   server: StoredMcpServer,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   signal?: AbortSignal,
+  options: McpProbeOptions = {},
 ): Promise<McpProbeResult> {
+  const installerWindow = options.patience === "first-run"
+    ? options.installerWindowMs ?? installerWindowMs(server.command, server.args)
+    : null;
+  if (installerWindow !== null) timeoutMs = installerWindow;
+  const fail = (kind: Parameters<typeof publicProbeError>[0]): McpProbeResult => ({ ok: false, error: publicProbeError(kind), reason: kind });
   return new Promise((resolve) => {
     if (signal?.aborted) {
-      resolve({ ok: false, error: publicProbeError("cancelled") });
+      resolve(fail("cancelled"));
       return;
     }
 
@@ -73,7 +125,7 @@ export function probeMcpServer(
         stdio: ["pipe", "pipe", "pipe"],
       });
     } catch {
-      resolve({ ok: false, error: publicProbeError("spawn") });
+      resolve(fail("spawn"));
       return;
     }
 
@@ -81,7 +133,7 @@ export function probeMcpServer(
     let stdoutBytes = 0;
     let initialized = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const onAbort = () => finish({ ok: false, error: publicProbeError("cancelled") });
+    const onAbort = () => finish(fail("cancelled"));
     const finish = (result: McpProbeResult) => {
       if (settled) return;
       settled = true;
@@ -95,7 +147,7 @@ export function probeMcpServer(
       try {
         child.stdin.write(`${JSON.stringify(frame)}\n`);
       } catch {
-        finish({ ok: false, error: publicProbeError("closed") });
+        finish(fail("closed"));
       }
     };
     const splitter = createLineSplitter((line) => {
@@ -119,7 +171,7 @@ export function probeMcpServer(
           !isRecord(result.capabilities) || !isRecord(result.serverInfo) ||
           typeof result.serverInfo.name !== "string" || typeof result.serverInfo.version !== "string"
         ) {
-          finish({ ok: false, error: publicProbeError("initialize") });
+          finish(fail("initialize"));
           return;
         }
         initialized = true;
@@ -129,12 +181,12 @@ export function probeMcpServer(
       }
       if (value.id !== 2) return;
       if (!initialized) {
-        finish({ ok: false, error: publicProbeError("initialize") });
+        finish(fail("initialize"));
         return;
       }
       const result = value.result as { tools?: unknown } | undefined;
       if (value.jsonrpc !== "2.0" || "error" in value || !Array.isArray(result?.tools)) {
-        finish({ ok: false, error: publicProbeError("protocol") });
+        finish(fail("protocol"));
         return;
       }
       const tools: McpProbeTool[] = [];
@@ -153,13 +205,13 @@ export function probeMcpServer(
     });
 
     timer = setTimeout(() => {
-      finish({ ok: false, error: publicProbeError("timeout") });
+      finish(fail(installerWindow !== null ? "still-installing" : "timeout"));
     }, timeoutMs);
     signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutBytes += chunk.byteLength;
       if (stdoutBytes > MAX_STDOUT_BYTES) {
-        finish({ ok: false, error: publicProbeError("protocol") });
+        finish(fail("protocol"));
         return;
       }
       splitter.push(chunk);
@@ -167,12 +219,12 @@ export function probeMcpServer(
     // Drain without retaining it. Child stderr often contains secrets or
     // arbitrary native logs and is not part of the MCP protocol.
     child.stderr.resume();
-    child.once("error", () => finish({ ok: false, error: publicProbeError("spawn") }));
-    child.once("close", () => finish({ ok: false, error: publicProbeError("closed") }));
+    child.once("error", () => finish(fail("spawn")));
+    child.once("close", () => finish(fail("closed")));
     // Defensive hardening: asynchronous stdin errors are not caught by
     // write's try/catch. Settle the probe if one arrives. The fixture proves
     // a closed-stdin probe answers; it does not prove a reachable EPIPE crash.
-    child.stdin.on("error", () => finish({ ok: false, error: publicProbeError("closed") }));
+    child.stdin.on("error", () => finish(fail("closed")));
 
     if (signal?.aborted) {
       onAbort();

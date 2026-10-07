@@ -6,13 +6,13 @@
 // Three public/runtime sockets, and one optional private managed origin. The
 // split between them is the whole security model:
 //
-//   :8810  0.0.0.0*   devices     token required, allowlisted, scrubbed.
-//                                 0.0.0.0 by DEFAULT and on purpose: a phone
-//                                 pairs over the LAN, and that is the whole
-//                                 feature. `MURAGE_COMPANION_BIND` narrows it
-//                                 — `loopback`, `tailnet`, or `off` for no
-//                                 listener at all — and a headless box is
-//                                 expected to set it. See the block below.
+//   :8810  tailnet|loopback  devices  token required, allowlisted, scrubbed.
+//                                 The tailnet address when there is one,
+//                                 loopback when there is not. 0.0.0.0 only
+//                                 when `MURAGE_COMPANION_BIND=lan` is chosen
+//                                 (plain HTTP on the local network, so never
+//                                 a default). `loopback`, `tailnet` and `off`
+//                                 narrow it further. See the block below.
 //   :8811  127.0.0.1  you         pairing and revocation — never off-machine
 //   :8813  tailnet    browsers    cookie required, its OWN allowlist, its own
 //                                 origin policy. Binds the Tailscale address
@@ -41,13 +41,16 @@
 // inside a process you chose to start would be ceremony: stopping it is the
 // off switch, and it is a more honest one than a flag in a file.
 import { createServer } from "node:http";
+import { join } from "node:path";
 
 import { createAddressWatcher } from "./advertise-watch.ts";
 import {
   browserBindHost,
   browserDoorLocation,
   browserFront,
+  reconcileBrowserFront,
   createBrowserHandler,
+  createBrowserStreamUpgrade,
   createSignInLimiter,
   rebindBrowserDoor,
   tailnetBindAddress,
@@ -75,18 +78,19 @@ import {
   MdnsResponder,
   type ServiceInfo,
 } from "./mdns.ts";
-import { createProxyHandler } from "./proxy.ts";
+import { createDeviceStreamUpgrade, createProxyHandler } from "./proxy.ts";
+import { doorForwardHeaders } from "./routes.ts";
+import { rejectUpgrade } from "./stream-upgrade.ts";
 import { companionOriginSocket, listenCompanionOrigin } from "./origin.ts";
 import { answerDoorChallenge, takeDoorIdentity } from "./door-identity.ts";
+import { createHarnessCall } from "./push-door.ts";
+import { createPushRevocations, revokeDeviceSender, watchDeviceRemovals } from "./push-revocations.ts";
+import { DATA_DIR } from "./state.ts";
+import { takeLaunchSecret } from "./launch-secret.ts";
 
-const companionToken = process.env.MURAGE_COMPANION_TOKEN;
-delete process.env.MURAGE_COMPANION_TOKEN;
-if (!companionToken || !/^[a-f0-9]{64}$/.test(companionToken)) {
-  // The harness answers its conversation routes (bots, threads, rooms, search
-  // and the live stream) only to a door carrying the launch credential both
-  // sides were started with. Without it a paired phone connects and sees nothing.
-  console.warn("[murage-companion] MURAGE_COMPANION_TOKEN is not set: start Murage and the companion together (the desktop app or `murage start`) so the phone can reach its conversations.");
-}
+const companionToken = await takeLaunchSecret("MURAGE_COMPANION_TOKEN");
+// Node has already read the compile cache setting; children (tools, pushes) must not inherit it.
+delete process.env.NODE_COMPILE_CACHE;
 /** The headless installer's door nonce, taken out of the environment for the
  * same reason as the token: no child of this process may inherit it. */
 const doorIdentity = takeDoorIdentity(process.env);
@@ -102,50 +106,38 @@ const HARNESS_PORT = num(process.env.MURAGE_PORT, 8799);
 const WEBHOOK_PORT = num(process.env.MURAGE_WEBHOOK_PORT, HARNESS_PORT + 1);
 const COMPANION_PORT = num(process.env.MURAGE_COMPANION_PORT, 8810);
 const CONTROL_PORT = num(process.env.MURAGE_CONTROL_PORT, 8811);
-/** Where the DEVICE door binds. Unset is `lan`, which is `0.0.0.0`.
+/** Where the DEVICE door binds. Unset is `auto`: the Tailscale address when
+ * there is a trustworthy one, `127.0.0.1` when there is not. The LAN
+ * (`0.0.0.0`) is a choice, never a default (0.1.62 audit C6).
  *
- * `0.0.0.0` is the right answer on a desktop and is deliberately the default:
- * a phone on the same wifi dials this machine's LAN address, and narrowing
- * the bind to fix a cloud box would silently break the product's headline
- * feature on every laptop it ships to. So the default is exactly what it has
- * always been, and the narrowing is opt-in.
+ * The device port speaks plain HTTP with the device token in a header. Over a
+ * tailnet that is inside WireGuard. Over a LAN it is cleartext to everyone on
+ * that network, and on a rented box `0.0.0.0` is the public internet minus a
+ * security-group rule. So the wide bind has to be asked for by name, and the
+ * desktop app asks for it only when the person turns on "Pair on this Wi-Fi"
+ * and has read that it is not encrypted.
  *
- * It is opt-in because "your network" stopped meaning one thing. On a rented
- * box the same `0.0.0.0` is the public internet minus a security-group rule,
- * and this deployment's entire claim is that there is no public ingress. A
- * bearer token on every route is not the point: the listener itself is.
- *
- *   lan       0.0.0.0 — the default, and what a phone pairs against
- *   loopback  127.0.0.1 — nothing off-machine; put `tailscale serve` in front
+ *   auto      the default: tailnet address when there is one, else loopback
+ *   lan       0.0.0.0, the explicit choice; a phone on the same wifi pairs
+ *   loopback  127.0.0.1, nothing off-machine; put `tailscale serve` in front
  *   tailnet   the 100.64.0.0/10 address, and only that address
  *   off       no device door at all, not even on loopback
  *
- * `off` exists because loopback is not the same claim as absent, and a
- * headless deployment should be able to make the stronger one. The browser
- * door (8813) and the control page (8811) are unaffected by this, so `off` on
- * a cloud box still leaves the way in that box actually uses.
- *
- * Three things are fail-closed here, and all three are the browser door's
- * precedent applied to this one:
+ * Fail-closed behaviour is unchanged:
  *   - `tailnet` with no trustworthy tailnet address REFUSES TO START. It does
  *     not fall back to loopback and it certainly does not fall back to
- *     0.0.0.0. Someone who wrote `tailnet` down meant that address or nothing.
- *   - an unrecognised value REFUSES TO START rather than taking the default.
- *     This is stricter than `MURAGE_BROWSER_BIND` below, deliberately: there
- *     the unknown value lands on `auto`, which is narrow, and here it would
- *     land on `0.0.0.0`, which is the widest thing this process can do. A
- *     typo in a security control must never resolve outward.
- *   - there is no `auto`. The browser door has one because the right answer
- *     genuinely varies with whether Tailscale is up; this door's right answer
- *     on a desktop is always the LAN, and a mode that sometimes narrowed it
- *     would break pairing on the machines least able to explain why. */
-type CompanionBindMode = "lan" | "loopback" | "tailnet" | "off";
+ *     0.0.0.0. (`auto` is the mode that falls back, and only to loopback.)
+ *   - an unrecognised value REFUSES TO START rather than taking a default. A
+ *     typo in a security control must never resolve outward. */
+type CompanionBindMode = "auto" | "lan" | "loopback" | "tailnet" | "off";
 const COMPANION_BIND_RAW = (process.env.MURAGE_COMPANION_BIND ?? "").trim().toLowerCase();
-/** The parsed mode, or null for a value that is not one of the four. Parsed
+/** The parsed mode, or null for a value that is not one of the five. Parsed
  * here and rejected in `main`, so the refusal prints as a sentence rather
- * than as a module-scope stack trace. */
+ * than as a module-scope stack trace. Unset is `auto` (audit C6): the tailnet
+ * address when there is one, loopback when there is not. Never the LAN. */
 const COMPANION_BIND: CompanionBindMode | null =
-  COMPANION_BIND_RAW === "" || COMPANION_BIND_RAW === "lan" ? "lan"
+  COMPANION_BIND_RAW === "" || COMPANION_BIND_RAW === "auto" ? "auto"
+  : COMPANION_BIND_RAW === "lan" ? "lan"
   : COMPANION_BIND_RAW === "loopback" ? "loopback"
   : COMPANION_BIND_RAW === "tailnet" ? "tailnet"
   : COMPANION_BIND_RAW === "off" ? "off"
@@ -192,7 +184,8 @@ const BROWSER_SCHEME: BoundIdentity["scheme"] = process.env.MURAGE_BROWSER_SCHEM
  *     `https://<name>:8813` which the certificate does not cover.
  *   - the front's scheme decides the session cookie, because the browser's
  *     view of the connection is the one the cookie has to match. */
-let BROWSER_FRONT = browserFront(process.env.MURAGE_BROWSER_PUBLIC_ORIGIN);
+const CONFIGURED_FRONT = browserFront(process.env.MURAGE_BROWSER_PUBLIC_ORIGIN);
+let BROWSER_FRONT = CONFIGURED_FRONT;
 /** What a browser sees. The front's scheme when there is a front, because
  * `serve` terminates TLS and the client is on HTTPS whatever this process
  * bound. Falls back to the configured scheme when nothing is in front. */
@@ -293,6 +286,8 @@ const companionBindHost = (): string | null => {
       return null;
     case "loopback":
       return "127.0.0.1";
+    case "lan":
+      return "0.0.0.0";
     case "tailnet": {
       const resolved = tailnetBindAddress(tailscaleAddress(), tailnetSelfAddress());
       if ("address" in resolved) return resolved.address;
@@ -306,10 +301,21 @@ const companionBindHost = (): string | null => {
           `no device door at all. It will not fall back to a wider address.`,
       );
     }
-    default:
-      return "0.0.0.0";
+    default: {
+      // auto (audit C6): the tailnet address when there is a trustworthy one,
+      // loopback when there is not. Never 0.0.0.0.
+      const resolved = tailnetBindAddress(tailscaleAddress(), tailnetSelfAddress());
+      if ("address" in resolved) return resolved.address;
+      console.log(`device door on loopback only: ${resolved.refused}. Turn on "Pair on this Wi-Fi" in Murage to pair over the local network (not encrypted).`);
+      return "127.0.0.1";
+    }
   }
 };
+
+/** Which kind of address the device door is on, for the pairing screens. */
+const deviceDoorMode = (host: string | null): "off" | "lan" | "tailnet" | "loopback" =>
+  host === null ? "off" : host === "0.0.0.0" ? "lan" : host === "127.0.0.1" ? "loopback" : "tailnet";
+let deviceDoorHost: string | null | undefined;
 
 /** Where the door should be bound right now, given Tailscale as it is right
  * now. Throws only in the explicit `tailnet` mode. */
@@ -345,6 +351,7 @@ async function refreshMachineName(): Promise<void> {
   if (cachedName) return; // an explicit override is not ours to second-guess
   try {
     const res = await fetch(`http://127.0.0.1:${HARNESS_PORT}/api/config`, {
+      headers: doorForwardHeaders(companionToken),
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return;
@@ -357,6 +364,17 @@ async function refreshMachineName(): Promise<void> {
 }
 
 const devices = new DeviceRegistry();
+
+/** Spec §3.5: signing out, re-pairing or revoking deletes the push binding.
+ *  The tokens died with the record; this tells the harness to drop the
+ *  relay binding, retried until it answers. */
+const pushRevocations = createPushRevocations({
+  file: join(DATA_DIR, "push-revocations.json"),
+  send: revokeDeviceSender(createHarnessCall(HARNESS_PORT), companionToken),
+});
+watchDeviceRemovals(devices, pushRevocations);
+devices.announceStartupPurge();
+void pushRevocations.flush();
 const mdns = new MdnsResponder();
 
 /** ONE sign-in limiter, handed to both doors.
@@ -407,13 +425,15 @@ const connectedDevices = createConnectedDeviceTracker();
 // streams with it. Device revoke still ends every stream through
 // `disconnectDevice` below; this is the narrower boundary.
 devices.onSessionEnded(({ sessionId }) => connectedDevices.disconnectSession(sessionId));
-const proxy = createProxyHandler({
+const proxyOptions: Parameters<typeof createProxyHandler>[0] = {
     harnessPort: HARNESS_PORT,
     companionToken,
     // `authenticate` also stamps lastSeenAt, which is what makes the control
     // page able to say when a phone was last heard from.
     authenticate: (token) => devices.authenticate(token),
-    redeem: (code, deviceName, pairRequestId) => devices.redeem(code, deviceName, pairRequestId),
+    approvalIdentity: (id) => devices.approvalIdentity(id),
+    redeem: (code, deviceName, pairRequestId, clientIp) =>
+      devices.redeem(code, deviceName, pairRequestId, undefined, undefined, undefined, clientIp),
     serverName: machineName,
     // Recomputed per pairing rather than cached: addresses change when the
     // machine joins another network, and a pairing is exactly the moment the
@@ -423,7 +443,8 @@ const proxy = createProxyHandler({
     connected: connectedDevices.open,
     // The same instance the browser door gets, three lines down. Not a copy.
     signInLimiter,
-  });
+  };
+const proxy = createProxyHandler(proxyOptions);
 const companion = createServer(proxy);
 const managedOrigin = PRIVATE_ORIGIN ? createServer(proxy) : null;
 
@@ -431,7 +452,7 @@ const managedOrigin = PRIVATE_ORIGIN ? createServer(proxy) : null;
  * anything bolted onto `proxy` above is on the device port *and* the
  * tunnel-fronted managed origin by default, which is the exact failure this
  * separation exists to prevent. */
-const browserRequests = createBrowserHandler({
+const browserOptions: Parameters<typeof createBrowserHandler>[0] = {
   harnessPort: HARNESS_PORT,
   companionToken,
   identity: browserIdentity,
@@ -442,17 +463,30 @@ const browserRequests = createBrowserHandler({
   // A device that signs itself out loses every stream, bearer ones too —
   // the same call the control page's revoke makes.
   disconnectDevice: connectedDevices.disconnect,
+  // An enrolment that lands for a device removed meanwhile drops its binding.
+  pushRevoked: (deviceId) => pushRevocations.add(deviceId),
   // The same instance the device door got. A lockout earned at either door
   // is spent at both, which is the only reading of "locked out" that means
   // anything when one credential opens two doors.
   signInLimiter,
-});
+};
+const browserRequests = createBrowserHandler(browserOptions);
 /** The headless installer's "is this my door?" check (see `door-identity.ts`).
  * Answered before the door's own routing, so it rides on whatever the request
  * gets back. Inert unless an installer handed this process a nonce. */
 const browser = createServer((req, res) => {
   answerDoorChallenge(req, res, doorIdentity);
   return browserRequests(req, res);
+});
+
+// Streaming voice: the one websocket path, each door behind its own checks.
+companion.on("upgrade", createDeviceStreamUpgrade(proxyOptions));
+browser.on("upgrade", createBrowserStreamUpgrade(browserOptions));
+// The tunnel-fronted managed origin shares the device handler for HTTP. It does
+// not serve streaming voice in v1: say so rather than leave the socket hanging.
+managedOrigin?.on("upgrade", (_req, socket) => {
+  socket.on("error", () => socket.destroy());
+  rejectUpgrade(socket, 426, "streaming voice is not served on this address");
 });
 
 // A startup invariant, not a comment. index.ts once had two listeners on one
@@ -470,6 +504,7 @@ const control = createControlServer({
     hostedUrl = next;
   },
   discovery: () => ({ advertising: mdns.advertising, name: service().name }),
+  deviceDoor: () => ({ mode: deviceDoorMode(deviceDoorHost ?? null), unencrypted: deviceDoorHost === "0.0.0.0" }),
   connectedDeviceIds: connectedDevices.ids,
   disconnectDevice: connectedDevices.disconnect,
   // The startup probe below is not the last word. Tailscale brought up after
@@ -499,8 +534,8 @@ function moveBrowserDoor(deadline?: number): Promise<void> {
   if (browserMove) return browserMove;
   const moving = (async () => {
     const observed = await refreshBrowserServe(BROWSER_PORT, {deadline});
-    BROWSER_FRONT = observed.owner === "ours" ? browserFront(observed.origin) : null;
-    BROWSER_CLIENT_SCHEME = BROWSER_FRONT?.scheme ?? "http";
+    BROWSER_FRONT = reconcileBrowserFront(observed.owner, observed.origin, CONFIGURED_FRONT);
+    BROWSER_CLIENT_SCHEME = BROWSER_FRONT?.scheme ?? BROWSER_SCHEME;
     if (observed.problem) console.warn(`browser HTTPS: ${observed.problem}`);
     const preserveHost = observed.owner === "other" || observed.owner === "unknown" ? browserBoundHost : null;
     const result = await rebindBrowserDoor({
@@ -511,9 +546,9 @@ function moveBrowserDoor(deadline?: number): Promise<void> {
       listen,
     });
     browserBoundHost = result.host;
-    if (BROWSER_FRONT && result.host !== "127.0.0.1") {
+    if (BROWSER_FRONT && observed.owner === "ours" && result.host !== "127.0.0.1") {
       BROWSER_FRONT = null;
-      BROWSER_CLIENT_SCHEME = "http";
+      BROWSER_CLIENT_SCHEME = BROWSER_SCHEME;
       console.warn("browser HTTPS: the owned proxy could not be matched to a loopback listener; HTTPS is not advertised.");
     }
     if (!result.note.startsWith("already bound")) console.log(`browser door: ${result.note}`);
@@ -578,8 +613,8 @@ async function main(): Promise<void> {
   if (COMPANION_BIND === null) {
     throw new Error(
       `MURAGE_COMPANION_BIND is set to "${COMPANION_BIND_RAW}", which is not one of ` +
-        `lan, loopback, tailnet, off. Refusing to start rather than guessing, because the guess would be ` +
-        `"lan", which binds 0.0.0.0.`,
+        `auto, lan, loopback, tailnet, off. Refusing to start rather than guessing, because a wrong guess ` +
+        `could bind a wider address than the one you meant.`,
     );
   }
   // The device door may not exist at all, and a port nothing binds cannot
@@ -647,7 +682,11 @@ async function main(): Promise<void> {
   // the top depends on the device socket — the control page, the managed
   // origin and the machine-name lookup are all independent of it.
   const deviceHost = companionBindHost();
+  deviceDoorHost = deviceHost;
   if (deviceHost !== null) await listen(companion, COMPANION_PORT, deviceHost);
+  if (deviceHost === "0.0.0.0") {
+    console.log("LAN pairing is on: the device door is open on your local network over plain HTTP, so it is not encrypted. Use it on a network you trust, or pair over Tailscale instead.");
+  }
 
   // Discovery failing is not an error anyone has to fix — port 5353 taken by
   // another responder, multicast off, a guest network that isolates its
@@ -662,7 +701,7 @@ async function main(): Promise<void> {
   // record names. A Bonjour A record pointing at a door bound to 127.0.0.1 —
   // or to nothing — is not a discovery aid, it is a phone dialling a refused
   // connection and blaming the wifi.
-  if (deviceHost === "0.0.0.0" || COMPANION_BIND === "tailnet") {
+  if (deviceHost === "0.0.0.0" || deviceDoorMode(deviceHost) === "tailnet") {
     await watcher.check();
     watcher.start();
   } else {
@@ -687,7 +726,7 @@ async function main(): Promise<void> {
   );
   // Only when a phone could actually get there. Printing an address for a
   // door bound to loopback is the same lie the Bonjour record would have been.
-  if (reach && deviceHost === "0.0.0.0") console.log(`on your phone, enter  ${reach}:${COMPANION_PORT}`);
+  if (reach && (deviceHost === "0.0.0.0" || deviceDoorMode(deviceHost) === "tailnet")) console.log(`on your phone, enter  ${reach}:${COMPANION_PORT}`);
   if (tailscale && !tailnetName()) {
     // Do not tell someone to turn on MagicDNS when they may well have it on
     // already — say what was actually tried, so the difference between "off"
@@ -704,6 +743,7 @@ const shutdown = async (signal: string): Promise<void> => {
   // the watcher first, or a tick could re-advertise the record the next
   // line just withdrew
   watcher.stop();
+  browserRequests.closePairedSessions();
   await mdns.stop().catch(() => {});
   // close() waits for open connections, and an SSE stream never ends on its
   // own — drop the sockets so "stop" means stopped, now.

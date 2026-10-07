@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request requires professional legal advice or falls outside the scope of tenant rights.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy contracts tenant-rights"
   category: "legal-civic"

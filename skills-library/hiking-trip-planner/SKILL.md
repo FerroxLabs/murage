@@ -6,7 +6,7 @@ description: |
   Do NOT use for competitive trail running (use beginner-running-plan), mountaineering or technical climbing, wilderness survival training, or outdoor gear purchasing decisions (use outdoor-gear-selection-guide).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "hiking planning checklist step-by-step"
   category: "hobbies-crafts"

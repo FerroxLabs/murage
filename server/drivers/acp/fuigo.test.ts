@@ -29,20 +29,33 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+
+// core.ts reads MURAGE_ACP_SESSION_CONFIG_MS once at import, so it has to be
+// set before the imports below run. Short enough for the hung set_model test,
+// long enough that a loaded machine never trips it on the fake's instant reply.
+vi.hoisted(() => { process.env.MURAGE_ACP_SESSION_CONFIG_MS = "1500"; });
 
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
 import { resetPathCacheForTests, restrictInstallScanDirsForTests } from "../../env-path.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { FuigoAgentDriver, fuigoLocalSlug, parseFuigoModels, STATIC_FUIGO_MODELS } from "./fuigo.ts";
-import { acpVersionFailureDetail, createAcpDriver, MCP_READY_WAIT_MS, type AcpSupport } from "./core.ts";
+import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
+import { ensureFuigoLocalModel, FuigoAgentDriver, fuigoLocalKeyEnv, fuigoLocalSlug, FUIGO_EXTERNAL_MCP_GATES, isolateFuigoFromExternalMcp, parseFuigoModels, scrubFuigoCredentialEnv, STATIC_FUIGO_MODELS } from "./fuigo.ts";
+import { noteFluxKeyRefused, resetFluxKeyHealthForTests } from "../../flux-key-health.ts";
+import { fluxKeyState } from "../../flux-config.ts";
+import { acpVersionFailureDetail, createAcpDriver, FALLBACK_CAP_LINE, MCP_OWN_READY_WAIT_MS, MCP_READY_WAIT_MS, type AcpSupport } from "./core.ts";
 import { configureLocalServerStore, writeLocalServers } from "../../local-servers.ts";
 import { localHost } from "../local-inject.ts";
 
+// The pinned bundle version, read from the packaging script (one source of truth).
+const FUIGO_VERSION = /FUIGO_VERSION = "(\d+\.\d+\.\d+)"/.exec(readFileSync(new URL("../../../scripts/prepare-fuigo.mjs", import.meta.url), "utf8"))![1]!;
+
 /** Shape only, never a live credential. */
 const FLUX_KEY = "sk-flux-Ffffffffffffffffffffffffffffffffffffffffff";
+/** A user's own Flux key, set in their shell rather than in Murage. Shape only. */
+const USER_OWN_FLUX_KEY = "sk-flux-Uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu";
 
 /** Verbatim `fuigo models` stdout (1.0.2), trimmed to one row per family. */
 const REAL_MODELS_OUTPUT = `You are using FUIGO_API_KEY.
@@ -79,14 +92,28 @@ Available models:
  * where there is no shebang at all.
  */
 const FAKE_SOURCE = `import { appendFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { delimiter, join } from "node:path";
 const argv = process.argv.slice(2);
 const kind = argv.includes("--version") ? "version" : argv[0] === "models" ? "models" : "agent";
+// Explicit fields only; credentials are fixture-dump.ts fingerprints, never values.
+const PLAIN = ["FUIGO_ALLOW_UPSTREAM_HOSTS", "PATH", "HOME", "FUIGO_HOME", "FUIGO_MEMORY", "FUIGO_CLAUDE_SKILLS_ENABLED", "FUIGO_CLAUDE_RULES_ENABLED", "FUIGO_CLAUDE_AGENTS_ENABLED", "FUIGO_CLAUDE_MCPS_ENABLED", "FUIGO_CLAUDE_HOOKS_ENABLED", "FUIGO_CLAUDE_SESSIONS_ENABLED", "FUIGO_CURSOR_SKILLS_ENABLED", "FUIGO_CURSOR_RULES_ENABLED", "FUIGO_CURSOR_AGENTS_ENABLED", "FUIGO_CURSOR_MCPS_ENABLED", "FUIGO_CURSOR_HOOKS_ENABLED", "FUIGO_CURSOR_SESSIONS_ENABLED", "FUIGO_CODEX_SKILLS_ENABLED", "FUIGO_CODEX_RULES_ENABLED", "FUIGO_CODEX_AGENTS_ENABLED", "FUIGO_CODEX_MCPS_ENABLED", "FUIGO_CODEX_HOOKS_ENABLED", "FUIGO_CODEX_SESSIONS_ENABLED", "FUIGO_AGENTS_SKILLS_ENABLED", "OPENAI_BASE_URL", "OPENAI_MODEL"];
+const CREDENTIALS = ["FUIGO_API_KEY", "FUIGO_CODE_API_KEY", "FLUX_API_KEY", "MURAGE_FLUX_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY",
+  ...Object.keys(process.env).filter((key) => /^MURAGE_LOCAL_[A-Z0-9_]+_API_KEY$/.test(key))];
+const fingerprint = (value) => createHash("sha256").update(value).digest("hex");
+const dumpEnv = Object.fromEntries([...PLAIN.map((key) => [key, process.env[key]]), ...CREDENTIALS.map((key) => [key, process.env[key] === undefined ? undefined : fingerprint(process.env[key])])]
+  .filter(([, value]) => value !== undefined));
 if (process.env.FUIGO_FAKE_DUMP_DIR) {
-  writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, kind + ".json"), JSON.stringify({ argv, env: process.env }));
+  writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, kind + ".json"), JSON.stringify({ argv, env: dumpEnv }));
 }
 if (kind === "version") { console.log("fuigo 1.0.4 (fake)"); process.exit(0); }
-if (kind === "models") { process.stdout.write(process.env.FUIGO_FAKE_MODELS ?? ""); process.exit(0); }
+if (kind === "models") {
+  // One line per catalog spawn: each is a GET /v1/models (and /api-key) at Flux.
+  if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "models.log"), "spawn\\n");
+  if (process.env.FUIGO_FAKE_MODELS_STDERR) process.stderr.write(process.env.FUIGO_FAKE_MODELS_STDERR);
+  process.stdout.write(process.env.FUIGO_FAKE_MODELS ?? "");
+  process.exit(Number(process.env.FUIGO_FAKE_MODELS_EXIT ?? 0));
+}
 const SID = "fake-fuigo-session";
 const send = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
 if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "spawns.log"), process.pid + "\\n");
@@ -102,6 +129,50 @@ const mcpReady = (sessionId) => {
   order("mcp-ready:" + sessionId);
   send({ jsonrpc: "2.0", method: "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: 1, elapsedMs: 1 } });
 };
+// Interjections that missed the running turn's final drain. Fuigo runs each
+// as its own interject-fallback turn once the prompt result is out.
+const stranded = [];
+let promptRunning = false;
+let fallbacks = 0;
+// FUIGO_FAKE_FALLBACK_HELPER=1: the fallback starts a background helper that
+// outlives it, asks for a permission and reports after FUIGO_FAKE_HELPER_MS.
+// FUIGO_FAKE_FALLBACK_EXIT=1: the process exits in the middle of the fallback.
+const runFallback = (text, delayMs = 100) => {
+  const promptId = "interject-fallback-000" + (++fallbacks);
+  setTimeout(() => {
+    order("fallback-start");
+    send({ jsonrpc: "2.0", method: "_fuigo/queue/changed", params: { sessionId: SID, entries: [], runningPromptId: promptId, runningText: text, runningKind: "prompt" } });
+    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: " fallback reply #" + fallbacks } } } });
+    if (process.env.FUIGO_FAKE_FALLBACK_EXIT === "1") setTimeout(() => { order("fallback-exit"); process.exit(3); }, 100);
+    if (process.env.FUIGO_FAKE_FALLBACK_HELPER === "1") {
+      send({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: SID,
+        update: { sessionUpdate: "subagent_spawned", subagent_id: "helper-1", description: "Background check" } } });
+      setTimeout(() => {
+        order("helper-ask");
+        send({ jsonrpc: "2.0", id: "helper-permission", method: "session/request_permission", params: { sessionId: SID,
+          toolCall: { toolCallId: "helper-tool", kind: "execute", title: "helper write" },
+          options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject-once", kind: "reject_once" }] } });
+      }, Number(process.env.FUIGO_FAKE_HELPER_MS ?? 1200));
+    }
+    setTimeout(() => {
+      order("fallback-end");
+      send({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: SID,
+        update: { sessionUpdate: "turn_completed", prompt_id: promptId, stop_reason: "end_turn" } } });
+      send({ jsonrpc: "2.0", method: "_fuigo/queue/changed", params: { sessionId: SID, entries: [] } });
+    }, Number(process.env.FUIGO_FAKE_FALLBACK_MS ?? 600));
+  }, delayMs);
+};
+const helperAnswered = (decision) => {
+  if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "helper.log"), JSON.stringify(decision) + "\\n");
+  send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
+    update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: " helper result" } } } });
+  setTimeout(() => {
+    order("helper-end");
+    send({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: SID,
+      update: { sessionUpdate: "subagent_finished", subagent_id: "helper-1", status: "completed" } } });
+  }, 200);
+};
 let buf = "";
 process.stdin.on("data", (d) => {
   buf += d;
@@ -113,19 +184,33 @@ process.stdin.on("data", (d) => {
     let m;
     try { m = JSON.parse(line); } catch { continue; }
     const ok = (r) => send({ jsonrpc: "2.0", id: m.id, result: r });
-    if (m.method === "initialize") ok({ protocolVersion: 1, authMethods: [{ id: "fuigo.api_key" }] });
+    if (m.id === "helper-permission" && !m.method) { helperAnswered(m.result); continue; }
+    if (m.method === "initialize") ok({ protocolVersion: 1, authMethods: [{ id: "fuigo.api_key" }], ...(process.env.FUIGO_FAKE_RETRY_DISCARD ? { agentCapabilities: { _meta: { "fuigo/capabilities": { retryDiscard: { version: 1 } } } } } : {}) });
     else if (m.method === "authenticate") ok({});
     else if (m.method === "session/new") {
       if (process.env.FUIGO_FAKE_DUMP_DIR) writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "session.json"), JSON.stringify(m.params));
       const hasMcp = Array.isArray(m.params?.mcpServers) && m.params.mcpServers.length > 0;
       if (hasMcp) send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 1, connected: 0 } });
       if (hasMcp && mcpMode === "before") mcpReady(SID);
-      ok({ sessionId: SID });
+      ok(process.env.FUIGO_FAKE_NEW_MODEL ? { sessionId: SID, models: { currentModelId: process.env.FUIGO_FAKE_NEW_MODEL, availableModels: [] } } : { sessionId: SID });
       order("new-response");
       // 1.0.x advertises its "/" commands right after session/new
       // (session_setup.rs send_available_commands_update), before any prompt.
       if (process.env.FUIGO_FAKE_COMMANDS) send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
         update: { sessionUpdate: "available_commands_update", availableCommands: JSON.parse(process.env.FUIGO_FAKE_COMMANDS) } } });
+      // An external (plugin) server is hung: the engine counts it in total
+      // and never sends mcp_initialized. "external": Murage's own mount (1 of
+      // 2) connects after 150 ms. "stuck": nothing ever connects.
+      if (hasMcp && (mcpMode === "external" || mcpMode === "stuck")) {
+        send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 2, connected: 0 } });
+        if (mcpMode === "external") setTimeout(() => send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 2, connected: 1 } }), 150);
+      }
+      // "late": another server connects at once (the count reaches Murage's
+      // mounts), but the all-settled notification only comes after 1.2 s.
+      if (hasMcp && mcpMode === "late") {
+        setTimeout(() => send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 2, connected: 1 } }), 150);
+        setTimeout(() => mcpReady(SID), 1200);
+      }
       if (hasMcp && mcpMode === "ready") {
         // Another session's readiness must not release this one.
         mcpReady("some-other-session");
@@ -136,15 +221,72 @@ process.stdin.on("data", (d) => {
       // A session this process already holds (the pool's reuse, #1575):
       // re-applied servers are announced again, as 1.0.20 does.
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "loads.log"), JSON.stringify(m.params) + "\\n");
-      ok({});
+      ok(process.env.FUIGO_FAKE_CURRENT_MODEL ? { models: { currentModelId: process.env.FUIGO_FAKE_CURRENT_MODEL, availableModels: [] } } : {});
       if (Array.isArray(m.params?.mcpServers) && m.params.mcpServers.length) mcpReady(m.params.sessionId);
+    }
+    else if (m.method === "session/set_model") {
+      order("set-model");
+      if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "set-model.log"), JSON.stringify(m.params) + "\\n");
+      if (process.env.FUIGO_FAKE_SET_MODEL_HANG) { /* never answers */ }
+      else if (process.env.FUIGO_FAKE_SET_MODEL_ERROR) send({ jsonrpc: "2.0", id: m.id, error: { code: -32602, message: process.env.FUIGO_FAKE_SET_MODEL_ERROR } });
+      else ok({});
     }
     else if (m.method === "session/prompt") {
       order("prompt");
       if (process.env.FUIGO_FAKE_DUMP_DIR) writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "prompt.json"), JSON.stringify(m.params));
-      send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
+      if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "prompts.log"), JSON.stringify(m.params) + "\\n");
+      // FUIGO_FAKE_SCRIPT: a JSON array of raw messages sent in place of the "ok" chunk.
+      if (process.env.FUIGO_FAKE_SCRIPT) for (const raw of JSON.parse(process.env.FUIGO_FAKE_SCRIPT)) send(raw);
+      else send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
         update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } } } });
-      ok({ stopReason: "end_turn" });
+      // FUIGO_FAKE_HOLD_MS keeps the turn running so a test can steer it.
+      const holdMs = Number(process.env.FUIGO_FAKE_HOLD_MS ?? 0);
+      promptRunning = true;
+      const finish = () => {
+        promptRunning = false;
+        // FUIGO_FAKE_PROMPT_HELPER=1: a background helper is still open when the prompt ends.
+        if (process.env.FUIGO_FAKE_PROMPT_HELPER === "1") send({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: SID,
+          update: { sessionUpdate: "subagent_spawned", subagent_id: "prompt-helper", description: "Background check" } } });
+        // The prompt's own durable turn end, ahead of its result.
+        send({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: SID,
+          update: { sessionUpdate: "turn_completed", prompt_id: "prompt-original", stop_reason: "end_turn" } } });
+        ok({ stopReason: "end_turn" });
+        // FUIGO_FAKE_AFTER_SCRIPT: raw messages sent 150 ms after the prompt result.
+        if (process.env.FUIGO_FAKE_AFTER_SCRIPT) setTimeout(() => { for (const raw of JSON.parse(process.env.FUIGO_FAKE_AFTER_SCRIPT)) send(raw); }, 150);
+        if (process.env.FUIGO_FAKE_PROMPT_EXIT_MS) setTimeout(() => { order("prompt-exit"); process.exit(3); }, Number(process.env.FUIGO_FAKE_PROMPT_EXIT_MS));
+        if (stranded.length) runFallback(stranded.shift());
+      };
+      if (holdMs > 0) setTimeout(finish, holdMs); else finish();
+    } else if (m.method === "_fuigo/interject") {
+      // FUIGO_FAKE_INTERJECT: "ok" (default) queues and echoes; "nomethod" is
+      // method-not-found, as a build without the extension answers;
+      // "fallback" queues and echoes, misses the final drain and runs as an
+      // interject-fallback turn after the prompt result; "slowack" echoes at
+      // once and answers after FUIGO_FAKE_ACK_DELAY_MS; "silent" answers
+      // nothing and echoes after FUIGO_FAKE_LATE_ECHO_MS.
+      if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "interjects.log"), JSON.stringify(m.params) + "\\n");
+      const mode = process.env.FUIGO_FAKE_INTERJECT ?? "ok";
+      const echo = () => send({ jsonrpc: "2.0", method: "_fuigo/session/interjection", params: { sessionId: m.params.sessionId, text: m.params.text, interjectionId: m.params.interjectionId } });
+      if (mode === "nomethod") send({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "Method not found" } });
+      else if (mode === "slowack") {
+        echo();
+        const id = m.id;
+        setTimeout(() => send({ jsonrpc: "2.0", id, result: { result: { status: "queued" } } }), Number(process.env.FUIGO_FAKE_ACK_DELAY_MS ?? 6000));
+      } else if (mode === "silent") {
+        setTimeout(echo, Number(process.env.FUIGO_FAKE_LATE_ECHO_MS ?? 2000));
+      } else {
+        // real Fuigo 1.0.21 double-wraps ext results: {"result":{"result":{"status":"queued"}}}
+        ok(mode === "flat" ? { status: "queued" } : { result: { status: "queued" } });
+        echo();
+        // FUIGO_FAKE_POST_ECHO_TEXT: the reply keeps streaming after the echo.
+        if (process.env.FUIGO_FAKE_POST_ECHO_TEXT) send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: process.env.FUIGO_FAKE_POST_ECHO_TEXT } } } });
+        // One arriving while no prompt runs becomes a fallback turn at once
+        // (after FUIGO_FAKE_IDLE_FALLBACK_DELAY_MS); one inside the prompt
+        // misses its final drain and runs after the result.
+        if (mode === "fallback" && promptRunning) stranded.push(m.params.text);
+        else if (mode === "fallback") runFallback(m.params.text, Number(process.env.FUIGO_FAKE_IDLE_FALLBACK_DELAY_MS ?? 100));
+      }
     } else if (m.id !== undefined) send({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "nm" } });
   }
 });
@@ -163,7 +305,7 @@ function dump(kind: "models" | "version" | "agent"): { argv: string[]; env: Reco
 
 /** Run one turn and hand back exactly what the CLI was spawned with. */
 async function runTurn(
-  options: { images?: Array<{ mimeType: string; data: string }>; model?: string; effort?: "low" | "high"; fullAuto?: boolean; environment?: Record<string, string>; integrations?: SendTurnInput["integrations"]; text?: string; system?: string; engineCommand?: SendTurnInput["engineCommand"] } = {},
+  options: { resumeCursor?: string; images?: Array<{ mimeType: string; data: string }>; model?: string; effort?: "low" | "high"; fullAuto?: boolean; environment?: Record<string, string>; integrations?: SendTurnInput["integrations"]; text?: string; system?: string; engineCommand?: SendTurnInput["engineCommand"] } = {},
 ): Promise<EventRecorder> {
   instance = await FuigoAgentDriver.create({
     instanceId: "fuigo-test",
@@ -179,6 +321,7 @@ async function runTurn(
     ...(options.system ? { system: options.system } : {}),
     ...(options.engineCommand ? { engineCommand: options.engineCommand } : {}),
     ...("images" in options ? { images: options.images } : {}),
+    ...(options.resumeCursor ? { resumeCursor: options.resumeCursor } : {}),
     ...(options.model ? { model: options.model } : {}),
     ...(options.effort ? { effort: options.effort } : {}),
     ...(options.integrations ? { integrations: options.integrations } : {}),
@@ -204,6 +347,9 @@ beforeEach(() => {
 afterEach(async () => {
   delete process.env.FLUX_API_KEY;
   delete process.env.FUIGO_FAKE_MODELS;
+  delete process.env.FUIGO_FAKE_MODELS_EXIT;
+  delete process.env.FUIGO_FAKE_MODELS_STDERR;
+  resetFluxKeyHealthForTests();
   delete process.env.FUIGO_API_KEY;
   delete process.env.FUIGO_CODE_API_KEY;
   recorder?.stop();
@@ -246,6 +392,76 @@ describe("engine commands", () => {
     await runTurn({ text: "/not-a-command", system: "You are Moss." });
     const prompt = JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8")).prompt as Array<{ type: string; text?: string }>;
     expect(prompt[0]!.text).toBe("You are Moss.\n\n/not-a-command");
+  });
+});
+
+// F4: the system stack rode every turn's message and Fuigo stored each copy in
+// its session, so the prompt grew by one stack per turn. It is sent once per
+// native session now, and again only when it changes.
+describe("the system stack", () => {
+  async function turns(steps: Array<{ text: string; system: string; integrations?: SendTurnInput["integrations"] }>, threadId = "t-fuigo-stack"): Promise<string[]> {
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-stack",
+      displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps },
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    let done = 0;
+    for (const step of steps) {
+      await instance.adapter.sendTurn({ threadId, text: step.text, system: step.system, ...(done > 0 ? { resumeCursor: "fake-fuigo-session" } : {}), ...(step.integrations ? { integrations: step.integrations } : {}) });
+      done += 1;
+      const n = done;
+      let seen = 0;
+      await recorder.until((e) => e.type === "turn.completed" && ++seen === n);
+    }
+    return readFileSync(join(dumps, "prompts.log"), "utf8").trim().split("\n")
+      .map((line) => (JSON.parse(line).prompt as Array<{ text: string }>)[0]!.text);
+  }
+
+  it("goes out with the first turn, not with the next one that has not changed", async () => {
+    const sent = await turns([
+      { text: "one", system: "You are Moss. Rules: be brief." },
+      { text: "two", system: "You are Moss. Rules: be brief." },
+      { text: "three", system: "You are Moss. Rules: be brief." },
+    ]);
+    expect(sent).toEqual(["You are Moss. Rules: be brief.\n\none", "two", "three"]);
+  });
+
+  it("goes out again when it changes, and then holds still again", async () => {
+    const sent = await turns([
+      { text: "one", system: "You are Moss." },
+      { text: "two", system: "You are Moss. New rule: no lists." },
+      { text: "three", system: "You are Moss. New rule: no lists." },
+    ]);
+    expect(sent).toEqual(["You are Moss.\n\none", "You are Moss. New rule: no lists.\n\ntwo", "three"]);
+  });
+
+  it("is alias-free with memory mounted, so it is sent once while each turn's body carries that turn's own alias", async () => {
+    const memory = (): SendTurnInput["integrations"] => ({ memory: { command: process.execPath, args: ["memory"], env: {} } });
+    const system = "You are Moss.";
+    const sent = await turns([
+      { text: "one", system, integrations: memory() },
+      { text: "two", system, integrations: memory() },
+      { text: "three", system, integrations: memory() },
+    ]);
+    const alias = /murage-memory-[a-f0-9]{20}/;
+    const [body1, body2, body3] = sent.map((text) => text.slice(text.lastIndexOf("For this turn only")));
+    // Turn 1 carries the system stack, and the stack names no rotating alias.
+    expect(sent[0]).toMatch(/^You are Moss\.\n\n/);
+    const stack1 = sent[0]!.slice(0, sent[0]!.indexOf("For this turn only"));
+    expect(stack1).toContain("murage-memory__memory_search");
+    expect(stack1).not.toMatch(alias);
+    // Turn 2 and 3 do not re-send it: the cache hits even though memory is mounted.
+    expect(sent[1]).not.toContain("You are Moss.");
+    expect(sent[1]).not.toContain("Murage tools are MCP tools");
+    expect(sent[1]).toMatch(/\n\ntwo$/);
+    expect(sent[2]).toMatch(/\n\nthree$/);
+    // The body still names the concrete alias for THIS turn, and it rotates.
+    const aliases = [body1, body2, body3].map((body) => body.match(alias)?.[0]);
+    expect(aliases.every(Boolean)).toBe(true);
+    expect(new Set(aliases).size).toBe(3);
   });
 });
 
@@ -401,10 +617,145 @@ describe("fuigo argv — the ordering trap", () => {
   });
 });
 
+describe("fuigo model pick over the wire", () => {
+  const lines = (file: string) =>
+    existsSync(join(dumps, file)) ? readFileSync(join(dumps, file), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+  const orderOf = () => readFileSync(join(dumps, "order.log"), "utf8").trim().split("\n").map((l) => l.split(" ")[0]);
+
+  it("sets the model after session/load, before the prompt, because -m is ignored on a loaded session", async () => {
+    await runTurn({ model: "flux-auto", resumeCursor: "fake-fuigo-session" });
+    expect(lines("loads.log")).toHaveLength(1);
+    expect(lines("set-model.log")).toEqual([{ sessionId: "fake-fuigo-session", modelId: "flux-auto" }]);
+    const order = orderOf();
+    expect(order.indexOf("set-model")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("set-model")).toBeLessThan(order.indexOf("prompt"));
+  });
+
+  it("sends the changed model on a reattached turn, the same id -m carries", async () => {
+    await runTurn({ model: "flux-fast", resumeCursor: "fake-fuigo-session" });
+    expect(lines("set-model.log")).toEqual([{ sessionId: "fake-fuigo-session", modelId: "flux-fast" }]);
+    expect(dump("agent").argv).toContain("flux-fast");
+  });
+
+  it("fails the turn with a clear message when set_model is refused", async () => {
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-test", displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, FUIGO_FAKE_SET_MODEL_ERROR: "unknown model" },
+      enabled: true, config: { cli: fakeCli, fullAuto: false },
+    });
+    const rec = recordEvents(instance.adapter);
+    recorder = rec;
+    await instance.adapter.sendTurn({ threadId: "t-fuigo", text: "hi", model: "flux-fast", resumeCursor: "fake-fuigo-session" });
+    const err = await rec.until((e) => e.type === "runtime.error");
+    const text = JSON.stringify(err);
+    expect(text).toContain("could not switch to the model");
+    expect(text).toContain("flux-fast");
+    expect(text).not.toMatch(/\u2014|\bsafe|safety/i);
+    expect(orderOf()).not.toContain("prompt");
+  });
+
+  it("skips set_model when the loaded session already runs the picked model", async () => {
+    await runTurn({ model: "flux-auto", resumeCursor: "fake-fuigo-session", environment: { FUIGO_FAKE_CURRENT_MODEL: "flux-auto" } });
+    expect(lines("loads.log")).toHaveLength(1);
+    expect(lines("set-model.log")).toEqual([]);
+  });
+
+  it("still sends set_model when the loaded session runs a different model", async () => {
+    await runTurn({ model: "flux-fast", resumeCursor: "fake-fuigo-session", environment: { FUIGO_FAKE_CURRENT_MODEL: "flux-auto" } });
+    expect(lines("set-model.log")).toEqual([{ sessionId: "fake-fuigo-session", modelId: "flux-fast" }]);
+  });
+
+  it("sends nothing when no model is picked", async () => {
+    await runTurn({ resumeCursor: "fake-fuigo-session" });
+    expect(lines("set-model.log")).toEqual([]);
+  });
+
+  it("session/new advertising the picked model as current sends no set_model", async () => {
+    await runTurn({ model: "flux-fast", environment: { FUIGO_FAKE_NEW_MODEL: "flux-fast" } });
+    expect(lines("set-model.log")).toEqual([]);
+    expect(orderOf()).toContain("prompt");
+  });
+
+  it("session/new advertising a different current model sends set_model before the prompt", async () => {
+    await runTurn({ model: "flux-fast", environment: { FUIGO_FAKE_NEW_MODEL: "flux-auto" } });
+    expect(lines("set-model.log")).toEqual([{ sessionId: "fake-fuigo-session", modelId: "flux-fast" }]);
+    const order = orderOf();
+    expect(order.indexOf("set-model")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("set-model")).toBeLessThan(order.indexOf("prompt"));
+  });
+
+  it("fails the turn and sends no prompt when set_model never answers", async () => {
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-test", displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, FUIGO_FAKE_SET_MODEL_HANG: "1" },
+      enabled: true, config: { cli: fakeCli, fullAuto: false },
+    });
+    const rec = recordEvents(instance.adapter);
+    recorder = rec;
+    await instance.adapter.sendTurn({ threadId: "t-fuigo", text: "hi", model: "flux-fast", resumeCursor: "fake-fuigo-session" });
+    const err = await rec.until((e) => e.type === "runtime.error");
+    expect(JSON.stringify(err)).toContain("could not switch to the model");
+    expect(lines("set-model.log")).toHaveLength(1);
+    expect(orderOf()).not.toContain("prompt");
+  });
+});
+
+describe("fuigo engine isolation from the owner's global MCP config", () => {
+  // The engine merges $HOME/.claude.json and $HOME/.cursor/mcp.json into the
+  // session's MCP set behind two env-resolved compat cells (verified against
+  // the 1.0.18 binary, see isolateFuigoFromExternalMcp). Murage must close both
+  // for the turn, the catalog spawn, and leave an explicit opt-in alone.
+  const poisonOwnerHome = () => {
+    writeFileSync(join(home, ".claude.json"), JSON.stringify({ mcpServers: { "owner-notion": { command: "/nonexistent/notion", args: [] } } }));
+    mkdirSync(join(home, ".cursor"), { recursive: true });
+    writeFileSync(join(home, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { "owner-cursor": { command: "/nonexistent/cursor", args: [] } } }));
+  };
+
+  it("turns the Claude Code and Cursor MCP imports off for the engine turn, with the owner's config on disk", async () => {
+    poisonOwnerHome();
+    await runTurn({ model: "flux-auto" });
+    const { env } = dump("agent");
+    for (const gate of FUIGO_EXTERNAL_MCP_GATES) expect(env[gate], gate).toBe("0");
+    expect(FUIGO_EXTERNAL_MCP_GATES).toHaveLength(19);
+  });
+
+  it("applies the same isolation to the catalog spawn, which shares transformEnv", async () => {
+    poisonOwnerHome();
+    await runTurn({ model: "flux-auto" });
+    for (const gate of FUIGO_EXTERNAL_MCP_GATES) expect(dump("models").env[gate], gate).toBe("0");
+  });
+
+  it("leaves Murage's own mounts as the only MCP set the engine is handed", () => {
+    // The session's mcpServers come from acpMcpServers (core.ts), which never
+    // reads the owner's files; the engine-side import is what the gates close.
+    const env: Record<string, string | undefined> = {};
+    isolateFuigoFromExternalMcp(env);
+    expect(Object.keys(env).sort()).toEqual([...FUIGO_EXTERNAL_MCP_GATES].sort());
+    expect(Object.values(env).every((value) => value === "0")).toBe(true);
+  });
+
+  it("respects an owner who opts back in, in any casing, and does not touch other names", () => {
+    const env: Record<string, string | undefined> = { FUIGO_CLAUDE_MCPS_ENABLED: "1", fuigo_cursor_mcps_enabled: "true", FUIGO_HOME: "/x" };
+    isolateFuigoFromExternalMcp(env);
+    expect(env.FUIGO_CLAUDE_MCPS_ENABLED).toBe("1");
+    expect(env.fuigo_cursor_mcps_enabled).toBe("true");
+    expect(env.FUIGO_CURSOR_MCPS_ENABLED).toBeUndefined();
+    expect(env.FUIGO_HOME).toBe("/x");
+    expect(env.FUIGO_CLAUDE_HOOKS_ENABLED).toBe("0");
+  });
+
+  it("an explicit opt-in on the engine environment reaches the child", async () => {
+    await runTurn({ model: "flux-auto", environment: { FUIGO_CLAUDE_MCPS_ENABLED: "1" } });
+    expect(dump("agent").env.FUIGO_CLAUDE_MCPS_ENABLED).toBe("1");
+    expect(dump("agent").env.FUIGO_CURSOR_MCPS_ENABLED).toBe("0");
+    expect(dump("agent").env.FUIGO_CLAUDE_HOOKS_ENABLED).toBe("0");
+  });
+});
+
 describe("fuigo credential — transformEnv, not applyTurnEnv", () => {
   it("hands the turn the workspace key under FUIGO_API_KEY", async () => {
     await runTurn({ model: "flux-auto" });
-    expect(dump("agent").env.FUIGO_API_KEY).toBe(FLUX_KEY);
+    expect(dump("agent").env.FUIGO_API_KEY).toBe(fixtureCredentialFingerprint(FLUX_KEY));
   });
 
   it("hands the CATALOG spawn the same key — this is why it is not applyTurnEnv", async () => {
@@ -413,7 +764,7 @@ describe("fuigo credential — transformEnv, not applyTurnEnv", () => {
     // catalog refresh (core.ts:220), so this assertion is the one that fails
     // if the hook is moved.
     await runTurn({ model: "flux-auto" });
-    expect(dump("models").env.FUIGO_API_KEY).toBe(FLUX_KEY);
+    expect(dump("models").env.FUIGO_API_KEY).toBe(fixtureCredentialFingerprint(FLUX_KEY));
     expect(dump("models").argv).toEqual(["models"]);
   });
 
@@ -421,7 +772,7 @@ describe("fuigo credential — transformEnv, not applyTurnEnv", () => {
     await runTurn({ model: "flux-auto" });
     const { env } = dump("agent");
     expect(env.FLUX_API_KEY).toBeUndefined();
-    expect(Object.keys(env).filter((k) => env[k] === FLUX_KEY)).toEqual(["FUIGO_API_KEY"]);
+    expect(Object.keys(env).filter((k) => env[k] === fixtureCredentialFingerprint(FLUX_KEY))).toEqual(["FUIGO_API_KEY"]);
   });
 
   it("writes no OPENAI_* surface — fuigo is already a FluxRouter client", async () => {
@@ -441,19 +792,28 @@ describe("fuigo credential — transformEnv, not applyTurnEnv", () => {
     await runTurn({ model: "flux-auto" });
     const { env } = dump("agent");
     expect(env.FUIGO_CODE_API_KEY).toBeUndefined();
-    expect(env.FUIGO_API_KEY).toBe(FLUX_KEY);
+    expect(env.FUIGO_API_KEY).toBe(fixtureCredentialFingerprint(FLUX_KEY));
+  });
+
+  it("does not pass an inherited FUIGO_ALLOW_UPSTREAM_HOSTS to an ordinary Flux turn", async () => {
+    process.env.FUIGO_ALLOW_UPSTREAM_HOSTS = "1";
+    try {
+      await runTurn({ model: "flux-auto" });
+      expect(dump("models").env.FUIGO_ALLOW_UPSTREAM_HOSTS).toBeUndefined();
+      expect(dump("agent").env.FUIGO_ALLOW_UPSTREAM_HOSTS).toBeUndefined();
+    } finally { delete process.env.FUIGO_ALLOW_UPSTREAM_HOSTS; }
   });
 
   it("leaves a user's own credential alone when Murage has no key", async () => {
     // Degrade to the CLI's native auth rather than half-write an env. An
     // install carrying its own FUIGO_API_KEY is a WORKING install.
     delete process.env.FLUX_API_KEY;
-    await runTurn({ model: "flux-auto", environment: { FUIGO_API_KEY: "sk-user-own-key" } });
+    await runTurn({ model: "flux-auto", environment: { FUIGO_API_KEY: USER_OWN_FLUX_KEY } });
     // The CATALOG spawn is asserted first because it happens before the auth
     // gate: it holds the direct evidence even when a regression also stops the
     // turn from spawning at all.
-    expect(dump("models").env.FUIGO_API_KEY).toBe("sk-user-own-key");
-    expect(dump("agent").env.FUIGO_API_KEY).toBe("sk-user-own-key");
+    expect(dump("models").env.FUIGO_API_KEY).toBe(fixtureCredentialFingerprint(USER_OWN_FLUX_KEY));
+    expect(dump("agent").env.FUIGO_API_KEY).toBe(fixtureCredentialFingerprint(USER_OWN_FLUX_KEY));
   });
 });
 
@@ -533,6 +893,125 @@ describe("fuigo catalog", () => {
   });
 });
 
+// 2026-10-01: three Windows installs of Murage 0.1.61 sent GET /v1/api-key
+// and GET /v1/models to api.fluxrouter.ai every 60-65 s, forever, with the
+// base URL as the bearer, a short non-sk value, an empty bearer, or another
+// provider's sk- key. Each `fuigo models` spawn is one of those pairs.
+describe("fuigo never aims a credential that is not a Flux key at Flux", () => {
+  const spawns = () => (existsSync(join(dumps, "models.log")) ? readFileSync(join(dumps, "models.log"), "utf8").split("\n").filter(Boolean).length : 0);
+  const create = (environment: Record<string, string> = {}) => FuigoAgentDriver.create({
+    instanceId: "fuigo-flux-shape",
+    displayName: "Fuigo",
+    environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, ...environment },
+    enabled: true,
+    config: { cli: fakeCli, fullAuto: false },
+  });
+
+  for (const [name, value] of [["the base URL", "https://api.fluxrouter.ai/v1"], ["a short non-sk value", "abc12345xyz"], ["another provider's sk- key", "sk-0123456789abcdef0123456789abcdef"]] as const) {
+    it(`asks Flux for nothing when the Flux slot holds ${name}`, async () => {
+      process.env.FLUX_API_KEY = value;
+      instance = await create();
+      expect(spawns()).toBe(0);
+      expect(instance.models.options.map((o) => o.id)).not.toContain("gemini-pro");
+    });
+  }
+
+  it("runs no catalog spawn at all when there is no key", async () => {
+    delete process.env.FLUX_API_KEY;
+    instance = await create();
+    expect(spawns()).toBe(0);
+  });
+
+  it("drops an ambient empty or non-Flux FUIGO key instead of passing it on", async () => {
+    delete process.env.FLUX_API_KEY;
+    mkdirSync(join(home, ".fuigo"), { recursive: true });
+    writeFileSync(join(home, ".fuigo", "auth.json"), "{}");
+    await runTurn({ model: "flux-auto", environment: { FUIGO_API_KEY: "", FUIGO_CODE_API_KEY: "https://api.fluxrouter.ai/v1" } });
+    const { env } = dump("agent");
+    expect(env.FUIGO_API_KEY).toBeUndefined();
+    expect(env.FUIGO_CODE_API_KEY).toBeUndefined();
+  });
+
+  it("on Windows, removes every casing of the Fuigo key names before setting its own", () => {
+    const env: Record<string, string | undefined> = { Fuigo_Api_Key: "https://api.fluxrouter.ai/v1", fuigo_code_api_key: "sk-0123456789abcdef0123456789abcdef", Path: "C:\\Windows" };
+    scrubFuigoCredentialEnv(env, FLUX_KEY, "win32");
+    expect(env).toEqual({ Path: "C:\\Windows", FUIGO_API_KEY: FLUX_KEY });
+  });
+
+  it("on Windows with no Murage key, keeps a Flux-shaped user key and drops the rest", () => {
+    const env: Record<string, string | undefined> = { fuigo_api_key: USER_OWN_FLUX_KEY, FUIGO_CODE_API_KEY: "" };
+    scrubFuigoCredentialEnv(env, null, "win32");
+    expect(env).toEqual({ fuigo_api_key: USER_OWN_FLUX_KEY });
+  });
+
+  it("stops asking after Murage's own Flux call says the key was refused, until the key changes", async () => {
+    // Real Fuigo 1.0.20 answers a 401 by falling back to its bundled models
+    // and exiting 0, so the fake does the same: the exit code says nothing.
+    process.env.FUIGO_FAKE_MODELS = REAL_MODELS_OUTPUT;
+    process.env.FUIGO_FAKE_MODELS_EXIT = "0";
+    process.env.FUIGO_FAKE_MODELS_STDERR = "warning: models/list failed: HTTP 401 Unauthorized, using bundled models\n";
+    instance = await create();
+    expect(spawns()).toBe(1);
+    expect(fluxKeyState()).toBe("ok");
+    noteFluxKeyRefused(FLUX_KEY);
+    expect(fluxKeyState()).toBe("refused");
+    await instance.refreshModels?.();
+    await instance.refreshModels?.({ manual: true });
+    expect(spawns()).toBe(1);
+    process.env.FLUX_API_KEY = "sk-flux-Nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn";
+    expect(fluxKeyState()).toBe("ok");
+    await instance.refreshModels?.();
+    expect(spawns()).toBe(2);
+  });
+
+  it("backs off after a catalog failure that is not a refusal, and a person-initiated refresh skips the wait", async () => {
+    process.env.FUIGO_FAKE_MODELS = "";
+    process.env.FUIGO_FAKE_MODELS_EXIT = "1";
+    instance = await create();
+    await instance.refreshModels?.();
+    expect(spawns()).toBe(1);
+    expect(fluxKeyState()).toBe("ok");
+    await instance.refreshModels?.({ manual: true });
+    expect(spawns()).toBe(2);
+  });
+
+  it("five ordinary failures do not switch the live list off", async () => {
+    process.env.FUIGO_FAKE_MODELS = "";
+    process.env.FUIGO_FAKE_MODELS_EXIT = "1";
+    instance = await create();
+    for (let i = 0; i < 6; i++) await instance.refreshModels?.({ manual: true });
+    expect(spawns()).toBe(7);
+    process.env.FUIGO_FAKE_MODELS = REAL_MODELS_OUTPUT;
+    process.env.FUIGO_FAKE_MODELS_EXIT = "0";
+    await instance.refreshModels?.({ manual: true });
+    expect(spawns()).toBe(8);
+  });
+});
+
+describe("Fuigo config writer on Windows", () => {
+  const SERVER = { id: "srv_win0123456ab", name: "WinBox", kind: "llamacpp" as const, apiBase: "http://127.0.0.1:18080/v1", apiKey: "local-win-key", createdAt: 1, updatedAt: 1 };
+  beforeEach(() => {
+    configureLocalServerStore(join(root, "data"));
+    writeLocalServers([SERVER]);
+  });
+  afterEach(() => configureLocalServerStore(null));
+
+  it("writes under USERPROFILE with no HOME, base URL in base_url and the key only in the env", () => {
+    const profile = join(root, "Users", "Some One");
+    mkdirSync(profile, { recursive: true });
+    const env: Record<string, string | undefined> = { USERPROFILE: profile };
+    const slug = ensureFuigoLocalModel(`${SERVER.id}::Qwen3`, env);
+    const host = localHost(SERVER.id)!;
+    const toml = readFileSync(join(profile, ".fuigo", "config.toml"), "utf8");
+    expect(toml).toContain(`[model."${slug}"]`);
+    expect(toml).toContain(`base_url = "${SERVER.apiBase}"`);
+    expect(toml).toContain(`env_key = "${fuigoLocalKeyEnv(host)}"`);
+    expect(toml).not.toContain(SERVER.apiKey);
+    expect(toml).not.toMatch(/^api_key/m);
+    expect(env[fuigoLocalKeyEnv(host)]).toBe(SERVER.apiKey);
+  });
+});
+
 describe("fuigo binary resolution — the bundled engine", () => {
   const saved: Record<string, string | undefined> = {};
   let bundleDir: string;
@@ -595,9 +1074,7 @@ describe("fuigo binary resolution — the bundled engine", () => {
     expect(dump("agent").env.PATH.split(delimiter)[0]).toBe(bundleDir);
     const session = JSON.parse(readFileSync(join(dumps, "session.json"), "utf8"));
     expect(session.mcpServers).toContainEqual({ name: "browser", command: browser.command, args: browser.args,
-      env: [{ name: "PATH", value: emptyBin }, { name: "ELECTRON_RUN_AS_NODE", value: "1" },
-        // Fuigo reaches MCP tools only through use_tool: Murage's browser server is told so.
-        { name: "MURAGE_TOOL_CALL_STYLE", value: "use-tool" }, { name: "MURAGE_MCP_SERVER_NAME", value: "browser" }] });
+      env: [{ name: "PATH", value: emptyBin }, { name: "ELECTRON_RUN_AS_NODE", value: "1" }] });
   });
 
   const snapshotDefault = async (cli = "fuigo") => {
@@ -637,22 +1114,39 @@ describe("fuigo binary resolution — the bundled engine", () => {
     expect(snapshot).not.toHaveProperty("setupAction");
   });
 
-  it("does NOT touch PATH when the user has their own fuigo installed", async () => {
-    // resolveFuigoCli prefers a fuigo on PATH over the bundled copy on
-    // purpose (env-path.ts:382-388) — the app should agree with the user's
-    // terminal. This is the control that proves the branch above is a branch
-    // and not an unconditional prepend.
+  // Real version probes use a POSIX executable fixture, like env-path.test.ts.
+  function userFuigo(version: string): string {
     const userBin = join(root, "user-bin");
     mkdirSync(userBin, { recursive: true });
-    const binary = join(userBin, process.platform === "win32" ? "fuigo.exe" : "fuigo");
-    writeFileSync(binary, "");
-    chmodSync(binary, 0o755);
+    for (const [directory, reported] of [[userBin, version], [bundleDir, FUIGO_VERSION]]) {
+      const binary = join(directory, "fuigo");
+      writeFileSync(binary, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo fuigo ${reported}; fi\n`);
+      chmodSync(binary, 0o755);
+    }
     process.env.PATH = userBin;
     resetPathCacheForTests();
+    return userBin;
+  }
 
+  it.skipIf(process.platform === "win32")("does NOT touch PATH when the user has a newer fuigo installed", async () => {
+    const [major, minor, patch] = FUIGO_VERSION.split(".").map(Number);
+    const userBin = userFuigo(`${major}.${minor}.${patch + 1}`);
     await runTurn({ model: "flux-auto" });
-    expect(dump("agent").env.PATH.split(delimiter)).not.toContain(bundleDir);
-    expect(dump("agent").env.PATH.split(delimiter)[0]).toBe(userBin);
+    for (const kind of ["agent", "models"] as const) {
+      expect(dump(kind).env.PATH.split(delimiter)).not.toContain(bundleDir);
+      expect(dump(kind).env.PATH.split(delimiter)[0]).toBe(userBin);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("puts the bundled fuigo before an older user copy on PATH", async () => {
+    const [major, minor, patch] = FUIGO_VERSION.split(".").map(Number);
+    const userBin = userFuigo(`${major}.${minor}.${patch - 1}`);
+    await runTurn({ model: "flux-auto" });
+    for (const kind of ["agent", "models"] as const) {
+      const path = dump(kind).env.PATH.split(delimiter);
+      expect(path[0]).toBe(bundleDir);
+      expect(path).toContain(userBin);
+    }
   });
 
   it("leaves PATH alone when there is no fuigo anywhere — the spawn reports it", async () => {
@@ -697,7 +1191,7 @@ describe("fuigo local models (spec E1)", () => {
     expect(argv[m + 1]).toBe(slug);
     expect(argv.indexOf("agent")).toBeLessThan(m);
     expect(m).toBeLessThan(argv.indexOf("stdio"));
-    expect(env[KEY_ENV]).toBe(SERVER.apiKey);
+    expect(env[KEY_ENV]).toBe(fixtureCredentialFingerprint(SERVER.apiKey));
     const toml = readFileSync(join(home, ".fuigo", "config.toml"), "utf8");
     expect(toml).toContain(`[model."${slug}"]`);
     expect(toml).toContain('model = "Qwen3.8-27B"');
@@ -828,6 +1322,74 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     expect(rows.map((row) => row.event)).not.toContain("mcp_ready");
   });
 
+  it("(g) R3: a hung external server does not hold the prompt once Murage's own mount is connected", async () => {
+    const { threadId, turnId, startedAt } = await start({ FUIGO_FAKE_MCP: "external" }, AGENTS);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    const order = readOrder();
+    expect(order.map((row) => row.event)).toEqual(["new-response", "prompt"]);
+    // released by the own-mount progress report, not by any timeout
+    expect(order[1]!.at - order[0]!.at).toBeLessThan(2_000);
+    expect(Date.now() - startedAt).toBeLessThan(MCP_OWN_READY_WAIT_MS);
+    const events = lifecycleEvents(threadId, turnId).map((row) => row.event);
+    expect(events).toContain("mcp_ready_own");
+    expect(events).not.toContain("mcp_ready_timeout");
+    expect(existsSync(join(dumps, "prompt.json"))).toBe(true);
+  });
+
+  it("(h) R3: nothing connecting at all is bounded by the short own-mount cap, not 15 s", async () => {
+    process.env.MURAGE_ACP_MCP_OWN_READY_MS = "500";
+    try {
+      const { threadId, turnId, startedAt } = await start({ FUIGO_FAKE_MCP: "stuck" }, AGENTS);
+      const done = await recorder!.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: true });
+      const order = readOrder();
+      expect(order.map((row) => row.event)).toEqual(["new-response", "prompt"]);
+      expect(order[1]!.at - order[0]!.at).toBeGreaterThanOrEqual(450);
+      expect(Date.now() - startedAt).toBeLessThan(MCP_OWN_READY_WAIT_MS);
+      expect(lifecycleEvents(threadId, turnId).map((row) => row.event)).toContain("mcp_ready_timeout");
+    } finally { delete process.env.MURAGE_ACP_MCP_OWN_READY_MS; }
+  });
+
+  const COMPOSIO = { composio: { command: process.execPath, args: ["/fake/composio-mcp.js"], env: {} } };
+
+  it("(h2) a connector turn is not released by another server connecting first; it waits for all-settled", async () => {
+    const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "late" }, COMPOSIO);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    const order = readOrder();
+    expect(order.map((row) => row.event)).toEqual(["new-response", "mcp-ready:fake-fuigo-session", "prompt"]);
+    expect(order[2]!.at - order[0]!.at).toBeGreaterThanOrEqual(1_000);
+    const events = lifecycleEvents(threadId, turnId).map((row) => row.event);
+    expect(events).toContain("mcp_ready");
+    expect(events).not.toContain("mcp_ready_own");
+  });
+
+  it("(h3) a non-connector turn keeps the early own-mount release in the same situation", async () => {
+    const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "late" }, AGENTS);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    const order = readOrder();
+    expect(order[0]!.event).toBe("new-response");
+    expect(order[1]!.event).toBe("prompt");
+    expect(order[1]!.at - order[0]!.at).toBeLessThan(1_000);
+    expect(lifecycleEvents(threadId, turnId).map((row) => row.event)).toContain("mcp_ready_own");
+  });
+
+  it("(h4) a connector turn whose servers never settle is bounded by the full wait: one wait, one prompt, no hang", async () => {
+    process.env.MURAGE_ACP_MCP_READY_MS = "600";
+    const { threadId, turnId, startedAt } = await start({ FUIGO_FAKE_MCP: "external" }, COMPOSIO);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    const order = readOrder();
+    expect(order.map((row) => row.event)).toEqual(["new-response", "prompt"]);
+    expect(order[1]!.at - order[0]!.at).toBeGreaterThanOrEqual(550);
+    expect(Date.now() - startedAt).toBeLessThan(MCP_OWN_READY_WAIT_MS);
+    const events = lifecycleEvents(threadId, turnId).map((row) => row.event);
+    expect(events.filter((e) => e === "mcp_ready_timeout")).toHaveLength(1);
+    expect(events).not.toContain("mcp_ready_own");
+  });
+
   it("(d) a Stop during the wait sends no prompt and ends the turn as cancelled, promptly", async () => {
     const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "never" }, AGENTS);
     await recorder!.until((e) => e.type === "session.started");
@@ -878,11 +1440,27 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
   });
 });
 
-describe("Fuigo keeps one engine process per thread (upstream #1575)", () => {
+describe("Fuigo keeps one engine process per thread, opt-in (upstream #1575, MURAGE_ACP_POOL=1)", () => {
+  // per-turn is the default for 1.0 (FUIGO-LIVE-EVIDENCE.md): the pool is an opt-in
+  beforeEach(() => { process.env.MURAGE_ACP_POOL = "1"; });
+  afterEach(() => { delete process.env.MURAGE_ACP_POOL; });
+  it("by default each turn is its own process: nothing is kept after end_turn", async () => {
+    delete process.env.MURAGE_ACP_POOL;
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-pool-default",
+      displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps },
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    const first = await instance.adapter.sendTurn({ threadId: "t-fuigo-default", text: "one" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const second = await instance.adapter.sendTurn({ threadId: "t-fuigo-default", text: "two", resumeCursor: "fake-fuigo-session" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(readFileSync(join(dumps, "spawns.log"), "utf8").split("\n").filter(Boolean)).toHaveLength(2);
+  });
   it("a second turn on the thread reuses the process and hands it the new turn's tokens", async () => {
-    // the pool ships off (MURAGE_ACP_POOL=1 turns it on)
-    process.env.MURAGE_ACP_POOL = "1";
-    onTestFinished(() => { delete process.env.MURAGE_ACP_POOL; });
     instance = await FuigoAgentDriver.create({
       instanceId: "fuigo-pool",
       displayName: "Fuigo",
@@ -911,4 +1489,330 @@ describe("Fuigo keeps one engine process per thread (upstream #1575)", () => {
       .find((server) => server.name === "agents")?.env.find((entry) => entry.name === "MURAGE_COMMS_TOKEN")?.value;
     expect(token).toBe("turn-two");
   });
+
+  it("a warm second turn that picks a different model sends set_model with the new id before its prompt", async () => {
+    process.env.MURAGE_ACP_POOL = "1";
+    onTestFinished(() => { delete process.env.MURAGE_ACP_POOL; });
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-pool-model",
+      displayName: "Fuigo",
+      // the fake reports flux-auto as current on both session/new and session/load
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, FUIGO_FAKE_NEW_MODEL: "flux-auto", FUIGO_FAKE_CURRENT_MODEL: "flux-auto" },
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    const first = await instance.adapter.sendTurn({ threadId: "t-fuigo-pool-model", text: "one", model: "flux-auto" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
+    const second = await instance.adapter.sendTurn({
+      threadId: "t-fuigo-pool-model", text: "two", model: "flux-fast", resumeCursor: "fake-fuigo-session",
+    });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    expect(done).toMatchObject({ ok: true });
+
+    const lines = (name: string) => readFileSync(join(dumps, name), "utf8").split("\n").filter(Boolean);
+    // -m is part of the spawn contract, so a changed pick parks the old
+    // process and loads the session in a fresh one; either way the new id must
+    // reach the engine through set_model.
+    expect(lines("loads.log")).toHaveLength(1);
+    expect(lines("set-model.log").map((l) => JSON.parse(l))).toEqual([{ sessionId: "fake-fuigo-session", modelId: "flux-fast" }]);
+    const order = lines("order.log").map((l) => l.split(" ")[0]);
+    expect(order.lastIndexOf("set-model")).toBeLessThan(order.lastIndexOf("prompt"));
+    expect(order.lastIndexOf("set-model")).toBeGreaterThan(order.indexOf("prompt"));
+  });
+});
+
+describe("steer (fuigo/interject)", () => {
+  const interjects = () => {
+    try { return readFileSync(join(dumps, "interjects.log"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
+  };
+  async function startHeld(environment: Record<string, string> = {}) {
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-test", displayName: "Fuigo", enabled: true,
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, FUIGO_FAKE_HOLD_MS: "700", ...environment },
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-fuigo", text: "work" });
+    await recorder.until((e) => e.type === "turn.started");
+    for (let i = 0; i < 400 && !existsSync(join(dumps, "prompts.log")); i++) await new Promise((r) => setTimeout(r, 20));
+    return instance.adapter;
+  }
+
+  it("declares queueing and steer for Fuigo only", async () => {
+    instance = await FuigoAgentDriver.create({ instanceId: "fuigo-test", displayName: "Fuigo", enabled: true, environment: { HOME: home }, config: { cli: fakeCli, fullAuto: false } });
+    expect(instance.adapter.capabilities.queueing).toBe(true);
+    expect(typeof instance.adapter.steer).toBe("function");
+  });
+
+  it("sends _fuigo/interject into a running turn and returns delivered, with no duplicate user message", async () => {
+    const adapter = await startHeld();
+    expect(await adapter.steer!("t-fuigo", "also check the totals")).toBe("delivered");
+    const sent = interjects();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ sessionId: "fake-fuigo-session", text: "also check the totals" });
+    expect(typeof sent[0].interjectionId).toBe("string");
+    await recorder!.until((e) => e.type === "turn.completed");
+    // Murage records the steered message itself; the echo adds nothing.
+    expect(recorder!.events.filter((e) => /user/i.test(e.type) || JSON.stringify(e).includes("also check the totals"))).toEqual([]);
+    expect(recorder!.events.filter((e) => e.type === "turn.started")).toHaveLength(1);
+  });
+
+  it("runs the steer's fence right before the _fuigo/interject write: a refusal writes nothing and returns rejected", async () => {
+    const adapter = await startHeld();
+    let fenceCalls = 0;
+    expect(await adapter.steer!("t-fuigo", "stale session line", () => { fenceCalls++; throw new Error("MEMORY_CONTEXT_REVOKED"); })).toBe("rejected");
+    expect(fenceCalls).toBe(1);
+    expect(interjects()).toEqual([]);
+    expect(await adapter.steer!("t-fuigo", "valid session line", () => { fenceCalls++; })).toBe("delivered");
+    expect(fenceCalls).toBe(2);
+    expect(interjects()).toHaveLength(1);
+    await recorder!.until((e) => e.type === "turn.completed");
+  });
+
+  it("returns rejected after the turn settled and sends nothing", async () => {
+    await runTurn({});
+    expect(await instance!.adapter.steer!("t-fuigo", "late")).toBe("rejected");
+    expect(interjects()).toEqual([]);
+  });
+
+  it("method-not-found returns rejected and is never tried a second time", async () => {
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "nomethod" });
+    expect(await adapter.steer!("t-fuigo", "one")).toBe("rejected");
+    expect(await adapter.steer!("t-fuigo", "two")).toBe("rejected");
+    expect(interjects()).toHaveLength(1);
+    await recorder!.until((e) => e.type === "turn.completed");
+  });
+
+  // Murage stores the steered message itself when steer() says true, and the
+  // server queue stores it when steer() says false. Either way that is the one
+  // persisted user message, so the driver must never add a second.
+  const userCopies = (text: string) => recorder!.events.filter((e) => /user/i.test(e.type) || JSON.stringify(e).includes(text));
+  const readOrder = () => existsSync(join(dumps, "order.log"))
+    ? readFileSync(join(dumps, "order.log"), "utf8").trim().split("\n").filter(Boolean).map((line) => ({ event: line.split(" ")[0]!, at: Number(line.split(" ")[1]) }))
+    : [];
+  const withEnv = (vars: Record<string, string>) => {
+    for (const [key, value] of Object.entries(vars)) process.env[key] = value;
+    onTestFinished(() => { for (const key of Object.keys(vars)) delete process.env[key]; });
+  };
+
+  it("an older Fuigo (no streamStartMs) keeps today's text: the echo never commits or splits it", async () => {
+    const adapter = await startHeld({ FUIGO_FAKE_POST_ECHO_TEXT: "Part two." });
+    expect(await adapter.steer!("t-fuigo", "also check the totals")).toBe("delivered");
+    await recorder!.until((e) => e.type === "turn.completed");
+    const texts = recorder!.events
+      .filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_text")
+      .map((e) => (e as unknown as { text: string }).text);
+    expect(texts).toEqual(["okPart two."]);
+  });
+
+  describe("assistant text is split by response, never at the interjection echo", () => {
+    const sid = "fake-fuigo-session";
+    const chunk = (text: string, startMs?: number) => ({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, ...(startMs !== undefined ? { _meta: { streamStartMs: startMs } } : {}), update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
+    const echo = (replay: boolean) => ({ jsonrpc: "2.0", method: "_fuigo/session/interjection", params: { sessionId: sid, text: "steer", interjectionId: "echo-1", ...(replay ? { _meta: { isReplay: true } } : {}) } });
+    const discard = (startMs: number) => ({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "retry_state", type: "retrying", discardEmitted: true, streamStartMs: startMs } } });
+    const completed = () => ({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: sid, update: { sessionUpdate: "response_completed", stop_reason: "end_turn" }, _meta: {} } });
+    const items = (rec: EventRecorder) => rec.events
+      .filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_text")
+      .map((e) => (e as unknown as { text: string }).text);
+    const script = (messages: unknown[], extra: Record<string, string> = {}) =>
+      runTurn({ environment: { FUIGO_FAKE_RETRY_DISCARD: "1", FUIGO_FAKE_SCRIPT: JSON.stringify(messages), ...extra } });
+
+    it("a live echo mid-response, then the steered reply in a new response: two items, never glued", async () => {
+      const rec = await script([chunk("A", 1), echo(false), chunk(" more", 1), completed(), chunk("B", 2)]);
+      expect(items(rec)).toEqual(["A more", "B"]);
+    });
+
+    it("a live echo mid-response whose attempt then fails: the discarded text never survives the resend", async () => {
+      const rec = await script([chunk("A", 1), echo(false), discard(1), chunk("A'", 3), completed(), chunk("B", 4)]);
+      expect(items(rec)).toEqual(["A'", "B"]);
+    });
+
+    it("a response not yet completed is never closed by a new streamStartMs, so its discard still reaches it", async () => {
+      const rec = await script([chunk("A", 1), chunk("X", 2), discard(2), discard(1), chunk("A'", 3)]);
+      expect(items(rec)).toEqual(["A'"]);
+    });
+
+    it("a replayed echo changes nothing: text stays one discardable item", async () => {
+      expect(items(await script([chunk("A", 1), echo(true), chunk("B", 1)]))).toEqual(["AB"]);
+      expect(items(await script([chunk("A", 1), echo(true), chunk("B", 1), discard(1), chunk("C", 2)]))).toEqual(["C"]);
+    });
+
+    it("chunks without streamStartMs never split, even across a live echo and a completed response", async () => {
+      const rec = await script([chunk("A"), echo(false), completed(), chunk("B")]);
+      expect(items(rec)).toEqual(["AB"]);
+    });
+
+    it("an echo arriving after the turn settled adds no item", async () => {
+      const rec = await script([chunk("A", 1)], { FUIGO_FAKE_AFTER_SCRIPT: JSON.stringify([echo(false), chunk("late", 3)]) });
+      await new Promise((r) => setTimeout(r, 500));
+      expect(items(rec)).toEqual(["A"]);
+      expect(rec.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    });
+  });
+
+  it("keeps the turn open through an interject-fallback turn and lands its reply in the same turn", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "400" });
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "fallback" });
+    expect(await adapter.steer!("t-fuigo", "also check the totals")).toBe("delivered");
+    const done = await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    const settledAt = Date.now();
+    const end = readOrder().find((o) => o.event === "fallback-end");
+    expect(end).toBeDefined();
+    expect(settledAt).toBeGreaterThanOrEqual(end!.at);
+    expect(done).toMatchObject({ ok: true, stopReason: null });
+    // The fallback's reply is part of this turn, before it completed.
+    const index = recorder!.events.indexOf(done);
+    const before = recorder!.events.slice(0, index);
+    expect(before.some((e) => JSON.stringify(e).includes("fallback reply") && (e as { turnId?: string }).turnId === (done as { turnId?: string }).turnId)).toBe(true);
+    expect(recorder!.events.filter((e) => e.type === "turn.started")).toHaveLength(1);
+    expect(recorder!.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    // One delivery, one persisted user message (the caller's).
+    expect(interjects()).toHaveLength(1);
+    expect(userCopies("also check the totals")).toEqual([]);
+  }, 20_000);
+
+  it("a turn with no accepted interjection still settles at the prompt result", async () => {
+    const events = await runTurn({ environment: { FUIGO_FAKE_INTERJECT: "fallback" } });
+    expect(events.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    expect(readOrder().some((o) => o.event === "fallback-start")).toBe(false);
+  });
+
+  it("a delayed response with an early echo is delivered, one delivery, one user message", async () => {
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "slowack", FUIGO_FAKE_ACK_DELAY_MS: "6000", FUIGO_FAKE_HOLD_MS: "1500" });
+    const startedAt = Date.now();
+    expect(await adapter.steer!("t-fuigo", "and the tax line")).toBe("delivered");
+    // The echo decided it; the 6 s response was not waited for.
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    expect(interjects()).toHaveLength(1);
+    expect(userCopies("and the tax line")).toEqual([]);
+  }, 20_000);
+
+  it("neither a response nor an echo within the budget is uncertain (the caller queues no copy), and a late echo confirms it", async () => {
+    withEnv({ MURAGE_FUIGO_INTERJECT_ACK_MS: "500", MURAGE_FUIGO_FALLBACK_GRACE_MS: "300" });
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "silent", FUIGO_FAKE_LATE_ECHO_MS: "900", FUIGO_FAKE_HOLD_MS: "2000" });
+    expect(await adapter.steer!("t-fuigo", "one more thing")).toBe("uncertain");
+    const confirmed = await recorder!.until((e) => e.type === "steer.confirmed", 5_000);
+    const done = await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    expect(recorder!.events.indexOf(confirmed)).toBeLessThan(recorder!.events.indexOf(done));
+    expect((confirmed as { turnId?: string }).turnId).toBe((done as { turnId?: string }).turnId);
+    const native = readFileSync(join(NATIVE_DIR, "t-fuigo.ndjson"), "utf8");
+    expect(native).toContain('"fuigoInterjection":"ack_timeout"');
+    expect(native).toContain('"fuigoInterjection":"late_echo_confirmed"');
+    expect(interjects()).toHaveLength(1);
+    expect(userCopies("one more thing")).toEqual([]);
+  }, 20_000);
+
+  it("a second steer accepted right at grace expiry keeps the turn open for its later fallback, and its reply lands in the same turn", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "600" });
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "fallback", FUIGO_FAKE_FALLBACK_MS: "300", FUIGO_FAKE_IDLE_FALLBACK_DELAY_MS: "400" });
+    expect(await adapter.steer!("t-fuigo", "first follow-up")).toBe("delivered");
+    // The first fallback ends and the 600 ms grace starts; steer again just before it runs out.
+    for (let i = 0; i < 500 && !readOrder().some((o) => o.event === "fallback-end"); i++) await new Promise((r) => setTimeout(r, 10));
+    const firstEnd = readOrder().find((o) => o.event === "fallback-end")!.at;
+    await new Promise((r) => setTimeout(r, Math.max(0, firstEnd + 550 - Date.now())));
+    expect(recorder!.events.some((e) => e.type === "turn.completed")).toBe(false);
+    expect(await adapter.steer!("t-fuigo", "second follow-up")).toBe("delivered");
+    const done = await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    const settledAt = Date.now();
+    const ends = readOrder().filter((o) => o.event === "fallback-end");
+    expect(ends).toHaveLength(2);
+    // The second fallback started after the first grace would have run out.
+    expect(readOrder().filter((o) => o.event === "fallback-start")[1]!.at).toBeGreaterThan(firstEnd + 600);
+    expect(settledAt).toBeGreaterThanOrEqual(ends[1]!.at);
+    expect(done).toMatchObject({ ok: true, stopReason: null });
+    const before = recorder!.events.slice(0, recorder!.events.indexOf(done));
+    const turnId = (done as { turnId?: string }).turnId;
+    expect(before.some((e) => JSON.stringify(e).includes("fallback reply #2") && (e as { turnId?: string }).turnId === turnId)).toBe(true);
+    expect(recorder!.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    expect(interjects()).toHaveLength(2);
+  }, 20_000);
+
+  it("a fallback that starts a background helper keeps the process owned until the helper finishes; its approval and result are kept", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "400" });
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "fallback", FUIGO_FAKE_FALLBACK_HELPER: "1", FUIGO_FAKE_HELPER_MS: "1200" });
+    expect(await adapter.steer!("t-fuigo", "check in the background")).toBe("delivered");
+    // The fallback ends first; the helper asks well after the grace would have run out.
+    const opened = await recorder!.until((e) => e.type === "request.opened", 15_000);
+    expect(recorder!.events.some((e) => e.type === "turn.completed")).toBe(false);
+    expect(await adapter.respondToRequest("t-fuigo", (opened as { requestId: string }).requestId, { behavior: "allow" })).not.toBe("unavailable");
+    const done = await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    const settledAt = Date.now();
+    const helperEnd = readOrder().find((o) => o.event === "helper-end");
+    expect(helperEnd).toBeDefined();
+    expect(settledAt).toBeGreaterThanOrEqual(helperEnd!.at);
+    expect(readOrder().find((o) => o.event === "fallback-end")!.at).toBeLessThan(helperEnd!.at);
+    expect(done).toMatchObject({ ok: true, stopReason: null });
+    const before = recorder!.events.slice(0, recorder!.events.indexOf(done));
+    expect(before.some((e) => JSON.stringify(e).includes("helper result"))).toBe(true);
+    expect(readFileSync(join(dumps, "helper.log"), "utf8")).toContain("allow-once");
+  }, 20_000);
+
+  it("a fallback still running at the cap settles failed with a visible reason", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "300", MURAGE_FUIGO_FALLBACK_CAP_MS: "900" });
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "fallback", FUIGO_FAKE_FALLBACK_MS: "8000" });
+    expect(await adapter.steer!("t-fuigo", "a long follow-up")).toBe("delivered");
+    const done = await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    expect(done).toMatchObject({ ok: false, stopReason: "interject_fallback_cap" });
+    expect(recorder!.events.some((e) => e.type === "runtime.error" && (e as { message?: string }).message === FALLBACK_CAP_LINE)).toBe(true);
+  }, 20_000);
+
+  it("the engine exiting during the fallback hold settles failed with the engine-exit line", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "300" });
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "fallback", FUIGO_FAKE_FALLBACK_EXIT: "1", FUIGO_FAKE_FALLBACK_MS: "5000" });
+    expect(await adapter.steer!("t-fuigo", "follow-up before a crash")).toBe("delivered");
+    const done = await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    expect(readOrder().some((o) => o.event === "fallback-exit")).toBe(true);
+    expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+    const error = recorder!.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined;
+    expect(error?.message).toMatch(/closed \(exit code 3\) before it finished its reply/);
+  }, 20_000);
+
+  it("the cap firing while a helper is still open settles failed with the visible reason", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "300", MURAGE_FUIGO_FALLBACK_CAP_MS: "1500" });
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "fallback", FUIGO_FAKE_FALLBACK_HELPER: "1", FUIGO_FAKE_HELPER_MS: "20000", FUIGO_FAKE_FALLBACK_MS: "300" });
+    expect(await adapter.steer!("t-fuigo", "follow-up with a helper")).toBe("delivered");
+    const done = await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    expect(done).toMatchObject({ ok: false, stopReason: "interject_fallback_cap" });
+    expect(recorder!.events.some((e) => e.type === "runtime.error" && (e as { message?: string }).message === FALLBACK_CAP_LINE)).toBe(true);
+  }, 25_000);
+
+  it("the engine exiting while the turn waits on a helper, after a steer was accepted, settles failed", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "300" });
+    const adapter = await startHeld({ FUIGO_FAKE_PROMPT_HELPER: "1", FUIGO_FAKE_PROMPT_EXIT_MS: "300", FUIGO_FAKE_HOLD_MS: "1500" });
+    expect(await adapter.steer!("t-fuigo", "follow-up before the engine dies")).toBe("delivered");
+    const done = await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    expect(readOrder().some((o) => o.event === "prompt-exit")).toBe(true);
+    expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+    const error = recorder!.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined;
+    expect(error?.message).toMatch(/closed \(exit code 3\)/);
+  }, 20_000);
+
+  it("the helper wait cap ending a turn whose accepted follow-up is still running settles failed", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "300", MURAGE_FUIGO_FALLBACK_CAP_MS: "30000", MURAGE_BACKGROUND_CAP_MS: "1500", MURAGE_BACKGROUND_CAP_MIN_MS: "500" });
+    const adapter = await startHeld({ FUIGO_FAKE_PROMPT_HELPER: "1", FUIGO_FAKE_INTERJECT: "fallback", FUIGO_FAKE_FALLBACK_MS: "20000" });
+    expect(await adapter.steer!("t-fuigo", "a follow-up the helper cap overtakes")).toBe("delivered");
+    const done = await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    expect(done).toMatchObject({ ok: false, stopReason: "interject_fallback_cap" });
+    expect(recorder!.events.some((e) => e.type === "runtime.error" && (e as { message?: string }).message === FALLBACK_CAP_LINE)).toBe(true);
+  }, 20_000);
+
+  it("the helper wait cap with the follow-up's own helper still open settles failed", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "300", MURAGE_FUIGO_FALLBACK_CAP_MS: "30000", MURAGE_BACKGROUND_CAP_MS: "2500", MURAGE_BACKGROUND_CAP_MIN_MS: "500" });
+    const adapter = await startHeld({ FUIGO_FAKE_PROMPT_HELPER: "1", FUIGO_FAKE_INTERJECT: "fallback", FUIGO_FAKE_FALLBACK_HELPER: "1", FUIGO_FAKE_HELPER_MS: "20000", FUIGO_FAKE_FALLBACK_MS: "300" });
+    expect(await adapter.steer!("t-fuigo", "a follow-up whose helper outlives the cap")).toBe("delivered");
+    const done = await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    expect(done).toMatchObject({ ok: false, stopReason: "interject_fallback_cap" });
+  }, 20_000);
+
+  it("steer.confirmed names the id the caller sent the steer under", async () => {
+    withEnv({ MURAGE_FUIGO_INTERJECT_ACK_MS: "500", MURAGE_FUIGO_FALLBACK_GRACE_MS: "300" });
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "silent", FUIGO_FAKE_LATE_ECHO_MS: "900", FUIGO_FAKE_HOLD_MS: "2000" });
+    expect(await adapter.steer!("t-fuigo", "one more thing", undefined, "steer-id-7")).toBe("uncertain");
+    const confirmed = await recorder!.until((e) => e.type === "steer.confirmed", 5_000);
+    expect(confirmed).toMatchObject({ interjectionId: "steer-id-7" });
+    expect(interjects()[0]).toMatchObject({ interjectionId: "steer-id-7" });
+    await recorder!.until((e) => e.type === "turn.completed", 15_000);
+  }, 20_000);
 });

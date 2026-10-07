@@ -4,7 +4,7 @@ description: |
   Advertising copy creation for Google Ads, Facebook/Instagram, LinkedIn, and other platforms, including copywriting formulas, audience targeting alignment, A/B test variations, compliance guidelines, performance metrics, and retargeting ad copy. Use when the user asks about ad copy generator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing-copy marketing content-marketing"
   category: "marketing-sales"

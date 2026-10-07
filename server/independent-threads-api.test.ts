@@ -6,14 +6,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { fixtureFetch, fixtureSse } from "./testing/conversation-proof.ts";
+import { openSse } from "./testing/sse.ts";
 
 const FAKE_ACP=join(dirname(fileURLToPath(import.meta.url)),"testing","fake-acp-cli.ts");
 const processAlive=(pid:number)=>{try{process.kill(pid,0);return true;}catch(error){return (error as NodeJS.ErrnoException).code==="EPERM";}};
 let fixture:VerificationServer,headers:Record<string,string>,modelOne:string,modelTwo:string;
-/** Conversation routes answer only to a proven caller; a bare call here is the paired phone's credential, without the desktop proof. */
-const fetch = fixtureFetch(() => fixture);
-const openSse = fixtureSse(() => fixture);
 const acpFile=(name:string)=>join(fixture.info.dataDir,`close-confirmed-${name}`);
 const sockets:Socket[]=[];
 const api=async(method:string,path:string,body?:unknown,owner=true)=>{
@@ -60,7 +57,11 @@ it("runs distinct models/accounts concurrently, enforces three, and stops exactl
   expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${third.threadId}`,{modelSelection:{instanceId:"verification",model:modelOne}})).status).toBe(200);
   await hold(bot.id,third.threadId,"third-independent");
   const fourth=(await api("POST",`/api/bots/${bot.id}/tasks`,{title:"Fourth"})).body.task;
-  expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:fourth.threadId,text:"fourth must not launch"})).status).toBe(409);
+  // three for everything but the owner: an unproven send is refused at the limit...
+  expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:fourth.threadId,text:"fourth must not launch"},false)).status).toBe(409);
+  // ...and the owner's own send takes the one reserved slot above it (SPEC-P 7.2 [AMB-6])
+  await hold(bot.id,fourth.threadId,"fourth-owner-reserved");
+  expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:fourth.threadId})).status).toBe(200);
   expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{})).status).toBe(409);
   expect((await api("POST",`/api/bots/${bot.id}/messages`,{text:"ambiguous"})).status).toBe(409);
   expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:"wrong-thread"})).status).toBe(404);
@@ -189,9 +190,10 @@ it("queues a routine visibly for a free slot while three threads run, then runs 
     expect(await task()).toMatchObject({busy:true,activity:"working"});
     expect(dumped("slot-waiter-routine-prompt")).toBe(false);
     expect((await messages((await task()).threadId)).some(message=>message.tool?.ok===false)).toBe(false);
-    // A waiting routine holds its place: a new chat cannot take the next slot ahead of it.
+    // A waiting routine holds its place: an unproven send cannot take the next slot ahead of it.
+    // The owner's own send is the one exception (owner first, SPEC-P 7.2 [AMB-6]).
     const fifth=(await api("POST",`/api/bots/${bot.id}/tasks`,{title:"Fifth"})).body.task;
-    expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:fifth.threadId,text:"must not jump the queue"})).status).toBe(409);
+    expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:fifth.threadId,text:"must not jump the queue"},false)).status).toBe(409);
     expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first})).status).toBe(200);
     await expect.poll(async()=>(await routineRun(runId))?.status,{timeout:10000}).toBe("completed");
     expect(dumped("slot-waiter-routine-prompt")).toBe(true);
@@ -347,7 +349,7 @@ it("dispatches pinned skill bytes through explicit references and native discove
   const third=(await api("POST",`/api/bots/${bot.id}/tasks`,{})).body.task;
   await api("PATCH",`/api/bots/${bot.id}/tasks/${third.threadId}`,{cwd:custom,modelSelection:{instanceId:"verification",model:modelOne}});
   const customRun=await hold(bot.id,third.threadId,"__fixture_procedure_probe__ pin-custom");
-  expect(realpathSync(customRun.procedureProbe.cwd)).toBe(realpathSync(custom));expect(customRun.procedureProbe.explicit).toContain("OWNER REVISED PROCEDURE");expect(customRun.procedureProbe.native).toBeNull();
+  expect(realpathSync.native(customRun.procedureProbe.cwd)).toBe(realpathSync.native(custom));expect(customRun.procedureProbe.explicit).toContain("OWNER REVISED PROCEDURE");expect(customRun.procedureProbe.native).toBeNull();
   expect(existsSync(join(custom,".agents"))).toBe(false);expect(readFileSync(join(custom,"owner.txt"),"utf8")).toBe("untouched");
   await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:third.threadId});
 },30000);

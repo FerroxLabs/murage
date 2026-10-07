@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir } from "./testing/cleanup.ts";
-import { probeMcpServer } from "./mcp-probe.ts";
+import { chmodSync } from "node:fs";
+import { DOCKER_WINDOW_MS, INSTALLER_WINDOW_MS, installerWindowMs, probeMcpServer } from "./mcp-probe.ts";
 
 // A minimal stdio MCP server, written to a temp dir rather than shipped as a
 // repo fixture: it exists only for this file. FAKE_MCP_MODE=silent never
@@ -99,7 +100,7 @@ describe("custom MCP probe", () => {
       args: [fakeServer],
       env: { FAKE_MCP_MODE: "silent" },
       enabled: false,
-    }, 100)).resolves.toEqual({ ok: false, error: "The server did not answer in time." });
+    }, 100)).resolves.toEqual({ ok: false, error: "The server did not answer in time.", reason: "timeout" });
   });
 
   it.each(["tools-before-initialize", "initialize-error", "malformed-initialize"])(
@@ -115,7 +116,7 @@ describe("custom MCP probe", () => {
       // The fake child stays alive and never follows this response with a
       // valid initialize result. A timeout/close is not an acceptable stand-in
       // for recognizing and reporting the initialization failure.
-      expect(result).toEqual({ ok: false, error: "The server did not complete MCP initialization." });
+      expect(result).toEqual({ ok: false, error: "The server did not complete MCP initialization.", reason: "initialize" });
       expect(JSON.stringify(result)).not.toMatch(/never-render-this|Untrusted|SECRET_TOKEN/);
       const pid = Number(readFileSync(pidFile, "utf8"));
       expect(pid).toBeGreaterThan(0);
@@ -136,7 +137,7 @@ describe("custom MCP probe", () => {
       args: [fakeServer],
       env: { FAKE_MCP_MODE: "tools-error", SECRET_TOKEN: "never-render-this" },
       enabled: false,
-    }, 2_000)).resolves.toEqual({ ok: false, error: "The command did not return a valid MCP tools list." });
+    }, 2_000)).resolves.toEqual({ ok: false, error: "The command did not return a valid MCP tools list.", reason: "protocol" });
   });
 
   it("stops a probe when its caller disconnects", async () => {
@@ -148,7 +149,7 @@ describe("custom MCP probe", () => {
       enabled: false,
     }, 5_000, controller.signal);
     controller.abort();
-    await expect(pending).resolves.toEqual({ ok: false, error: "Connection test was cancelled." });
+    await expect(pending).resolves.toEqual({ ok: false, error: "Connection test was cancelled.", reason: "cancelled" });
   });
 
   it("does not expose native spawn details", async () => {
@@ -209,4 +210,48 @@ describe("custom MCP probe", () => {
     if (!result.ok) expect(typeof result.error).toBe("string");
     await removeTempDir(dir);
   }, 30_000);
+
+  describe("installer patience (spec 3.6)", () => {
+    it("names the installer commands and their windows", () => {
+      for (const [command, args] of [
+        ["npx", ["-y", "pkg"]], ["/usr/local/bin/npx", []], ["bunx", ["x"]], ["uvx", ["x"]], ["pipx", ["run", "x"]],
+        ["pnpm", ["dlx", "x"]], ["pnpm", ["exec", "x"]], ["yarn", ["dlx", "x"]], ["npx.cmd", []],
+      ] as const) {
+        expect([command, installerWindowMs(command, args)]).toEqual([command, INSTALLER_WINDOW_MS]);
+      }
+      expect(INSTALLER_WINDOW_MS).toBe(150_000);
+      expect(installerWindowMs("docker", ["run", "-i", "img"])).toBe(DOCKER_WINDOW_MS);
+      expect(installerWindowMs("docker", ["pull", "img"])).toBe(300_000);
+      for (const [command, args] of [["node", ["x.js"]], ["pnpm", ["install"]], ["yarn", ["start"]], ["docker", ["ps"]], ["python", ["-m", "x"]], ["/opt/notes/server", []]] as const) {
+        expect([command, installerWindowMs(command, args)]).toEqual([command, null]);
+      }
+    });
+
+    it("an installer that answers late passes with first-run patience and times out without it", async () => {
+      const shim = join(dir, "npx");
+      writeFileSync(shim, `#!/bin/sh\nsleep 0.7\nexec "${process.execPath}" "${fakeServer}"\n`);
+      chmodSync(shim, 0o755);
+      const server = { command: shim, args: ["-y", "pkg"], env: {}, enabled: false };
+      const without = await probeMcpServer(server, 300);
+      expect(without).toEqual({ ok: false, error: "The server did not answer in time.", reason: "timeout" });
+      const patient = await probeMcpServer(server, 300, undefined, { patience: "first-run", installerWindowMs: 5_000 });
+      expect(patient).toMatchObject({ ok: true });
+    });
+
+    it("a timeout inside the window is still-installing, not a failure of the server", async () => {
+      const result = await probeMcpServer(
+        { command: process.execPath, args: [fakeServer], env: { FAKE_MCP_MODE: "silent" }, enabled: false },
+        8_000, undefined, { patience: "first-run", installerWindowMs: 150 },
+      );
+      expect(result).toEqual({ ok: false, error: "It is still installing.", reason: "still-installing" });
+    });
+
+    it("patience applies only to installers: a plain command keeps the short window", async () => {
+      const result = await probeMcpServer(
+        { command: process.execPath, args: [fakeServer], env: { FAKE_MCP_MODE: "silent" }, enabled: false },
+        120, undefined, { patience: "first-run" },
+      );
+      expect(result).toMatchObject({ ok: false, reason: "timeout" });
+    });
+  });
 });

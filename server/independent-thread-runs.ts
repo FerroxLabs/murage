@@ -73,15 +73,28 @@ export class IndependentThreadRuns<T> {
    * thread slot, and the FIFO of those waiting for one. */
   private readonly slotless = new Set<string>();
   private readonly slotWaiters: { owner: TurnOwner; botId: string; resolve: (granted: boolean) => void }[] = [];
+  /** The one run per bot holding the owner's reserved slot above the limit. */
+  private readonly ownerReserved = new Set<string>();
+  /** Owner sends waiting for a slot: served ahead of automation. */
+  private readonly ownerWaiting = new Set<string>();
 
   /** `queueForSlot` (queued automation only): at the limit, admit without a
    * thread slot instead of refusing; the caller must `awaitSlot` before any
    * setup. A direct send counts every admitted run, so it never overtakes a
    * queued one. */
-  admit(botId: string, threadId: string, snapshot: T, resources: readonly string[] = [], options: { queueForSlot?: boolean } = {}): DirectThreadRun<T> {
+  admit(botId: string, threadId: string, snapshot: T, resources: readonly string[] = [], options: { queueForSlot?: boolean; ownerFirst?: boolean } = {}): DirectThreadRun<T> {
     if (this.runs.has(threadId)) throw conflict("thread_busy", "This thread is already running or stopping.");
-    const needsSlot = this.forBot(botId).length >= MAX_CONCURRENT_BOT_THREADS;
-    if (needsSlot && !options.queueForSlot) {
+    const running = this.forBot(botId);
+    let needsSlot = running.length >= MAX_CONCURRENT_BOT_THREADS;
+    // Owner first (SPEC-P 7.2 step 8 [AMB-6]): the owner's own send is never
+    // refused at the limit. It takes one reserved slot above it; with that
+    // taken it waits for a slot ahead of every queued automation run.
+    let reserved = false;
+    if (needsSlot && options.ownerFirst && !running.some(run => this.ownerReserved.has(run.generation))) {
+      needsSlot = false;
+      reserved = true;
+    }
+    if (needsSlot && !options.queueForSlot && !options.ownerFirst) {
       throw conflict("thread_limit", "This bot is already running three threads. Wait for one to finish.");
     }
     const copied = structuredClone(snapshot);
@@ -90,6 +103,8 @@ export class IndependentThreadRuns<T> {
     const run: DirectThreadRun<T> = Object.freeze({ ...owner, botId, snapshot: copied, phase: "setup" });
     this.runs.set(threadId, run);
     if (needsSlot) this.slotless.add(owner.generation);
+    if (reserved) this.ownerReserved.add(owner.generation);
+    if (needsSlot && options.ownerFirst) this.ownerWaiting.add(owner.generation);
     return run;
   }
 
@@ -101,7 +116,12 @@ export class IndependentThreadRuns<T> {
     if (!this.slotless.has(owner.generation)) return Promise.resolve(true);
     const botId = this.runs.get(owner.threadId)!.botId;
     return new Promise<boolean>((resolve) => {
-      this.slotWaiters.push({ owner, botId, resolve });
+      const waiter = { owner, botId, resolve };
+      if (this.ownerWaiting.has(owner.generation)) {
+        // ahead of every automation run, behind earlier owner sends
+        const firstAutomation = this.slotWaiters.findIndex(entry => !this.ownerWaiting.has(entry.owner.generation));
+        if (firstAutomation < 0) this.slotWaiters.push(waiter); else this.slotWaiters.splice(firstAutomation, 0, waiter);
+      } else this.slotWaiters.push(waiter);
       onWait?.();
       this.pump();
     });
@@ -227,6 +247,8 @@ export class IndependentThreadRuns<T> {
     this.resources.release(owner);
     this.runs.delete(owner.threadId);
     this.slotless.delete(owner.generation);
+    this.ownerReserved.delete(owner.generation);
+    this.ownerWaiting.delete(owner.generation);
     this.pump();
     return true;
   }
@@ -271,9 +293,11 @@ export class IndependentThreadRuns<T> {
       if (!this.claimable(waiter.owner)) {
         this.slotWaiters.splice(index, 1);waiter.resolve(false);continue;
       }
-      const holding = this.forBot(waiter.botId).filter(run => !this.slotless.has(run.generation)).length;
+      // the owner's reserved slot sits above the limit and frees none of it
+      const holding = this.forBot(waiter.botId).filter(run => !this.slotless.has(run.generation) && !this.ownerReserved.has(run.generation)).length;
       if (holding < MAX_CONCURRENT_BOT_THREADS) {
         this.slotless.delete(waiter.owner.generation);
+        this.ownerWaiting.delete(waiter.owner.generation);
         this.slotWaiters.splice(index, 1);waiter.resolve(true);continue;
       }
       index++;

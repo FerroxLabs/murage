@@ -28,6 +28,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { turnSecret } from "../../turn-credential.ts";
 import type { AdapterArtifactsFor, B34Adapter, B34AdapterContext, Bot, Dump, Q14Readback, Q14ReadbackFact, Q14Variant } from "./b34-adapter-types.ts";
 import { B34_EVALUATOR_INSTANCE_ID, B34_Q14, readB34EvaluatorCalls, readB34EvaluatorReviews, type B34CallFamily } from "./b34-evaluator-runtime.ts";
 
@@ -43,7 +44,7 @@ export const B34_EVALUATOR_INSTRUMENTATION = [
 const JOURNEY_BUDGET_MS = 470_000;
 const HOLD_MARKER = "__fixture_hold_authority__";
 /** Set once, before any review snapshot (learning-policy.ts:4-10). Five calls per minute put the routine refusal on its first callback. */
-const LEARNING = Object.freeze({ automaticFacts: false, automaticProcedures: true, reviewMode: false, callsPerMinute: 5, inputLimit: 10_000_000, outputLimit: 2_000_000, dailyCostUsd: null });
+const LEARNING = Object.freeze({ automaticFacts: false, automaticProcedures: true, reviewMode: false, callsPerMinute: 5, dailyInputTokens: 10_000_000, dailyOutputTokens: 2_000_000 });
 /** Per-callback reservations (procedure-evaluator.ts:103, extract.ts:82). */
 const EVALUATION_OUTPUT = 2000, REFLECTION_OUTPUT = 8000;
 const TOTAL_OUTPUT = 5 * EVALUATION_OUTPUT + 3 * REFLECTION_OUTPUT;
@@ -203,7 +204,8 @@ function agentsCapability(config: unknown, fixtureUrl: string): { url: string; t
     const env = (value as { env?: unknown }).env;
     if (env && typeof env === "object") {
       const vars = env as Record<string, unknown>;
-      if (typeof vars.MURAGE_COMMS_TOKEN === "string" && vars.MURAGE_SKILL_AUTHORING_ENABLED === "1") return vars;
+      // The comms token rides in the per-process credential file when one is wired (turn-credentials.ts).
+      if ((typeof vars.MURAGE_COMMS_TOKEN === "string" || typeof vars.MURAGE_CRED_FILE === "string") && vars.MURAGE_SKILL_AUTHORING_ENABLED === "1") return vars;
     }
     for (const child of Object.values(value)) { const found = find(child, depth + 1); if (found) return found; }
     return undefined;
@@ -214,7 +216,7 @@ function agentsCapability(config: unknown, fixtureUrl: string): { url: string; t
     const target = new URL(vars.MURAGE_HARNESS_URL), fixture = new URL(fixtureUrl);
     if (target.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(target.hostname) || target.port !== fixture.port) return undefined;
   } catch { return undefined; }
-  return { url: vars.MURAGE_HARNESS_URL, token: String(vars.MURAGE_COMMS_TOKEN) };
+  return { url: vars.MURAGE_HARNESS_URL, token: turnSecret("MURAGE_COMMS_TOKEN", vars as Record<string, string | undefined>) };
 }
 
 function pinOf(body: Json, botId: string, threadId: string): PinRef | undefined {
@@ -332,8 +334,8 @@ async function runQ14(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q14"
   const configured = await named(ctx, "q14-owner-learning-configured-before-reviews", "POST", "/api/memory/action",
     { action: "configure", mode: "capture", learning: LEARNING, learningRevision: r0 }, body => ({
       ok: body?.mode === "capture" && body?.configuration?.extractorInstanceId == null && body?.learning?.revision === r0 + 1
-        && Object.entries(LEARNING).every(([key, value]) => body?.learning?.[key] === value),
-      note: `mode ${code(body?.mode)}; learning revision ${code(Number(body?.learning?.revision) - r0)} after; limits ${flag(Object.entries(LEARNING).every(([key, value]) => body?.learning?.[key] === value))}`,
+        && Object.entries(LEARNING).every(([key, value]) => body?.learning?.settings?.[key] === value),
+      note: `mode ${code(body?.mode)}; learning revision ${code(Number(body?.learning?.revision) - r0)} after; limits ${flag(Object.entries(LEARNING).every(([key, value]) => body?.learning?.settings?.[key] === value))}`,
     }));
   const L1 = Number(configured.learning.revision);
   const botA = await createBot(ctx, "Q14 Skill Owner", model), botB = await createBot(ctx, "Q14 Routine Owner", model);
@@ -397,7 +399,7 @@ async function runQ14(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q14"
   const TE_BUNDLE = tePin.bundleId;
 
   // B5. The routine, created disabled with an owner instruction (routines.ts:766-800).
-  const createdRoutine = await ctx.setup(null, "POST", ROUTINES_PATH, { name: B34_Q14.routineName, botId: botB.id, prompt: routineBase, target: "bot", runOn: "ember", enabled: false,
+  const createdRoutine = await ctx.setup(null, "POST", ROUTINES_PATH, { name: B34_Q14.routineName, botId: botB.id, prompt: routineBase, target: "bot", runOn: "ember", permissionMode: "ask", enabled: false,
     schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() }, durationMinutes: 30 }, 201);
   const routine0 = createdRoutine.body?.routine;
   const routineId: string = routine0?.id, B0: string = routine0?.instructionRevision, U0: number = routine0?.updatedAt;
@@ -447,7 +449,7 @@ async function runQ14(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q14"
   // ── Phase C: evaluation window (no turns, no task or bot changes) ──────
   phase("C");
   await named(ctx, "q14-owner-selects-scripted-evaluator", "POST", "/api/memory/action", { action: "configure", extractorInstanceId: B34_EVALUATOR_INSTANCE_ID },
-    body => ({ ok: body?.configuration?.extractorInstanceId === B34_EVALUATOR_INSTANCE_ID && body?.learning?.revision === L1 && body?.learning?.callsPerMinute === LEARNING.callsPerMinute,
+    body => ({ ok: body?.configuration?.extractorInstanceId === B34_EVALUATOR_INSTANCE_ID && body?.learning?.revision === L1 && body?.learning?.settings?.callsPerMinute === LEARNING.callsPerMinute,
       note: `selected ${flag(body?.configuration?.extractorInstanceId === B34_EVALUATOR_INSTANCE_ID)}; learning revision unchanged ${flag(body?.learning?.revision === L1)}` }));
   // Both skill attempts and the routine refusal must share one UTC minute (extract.ts:76,86-87).
   if (Date.now() % 60_000 > 25_000) {

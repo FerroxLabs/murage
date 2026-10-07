@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of healthcare compliance navigator or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "healthcare strategy checklist analysis research planning email cleaning"
   category: "business-strategy"

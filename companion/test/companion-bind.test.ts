@@ -160,21 +160,26 @@ describe("the device door binds where it was asked to and nowhere else", () => {
     if (OFF_MACHINE) expect(await reachable(OFF_MACHINE, DEVICE_PORT)).toBe("refused");
   }, 40_000);
 
-  // The desktop, unchanged. If this ever goes red the cloud fix broke phone
-  // pairing, which is the failure this whole change was shaped to avoid.
-  it("still binds 0.0.0.0 with nothing set, so a phone on the LAN still pairs", async () => {
+  // Audit C6: unset is no longer the LAN. A phone on the same wifi is plain
+  // HTTP, so the person chooses it. Unset means the tailnet address when
+  // there is one, loopback when there is not.
+  it("with nothing set binds the tailnet address when there is one, loopback when there is not, never the LAN", async () => {
     const { out } = await boot({});
-    expect(out).toContain(`http://0.0.0.0:${DEVICE_PORT}`);
-    expect(await reachable("127.0.0.1", DEVICE_PORT)).toBe("open");
-    if (OFF_MACHINE) expect(await reachable(OFF_MACHINE, DEVICE_PORT)).toBe("open");
-    else console.warn("no non-loopback address on this machine — LAN reachability not asserted");
+    expect(out).not.toContain(`http://0.0.0.0:${DEVICE_PORT}`);
+    expect(await reachable("127.0.0.1", DEVICE_PORT)).toBe(tailscaleAddress() ? "refused" : "open");
+    if (!tailscaleAddress()) expect(out).toContain(`http://127.0.0.1:${DEVICE_PORT}`);
+    else expect(out).toContain(`http://${tailscaleAddress()}:${DEVICE_PORT}`);
+    if (OFF_MACHINE) expect(await reachable(OFF_MACHINE, DEVICE_PORT)).toBe("refused");
   }, 40_000);
 
-  // `lan` written out is the same thing as unset. Worth a line: an installer
-  // that sets the variable explicitly on a desktop must get the desktop.
-  it("treats MURAGE_COMPANION_BIND=lan as the default", async () => {
+  // `lan` written out is the explicit choice, and the only way to the LAN. It
+  // says in plain words that this path is not encrypted.
+  it("binds 0.0.0.0 only when MURAGE_COMPANION_BIND=lan is chosen, and says it is unencrypted", async () => {
     const { out } = await boot({ MURAGE_COMPANION_BIND: "lan" });
     expect(out).toContain(`http://0.0.0.0:${DEVICE_PORT}`);
+    expect(out).toMatch(/not encrypted/i);
+    expect(await reachable("127.0.0.1", DEVICE_PORT)).toBe("open");
+    if (OFF_MACHINE) expect(await reachable(OFF_MACHINE, DEVICE_PORT)).toBe("open");
   }, 40_000);
 
   // Fail closed on a typo. The default is the widest bind this process can

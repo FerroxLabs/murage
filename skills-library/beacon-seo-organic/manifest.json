@@ -2,7 +2,7 @@
   "id": "beacon-seo-organic",
   "name": "seo-organic",
   "version": "1.0.0",
-  "description": "As of: 2026-05-16",
+  "description": "Plan how to get found in search without paying per click. Pick realistic queries, group them into topic clusters, write page briefs and track rankings.",
   "defaultEnabled": false,
   "triggerTerms": [
     "beacon",

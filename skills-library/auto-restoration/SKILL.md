@@ -4,7 +4,7 @@ description: |
   Comprehensive automotive restoration guide covering project vehicle selection, condition assessment, restoration planning for both frame-off and partial approaches, parts sourcing strategies, bodywork basics, paint preparation, mechanical restoration order, budget tracking, and documentation practices. Use when the user asks about auto restoration or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "automotive restoration guide step-by-step"
   category: "hobbies-crafts"

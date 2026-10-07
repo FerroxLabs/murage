@@ -6,7 +6,7 @@ description: |
   Do NOT use for clarity of specific passages (use clarity-editing), conciseness without readability goals (use conciseness-editing), or academic writing conventions (use research-paper-structure).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "editing writing research"
   category: "writing"

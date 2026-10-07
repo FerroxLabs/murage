@@ -31,7 +31,9 @@ describe("team import is additive", () => {
     // `add` and `project` both create; `project` additionally opens a room on a
     // scouted folder (server/index.ts:6311). `replace` is the only mode that
     // archives what you already have, and nothing here may request it.
-    const modes = [...source.matchAll(/\/api\/teams\/import\?mode=([a-z$#{}\w]*)/g)].map((m) => m[1]);
+    // The mode is a literal word; an interpolated mode reads as "" and fails.
+    // What may follow it is only the import guard's acknowledgement.
+    const modes = [...source.matchAll(/\/api\/teams\/import\?mode=([^&$`"]*)/g)].map((m) => m[1]);
     expect(modes.length).toBeGreaterThan(0);
     expect([...new Set(modes)].sort()).toEqual(["add", "project"]);
   });

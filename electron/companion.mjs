@@ -13,7 +13,10 @@
 import { app, utilityProcess } from "electron";
 import fs from "node:fs";
 import path from "node:path";
+import { compileCacheEnvironment } from "./compile-cache.mjs";
 import { resolveCompanionEntry } from "./companion-entry.mjs";
+import { lanBindEnvironment } from "./companion-lan-pairing.mjs";
+import { launchSecretVia, sendLaunchSecretParent } from "./launch-secret.mjs";
 import { createServerChildLifecycle } from "./server-child-lifecycle.mjs";
 import {
   cleanupCompanionOriginEndpoint,
@@ -125,9 +128,11 @@ function companionSettings() {
       enabled: parsed?.enabled === true,
       keepAwake: parsed?.keepAwake === true,
       remoteAccess: parsed?.remoteAccess === true,
+      // true or false once chosen, null for an install that never chose
+      lanPairing: typeof parsed?.lanPairing === "boolean" ? parsed.lanPairing : null,
     };
   } catch {
-    return { enabled: false, keepAwake: false, remoteAccess: false };
+    return { enabled: false, keepAwake: false, remoteAccess: false, lanPairing: null };
   }
 }
 
@@ -159,6 +164,8 @@ function rememberCompanionSettings(patch) {
   const temporary = `${file}.${process.pid}.tmp`;
   try {
     const next = { ...companionSettings(), ...patch };
+    // never chose is the absence of the key, so an old file stays as it was
+    if (next.lanPairing === null) delete next.lanPairing;
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(temporary, JSON.stringify(next, null, 2));
     fs.renameSync(temporary, file);
@@ -182,6 +189,16 @@ export function rememberCompanionKeepAwake(keepAwake) {
 
 export function rememberCompanionRemoteAccess(remoteAccess) {
   rememberCompanionSettings({ remoteAccess });
+}
+
+/** Whether the person chose pairing over the local network (plain HTTP). Null
+ * when they never chose, which behaves as off. */
+export function companionLanPairingAtRest() {
+  return companionSettings().lanPairing;
+}
+
+export function rememberCompanionLanPairing(lanPairing) {
+  rememberCompanionSettings({ lanPairing: Boolean(lanPairing) });
 }
 
 /** Adopt only an already-verified, exclusively owned Serve arrangement. This
@@ -320,9 +337,14 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
   delete childEnvironment.MURAGE_COMPANION_HOSTED_URL;
   delete childEnvironment.MURAGE_COMPANION_INTERNAL_ORIGIN;
   delete childEnvironment.MURAGE_COMPANION_TOKEN;
+  delete childEnvironment.MURAGE_COMPANION_TOKEN_FILE;
+  delete childEnvironment.MURAGE_COMPANION_TOKEN_VIA;
   // Only the owned harness receives the parent's persistent-state lease.
   delete childEnvironment.MURAGE_INTERNAL_DATA_DIR_LEASE;
-  if (companionToken) childEnvironment.MURAGE_COMPANION_TOKEN = companionToken;
+  // Over the private utility parent port, never the environment, an argument
+  // or a file: an environment copy stays readable at /proc/<pid>/environ on
+  // Linux and a file can be raced (audit P1, S1b R8).
+  if (companionToken) Object.assign(childEnvironment, launchSecretVia("MURAGE_COMPANION_TOKEN", "parent"));
   // Same reasoning: the door's public origin is decided here, per start, from
   // what `tailscale serve` was actually observed to be doing. An inherited
   // one would survive turning remote access off.
@@ -331,10 +353,14 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
   childEnvironment.MURAGE_COMPANION_INTERNAL_ORIGIN = allocatedOrigin.socketPath;
 
   let child;
+  // The local network is a choice, never a default (audit C6).
+  const lanBind = lanBindEnvironment(process.env, companionSettings().lanPairing);
   try {
     child = utilityProcess.fork(resolved.entry, [], {
       env: {
         ...childEnvironment,
+        ...(lanBind ? { MURAGE_COMPANION_BIND: lanBind } : {}),
+        ...(app.isPackaged ? compileCacheEnvironment({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }) : {}),
         MURAGE_PORT: String(harnessPort),
         MURAGE_COMPANION_PORT: String(COMPANION_PORT),
         MURAGE_CONTROL_PORT: String(CONTROL_PORT),
@@ -371,6 +397,7 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
   child.stdout?.on("data", (d) => log?.(`[companion] ${String(d).trimEnd()}`));
   child.stderr?.on("data", (d) => log?.(`[companion err] ${String(d).trimEnd()}`));
 
+  if (companionToken) sendLaunchSecretParent(child, "MURAGE_COMPANION_TOKEN", companionToken);
   let exited = false;
   child.once("exit", (code) => {
     exited = true;

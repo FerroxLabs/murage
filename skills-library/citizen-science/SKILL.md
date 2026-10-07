@@ -4,7 +4,7 @@ description: |
   Guide to participating in citizen science projects including bird counting, water quality monitoring, galaxy classification, species tracking, and data collection methodology. Use when the user asks about citizen science or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research guide step-by-step"
   category: "hobbies-crafts"

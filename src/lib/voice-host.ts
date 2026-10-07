@@ -13,7 +13,7 @@ export function callRouteHeaders(): Record<string, string> {
 }
 
 export type HostEvent =
-  | { type: "sentence"; text: string }
+  | { type: "sentence"; text: string; /** first piece cut at a clause; for the timing line only */ clause?: true }
   | { type: "hand_down"; request: string }
   /** A web lookup started; its answer follows as sentences. */
   | { type: "lookup"; query: string }
@@ -27,8 +27,15 @@ export interface CallHandDown {
   id: string;
   request: string;
   at: number;
-  state: "sending" | "accepted" | "refused" | "cancelled";
+  /** "failed" and "dropped" are read from the harness's receipt for the send. */
+  state: "sending" | "accepted" | "refused" | "cancelled" | "failed" | "dropped";
   reason?: string;
+  /** The send's id: the harness finds the owner's message again by it. */
+  sendId?: string;
+  /** The queue row (or root request) the send became. */
+  requestId?: string;
+  /** True when the send waited in the room's queue (requestId is then a queue row a cancel can reach). */
+  queued?: boolean;
 }
 
 export interface HostTurnInput {
@@ -40,6 +47,18 @@ export interface HostTurnInput {
   approval?: string;
   /** `text` is a finished answer to tell in a few sentences, not speech. */
   brief?: boolean;
+  /** A room call: the channel this member is answering in (server builds a
+   *  room snapshot). */
+  groupId?: string;
+  /** A room call: what the owner said to the other members' voices on this
+   *  call, and what they answered. */
+  roomHeard?: RoomHeard[];
+}
+
+export interface RoomHeard {
+  member: string;
+  owner: string;
+  reply: string;
 }
 
 /** A finished answer longer than this is told as a brief on a call rather

@@ -308,3 +308,12 @@ describe("Kimi finding C — the key must survive the strip", () => {
     expect(ROUTING_ENV as readonly string[]).toContain("ANTHROPIC_BASE_URL");
   });
 });
+
+describe("OpenClaw", () => {
+  it("is unclassified like Antigravity: no surface, capability or mechanism, so it fails closed", () => {
+    expect(fluxSurfaceFor("openclawAgent")).toBeNull();
+    expect(fluxCapabilityFor("openclawAgent")).toBeNull();
+    expect(fluxMechanismFor("openclawAgent")).toBeNull();
+    expect(fluxSurfaceFor("antigravityAgent")).toBeNull();
+  });
+});

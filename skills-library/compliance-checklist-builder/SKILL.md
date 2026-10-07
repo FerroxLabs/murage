@@ -6,7 +6,7 @@ description: |
   Do NOT use for tax preparation, regulatory filing, legal compliance certification, or industry-specific regulatory guidance requiring specialized expertise.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy checklist guide planning"
   category: "legal-civic"

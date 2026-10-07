@@ -19,6 +19,8 @@ export type SidebarAttentionBot = {
 };
 
 export type SidebarAttentionGroup = {
+  working?: boolean;
+  needsYou?: number;
   unread?: boolean;
   busyBotId?: string | null;
 };
@@ -64,7 +66,8 @@ export function sidebarBotMark(bot: SidebarAttentionBot): SidebarMark {
 /** Channels never hold a decision of their own; they work, or they are unread.
  *  Uses the same predicate the collapsed-section rollup counts with. */
 export function sidebarGroupMark(group: SidebarAttentionGroup): SidebarMark {
-  if (group.busyBotId) return { kind: "working" };
+  if (group.needsYou && group.needsYou > 0) return { kind: "waiting", count: group.needsYou };
+  if (group.busyBotId || group.working) return { kind: "working" };
   if (group.unread) return { kind: "unread" };
   return { kind: "none" };
 }
@@ -114,7 +117,7 @@ export function sidebarSectionAttention(
         (bot) =>
           bot.activity === "working" ||
           (Boolean(bot.busy) && bot.activity !== "waiting-on-you"),
-      ).length + groups.filter((group) => Boolean(group.busyBotId)).length,
+      ).length + groups.filter((group) => Boolean(group.busyBotId || group.working)).length,
   };
 }
 

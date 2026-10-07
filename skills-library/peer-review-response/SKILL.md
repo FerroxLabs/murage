@@ -6,7 +6,7 @@ description: |
   Do NOT use for writing the peer review itself (use academic-paper-review), revising the paper content (use the appropriate writing skill), or general editing (use copy-editing).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "academic-writing writing editing"
   category: "writing"

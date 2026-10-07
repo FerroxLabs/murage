@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of self defense basics or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness habits stress-management guide research safety emergency-preparedness performing-arts"
   category: "health-wellness"

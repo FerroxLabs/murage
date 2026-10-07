@@ -4,7 +4,7 @@ description: |
   End-to-end YouTube channel strategy from niche selection through scripting, production, SEO optimization, analytics interpretation, and monetization milestone planning for sustainable channel growth. Use when the user asks about youtube creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "youtube social-media marketing content-marketing"
   category: "marketing-sales"

@@ -27,12 +27,13 @@ import { openSidebar } from "./fixtures";
 // narrow desktop window, and it must still get its gate.
 test.use({ viewport: { width: 390, height: 844 } });
 
-/** The desktop's first-run screen, by the words on it. It used to be an
- * email gate headed "Welcome to Murage" / "Tell us who you are"; it is now an
- * outcome picker whose eyebrow is set in capitals ("WELCOME TO MURAGE"), with
- * the name and email behind "Add your details (optional)". */
+/** The desktop's first-run surface. It was an email gate headed "Welcome to
+ * Murage"; since 311387b1 the first run is the Chief of Staff's own thread,
+ * and the one screen of it the app draws is the phase band above the window
+ * (FirstRunPhases, "Getting set up"), mounted on a confirmed desktop only. */
 const WELCOME = /welcome to murage/i;
 const EMAIL_CAPTURE = /What would you like to do\?/;
+const PHASES = "Getting set up";
 /** The phone-setup wizard, by its heading and by the two denials. */
 const PHONE_WIZARD = /Open Murage in your browser/;
 const DENIALS = [/not found/, /not listening yet/];
@@ -69,8 +70,21 @@ async function answerEmptyWorkspace(page: import("@playwright/test").Page): Prom
   });
 }
 
+/** Serve the setup view of a first run in progress (the welcome card is in
+ * the Chief's thread and a step is left), which is what puts the phase band
+ * up. Everything else in the view is the rig's own. */
+async function answerLiveFirstRun(page: import("@playwright/test").Page): Promise<void> {
+  await page.route("**/api/setup", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({ response, json: { ...body, conversationLive: true, next: body.next ?? body.steps[0] } });
+  });
+}
+
 test("a phone is never asked to introduce itself, or to set itself up", async ({ page }) => {
   await answerEmptyWorkspace(page);
+  await answerLiveFirstRun(page);
   await answerRemote(page);
   await page.goto("/");
 
@@ -80,13 +94,15 @@ test("a phone is never asked to introduce itself, or to set itself up", async ({
   for (const copy of [WELCOME, EMAIL_CAPTURE, PHONE_WIZARD, ...DENIALS]) {
     await expect(page.getByText(copy)).toHaveCount(0);
   }
+  // A first run in progress on the machine is still not the phone's.
+  await expect(page.getByRole("navigation", { name: PHASES, exact: true })).toHaveCount(0);
 
-  // Settings → Phone is the wizard's other door. The section is gone, so the
+  // Settings, then Phone and other devices, is the wizard's other door. The section is gone, so the
   // pane holds none of it. Below `md` the app-settings button lives inside the
   // drawer, so the drawer opens first.
   const sidebar = await openSidebar(page);
   await sidebar.getByRole("button", { name: "App settings" }).first().click();
-  await expect(page.getByRole("button", { name: "Phone", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Phone and other devices", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Connections", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Engines", exact: true })).toHaveCount(0);
   for (const copy of [PHONE_WIZARD, ...DENIALS]) {
@@ -94,66 +110,24 @@ test("a phone is never asked to introduce itself, or to set itself up", async ({
   }
 });
 
-test("the desktop still gets its first-run gate, at the same width", async ({ page }) => {
-  // No interception: on loopback the harness confirms `surface: "desktop"`,
-  // which is what the developer's own machine and the packaged app both are.
-  // Same empty localStorage, same 390px viewport — the ONLY difference from
-  // the test above is the door. Narrow is not remote.
+test("the desktop still gets its first-run band, at the same width", async ({ page }) => {
+  // No interception of the door: on loopback the harness confirms
+  // `surface: "desktop"`, which is what the developer's own machine and the
+  // packaged app both are. Same first run in progress, same 390px viewport:
+  // the ONLY difference from the test above is the door. Narrow is not remote.
   await answerEmptyWorkspace(page);
+  await answerLiveFirstRun(page);
   await page.goto("/");
 
-  await expect(page.getByText(WELCOME)).toBeVisible();
-  await expect(page.getByText(EMAIL_CAPTURE)).toBeVisible();
-  // The name and email moved behind an optional disclosure; opening it is
-  // still the same desktop-only gate.
-  await page.getByRole("button", { name: "Add your details (optional)" }).click();
-  await expect(page.getByPlaceholder("you@example.com")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Continue" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Maybe later" })).toBeVisible();
-});
-
-/** A brand-new install is not an empty workspace: the harness seeds one bot on
- * its first start, whose thread opens with its greeting and intake question.
- * Serve exactly that shape (one bot, no rooms, a thread of only its own
- * opening lines), or the same bot after the person has written to it. */
-async function answerSeededWorkspace(page: import("@playwright/test").Page, talkedTo: boolean): Promise<{ threadAsked: Promise<void> }> {
-  let asked!: () => void;
-  const threadAsked = new Promise<void>((resolve) => { asked = resolve; });
-  await page.route("**/api/bots?messages=0", async (route) => {
-    if (route.request().method() !== "GET") return route.fallback();
-    const response = await route.fetch();
-    const body = await response.json().catch(() => ({}));
-    const seed = { ...body.bots?.[0], threadId: "seed-thread", title: "", description: "", tasks: [{ threadId: "seed-thread" }] };
-    await route.fulfill({ response, json: { ...body, bots: [seed], groups: [] } });
-  });
-  await page.route("**/api/threads/seed-thread/messages?limit=10", async (route) => {
-    const opening = [
-      { id: "m1", at: 1, role: "bot", kind: "text", text: "Hello." },
-      { id: "m2", at: 2, role: "bot", kind: "options", card: { question: "What do you actually want me for?" } },
-    ];
-    const messages = talkedTo ? [...opening, { id: "m3", at: 3, role: "user", kind: "text", text: "Help me plan my week" }] : opening;
-    asked();
-    await route.fulfill({ json: { messages, hasMore: false } });
-  });
-  return { threadAsked };
-}
-
-test("a fresh install's own seeded bot still gets the welcome", async ({ page }) => {
-  // Was: any bot at all read as an established workspace, so the seeded bot
-  // hid this screen on every fresh install and a new user landed in its
-  // intake questions instead.
-  const { threadAsked } = await answerSeededWorkspace(page, false);
-  await page.goto("/");
-  await threadAsked;
-  await expect(page.getByText(WELCOME)).toBeVisible();
-  await expect(page.getByText(EMAIL_CAPTURE)).toBeVisible();
-});
-
-test("a workspace whose one bot has been talked to goes straight in", async ({ page }) => {
-  const { threadAsked } = await answerSeededWorkspace(page, true);
-  await page.goto("/");
-  await threadAsked;
-  await expect(page.getByText("Checking your workspace…")).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: PHASES, exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: PHASES, exact: true }).locator('[aria-current="step"]')).toHaveCount(1);
+  // The old gate is gone on both surfaces.
   await expect(page.getByText(WELCOME)).toHaveCount(0);
-  await expect(page.getByText(EMAIL_CAPTURE)).toHaveCount(0);
 });
+
+// Whether a freshly seeded bot still counts as a new install (its greeting
+// alone) or an established one (the person has written to it) is now the
+// server's answer, not this renderer's: `view.firstRun` from server/setup.ts,
+// proved in server/setup.test.ts ("does not mistake a newly seeded bot's
+// greeting for an engine reply" and its neighbours). The two client-side
+// tests of the removed welcome gate went with it (311387b1).

@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of food preservation or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "cooking home-maintenance meal-planning budgeting nutrition guide step-by-step beginner-friendly"
   category: "home-household"

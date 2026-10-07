@@ -4,7 +4,7 @@ description: |
   Guide to safe home chemistry experiments including crystal growing, pH indicators, electrochemistry, with strong safety protocols and age-appropriate experiment recommendations. Use when the user asks about chemistry explorer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide step-by-step"
   category: "hobbies-crafts"

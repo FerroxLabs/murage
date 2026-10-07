@@ -6,7 +6,7 @@ description: |
   Do NOT use for initial data exploration (use eda-framework), statistical testing (use hypothesis-testing), or writing SQL/Python cleaning scripts (software-development scope).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science analysis spreadsheets"
   category: "data-analysis"

@@ -19,7 +19,7 @@ trigger_phrases: >-
   early create a financial independence plan build wealth for early retirement
   how long until I can retire
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: investing budgeting retirement-planning savings step-by-step planning
   category: business-operations

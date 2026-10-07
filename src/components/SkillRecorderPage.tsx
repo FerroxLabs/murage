@@ -35,6 +35,7 @@ import {
 import { requestScreenPreview, stopScreenPreview } from "@/lib/screen-preview";
 import { TRANSCRIPTION_STATUS_EVENT } from "@/lib/transcription-status";
 import { useStore } from "@/state/store";
+import { OpenBotListButton } from "./OpenBotListButton";
 
 type Phase = "idle" | "starting" | "recording" | "review" | "saving" | "saved";
 
@@ -349,8 +350,12 @@ export function SkillRecorderPage() {
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-app text-ink">
       <video ref={videoRef} muted playsInline className="pointer-events-none absolute size-px opacity-0" />
-      <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-6">
-        <div>
+      {/* The status bar's inset on top of the 60px row; env() is 0px on the
+          desktop, so nothing moves there. */}
+      <header className="flex h-[calc(60px+env(safe-area-inset-top))] shrink-0 items-center justify-between gap-3 border-b border-hairline px-6 pt-[env(safe-area-inset-top)] max-md:pl-3">
+        {/* Phones only, first on the row (OpenBotListButton.tsx). */}
+        <OpenBotListButton />
+        <div className="min-w-0 flex-1">
           <h1 className="text-[15px] font-semibold">Teach a skill</h1>
           <p className="text-[11px] text-ink-secondary">Show it once. Let every bot repeat it.</p>
         </div>
@@ -408,7 +413,7 @@ export function SkillRecorderPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}
+                    onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "voice" })}
                     className="shrink-0 rounded-xl bg-control px-3 py-2 text-[12px] font-medium text-ink hover:bg-raised-hover"
                   >
                     {transcriptionConfigured ? "Manage" : "Open Settings"}

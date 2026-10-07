@@ -10,7 +10,7 @@ description: |
   (use resume-bullet-writer), or social media marketing for a business (use content-marketing skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "career planning linkedin writing"
   category: "career-development"

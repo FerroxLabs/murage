@@ -6,8 +6,8 @@
 // src/e2e/media-lightbox.human.spec.ts.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const auth = vi.hoisted(() => ({ ensure: vi.fn(), headers: vi.fn(() => ({ "x-murage-surface-secret": "synthetic-proof" })) }));
-vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopSurfaceHeaders: auth.headers }));
+const auth = vi.hoisted(() => ({ ensure: vi.fn(), headers: vi.fn(() => ({ "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" })) }));
+vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopCallerHeaders: auth.headers }));
 
 import { fetchOriginalScreenFrame } from "./paged-screen-frame";
 

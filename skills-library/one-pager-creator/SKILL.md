@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of one pager creator or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "quickstart strategy budgeting investing"
   category: "business-strategy"

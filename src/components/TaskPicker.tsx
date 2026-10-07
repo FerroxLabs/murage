@@ -1,3 +1,4 @@
+import { unreadTaskLabel } from "@/lib/project-presentation";
 // Separate task contexts for an agent or a channel.
 //
 // One endless thread per bot means every job contaminates the next, and
@@ -8,7 +9,7 @@ import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as Reac
 import { BellOff, Check, ChevronDown, ChevronRight, Clock, Download, Pencil, Pin, Plus, Search, Trash2 } from "lucide-react";
 import { api, useStore, type Bot, type Group, type Task } from "@/state/store";
 import { deletionConsequenceLines } from "@/lib/deletion-notes";
-import { useSavedFileCount } from "./ConfirmDelete";
+import { useDeletionCounts } from "./ConfirmDelete";
 import type { RoutineRun } from "@/lib/routines";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE_LAST } from "@/lib/compact-chip";
@@ -20,7 +21,7 @@ import {
   buildTaskListView,
   formatTaskMoment,
   formatTaskTokenLabel,
-  formatTaskWhen,
+  formatRelativeTaskWhen,
   readableTaskTitle,
   searchTasks,
   taskSortTime,
@@ -35,6 +36,7 @@ import {
 import { sidebarMarkLabel, taskWaitsOnYou } from "@/lib/sidebar-attention";
 import { formatSnoozedUntil, threadIsQuiet } from "@/lib/thread-snooze";
 import { changeThreadSnooze, useThreadAttention } from "@/lib/thread-attention";
+import { useRelativeNow } from "@/lib/relative-now";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { QuestionBadge, SnoozeChoices } from "./ConversationSnooze";
 
@@ -166,7 +168,7 @@ export function hoistWaitingTasks<T extends { threadId: string }>(
   return { sections, navigable };
 }
 
-type PickerTask = Pick<Task, "threadId" | "title" | "createdAt" | "lastActivityAt" | "busy" | "unread" | "pinned" | "activity"> & {
+type PickerTask = { unreadCount?: number } & Pick<Task, "threadId" | "title" | "createdAt" | "lastActivityAt" | "busy" | "unread" | "pinned" | "activity"> & {
   usage?: Task["usage"];
 };
 
@@ -185,6 +187,7 @@ export function ConversationTaskPicker({
   timeZone,
   locale,
   snoozes,
+  untilActivity,
   questions,
   canSnooze = false,
   deleteScope,
@@ -208,6 +211,8 @@ export function ConversationTaskPicker({
   locale?: string;
   /** Snoozed conversations: threadId to when each wakes. */
   snoozes?: ReadonlyMap<string, number>;
+  /** The snoozed ones that wake at their next new activity. */
+  untilActivity?: ReadonlySet<string>;
   /** Questions waiting on the owner, by threadId (Inbox questionThreads). */
   questions?: Readonly<Record<string, number>>;
   /** Snooze is a desktop action; elsewhere the marker shows and nothing more. */
@@ -344,14 +349,16 @@ export function ConversationTaskPicker({
   const switchTitle = currentTokens ? `Switch task · ${currentTokens.detail}` : "Switch task";
   const looking = query.trim();
   const clock = { timeZone, locale };
-  const nowAt = now ?? Date.now();
+  // One shared 30-second clock keeps "5 min ago" honest (lib/relative-now).
+  const relativeNow = useRelativeNow();
+  const nowAt = now ?? relativeNow;
   // A snoozed conversation's unread is held back here exactly as in the
   // sidebar: no Unread label, not under the Unread filter, not counted in a
   // routine fold. A question or an approval in it ends that at once.
   const quiet = (task: PickerTask) =>
     threadIsQuiet(task.threadId, { snoozes: snoozes ?? new Map(), questions: questions ?? {}, now: nowAt, waiting: taskWaitsOnYou(task) });
   const listed = useMemo(
-    () => tasks.map((task) => (task.unread && quiet(task) ? { ...task, unread: false } : task)),
+    () => tasks.map((task) => (task.unread && quiet(task) ? { ...task, unread: false, unreadCount: 0 } : task)),
     [tasks, snoozes, questions, nowAt],
   );
   const view = useMemo(
@@ -426,12 +433,13 @@ export function ConversationTaskPicker({
     const waiting = taskWaitsOnYou(task);
     const status = [
       task.busy && !waiting ? "Working" : null,
-      task.unread ? "Unread" : null,
+      unreadTaskLabel(task) || null,
     ].filter(Boolean).map((part) => ` · ${part}`).join("");
     const tokens = formatTaskTokenLabel(task.usage, locale);
     const questionCount = questions?.[task.threadId] ?? 0;
     const snoozedUntil = quiet(task) ? snoozes?.get(task.threadId) : undefined;
-    const snoozedText = snoozedUntil !== undefined ? formatSnoozedUntil(snoozedUntil, nowAt, clock) : null;
+    const waitsForNews = untilActivity?.has(task.threadId) === true;
+    const snoozedText = snoozedUntil !== undefined ? formatSnoozedUntil(snoozedUntil, nowAt, clock, waitsForNews) : null;
     // Something owed in it: it cannot be snoozed, the server refuses too.
     const owed = waiting || questionCount > 0;
     return (
@@ -505,7 +513,7 @@ export function ConversationTaskPicker({
                 <span className="shrink-0 rounded border border-hairline/60 px-1 text-[10px] leading-[14px]">{badge}</span>
               )}
               <span className="min-w-0 truncate">
-                <time dateTime={new Date(at).toISOString()} title={moment}>{formatTaskWhen(at, nowAt, clock)}</time>
+                <time dateTime={new Date(at).toISOString()} title={moment}>{formatRelativeTaskWhen(at, nowAt, clock)}</time>
                 {waiting && <span className="font-medium text-warning">{` · ${TASK_WAITING_LABEL}`}</span>}
                 {status}
                 {snoozedText && <span data-task-snoozed="" title={snoozedText}>{` · ${snoozedText}`}</span>}
@@ -587,7 +595,7 @@ export function ConversationTaskPicker({
       )}
       {canSnooze && snoozing === task.threadId && (
         <div className="border-y border-hairline/40 bg-inset/40 px-1 py-1">
-          <SnoozeChoices threadId={task.threadId} name={name} until={snoozedUntil} blocked={owed} now={nowAt} clock={clock}
+          <SnoozeChoices threadId={task.threadId} name={name} until={snoozedUntil} untilActivity={waitsForNews} blocked={owed} now={nowAt} clock={clock}
             onDone={() => setSnoozing(null)} />
         </div>
       )}
@@ -732,7 +740,7 @@ export function ConversationTaskPicker({
                     const unread = entry.runs.filter((run) => run.unread).length;
                     const at = taskSortTime(entry.latest, sort);
                     const summary = [
-                      formatTaskWhen(at, nowAt, clock),
+                      formatRelativeTaskWhen(at, nowAt, clock),
                       working ? "Working" : null,
                       unread === 1 ? "Unread" : unread > 1 ? `${unread} unread` : null,
                     ].filter(Boolean).join(" · ");
@@ -816,6 +824,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
     <ConversationTaskPicker
       routineOf={routineOf}
       snoozes={attention.snoozes}
+      untilActivity={attention.untilActivity}
       questions={attention.questions}
       canSnooze={desktop}
       threadId={bot.threadId}
@@ -850,6 +859,7 @@ export function GroupTaskPicker({ group }: { group: Group }) {
     <ConversationTaskPicker
       routineOf={routineOf}
       snoozes={attention.snoozes}
+      untilActivity={attention.untilActivity}
       questions={attention.questions}
       canSnooze={desktop}
       threadId={group.threadId}
@@ -865,22 +875,25 @@ export function GroupTaskPicker({ group }: { group: Group }) {
 }
 
 /** The inline confirmation under a conversation row: what goes with it
- * (saved files) and what stays (earlier backups), then Delete or Cancel. */
-export function ConfirmTaskDelete({ name, preview, onCancel, onConfirm, savedFiles: known }: {
+ * (its messages and saved files, counted) and what stays (earlier backups),
+ * then Delete or Cancel. */
+export function ConfirmTaskDelete({ name, preview, onCancel, onConfirm, savedFiles: known, messages: knownMessages }: {
   name: string;
   preview: { botId?: string; groupId?: string; threadId?: string };
   onCancel: () => void;
   onConfirm: () => void;
-  /** Tests pass the count; the app asks the server. */
+  /** Tests pass the counts; the app asks the server. */
   savedFiles?: number;
+  messages?: number;
 }) {
-  const fetched = useSavedFileCount(known === undefined ? preview : undefined);
-  const savedFiles = known ?? fetched;
+  const fetched = useDeletionCounts(known === undefined ? preview : undefined);
+  const savedFiles = known ?? fetched?.savedFiles ?? null;
+  const messages = knownMessages ?? fetched?.messages ?? null;
   return (
     <div role="group" aria-label={`Delete ${name}?`} className="border-y border-hairline/40 bg-inset/40 px-2 py-2 text-[12.5px] text-ink">
       <p className="font-medium">Delete this conversation?</p>
       <p className="mt-0.5 text-ink-secondary">Its messages, files and history are removed from this computer.</p>
-      {deletionConsequenceLines(savedFiles).map((line) => <p key={line} className="mt-0.5 text-ink-secondary">{line}</p>)}
+      {deletionConsequenceLines(savedFiles, messages).map((line) => <p key={line} className="mt-0.5 text-ink-secondary">{line}</p>)}
       <div className="mt-1.5 flex justify-end gap-1.5">
         <button type="button" onClick={onCancel} className="rounded px-2 py-1 text-ink-secondary hover:bg-raised hover:text-ink">Cancel</button>
         <button type="button" onClick={onConfirm} className="rounded bg-danger px-2 py-1 font-medium text-white">Delete</button>

@@ -1,0 +1,12 @@
+{
+  "id": "GHSA-qvv5-jq5g-4cgg",
+  "source": "https://github.com/advisories/GHSA-qvv5-jq5g-4cgg",
+  "recordedAt": "2026-10-06",
+  "status": "reviewed",
+  "checkedAt": "2026-10-06",
+  "version": "7.0.0-rc14",
+  "integrity": "sha512-pewtrljhWx5JTUBvvkXZz1fL3JPiwzjBsnhx/DWf2LWBx1cZNH7J/sF22xDehba5mySWUQU4a1Pwt7lWARUxaA==",
+  "affectedRange": ">= 7.0.0-rc.1, < 7.0.0-rc12 (and < 6.7.22 on 6.x)",
+  "patchedRange": ">= 7.0.0-rc12 (6.x: >= 6.7.22)",
+  "distTagLatest": "7.0.0-rc14"
+}

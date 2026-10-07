@@ -4,7 +4,7 @@ description: |
   Guide for celebrating milestone birthdays (30, 40, 50, 60 and beyond) including life reflection exercises, party planning, bucket list creation, photo and video tributes, meaningful gift ideas, legacy projects, and future visioning. Use when the user asks about milestone birthday or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events event-planning planning"
   category: "family-relationships"

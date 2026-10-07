@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about async concurrency (use `python-async-patterns`), general Python idioms (use `python-idioms`), or project setup (use `python-project-setup`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "python optimization debugging"
   category: "software-engineering"

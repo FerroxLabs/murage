@@ -6,7 +6,7 @@ description: |
   Do NOT use for diagnosing developmental delays, screening for autism or other conditions, or replacing a pediatric evaluation.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "parenting guide step-by-step"
   category: "family-relationships"

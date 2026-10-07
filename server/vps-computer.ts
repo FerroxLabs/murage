@@ -671,7 +671,7 @@ function assertUsableContainer(status: VpsComputerStatus) {
     status.mounts !== "none" ||
     status.security !== "hardened"
   ) {
-    throw Object.assign(new Error(status.problem ?? "The existing VPS container is unsafe or incompatible"), {
+    throw Object.assign(new Error(status.problem ?? "The existing VPS container is not locked down or does not match this version"), {
       status: 409,
     });
   }

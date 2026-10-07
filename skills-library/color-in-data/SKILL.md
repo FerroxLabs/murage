@@ -6,7 +6,7 @@ description: |
   Do NOT use for brand color palette design (use color-palette-design in the design category), chart type selection (use chart-type-selector), or chart formatting beyond color (use chart-formatting).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-visualization design accessibility"
   category: "data-analysis"

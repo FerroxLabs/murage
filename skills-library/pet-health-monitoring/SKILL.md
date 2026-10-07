@@ -6,7 +6,7 @@ description: |
   Do NOT use for diagnosing specific diseases, recommending medications or treatments, or replacing veterinary examination. This skill helps owners observe and report -- not diagnose or treat.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "pet-care checklist guide"
   category: "home-household"

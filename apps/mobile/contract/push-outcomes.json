@@ -1,0 +1,45 @@
+{
+  "noticeText": {
+    "approved": { "title": "Murage", "body": "Approved." },
+    "denied": { "title": "Murage", "body": "Denied." },
+    "stepUp": { "title": "Murage", "body": "Open Murage to allow this." },
+    "alreadyAnswered": { "title": "Murage", "body": "This was already answered." },
+    "unreachable": { "title": "Murage", "body": "Couldn't reach your Murage, open the app." },
+    "openApp": { "title": "Murage", "body": "Open Murage to answer this." }
+  },
+  "detail": [
+    { "status": 200, "category": "approval", "body": { "title": "Lena needs approval", "body": "Lena wants to delete 3 files", "target": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "threadId": "t1", "messageId": "m1", "requestId": "req-1" } },
+      "expect": { "title": "Lena needs approval", "body": "Lena wants to delete 3 files", "target": { "threadId": "t1", "messageId": "m1", "requestId": "req-1" } } },
+    { "status": 200, "category": "done", "body": { "title": "Scout finished", "body": "", "target": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "threadId": "t2" } },
+      "expect": { "title": "Scout finished", "body": "", "target": { "threadId": "t2" } } },
+    { "status": 200, "category": "question", "body": { "title": "", "body": "x", "target": { "threadId": "t1" } },
+      "expect": { "title": "Murage", "body": "Your attention is needed.", "target": null } },
+    { "status": 200, "category": "question", "body": { "title": "Scout has a question", "body": "x", "target": { "threadId": "" } },
+      "expect": { "title": "Murage", "body": "Your attention is needed.", "target": null } },
+    { "status": 200, "category": "question", "body": { "title": "Scout has a question", "body": 7, "target": { "threadId": "t1" } },
+      "expect": { "title": "Murage", "body": "Your attention is needed.", "target": null } },
+    { "status": 404, "category": "approval", "body": { "code": "unavailable" },
+      "expect": { "title": "Murage", "body": "Your attention is needed.", "target": null } },
+    { "status": null, "category": "done", "body": null,
+      "expect": { "title": "Murage", "body": "A task has finished.", "target": null } },
+    { "status": 200, "category": "approval", "body": { "title": "a very long title that goes on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on and on", "body": "x", "target": { "threadId": "t1" } },
+      "expect": { "title": "Murage", "body": "Your attention is needed.", "target": null } }
+  ],
+  "notice": [
+    { "status": 200, "decision": "allow", "body": { "ok": true, "outcome": "allowed-once" }, "expect": "approved" },
+    { "status": 200, "decision": "deny", "body": { "ok": true, "outcome": "rejected" }, "expect": "denied" },
+    { "status": 200, "decision": "allow", "body": { "ok": true, "outcome": "unavailable" }, "expect": "openApp" },
+    { "status": 403, "decision": "allow", "body": { "code": "step_up" }, "expect": "stepUp" },
+    { "status": 409, "decision": "deny", "body": { "code": "already_answered" }, "expect": "alreadyAnswered" },
+    { "status": 409, "decision": "deny", "body": { "code": "stale" }, "expect": "openApp" },
+    { "status": 404, "decision": "deny", "body": { "code": "unavailable" }, "expect": "openApp" },
+    { "status": 401, "decision": "deny", "body": { "error": "sign in" }, "expect": "openApp" },
+    { "status": 400, "decision": "deny", "body": { "code": "bad_request" }, "expect": "openApp" },
+    { "status": 400, "decision": "allow", "body": { "code": "not_supported" }, "expect": "openApp" },
+    { "status": 413, "decision": "deny", "body": null, "expect": "openApp" },
+    { "status": 502, "decision": "deny", "body": null, "expect": "unreachable" },
+    { "status": 502, "decision": "deny", "body": { "code": "unavailable" }, "expect": "unreachable" },
+    { "status": 503, "decision": "deny", "body": null, "expect": "unreachable" },
+    { "status": null, "decision": "allow", "body": null, "expect": "unreachable" }
+  ]
+}

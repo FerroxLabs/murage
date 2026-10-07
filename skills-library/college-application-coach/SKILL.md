@@ -4,7 +4,7 @@ description: |
   Full college application strategy guide covering school selection with safety/match/reach tiers, essay brainstorming and writing, activity list optimization, recommendation letter strategy, financial aid including FAFSA and CSS Profile, application timeline management, and interview preparation. Use when the user asks about college application coach or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events teaching planning"
   category: "family-relationships"

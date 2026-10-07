@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of graph algorithm specialist or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "advanced competitive-programming guide beginner-friendly testing analysis networking parenting"
   category: "emerging-tech"

@@ -52,9 +52,10 @@ export function UpdateBanner() {
   // command is copied and a terminal opens; the user finishes there.
   // Nothing restarts, and the card has to stop promising that it will.
   const handoff = s.installMode === "handoff";
+  const verificationRefused = s.status === "error" && s.action === "download-from-murage";
 
   const title =
-    deferred ? "Update waiting for backup" : s.status === "available"
+    verificationRefused ? t("updates.title") : deferred ? "Update waiting for backup" : s.status === "available"
       ? `Murage ${s.version} is available`
       : s.status === "downloading"
         ? `Downloading ${s.version ?? "update"}…`
@@ -68,7 +69,7 @@ export function UpdateBanner() {
               ? "Finish in a terminal"
               : "Update could not finish";
   const subtitle =
-    deferred ? "This update is waiting for the pre-upgrade backup flow. Review Settings → Backups if it needs attention." : s.status === "available"
+    verificationRefused ? t("updates.verificationRefused") : deferred ? "This update is waiting for the pre-upgrade backup flow. Review Settings → Backups if it needs attention." : s.status === "available"
       ? "A newer version is ready to download."
       : s.status === "downloading"
         ? // no percent yet means the transfer hasn't reported in — don't imply 0
@@ -90,7 +91,7 @@ export function UpdateBanner() {
               : friendlyError(s.message);
 
   return (
-    <div className="animate-panel-in fixed bottom-4 left-4 z-50 w-[300px] rounded-xl border border-hairline/40 bg-panel p-3.5 shadow-2xl shadow-black/50">
+    <div className="animate-panel-in fixed bottom-[calc(1rem+var(--inset-bottom))] left-4 z-50 w-[300px] rounded-xl border border-hairline/40 bg-panel p-3.5 shadow-2xl shadow-black/50">
       <div className="flex items-start gap-2.5">
         <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
           <Sparkles size={14} />
@@ -192,13 +193,17 @@ export function UpdateBanner() {
           {s.status === "error" && (
             <button
               onClick={() => {
+                if (verificationRefused) {
+                  void window.muragebox?.openExternal?.("https://murage.ai/download");
+                  return;
+                }
                 setPending("check");
                 void updater.retry().finally(() => setPending(null));
               }}
               disabled={pending !== null}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-control py-1.5 text-[13px] text-ink hover:bg-raised-hover disabled:text-ink-secondary disabled:hover:bg-control"
             >
-              {pending === "check" ? (
+              {verificationRefused ? t("updates.downloadFromMurage") : pending === "check" ? (
                 <>
                   <Loader2 size={13} className="animate-spin" /> Trying again…
                 </>

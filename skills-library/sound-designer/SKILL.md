@@ -4,7 +4,7 @@ description: |
   Comprehensive sound design guidance covering Foley recording, SFX creation and layering, ambient soundscape construction, game audio implementation (Wwise, FMOD), film sound design workflows, field recording techniques, sound library management, and the creative process of building sonic worlds. Use when the user asks about sound designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design guide"
   category: "design-creative"

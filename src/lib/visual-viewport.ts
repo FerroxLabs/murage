@@ -29,6 +29,13 @@ export function keyboardInset(v: {
   return Number.isFinite(inset) ? Math.max(0, inset) : 0;
 }
 
+/** Whether a software keyboard is up: the visual viewport is shorter than the
+ * layout viewport by more than the threshold, whatever its pan (`offsetTop`). */
+export function isKeyboardOpen(v: { innerHeight: number; height: number }): boolean {
+  const covered = v.innerHeight - v.height;
+  return Number.isFinite(covered) && covered > KEYBOARD_INSET_THRESHOLD;
+}
+
 /** Where the transcript has to be scrolled to after the pane changes height so
  * the row the reader was looking at does not slide out from under them.
  *
@@ -61,7 +68,16 @@ export function trackVisualViewport(): () => void {
     });
     root.style.setProperty("--vvh", `${vv.height}px`);
     root.style.setProperty("--kb", `${inset}px`);
-    root.dataset.keyboard = inset > KEYBOARD_INSET_THRESHOLD ? "open" : "closed";
+    // Open or closed ignores offsetTop: iOS reports height = innerHeight - keyboard
+    // whatever the pan, so a large pan would otherwise read as "closed" and zero
+    // --vvt exactly when the shell has to follow it. `--kb` keeps offsetTop.
+    const open = isKeyboardOpen({ innerHeight: window.innerHeight, height: vv.height });
+    // iOS pans the visual viewport down inside the layout viewport to reveal
+    // a focused field; the shell must follow it (styles.css #root and
+    // .overlay-inset), or its top sits under the status bar with a gap
+    // between the composer and the keyboard. 0 while the keyboard is closed.
+    root.style.setProperty("--vvt", open ? `${Math.max(0, vv.offsetTop)}px` : "0px");
+    root.dataset.keyboard = open ? "open" : "closed";
   };
   // iOS fires resize+scroll many times through the keyboard animation; one
   // frame's worth of writes is enough and keeps the layout out of a thrash.

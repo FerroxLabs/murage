@@ -14,11 +14,19 @@
 // answer. For the same reason a conversation that is already waiting on the
 // owner cannot be snoozed at all, exactly as the Inbox refuses to snooze its
 // owed items (INBOX_OWED_VIEWS in src/components/Inbox.tsx).
+//
+// A snooze can also wait for news instead of a time ("until new activity",
+// adapted from OpenMausBot #1205): it ends when the conversation has
+// something new the owner did not write. It still wakes by the clock at the
+// usual 30-day limit, so no conversation is quiet for ever.
 
-/** One snoozed conversation. `until` is epoch ms. */
+/** One snoozed conversation. `until` is epoch ms: the chosen time, or the
+ *  latest a snooze waiting for new activity can last. */
 export interface ThreadSnooze {
   threadId: string;
   until: number;
+  /** Ends at the conversation's next new activity. */
+  untilActivity?: true;
 }
 
 /** The longest a conversation may sleep. Matches the Inbox item limit. */

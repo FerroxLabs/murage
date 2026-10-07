@@ -6,7 +6,7 @@ description: |
   Do NOT use for competitive race training or racing strategy, professional bike fitting, mountain biking technical skills progression, or cycling commute planning for daily transportation (use green-transportation-planner).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "planning checklist step-by-step guide"
   category: "hobbies-crafts"

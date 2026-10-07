@@ -1,0 +1,11 @@
+{
+  "approver": {
+    "driver": "grokAgent",
+    "displayName": "Approver fixture",
+    "environment": {
+      "FAKE_ACP_MODE": "permission",
+      "FAKE_ACP_PERMISSION_COMMAND": "rm -rf ~/Documents/old"
+    },
+    "config": { "cli": "FAKE_ACP_CLI", "fullAuto": true }
+  }
+}

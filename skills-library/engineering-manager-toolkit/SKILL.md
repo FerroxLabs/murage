@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of engineering manager toolkit or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "tech-industry strategy budgeting template guide step-by-step api-design planning"
   category: "business-strategy"

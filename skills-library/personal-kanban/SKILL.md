@@ -6,7 +6,7 @@ description: |
   Do NOT use for team Kanban or Scrum boards (use business project-management skills), general task prioritization (use task-prioritization), or project milestone tracking (use milestone-planning).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "project-management planning automation"
   category: "productivity"

@@ -4,7 +4,7 @@ description: |
   Guide to freshwater aquarium keeping including tank setup, nitrogen cycle, stocking, water parameters, planted tanks, aquascaping styles, maintenance, disease prevention, and fish compatibility. Use when the user asks about aquarium keeper or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "pet-care guide step-by-step"
   category: "hobbies-crafts"

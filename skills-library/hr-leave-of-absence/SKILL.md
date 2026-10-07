@@ -3,7 +3,7 @@ name: hr-leave-of-absence
 description: "Run a leave eligibility analysis and produce the paperwork — federal FMLA (50 employees within 75 miles, 12 months and 1,250 hours), the state PFML programs that stack on top of it, the request-response letter, the return-to-work plan and intermittent-leave tracking. Use when an employee asks for medical, family, parental or personal leave. Do NOT use for a disability or religious accommodation request (use hr-accommodation-request) or for the handbook's leave policy text (use hr-handbook). Analysis and templates only — have employment counsel confirm the user's state programs before the response letter goes out."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "fmla pfml leave hr people-ops smb"
   category: "hr"

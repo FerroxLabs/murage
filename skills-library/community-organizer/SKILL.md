@@ -4,7 +4,7 @@ description: |
   Guide to community organizing including issue identification, coalition building, mobilization strategies, meeting facilitation, advocacy campaigns, media engagement, and power mapping. Use when the user asks about community organizer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy planning guide"
   category: "business-strategy"

@@ -56,6 +56,13 @@ describe("which engine a brand new bot lands on", () => {
     expect(pickDefaultEngine([FUIGO, CLAUDE_SIGNED_IN]).instanceId).toBe("claude");
   });
 
+  it("a Flux-keyed Fuigo (authenticated:true) still does not outrank a signed-in CLI", () => {
+    const fuigoKeyed = engine({ instanceId: "fuigo", driverKind: "fuigoAgent", snapshot: { state: "available", authenticated: true }, models: { default: "flux/auto" } });
+    expect(pickDefaultEngine([fuigoKeyed, CLAUDE_SIGNED_IN]).instanceId).toBe("claude");
+    expect(pickDefaultEngine([CLAUDE_SIGNED_IN, fuigoKeyed]).instanceId).toBe("claude");
+    expect(pickDefaultEngine([fuigoKeyed]).instanceId).toBe("fuigo");
+  });
+
   it("picks the one we ship on the machine this product is actually for", () => {
     // Nothing else installed: the only usable engine is ours, which is the
     // common case and the one the zero-terminal promise is about.

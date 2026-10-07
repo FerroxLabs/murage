@@ -56,6 +56,7 @@ const {
   saveFile,
   saveImage,
   saveImageUpload,
+  savedAsNewFile,
   validateAttachmentUploadId,
 } = await import("./attachments.ts");
 
@@ -119,12 +120,21 @@ describe("saveImage", () => {
     expect(back?.mime).toBe("image/gif");
   });
 
+  it("tells a newly written upload from an idempotent retry that found the file", () => {
+    const uploadId = "33333333-3333-4333-8333-333333333333";
+    const first = saveImage(Buffer.from("pixels-N"), "image/png", uploadId);
+    const retry = saveImage(Buffer.from("pixels-N"), "image/png", uploadId);
+    expect(savedAsNewFile(first)).toBe(true);
+    expect(savedAsNewFile(retry)).toBe(false);
+    expect(savedAsNewFile(saveImage(Buffer.from("pixels-M"), "image/png"))).toBe(true);
+  });
+
   it("names the bytes it read with a version that changes when a reused name gets other bytes", () => {
     const uploadId = "22222222-2222-4222-8222-222222222222";
     const saved = saveImage(Buffer.from("pixels-A"), "image/png", uploadId);
     const name = saved.path.split(/[\\/]/).pop()!;
     const first = readAttachment(name);
-    expect(first?.version).toMatch(/^8:\d+:\d+$/);
+    expect(first?.version).toMatch(/^8:[0-9a-f]{32}$/);
     // Read again, unchanged: the same version, so a cached thumbnail is reused.
     expect(readAttachment(name)?.version).toBe(first?.version);
     // Deleted with its message, then saved again under the same uploadId with

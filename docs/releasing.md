@@ -121,6 +121,16 @@ stapling silently invalidating every published hash, and a finished release
 sitting invisible as a draft. Don't remove a gate without reading the comment
 above it.
 
+## CI must have passed on the commit
+
+The first job refuses to start a release from a commit the `CI` workflow
+(`ci.yml`) did not pass. `scripts/release-ci-gate.mjs` lists CI's runs for the
+pinned SHA and exits only when the newest attempt concluded `success`. A push
+to main starts CI and Release together, so a run still in progress is waited
+for (up to 75 minutes); no run at all is refused after a ten minute grace; a
+failed, cancelled or skipped one is refused straight away. Re-run CI on the
+commit (Actions, Re-run all jobs) and re-run the release to continue.
+
 ## One-time setup: four secrets
 
 Set these in **Murage → Settings → Secrets and variables → Actions**.
@@ -163,6 +173,51 @@ separate releases repo: **GitHub → Settings → Developer settings →
 Fine-grained tokens** → repository access: only `murage-releases` →
 permissions: **Contents: Read and write**. Set a long expiry and a calendar
 reminder.
+
+### 4. `RELEASE_GPG_PRIVATE_KEY` (and `RELEASE_GPG_PASSPHRASE`)
+
+Signs `SHA256SUMS-ubuntu-x64.txt`, so a downloader can check the checksum file
+and not just the files. Add the armored private key of a release-only GPG key:
+
+```sh
+gpg --quick-generate-key "Murage releases <releases@example.invalid>" ed25519 sign 2y
+gpg --armor --export-secret-keys <KEYID> | pbcopy   # -> RELEASE_GPG_PRIVATE_KEY
+# the key's passphrase, if it has one              -> RELEASE_GPG_PASSPHRASE
+gpg --armor --export <KEYID> > murage-release-key.asc   # publish this public key
+```
+
+Linux updates verify `SHA256SUMS-ubuntu-x64.txt` and its detached `.asc` in-app
+against `electron/release-key.asc`. The signed filename must match the version
+and Linux artifact, the downloaded SHA-256 must match, and the version must be
+newer than the running app. Murage checks the cached bytes again before restart
+or Debian package handoff. Missing assets or a verification refusal remove the
+download and offer “Download from murage.ai”.
+
+Replace the labelled TEST public key in `electron/release-key.asc` with Sean's
+release-only Ed25519 OpenPGP public key export, including its armor CRC24.
+Confirm its fingerprint with Sean independently of the release host. Use a v4
+Ed25519 legacy primary signing key (algorithm 22), signing binary checksum data
+with SHA-256 or SHA-512. The verifier accepts that primary key, without subkeys.
+Only the public export belongs in the repository. Its matching private key and
+passphrase remain in the release secrets. `electron/**` packages the public key;
+the app never downloads keys.
+
+Every macOS, Windows and Linux job in `release.yml` runs
+`node scripts/check-release-key.mjs` before packaging. Missing, malformed or
+TEST keys stop the release. The committed TEST key deliberately keeps this gate
+closed until the publisher key is supplied. Configure the matching signing
+secrets and publish both checksum assets alongside the Linux artifacts;
+an absent signing secret can omit the `.asc`, which the app refuses.
+Check a download with
+`gpg --verify SHA256SUMS-ubuntu-x64.txt.asc SHA256SUMS-ubuntu-x64.txt`, then
+`sha256sum -c SHA256SUMS-ubuntu-x64.txt`.
+
+### Build-provenance attestation
+
+The Linux job attests the `.deb`, the `.AppImage` and `SHA256SUMS-ubuntu-x64.txt`
+with `actions/attest-build-provenance` (pinned by full commit SHA, v4.2.2). Check a
+download with `gh attestation verify Murage.AppImage --repo FerroxLabs/murage`. The
+macOS and Windows jobs are not attested yet, and cosign is not used.
 
 ### Local fallback
 

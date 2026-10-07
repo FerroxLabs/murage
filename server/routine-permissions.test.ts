@@ -1,10 +1,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// A routine's approval level: what it inherits, what an explicit choice
-// overrides, and how the verdict treats a routine run at each level. The
-// case behind it: a No limits bot whose 30-minute routine was judged as Auto,
-// hit a card nobody was there to answer and died at its run limit.
+// A routine's stored ceiling, the bot's current level, and the grants and
+// guards that apply to each run.
 import { describe, expect, it } from "vitest";
 
 import { autoVerdict, fullAccessCovers, type AutoContext } from "./auto-approve.ts";
@@ -38,11 +36,15 @@ describe("a routine's level", () => {
     expect(botPermissionMode(null)).toBe("ask");
   });
 
-  it("inherits the bot's current level unless the routine names one", () => {
+  it("uses the lower of the routine ceiling and the current bot level", () => {
     expect(effectiveRoutinePermissionMode({}, unlimited)).toBe("unlimited");
     expect(effectiveRoutinePermissionMode({}, auto)).toBe("auto");
     expect(effectiveRoutinePermissionMode({ permissionMode: "ask" }, unlimited)).toBe("ask");
-    expect(effectiveRoutinePermissionMode({ permissionMode: "full" }, ask)).toBe("full");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "full" }, ask)).toBe("ask");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "unlimited" }, auto)).toBe("auto");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "unlimited" }, full)).toBe("full");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "auto" }, full)).toBe("auto");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "unlimited" }, null)).toBe("ask");
   });
 
   it("applies a level as the flags the verdict reads, keeping the grants", () => {
@@ -53,11 +55,12 @@ describe("a routine's level", () => {
     expect(applyRoutinePermissionMode(unlimited, "ask")).toMatchObject({ autoApprove: false, fullAccess: false, noLimits: false });
   });
 
-  it("loads older files as inherit and drops anything unknown", () => {
+  it("leaves missing levels for migration and loads invalid levels as Ask", () => {
     expect(loadRoutinePermissionMode(undefined)).toBeUndefined();
     expect(loadRoutinePermissionMode("full")).toBe("full");
-    expect(loadRoutinePermissionMode("root")).toBeUndefined();
-    expect(loadRoutinePermissionMode(3)).toBeUndefined();
+    for (const value of ["root", "inherit", null, 3, false, {}]) {
+      expect(loadRoutinePermissionMode(value)).toBe("ask");
+    }
   });
 
   it("accepts a level or inherit from the editor and refuses anything else", () => {
@@ -90,11 +93,25 @@ describe("a routine run's verdict at each level", () => {
     }
   });
 
-  it("the stop line holds below No limits and lifts at No limits", () => {
-    for (const mode of ["ask", "auto", "full"] as const) {
-      expect(autoVerdict(at(mode), "Bash", "rm -rf ~/Documents/x", { ...routine, stopLine: outside }).source).toBe("stop-line");
+  it("the stop line holds at every routine level", () => {
+    for (const mode of ["ask", "auto", "full", "unlimited"] as const) {
+      expect(autoVerdict(at(mode), "Bash", "rm -rf ~/Documents/x", { ...routine, stopLine: outside })).toMatchObject({ approve: null, source: "stop-line" });
     }
-    expect(autoVerdict(at("unlimited"), "Bash", "rm -rf ~/Documents/x", { ...routine, stopLine: outside }).source).toBe("no-limits");
+  });
+
+  it("No limits keeps payment approval for routines and the owner's existing authority", () => {
+    const payment = { kind: "pay" as const, place: "stripe:cus_1", what: "Pay the named recipient" };
+    const verdict = autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", { ...routine, stopLine: payment });
+    expect(verdict).toMatchObject({ approve: null, source: "stop-line", rule: "pay" });
+    expect(autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", { stopLine: payment })).toMatchObject({
+      approve: expect.any(String), source: "no-limits",
+    });
+    expect(autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", {
+      ...routine, stopLine: payment, routineAllow: ["stop:pay:stripe:cus_1"],
+    })).toMatchObject({ approve: expect.any(String), source: "routine-allow", rule: "stop:pay:stripe:cus_1" });
+    expect(autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", {
+      ...routine, unattended: true, stopLine: payment, routineAllow: ["stop:pay:stripe:cus_1"],
+    }).approve).toBeNull();
   });
 
   it("setup requests (a new routine, skill or trusted folder) still ask in a routine run", () => {
@@ -131,22 +148,21 @@ describe("Always allow for this routine", () => {
     expect(autoVerdict(ask, "Bash", exact.command, { ...routine, exactCommand: elsewhere, routineAllow: [exactKey] }).source).toBe("no-grant");
   });
 
-  it("covers the same command on a later run when only its dates and times changed", () => {
-    // the Mac pass: a routine that writes the time into its log asked every run
+  it("keeps dates and times in the exact command granted for a routine", () => {
     const at = (stamp: string) => ({ ...exact, command: `mkdir -p notes && cat >> notes/log.md <<'EOF'\n${stamp}\nEOF\npython3 - <<'EOF'\nwith open('notes/pipeline.md', 'a') as f:\n    f.write('tick\\n')\nEOF` });
     const granted = exactCommandKey(at("2026-09-25 13:19 ICT (Asia/Bangkok)"))!;
     for (const later of ["2026-09-25 13:25 ICT (Asia/Bangkok)", "2026-10-01 09:05 ICT (Asia/Bangkok)"]) {
-      expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: at(later), routineAllow: [granted] })).toMatchObject({ source: "routine-allow", rule: granted });
+      expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: at(later), routineAllow: [granted] })).toMatchObject({ approve: null, source: "no-grant" });
     }
     const stamped = (when: string) => ({ ...exact, command: `echo "run at ${when}" >> notes/log-${when.slice(0, 10)}.md` });
-    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: stamped("2026-09-26T07:00:00Z"), routineAllow: [exactCommandKey(stamped("2026-09-25T07:00:00Z"))!] }).source).toBe("routine-allow");
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: stamped("2026-09-26T07:00:00Z"), routineAllow: [exactCommandKey(stamped("2026-09-25T07:00:00Z"))!] }).source).toBe("no-grant");
     // `date` output, and a time right after a date
     const said = (when: string) => ({ ...exact, command: `echo "${when}" >> notes/log.md` });
-    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: said("Sat Sep 26 07:00:02 ICT 2026"), routineAllow: [exactCommandKey(said("Fri Sep 25 13:25:07 ICT 2026"))!] }).source).toBe("routine-allow");
-    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: { ...exact, command: "date; echo Fri 25 Sep 2026 1:25 PM" }, routineAllow: [exactCommandKey({ ...exact, command: "date; echo Thu 24 Sep 2026 11:05 AM" })!] }).source).toBe("routine-allow");
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: said("Sat Sep 26 07:00:02 ICT 2026"), routineAllow: [exactCommandKey(said("Fri Sep 25 13:25:07 ICT 2026"))!] }).source).toBe("no-grant");
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: { ...exact, command: "date; echo Fri 25 Sep 2026 1:25 PM" }, routineAllow: [exactCommandKey({ ...exact, command: "date; echo Thu 24 Sep 2026 11:05 AM" })!] }).source).toBe("no-grant");
   });
 
-  it("never covers a command whose words changed, only its dates and times", () => {
+  it("matches the granted command's words, paths and numbers", () => {
     const at = (stamp: string, file = "notes/pipeline.md") => ({ ...exact, command: `cat >> notes/log.md <<'EOF'\n${stamp}\nEOF\npython3 - <<'EOF'\nopen('${file}', 'a').write('tick')\nEOF` });
     const granted = exactCommandKey(at("2026-09-25 13:19"))!;
     expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: at("2026-09-25 13:25", "notes/other.md"), routineAllow: [granted] }).source).toBe("no-grant");

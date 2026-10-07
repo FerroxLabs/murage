@@ -76,10 +76,12 @@ describe("the hover rail's controls, as words", () => {
       "Reply",
       "Edit message",
       "Regenerate response",
-      "Read aloud",
     ]) {
       expect(chatSheet).toContain(`"${label}"`);
     }
+    // Read aloud's label comes from the shared helper ("Read aloud" / "Stop").
+    expect(chatSheet).toContain('id: "speak"');
+    expect(chatSheet).toContain("readAloudLabel(");
     expect(chatSheet).toMatch(/pinned \? "Unpin message" : "Pin message"/);
   });
 
@@ -91,13 +93,15 @@ describe("the hover rail's controls, as words", () => {
     expect(chatSheet).toMatch(/isLastBotText && !bot\.busy && onRegenerate/);
   });
 
-  it("keeps the speak control in the list when it is not ready, and says why", () => {
-    // SpeakButton's own rule, quoted: "a hidden button is a feature nobody
-    // discovers". On a phone that matters more, not less — there is no
-    // tooltip to hover for the reason.
-    expect(chatSheet).toContain("Add an ElevenLabs key to read messages aloud");
-    expect(chatSheet).toContain("Pick a voice in this bot's settings to read aloud");
-    expect(chatSheet).toContain("Stop speaking");
+  it("hides the speak control with no voice endpoint, and says what a bot without a voice needs", () => {
+    // The call button's own check (tts.configured): with no endpoint a read
+    // aloud control can only fail, so it is not offered. With an endpoint but
+    // no voice for this bot it stays, disabled, and the shared label says why.
+    expect(chatSheet).toMatch(/message\.kind === "text" && text\.trim\(\) && tts\?\.configured/);
+    const helper = readFileSync(fileURLToPath(new URL("../lib/read-aloud.ts", import.meta.url)), "utf8");
+    expect(helper).toContain("Pick a voice in this bot's settings to read aloud");
+    expect(helper).toContain('return "Stop"');
+    expect(helper).toContain('return "Read aloud"');
   });
 
   it("offers a channel message its rail's pair", () => {
@@ -187,7 +191,7 @@ describe("one image surface", () => {
     expect(media).toMatch(/onLoad=\{\(event\) => \{[\s\S]{0,400}truePixelWidth\(current\)\.then\(\(pixels\) => \{\s*if \(!servedOriginal\(current, pixels\)\) return;\s*rememberServedOriginal\(item\.src\);\s*setSmallOriginal\(true\)/);
     expect(media).not.toContain("img.naturalWidth");
     // dropping the srcset remounts the <img> so it draws at natural density
-    expect(media).toMatch(/<img\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*key=\{srcSet \? "srcset" : "original"\}\s*src=\{item\.src\}\s*srcSet=\{srcSet\}/);
+    expect(media).toMatch(/<img\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*key=\{srcSet \? "srcset" : "original"\}\s*src=\{desktopResourceUrl\(item\.src\)\}\s*srcSet=\{srcSet\}/);
   });
 
   it("routes Markdown images, attachment galleries and the Files preview the same way", () => {
@@ -346,6 +350,22 @@ describe("the running turn's live detail", () => {
   });
 });
 
+describe("the reply is shown as it streams", () => {
+  it("paints the held-back-checked stream in the answer slot, through the settled bubble's markdown", () => {
+    expect(chat).toContain("const liveReply = useStreamPaint(streamPaintText(streaming, { busy: Boolean(bot.busy) }));");
+    expect(chat).toMatch(/liveReply \? \(\s*<LiveReplyBubble text=\{liveReply\}/);
+    expect(chat).toContain('answering={popping !== null || liveReply !== ""}');
+    expect(chat).toContain('waiting || popping !== null || liveReply !== ""');
+    const bubble = read("./LiveReplyBubble.tsx");
+    expect(bubble).toContain("<ChatMarkdown text={text} streaming");
+  });
+
+  it("does not pop the reply in a second time and keeps following the end", () => {
+    expect(chat).toMatch(/if \(liveReply\) wasWaiting\.current = false;/);
+    expect(chat).toContain("[bot.id, messages.length, streaming, liveReply, reasoning, plan, bot.busy, composerDock.pad, keyboardInsetPx]");
+  });
+});
+
 describe("the elapsed turn timer counts from the server's turn start", () => {
   it("ChatView anchors to the thread's stamped start and re-reads it on a thread switch", () => {
     // Anchoring to the moment `busy` flipped on this client restarted the
@@ -361,5 +381,59 @@ describe("the elapsed turn timer counts from the server's turn start", () => {
     const presence = group.match(/<TurnPresence[\s\S]*?>\s*\{popping/);
     expect(presence).not.toBeNull();
     expect(presence![0]).toMatch(/since=\{speaker \? group\.turnStartedAt \?\? null : null\}/);
+  });
+});
+
+// E1 device acceptance (2026-09-28): a companion's "Messaged @Kessler" chip
+// opened a different bot's conversation (Numbers, not Kessler) because
+// `select` on a group id the phone never received fell back to
+// `state.bots[0]` — see src/state/store.test.ts's "select with an id
+// neither a group nor a bot" suite for the reducer half, and
+// src/lib/comm-chip-visibility.test.ts for `commChipAction` itself. This
+// pins that ActivityChip actually calls it, and that the blocked branch
+// never becomes a button (nothing to tap) or a dead link.
+describe("the comm chip on a phone never opens the wrong bot (E1, 2026-09-28)", () => {
+  const chipTail = (() => {
+    const start = chat.indexOf("function ActivityChip(");
+    const end = chat.indexOf("const failed = tool.ok === false;");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return chat.slice(start, end);
+  })();
+
+  it("decides open vs. blocked with commChipAction, not an inline guess", () => {
+    expect(chat).toContain('import { commChipAction } from "@/lib/comm-chip-visibility";');
+    expect(chipTail).toMatch(
+      /commChipAction\(\{ phone: isPhoneClient\(\), groupId: comm\.groupId, groups: state\.groups \}\) === "blocked"/,
+    );
+  });
+
+  it("the blocked chip is not a button and does not dispatch select", () => {
+    const blocked = chipTail.slice(chipTail.indexOf('=== "blocked") {'), chipTail.indexOf("return (\n      <div className=\"flex justify-start\">\n        <button"));
+    expect(blocked).not.toContain("<button");
+    expect(blocked).not.toContain('dispatch({ type: "select"');
+    expect(blocked).not.toContain("<ChevronRight");
+    expect(blocked).toContain('aria-disabled="true"');
+    expect(blocked).toContain("is only on your Mac.");
+  });
+
+  it("says which two bots the conversation is between, in plain words with no em dash, safe, or price talk", () => {
+    const title = chipTail.match(/title=\{`([^`]*is only on your Mac\.)`\}/);
+    expect(title).not.toBeNull();
+    const text = title![1];
+    expect(text).toBe("This conversation between ${botName} and ${comm.withName} is only on your Mac.");
+    expect(text).not.toMatch(/—/);
+    expect(text.toLowerCase()).not.toContain("safe");
+    expect(text).not.toMatch(/\$\{[^}]*\}\$|\bfree\b|\bprice\b|\bcost\b/i);
+  });
+
+  it("both call sites pass the current bot's name down to the chip", () => {
+    expect(chat).toContain("<ActivityChip message={step} botName={bot.name} />");
+    expect(chat).toContain("<ActivityChip message={m} botName={bot.name} />");
+  });
+
+  it("the open branch is unchanged: still a button that selects the group and shows the arrow", () => {
+    expect(chipTail).toMatch(/onClick=\{\(\) => dispatch\(\{ type: "select", id: comm\.groupId \}\)\}/);
+    expect(chipTail).toContain("<ChevronRight size={13} className=\"shrink-0\" />");
   });
 });

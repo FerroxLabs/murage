@@ -3,7 +3,7 @@
 // image route. Fetched rather than put in an <img src>, because the route
 // answers by surface and an image request cannot carry the desktop's proof.
 import { useEffect, useState } from "react";
-import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
+import { desktopCallerHeaders, ensureDesktopSurfaceSecret } from "@/lib/live-events";
 import { screenFramePath } from "@/lib/image-thumbnail";
 import { isPhoneClient } from "@/lib/phone-client";
 
@@ -14,9 +14,7 @@ export interface ScreenFramePixels {
 
 async function fetchScreenFramePixels(path: string): Promise<ScreenFramePixels | null> {
   await ensureDesktopSurfaceSecret();
-  // The marker and the secret together are the desktop's proof; the secret
-  // alone reads as an unproven caller, which the conversation gate refuses.
-  const res = await fetch(path, { headers: { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() } });
+  const res = await fetch(path, { headers: desktopCallerHeaders() });
   if (!res.ok) return null;
   const blob = await res.blob();
   const bytes = new Uint8Array(await blob.arrayBuffer());

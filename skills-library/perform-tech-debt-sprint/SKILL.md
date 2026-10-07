@@ -14,7 +14,7 @@ type: workflow
 skills: tech-debt-assessment code-smell-detection refactoring-patterns test-refactoring release-management
 trigger_phrases: tech debt sprint reduce technical debt cleanup sprint code quality improvement refactoring sprint
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: refactoring testing architecture planning step-by-step
   category: software-project

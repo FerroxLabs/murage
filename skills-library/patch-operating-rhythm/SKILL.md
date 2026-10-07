@@ -1,8 +1,9 @@
 ---
 name: patch-operating-rhythm
 description: "The user says \"we keep dropping things,\" \"our weekly is useless,\" \"we forgot the quarterly goals by week six,\" or \"I need a dashboard.\" Load for meeting cadence, KPI set, or leadership-team rhythm. If they ask for a tool stack first, push back: rhythm before tools."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "patch"
 ---

@@ -12,7 +12,7 @@ description: |
   email campaigns to subscribers (use email-campaign).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sales email template planning"
   category: "marketing-sales"

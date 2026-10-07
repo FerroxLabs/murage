@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request requires professional medical advice or falls outside the scope of swimming coach.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness fitness step-by-step"
   category: "health-wellness"

@@ -3,7 +3,7 @@
 // storage round-trip pins that the choice survives a restart.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { analyticsEnabled, optAction, setAnalyticsEnabled } from "./analytics";
+import { analyticsAllowed, analyticsEnabled, optAction, setAnalyticsEnabled } from "./analytics";
 
 // The suite runs on the node environment, which has no localStorage.
 const store = new Map<string, string>();
@@ -105,5 +105,20 @@ describe("initAnalytics while opted out", () => {
     // reach the real posthog-js and set this marker. Its absence is the
     // proof — and it also means opting back in later still counts the install.
     expect(store.get("murage-installed")).toBeUndefined();
+  });
+});
+
+describe("analyticsAllowed", () => {
+  it("never starts the client inside the phone app, even when the switch is on", () => {
+    expect(analyticsAllowed({ token: "phc_test", enabled: true, nativeShell: true })).toBe(false);
+  });
+
+  it("starts it on desktop and in a browser when configured and switched on", () => {
+    expect(analyticsAllowed({ token: "phc_test", enabled: true, nativeShell: false })).toBe(true);
+  });
+
+  it("stays off without a build token or after an opt-out", () => {
+    expect(analyticsAllowed({ token: "", enabled: true, nativeShell: false })).toBe(false);
+    expect(analyticsAllowed({ token: "phc_test", enabled: false, nativeShell: false })).toBe(false);
   });
 });

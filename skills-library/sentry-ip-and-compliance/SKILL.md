@@ -1,8 +1,9 @@
 ---
 name: sentry-ip-and-compliance
 description: "This skill explains common IP moves and the most-cited compliance regimes for early-stage product companies. It does not file your trademark, write your privacy policy, or interpret a regulator's order. Escalate to counsel any time you're in a regulated industry (health, finance, legal services, any"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "sentry"
 ---

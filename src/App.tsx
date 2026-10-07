@@ -1,28 +1,27 @@
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Loader2, Menu } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
+import { CallOverlaySlot } from "@/components/CallControls";
 import { initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
-import { PluginsPanel, preloadConnectedApps } from "@/components/PluginsPanel";
+import { preloadConnectedApps } from "@/lib/connected-apps-preload";
 import { InspectorPanel } from "@/components/InspectorPanel";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
 import { RemoteConnectionBanner } from "@/components/RemoteConnectionBanner";
+import { FluxKeyProblemBanner } from "@/components/FluxKeyProblemBanner";
 import { SignedOutCard } from "@/components/SignedOutCard";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
-import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
 import { enginesOnlySwitchedOff } from "@/lib/engines-off";
+import { drawerCloseKey } from "@/lib/drawer-close";
 import { CommandPalette } from "@/components/CommandPalette";
 import { FirstRunPhases } from "@/components/FirstRunPhases";
 import { useSetupView } from "@/components/FirstRunChrome";
 import { firstRunOwnsMainView } from "@/lib/first-run";
-import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
-import { BrowserWorkspace } from "@/components/BrowserWorkspace";
-import { SkillRecorderPage } from "@/components/SkillRecorderPage";
-import { TeamMapPage } from "@/components/TeamMapPage";
+import { BotListDrawerProvider, PhoneBotListBar, useBotListDrawer } from "@/components/OpenBotListButton";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { trackVisualViewport } from "@/lib/visual-viewport";
@@ -30,6 +29,8 @@ import { localeVersion, rememberLanguage, setLocale, subscribeLocale } from "@/l
 import { useDesktopSurface } from "@/lib/use-surface";
 import { InstallPrompt } from "./components/InstallPrompt";
 import { useDeepLinks } from "@/components/useDeepLinks";
+import { usePushEnrol } from "@/components/usePushEnrol";
+import { usePresence } from "@/components/usePresence";
 import { LazyFallback } from "@/components/LazyFallback";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 
@@ -46,10 +47,31 @@ const BotSettingsDialog = BotSettings.Component;
 const ComputerPanel = Computer.Component;
 const SettingsModal = Settings.Component;
 
+const PluginsPanelLazy = retryableLazy(() => import("@/components/PluginsPanel").then((module) => ({ default: module.PluginsPanel })));
+const PluginsPanel = PluginsPanelLazy.Component;
+
+const RoutinesPageLazy = retryableLazy(() => import("@/components/RoutinesPage").then((module) => ({ default: module.RoutinesPage })));
+const RoutinesPage = RoutinesPageLazy.Component;
+
+const TeamMapPageLazy = retryableLazy(() => import("@/components/TeamMapPage").then((module) => ({ default: module.TeamMapPage })));
+const TeamMapPage = TeamMapPageLazy.Component;
+
+const SkillRecorderPageLazy = retryableLazy(() => import("@/components/SkillRecorderPage").then((module) => ({ default: module.SkillRecorderPage })));
+const SkillRecorderPage = SkillRecorderPageLazy.Component;
+
+const LocalVmWorkspaceLazy = retryableLazy(() => import("@/components/LocalVmWorkspace").then((module) => ({ default: module.LocalVmWorkspace })));
+const LocalVmWorkspace = LocalVmWorkspaceLazy.Component;
+
+const BrowserWorkspaceLazy = retryableLazy(() => import("@/components/BrowserWorkspace").then((module) => ({ default: module.BrowserWorkspace })));
+const BrowserWorkspace = BrowserWorkspaceLazy.Component;
+
 function Shell() {
   const { state, dispatch } = useStore();
   // #open=<thread>&msg=<message> and the phone app's notificationOpened.
   useDeepLinks();
+  usePushEnrol();
+  // Tells the host this tab is visible, so phones stay quiet (spec §3.4).
+  usePresence();
   // The same cached `GET /api/setup` the phase bar reads, so the band and the
   // view underneath it cannot disagree about whose screen this is.
   const { view: setupView } = useSetupView();
@@ -64,7 +86,6 @@ function Shell() {
   // cancelling them with md:, which would still emit a translate value and
   // turn the aside into a containing block for its fixed descendants (see
   // Sidebar.tsx's className comment).
-  const [drawerOpen, setDrawerOpen] = useState(false);
   // Apply the configured UI language the moment config arrives or changes;
   // "" follows the system. A pack other than English arrives as its own
   // chunk, and t() reads a module variable, so the app re-renders its
@@ -84,12 +105,32 @@ function Shell() {
   // the Browser tab, expanded into the main column (the small preview in
   // the panel hands off to this and back)
   const [browserWorkspaceBotId, setBrowserWorkspaceBotId] = useState<string | null>(null);
-  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const previousViewRef = useRef(state.activeView);
   const calendarOriginRef = useRef<"chat" | "team-map" | "skill-recorder">("chat");
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
   const calendarFocus = state.activeView === "routines";
+
+  const { drawerOpen, setDrawerOpen, closeDrawer, returnDrawerFocus, control: drawerControl } = useBotListDrawer(!calendarFocus);
+  // A workspace panel (LocalVm/Browser) covers the call's own bot/room's
+  // screen the same way another selection does, with nothing to return to
+  // otherwise (callbar-rereview.md N4). CallOverlaySlot (CallControls.tsx)
+  // owns the call itself — keyed to the bot or room actually on the line,
+  // never to whatever is selected, so switching threads (to approve
+  // another bot's request, say) never unmounts it; that used to hang the
+  // call up silently (.superpowers/sdd/2026-09-29-iphone-native-call-audio/
+  // moss-approval-bug.md).
+  const isCallTargetCovered = useCallback(
+    (id: string) => localVmWorkspaceBotId === id || browserWorkspaceBotId === id,
+    [localVmWorkspaceBotId, browserWorkspaceBotId],
+  );
+  const uncoverCallTarget = useCallback(
+    (id: string) => {
+      if (localVmWorkspaceBotId === id) setLocalVmWorkspaceBotId(null);
+      if (browserWorkspaceBotId === id) setBrowserWorkspaceBotId(null);
+    },
+    [localVmWorkspaceBotId, browserWorkspaceBotId],
+  );
 
   // Nothing on this machine can run a bot. A missing cloud login does not
   // count — that CLI can still host a local model. Wait for the first
@@ -136,7 +177,7 @@ function Shell() {
   // Engines switched off (a restored copy) never hide the conversations: the
   // chat stays, with a notice above it (D7).
   const enginesOff = noEngines && enginesOnlySwitchedOff(state.instances) && Boolean(bot || group);
-  // App-wide shortcuts: ⌘N new bot · ⌘1–9 jump to bot · ⌘⇧[ / ⌘⇧] prev/next.
+  // App-wide shortcuts: ⌘N new bot · ⌘, Settings · ⌘1–9 jump to bot · ⌘⇧[ / ⌘⇧] prev/next.
   // Kept deliberately small; every panel already closes on Esc.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -146,6 +187,10 @@ function Shell() {
       if (e.key === "n" && !e.shiftKey) {
         e.preventDefault();
         dispatch({ type: "newBot" });
+      } else if (e.key === "," && !e.shiftKey && !e.altKey) {
+        // Settings, the way every Mac app opens its settings.
+        e.preventDefault();
+        dispatch({ type: "toggleAppSettings", open: true });
       } else if (/^[1-9]$/.test(e.key)) {
         const target = bots[Number(e.key) - 1];
         if (target) {
@@ -190,14 +235,15 @@ function Shell() {
   }, [state.connected]);
 
   // Picking a conversation closes the drawer: on a phone the chat is what you
-  // asked for, and leaving the list up would hide it. Watching activeView too
-  // catches re-selecting the bot that is already current from another view —
-  // the reducer switches the view without changing selectedId. pluginsOpen
-  // and settingsOpen cover the same idea from a different trigger: close the
-  // drawer whenever an action opens something over the chat.
+  // asked for, and leaving the list up would hide it. A pick is the person's
+  // own (conversationPicks), so hydration settling the selection or another
+  // surface moving the thread leaves an open drawer alone. pluginsOpen and
+  // settingsOpen cover the same idea from a different trigger: close the
+  // drawer whenever an action opens something over the chat (drawer-close.ts).
+  const closeKey = drawerCloseKey(state);
   useEffect(() => {
     setDrawerOpen(false);
-  }, [state.selectedId, state.activeView, state.pluginsOpen, state.settingsOpen]);
+  }, [closeKey]);
 
   useEffect(() => {
     if (state.activeView === "routines" && previousViewRef.current !== "routines") {
@@ -297,6 +343,8 @@ function Shell() {
       <ServerLifecycleBanner />
       {/* The remote counterpart: a phone or browser whose computer went quiet. */}
       {desktop === false && <RemoteConnectionBanner connected={state.connected} signedOut={state.signedOut === true} />}
+      {/* The saved Flux key is not one, or Flux refused it: say so, with the fix. */}
+      {desktop === true && <FluxKeyProblemBanner />}
       {/* Only after the door itself said 401 (lib/session-check.ts). */}
       {state.signedOut && <SignedOutCard />}
       {/* fixed-position popup, bottom-left — outside the layout flow */}
@@ -310,16 +358,11 @@ function Shell() {
           first-run screen. */}
       {desktop === true && <FirstRunPhases />}
       <div className="relative flex min-h-0 flex-1">
-      {!calendarFocus && <button
-        type="button"
-        ref={menuButtonRef}
-        aria-label="Open bot list"
-        aria-expanded={drawerOpen}
-        onClick={() => setDrawerOpen(true)}
-        className="absolute left-3 top-3 z-30 rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink md:hidden"
-      >
-        <Menu size={18} />
-      </button>}
+      <BotListDrawerProvider value={drawerControl}>
+      {/* The "Open bot list" button is not drawn here. Each main view's header
+          draws it as the first item of its own row (OpenBotListButton.tsx), so
+          it is centred with the name and the ••• instead of floating over
+          them. The calendar focus view gets no provider, so no button. */}
       {drawerOpen && !calendarFocus && (
         <div
           aria-hidden
@@ -329,26 +372,28 @@ function Shell() {
       )}
       {!calendarFocus && <Sidebar
         open={drawerOpen}
-        onClose={() => {
-          setDrawerOpen(false);
-          menuButtonRef.current?.focus();
-        }}
+        // Focus goes back to the bot-list button once the view the pick
+        // opened has mounted its own (useBotListDrawer).
+        onClose={closeDrawer}
+        // Closed by an effect (closeKey: something opened over the chat) with
+        // focus still inside: the now inert drawer would drop it to the page.
+        onReturnFocus={returnDrawerFocus}
       />}
       {state.activeView === "team-map" ? (
-        <TeamMapPage />
+        <LazyBoundary onRetry={TeamMapPageLazy.retry}><Suspense fallback={<LazyFallback />}><TeamMapPage /></Suspense></LazyBoundary>
       ) : state.activeView === "routines" ? (
-        <RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} />
+        <LazyBoundary onRetry={RoutinesPageLazy.retry}><Suspense fallback={<LazyFallback />}><RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} /></Suspense></LazyBoundary>
       ) : state.activeView === "skill-recorder" ? (
-        <SkillRecorderPage />
+        <LazyBoundary onRetry={SkillRecorderPageLazy.retry}><Suspense fallback={<LazyFallback />}><SkillRecorderPage /></Suspense></LazyBoundary>
       ) : browserWorkspaceBotId && bot && bot.id === browserWorkspaceBotId ? (
-        <BrowserWorkspace bot={bot} onClose={closeBrowserWorkspace} />
+        <LazyBoundary onRetry={BrowserWorkspaceLazy.retry}><Suspense fallback={<LazyFallback />}><BrowserWorkspace bot={bot} onClose={closeBrowserWorkspace} /></Suspense></LazyBoundary>
       ) : localVmWorkspaceBotId ? (
-        <LocalVmWorkspace
+        <LazyBoundary onRetry={LocalVmWorkspaceLazy.retry}><Suspense fallback={<LazyFallback />}><LocalVmWorkspace
           primaryBotId={localVmWorkspaceBotId}
           overlayOpen={nativeViewOverlayOpen}
           onClose={() => setLocalVmWorkspaceBotId(null)}
           onOpenComputer={openComputerFromWorkspace}
-        />
+        /></Suspense></LazyBoundary>
       ) : enginesOff ? (
         <div className="flex h-full min-w-0 flex-1 flex-col">
           <div role="status" className="flex flex-wrap items-center gap-3 border-b border-hairline/40 bg-inset px-4 py-2 text-[13px] text-ink">
@@ -365,7 +410,9 @@ function Shell() {
       ) : bot ? (
         <ChatView bot={bot} />
       ) : (
-        <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
+        <main className="flex h-full min-w-0 flex-1 flex-col bg-app text-ink-secondary">
+          <PhoneBotListBar />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3">
           <Loader2 size={20} className="animate-spin" />
           <div className="text-[14px]">
             {state.connected ? "No bots yet" : "Reconnecting to Murage…"}
@@ -377,6 +424,7 @@ function Shell() {
                 : "This usually clears on its own once your computer is awake and online."}
             </div>
           )}
+          </div>
         </main>
       )}
       {state.settingsOpen && bot && (
@@ -406,10 +454,17 @@ function Shell() {
           </Suspense>
         </LazyBoundary>
       )}
-      {state.pluginsOpen && <PluginsPanel />}
+      {state.pluginsOpen && <LazyBoundary onRetry={PluginsPanelLazy.retry}><Suspense fallback={<LazyFallback />}><PluginsPanel /></Suspense></LazyBoundary>}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
       <CommandPalette onOpenChange={setPaletteOpen} />
+      <CallOverlaySlot
+        state={state}
+        dispatch={dispatch}
+        isCallTargetCovered={isCallTargetCovered}
+        uncoverCallTarget={uncoverCallTarget}
+      />
+      </BotListDrawerProvider>
       </div>
     </div>
   );

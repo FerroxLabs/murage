@@ -10,6 +10,7 @@ export type DiscordIdentity = Pick<DiscordBinding, "applicationId" | "botUserId"
 const eventSchema = z.object({ applicationId: discordId, botUserId: discordId, id: discordId,
   dmId: discordId, channelType: z.literal(1), authorId: discordId, authorBot: z.literal(false),
   guildId: z.null(), webhookId: z.null(), type: z.literal(0), content: z.string().min(1).max(5000),
+  authorName: z.string().max(200).nullish(), authorUsername: z.string().max(200).nullish(),
   occurredAt: z.number().finite(), attachments: z.literal(0), components: z.literal(0), forwarded: z.literal(false),
 });
 export function normalizeDiscordMessage(raw: unknown, identity: DiscordIdentity) {
@@ -17,7 +18,7 @@ export function normalizeDiscordMessage(raw: unknown, identity: DiscordIdentity)
   if (!result.success) return null;
   const e = result.data;
   if (e.applicationId !== identity.applicationId || e.botUserId !== identity.botUserId || e.authorId !== identity.ownerUserId || e.authorId === identity.botUserId) return null;
-  return { deliveryId: `discord:${e.applicationId}:${e.dmId}:${e.id}`, dmId: e.dmId, text: e.content, occurredAt: e.occurredAt };
+  return { deliveryId: `discord:${e.applicationId}:${e.dmId}:${e.id}`, dmId: e.dmId, text: e.content, occurredAt: e.occurredAt, sender: { name: e.authorName ?? undefined, username: e.authorUsername ?? undefined } };
 }
 export function discordPrompt(text: string): { prompt: string; response?: string } {
   if (/^\/(?:approve|deny|allow|reject|pair)(?:\s|$)/i.test(text) || /^(?:approve|deny|allow|reject|yes|no)$/i.test(text.trim()))

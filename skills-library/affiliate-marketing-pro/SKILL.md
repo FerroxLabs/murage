@@ -4,7 +4,7 @@ description: |
   Comprehensive affiliate marketing strategy covering program selection, content-driven promotion, FTC disclosure compliance, tracking and attribution, conversion optimization, niche selection, relationship building with merchants, and scaling from side income to full affiliate business. Use when the user asks about affiliate marketing pro or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing seo content-marketing"
   category: "marketing-sales"

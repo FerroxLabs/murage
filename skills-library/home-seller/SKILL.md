@@ -4,7 +4,7 @@ description: |
   Strategic guidance for selling residential property including market timing analysis, pricing strategy using comparative market analysis (CMA), staging techniques, professional photography, listing optimization, showing preparation, offer evaluation, negotiation tactics, closing from the seller side, and understanding tax implications of home sales. Use when the user asks about home seller or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-buying personal-finance planning"
   category: "personal-finance"

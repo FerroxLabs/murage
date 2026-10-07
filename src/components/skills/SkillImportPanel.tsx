@@ -165,7 +165,7 @@ export function SkillImportPanel({ onBack, onOpen }: { onBack(): void; onOpen(re
             <input
               value={link}
               onChange={(event) => setLink(event.target.value)}
-              placeholder="or paste a link to a skill on GitHub"
+              placeholder="or paste a link to a skill on GitHub or skills.sh"
               aria-label="Link to a skill"
               className="min-h-10 min-w-0 flex-1 rounded-lg border border-hairline/50 bg-inset px-3 text-[13px] text-ink placeholder:text-ink-secondary"
             />

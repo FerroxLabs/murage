@@ -6,7 +6,7 @@ description: |
   Do NOT use for stable-income budgets (use budget-planning or fifty-thirty-twenty-budget), business revenue forecasting, or investment planning.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "budgeting personal-finance freelancing savings"
   category: "personal-finance"

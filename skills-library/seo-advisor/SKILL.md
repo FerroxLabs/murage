@@ -4,7 +4,7 @@ description: |
   Comprehensive SEO strategy including keyword research, on-page optimization, technical SEO auditing, content strategy, link building, local SEO, Core Web Vitals, schema markup, and monthly SEO workflow planning. Use when the user asks about seo advisor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "seo marketing analysis"
   category: "marketing-sales"

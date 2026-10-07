@@ -4,7 +4,7 @@ description: |
   End-to-end investor pitch construction covering narrative architecture, financial slide design, storytelling techniques, slide-by-slide templates, delivery coaching, deck versioning for different audiences, and the most common mistakes that kill fundraising rounds. Use when the user asks about pitch deck builder or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship presentation strategy"
   category: "business-strategy"

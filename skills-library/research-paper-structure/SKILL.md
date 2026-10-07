@@ -6,7 +6,7 @@ description: |
   Do NOT use for literature reviews (use literature-review), abstracts only (use abstract-writing), or editing an existing paper (use academic-paper-review).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "academic-writing writing research"
   category: "writing"

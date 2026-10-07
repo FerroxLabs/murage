@@ -81,12 +81,14 @@ test('sidebar roster readability',async({page},testInfo)=>{
   await page.getByRole('button',{name:'More actions for Market Research Analyst'}).click();
   await expect(page.getByRole('menuitem',{name:'Hide from sidebar',exact:true})).toBeVisible();
   await page.keyboard.press('Escape');
-  await page.getByRole('button',{name:'Choose sidebar density'}).click();
-  await page.getByRole('button',{name:'compact',exact:true}).click();
+  // 0.1.62: the density picker lives in Settings > General > Appearance and
+  // shares one store with the sidebar; this fixture has no Settings, so pick
+  // Standard the way that picker does.
+  await page.evaluate(async()=>{const url='/src/lib/sidebar-preferences.ts';const prefs=await import(/* @vite-ignore */ url);prefs.chooseSidebarDensity('compact');(document.activeElement as HTMLElement|null)?.blur();});
   await page.mouse.move(1200,850);
   await expect(row).toHaveCSS('padding-right',canHover?'8px':'84px');
   await page.screenshot({path:testInfo.outputPath('sidebar-compact.png')});
-  await page.getByRole('button',{name:'Collapse sidebar to avatars'}).click();
+  await page.getByRole('button',{name:'Collapse sidebar'}).click();
   // Avatars only: the full name still leads the button's accessible name
   // (the unread mark follows it).
   await expect(select).toBeVisible();

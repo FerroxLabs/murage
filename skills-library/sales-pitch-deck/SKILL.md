@@ -11,7 +11,7 @@ description: |
   or internal company presentation (use presentation skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sales presentation strategy planning"
   category: "marketing-sales"

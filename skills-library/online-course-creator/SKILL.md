@@ -4,7 +4,7 @@ description: |
   End-to-end online course development from curriculum design and platform selection through pricing strategy, student engagement, launch formulas, and ongoing student support for sustainable education businesses. Use when the user asks about online course creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching content-marketing entrepreneurship"
   category: "marketing-sales"

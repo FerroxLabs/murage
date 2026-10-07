@@ -60,7 +60,10 @@ function inside(path: string, root: string): boolean {
  * Edits inside the working folder go straight through, as Claude's
  * acceptEdits does; anything outside it asks.
  */
-export function piGateAsks(toolName: string, input: Record<string, unknown>, cwd: string, prefixes: readonly string[]): boolean {
+export function piGateAsks(toolName: string, input: Record<string, unknown>, cwd: string, prefixes: readonly string[], only?: string): boolean {
+  // The Chief's New project proposal turn (MURAGE_PI_GATE_ONLY): that one
+  // Murage tool runs; everything else asks, reads and searches included.
+  if (only) return toolName !== only;
   if (SHELL_TOOLS.has(toolName)) return true;
   if (FILE_TOOLS.has(toolName)) {
     const path = typeof input.path === "string" ? input.path : typeof input.file_path === "string" ? input.file_path : "";
@@ -89,12 +92,14 @@ export default function piPermissionGate(pi: GateApi): void {
   } catch {
     // no prefixes: only pi's own tools are gated
   }
+  const only = process.env.MURAGE_PI_GATE_ONLY || undefined;
   delete process.env.MURAGE_PI_GATE;
   delete process.env.MURAGE_PI_GATE_PREFIXES;
+  delete process.env.MURAGE_PI_GATE_ONLY;
   if (!secret) return;
   pi.on("tool_call", async (event, ctx) => {
     const input = event.input && typeof event.input === "object" ? event.input : {};
-    if (!piGateAsks(event.toolName, input, ctx.cwd, prefixes)) return undefined;
+    if (!piGateAsks(event.toolName, input, ctx.cwd, prefixes, only)) return undefined;
     if (!ctx.hasUI) return { block: true, reason: "Murage could not ask the owner about this, so it did not run." };
     const allowed = await ctx.ui.confirm(`${PI_GATE_TITLE_PREFIX}${secret}`, piGateMessage(event.toolName, input));
     return allowed ? undefined : { block: true, reason: "The owner did not allow this in Murage." };

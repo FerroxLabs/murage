@@ -4,7 +4,7 @@ description: |
   Expert startup guidance covering lean startup methodology, MVP definition, product-market fit measurement, funding strategy, key metrics, pivot decisions, and stage-appropriate advice from ideation through scale. Use when the user asks about startup advisor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning analysis"
   category: "business-strategy"

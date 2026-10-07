@@ -8,7 +8,7 @@ icon: Unplug
 
 If a bot says it has no connected apps, or cannot see an app you know is connected:
 
-1. Open Connected apps from the sidebar (**Tools → Connected apps**).
+1. Open Connected apps from the sidebar (**Sidebar → Apps**, in the row under Needs you).
 2. Press the refresh button at the top of the panel (Refresh connection status).
 3. Check the Connected tab: the account should be listed there.
 4. Send the bot your request again. Each new message checks the connection again, so it does not need a restart.
@@ -33,6 +33,6 @@ Some engines expose connected tools differently. Verify the chosen engine suppor
 
 Check internet connectivity and try again later before reconnecting every account. The packaged app preserves its installation identity across transient broker outages; rotating or deleting local credentials during an outage can separate existing grants from the installation.
 
-## Self-hosted build asks for configuration
+## It says connected apps run through Flux Router
 
-Source and self-hosted builds do not automatically use the official managed service. Configure your own Composio project as described in [Self-hosted Composio](../connected-apps/self-hosted-composio.mdx).
+If you used a key of your own in an earlier version, it is no longer used. Add your Flux Router key under **Settings → Models**, then connect your apps again from the Connected apps page. Nothing you saved was deleted.

@@ -5,7 +5,7 @@ description: |
   Do NOT use for personal finance calculations, unit economics analysis (use unit-economics), or full financial modeling (use financial-model-structure).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy analysis planning sales marketing"
   category: "business-strategy"

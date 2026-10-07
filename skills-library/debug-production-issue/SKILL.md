@@ -14,7 +14,7 @@ type: workflow
 skills: incident-response logging-patterns performance-profiling monitoring-alerting
 trigger_phrases: debug production issue investigate production bug fix production error diagnose production problem
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: devops troubleshooting optimization step-by-step
   category: software-project

@@ -12,7 +12,7 @@ description: |
   to take or stop any medication -- those decisions require a physician.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "elder-care checklist template"
   category: "family-relationships"

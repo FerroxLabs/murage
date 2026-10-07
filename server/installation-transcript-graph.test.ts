@@ -37,6 +37,7 @@ const kinds = {
   activity: { tool: { name: "Read", ok: true, spoken: "reading", setup: false } },
   screen: { png: "aW1hZ2U=", mime: "image/png" },
   connector: { connector: { slug: "gmail", label: "Mail", description: "Connect", status: "required", resumeKey: "resume" } },
+  mcpSignIn: { mcpSignIn: { name: "comfy", host: "cloud.comfy.org", bot: "Sable", reason: "sign-in-ended", status: "required", resumeKey: "mcp-resume", title: "Sign in to cloud.comfy.org", body: "comfy needs you to sign in again before Sable can use it.", phone: "Finish sign-in on the computer running Murage." } },
   secret: { secret: { target: "xaiApiKey", label: "Key", description: "Connect", placeholder: "key", helpUrl: "https://example.invalid", requestKey: "request" } },
   "routine.run": { routineRun: { runId: "run", routineId: "routine", routineName: "Routine", status: "completed", executionThreadId: "deleted-thread", summary: "Done" } },
   "goal.run": { goalRun: { runId: "goal", goal: "Done", status: "completed", coordinatorBotId: "deleted-bot", coordinatorName: "Historical name", turnCount: 1, maxTurns: 5, startedAt: 1, finishedAt: 2 } },

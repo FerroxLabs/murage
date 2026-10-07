@@ -21,7 +21,7 @@ Object.assign(globalThis, {
 });
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { AnnouncementBanner, AnnouncementBody, AnnouncementCard, drawnLayout, runAnnouncementAction } = await import("./Announcements");
-const { openAnnouncementLink, ANNOUNCEMENT_ACTION_SECTIONS, ANNOUNCEMENT_ACTIONS } = await import("@/lib/announcements");
+const { openAnnouncementLink, ANNOUNCEMENT_ACTIONS } = await import("@/lib/announcements");
 
 const item = (extra: Partial<AnnouncementView> = {}): AnnouncementView => ({
   id: "flux-voice", kind: "info", layout: "hero", accent: "orange",
@@ -87,10 +87,16 @@ describe("actions", () => {
   it("covers every action in the fixed list, and nothing else", () => {
     const dispatched: unknown[] = [];
     for (const target of ANNOUNCEMENT_ACTIONS) runAnnouncementAction(target, (action) => dispatched.push(action));
+    const open = (section: string) => ({ type: "toggleAppSettings", open: true, section });
     expect(dispatched).toEqual([
-      ...Object.values(ANNOUNCEMENT_ACTION_SECTIONS).map((section) => ({ type: "toggleAppSettings", open: true, section })),
-      { type: "toggleAppSettings", open: true, section: "general" },
+      // the six published targets land where they always did
+      ...["general", "models", "connections", "skills", "houseRules", "backups"].map(open),
+      // updates moved from General to Help & updates in 0.1.62
+      open("about"),
+      // the four 0.1.62 targets
+      ...["images", "webSearch", "voice", "about"].map(open),
     ]);
+    expect(ANNOUNCEMENT_ACTIONS.slice(0, 7)).toEqual(["settings-general", "settings-models", "settings-connections", "settings-skills", "settings-house-rules", "settings-backups", "check-for-updates"]);
     expect(check).toHaveBeenCalledTimes(1);
   });
 });

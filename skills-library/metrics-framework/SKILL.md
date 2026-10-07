@@ -5,7 +5,7 @@ description: |
   Do NOT use for financial KPIs (use financial-kpis), A/B test metrics (use ab-test-design), or marketing analytics (use marketing-analytics-report).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis planning strategy decision-making project-management"
   category: "business-strategy"

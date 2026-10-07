@@ -82,7 +82,7 @@ it("runs the actual source queue through the host and scoped skill publisher wit
 });
 it("publishes a validated routine update through the same host and retains source handles on future runs", async () => {
   const f = fixture();
-  const routine = f.manager.create({ name: "Review output", botId: f.bot.id, prompt: "Original routine", target: "bot", enabled: false, runOn: "ember", schedule: { type: "interval", everyMinutes: 5, anchorAt: Date.now() } });
+  const routine = f.manager.create({ name: "Review output", botId: f.bot.id, prompt: "Original routine", target: "bot", enabled: false, runOn: "ember", permissionMode: "ask", schedule: { type: "interval", everyMinutes: 5, anchorAt: Date.now() } });
   const pin = createProcedurePin(f.bot.id, f.threadId, [], [], { id: routine.id, instructionRevision: routineInstructionRevision(routine) }, context(f)); f.store.pinTaskProcedures(f.bot.id, f.threadId, pin);
   settle(f); await review(f);
   const promoted = f.manager.listRoutines()[0];
@@ -99,4 +99,22 @@ it("keeps the real production host pending when no evaluator is configured", asy
   settle(f); const rows = await review(f);
   expect(rows).toHaveLength(1); expect(f.evaluator).not.toHaveBeenCalled();
   expect(JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(rows[0].id)!.intent))).toMatchObject({ status: "deferred", reason: "procedure-evaluator-unavailable" });
+});
+it("reviews a procedure pinned in a pair room (a room that is its own holder) for the bot that pinned it", async () => {
+  const f = fixture(); install(f);
+  const peer = f.store.createBot(), pair = f.store.createGroup("pair", [f.bot.id, peer.id], true, "");
+  reconcileMemoryRoster({ bots: f.store.bots, groups: f.store.groups });
+  const pin = createProcedurePin(f.bot.id, pair.threadId, [], [], undefined, context(f, pair.threadId));
+  f.store.pinGroupProcedures(pair.id, pair.threadId, f.bot.id, pin);
+  preparePinnedProcedures(f.bot.id, pair.threadId, pin, true, context(f, pair.threadId));
+  transaction(db => {
+    captureSource(db, { id: "pair-tool", threadId: pair.threadId, turnId: "turn", kind: "tool-outcome", speaker: "tool", outcome: "failed", text: "The reported output did not exist." });
+    captureSource(db, { id: "pair-terminal", threadId: pair.threadId, turnId: "turn", kind: "turn", speaker: "harness", outcome: "completed", text: "Turn completed." });
+  });
+  const rows = await review(f);
+  expect(rows).toHaveLength(1);
+  // The review reaches the pinning bot's skill; a room is not the owner's own audience, so it waits for approval rather than publishing.
+  expect(JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(String(rows[0].id))!.intent)))
+    .toMatchObject({ target: { kind: "skill", ownerId: f.bot.id, artifactId: "checked-method", threadId: pair.threadId }, status: "deferred", reason: "needs-owner-approval" });
+  expect(f.evaluator).not.toHaveBeenCalled();
 });

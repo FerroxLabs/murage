@@ -22,7 +22,7 @@ trigger_phrases: >-
   I want to start an open source project I want to launch an open source library
   I want to build a community around my project How do I open source my code
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: networking documentation step-by-step planning
   category: software-project

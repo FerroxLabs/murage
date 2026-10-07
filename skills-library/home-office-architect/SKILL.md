@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of home office architect or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management budgeting checklist guide analysis performing-arts cleaning running"
   category: "productivity"

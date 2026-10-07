@@ -6,6 +6,7 @@
 // per sentence, the same shape as the other voice services here.
 //
 // Runs on the HARNESS only: the key must not leave the server.
+import { RateLimitedError, retryAfterMs } from "./rate-limit.ts";
 import { clipFrom, type Audio, type Clip, type Voice } from "./elevenlabs.ts";
 
 export interface XaiSpeechEndpoint {
@@ -87,7 +88,7 @@ export async function synthesizeClip(text: string, voice: string | undefined, en
     if (res.status === 401 || res.status === 403) throw new Error("xAI rejected the saved key. Paste a fresh one in Settings.");
     if (res.status === 402) throw new Error("Your xAI account is out of credits. Add credits with xAI, then try again.");
     if (res.status === 404) throw new Error("xAI couldn't find that voice. Pick a different voice in Settings.");
-    if (res.status === 429) throw new Error("xAI is rate-limiting this account. Wait a moment and try again.");
+    if (res.status === 429) throw new RateLimitedError("xAI is rate-limiting this account. Wait a moment and try again.", retryAfterMs(res.headers.get("retry-after")));
     throw new Error(`Speaking failed (${res.status})`);
   }
   return clipFrom(res, res.headers.get("content-type") || "audio/mpeg", streamed);

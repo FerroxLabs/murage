@@ -349,10 +349,12 @@ describe("the size of the lists", () => {
   // 1,621 before the third pass; four shape-prose terms went from the
   // playbook-only slugs the earlier passes could not see (`watch`, `files`,
   // `broken`, `system` — see the header of intake-matches.ts).
+  // Bot library wave 1 added 150 slugs (134 bots, 16 teams): 133 -> 283 lists,
+  // 1,627 -> 2,343 terms, 870 -> 1,189 unique.
   it("matches the maintained inventory including the three starter profiles", () => {
-    expect(Object.keys(INTAKE_MATCH_TERMS)).toHaveLength(132);
-    expect(terms).toHaveLength(1617);
-    expect(new Set(terms).size).toBe(866);
+    expect(Object.keys(INTAKE_MATCH_TERMS)).toHaveLength(283);
+    expect(terms).toHaveLength(2343);
+    expect(new Set(terms).size).toBe(1189);
     expect(INTAKE_GENERIC_WORDS.size).toBe(554);
   });
 });

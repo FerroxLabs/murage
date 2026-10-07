@@ -1,13 +1,12 @@
 ---
 name: sales-qualify
 description: "Qualify one lead against BANT (budget, authority, need, timeline) and MEDDIC (metrics, economic buyer, decision criteria, decision process, identified pain, champion) using public signals only, producing an opportunity quality score out of 100, an A-to-D grade and the recommended approach. Use when a lead is in the pipeline and the question is whether it is real. Do NOT use for the full five-dimension account workup (use sales-prospect), for mapping the buying committee (use sales-contacts) or for running the call itself (use sales-discovery-call)."
-license: MIT
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sales qualification bant meddic scoring smb"
   category: "sales"
-  attribution: "Wayland Business Suite (Original)"
 ---
 
 > **Templates and analytical tools only - not legal, marketing-compliance, or data-protection advice.** Lead qualification draws on public sources only - never scrape LinkedIn (ToS §8.2), Glassdoor, G2, Capterra, or Crunchbase free-tier. Personal data captured during qualification (named individuals, role, employer) is regulated under GDPR Art. 6 (EU/UK), CCPA/CPRA (CA), and equivalent regimes - surface notice obligations downstream. Champion/economic-buyer identification must be evidence-based; never fabricate names or relationships.

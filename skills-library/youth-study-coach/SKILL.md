@@ -4,7 +4,7 @@ description: |
   Direct tutoring-style homework support for students. Helps students understand assignments, learn concepts, build study skills, and develop independence. Student-facing guidance across all subjects and grade levels using Socratic methods. Use when the user asks about youth study coach or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching study-skills guide"
   category: "education"

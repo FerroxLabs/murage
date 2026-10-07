@@ -21,7 +21,7 @@ trigger_phrases: >-
   I want to create a design system I need to build a component library How do I
   establish design tokens I want to standardize our UI components
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: accessibility documentation frontend step-by-step planning
   category: software-project

@@ -1,0 +1,421 @@
+{
+  "extName": {
+    "message": "Murage for Chrome"
+  },
+  "extDescription": {
+    "message": "与你的 Murage 机器人共享选定的浏览器标签页，并通过暂停和停止保持掌控。"
+  },
+  "groupTitle": {
+    "message": "Murage"
+  },
+  "groupTitleBot": {
+    "message": "Murage · $BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "groupSuffixPaused": {
+    "message": " · 已暂停"
+  },
+  "groupSuffixStopped": {
+    "message": " · 已停止"
+  },
+  "groupSuffixYourTurn": {
+    "message": " · 轮到你"
+  },
+  "groupSuffixFull": {
+    "message": " · 完全"
+  },
+  "groupSuffixWorking": {
+    "message": " · 工作中"
+  },
+  "groupSuffixDone": {
+    "message": " · 已完成"
+  },
+  "overlayWorking": {
+    "message": "$BOT$ 正在工作",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPause": {
+    "message": "暂停"
+  },
+  "overlayStop": {
+    "message": "停止"
+  },
+  "overlayWaiting": {
+    "message": "在 Murage 中等你"
+  },
+  "overlayFull": {
+    "message": "完全放行"
+  },
+  "overlayAria": {
+    "message": "$BOT$ 正在使用此标签页。可在此处暂停或停止。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPointer": {
+    "message": "$BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHeader": {
+    "message": "Murage for Chrome"
+  },
+  "spConnected": {
+    "message": "已连接到 Murage"
+  },
+  "spNotConnected": {
+    "message": "Murage 未连接"
+  },
+  "spBotLine": {
+    "message": "$BOT$ 在“$CONVERSATION$”中",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      },
+      "conversation": {
+        "content": "$2"
+      }
+    }
+  },
+  "spStateWorking": {
+    "message": "工作中"
+  },
+  "spStateWaiting": {
+    "message": "等待你"
+  },
+  "spStatePaused": {
+    "message": "已暂停"
+  },
+  "spStateStopped": {
+    "message": "已停止"
+  },
+  "spStateYourTurn": {
+    "message": "轮到你"
+  },
+  "spModeStep": {
+    "message": "每一步都询问"
+  },
+  "spModeTask": {
+    "message": "每个任务询问一次"
+  },
+  "spModeFull": {
+    "message": "完全放行"
+  },
+  "btnPause": {
+    "message": "暂停"
+  },
+  "btnStop": {
+    "message": "停止"
+  },
+  "btnResume": {
+    "message": "继续"
+  },
+  "btnEndTask": {
+    "message": "结束任务"
+  },
+  "btnContinue": {
+    "message": "继续"
+  },
+  "btnShare": {
+    "message": "共享此标签页"
+  },
+  "btnUnshare": {
+    "message": "取消共享"
+  },
+  "spTaskTitle": {
+    "message": "此任务"
+  },
+  "spAllowedForTask": {
+    "message": "本次任务已允许："
+  },
+  "spRevoke": {
+    "message": "撤销"
+  },
+  "spActivityTitle": {
+    "message": "$BOT$ 做过的操作",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spActivityEmpty": {
+    "message": "暂无。"
+  },
+  "spSitesTitle": {
+    "message": "$BOT$ 可使用的网站",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spSiteAlways": {
+    "message": "始终"
+  },
+  "spSiteNever": {
+    "message": "永不"
+  },
+  "spSiteAsks": {
+    "message": "每一步都询问"
+  },
+  "spShareTitle": {
+    "message": "与 $BOT$ 共享此标签页？",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spShare": {
+    "message": "共享"
+  },
+  "spNotNow": {
+    "message": "暂不"
+  },
+  "spUnshareTitle": {
+    "message": "停止与 $BOT$ 共享此标签页？",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshare": {
+    "message": "停止共享"
+  },
+  "spKeep": {
+    "message": "保留"
+  },
+  "spDebugNote": {
+    "message": "$BOT$ 工作期间，Chrome 会显示一条提示栏，说明 Murage for Chrome 已开始调试此浏览器。这是 Chrome 在告知你，有扩展程序可以在你的标签页中执行操作。点击该提示栏上的“取消”会暂停 $BOT$。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUpdateWaiting": {
+    "message": "$BOT$ 完成此步骤后，Murage for Chrome 将会更新。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spOldExtension": {
+    "message": "请更新 Murage for Chrome 以使用新的控制功能。"
+  },
+  "spOldApp": {
+    "message": "请更新此电脑上的 Murage，以使用此版本的 Murage for Chrome。"
+  },
+  "spShortcutHint": {
+    "message": "键盘暂停：$SHORTCUT$",
+    "placeholders": {
+      "shortcut": {
+        "content": "$1"
+      }
+    }
+  },
+  "spYourTurn": {
+    "message": "轮到你了：$LINE$",
+    "placeholders": {
+      "line": {
+        "content": "$1"
+      }
+    }
+  },
+  "spFullOn": {
+    "message": "完全放行已开启。"
+  },
+  "spTurnOff": {
+    "message": "关闭"
+  },
+  "spModeTitle": {
+    "message": "审批模式"
+  },
+  "spHintStep": {
+    "message": "$BOT$ 在每次更改网站的操作前都会询问。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintTask": {
+    "message": "每个网站一张卡片，之后 $BOT$ 完成任务。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintFull": {
+    "message": "普通操作不再显示卡片。只有你能做的事仍会交还给你。"
+  },
+  "spRevokeAria": {
+    "message": "撤销对 $SITE$ 的访问",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshareAria": {
+    "message": "取消共享 $SITE$",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spNewTab": {
+    "message": "新标签页"
+  },
+  "spSharedTitle": {
+    "message": "已共享的标签页"
+  },
+  "spNoTabs": {
+    "message": "没有共享的标签页。"
+  },
+  "spNoSites": {
+    "message": "暂无网站。"
+  },
+  "spShareHint": {
+    "message": "只有在此共享的标签页才属于这个机器人。把标签页拖进它的分组并不会共享它。"
+  },
+  "spSetupTitle": {
+    "message": "连接到 Murage"
+  },
+  "spSetupBody": {
+    "message": "在这台电脑上打开 Murage，并在浏览器设置中开启浏览器伴侣。"
+  },
+  "spCheckConnection": {
+    "message": "检查连接"
+  },
+  "spProfile": {
+    "message": "Chrome 用户资料：$PROFILE$",
+    "placeholders": {
+      "profile": {
+        "content": "$1"
+      }
+    }
+  },
+  "spBodyWorking": {
+    "message": "正在你共享的标签页中工作。"
+  },
+  "spBodyPaused": {
+    "message": "在你继续之前，标签页保持私密。"
+  },
+  "spBodyStopped": {
+    "message": "此任务已停止。请让机器人在新对话中重新开始。"
+  },
+  "spBodyReconnect": {
+    "message": "正在等待 Murage 重新连接此机器人。"
+  },
+  "spErrHostOffline": {
+    "message": "请打开 Murage，然后再次检查连接。"
+  },
+  "spErrSiteDenied": {
+    "message": "Murage 已请你允许此网站。请在那里允许后，再按一次共享。"
+  },
+  "spErrHumanHandover": {
+    "message": "此网站需要你亲自操作。"
+  },
+  "spErrBindingInactive": {
+    "message": "共享标签页之前，请先在 Murage 中继续此机器人。"
+  },
+  "spErrTabOwned": {
+    "message": "此标签页已归另一个机器人所有。"
+  },
+  "spErrUnknownBinding": {
+    "message": "请先在 Murage 中开始一个浏览器任务。"
+  },
+  "spErrBindingStopped": {
+    "message": "此任务已停止。请让机器人在新对话中重新开始。"
+  },
+  "spErrGeneric": {
+    "message": "浏览器操作未能完成。请检查连接后重试。"
+  },
+  "spHeaderBrand": {
+    "message": "Murage"
+  },
+  "spHeaderSuffix": {
+    "message": "for Chrome"
+  },
+  "spTaskAccess": {
+    "message": "任务访问权限"
+  },
+  "overlayYourTurn": {
+    "message": "轮到你了：$BOT$ 在等你",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayStopTask": {
+    "message": "停止任务"
+  },
+  "cmdPauseDescription": {
+    "message": "暂停 Murage for Chrome"
+  },
+  "spSwitchTitle": {
+    "message": "机器人"
+  },
+  "spBodyYourTurn": {
+    "message": "请在浏览器中亲自完成这一步，然后让你的机器人继续。"
+  },
+  "spPending": {
+    "message": "正在处理"
+  },
+  "spPhaseStarting": {
+    "message": "正在启动你的机器人"
+  },
+  "spPhaseConnecting": {
+    "message": "正在连接浏览器工具"
+  },
+  "spPhaseReading": {
+    "message": "正在读取此页面"
+  },
+  "spPhaseWaiting": {
+    "message": "正在等你操作"
+  },
+  "btnNewTask": {
+    "message": "开始新任务"
+  },
+  "spRecoveryReshare": {
+    "message": "Murage for Chrome 已重新开始。请再次共享你的标签页以继续。"
+  },
+  "spErrHandoffUseContinue": {
+    "message": "你的机器人正在等你。完成这一步后请点按“继续”。"
+  },
+  "spErrNotHandoff": {
+    "message": "你的机器人现在没有在等你，所以没有需要继续的操作。"
+  },
+  "spErrIncognitoDenied": {
+    "message": "Murage for Chrome 无法在隐私窗口中使用。请在普通窗口中打开该网站，然后再共享。"
+  },
+  "spErrPersistenceFailed": {
+    "message": "Chrome 无法保存你的更改。请稍后再试。"
+  },
+  "spErrUpdateRequired": {
+    "message": "此配置文件由更新版本的 Murage for Chrome 保存。请更新扩展程序以继续。"
+  },
+  "spErrStorageUnavailable": {
+    "message": "无法读取 Chrome 存储。请重启 Chrome，然后再次共享你的标签页。"
+  }
+}

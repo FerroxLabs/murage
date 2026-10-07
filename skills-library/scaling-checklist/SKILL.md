@@ -5,7 +5,7 @@ description: |
   Do NOT use for product launch (use product-launch-checklist), MVP scoping (use mvp-definition), or financial modeling (use financial-model-structure).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship planning strategy checklist project-management"
   category: "business-strategy"

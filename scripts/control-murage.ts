@@ -1,21 +1,27 @@
 #!/usr/bin/env -S node --experimental-strip-types
 // Thin, agent-friendly CLI over the same guarded MCP operations exposed to
 // external clients. It deliberately owns no second API client or wait loop.
-import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, mkdirSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { request as httpRequest } from "node:http";
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 
 import { handleToolCall, request, validateBaseUrl } from "./mcp-server.ts";
+import { readMcpAccessKey } from "../server/mcp-access.ts";
 import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FAKE_CLI = join(ROOT, "server", "testing", "fake-claude-cli.ts");
 const MUTATING = new Set(["new-bot", "new-channel", "send", "send-channel", "interrupt"]);
+
+/** Data folders of the verification servers this process launched, by origin,
+ * so a call to one of them finds its access key without every caller passing
+ * the folder (audit C5). */
+const fixtureDataDirs = new Map<string, string>();
 
 export class ControlMurageError extends Error {
   readonly hint?: string;
@@ -140,11 +146,27 @@ export async function runControlMurage(
   const callTool = dependencies.callTool ?? handleToolCall;
   const requester = dependencies.request ?? request;
   const mutation = MUTATING.has(command);
+  // The harness answers conversation routes only to a caller that proved who
+  // it is (audit C5). This CLI proves itself with the key the harness keeps in
+  // its data folder: MURAGE_DATA_DIR names a verification server's folder, and
+  // it is only ever sent to a loopback instance.
+  const accessKey = (url: string) => {
+    if (env.MURAGE_TOKEN?.trim()) return undefined;
+    return readMcpAccessKey(fixtureDataDirs.get(url) ?? (env.MURAGE_DATA_DIR?.trim() || join(homedir(), ".murage")));
+  };
+  const isLoopback = (url: string) => ["127.0.0.1", "localhost", "::1"].includes(new URL(url).hostname.replace(/^\[|\]$/g, ""));
   const call = async (tool: string, input: Record<string, unknown>, rawUrl: unknown) => {
     const url = configuredUrl(rawUrl, env, mutation);
+    const key = url && isLoopback(url) ? accessKey(url) : undefined;
+    const withKey = (options: RequestInit): RequestInit => {
+      if (!key) return options;
+      const headers = new Headers(options.headers);
+      if (!headers.has("Authorization")) headers.set("Authorization", `Bearer ${key}`);
+      return { ...options, headers };
+    };
     const fetcher = url
-      ? (path: string, options: RequestInit = {}) => requester(path, options, url)
-      : requester;
+      ? (path: string, options: RequestInit = {}) => requester(path, withKey(options), url)
+      : (path: string, options: RequestInit = {}) => requester(path, withKey(options));
     return callTool(tool, input, fetcher);
   };
 
@@ -255,9 +277,6 @@ export interface VerificationServer {
   fixtureDumpPath: string;
   /** Writing a file named after a held fake CLI's pid here lets that turn finish normally. */
   fixtureFinishGateDir: string;
-  /** The launch credential this server shares with a paired-phone stand-in
-   * (`MURAGE_COMPANION_TOKEN`). Never part of `info`, which the CLI prints. */
-  companionToken: string;
   child: ChildProcess;
   /** Stop the owned process and reload its same isolated profile without reseeding. */
   restart(): Promise<void>;
@@ -267,17 +286,72 @@ export interface VerificationServer {
 }
 
 /** Start one foreground-owned, fake-engine server with no access to user data. */
+/** Record this build's What's new page as already shown in a fixture data
+ * folder, before its server starts. A fixture workspace otherwise reads as an
+ * update from before 0.1.59 (server/whats-new.ts) and the page opens over
+ * whatever a spec is driving. */
+export function seedWhatsNewSeen(dataDir: string): void {
+  const version = (JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string }).version;
+  writeFileSync(join(dataDir, "whats-new.json"), `${JSON.stringify({ seen: [version], lastVersion: version }, null, 2)}\n`, { mode: 0o600 });
+}
+
+/** How long a fixture server may take to answer its health check. Loaded
+ * machines (a build running beside it) need far more than the old 20 s. */
+export const DEFAULT_READY_TIMEOUT_MS = 120_000;
+
+/** The allowance: the option, else MURAGE_VERIFY_READY_TIMEOUT_MS when it is a
+ * positive whole number of milliseconds, else the default. */
+export function verificationReadyTimeoutMs(options: { readyTimeoutMs?: number }, env: NodeJS.ProcessEnv = process.env): number {
+  if (options.readyTimeoutMs !== undefined) return options.readyTimeoutMs;
+  const raw = env.MURAGE_VERIFY_READY_TIMEOUT_MS;
+  return raw && /^[1-9][0-9]*$/.test(raw) ? Number(raw) : DEFAULT_READY_TIMEOUT_MS;
+}
+
+/** One health probe on its own connection, closed when it is answered. A
+ * pooled keep-alive socket left by a probe is closed by the server's idle
+ * timer, and the caller's first request can land on it while it is closing
+ * (read ECONNRESET). The server only answers after its listener is open, so
+ * readiness itself is not declared early. */
+export function probeVerificationHealth(url: string, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = httpRequest(`${url}/api/health`, { agent: false, headers: { connection: "close" }, timeout: timeoutMs, signal }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); resolve(false); return; }
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.on("end", () => {
+        try { resolve((JSON.parse(Buffer.concat(chunks).toString("utf8")) as { app?: string }).app === "murage"); }
+        catch { resolve(false); }
+      });
+      res.on("error", () => resolve(false));
+    });
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => resolve(false));
+    req.end();
+  });
+}
+
 export async function launchVerificationServer(
   parentEnv: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
   options: {
     instrumentationSource?: string;
+    /** Fixture startup allowance for slow filesystems or a loaded machine; does
+     *  not change turn deadlines. Default 120 s, or MURAGE_VERIFY_READY_TIMEOUT_MS. */
+    readyTimeoutMs?: number;
     portRange?: { from: number; span: number };
-    /** Extra MURAGE_ANNOUNCEMENTS_* variables, e.g. a loopback stub feed. */
-    env?: Partial<Record<"MURAGE_ANNOUNCEMENTS_URL" | "MURAGE_ANNOUNCEMENTS_TEST_KEY" | "MURAGE_COMPANION_TOKEN", string>>;
+    /** Extra MURAGE_ANNOUNCEMENTS_* variables, e.g. a loopback stub feed, or
+     *  a companion launch proof for a test standing in for the phone's door, or
+     *  the fake engine's scripted background-helper run (see __fixture_background__
+     *  in server/testing/fake-claude-cli.ts). */
+    env?: Partial<Record<"MURAGE_ANNOUNCEMENTS_URL" | "MURAGE_ANNOUNCEMENTS_TEST_KEY" | "MURAGE_COMPANION_TOKEN" | "FAKE_CLAUDE_BG_STAGGER_DIR" | "FAKE_CLAUDE_BG_TASKS" | "FAKE_CLAUDE_BG_ASKS" | "FAKE_CLAUDE_BG_LOG", string>>;
     /** Give the child a HOME outside its data folder, so everything at the
      * data folder's root is Murage's own (data-dir-inventory.test.ts). */
     separateHome?: boolean;
+    /** "seen" (the default): this build's What's new page counts as already
+     * shown, as it would be for anyone past their first day on it. A fixture
+     * workspace otherwise reads as an update from before 0.1.59 and the page
+     * opens over every spec. "pending" keeps the real first-launch answer. */
+    whatsNew?: "seen" | "pending";
   } = {},
 ): Promise<VerificationServer> {
   const port = await freePortBlock([0, 1], options.portRange?.from, options.portRange?.span);
@@ -293,6 +367,7 @@ export async function launchVerificationServer(
   const evidenceDir = join(tmpdir(), "murage-verification-evidence");
   mkdirSync(evidenceDir, { recursive: true });
   let logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
+  if ((options.whatsNew ?? "seen") === "seen") seedWhatsNewSeen(dataDir);
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
     instances: {
       verification: {
@@ -323,7 +398,6 @@ export async function launchVerificationServer(
     HERMES_HOME: join(home, ".hermes"),
     MURAGE_DATA_DIR: dataDir,
     MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
-    MURAGE_COMPANION_TOKEN: randomBytes(32).toString("hex"),
     MURAGE_PORT: String(port),
     MURAGE_WEBHOOK_PORT: String(port + 1),
     FAKE_CLAUDE_MODE: "happy",
@@ -332,6 +406,9 @@ export async function launchVerificationServer(
     PATH: "",
     // A verification server never asks the real announcements feed.
     MURAGE_ANNOUNCEMENTS_URL: "off",
+    // The suite's stand-in for the companion door's launch secret (audit C5):
+    // only a test run carries it, so a launcher outside one adds nothing.
+    ...(parentEnv.MURAGE_TEST_DOOR_TOKEN ? { MURAGE_COMPANION_TOKEN: parentEnv.MURAGE_TEST_DOOR_TOKEN } : {}),
     ...options.env,
   });
   // Optional fixture-owned observation only. Existing callers retain exactly
@@ -349,22 +426,13 @@ export async function launchVerificationServer(
   let child = startChild();
 
   async function ready() {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + (verificationReadyTimeoutMs(options, parentEnv));
     for (;;) {
       if (signal?.aborted) throw new ControlMurageError("verification launch cancelled");
       if (child.exitCode !== null || child.signalCode !== null) {
         throw new Error(`verification server exited before it was ready; see ${logPath}`);
       }
-      try {
-        const timeout = AbortSignal.timeout(1_000);
-        const response = await fetch(`${url}/api/health`, {
-          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-        });
-        const body = response.ok ? await response.json() as { app?: string } : null;
-        if (body?.app === "murage") break;
-      } catch {
-        // The server is still starting.
-      }
+      if (await probeVerificationHealth(url, 1_000, signal)) break;
       if (Date.now() >= deadline) throw new Error(`verification server did not become ready; see ${logPath}`);
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
@@ -380,11 +448,11 @@ export async function launchVerificationServer(
 
   let closed = false;
   let restarting = false;
+  fixtureDataDirs.set(url, dataDir);
   const fixture: VerificationServer = {
     info: { url, pid: child.pid!, dataDir, logPath },
     fixtureDumpPath,
     fixtureFinishGateDir,
-    companionToken: childEnv.MURAGE_COMPANION_TOKEN!,
     child,
     async restart() {
       if (closed || restarting) throw new ControlMurageError("verification fixture is closed or restarting");
@@ -407,6 +475,7 @@ export async function launchVerificationServer(
       if (closed) return;
       if (restarting) throw new ControlMurageError("verification fixture is restarting");
       closed = true;
+      fixtureDataDirs.delete(url);
       await waitForExit(child, { signal: "SIGTERM" });
       await removeTempDir(dataDir);
       if (home !== dataDir) await removeTempDir(home);

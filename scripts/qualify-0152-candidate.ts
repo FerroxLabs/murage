@@ -79,7 +79,9 @@ const fixture = await launchVerificationServer(process.env, undefined, { instrum
   "config.instances.reporter = { driver: 'claudeAgent', displayName: 'Reporter fixture', environment: { FAKE_CLAUDE_MODE: 'slow', FAKE_CLAUDE_REPLY_GATE: join(dataDir, 'reporter-gate'), FAKE_CLAUDE_DUMP: join(dataDir, 'dump-reporter.json'), FAKE_CLAUDE_DUMP_EACH_TURN: '1' }, config: { cli } };",
   "config.instances.artist = { driver: 'claudeAgent', displayName: 'Artist fixture', environment: { FAKE_CLAUDE_DUMP: join(dataDir, 'dump-artist.json'), FAKE_CLAUDE_DUMP_EACH_TURN: '1' }, config: { cli } };",
   "writeFileSync(configPath, JSON.stringify(config, null, 2));",
-  "writeFileSync(join(dataDir, 'candidate-environment.json'), JSON.stringify(process.env), {mode: 0o600});",
+  // Only what the mounted proxy needs from the server's environment (connect() below); its capability comes from the mount's own env.
+  "const keep = ['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'TMPDIR', 'TEMP', 'TMP', 'NODE_OPTIONS', 'MURAGE_DATA_DIR'];",
+  "writeFileSync(join(dataDir, 'candidate-environment.json'), JSON.stringify(Object.fromEntries(keep.filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]))), {mode: 0o600});",
 ].join("\n") });
 const dataDir = fixture.info.dataDir;
 const logs: string[] = [fixture.info.logPath];

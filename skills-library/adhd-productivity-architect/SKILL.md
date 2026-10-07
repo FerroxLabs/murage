@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of adhd productivity architect or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness mental-wellness budgeting journaling quick-reference planning emergency-preparedness neurodiversity"
   category: "health-wellness"

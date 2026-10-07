@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of expense report builder or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "quickstart strategy budgeting checklist template planning photography email"
   category: "business-strategy"

@@ -2,10 +2,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { GRACEFUL_CLOSE_MESSAGE } from "../electron/server-child-lifecycle.mjs";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const secret = "0123456789abcdef".repeat(4);
 const desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret };
@@ -28,7 +29,7 @@ it.each([false, true])("joins owner DM binding, restart and revocation (scripted
       MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: secret, PATH: process.env.PATH, FAKE_CLAUDE_DUMP: join(home, "unexpected-model-turn.json"),
       ...(restored ? { MURAGE_SLACK_APP_TOKEN: fakeApp, MURAGE_SLACK_BOT_TOKEN: fakeBot } : {}) };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    child = spawn(process.execPath, ["--import", join(root, "server/testing/slack-sdk-preload.mjs"), join(root, "server/index.ts")], { cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    child = spawn(process.execPath, ["--import", pathToFileURL(join(root, "server/testing/slack-sdk-preload.mjs")).href, join(root, "server/index.ts")], { cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
     child.stderr!.on("data", chunk => { stderr += chunk; }); child.on("message", value => { if ((value as Trace)?.kind === "slack-fixture") traces.push(value as Trace); });
     await expect.poll(async () => { if (child!.exitCode !== null) throw new Error("Fixture exited: " + stderr); try { return (await request("GET", "/api/health")).status; } catch { return 0; } }, { timeout: 20000 }).toBe(200);
   };
@@ -78,7 +79,8 @@ it.each([false, true])("joins owner DM binding, restart and revocation (scripted
       expect(JSON.stringify(model.prompt)).toContain("the blue fixture is ready");
     }
     expect((await request("PATCH", "/api/config?secretStorage=external", { slack: { botToken: "replacement" } })).status).toBe(409);
-    await waitForExit(child, { signal: "SIGTERM" }); expect(child!.exitCode, stderr).toBe(0);
+    // Quit as the desktop does (a SIGTERM on Windows is TerminateProcess): ask, and it exits by itself.
+    child!.send(GRACEFUL_CLOSE_MESSAGE); await waitForExit(child, { graceMs: 15_000 }); expect(child!.exitCode, stderr).toBe(0);
     await boot(true);
     await expect.poll(async () => (await request("GET", "/api/slack/status")).body.enabled).toBe(true);
     const count = traces.filter(t => t.op === "send").length;

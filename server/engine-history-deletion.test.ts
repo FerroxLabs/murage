@@ -10,8 +10,11 @@ import { afterAll, describe, expect, it } from "vitest";
 import { ConversationDeletions, runConversationDeletion } from "./conversation-deletion.ts";
 import { cursorChatsKey, cursorProjectSlug, droidCwdKey, geminiNormalizedPath, geminiSlug, kimiWorkDirKey, qwenProjectHash, qwenProjectKey } from "./engine-history-deletion.ts";
 
-const scratch = realpathSync(mkdtempSync(join(tmpdir(), "murage-engines-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-engines-")));
+// Every messages.db a test opens is closed before the folder goes: Windows
+// refuses to remove a folder with an open file in it.
+const openDatabases: DatabaseSync[] = [];
+afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
 let n = 0;
 const fresh = (name: string) => { const dir = join(scratch, `${name}-${++n}`); mkdirSync(dir, { recursive: true }); return dir; };
 const touch = (file: string, text = "x") => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); };
@@ -24,7 +27,9 @@ const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 describe("engine folder keys, as each engine computes them", () => {
   it("Gemini CLI: resolved path, lowercased on Windows; slug of the leaf", () => {
     expect(geminiNormalizedPath(WIN)).toBe(WIN.toLowerCase());
-    expect(geminiNormalizedPath("/a/b/../My Project")).toBe("/a/My Project");
+    // A POSIX folder only exists on a POSIX host; on Windows Gemini lowercases every path.
+    if (process.platform !== "win32") expect(geminiNormalizedPath("/a/b/../My Project")).toBe("/a/My Project");
+    else expect(geminiNormalizedPath("C:\\a\\b\\..\\My Project")).toBe("c:\\a\\my project");
     expect(geminiSlug("/a/My Project!!")).toBe("my-project");
     expect(geminiSlug("/a/!!!")).toBe("project");
   });
@@ -42,7 +47,8 @@ describe("engine folder keys, as each engine computes them", () => {
   });
   it("Cursor: collapsed-dash slug and md5 chats key", () => {
     expect(cursorProjectSlug("/Users/a/.m/workspaces/b")).toBe("Users-a-m-workspaces-b");
-    expect(cursorChatsKey("/a/b")).toBe(createHash("md5").update("/a/b").digest("hex"));
+    // Cursor hashes the host's resolved path.
+    expect(cursorChatsKey("/a/b")).toBe(createHash("md5").update(path.resolve("/a/b")).digest("hex"));
   });
 });
 
@@ -50,6 +56,7 @@ function setup() {
   const data = fresh("data");
   const home = fresh("home");
   const db = new DatabaseSync(join(data, "messages.db"));
+  openDatabases.push(db);
   const desk = join(data, "workspaces", BOT, "threads", THREAD);
   touch(join(desk, "a.md"));
   return { data, home, db, desk, deletions: new ConversationDeletions({ dataDir: data, database: () => db }) };
@@ -60,6 +67,8 @@ describe("removing one conversation's engine history", () => {
     const { home, desk, deletions } = setup();
     const gemini = join(home, ".gemini");
     touch(join(gemini, "projects.json"), JSON.stringify({ projects: { [desk]: `${THREAD}`, "/other": "other" } }));
+    // Gemini normalizes a marker before comparing it: one in the folder's own
+    // case (not lowercased on Windows) still names this folder.
     touch(join(gemini, "tmp", THREAD, ".project_root"), desk);
     touch(join(gemini, "tmp", THREAD, "chats", "session-x.jsonl"), SECRET);
     touch(join(gemini, "history", THREAD, ".project_root"), desk);
@@ -157,11 +166,16 @@ describe("removing one conversation's engine history", () => {
     expect(existsSync(join(cursor, "cli-config.json"))).toBe(true);
   });
 
+  // Droid's Windows per-folder bucket name is unverified: this rule keeps the
+  // drive colon and backslashes, which cannot be a Windows folder name (0.1.61
+  // CI lane), so on Windows only the bucket is left out. Its flat copies by
+  // session id and its index rows are removed the same everywhere.
+  const droidBucketKnown = process.platform !== "win32";
   it("Droid: the folder's sessions, flat copies by session id, and its index rows", async () => {
     const { home, desk, deletions } = setup();
     const factory = join(home, ".factory");
     const sid = "7d7c0000-1111-4222-8333-444455556666";
-    const bucket = join(factory, "sessions", droidCwdKey(realpathSync(desk)));
+    const bucket = join(factory, "sessions", droidBucketKnown ? droidCwdKey(realpathSync.native(desk)) : "-bucket-under-test");
     touch(join(bucket, `${sid}.jsonl`), SECRET);
     touch(join(bucket, `${sid}.settings.json`), "{}");
     touch(join(factory, "sessions", `${sid}.jsonl`), SECRET);
@@ -174,8 +188,11 @@ describe("removing one conversation's engine history", () => {
     index.prepare("INSERT INTO files VALUES(?,?)").run(`/x/${sid}.jsonl`, SECRET);
     index.close();
     touch(join(factory, "auth.v2.file"), "sign-in");
-    await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "droid", home: factory }] }, () => true);
-    expect(existsSync(bucket)).toBe(false);
+    // Where the bucket is known it names the session; on Windows the id comes
+    // from the resume cursor Murage holds for the conversation.
+    const sessionIds: Record<string, string[]> = droidBucketKnown ? {} : { droidAgent: [sid] };
+    await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "droid", home: factory }], sessionIds }, () => true);
+    if (droidBucketKnown) expect(existsSync(bucket)).toBe(false);
     expect(existsSync(join(factory, "sessions", `${sid}.jsonl`))).toBe(false);
     expect(existsSync(join(factory, "sessions", "-other"))).toBe(true);
     expect(existsSync(join(factory, "auth.v2.file"))).toBe(true);

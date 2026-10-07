@@ -5,6 +5,7 @@ import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
 import { CURRENT_MEMORY } from "./eligibility.ts";
+import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import type { IndexHit } from "./index.ts";
 
 /** A small authorized catch-up uses the same durable leases as the worker.
@@ -34,7 +35,7 @@ export function recentMemoryHits(query:string,access:MemoryAccess):IndexHit[]{
   const terms=[...new Set(query.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}_-]{2,}/gu)??[])].slice(0,20);
   if(!terms.length)return [];
   const rows=database().prepare(`SELECT r.id,r.version,r.text FROM memory_records r
-    WHERE r.rowid IN (SELECT rowid FROM memory_records ORDER BY rowid DESC LIMIT 256)
+    WHERE r.rowid IN (SELECT rowid FROM memory_records WHERE kind NOT IN ${PIP_ALL_KINDS_SQL} ORDER BY rowid DESC LIMIT 256)
     AND r.scope_id IN (SELECT value FROM json_each(?)) AND ${CURRENT_MEMORY}
     AND NOT EXISTS (SELECT 1 FROM memory_projection_receipts p WHERE p.record_id=r.id AND p.record_version=r.version AND p.lexical_status='indexed')
     ORDER BY r.rowid DESC LIMIT 128`).all(JSON.stringify(access.scopeIds));

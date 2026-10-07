@@ -24,6 +24,11 @@ describe("conversation Delete confirmation", () => {
     expect(html).toContain("Earlier backups still contain it until they expire.");
   });
 
+  it("counts the messages of a long conversation", () => {
+    const html = renderToStaticMarkup(createElement(ConfirmTaskDelete, { name: "Taxes", preview: { botId: "b", threadId: "t" }, savedFiles: 1, messages: 812, onCancel: noop, onConfirm: noop }));
+    expect(html).toContain("That is 812 messages and 1 saved file.");
+  });
+
   it("shows what could not be removed after a Delete", () => {
     const html = renderToStaticMarkup(createElement(DeletionNoteBanner, { note: { title: "Deleted. A few things could not be removed:", items: ["Gemini CLI's own copy of this conversation, in Gemini CLI's history on this computer."] }, onDismiss: noop }));
     expect(html).toContain("A few things could not be removed");

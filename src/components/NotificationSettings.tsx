@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Switch } from "./SettingsPrimitives";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { requestNotificationPermission } from "@/lib/notify";
 import { setNotificationSounds, useNotificationSounds } from "@/lib/notification-sounds";
@@ -60,11 +61,12 @@ export function NotificationSettings() {
     catch { setPermission(currentPermission()); setError(t("notificationSettings.errorPermission")); }
     finally { setPermissionPending(false); }
   };
+  // One setting, one switch (0.1.62): the label and its note name it.
   const check = (field: "attention" | "completion" | "failures" | "previewContent", label: string, detail: string) =>
-    <label className="flex min-h-11 items-start gap-2 py-1.5 text-[13px] text-ink">
-      <input type="checkbox" checked={draft[field]} disabled={!state.config || saving} onChange={event => edit({ ...draft, [field]: event.target.checked })} className={"mt-0.5 " + focus} />
-      <span>{label}<span className="mt-0.5 block text-[11px] leading-relaxed text-ink-secondary">{detail}</span></span>
-    </label>;
+    <div className="flex min-h-11 items-start justify-between gap-3 py-1.5 text-[13px] text-ink">
+      <span id={`notification-${field}`}>{label}<span className="mt-0.5 block text-[11px] leading-relaxed text-ink-secondary">{detail}</span></span>
+      <Switch aria-labelledby={`notification-${field}`} checked={draft[field]} disabled={!state.config || saving} onClick={() => edit({ ...draft, [field]: !draft[field] })} className={focus} />
+    </div>;
   return <section aria-labelledby="notification-settings-title" className="rounded-xl border border-hairline/40 bg-card p-4">
     <h3 id="notification-settings-title" className="text-[15px] font-medium text-ink">{t("notificationSettings.title")}</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("notificationSettings.intro")}</p>
@@ -75,10 +77,10 @@ export function NotificationSettings() {
       {check("previewContent", t("notificationSettings.previewLabel"), t("notificationSettings.previewHelp"))}
     </div>
     <div className="mt-3 rounded-lg bg-inset p-3">
-      <label className="flex min-h-11 items-center gap-2 text-[13px] font-medium text-ink">
-        <input type="checkbox" checked={quiet?.enabled === true} disabled={!state.config || saving} onChange={event => setQuietEnabled(event.target.checked)} className={focus} />
-        {t("notificationSettings.quietLabel")}
-      </label>
+      <div className="flex min-h-11 items-center justify-between gap-3 text-[13px] font-medium text-ink">
+        <span id="notification-quiet">{t("notificationSettings.quietLabel")}</span>
+        <Switch aria-labelledby="notification-quiet" checked={quiet?.enabled === true} disabled={!state.config || saving} onClick={() => setQuietEnabled(quiet?.enabled !== true)} className={focus} />
+      </div>
       <p className="text-[11px] leading-relaxed text-ink-secondary">{t("notificationSettings.quietHelp")}</p>
       {quiet && <div className="mt-3 grid grid-cols-2 gap-3">
         <label className="min-w-0 text-[12px] text-ink">{t("notificationSettings.startLabel")}
@@ -96,10 +98,10 @@ export function NotificationSettings() {
         </label>
       </div>}
     </div>
-    <label className="mt-3 flex min-h-11 items-start gap-2 py-1.5 text-[13px] text-ink">
-      <input type="checkbox" checked={sounds} onChange={event => setNotificationSounds(event.target.checked)} className={"mt-0.5 " + focus} />
-      <span>{t("notificationSettings.soundLabel")}<span className="mt-0.5 block text-[11px] leading-relaxed text-ink-secondary">{t("notificationSettings.soundHelp")}</span></span>
-    </label>
+    <div className="mt-3 flex min-h-11 items-start justify-between gap-3 py-1.5 text-[13px] text-ink">
+      <span id="notification-sounds">{t("notificationSettings.soundLabel")}<span className="mt-0.5 block text-[11px] leading-relaxed text-ink-secondary">{t("notificationSettings.soundHelp")}</span></span>
+      <Switch aria-labelledby="notification-sounds" checked={sounds} onClick={() => setNotificationSounds(!sounds)} className={focus} />
+    </div>
     <div className="mt-3 text-[12px] text-ink-secondary">
       {permission === "granted" ? <p>{t("notificationSettings.permissionGranted")}</p>
         : permission === "denied" ? <p>{t("notificationSettings.permissionDenied")}</p>

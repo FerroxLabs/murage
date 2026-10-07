@@ -4,7 +4,7 @@ description: |
   Complete digital illustration guidance covering tools (Procreate, Photoshop, Illustrator, Clip Studio Paint), digital painting techniques, vector illustration workflows, brush customization, layers and blending modes, portfolio development, commission pricing, and building a professional illustration practice. Use when the user asks about digital illustrator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design guide"
   category: "creative-arts"

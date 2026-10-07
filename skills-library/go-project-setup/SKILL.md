@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Go language idioms (use `go-idioms`), Go testing (use `go-testing-patterns`), Go concurrency (use `go-concurrency-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "go best-practices template"
   category: "software-engineering"

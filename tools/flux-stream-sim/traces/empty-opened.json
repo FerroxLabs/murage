@@ -1,0 +1,21 @@
+[
+ {
+  "at_ms": 300,
+  "msg": {
+   "type": "SpeechStarted",
+   "timestamp": 240
+  }
+ },
+ {
+  "at_ms": 1500,
+  "msg": {
+   "type": "Turn",
+   "turn_order": 0,
+   "end_of_turn": true,
+   "turn_is_formatted": true,
+   "end_of_turn_confidence": 1.0,
+   "transcript": "",
+   "words": []
+  }
+ }
+]

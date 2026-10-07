@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, type Stats } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { parseDocument } from "yaml";
+import { isLearningLocalPath, skillIsProspectDerived } from "./bot-package.ts";
 import { MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES, normalizeBotPackagePath } from "./bot-package-manifest.ts";
 
 export interface PackageExportSkillSource { directory: string; expectedSkillSha256?: string }
@@ -65,6 +66,7 @@ export function collectPackageExportSkills(workspaceRoot: string, selectedSkillN
     const copy = (absolute: string, path: string, depth = 0) => {
       if (++count > MAX_BOT_PACKAGE_ENTRIES || depth > 64) fail("SKILL_EXPORT_LIMIT");
       try { normalizeBotPackagePath(path); } catch { fail("UNSAFE_SKILL_SOURCE"); }
+      if (isLearningLocalPath(path)) fail("LEARNING_LOCAL_EXCLUDED");
       const before = lstatSync(absolute); observed.set(absolute, before);
       if (before.isSymbolicLink()) fail("UNSAFE_SKILL_SOURCE");
       if (before.isDirectory()) {
@@ -104,6 +106,7 @@ export function collectPackageExportSkills(workspaceRoot: string, selectedSkillN
       const document = parseDocument(match[1]);
       if (document.errors.length) fail("SKILL_METADATA_INVALID");
       const fields = document.toJS({ maxAliasCount: 0 });
+      if (skillIsProspectDerived(fields)) fail("PROSPECT_DERIVED_SKILL");
       if (!fields || typeof fields !== "object" || fields.name !== name || typeof fields.description !== "string" || !fields.description.trim()) fail("SKILL_METADATA_INVALID");
       if (fields.license !== undefined && (typeof fields.license !== "string" || fields.license.trim().length > 200)) fail("SKILL_METADATA_INVALID");
       metadata.push({ key: name, name, license: typeof fields.license === "string" && fields.license.trim() ? fields.license.replace(/\s+/g, " ").trim() : "Unspecified", dependencies: [], dependencyStatus: "unverified", files: [...payloads.keys()].filter(path => path.startsWith(`skills/${name}/`)) });

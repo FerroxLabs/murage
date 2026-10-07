@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of edge ml engineer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "advanced iot checklist guide python api-design cloud testing"
   category: "emerging-tech"

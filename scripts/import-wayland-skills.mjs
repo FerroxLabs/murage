@@ -105,6 +105,19 @@ export function normalizeFrontmatterDescription(body) {
   );
 }
 
+/** The skills in skills-library are Ferrox Labs' own work, so the frontmatter
+ * credits "Ferrox Labs" whatever the source pack called its author. A skill
+ * recorded as an MIT port (see skills-library/LICENSE-AUDIT.md) keeps its
+ * upstream attribution and is left alone. Only the frontmatter is touched. */
+export const LIBRARY_AUTHOR = "Ferrox Labs";
+export function normalizeFrontmatterAuthor(body) {
+  const match = body.match(/^(---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/);
+  if (!match) return body;
+  if (/^license:[ \t]*["']?MIT["']?[ \t]*$/m.test(match[2])) return body;
+  const frontmatter = match[2].replace(/^([ \t]*)author:[ \t]*.*$/m, `$1author: ${LIBRARY_AUTHOR}`);
+  return body.slice(0, match.index) + match[1] + frontmatter + match[3] + body.slice(match.index + match[0].length);
+}
+
 /** "executive-communicator" reads as a slug in a picker, so title-case it.
  * Words that already carry capitals are left alone. */
 export function humanName(name) {
@@ -269,8 +282,9 @@ function main() {
       mkdirSync(directory, { recursive: true });
       writeFileSync(join(directory, "manifest.json"), `${JSON.stringify(buildManifest(entry, id), null, 2)}\n`);
       // The body is the skill; only the frontmatter description is reshaped
-      // into one quoted line (see normalizeFrontmatterDescription).
-      writeFileSync(join(directory, "SKILL.md"), normalizeFrontmatterDescription(body));
+      // into one quoted line (see normalizeFrontmatterDescription) and the author
+      // is credited to Ferrox Labs (see normalizeFrontmatterAuthor).
+      writeFileSync(join(directory, "SKILL.md"), normalizeFrontmatterAuthor(normalizeFrontmatterDescription(body)));
     }
     written += 1;
   }

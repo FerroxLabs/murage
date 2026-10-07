@@ -67,7 +67,7 @@ export function nativeFuigoPackage(tgz: Buffer, target: string, version: string)
     const header = tar.subarray(offset, offset + 512); if (header.every(byte => byte === 0)) break;
     const field = (start: number, length: number) => header.subarray(start, start + length).toString("utf8").replace(/\0.*$/s, "");
     const name = [field(345, 155), field(0, 100)].filter(Boolean).join("/");
-    if (!name || name.startsWith("/") || name.includes("\\") || name.split("/").includes("..")) throw new Error("Fuigo archive contains an unsafe path.");
+    if (!name || name.startsWith("/") || name.includes("\\") || name.split("/").includes("..")) throw new Error("The Fuigo archive has a file path outside its own folder.");
     const rawSize = field(124, 12).trim(); const size = /^[0-7]+$/.test(rawSize) ? parseInt(rawSize, 8) : NaN;
     const checksum = parseInt(field(148, 8), 8);
     const actual = header.reduce((sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte), 0);

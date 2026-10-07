@@ -84,6 +84,11 @@ export class TranscriptionUnavailable extends Error {
   readonly reason: TranscriptionFailure;
   /** True when trying the identical request again could plausibly work. */
   readonly retryable: boolean;
+  /** Where the refusal came from, for the server log only. Never sent to the
+   *  app: `detail` is the upstream's own wording. */
+  provider?: string;
+  status?: number;
+  detail?: string;
 
   constructor(reason: TranscriptionFailure, message: string) {
     super(message);
@@ -124,7 +129,17 @@ function theirWords(body: any): string {
  * 402 `premium_locked` is the one code no other transcription service
  * returns, and 404 means the capability is dark rather than missing.
  */
+export const UNREADABLE_RECORDING =
+  "That recording couldn’t be read. Hold the button a little longer and try again.";
+
 function failureFor(status: number, body: any): TranscriptionUnavailable {
+  const failure = describeFailure(status, body);
+  failure.status = status;
+  failure.detail = theirWords(body).slice(0, 300);
+  return failure;
+}
+
+function describeFailure(status: number, body: any): TranscriptionUnavailable {
   const said = theirWords(body);
   if (status === 404) {
     return new TranscriptionUnavailable(
@@ -166,8 +181,10 @@ function failureFor(status: number, body: any): TranscriptionUnavailable {
       said || "Flux is rate-limiting this account. Wait a moment and try again.",
     );
   }
-  if (status === 400) {
-    return new TranscriptionUnavailable("format", said || "That audio format was not recognized.");
+  // The service's own words about the audio ("unsupported or unrecognized
+  // audio format") are for the log, not for a person holding a phone.
+  if (status === 400 || status === 415 || status === 422 || (status < 500 && /audio|format|decode|codec|container/i.test(said))) {
+    return new TranscriptionUnavailable("format", UNREADABLE_RECORDING);
   }
   return new TranscriptionUnavailable("upstream", said ? `Transcribing failed: ${said}` : `Transcribing failed (${status})`);
 }
@@ -258,7 +275,11 @@ export async function transcribe(recording: Recording, options: TranscribeOption
     throw new TranscriptionUnavailable("upstream", "Couldn't reach Flux to transcribe that. Check your connection.");
   }
 
-  if (!res.ok) throw failureFor(res.status, await safeJson(res));
+  if (!res.ok) {
+    const failure = failureFor(res.status, await safeJson(res));
+    failure.provider = own?.via ?? "flux";
+    throw failure;
+  }
 
   const body = await safeJson(res);
   const text = typeof body?.text === "string" ? body.text.trim() : "";

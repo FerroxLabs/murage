@@ -29,9 +29,13 @@
 //    differ by one word.
 import { request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders, type Server, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
+import { isIP } from "node:net";
+import type { Duplex } from "node:stream";
 
-import { cleanDeviceName, type PublicDevice } from "./devices.ts";
-import { BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isImageUpload, isInboxRoute, isRoutineWrite, launchProofHeaders, needsLaunchProof } from "./routes.ts";
+import { bearerToken, cleanDeviceName, PAIRING_REPLAY_MS, type PublicDevice } from "./devices.ts";
+import { createHarnessCall, handlePushBearer, handlePushSession, isPushSessionRoute, pushBearerExempt, pushBearerScope, readLimited } from "./push-door.ts";
+import { approvalDeviceHeaders, hasLaunchCredential, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isImageUpload, isInboxRoute, isPresenceRoute, doorForwardHeaders, isRoutineWrite, isStreamTicket, browserProofHeaders, isScriptAccessRoute, needsLaunchProof } from "./routes.ts";
+import { STREAM_UPGRADE_PATH, forwardStreamUpgrade, redactedRequest, rejectUpgrade } from "./stream-upgrade.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 import { compressBuffer, compressStream, isCompressible, MIN_COMPRESS_BYTES, negotiateEncoding, type Encoding } from "./encoding.ts";
 
@@ -63,6 +67,9 @@ export interface BrowserDeviceStore {
     name: unknown,
     pairRequestId?: unknown,
     installId?: unknown,
+    approvalKey?: unknown,
+    approvalStatement?: unknown,
+    clientIp?: string,
   ): { device: PublicDevice; token: string } | { error: string; reason?: string; devices?: Array<{ name: string; lastSeenAt: number }> };
   openSession(deviceId: string, label: unknown): { value: string; session: { expiresAt: number } } | null;
   /** `sessionId` names the session RECORD, which survives renewal; the cookie
@@ -70,7 +77,7 @@ export interface BrowserDeviceStore {
   resolveSession(
     value: string | undefined,
   ): {
-    device: { id: string; name: string; cloudDesktopAccess: boolean };
+    device: { id: string; name: string; cloudDesktopAccess: boolean; scriptAccess?: boolean };
     session: { expiresAt: number };
     sessionId: string;
   } | null;
@@ -90,6 +97,20 @@ export interface BrowserDeviceStore {
   renewSession(
     value: string | undefined,
   ): { value: string; expiresAt: number } | null;
+  /** Push (spec §3.3): mint a device's scoped tokens, name the binding they
+   * were minted for, and resolve a bearer token to its device and binding. */
+  issuePushTokens(deviceId: string, bindingId: string): { detail: string; respond: string; expiresAt: number } | null;
+  pushBinding(deviceId: string): string | null;
+  /** SEC-006: what the harness is told about a device answering a card. */
+  approvalIdentity(deviceId: string): { id: string; cls: "app" | "browser"; key?: string } | null;
+  authenticatePush(token: string | undefined, scope: "detail" | "respond"): { deviceId: string; bindingId: string } | null;
+  /** True when `redeem` returned this result as a replay of an earlier
+   * request (`DeviceRegistry.wasReplay`). Left out, nothing is a replay. */
+  wasReplay?(result: object): boolean;
+  /** Both let the door forget a kept session when its device is revoked or
+   * signed out (`DeviceRegistry.onDeviceRemoved` / `onSessionEnded`). */
+  onDeviceRemoved?(listener: (deviceId: string) => void): () => void;
+  onSessionEnded?(listener: (ended: { deviceId: string; sessionId: string }) => void): () => void;
 }
 
 export interface BrowserDoorOptions {
@@ -110,6 +131,9 @@ export interface BrowserDoorOptions {
    * a device signs itself out, the same call the control page makes after a
    * revoke. */
   disconnectDevice?: (deviceId: string) => void;
+  /** Queue a device for the harness to drop its push relay binding (the
+   * push revocation queue). See `PushDoorOptions.revoked`. */
+  pushRevoked?: (deviceId: string) => void;
   /** How long the harness may take to produce response *headers*, counted
    * from when the request body has been forwarded whole. Tests only. */
   headersTimeoutMs?: number;
@@ -319,6 +343,13 @@ function originGateInner(
 
   const method = req.method ?? "GET";
   const path = (req.url ?? "/").split("?")[0];
+
+  // Spec §3.3: the three push routes a phone's notification code calls with
+  // a bearer token. Native code sends no Origin and no Sec-Fetch-*, and it
+  // cannot hold the cookie. Exempt only with a token of that route's scope's
+  // shape, so a cookie-borne cross-site request to the same path — or one
+  // carrying any other Authorization — still meets rules 2 to 4.
+  if (pushBearerExempt(method, path, req.headers.authorization as string | undefined)) return null;
 
   // 2. Sec-Fetch-Site. Sent by every browser that can run this app, on every
   //    request including EventSource and no-cors images. Absent means the
@@ -726,6 +757,75 @@ function codeEntryMarkup(hidden: boolean): string {
   </div>`;
 }
 
+/** The session a sign-in just opened, kept in memory under its request id, so
+ * a replayed pairing request (see `DeviceRegistry.redeem`) hands back the same
+ * session instead of opening another. Never written down. It lives exactly as
+ * long as the registry's replay window (`PAIRING_REPLAY_MS`), both counted
+ * from the first redemption, and a timer deletes the raw cookie at that
+ * moment, whether or not another request ever arrives. */
+const PAIRED_SESSION_MAX = 16;
+export function createPairedSessions() {
+  type Opened = { value: string; session: { expiresAt: number } };
+  // Keyed by request id and checked against the device id, so only a request
+  // that repeats itself can ever be handed an earlier session.
+  const kept = new Map<string, { deviceId: string; opened: Opened; until: number; timer: ReturnType<typeof setTimeout> }>();
+  const drop = (id: string) => {
+    const entry = kept.get(id);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    kept.delete(id);
+  };
+  const sweep = (now: number) => {
+    for (const [id, entry] of kept) if (entry.until <= now) drop(id);
+    while (kept.size > PAIRED_SESSION_MAX) drop(kept.keys().next().value as string);
+  };
+  return {
+    get(requestId: unknown, deviceId: string, now: number): Opened | null {
+      sweep(now);
+      const entry = typeof requestId === "string" ? kept.get(requestId) : undefined;
+      return entry && entry.deviceId === deviceId ? entry.opened : null;
+    },
+    put(requestId: unknown, deviceId: string, opened: Opened | null, now: number): Opened | null {
+      if (opened && typeof requestId === "string") {
+        drop(requestId);
+        const timer = setTimeout(() => drop(requestId), PAIRING_REPLAY_MS);
+        // A pending deletion is never a reason to keep the process alive.
+        timer.unref?.();
+        kept.set(requestId, { deviceId, opened, until: now + PAIRING_REPLAY_MS, timer });
+        sweep(now);
+      }
+      return opened;
+    },
+    forgetDevice(deviceId: string): void {
+      for (const [id, entry] of kept) if (entry.deviceId === deviceId) drop(id);
+    },
+    clear(): void {
+      for (const id of [...kept.keys()]) drop(id);
+    },
+    size(): number {
+      return kept.size;
+    },
+  };
+}
+
+/** Page script: one id per page load, sent with every sign-in attempt so a
+ * retry after a lost response is recognised as the same request (see
+ * `DeviceRegistry.redeem`). Plain concatenation only: the pages are template
+ * literals, so no backslash and no backtick. */
+export const REQUEST_ID_SCRIPT = `var requestId = (function () {
+  try {
+    if (crypto.randomUUID) return "pr-" + crypto.randomUUID();
+  } catch (e) {}
+  try {
+    var bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    var out = "pr-";
+    for (var i = 0; i < 16; i++) out += (bytes[i] + 256).toString(16).slice(1);
+    return out;
+  } catch (e) {}
+  return null;
+})();`;
+
 /** The client half of typed-code sign-in.
  *
  * NOTE FOR ANYONE EDITING THIS STRING: it is a TEMPLATE LITERAL. A backtick
@@ -750,12 +850,19 @@ function codeEntryMarkup(hidden: boolean): string {
  * `installIdVar` names a variable in the enclosing script that holds the phone
  * app's install id (see `enterPage`), so a typed code sent from a page the app
  * opened still replaces that install's old record rather than taking a second
- * slot. Without it the body is exactly `{ credential }`, as it always was. */
-export function codeEntryScript(installIdVar?: string): string {
-  const body = installIdVar
-    ? `${installIdVar} ? { credential: code, installId: ${installIdVar} } : { credential: code }`
+ * slot. Without it the body is exactly `{ credential }`, as it always was.
+ * `approvalKeyVar` does the same for the app's approval public key, and is
+ * sent only next to an install id. `statementVar` is the relay's statement
+ * for that key, sent only when all three are present. */
+export function codeEntryScript(installIdVar?: string, approvalKeyVar?: string, statementVar?: string): string {
+  const fields = installIdVar
+    ? approvalKeyVar
+      ? `(function () { var b = { credential: code }; if (${installIdVar}) b.installId = ${installIdVar}; if (${installIdVar} && ${approvalKeyVar}) b.approvalKey = ${approvalKeyVar}; ${statementVar ? `if (${installIdVar} && ${approvalKeyVar} && ${statementVar}) b.approvalStatement = ${statementVar}; ` : ""}return b; })()`
+      : `${installIdVar} ? { credential: code, installId: ${installIdVar} } : { credential: code }`
     : "{ credential: code }";
+  const body = `(function () { var b = ${fields}; if (requestId) b.pairRequestId = requestId; return b; })()`;
   return `(function () {
+  ${REQUEST_ID_SCRIPT}
   var box = document.getElementById("cf");
   if (!box || typeof fetch !== "function") return;
   var input = document.getElementById("cc");
@@ -890,20 +997,28 @@ ${CODE_ENTRY_STYLE}
     document.getElementById("m").textContent = detail || "";
   };
   var fragment = location.hash.slice(1);
-  // The phone app appends its install id after the credential, so pairing
-  // again after a reinstall replaces its own old record instead of taking a
-  // new slot. A camera-app scan has no such suffix and pairs as it always
-  // did. indexOf, not a regular expression: see the note below about this
-  // being a template literal.
+  // The phone app appends its install id after the credential, then its
+  // approval public key as "&approvalKey=", then the relay's statement for
+  // that key as "&approvalStatement=". The install id lets pairing again after
+  // a reinstall replace the app's own old record instead of taking a new slot.
+  // A camera-app scan has no such suffix and pairs as it always did. indexOf,
+  // not a regular expression: see the note below about this being a template
+  // literal.
   var cut = fragment.indexOf("&installId=");
   var credential = cut < 0 ? fragment : fragment.slice(0, cut);
-  var installId = cut < 0 ? "" : fragment.slice(cut + 11);
+  var rest = cut < 0 ? "" : fragment.slice(cut + 11);
+  var stmtCut = rest.indexOf("&approvalStatement=");
+  var approvalStatement = stmtCut < 0 ? "" : rest.slice(stmtCut + 19);
+  var head = stmtCut < 0 ? rest : rest.slice(0, stmtCut);
+  var keyCut = head.indexOf("&approvalKey=");
+  var installId = keyCut < 0 ? head : head.slice(0, keyCut);
+  var approvalKey = keyCut < 0 ? "" : head.slice(keyCut + 13);
   // Before anything else, and before any network call: the address bar and
   // the session history must not keep it.
   history.replaceState(null, "", "/enter");
   // The typed-code field, wired inside this scope so that a code typed after
   // the link failed carries the same install id the link did.
-  ${codeEntryScript("installId")}
+  ${codeEntryScript("installId", "approvalKey", "approvalStatement")}
   if (!credential) {
     // Not a dead end any more. This page is reached with an empty fragment by
     // anyone who bookmarked it, and by every device that cannot scan — so it
@@ -911,7 +1026,7 @@ ${CODE_ENTRY_STYLE}
     // laptop to point a camera at itself.
     say(
       "Sign in to Murage",
-      "On your computer, open Murage and go to Settings → Phone. Scan the QR code with a phone camera, or type the six-digit code beside it here."
+      "On your computer, open Murage and go to Settings → Phone and other devices. Scan the QR code with a phone camera, or type the six-digit code beside it here."
     );
     document.getElementById("cf").hidden = false;
     document.getElementById("cc").focus();
@@ -932,6 +1047,15 @@ ${CODE_ENTRY_STYLE}
   // A crawler does not press buttons. One tap costs a person nothing they
   // were not already doing, and it is also the only moment at which we can
   // warn them BEFORE the code is spent — see the in-app browser note below.
+  //
+  // The one exception is the Murage phone app, and only when BOTH marks are
+  // present: its user agent carries "MurageApp/", and the fragment carries an
+  // install id, which only the app appends. Inside the app the scan was
+  // already the deliberate act, so a second tap asks the person for nothing
+  // new. A crawler has neither mark, a camera-app scan opens a real browser
+  // with neither, and a relayed app link still lacks the user agent, so all
+  // of them keep the tap. A spoofed user agent gains nothing: whoever holds
+  // the link can already sign in with it by tapping.
   var go = document.getElementById("go");
   var warn = document.getElementById("w");
   var ua = navigator.userAgent || "";
@@ -965,13 +1089,14 @@ ${CODE_ENTRY_STYLE}
     warn.textContent = "You are in an app's built-in browser. Its sign-in will not carry over to Chrome or Safari, and this code can only be used once. Open this link in your normal browser first.";
   }
   go.hidden = false;
-  go.addEventListener("click", function () {
+  ${REQUEST_ID_SCRIPT}
+  var signIn = function () {
     go.disabled = true;
     say("Signing in…", "");
     fetch("/session", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(installId ? { credential: credential, installId: installId } : { credential: credential })
+      body: JSON.stringify((function () { var b = { credential: credential }; if (installId) b.installId = installId; if (installId && approvalKey) b.approvalKey = approvalKey; if (installId && approvalKey && approvalStatement) b.approvalStatement = approvalStatement; if (requestId) b.pairRequestId = requestId; return b; })())
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (body) {
         if (r.ok) { location.replace("/"); return; }
@@ -994,9 +1119,17 @@ ${CODE_ENTRY_STYLE}
         go.textContent = "Sign in on this device";
       });
     }).catch(function () {
+      // Nothing reached the computer, so the code is not spent. Inside the
+      // app this can now happen on a plain page load with no tap, so leave a
+      // way forward: the same button again, and the typed-code field.
       say("Could not reach Murage", "The app may have stopped on your computer.");
+      go.textContent = "Try again";
+      go.disabled = false;
+      document.getElementById("cf").hidden = false;
     });
-  });
+  };
+  go.addEventListener("click", signIn);
+  if (ourApp && installId) signIn();
 })();
 </script>
 `;
@@ -1029,7 +1162,7 @@ ${CODE_ENTRY_STYLE}
 </style>
 <main>
   <h1>Not signed in</h1>
-  <p>On your computer, open Murage and go to Settings → Phone. Scan the QR code with a phone camera, or type the six-digit code beside it here.</p>
+  <p>On your computer, open Murage and go to Settings → Phone and other devices. Scan the QR code with a phone camera, or type the six-digit code beside it here.</p>
   ${codeEntryMarkup(false)}
 </main>
 <script nonce="${nonce}">
@@ -1333,7 +1466,9 @@ export function createSignInLimiter(): SignInLimiter {
 
 /** Which client an attempt is charged to.
  *
- * The socket's peer address, and NEVER a header. `X-Forwarded-For` is the
+ * The socket's peer address, and by default NEVER a header (the one opt-in
+ * exception is `MURAGE_TRUST_PROXY=1` behind a loopback proxy, below).
+ * `X-Forwarded-For` is the
  * obvious-looking choice and it is the wrong one: bound directly to the
  * tailnet, that header is written by whoever is connecting, so an attacker
  * would mint a fresh identity per guess and the limiter would be decoration.
@@ -1345,8 +1480,36 @@ export function createSignInLimiter(): SignInLimiter {
  * from one peer locks the others out too. That is over-throttling, and it is
  * the direction to be wrong in — a tailnet has one user here, and the
  * alternative is a spoofable key, which is no limit at all. */
-export function signInClientKey(req: IncomingMessage): string {
-  return req.socket?.remoteAddress ?? "unknown";
+export function signInClientKey(req: IncomingMessage, env: NodeJS.ProcessEnv = process.env): string {
+  const peer = req.socket?.remoteAddress ?? "unknown";
+  // Opt-in only: a TLS reverse proxy on this machine (Caddy in front of the
+  // door) makes every client look like loopback. The header is believed only
+  // when the socket peer IS loopback, which a remote client cannot fake, and
+  // only the RIGHTMOST entry, the one the local proxy appended itself. Any
+  // leftmost entries are whatever the client wrote. Not well-formed means the
+  // peer address stands.
+  if (env.MURAGE_TRUST_PROXY !== "1" || !isLoopbackPeer(peer)) return peer;
+  const raw = req.headers?.["x-forwarded-for"];
+  const header = Array.isArray(raw) ? raw[raw.length - 1] : raw;
+  if (typeof header !== "string") return peer;
+  const last = header.split(",").pop()?.trim() ?? "";
+  return isIP(last) ? last : peer;
+}
+
+function isLoopbackPeer(addr: string): boolean {
+  const a = addr.toLowerCase();
+  return a === "::1" || a.startsWith("127.") || a.startsWith("::ffff:127.");
+}
+
+/** The front a browser reaches the door through. A Tailscale-owned front wins
+ * when Tailscale is ours; otherwise the configured one (a reverse proxy the
+ * operator named) stays, because nothing observed contradicts it. */
+export function reconcileBrowserFront(
+  owner: "none" | "ours" | "other" | "unknown",
+  observedOrigin: string | null,
+  configured: BrowserFront | null,
+): BrowserFront | null {
+  return owner === "ours" ? browserFront(observedOrigin) : configured;
 }
 
 /** The credential as the registry should see it.
@@ -1392,7 +1555,18 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
   // an attacker can provoke writes to is a worse trade than a lockout that a
   // deliberate restart of the desktop app clears.
   const signIn = options.signInLimiter ?? createSignInLimiter();
-  return function handle(req: IncomingMessage, res: ServerResponse): void {
+  const pairedSessions = createPairedSessions();
+  // A revoked or signed-out device keeps no replayable session.
+  options.devices.onDeviceRemoved?.((deviceId) => pairedSessions.forgetDevice(deviceId));
+  options.devices.onSessionEnded?.(({ deviceId }) => pairedSessions.forgetDevice(deviceId));
+  const pushDoor = { devices: options.devices, harness: createHarnessCall(options.harnessPort), companionToken: options.companionToken, revoked: options.pushRevoked };
+  // A 413 closes the connection: the rest of an oversized upload is not
+  // worth draining on a kept-alive socket.
+  const tooLarge = (res: ServerResponse) => () => {
+    res.setHeader("connection", "close");
+    return { status: 413, body: { error: "too large" } };
+  };
+  const handle = function handle(req: IncomingMessage, res: ServerResponse): void {
     const identity = options.identity();
     const path = (req.url ?? "/").split("?")[0];
     const method = req.method ?? "GET";
@@ -1422,7 +1596,35 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
     if (path === "/healthz") {
       if (method !== "GET" && method !== "HEAD") return sendJson(res, 404, { error: `no route: ${method} ${path}` });
       const name = [...(options.serverName?.() || "Murage")].slice(0, 200).join("");
-      return sendJson(res, 200, { ok: true, name, mobile: 1 });
+      // `mobile` stays the integer 1 (the door handshake, a strict-equality identity, never a version);
+      // `mobileFeatures` and `approvalProof` are additive capability levels phones read with >=, bump them for new phone features.
+      return sendJson(res, 200, { ok: true, name, mobile: 1, mobileFeatures: 1, approvalProof: 1 });
+    }
+
+    // ── push bearer routes (spec §3.3) ───────────────────────────────────
+    //
+    // The phone's notification code, with a scoped push token and no
+    // cookie. Checked and forwarded by `handlePushBearer`, which builds the
+    // harness headers from nothing; a bad token is a 401 that reaches
+    // nothing. With no Authorization at all the request carries on below
+    // like any other.
+    const pushScope = pushBearerScope(method, path);
+    const pushToken = pushScope ? bearerToken(req.headers.authorization as string | undefined) : undefined;
+    if (pushScope && pushToken) {
+      // The token first, before a byte of body is read: a caller without one
+      // cannot make the door buffer or wait on anything. A GET's body is
+      // never read at all. `handlePushBearer` checks again after the read.
+      let known = false;
+      try { known = Boolean(options.devices.authenticatePush(pushToken, pushScope)); } catch { known = false; }
+      if (!known) {
+        res.setHeader("connection", "close");
+        return sendJson(res, 401, { error: "sign in" });
+      }
+      (method === "POST" ? readLimited(req, 4096) : Promise.resolve(null)).then(
+        (body) => handlePushBearer({ method, path, authorization: req.headers.authorization as string, body }, pushDoor),
+        tooLarge(res),
+      ).then((answer) => sendJson(res, answer.status, answer.body), () => sendJson(res, 500, { error: "Could not reach Murage. Try again." }));
+      return;
     }
 
     // ── first contact ────────────────────────────────────────────────────
@@ -1527,10 +1729,16 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
             const result = options.devices.redeem(
               normalizeCredential(body.credential),
               browserLabel(String(req.headers["user-agent"] ?? "")),
-              undefined,
+              // The page's request id: a repeat of the same request (a lost
+              // response, a second tap) gets the first result back from the
+              // registry instead of a second device.
+              body.pairRequestId,
               // The phone app's install id, when `/enter` was opened by the
               // app. Absent from every camera-app scan and typed code.
               body.installId,
+              body.approvalKey,
+              body.approvalStatement,
+              client,
             );
             if ("error" in result) {
               // Each case keeps the registry's own sentence — expired,
@@ -1556,7 +1764,24 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
             signIn.succeed(client);
             // The raw bearer stops here. It is not written down, not logged,
             // and not sent on.
-            const session = options.devices.openSession(result.device.id, browserLabel(String(req.headers["user-agent"] ?? "")));
+            // A replayed request returns the device it already made, so it
+            // also gets the session it already opened: no second credential.
+            const replayed = options.devices.wasReplay?.(result) === true;
+            let session = pairedSessions.get(body.pairRequestId, result.device.id, Date.now());
+            // A kept session is returned only while it is still a live sign-in.
+            if (session && !options.devices.resolveSession(session.value)) {
+              pairedSessions.forgetDevice(result.device.id);
+              session = null;
+            }
+            // A replay never opens a session of its own: the first one is
+            // returned or the replay is refused as used.
+            if (!session && replayed) {
+              return sendJson(res, 401, {
+                error: "That code has already signed a device in. Open Phone settings on your computer for a new one.",
+                reason: "used",
+              });
+            }
+            session ??= pairedSessions.put(body.pairRequestId, result.device.id, options.devices.openSession(result.device.id, browserLabel(String(req.headers["user-agent"] ?? ""))), Date.now());
             if (!session) return sendJson(res, 500, { error: "could not save the session" });
             const maxAge = Math.floor((session.session.expiresAt - Date.now()) / 1000);
             res.setHeader("set-cookie", sessionCookie(session.value, identity, maxAge));
@@ -1596,6 +1821,16 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
     const cookie = readCookie(req.headers.cookie, cookieName(identity.scheme));
     const resolved = options.devices.resolveSession(cookie);
     const device = resolved?.device ?? null;
+
+    // ── push session routes: the app enrols and refreshes its tokens ─────
+    if (isPushSessionRoute(method, path)) {
+      if (!device) return sendJson(res, 401, { error: "sign in", signIn: "/enter" });
+      readLimited(req, 4096).then(
+        (body) => handlePushSession({ method, path, deviceId: device.id, body }, pushDoor),
+        tooLarge(res),
+      ).then((answer) => sendJson(res, answer.status, answer.body), () => sendJson(res, 500, { error: "Could not set up notifications. Try again." }));
+      return;
+    }
 
     const denial = denyReason({
       path,
@@ -1637,7 +1872,14 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
     // read from the same record. Off until the computer owner turns it on.
     if (isCloudDesktopJoin(method, path) && !device?.cloudDesktopAccess) {
       return sendJson(res, 403, {
-        error: "Cloud desktop access is off for this device. Turn it on in Murage → Settings → Phone.",
+        error: "Cloud desktop access is off for this device. Turn it on in Murage → Settings → Phone and other devices.",
+      });
+    }
+    // Script access (S1b R2): only a device the owner marked for it. A phone
+    // paired with an ordinary code is refused here, before any proof is added.
+    if (isScriptAccessRoute(method, path) && device?.scriptAccess !== true) {
+      return sendJson(res, 403, {
+        error: "Script access is off for this device. The computer's owner turns it on with `murage devices script-access <id>`.",
       });
     }
     const carriesProof = isCloudDesktopJoin(method, path) || needsLaunchProof(method, path);
@@ -1647,9 +1889,11 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
           ? "the Inbox requires Murage and its companion to be started together by the desktop app or murage start"
           : isImageUpload(method, path)
             ? "sending images requires Murage and its companion to be started together by the desktop app or murage start"
-            : needsLaunchProof(method, path)
-              ? "calls require Murage and its companion to be started together by the desktop app or murage start"
-              : "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start",
+            : isPresenceRoute(method, path)
+              ? "Presence needs Murage and its companion to be started together by the desktop app or murage start."
+              : needsLaunchProof(method, path)
+                ? "calls require Murage and its companion to be started together by the desktop app or murage start"
+                : "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start",
       });
     }
 
@@ -1674,8 +1918,15 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
             // shared with the device door), plus this door's own proof for the
             // Inbox, a call's routes and an image upload, already refused
             // above without one.
-            ...launchProofHeaders(method, path, options.companionToken),
+            ...browserProofHeaders(method, path, options.companionToken),
+            // Not owner proof: tells the harness this came through the door (audit C5).
+            ...doorForwardHeaders(options.companionToken),
+            // SEC-006: which device is answering, from the registry by the session, beside the launch proof only.
+            ...(hasLaunchCredential(options.companionToken) && resolved ? approvalDeviceHeaders(method, path, options.devices.approvalIdentity(resolved.device.id)) : {}),
             ...(carriesProof ? { "x-murage-companion-token": options.companionToken! } : {}),
+            // the streaming ticket is bound to this session; a client's own copy
+            // of the header never gets here (forwardedHeaders is an allowlist)
+            ...(isStreamTicket(method, path) && resolved ? { "x-murage-stream-principal": `companion:${resolved.device.id}:${resolved.sessionId}` } : {}),
           },
         },
         (harness) => {
@@ -1844,6 +2095,8 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
     }
     forward(null);
   };
+  // Called when the companion stops: the kept raw cookies go with it.
+  return Object.assign(handle, { closePairedSessions: () => pairedSessions.clear() });
 }
 
 /** Relay one static file, refusing the harness's SPA fallback.
@@ -2464,4 +2717,37 @@ export function browserDoorLocation(
   // it would be exactly the half-truth `null` exists to avoid.
   if (front) return { scheme: front.scheme, host: front.host, port: front.port };
   return { scheme, host: magicDnsName ?? tailnet ?? boundHost, port };
+}
+
+/** The streaming-voice websocket on the browser door: the same origin gate and
+ *  cookie session as every request, tracked like a live stream so a sign-out
+ *  or revoke ends it. */
+export function createBrowserStreamUpgrade(options: BrowserDoorOptions) {
+  const slots = new Map<string, number>();
+  return (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
+    // Node takes its own error listener off an upgrade socket
+    socket.on("error", () => socket.destroy());
+    const path = (req.url ?? "/").split("?")[0];
+    if (path !== STREAM_UPGRADE_PATH) return void socket.destroy();
+    const identity = options.identity();
+    // originGate logs req.url under MURAGE_DOOR_DIAGNOSE=1: never with the ticket or keyterms in it (Astra I20)
+    const gate = originGate(redactedRequest(req), identity);
+    if (gate) return rejectUpgrade(socket, gate.status, gate.error);
+    const resolved = options.devices.resolveSession(readCookie(req.headers.cookie, cookieName(identity.scheme)));
+    if (!resolved) return rejectUpgrade(socket, 401, "sign in");
+    if (!options.companionToken || !/^[a-f0-9]{64}$/.test(options.companionToken)) {
+      return rejectUpgrade(socket, 503, "calls require Murage and its companion to be started together by the desktop app or murage start");
+    }
+    const replace = new URL(req.url ?? "/", "http://door").searchParams.get("replace") === "1";
+    forwardStreamUpgrade(req, socket, head, {
+      harnessPort: options.harnessPort,
+      companionToken: options.companionToken,
+      principal: `companion:${resolved.device.id}:${resolved.sessionId}`,
+      slots,
+      maxOpen: replace ? 2 : 1,
+      onOpen: (disconnect) => options.connected?.(resolved.device.id, disconnect, resolved.sessionId) ?? (() => {}),
+      live: () => options.devices.sessionDeadline(resolved.sessionId) !== null,
+      deadline: () => options.devices.sessionDeadline(resolved.sessionId),
+    });
+  };
 }

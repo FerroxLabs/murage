@@ -4,7 +4,7 @@ description: |
   Comprehensive leatherworking guide covering starter tool kits, leather types and grades, cutting techniques, hand stitching with the saddle stitch method, hardware installation, dyeing and finishing processes, pattern making, and project progression from beginner to advanced. Use when the user asks about leathercraft or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sewing guide step-by-step"
   category: "hobbies-crafts"

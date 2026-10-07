@@ -1,8 +1,9 @@
 ---
 name: patch-crm-hygiene
 description: "The user says \"the pipeline number is wrong,\" \"the forecast keeps missing,\" \"our CRM is a graveyard,\" or \"I can't trust the data.\" Load for pipeline audit, contact-data cleanup, stale-deal sweep, or a defensible forecast. Pairs with operating-rhythm — the CRM feeds the weekly tactical's pipeline-cov"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "patch"
 ---

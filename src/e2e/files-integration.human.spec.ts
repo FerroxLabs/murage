@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openSidebar } from "./fixtures.ts";
 import type { Artifact } from "../../shared/artifacts.ts";
+import { openSidebarPlace, sidebarPlace } from "./sidebar-nav";
 
 interface Fixture { info: { url: string; dataDir: string; logPath: string }; fixtureDumpPath: string; child: ChildProcess; close(): Promise<void> }
 type Launcher = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<Fixture>;
@@ -87,9 +88,12 @@ test("registered MCP task output appears once in Chat, Inbox and Files with a by
   // protected frame Files uses; the card offers no Preview that leaves the chat.
   await expect(card.frameLocator('iframe[title="Preview Registered task report"]').getByText("FILES_INTEGRATED_RESULT: three verified findings.", { exact: true })).toBeVisible();
   await expect(card.getByRole("button", { name: "Preview", exact: true })).toHaveCount(0);
+  // With a bot open, the folder chip opens the workspace pane beside the chat
+  // (40d9027d) and its saved copies are one click further, in the same pane.
   await page.locator('[data-header-labelled="folder"]').click();
-  const dialog = page.getByRole("dialog", { name: "Files", exact: true });
+  const dialog = page.getByRole("region", { name: "Workspace pane", exact: true });
   await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Saved versions", exact: true }).click();
   // The Files section's own preview is unchanged.
   await dialog.locator(`[data-artifact-id="${artifact.id}"]`).getByRole("button", { name: "Preview", exact: true }).click();
   await expect(dialog.frameLocator('iframe[title="Preview Registered task report"]').getByText("FILES_INTEGRATED_RESULT: three verified findings.", { exact: true })).toBeVisible();
@@ -105,15 +109,14 @@ test("registered MCP task output appears once in Chat, Inbox and Files with a by
   await page.screenshot({ path: testInfo.outputPath("files-focused-desktop-light.png"), fullPage: true });
   const download = page.waitForEvent("download"); await page.getByRole("button", { name: "Download saved copy", exact: true }).click();
   expect(createHash("sha256").update(readFileSync((await (await download).path())!)).digest("hex")).toBe(artifact.sha256);
-  await page.getByRole("button", { name: "Close Files", exact: true }).click();
-  // 0.1.57: the Inbox has a sidebar row of its own; Tools keeps Files.
-  await sidebar.getByRole("button", { name: /^Tools/ }).click();
-  const menu = sidebar.getByRole("menu", { name: "Tools" }); expect((await menu.getByRole("menuitem").allTextContents()).slice(0, 1)).toEqual(["Files"]);
-  await sidebar.getByRole("button", { name: /^Tools/ }).click();
+  await dialog.getByTestId("workspace-pane-close").click();
+  // 0.1.57: the Inbox has a sidebar row of its own; Files stays one step
+  // away, a place in the strip (0.1.62).
+  await expect(sidebarPlace(sidebar, "files")).toBeVisible();
   await sidebar.locator("[data-sidebar-needs-you]").click();
   await page.getByRole("button", { name: "Results", exact: true }).click();
   await page.getByRole("button", { name: "Open file", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Files", exact: true }).frameLocator('iframe[title="Preview Registered task report"]').getByRole("heading", { name: "Registered task report", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Workspace pane", exact: true }).frameLocator('iframe[title="Preview Registered task report"]').getByRole("heading", { name: "Registered task report", exact: true })).toBeVisible();
 });
 
 test("saved copy survives a real fixture restart and task deletion; narrow Files remains scoped", async ({ page }, testInfo) => {
@@ -128,17 +131,23 @@ test("saved copy survives a real fixture restart and task deletion; narrow Files
   expect((await api(`/api/artifacts/${artifact.id}`)).artifact.sourceState).toBe("changed");
   const bytes = Buffer.from(await (await request(`/api/artifacts/${artifact.id}/download`)).arrayBuffer()); expect(createHash("sha256").update(bytes).digest("hex")).toBe(artifact.sha256);
   expect((await api("/api/inbox?view=results")).items.find((entry: { id: string }) => entry.id === item.id).read).toBe(true);
-  await api(`/api/bots/${bot.id}/tasks`, "POST", { title: "New task after report" }); await api(`/api/bots/${bot.id}/tasks/${artifact.threadId}`, "DELETE");
-  expect((await api(`/api/artifacts/${artifact.id}`)).artifact.sourceConversationAvailable).toBe(false);
   await page.setViewportSize({ width: 390, height: 900 });
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "dark"); });
-  await page.goto(origin); const sidebar = await openSidebar(page); await sidebar.getByRole("button", { name: /^Tools/ }).click(); await sidebar.getByRole("menuitem", { name: "Files", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Files", exact: true }); await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("The source conversation is no longer available. The file remains saved.", { exact: true })).toBeVisible();
+  await page.goto(origin); const sidebar = await openSidebar(page); await openSidebarPlace(sidebar, "files");
+  // Files opens in the workspace pane beside a selected bot, and as its own
+  // dialog when nothing is selected (Sidebar.tsx murage:open-files), as here
+  // on a fresh narrow load. Either is the same scoped Files surface.
+  const dialog = page.getByRole("region", { name: "Workspace pane", exact: true }).or(page.getByRole("dialog", { name: "Files", exact: true })); await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Preview", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Files", exact: true }).frameLocator('iframe[title="Preview Registered task report"]').getByRole("heading", { name: "Registered task report", exact: true })).toBeVisible();
+  await expect(dialog.frameLocator('iframe[title="Preview Registered task report"]').getByRole("heading", { name: "Registered task report", exact: true })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Open in app", exact: true })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("files-focused-narrow-dark.png"), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await api(`/api/bots/${bot.id}`, "DELETE"); expect((await request(`/api/artifacts/${artifact.id}`)).status).toBe(404);
+  // Deleting the conversation takes its saved files with it (c3bdbfc1: delete
+  // means gone, and the delete dialog counts them first); it no longer leaves
+  // a saved copy behind with no source.
+  expect((await api(`/api/deletion-preview?botId=${bot.id}&threadId=${artifact.threadId}`)).savedFiles).toBe(1);
+  await api(`/api/bots/${bot.id}/tasks`, "POST", { title: "New task after report" }); await api(`/api/bots/${bot.id}/tasks/${artifact.threadId}`, "DELETE");
+  expect((await request(`/api/artifacts/${artifact.id}`)).status).toBe(404);
+  await api(`/api/bots/${bot.id}`, "DELETE");
 });

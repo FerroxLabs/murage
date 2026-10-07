@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of accessibility testing lead or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "accessibility budgeting checklist template javascript api-design testing analysis"
   category: "web-development"

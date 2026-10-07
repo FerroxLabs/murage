@@ -4,7 +4,7 @@ description: |
   Advanced email marketing systems design covering list architecture, behavioral segmentation, multi-sequence automation, deliverability engineering, A/B testing methodology, revenue attribution, lifecycle campaigns, and platform-specific implementation for Klaviyo, ConvertKit, and ActiveCampaign. Use when the user asks about email marketing architect or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "email-marketing marketing strategy"
   category: "marketing-sales"

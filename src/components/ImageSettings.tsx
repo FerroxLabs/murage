@@ -4,6 +4,7 @@ import { IMAGE_BUDGET_NOTES, ratioLabel, type ImageModelCapabilities, type SizeR
 import { t } from "@/lib/i18n";
 import { api } from "@/state/store";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { Switch } from "./SettingsPrimitives";
 
 /** Saved prompt blocks and reference packs load only when opened. */
 const Library = retryableLazy(() => import("./ImageLibrary"));
@@ -130,7 +131,7 @@ const focus = "focus-visible:outline-none focus-visible:ring-2 focus-visible:rin
 const select = `mt-1.5 min-h-11 w-full min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50 ${focus}`;
 
 /** Provider credentials and generation stay on the server; this selects an existing connection. */
-export function ImageSettings() {
+export function ImageSettings({ showLibrary = true }: { showLibrary?: boolean } = {}) {
   const [snapshot, setSnapshot] = useState<ImageSettingsSnapshot | null>(null);
   const [busy, setBusy] = useState<"load" | "save" | null>(null);
   const [error, setError] = useState("");
@@ -163,7 +164,7 @@ export function ImageSettings() {
     } finally { inFlight.current = false; if (mounted.current) setProbing(false); }
   };
   return <ImageSettingsView snapshot={snapshot} busy={busy} error={error} notice={notice} onChange={patch => void request(patch)} onRefresh={() => void request(undefined, true)}
-    probing={probing} onProbe={(connectionId, model) => void probe(connectionId, model)} />;
+    probing={probing} onProbe={(connectionId, model) => void probe(connectionId, model)} showLibrary={showLibrary} />;
 }
 
 export interface ImageSettingsViewProps {
@@ -176,10 +177,12 @@ export interface ImageSettingsViewProps {
   /** Owner-only model check. Absent in older views and tests. */
   probing?: boolean;
   onProbe?: (connectionId: string, model: string) => void;
+  /** Settings > Images shows the library as a tab of its own, not a button. */
+  showLibrary?: boolean;
 }
 
 /** Pure presentation of one settings snapshot. Every capability claim comes from the server's per-model record. */
-export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onRefresh, probing = false, onProbe }: ImageSettingsViewProps) {
+export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onRefresh, probing = false, onProbe, showLibrary = true }: ImageSettingsViewProps) {
   const [confirming, setConfirming] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const connectionId = snapshot?.selected?.connectionId ?? snapshot?.catalog?.connectionId ?? "";
@@ -190,14 +193,14 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
   const capability = model ? imageModelCapability(model) : null;
   const usable = Boolean(model?.generate && !model.disabledReason);
 
-  return <section aria-labelledby="image-settings-heading" className="min-w-0 rounded-xl border border-hairline/40 p-4">
+  return <section aria-labelledby="image-settings-heading" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
     <h3 id="image-settings-heading" className="text-[14px] font-medium text-ink">{t("imageSettings.heading")}</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.intro")}</p>
-    <label className="mt-3 flex min-h-11 items-center gap-3 text-[13px] text-ink">
-      <input type="checkbox" checked={snapshot?.enabled ?? false} disabled={!snapshot || Boolean(busy) || (!snapshot.enabled && !usable)}
-        onChange={event => onChange({ enabled: event.target.checked })} className={`size-4 shrink-0 accent-accent ${focus}`} />
-      {t("imageSettings.allow")}
-    </label>
+    <div className="mt-3 flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
+      <span id="image-settings-allow">{t("imageSettings.allow")}</span>
+      <Switch aria-labelledby="image-settings-allow" checked={snapshot?.enabled ?? false} disabled={!snapshot || Boolean(busy) || (!snapshot.enabled && !usable)}
+        onClick={() => snapshot && onChange({ enabled: !snapshot.enabled })} className={focus} />
+    </div>
     {snapshot?.connections.length === 0 ? <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.noConnections")}</p> : <>
       <label className="mt-3 block text-[13px] text-ink">{t("imageSettings.connection")}
         <select aria-label={t("imageSettings.connectionAria")} value={connectionId} disabled={!snapshot || Boolean(busy)} onChange={event => onChange({ connectionId: event.target.value })} className={select}>
@@ -224,15 +227,15 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
           <button type="button" onClick={() => setConfirming(false)} className={`min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink ${focus}`}>{t("imageSettings.check.cancel")}</button>
         </div>
       </div> : <button type="button" disabled={probing || Boolean(busy)} onClick={() => setConfirming(true)} className={`mt-2 min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`}>{probing ? t("imageSettings.check.running") : t("imageSettings.check.now")}</button>)}
-      {snapshot && onProbe && <label className="mt-3 flex min-h-11 items-center gap-3 text-[13px] text-ink">
-        <input type="checkbox" checked={snapshot.dailyProbe === true} disabled={Boolean(busy)} onChange={event => onChange({ dailyProbe: event.target.checked })} className={`size-4 shrink-0 accent-accent ${focus}`} />
-        <span>{t("imageSettings.check.daily")}<span className="block text-[12px] text-ink-secondary">{t("imageSettings.check.dailyNote")}</span></span>
-      </label>}
+      {snapshot && onProbe && <div className="mt-3 flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
+        <span id="image-settings-daily">{t("imageSettings.check.daily")}<span className="block text-[12px] text-ink-secondary">{t("imageSettings.check.dailyNote")}</span></span>
+        <Switch aria-labelledby="image-settings-daily" checked={snapshot.dailyProbe === true} disabled={Boolean(busy)} onClick={() => onChange({ dailyProbe: snapshot.dailyProbe !== true })} className={focus} />
+      </div>}
       {catalog && !usable && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.chooseAvailable")}</p>}
       {connection && <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.usesConnection", { label: connection.label })}</p>}
     </>}
     <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.oneRequest")}</p>
-    {onProbe && (libraryOpen ? <LazyBoundary inline onRetry={Library.retry} onDismiss={() => setLibraryOpen(false)}>
+    {onProbe && showLibrary && (libraryOpen ? <LazyBoundary inline onRetry={Library.retry} onDismiss={() => setLibraryOpen(false)}>
       <Suspense fallback={<p role="status" className="mt-3 text-[12px] text-ink-secondary">{t("imageLibrary.busy")}</p>}><Library.Component /></Suspense>
     </LazyBoundary> : <button type="button" onClick={() => setLibraryOpen(true)} className={`mt-3 block min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink ${focus}`}>{t("imageSettings.library.open")}</button>)}
     <button type="button" onClick={onRefresh} disabled={Boolean(busy)} className={`mt-3 min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`}>{busy === "load" ? t("imageSettings.loading") : t("imageSettings.refresh")}</button>

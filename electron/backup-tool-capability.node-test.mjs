@@ -1,7 +1,7 @@
 import test from "node:test";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmdirSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmdirSync, statSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import vm from "node:vm";
@@ -122,7 +122,14 @@ async function macFixture(work,recheckOptions={delays:[5,10,20]}){
 /** What macOS does to a freshly installed app a moment after its first
  * launch: it writes com.apple.macl onto Murage.app, which moves the bundle
  * folder's ctime. Here a folder entry made and removed moves it the same way. */
-function touchBundle(app){const probe=path.join(app,".macl-probe");mkdirSync(probe);rmdirSync(probe);}
+function touchBundle(app){
+ // The kernel stamps ctime from a coarse clock (a few ms on Linux), so a probe
+ // made right after the folder was created can leave the same stamp. Repeat,
+ // pausing, until the stamp has really moved, as it does on macOS.
+ const before=statSync(app,{bigint:true}).ctimeNs;
+ for(let i=0;i<200;i++){const probe=path.join(app,".macl-probe");mkdirSync(probe);rmdirSync(probe);if(statSync(app,{bigint:true}).ctimeNs!==before)return;Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,5);}
+ throw Error("bundle ctime did not move");
+}
 const until=async(predicate,ms=2000)=>{const end=Date.now()+ms;while(!predicate()){if(Date.now()>end)throw Error("timed out");await new Promise(r=>setTimeout(r,5));}};
 test("macOS observational status never verifies; actions refresh and replacement invalidates",()=>macFixture(async({state,capability,file})=>{
  for(let i=0;i<20;i++){capability.currentTool();capability.status();}assert.equal(state.calls,0);assert.equal(await capability.requireTool(),file);

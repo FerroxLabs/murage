@@ -188,6 +188,8 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
         // max-md: rather than cancelled with md:, per Sidebar.tsx's note about
         // Tailwind v4 emitting a containing block for fixed descendants.
         "max-md:absolute max-md:inset-0 max-md:z-40 max-md:w-full",
+        // Covering the chat means covering its header's status-bar inset too.
+        "max-md:pt-[var(--inset-top)] max-md:pb-[var(--inset-bottom)]",
       )}
     >
       <div className="flex items-center justify-between px-4 py-3">

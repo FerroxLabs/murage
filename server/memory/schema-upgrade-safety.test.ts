@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_SCHEMA_V1, downgradeMemorySchema, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
+import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_SCHEMA_V1, MEMORY_SCHEMA_VERSION, downgradeMemorySchema, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 
 const roots: string[] = [];
@@ -52,7 +52,7 @@ describe("H1 pre-migration snapshot", () => {
     const f = legacyInstallation("active");
     expect(existsSync(f.snapshot)).toBe(false);
     migrateMemorySchema(f.db, "off", { snapshotPath: f.snapshot });
-    expect(f.db.prepare("SELECT schema_version,mode FROM memory_meta").get()).toEqual({ schema_version: 2, mode: "active" });
+    expect(f.db.prepare("SELECT schema_version,mode FROM memory_meta").get()).toEqual({ schema_version: MEMORY_SCHEMA_VERSION, mode: "active" });
     expect(existsSync(f.snapshot)).toBe(true);
     expect(existsSync(`${f.snapshot}-wal`)).toBe(false);
     if (process.platform !== "win32") expect(statSync(f.snapshot).mode & 0o777).toBe(0o600);
@@ -65,9 +65,12 @@ describe("H1 pre-migration snapshot", () => {
   });
   it("does not overwrite an existing snapshot and does not snapshot a fresh or already-migrated database", () => {
     const f = legacyInstallation();
-    writeFileSync(f.snapshot, "keep me");
+    // an earlier attempt's copy is a whole v1 file (it is verified, not trusted): it stays as it is
+    f.db.prepare("VACUUM INTO ?").run(f.snapshot);
+    const kept = statSync(f.snapshot).mtimeMs, keptSize = statSync(f.snapshot).size;
     migrateMemorySchema(f.db, "off", { snapshotPath: f.snapshot });
-    expect(statSync(f.snapshot).size).toBe("keep me".length);
+    expect(statSync(f.snapshot).size).toBe(keptSize);
+    expect(statSync(f.snapshot).mtimeMs).toBe(kept);
     migrateMemorySchema(f.db, "off", { snapshotPath: join(f.root, "second.db") });
     expect(existsSync(join(f.root, "second.db"))).toBe(false);
     const fresh = dataDir(), db = open(join(fresh, "messages.db"));
@@ -93,7 +96,7 @@ describe("H2 downgrade", () => {
     f.db.exec("INSERT INTO messages VALUES('thread','m2',2,'user','text','after upgrade','{}');");
     f.db.exec("INSERT INTO memory_records VALUES('later',1,'scope','fact','Learned after upgrade','owner-statement','active',0,2,NULL,NULL,2);");
     expect(f.db.prepare("SELECT count(*) n FROM memory_record_details").get()?.n).toBe(2);
-    expect(downgradeMemorySchema(f.db)).toEqual({ status: "downgraded", from: 2, to: 1 });
+    expect(downgradeMemorySchema(f.db)).toEqual({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 1 });
     expect(validateAs0153(f.db).size).toBeGreaterThan(12);
     expect(validateMemorySchema(f.db).has("memory_record_details")).toBe(false);
     expect(f.db.prepare("SELECT schema_version,installation_id,policy_revision,deletion_epoch,data_revision,mode FROM memory_meta").get()).toMatchObject({ schema_version: 1, policy_revision: 7, deletion_epoch: 8, data_revision: 9, mode: "active" });
@@ -113,11 +116,11 @@ describe("H2 downgrade", () => {
     f.db.exec("DROP TABLE memory_future;");
     const before = f.db.prepare("SELECT * FROM sqlite_schema ORDER BY name").all();
     const exec = f.db.exec.bind(f.db);
-    f.db.exec = (sql: string) => { if (sql.includes("DROP TABLE memory_meta_v2")) throw new Error("injected downgrade failure"); return exec(sql); };
+    f.db.exec = (sql: string) => { if (sql.includes("DROP TABLE memory_meta_newer")) throw new Error("injected downgrade failure"); return exec(sql); };
     expect(() => downgradeMemorySchema(f.db)).toThrow("injected downgrade failure");
     f.db.exec = exec;
     expect(f.db.prepare("SELECT * FROM sqlite_schema ORDER BY name").all()).toEqual(before);
-    expect(f.db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(2);
+    expect(f.db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(MEMORY_SCHEMA_VERSION);
   });
 });
 
@@ -125,11 +128,11 @@ describe("H3 review mode for migrated installs", () => {
   it("seeds reviewMode:true when upgrading an existing v1 install, keeping the cost switch untouched", () => {
     const f = legacyInstallation("off");
     migrateMemorySchema(f.db, "active", { snapshotPath: f.snapshot });
-    expect(readMemoryLearning(f.db)).toMatchObject({ revision: 0, automaticFacts: true, automaticProcedures: true, reviewMode: true, dailyCostUsd: null, inputLimit: 100000, outputLimit: 20000, callsPerMinute: 6 });
+    expect(readMemoryLearning(f.db)).toMatchObject({ revision: 0, automaticFacts: true, automaticProcedures: true, reviewMode: true, version: 2, dailyInputTokens: 400000, dailyOutputTokens: 60000, callsPerMinute: 6 });
   });
   it("keeps the shipped default for a fresh install", () => {
     const db = open(join(dataDir(), "messages.db"));
     migrateMemorySchema(db, "active", { snapshotPath: join(roots[roots.length - 1], MEMORY_PRE_V2_SNAPSHOT) });
-    expect(readMemoryLearning(db)).toMatchObject({ revision: 0, reviewMode: false, dailyCostUsd: null });
+    expect(readMemoryLearning(db)).toMatchObject({ revision: 0, reviewMode: false, version: 2 });
   });
 });

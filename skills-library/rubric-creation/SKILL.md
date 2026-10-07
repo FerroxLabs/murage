@@ -6,7 +6,7 @@ description: |
   Do NOT use for creating the assessment itself (use `assessment-design`), for student self-assessment tools (use `learning-objectives`), or for feedback writing (use `student-feedback`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching lesson-plan step-by-step guide"
   category: "education"

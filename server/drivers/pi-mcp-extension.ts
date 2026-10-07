@@ -19,8 +19,9 @@ interface McpServerDef {
   command: string;
   args?: string[];
   env?: Record<string, string>;
-  /** "local-computer" marks the user's real host desktop: every tool on such
-   * a server is gated behind a permission card before it executes. */
+  /** "local-computer" marks the user's real host desktop and "custom" the
+   * owner's own servers: every tool on such a server is gated behind a
+   * permission card before it executes. */
   scope?: string;
 }
 
@@ -576,7 +577,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
   for (const mount of mounts) {
     if (!mount.client || !mount.def || !mount.tools) continue;
     const { serverName, def, client, tools } = mount;
-    const gated = def.scope === "local-computer";
+    const gated = def.scope === "local-computer" || def.scope === "custom";
     let registered = 0;
 
     for (const tool of tools) {
@@ -600,7 +601,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
             if (gated) {
               const detail = summarizeParams(params);
               const allowed = await ctx.ui.confirm(
-                `Allow ${toolName} on your computer?`,
+                def.scope === "custom" ? `Allow ${toolName} from ${serverName}?` : `Allow ${toolName} on your computer?`,
                 detail || `Run ${serverName}:${toolName}`,
               );
               if (!allowed) {

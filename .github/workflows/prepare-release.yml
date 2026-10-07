@@ -52,6 +52,12 @@ jobs:
           # workflow here sets persist-credentials: false.
           persist-credentials: true
 
+      # A release cannot build without the Murage for Chrome store identity
+      # (release.yml checks it again). Refuse before the version bump lands on
+      # main, not after, so main is never left unreleasable.
+      - name: Murage for Chrome release identity is set
+        run: node scripts/release-guard.mjs browser-extension extensions/murage-browser/release.json > /dev/null
+
       - name: Choose the next version
         id: version
         env:

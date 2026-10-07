@@ -14,7 +14,7 @@ type: workflow
 skills: threat-modeling-expert devsecops-engineer penetration-tester api-security-engineer compliance-checker
 trigger_phrases: security audit codebase review code security assess application security vulnerability assessment
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: security architecture api-design compliance step-by-step
   category: software-project

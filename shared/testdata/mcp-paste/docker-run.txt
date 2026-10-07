@@ -1,0 +1,1 @@
+docker run -i --rm -e TOKEN -e REGION=eu ghcr.io/acme/notes-server:latest

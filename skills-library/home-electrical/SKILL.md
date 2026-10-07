@@ -4,7 +4,7 @@ description: |
   DIY home electrical guide covering safety fundamentals including breaker panels and testing for live wires, outlet and switch replacement, GFCI installation, light fixture swaps, guidelines for when to call a licensed electrician, wire gauge reference, and electrical code basics. Includes strong safety warnings throughout. Use when the user asks about home electrical or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-maintenance guide step-by-step"
   category: "hobbies-crafts"

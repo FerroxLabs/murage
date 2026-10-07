@@ -14,15 +14,17 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { houseRulesPrompt } from "../house-rules.ts";
 import type { Message } from "../store.ts";
-import { handDownResult, handDownStatus, parseHandDowns } from "./hand-downs.ts";
+import { handDownResult, handDownStatus, parseHandDowns, type HandDownReceipt } from "./hand-downs.ts";
 import {
   BRIEF_MAX_CHARS,
+  type HostTiming,
   runVoiceBrief,
   runVoiceHostTurn,
   warmVoiceHost,
   type VoiceBriefOptions,
   type VoiceHostEvent,
   type VoiceHostOptions,
+  type VoiceHostRoom,
   type VoiceHostState,
   type VoiceHostTurn,
 } from "./voice-host.ts";
@@ -30,9 +32,24 @@ import type { VoiceEndpoint } from "./voice-routes.ts";
 
 export const VOICE_HOST_PATH = /^\/api\/bots\/([\w-]+)\/voice-host$/;
 
-const RECENT_MESSAGES = 16;
+/** The thread as the host sees it: the newest few messages. The prompt is
+ *  rebuilt every turn, and its size is most of the time to first words
+ *  (16 messages of 600 chars measured at a 3.1 s median on a live call,
+ *  2026-09-30; voice-host.ts clips each to RECENT_CHARS). */
+const RECENT_MESSAGES = 8;
 const ACTIVITY_STEPS = 6;
 const SAID_MAX_CHARS = 2_000;
+/** Each of the host's own earlier lines, as the model reads it back. What
+ *  the call screen keeps is not changed; a long spoken reply is only
+ *  shortened here, with its end kept (it may say where the owner cut in). */
+export const HOST_TURN_CHARS = 500;
+
+/** A long host line for the model: its opening and its end. */
+export function clipHostTurn(text: string, max = HOST_TURN_CHARS): string {
+  if (text.length <= max) return text;
+  const tail = Math.floor(max * 0.3);
+  return `${text.slice(0, max - tail - 3).trimEnd()} … ${text.slice(-tail).trimStart()}`;
+}
 
 export interface VoiceHostRouteBot {
   id: string;
@@ -41,13 +58,30 @@ export interface VoiceHostRouteBot {
   persona?: string;
   threadId: string;
   busy?: boolean;
+  hidden?: boolean;
+  tasks?: Array<{ threadId: string; title: string; createdAt: number }>;
+}
+
+/** A channel, as a room call's snapshot reads it. */
+export interface VoiceHostRouteGroup {
+  id: string;
+  name: string;
+  threadId: string;
+  memberIds: string[];
+  busyBotId?: string | null;
   tasks?: Array<{ threadId: string; title: string; createdAt: number }>;
 }
 
 export interface VoiceHostRouteDeps {
   bot(id: string): VoiceHostRouteBot | null;
+  /** A channel the caller may hold a room call in; null when it does not
+   *  exist or this caller may not call it (index.ts: desktop only). */
+  group?(id: string): VoiceHostRouteGroup | null;
   /** The active branch of a thread, oldest first. */
   activePath(threadId: string): Message[];
+  /** What the harness holds for a hand-down's request row in a room: its
+   *  state and note, or "missing" when the row is gone. */
+  requestReceipt?(groupId: string, requestId: string): HandDownReceipt | undefined;
   lastActivityAt(threadId: string): number | undefined;
   /** Open decisions and unread news for this bot, newest first. */
   needsYou(botId: string): Array<{ title: string; summary: string; at: number }>;
@@ -117,7 +151,88 @@ export function voiceHostState(
   };
 }
 
-function parseHistory(raw: unknown): VoiceHostTurn[] {
+const ROOM_HEARD = 6;
+const ROOM_MEMBERS = 12;
+const ROOM_NAME_CHARS = 40;
+
+/** A member name as the prompt reads it: one line, bounded. */
+function roomName(raw: unknown): string {
+  return typeof raw === "string" ? raw.replace(/\s+/g, " ").trim().slice(0, ROOM_NAME_CHARS).trim() : "";
+}
+
+/** What was said to other members' voices on this call. Exported for tests. */
+export function parseRoomHeard(raw: unknown): VoiceHostRoom["heard"] {
+  if (!Array.isArray(raw)) return [];
+  const out: VoiceHostRoom["heard"] = [];
+  for (const entry of raw) {
+    const member = roomName(entry?.member);
+    const owner = typeof entry?.owner === "string" ? entry.owner.trim().slice(0, 400) : "";
+    const reply = typeof entry?.reply === "string" ? clipHostTurn(entry.reply.trim(), 400) : "";
+    if (member && (owner || reply)) out.push({ member, owner, reply });
+  }
+  return out.slice(-ROOM_HEARD);
+}
+
+/** The snapshot a member's voice speaks from on a room call. Read only, like
+ *  voiceHostState; no inbox and no other tasks: the room's own approval flow
+ *  speaks decisions, and the snapshot stays small. Exported for tests. */
+export function voiceHostRoomState(
+  bot: VoiceHostRouteBot,
+  group: VoiceHostRouteGroup,
+  threadId: string,
+  deps: Pick<VoiceHostRouteDeps, "activePath" | "bot">,
+  now: number,
+  opts: { approval?: string; handedDown?: string[]; heard?: VoiceHostRoom["heard"] } = {},
+): VoiceHostState {
+  const path = deps.activePath(threadId);
+  const fromThisCall = new Set((opts.handedDown ?? []).map((r) => r.trim()));
+  const own = (m: Message) => !m.from || m.from.botId === bot.id;
+  // a room-wide error row has no sender: it is nobody's own failure
+  const failed = (m: Message) => m.kind === "activity" && m.tool?.ok === false && /^error:/i.test(m.tool.name ?? "") && m.from?.botId === bot.id;
+  const recent = path
+    .filter((m) => (m.kind === "text" && typeof m.text === "string" && m.text.trim() && !(m.role === "user" && fromThisCall.has(m.text.trim()))) || failed(m))
+    .slice(-RECENT_MESSAGES)
+    .map((m) => {
+      if (failed(m)) return { who: "bot" as const, text: `(That attempt failed and nothing is running: ${m.tool!.errorDetails || m.tool!.name.replace(/^error:\s*/i, "")})`, at: m.at };
+      if (m.role === "user") return { who: "owner" as const, text: m.text!, at: m.at };
+      if (!own(m)) return { who: "member" as const, name: roomName(m.from!.name), text: m.text!, at: m.at };
+      return { who: "bot" as const, text: m.text!, at: m.at };
+    });
+  let lastOwner = -1;
+  for (let i = path.length - 1; i >= 0; i -= 1) {
+    if (path[i].role === "user" && path[i].kind === "text") {
+      lastOwner = i;
+      break;
+    }
+  }
+  const busy = group.busyBotId === bot.id && group.threadId === threadId;
+  const activity = busy
+    ? path.slice(lastOwner + 1).filter((m) => m.kind === "activity" && m.tool && own(m)).map((m) => m.tool!.spoken || m.tool!.summary || m.tool!.name).filter(Boolean).slice(-ACTIVITY_STEPS)
+    : [];
+  const members = group.memberIds
+    .filter((id) => id !== bot.id)
+    .map((id) => deps.bot(id))
+    .filter((m): m is VoiceHostRouteBot => Boolean(m && !m.hidden))
+    .slice(0, ROOM_MEMBERS)
+    .map((m) => ({ name: roomName(m.name), ...(m.description?.trim() ? { description: m.description } : {}) }));
+  const workingName = group.busyBotId && group.busyBotId !== bot.id ? deps.bot(group.busyBotId)?.name : undefined;
+  return {
+    botName: bot.name,
+    houseRules: houseRulesPrompt(),
+    persona: bot.persona,
+    description: bot.description,
+    now,
+    task: { title: (group.tasks ?? []).find((t) => t.threadId === threadId)?.title ?? group.name, busy, activity },
+    recent,
+    otherTasks: [],
+    needsYou: [],
+    approval: opts.approval?.trim() || undefined,
+    room: { name: group.name, members, working: workingName ? roomName(workingName) : null, heard: (opts.heard ?? []).slice(-ROOM_HEARD) },
+  };
+}
+
+/** Exported for tests. */
+export function parseHistory(raw: unknown): VoiceHostTurn[] {
   if (!Array.isArray(raw)) return [];
   const turns: VoiceHostTurn[] = [];
   for (const entry of raw.slice(-12)) {
@@ -126,7 +241,7 @@ function parseHistory(raw: unknown): VoiceHostTurn[] {
     const id = typeof entry?.handDown?.id === "string" && /^[\w-]{1,64}$/.test(entry.handDown.id) ? entry.handDown.id : "";
     const request = typeof entry?.handDown?.request === "string" ? entry.handDown.request.trim().slice(0, 2_000) : "";
     const handDown = role === "host" && id && request ? { id, request } : undefined;
-    if (role && (text || handDown)) turns.push({ role, text, ...(handDown ? { handDown } : {}) });
+    if (role && (text || handDown)) turns.push({ role, text: role === "host" ? clipHostTurn(text) : text, ...(handDown ? { handDown } : {}) });
   }
   return turns;
 }
@@ -161,15 +276,26 @@ export async function handleVoiceHostRoute(
   if (said.length > (brief ? BRIEF_MAX_CHARS : SAID_MAX_CHARS)) return sendJson(413, { error: "that is too long for one spoken turn" });
   const bot = deps.bot(match[1]);
   if (!bot) return sendJson(404, { error: "no such bot" });
-  const threadId = typeof body.threadId === "string" && /^[\w-]+$/.test(body.threadId) ? body.threadId : bot.threadId;
-  if (threadId !== bot.threadId && !(bot.tasks ?? []).some((t) => t.threadId === threadId)) {
-    return sendJson(409, { error: "that task does not belong to this bot" });
-  }
+  const groupId = typeof body.groupId === "string" && /^[\w-]+$/.test(body.groupId) ? body.groupId : null;
+  if (body.groupId !== undefined && !groupId) return sendJson(400, { error: "bad channel id" });
+  const group = groupId ? deps.group?.(groupId) ?? null : null;
+  if (groupId && !group) return sendJson(404, { error: "no such channel" });
+  if (group && !group.memberIds.includes(bot.id)) return sendJson(409, { error: "that bot is not in this channel" });
+  const ownThread = group ? group.threadId : bot.threadId;
+  const threadId = typeof body.threadId === "string" && /^[\w-]+$/.test(body.threadId) ? body.threadId : ownThread;
+  const owns = group
+    ? threadId === group.threadId || (group.tasks ?? []).some((t) => t.threadId === threadId)
+    : threadId === bot.threadId || (bot.tasks ?? []).some((t) => t.threadId === threadId);
+  if (!owns) return sendJson(409, { error: group ? "that task does not belong to this channel" : "that task does not belong to this bot" });
 
   // requests handed down on this call are in the host's context as tool
   // calls; listing them again as the owner's words made them look unanswered
   const handedDown = parseHandDowns(body.handDowns).map((h) => h.request);
-  const state = voiceHostState(bot, threadId, deps, (deps.now ?? Date.now)(), typeof body.approval === "string" ? body.approval : undefined, handedDown);
+  const approval = typeof body.approval === "string" ? body.approval : undefined;
+  const now = (deps.now ?? Date.now)();
+  const state = group
+    ? voiceHostRoomState(bot, group, threadId, deps, now, { approval, handedDown, heard: parseRoomHeard(body.roomHeard) })
+    : voiceHostState(bot, threadId, deps, now, approval, handedDown);
   const controller = new AbortController();
   // `close` fires on the response when the client goes away mid-stream
   res.on("close", () => controller.abort());
@@ -184,18 +310,23 @@ export async function handleVoiceHostRoute(
   // the thread (hand-downs.ts): the host's context carries it as a tool
   // result, and work still running cannot be handed down again.
   const history = parseHistory(body.history);
-  const thread = deps.activePath(threadId);
-  const busy = Boolean(bot.busy) && bot.threadId === threadId;
+  // In a room the thread holds every member's rows: a hand-down's outcome is
+  // read from the owner's lines and this member's own rows only.
+  const fullThread = deps.activePath(threadId);
+  const thread = group ? fullThread.filter((m) => m.role === "user" || m.from?.botId === bot.id) : fullThread;
+  const busy = group ? group.busyBotId === bot.id && group.threadId === threadId : Boolean(bot.busy) && bot.threadId === threadId;
   const results: Record<string, string> = {};
   const running: string[] = [];
   for (const handDown of parseHandDowns(body.handDowns)) {
-    const status = handDownStatus(handDown, thread, busy);
+    const receipt = handDown.requestId && group ? deps.requestReceipt?.(group.id, handDown.requestId) : undefined;
+    const status = handDownStatus(handDown, thread, busy, receipt);
     results[handDown.id] = handDownResult(status);
     if (status.kind === "running" || status.kind === "starting") running.push(handDown.request);
   }
+  let timing: HostTiming | null = null;
   const events = brief
     ? (deps.brief ?? runVoiceBrief)({ state, answer: said, host, history, results, signal: controller.signal })
-    : (deps.run ?? runVoiceHostTurn)({ state, history, said, host, lookup, results, running, signal: controller.signal });
+    : (deps.run ?? runVoiceHostTurn)({ state, history, said, host, lookup, results, running, signal: controller.signal, onTiming: (t) => (timing = t) });
   // One line per turn in the harness log: what the host chose and how fast,
   // never what was said. A live call is otherwise a black box afterwards.
   const started = Date.now();
@@ -208,7 +339,11 @@ export async function handleVoiceHostRoute(
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   }
   chose.delete("done");
-  console.log(`[voice-host] ${brief ? "brief" : "turn"} via ${host?.via ?? "none"}: ${[...chose].join(",") || "nothing"}; first ${first ?? "-"} ms, all ${Date.now() - started} ms${controller.signal.aborted ? " (hung up)" : ""}`);
+  const t = timing as HostTiming | null;
+  const stages = t
+    ? `; headers ${t.headersMs ?? "-"} ms, first token ${t.firstTokenMs ?? "-"} ms, first piece ${t.firstPieceMs ?? "-"} ms (${t.firstPiece ? `${t.firstPiece}, ${t.firstPieceChars} chars` : "-"}), attempts ${t.attempts}`
+    : "";
+  console.log(`[voice-host] ${brief ? "brief" : group ? "room turn" : "turn"} via ${host?.via ?? "none"}: ${[...chose].join(",") || "nothing"}; first ${first ?? "-"} ms, all ${Date.now() - started} ms${controller.signal.aborted ? " (hung up)" : ""}${stages}`);
   res.end();
   return true;
 }

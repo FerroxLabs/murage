@@ -38,6 +38,11 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Murage for Chrome: the store item ID and public key when the owner has
+      # set them (plan 2.3); until then this build carries no extension identity.
+      - name: Murage for Chrome identity, when set
+        shell: bash
+        run: node scripts/release-guard.mjs browser-extension-optional extensions/murage-browser/release.json >> "$GITHUB_ENV"
       # the packaged app ships compiled JS, so a stale dist/ or dist-server/
       # would ride along unsigned-for and unsealed (the 0.1.15 "damaged"
       # incident) — a fresh checkout is clean, but be explicit
@@ -91,6 +96,16 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      # The FINAL packaged build.json, not a pre-build directory (handoff 9):
+      # release mode, the store identity, no development ID, and the x64 helper.
+      - name: Murage for Chrome identity in the packaged app
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "release/win-unpacked/resources/browser-extension/build.json"
+          test -f "release/win-unpacked/resources/browser-extension/native-host.mjs"
+          test -f "release/win-unpacked/resources/browser-extension/win32-x64/murage-browser-host.exe" || { echo "::error::missing the Windows browser helper release/win-unpacked/resources/browser-extension/win32-x64/murage-browser-host.exe"; exit 1; }
+          if [ -n "${MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG:-}" ]; then node scripts/release-guard.mjs browser-extension-build "release/win-unpacked/resources/browser-extension/build.json" "$MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG"; fi
       - name: report what was built
         shell: bash
         run: |

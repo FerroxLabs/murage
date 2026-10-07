@@ -5,7 +5,7 @@ description: |
   Do NOT use for public company stock analysis, personal investment decisions, financial modeling (use financial-model-structure), or legal advice on equity agreements.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning analysis spreadsheets"
   category: "business-strategy"

@@ -3,14 +3,19 @@
 // separate final answers after the turn is done.
 import { useEffect, useState } from "react";
 import { Check, ChevronRight } from "lucide-react";
+import { HelperRows } from "@/components/HelpersLine";
+import type { Subtask } from "@/lib/subtasks";
 
 export function TurnNarrationRun({
   label,
   forceOpen = false,
+  helpers,
   children,
 }: {
   label: string;
   forceOpen?: boolean;
+  /** the turn's helpers: what each one did, shown when the summary opens */
+  helpers?: Subtask[];
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(forceOpen);
@@ -27,13 +32,14 @@ export function TurnNarrationRun({
           aria-expanded={open}
           data-run-toggle
           title={open ? "Hide progress messages" : "Show progress messages"}
-          className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-control"
+          className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           <Check size={13} className="text-success" />
           <span>{label}</span>
           <ChevronRight size={13} className={open ? "rotate-90" : undefined} />
         </button>
       </div>
+      {open && helpers?.length ? <HelperRows helpers={helpers} /> : null}
       {open && children}
     </div>
   );

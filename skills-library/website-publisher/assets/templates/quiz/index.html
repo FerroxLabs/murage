@@ -1,0 +1,153 @@
+<!doctype html>
+<!-- Copyright 2026 Ferrox Labs. SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- CONTENT BLOCK: Edit the title, description and page copy below. Keep field names, IDs and form attributes together when changing them. -->
+  <title>Find your next project step</title>
+  <meta name="description" content="Three questions to find a useful starting point.">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<main id="main" data-email-capture="false">
+  <!-- Set data-email-capture to true to offer contact after the result. Scores add up from 0 to 6. -->
+  <p class="eyebrow">Your project name</p>
+  <h1>Find your next project step</h1>
+  <p>Answer three questions to explore a useful starting point. This is a guide for reflection.</p>
+  <noscript><p>To see a result, add the points beside your choices and read the matching result below. Enable JavaScript for one question at a time.</p></noscript>
+  <section id="questions" aria-label="Project questions">
+    <p id="progress" role="status" hidden></p>
+    <fieldset data-step><legend tabindex="-1">1. How clearly can you describe your idea?</legend>
+      <label class="choice"><input type="radio" name="question-1" value="0">I am exploring possibilities (0 points)</label>
+      <label class="choice"><input type="radio" name="question-1" value="1">I have a direction in mind (1 point)</label>
+      <label class="choice"><input type="radio" name="question-1" value="2">I can describe the outcome (2 points)</label>
+    </fieldset>
+    <fieldset data-step><legend tabindex="-1">2. How well do you know your audience?</legend>
+      <label class="choice"><input type="radio" name="question-2" value="0">I am discovering who to help (0 points)</label>
+      <label class="choice"><input type="radio" name="question-2" value="1">I have some people in mind (1 point)</label>
+      <label class="choice"><input type="radio" name="question-2" value="2">I have heard what they need (2 points)</label>
+    </fieldset>
+    <fieldset data-step><legend tabindex="-1">3. What would help you move forward?</legend>
+      <label class="choice"><input type="radio" name="question-3" value="0">Space to explore (0 points)</label>
+      <label class="choice"><input type="radio" name="question-3" value="1">A simple plan (1 point)</label>
+      <label class="choice"><input type="radio" name="question-3" value="2">A small first version (2 points)</label>
+    </fieldset>
+    <p id="question-error" role="alert"></p>
+    <div id="navigation" class="actions" hidden><button id="back" type="button" class="secondary">Back</button><button id="next" type="button">Next question</button></div>
+  </section>
+  <section id="results" aria-labelledby="result-heading">
+    <h2 id="result-heading" tabindex="-1">Your next step</h2>
+    <p id="score" role="status"></p>
+    <article class="card" data-min="0" data-max="2"><h3>Explore a direction</h3><p>0 to 2 points: Write down three ideas and choose one you would like to learn more about.</p></article>
+    <article class="card" data-min="3" data-max="4"><h3>Shape a simple plan</h3><p>3 to 4 points: Describe who you want to help and one outcome that matters to them.</p></article>
+    <article class="card" data-min="5" data-max="6"><h3>Try a first version</h3><p>5 to 6 points: Make a small version of your idea and invite feedback from someone it could help.</p></article>
+    <section id="email-capture" class="card" aria-labelledby="email-heading" hidden>
+      <h3 id="email-heading">Would you like to talk about your result?</h3>
+      <p>Your result is above. Sharing your email is optional.</p>
+<form name="quiz-contact" method="POST" action="thank-you.html" data-netlify="true" netlify-honeypot="bot-field">
+  <input type="hidden" name="form-name" value="quiz-contact">
+  <p hidden><label>Leave this field empty <input name="bot-field" autocomplete="off" tabindex="-1"></label></p>
+        <input type="hidden" name="score" id="submitted-score" value="">
+        <input type="hidden" name="result" id="submitted-result" value="">
+        <label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" required aria-describedby="privacy">
+        <label class="choice"><input type="checkbox" name="contact-consent" value="yes" required>I agree to be contacted about my result.</label>
+        <p id="privacy">Your email and result are stored with Netlify Forms for the project team to read and reply.</p>
+        <button type="submit">Request a conversation</button>
+      </form>
+      <p><a href="#result-heading">Keep reading my result</a></p>
+    </section>
+    <button id="restart" type="button" class="secondary" hidden>Try the questions again</button>
+  </section>
+  <footer><p>A small step can help an idea take shape.</p></footer>
+</main>
+<!-- END CONTENT BLOCK. Appearance and behaviour follow. -->
+<style>
+  :root { color-scheme: light; font-family: system-ui, sans-serif; color: #182c29; background: #f4f7f4; line-height: 1.6; }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  main { width: min(100% - 2rem, 56rem); margin: 2rem auto; }
+  h1, h2, h3, legend { line-height: 1.2; overflow-wrap: anywhere; }
+  h1 { font-size: clamp(2rem, 7vw, 3.5rem); max-width: 20ch; }
+  h2 { font-size: 1.6rem; }
+  p { max-width: 65ch; }
+  a { color: #135e50; text-underline-offset: .2em; }
+  .eyebrow { font-weight: 700; letter-spacing: .06em; }
+  .card, fieldset { background: #fff; border: 1px solid #687b73; border-radius: 1rem; padding: 1.25rem; margin: 1.5rem 0; min-width: 0; }
+  legend { font-size: 1.25rem; font-weight: 700; padding: .25rem; }
+  label { display: block; margin: .8rem 0; }
+  input, select, textarea, button { font: inherit; }
+  input:not([type=radio]):not([type=checkbox]):not([type=hidden]), select, textarea { display: block; width: 100%; min-height: 2.75rem; border: 1px solid #687b73; border-radius: .35rem; padding: .65rem; color: #182c29; background: #fff; }
+  input[type=radio], input[type=checkbox] { width: 1.25rem; height: 1.25rem; vertical-align: middle; margin: .3rem .5rem .3rem 0; accent-color: #135e50; flex-shrink: 0; }
+  .choice { display: flex; align-items: center; min-height: 2.75rem; padding: .4rem; gap: .25rem; }
+  button, .button { display: inline-block; min-height: 2.75rem; padding: .7rem 1.2rem; border: 2px solid #135e50; border-radius: .5rem; background: #135e50; color: #fff; font-weight: 700; text-decoration: none; cursor: pointer; }
+  .secondary { background: #fff; color: #135e50; }
+  :focus-visible { outline: 3px solid #843e0d; outline-offset: 4px; }
+  .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1.5rem 0; }
+  .grid { display: grid; gap: 1rem; }
+  .grid .card { margin: 0; }
+  .skip { position: absolute; top: .5rem; left: .5rem; transform: translateY(-200%); background: #fff; padding: .5rem; z-index: 1; }
+  .skip:focus { transform: none; }
+  [hidden] { display: none !important; }
+  footer { margin-top: 3rem; border-top: 1px solid #687b73; padding-top: 1rem; }
+  @media (min-width: 42rem) { main { margin: 4rem auto; } .grid { grid-template-columns: repeat(3, 1fr); } .card, fieldset { padding: 1.75rem; } }
+</style>
+<script>
+  (() => {
+    const main = document.getElementById('main');
+    const questions = document.getElementById('questions');
+    const steps = [...document.querySelectorAll('[data-step]')];
+    const results = document.getElementById('results');
+    const cards = [...results.querySelectorAll('[data-min]')];
+    const capture = document.getElementById('email-capture');
+    const progress = document.getElementById('progress');
+    const error = document.getElementById('question-error');
+    const back = document.getElementById('back');
+    const next = document.getElementById('next');
+    let step = 0;
+    const showStep = (focus = true) => {
+      steps.forEach((item, index) => { item.hidden = index !== step; });
+      back.hidden = step === 0;
+      next.textContent = step === steps.length - 1 ? 'See my result' : 'Next question';
+      progress.textContent = `Question ${step + 1} of ${steps.length}`;
+      error.textContent = '';
+      if (focus) steps[step].querySelector('legend').focus();
+    };
+    back.addEventListener('click', () => { step = Math.max(0, step - 1); showStep(); });
+    next.addEventListener('click', () => {
+      if (!steps[step].querySelector('input:checked')) {
+        error.textContent = 'Choose an answer to continue.';
+        steps[step].querySelector('input').focus();
+        return;
+      }
+      if (step < steps.length - 1) { step += 1; showStep(); return; }
+      const score = steps.reduce((sum, item) => sum + Number(item.querySelector('input:checked').value), 0);
+      const result = cards.find(card => score >= Number(card.dataset.min) && score <= Number(card.dataset.max));
+      if (!result) { error.textContent = 'Please ask the project team to check the result ranges.'; return; }
+      cards.forEach(card => { card.hidden = card !== result; });
+      document.getElementById('score').textContent = `Your score: ${score}`;
+      document.getElementById('submitted-score').value = String(score);
+      document.getElementById('submitted-result').value = result.querySelector('h3').textContent;
+      questions.hidden = true;
+      results.hidden = false;
+      capture.hidden = main.dataset.emailCapture !== 'true';
+      document.getElementById('result-heading').focus();
+    });
+    document.getElementById('restart').addEventListener('click', () => {
+      questions.querySelectorAll('input').forEach(input => { input.checked = false; });
+      capture.querySelector('form').reset();
+      capture.hidden = true;
+      results.hidden = true;
+      questions.hidden = false;
+      step = 0;
+      showStep();
+    });
+    results.hidden = true;
+    progress.hidden = false;
+    document.getElementById('navigation').hidden = false;
+    document.getElementById('restart').hidden = false;
+    showStep(false);
+  })();
+</script>
+</body>
+</html>

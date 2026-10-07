@@ -1,10 +1,11 @@
+import { renderMurageTools, CODEX_TOOL_SURFACE } from "./murage-tool-surface.ts";
 import { describe, expect, it } from "vitest";
 
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt } from "./chief-of-staff.ts";
 
 describe("chiefOfStaffSystemPrompt roster caps", () => {
   it("clips oversized persona fields instead of interpolating them whole", () => {
-    const prompt = chiefOfStaffSystemPrompt(
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt(
       "chief",
       [
         { id: "chief", name: "Atlas" },
@@ -16,7 +17,7 @@ describe("chiefOfStaffSystemPrompt roster caps", () => {
         },
       ],
       true,
-    );
+    ), CODEX_TOOL_SURFACE, {agents:"agents"});
     // an imported 10KB description must not ride into the Chief's system
     // prompt — the roster line stays bounded
     const rosterLine = prompt.split("\n").find((line) => line.startsWith("- N"))!;
@@ -26,7 +27,7 @@ describe("chiefOfStaffSystemPrompt roster caps", () => {
 
   it("caps the roster length and says how many were left out", () => {
     const team = Array.from({ length: 60 }, (_, i) => ({ id: `bot${i}`, name: `Bot ${i}` }));
-    const prompt = chiefOfStaffSystemPrompt("chief", [{ id: "chief", name: "Atlas" }, ...team], true);
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("chief", [{ id: "chief", name: "Atlas" }, ...team], true), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).toContain("Bot 39");
     expect(prompt).not.toContain("Bot 40 (");
     expect(prompt).toContain("…and 20 more");
@@ -43,7 +44,7 @@ describe("chiefOfStaffSystemPrompt", () => {
   ];
 
   it("describes visible teammates, roles, and availability", () => {
-    const prompt = chiefOfStaffSystemPrompt("chief", bots, true);
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("chief", bots, true), CODEX_TOOL_SURFACE, {agents:"agents"});
 
     expect(prompt).toContain("Chief of Staff for the Work section");
     expect(prompt).toContain("Quill (Writer, available): Drafts concise copy");
@@ -51,17 +52,17 @@ describe("chiefOfStaffSystemPrompt", () => {
     expect(prompt).not.toContain("Secret");
     expect(prompt).not.toContain("Scout");
     expect(prompt).not.toContain("Atlas (");
-    expect(prompt).toContain("use delegate_bot");
+    expect(prompt).toContain("use mcp__agents__delegate_bot");
     expect(prompt).toContain("keeps you available to the user");
     expect(prompt).toContain("delivers the teammate's completed result back into this conversation automatically");
-    expect(prompt).toContain("Do not call wait_delegation");
-    expect(prompt).toContain("Use ask_bot only for a brief consultation");
-    expect(prompt).toContain("Never use ask_bot for an assigned task");
-    expect(prompt).toContain("use create_bot");
+    expect(prompt).toContain("Do not call mcp__agents__wait_delegation");
+    expect(prompt).toContain("Use mcp__agents__ask_bot only for a brief consultation");
+    expect(prompt).toContain("Never use mcp__agents__ask_bot for an assigned task");
+    expect(prompt).toContain("use mcp__agents__create_bot");
   });
 
   it("does not promise delegation when the engine cannot mount agent tools", () => {
-    const prompt = chiefOfStaffSystemPrompt("chief", bots, false);
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("chief", bots, false), CODEX_TOOL_SURFACE, {agents:"agents"});
 
     expect(prompt).toContain("cannot contact teammates");
     expect(prompt).not.toContain("delegate_bot");
@@ -91,7 +92,7 @@ describe("chiefOfStaffSystemPrompt — the workspace tier", () => {
   ];
 
   it("names the team leaders, counts their specialists, and never names a specialist", () => {
-    const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("ember", workspace, true), CODEX_TOOL_SURFACE, {agents:"agents"});
 
     expect(prompt).toContain("Chief of Staff for this workspace");
     expect(prompt).toContain("Sales, led by @Rex (Head of Sales, available): Owns pipeline; 2 specialists");
@@ -104,18 +105,18 @@ describe("chiefOfStaffSystemPrompt — the workspace tier", () => {
   });
 
   it("says a team has no leader rather than working around it", () => {
-    const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("ember", workspace, true), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).toContain("Ops: no leader yet (1 bot). Say so rather than working around it.");
   });
 
   it("lists bots in the chief's own section as direct reports", () => {
-    const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("ember", workspace, true), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).toContain("Also reporting to you directly:");
     expect(prompt).toContain("- @Scribe (Note taker, available)");
   });
 
   it("keeps the section-lead prompt verbatim for a bot without the tier", () => {
-    const prompt = chiefOfStaffSystemPrompt("rex", workspace, true);
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("rex", workspace, true), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).toContain("Chief of Staff for the Sales section");
     expect(prompt).toContain("Dash (SDR, available)");
     expect(prompt).toContain("Wick (SDR, working right now)");
@@ -132,17 +133,17 @@ describe("chiefOfStaffSystemPrompt — the workspace tier", () => {
   });
 
   it("clips a hostile section label and emits the team size as a number", () => {
-    const prompt = chiefOfStaffSystemPrompt("ember", [
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("ember", [
       workspace[0]!,
       { id: "lead", name: "Lead", section: "S".repeat(400), chiefOfStaff: true },
-    ], true);
+    ], true), CODEX_TOOL_SURFACE, {agents:"agents"});
     const line = prompt.split("\n").find((row) => row.startsWith("- S"))!;
     expect(line.length).toBeLessThan(300);
     expect(line).toContain("…");
   });
 
   it("still refuses to promise delegation on an engine without the tools", () => {
-    const prompt = chiefOfStaffSystemPrompt("ember", workspace, false);
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("ember", workspace, false), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).toContain("cannot contact teammates");
     expect(prompt).not.toContain("delegate_bot");
   });
@@ -163,7 +164,7 @@ describe("chiefOfStaffSystemPrompt — individual assistants", () => {
   ];
 
   it("gives individual assistants their own group, never the team-leader line", () => {
-    const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("ember", workspace, true), CODEX_TOOL_SURFACE, {agents:"agents"});
 
     expect(prompt).toContain("Individual assistants (they lead no team and report to you directly):");
     expect(prompt).toContain("- @Bruce (Trading assistant, available): Runs the book");
@@ -174,37 +175,37 @@ describe("chiefOfStaffSystemPrompt — individual assistants", () => {
   });
 
   it("keeps the group an individual sits in out of the team list entirely", () => {
-    const prompt = chiefOfStaffSystemPrompt("ember", workspace, true);
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("ember", workspace, true), CODEX_TOOL_SURFACE, {agents:"agents"});
     const teams = prompt.slice(prompt.indexOf("Team leaders:"), prompt.indexOf("Individual assistants"));
     expect(teams).toContain("Sales, led by @Rex");
     expect(teams).not.toContain("Smart Trader");
   });
 
   it("does not treat a team leader or a plain member as individual", () => {
-    const prompt = chiefOfStaffSystemPrompt("ember", [
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("ember", [
       workspace[0]!,
       workspace[1]!,
       workspace[2]!,
-    ], true);
+    ], true), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).not.toContain("Individual assistants");
   });
 
   it("refuses the individual branch to a bot that also leads — the chart wins", () => {
     // Both flags on one record can only come from a hand-edited file; the
     // store de-dupes it at load. The prompt must not depend on that.
-    const prompt = chiefOfStaffSystemPrompt("ember", [
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("ember", [
       workspace[0]!,
       { id: "both", name: "Janus", title: "Lead", section: "Ops", chiefOfStaff: true, individual: true },
-    ], true);
+    ], true), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).toContain("Ops, led by @Janus (Lead, available); 0 specialists");
     expect(prompt).not.toContain("Individual assistants");
   });
 
   it("does not name a hidden individual assistant", () => {
-    const prompt = chiefOfStaffSystemPrompt("ember", [
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("ember", [
       workspace[0]!,
       { id: "ghost", name: "Spectre", section: "Solo", individual: true, hidden: true },
-    ], true);
+    ], true), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).not.toContain("Spectre");
     expect(prompt).not.toContain("Individual assistants");
   });
@@ -215,33 +216,33 @@ describe("individualAssistantSystemPrompt", () => {
   const ember = { id: "ember", name: "Ember", title: "Chief of Staff", chiefOfStaff: true, chiefScope: "workspace" as const };
 
   it("names the Chief as the one bot it reports to", () => {
-    const prompt = individualAssistantSystemPrompt("bruce", [bruce, ember], true);
+    const prompt = renderMurageTools(individualAssistantSystemPrompt("bruce", [bruce, ember], true), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).toContain("You are an individual assistant");
     expect(prompt).toContain("@Ember is the workspace Chief of Staff and you report to them directly");
-    expect(prompt).toContain("Use list_bots");
+    expect(prompt).toContain("Use mcp__agents__list_bots");
     expect(prompt).not.toContain("the other bots in your section");
   });
 
   it("says plainly that nobody is reachable when no Chief has been elected", () => {
-    const prompt = individualAssistantSystemPrompt("bruce", [bruce, { id: "rex", name: "Rex", section: "Sales", chiefOfStaff: true }], true);
+    const prompt = renderMurageTools(individualAssistantSystemPrompt("bruce", [bruce, { id: "rex", name: "Rex", section: "Sales", chiefOfStaff: true }], true), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).toContain("no Chief of Staff");
     expect(prompt).toContain("Say so rather than inventing a teammate");
     expect(prompt).not.toContain("Rex");
   });
 
   it("never contradicts canReach when the individual shares a group", () => {
-    const prompt = individualAssistantSystemPrompt(
+    const prompt = renderMurageTools(individualAssistantSystemPrompt(
       "bruce",
       [bruce, ember, { id: "quant", name: "Quant", title: "Analyst", section: "Smart Trader" }],
       true,
-    );
+    ), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).toContain("Bots filed alongside you");
     expect(prompt).toContain("- Quant (Analyst, available)");
     expect(prompt).not.toContain("no other bot you can reach");
   });
 
   it("promises no tools the engine cannot mount", () => {
-    const prompt = individualAssistantSystemPrompt("bruce", [bruce, ember], false);
+    const prompt = renderMurageTools(individualAssistantSystemPrompt("bruce", [bruce, ember], false), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).not.toContain("delegate_bot");
     expect(prompt).not.toContain("list_bots");
   });
@@ -254,14 +255,8 @@ describe("chiefOfStaffSystemPrompt speaks only for the Chief", () => {
     ["section lead", [{ id: "chief", name: "Atlas", section: "Work", chiefOfStaff: true }, { id: "moss", name: "Moss", section: "Work" }]],
     ["workspace Chief", [{ id: "chief", name: "Ember", chiefOfStaff: true, chiefScope: "workspace" as const }, { id: "rex", name: "Rex", section: "Sales", chiefOfStaff: true }]],
   ])("tells a %s never to answer on a teammate's behalf", (_label, bots) => {
-    const prompt = chiefOfStaffSystemPrompt("chief", bots, true);
+    const prompt = renderMurageTools(chiefOfStaffSystemPrompt("chief", bots, true), CODEX_TOOL_SURFACE, {agents:"agents"});
     expect(prompt).toContain("never write lines as a teammate or answer on a teammate's behalf");
     expect(prompt).toContain("If a message is addressed to a teammate, hand it to them");
   });
-});
-
-it("uses engine-neutral agents tool instructions", () => {
-  const prompt = chiefOfStaffSystemPrompt("chief", [{ id: "chief", name: "Chief" }, { id: "peer", name: "Peer" }], true);
-  expect(prompt).toContain("Use Murage's agents tools (list_bots, ask_bot, delegate_bot)");
-  expect(prompt).not.toContain("mcp__agents");
 });

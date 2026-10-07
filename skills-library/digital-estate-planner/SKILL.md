@@ -12,7 +12,7 @@ description: |
   will-preparation-checklist or estate-attorney-prep-guide instead).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "estate-planning legal-literacy checklist template"
   category: "legal-civic"

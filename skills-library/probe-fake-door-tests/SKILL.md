@@ -1,8 +1,9 @@
 ---
 name: probe-fake-door-tests
 description: "The user wants to know if a new product, feature, price point, or positioning has demand before they spend weeks building it. Load this whenever someone says \"should we build X,\" \"would people pay Y for this,\" or \"is there a market for Z.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "probe"
 ---

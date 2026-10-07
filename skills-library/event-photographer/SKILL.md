@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of event photographer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design photography budgeting checklist guide beginner-friendly quick-reference cloud"
   category: "design-creative"

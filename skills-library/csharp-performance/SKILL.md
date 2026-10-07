@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about C# async (use `csharp-async-patterns`), C# modern idioms (use `csharp-modern-idioms`), general performance testing (use `performance-testing`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "csharp optimization debugging"
   category: "software-engineering"

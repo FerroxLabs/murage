@@ -26,12 +26,15 @@ import {
   LEGACY_BROKER_RETIRED,
   LEGACY_BROKER_RETIRED_FLUX_READY,
   LEGACY_DAILY_LIMIT,
+  mcpIntegration,
   primeBrokerReadiness,
+  setMountWaitCapMsForTests,
   relayMcp,
   turnConnectedAppsReady,
   resetManagedBrokerState,
   setBrokerEventSink,
 } from "./composio.ts";
+import { brokerTokenFingerprint } from "../electron/flux-composio-token.mjs";
 import { DATA_DIR, type AppConfig } from "./config.ts";
 import { DEV_FLUX_TOKEN_FILE, DEV_FLUX_TOKEN_LABEL, resetDevFluxTokenState } from "./flux-composio-dev-token.ts";
 
@@ -137,11 +140,11 @@ async function readyFlux(options: Parameters<typeof shell>[0] = {}) {
 }
 
 describe("which broker a data call uses", () => {
-  it("lets a pasted Composio key beat every managed broker", async () => {
-    await readyFlux();
+  it("ignores an old saved own key: the managed broker still serves", async () => {
+    await readyFlux({ claim: { state: "claimed" } });
     const own = cfg({ composio: { apiKey: "ak_live" } });
-    expect(connectionBroker(own)).toBeNull();
-    expect(connectionMode(own)).toBe("self-hosted");
+    expect(connectionBroker(own)).toBe("flux");
+    expect(connectionMode(own)).toBe("managed");
   });
 
   it("prefers FluxRouter once this install has no live Worker identity", async () => {
@@ -282,9 +285,33 @@ describe("what a broker request carries", () => {
     await readyFlux({ claim: { state: "claimed" } });
     dataAnswer = { status: 401, body: { error: "gone", code: "broker_token_revoked" } };
     await connectedServices(cfg()).catch(() => undefined);
-    expect(events).toEqual([{ type: "murage:flux-composio-token-rejected" }]);
+    // The event names WHICH token was rejected (a fingerprint, never the
+    // token), so the desktop ignores a straggler for one already replaced.
+    expect(events).toEqual([{ type: "murage:flux-composio-token-rejected", tokenFingerprint: brokerTokenFingerprint(FLUX_TOKEN), code: "broker_token_revoked" }]);
     // And it stops using a broker it cannot authenticate against.
     expect(connectionBroker(cfg())).toBe("legacy");
+  });
+
+  it("tells the desktop when another device's mint pushed this token out", async () => {
+    const events: Array<{ type: string; code?: string }> = [];
+    setBrokerEventSink((event) => events.push(event));
+    await readyFlux({ claim: { state: "claimed" } });
+    dataAnswer = { status: 401, body: { error: "gone", code: "broker_token_evicted" } };
+    await connectedServices(cfg()).catch(() => undefined);
+    expect(events).toMatchObject([{ type: "murage:flux-composio-token-rejected", code: "broker_token_evicted" }]);
+  });
+
+  it.each([
+    ["a code nobody has seen", { error: "gone", code: "something_new" }, "something_new"],
+    ["no code at all", { error: "unauthorized" }, "unknown"],
+    ["a plain expiry", { error: "expired", code: "broker_token_expired" }, "broker_token_expired"],
+  ])("sends any other 401 (%s) to the desktop too, so apps never stay dead until expiry", async (_name, body, code) => {
+    const events: Array<{ type: string; code?: string; tokenFingerprint?: string }> = [];
+    setBrokerEventSink((event) => events.push(event));
+    await readyFlux({ claim: { state: "claimed" } });
+    dataAnswer = { status: 401, body };
+    await connectedServices(cfg()).catch(() => undefined);
+    expect(events).toEqual([{ type: "murage:flux-composio-token-rejected", tokenFingerprint: brokerTokenFingerprint(FLUX_TOKEN), code }]);
   });
 
   it("recognises an install whose apps somebody else moved", async () => {
@@ -310,7 +337,8 @@ describe("the FluxRouter readiness probe", () => {
 
     health = { status: 200, body: { ready: true, claims: true } };
     vi.setSystemTime(Date.now() + 25_000);
-    expect(configured(cfg())).toBe(false);
+    // (Reading configured() here would itself start a background re-check,
+    // since 0.1.62: see composio-recovery.test.ts. This test is the turn's.)
     expect(await turnConnectedAppsReady(cfg())).toBe(true);
     expect(connectionBroker(cfg())).toBe("flux");
   });
@@ -378,6 +406,38 @@ describe("the FluxRouter readiness probe", () => {
     expect(healthProbes).toBe(1);
   });
 
+  describe("a connector mount while another request's probe is running", () => {
+    const ctx = { harnessUrl: "http://127.0.0.1:1", commsToken: "t", botId: "b", threadId: "th" };
+    afterEach(() => setMountWaitCapMsForTests());
+
+    it("joins the running probe and mounts Composio instead of returning unmounted", async () => {
+      healthDelayMs = 150;
+      shell({ flux: true, claim: { state: "claimed" } });
+      const inFlight = primeBrokerReadiness();
+      const integration = await mcpIntegration(cfg(), ctx);
+      expect(integration).not.toBeNull();
+      expect(integration?.env.MURAGE_BOT_ID).toBe("b");
+      expect(healthProbes).toBe(1);
+      await inFlight;
+    });
+
+    it("is bounded by the cap when the probe never answers in time", async () => {
+      healthDelayMs = 1_500;
+      shell({ flux: true, claim: { state: "claimed" } });
+      setMountWaitCapMsForTests(100);
+      const inFlight = primeBrokerReadiness();
+      const started = Date.now();
+      const integration = await mcpIntegration(cfg(), ctx);
+      expect(Date.now() - started).toBeLessThan(1_000);
+      // Fell through with the state that existed (probe still unresolved).
+      expect(connectionBroker(cfg())).toBe("legacy");
+      expect(integration).not.toBeNull();
+      expect(healthProbes).toBe(1);
+      await inFlight;
+      expect(connectionBroker(cfg())).toBe("flux");
+    });
+  });
+
   it("forgets its answer on demand", async () => {
     await readyFlux({ claim: { state: "claimed" } });
     expect(connectionBroker(cfg())).toBe("flux");
@@ -427,9 +487,9 @@ describe("what the panel is told", () => {
     expect(JSON.stringify(fields)).not.toContain(LEGACY_TOKEN);
   });
 
-  it("says nothing about a move for a workspace running its own key", () => {
+  it("reports the move the same way whether or not an old own key is saved", () => {
     shell({ flux: "url-only", claim: { state: "offered" } });
-    expect(connectorMigration(cfg({ composio: { apiKey: "ak_live" } }))).toMatchObject({ state: "none" });
+    expect(connectorMigration(cfg({ composio: { apiKey: "ak_live" } }))).toMatchObject({ state: "offered" });
   });
 });
 
@@ -581,6 +641,8 @@ describe("the dev harness mints its own FluxRouter token", () => {
     await primeBrokerReadiness();
     expect(mints()).toHaveLength(2);
     expect(MINTED_TOKEN()).not.toBe(first);
+    // Mint first, then end this harness's own previous token (and only it).
+    expect(revocations().map((request) => request.authorization)).toEqual([`Bearer ${first}`]);
     expect(connectionBroker(cfg())).toBe("flux");
     await connectedServices(cfg());
     expect(requests.filter((request) => request.path.endsWith("/v1/connectors/connected")).at(-1)?.authorization).toBe(`Bearer ${MINTED_TOKEN()}`);
@@ -692,5 +754,52 @@ describe("when the Murage Worker retires or hits its daily cap", () => {
     expect(reply.status).toBe(500);
     expect(decode(reply.bytes)).toEqual({ error: "boom" });
     expect(connectionBroker(cfg())).toBe("legacy");
+  });
+});
+
+describe("permission is rechecked after the readiness wait, before anything is sent", () => {
+  it("sends no MCP request when access is revoked while readiness is pending", async () => {
+    shell({ flux: true, claim: { state: "claimed" } });
+    healthDelayMs = 150;
+    let allowed = true;
+    setTimeout(() => { allowed = false; }, 50);
+    const authorize = vi.fn(() => { if (!allowed) throw new Error("owner revoked access"); });
+    await expect(relayMcp(cfg(), { jsonrpc: "2.0", id: 1, method: "tools/list" }, undefined, authorize)).rejects.toThrow("owner revoked access");
+    expect(authorize).toHaveBeenCalledOnce();
+    expect(requests.some((request) => request.path.endsWith("/v1/mcp"))).toBe(false);
+  });
+});
+
+describe("a turn that expects connected apps at launch", () => {
+  it("joins the readiness probe that is still running instead of reporting ready at once", async () => {
+    // Boot: the first probe is in flight and slow. A turn used to skip it,
+    // read the empty cache and treat "no connectors" as ready.
+    shell({ flux: true, legacy: false, claim: { state: "claimed" } });
+    healthDelayMs = 150;
+    const first = primeBrokerReadiness();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await turnConnectedAppsReady(cfg(), { expectConnectors: true, waitMs: 3_000 })).toBe(true);
+    await first;
+    expect(healthProbes).toBe(1);
+  });
+
+  it("is still bounded when the broker never answers in time", async () => {
+    shell({ flux: true, legacy: false, claim: { state: "claimed" } });
+    healthDelayMs = 400;
+    const first = primeBrokerReadiness();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const started = Date.now();
+    expect(await turnConnectedAppsReady(cfg(), { expectConnectors: true, waitMs: 50 })).toBe(false);
+    expect(Date.now() - started).toBeLessThan(300);
+    await first;
+  });
+
+  it("without the expectation keeps the old non-waiting behavior", async () => {
+    shell({ flux: true, legacy: false, claim: { state: "claimed" } });
+    healthDelayMs = 150;
+    const first = primeBrokerReadiness();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await turnConnectedAppsReady(cfg())).toBe(false);
+    await first;
   });
 });

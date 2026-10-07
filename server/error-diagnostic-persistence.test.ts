@@ -68,3 +68,12 @@ it("load drops invalid new metadata without rewriting stored rows or changing le
   expect(reloaded.find(message => message.id === saved.id)?.tool?.errorDetails).toBe("Existing details");
   expect(stored(threadId).messages.find(message => message.id === saved.id)?.tool?.diagnostic).toEqual(malformed.tool.diagnostic);
 });
+it("a patch event carries the message as it was before the patch", () => {
+  const { store, threadId } = fixture();
+  const saved = store.appendMessage(threadId, error());
+  const events: unknown[] = [];
+  store.onChange((change) => { if (change.type === "message.patch") events.push(change); });
+  store.patchMessage(threadId, saved.id, { text: "changed" });
+  expect(events).toMatchObject([{ message: { id: saved.id, text: "changed" }, before: { id: saved.id } }]);
+  expect((events[0] as { before: Message }).before.text).toBeUndefined();
+});

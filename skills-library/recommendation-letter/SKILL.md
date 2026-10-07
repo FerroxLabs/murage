@@ -6,7 +6,7 @@ description: |
   Do NOT use for cover letters (use career skills), personal references for housing (different format), or self-recommendation (that is a personal statement).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "writing personal-communication email"
   category: "writing"

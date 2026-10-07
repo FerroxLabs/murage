@@ -34,11 +34,12 @@ function views(path: string, content: string): { code: string; prose: string; ma
  *  rules. SkillSpector's high patterns are read without the context
  *  analysis SkillSpector runs around them, so on their own they ask for a
  *  look and never block. */
+export const findingBlocks = (f: SkillFinding) =>
+  (f.severity === "critical" && f.confidence >= BLOCK_RULES.criticalAt) ||
+  (f.severity === "high" && f.source !== "skillspector" && f.confidence >= BLOCK_RULES.highAt);
+
 export function verdictFor(findings: SkillFinding[]): SkillVerdict {
-  const blocks = (f: SkillFinding) =>
-    (f.severity === "critical" && f.confidence >= BLOCK_RULES.criticalAt) ||
-    (f.severity === "high" && f.source !== "skillspector" && f.confidence >= BLOCK_RULES.highAt);
-  if (findings.some(blocks)) return "blocked";
+  if (findings.some(findingBlocks)) return "blocked";
   return findings.length ? "review" : "clean";
 }
 
@@ -58,23 +59,26 @@ function corroborated(findings: SkillFinding[]): SkillFinding[] {
   return [...findings.filter((f) => f.source !== "skillspector"), ...kept];
 }
 
-export function scanSkill(input: SkillScanInput, now: Date = new Date()): SkillScan {
+export function scanSkill(input: SkillScanInput, now: Date = new Date(), onText?: (length: number) => void): SkillScan {
   // Trigger terms are single words: only Skill Guard's rules and the
   // index-poisoning check read them, never SkillSpector's line patterns.
   const texts = [
-    ...input.files.map((file) => ({ file: file.path, text: file.content, spector: true })),
-    { file: "(description)", text: input.description, spector: true },
-    { file: "(trigger terms)", text: input.triggerTerms.join(" "), spector: false },
+    ...input.files.map((file) => ({ file: file.path, text: file.content, spector: true, both: file.both === true })),
+    { file: "(description)", text: input.description, spector: true, both: false },
+    { file: "(trigger terms)", text: input.triggerTerms.join(" "), spector: false, both: false },
   ];
   const findings: SkillFinding[] = [];
-  for (const { file, text, spector: readBySpector } of texts) {
+  for (const { file, text, spector: readBySpector, both } of texts) {
     if (!text) continue;
+    // Lets a caller show how far a large scan has got; reads nothing.
+    onText?.(text.length);
     for (const rule of SKILL_RULES) {
       const match = rule.test(text);
       if (match !== null) findings.push({ rule: rule.id, category: rule.category, severity: rule.severity, confidence: rule.confidence, message: plainMessage(rule.category), evidence: match, file, source: rule.source });
     }
     if (!readBySpector) continue;
-    const view = file.startsWith("(") ? { code: "", prose: text, manifest: false } : views(file, text);
+    const view = both ? { code: text, prose: text, manifest: false }
+      : file.startsWith("(") ? { code: "", prose: text, manifest: false } : views(file, text);
     for (const pattern of spector()) {
       const target = pattern.applies === "manifest" ? (view.manifest ? view.code : "")
         : pattern.applies === "code" ? view.code

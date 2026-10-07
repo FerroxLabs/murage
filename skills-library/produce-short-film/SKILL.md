@@ -20,7 +20,7 @@ trigger_phrases: >-
   how to direct a short film film festival submission make my first movie short
   film from script to screen
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: video-production editing step-by-step planning
   category: creative-project

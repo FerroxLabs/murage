@@ -1,0 +1,14 @@
+{
+  "id": "document-to-table-checklist",
+  "name": "Document-to-Table Checklist",
+  "version": "1.0.0",
+  "description": "Turns supplied PDFs, receipts and forms into a traceable table. Defines destination fields, links each value to a document and page, records uncertain readings, and reconciles row counts and totals against the source. Use when structured data must be extracted from documents. The procedure uses an available reader and does not claim OCR or file access that has not been demonstrated.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "documents",
+    "extraction",
+    "tables",
+    "provenance"
+  ],
+  "requiredCapabilities": []
+}

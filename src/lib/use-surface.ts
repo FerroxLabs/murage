@@ -21,7 +21,15 @@ import { knownSurface, surface, type SurfaceAnswer } from "./surface";
  * on a phone that frame is what the user photographs.
  */
 export function useDesktopSurface(): boolean | undefined {
+  return useSurfaceState().desktop;
+}
+
+/** The same answer, plus whether the harness has confirmed it. `false` after a
+ * failed first ask is a fallback, not a phone: a screen that would move the
+ * person away from a desktop-only place waits for `confirmed`. */
+export function useSurfaceState(): { desktop: boolean | undefined; confirmed: boolean } {
   const [answer, setAnswer] = useState<SurfaceAnswer | undefined>(() => knownSurface());
+  const [confirmed, setConfirmed] = useState(() => knownSurface() !== undefined);
   useEffect(() => {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -30,6 +38,7 @@ export function useDesktopSurface(): boolean | undefined {
       const next = await surface();
       if (!live) return;
       setAnswer(next);
+      setConfirmed(knownSurface() !== undefined);
       // A transient fallback is safe to render, but is not confirmation.
       // Keep mounted screens recoverable while the harness starts. A real
       // remote answer stops here, including on the browser door.
@@ -44,7 +53,7 @@ export function useDesktopSurface(): boolean | undefined {
       clearTimeout(timer);
     };
   }, []);
-  return resolveDesktopSurface(answer, (globalThis as { muragebox?: unknown }).muragebox);
+  return { desktop: resolveDesktopSurface(answer, (globalThis as { muragebox?: unknown }).muragebox), confirmed };
 }
 
 /** The one synchronous signal that can only ever be a TRUE positive.

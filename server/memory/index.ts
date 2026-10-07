@@ -25,6 +25,11 @@ export class MemoryIndex {
       CREATE TABLE IF NOT EXISTS entries(id TEXT NOT NULL,version INTEGER NOT NULL,scope_id TEXT NOT NULL,text TEXT NOT NULL,PRIMARY KEY(id,version));
       CREATE VIRTUAL TABLE IF NOT EXISTS lexical USING fts5(id UNINDEXED,version UNINDEXED,text,tokenize='unicode61');
       CREATE TABLE IF NOT EXISTS vectors(id TEXT NOT NULL,version INTEGER NOT NULL,model TEXT NOT NULL,part INTEGER NOT NULL,vector BLOB NOT NULL,PRIMARY KEY(id,version,model,part));`);
+    // FTS5 keeps a deleted document's terms in its index segments until they
+    // are merged, so secure_delete alone left a forgotten memory's words in
+    // the file (0.1.60 low). A write that deletes merges the index
+    // (`optimize`) in the same transaction, and secure_delete zeroes the
+    // pages the merge frees.
     if(!hadLexicalKeys){
       // Backfill once, atomically, including legacy FTS rowids that do not
       // match entries.rowid. Subsequent writes use the keyed rowid lookup.
@@ -51,10 +56,37 @@ export class MemoryIndex {
         const inserted=this.db.prepare("INSERT INTO lexical VALUES(?,?,?)").run(row.id,row.version,row.text);
         this.db.prepare("INSERT INTO lexical_keys VALUES(?,?,?)").run(row.id,row.version,inserted.lastInsertRowid);
       }
+      if(records.some(row=>row.deleted))this.db.exec("INSERT INTO lexical(lexical) VALUES('optimize')");
       this.db.exec("COMMIT");
     }catch(error){this.db.exec("ROLLBACK");throw error;}
     // The old pages stay in the write-ahead log until it is checkpointed.
     if(records.some(row=>row.deleted))try{this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");}catch{/* the next checkpoint takes it */}
+  }
+  /** Remove every entry (lexical text, keys, vectors) of the given record ids, all
+   * versions. Bounded (200 ids per transaction) and idempotent: a second call
+   * finds nothing. Used at open to drop owner-authored continuity records that an
+   * earlier build indexed, so their text never contributes to BM25 statistics. */
+  purgeRecords(ids: readonly string[]): number {
+    let removed=0;
+    for(let start=0;start<ids.length;start+=200){
+      const chunk=JSON.stringify(ids.slice(start,start+200));
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        const rowids=this.db.prepare("SELECT fts_rowid FROM lexical_keys WHERE id IN (SELECT value FROM json_each(?))").all(chunk);
+        for(const row of rowids)this.db.prepare("DELETE FROM lexical WHERE rowid=?").run(row.fts_rowid);
+        removed+=rowids.length;
+        this.db.prepare("DELETE FROM lexical_keys WHERE id IN (SELECT value FROM json_each(?))").run(chunk);
+        removed+=Number(this.db.prepare("DELETE FROM entries WHERE id IN (SELECT value FROM json_each(?))").run(chunk).changes);
+        removed+=Number(this.db.prepare("DELETE FROM vectors WHERE id IN (SELECT value FROM json_each(?))").run(chunk).changes);
+        this.db.exec("COMMIT");
+      }catch(error){this.db.exec("ROLLBACK");throw error;}
+    }
+    if(removed){
+      const drop=new Set(ids);
+      if(this.matrix)for(const [key,entry] of this.matrix.rows)if(drop.has(entry.id))this.matrix.rows.delete(key);
+      try{this.db.exec("INSERT INTO lexical(lexical) VALUES('optimize')");this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");}catch{/* the next write merges */}
+    }
+    return removed;
   }
   vector(record: IndexedMemory, model: string, part: number, values: number[]) {
     const array=new Float32Array(values);

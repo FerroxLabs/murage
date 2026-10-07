@@ -23,8 +23,10 @@ import {
   antigravityAgentsMcpServer,
   antigravityComputerMcpServer,
   antigravityMcpServers,
+  ANTIGRAVITY_CUSTOM_MCP_PREFIX,
   supportsAntigravityStreamInput,
   ensureAntigravityMcpServers,
+  sweepAntigravityCustomMcpServers,
   readAntigravityModelCatalog,
   STATIC_ANTIGRAVITY_MODELS,
 } from "./antigravity.ts";
@@ -104,13 +106,13 @@ describe("Antigravity turns (fake CLI)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
 
-  const create = async () => {
+  const create = async (fullAuto = true) => {
     instance = await AntigravityDriver.create({
       instanceId: "agy-test",
       displayName: "Antigravity Test",
       environment: {},
       enabled: true,
-      config: { cli: FAKE_CLI, fullAuto: true },
+      config: { cli: FAKE_CLI, fullAuto },
     });
     recorder = recordEvents(instance.adapter);
   };
@@ -125,6 +127,13 @@ describe("Antigravity turns (fake CLI)", () => {
     delete process.env.FAKE_AGY_VERSION;
     recorder?.stop();
     await instance?.dispose();
+  });
+
+  it("reports exactly one usage total for each of two turns",async()=>{
+    await create();
+    for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({threadId:"usage-two",text:"hi",model:"gemini-3.1-pro-high"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
+    const completed=recorder.events.filter(e=>e.type==="turn.completed");expect(completed).toHaveLength(2);
+    for(const event of completed)expect(event).toMatchObject({ok:true,usage:{input:105,output:20}});
   });
 
   it("normalizes a full print-mode turn into the canonical event sequence", async () => {
@@ -215,6 +224,29 @@ describe("Antigravity turns (fake CLI)", () => {
   // (server/stop-line.ts) this engine never skips permissions: deleting
   // outside its folder, paying and messaging someone new cannot happen
   // unasked. Without the stop line the instance's own setting stands.
+  // Gap 4: routeAsks removes Antigravity's skip flag for this turn only.
+  it("routeAsks overrides only Antigravity skip-all argv", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "murage-agy-enforce-"));
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_AGY_DUMP = dump;
+    try {
+      for (const fullAuto of [false, true]) {
+        if (fullAuto) { recorder.stop(); await instance.dispose(); }
+        await create(fullAuto);
+        for (const [turn, enforced] of [false, true, false].entries()) {
+          const sent = await instance.adapter.sendTurn({
+            threadId: `t-enforce-${fullAuto}-${turn}`, text: "hi",
+            ...(enforced ? { routeAsks: true as const } : {}),
+          });
+          await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
+          const { argv } = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
+          expect(argv.includes("--dangerously-skip-permissions")).toBe(fullAuto && !enforced);
+          if (!fullAuto || enforced) expect(argv).toContain("accept-edits");
+        }
+      }
+    } finally { await removeTempDir(scratch); }
+  });
+
   it.each([[true, "accept-edits"], [false, "--dangerously-skip-permissions"]] as const)("never skips permissions under the stop line (stopLine %s)", async (stopLine, expected) => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-agy-stop-line-"));
     const dump = join(scratch, "dump.json");
@@ -358,6 +390,64 @@ describe("Antigravity turns (fake CLI)", () => {
       delete process.env.MURAGE_ANTIGRAVITY_LEASE_BEAT_MS;
       await holder.adapter.interruptTurn("t-holder");
       await holderEvents.until((e) => e.type === "turn.completed").catch(() => undefined);
+      holderEvents.stop();
+      await holder.dispose();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it("fences the write after the lease wait: a turn retired while queued (keeping --conversation) spawns and writes nothing", async () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-fence-"));
+    const readyFile = join(home, "ready");
+    const dump = join(home, "queued-dump.json");
+    const holder = await AntigravityDriver.create({
+      instanceId: "agy-fence-holder",
+      displayName: undefined,
+      environment: { HOME: home, FAKE_AGY_DELAY_MS: "10000", FAKE_AGY_READY_FILE: readyFile },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    const holderEvents = recordEvents(holder.adapter);
+    instance = await AntigravityDriver.create({
+      instanceId: "agy-fence-queued",
+      displayName: undefined,
+      environment: { HOME: home, FAKE_AGY_DUMP: dump },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    recorder = recordEvents(instance.adapter);
+    try {
+      await holder.adapter.sendTurn({ threadId: "t-fence-holder", text: "long work" });
+      await expect.poll(() => existsSync(readyFile), { timeout: 2_000 }).toBe(true);
+      let retired = false;
+      let checks = 0;
+      const refusal = new Error("retired while queued");
+      const queued = instance.adapter.sendTurn({
+        threadId: "t-fence-queued",
+        text: "stale context",
+        resumeCursor: "conv-kept",
+        beforeSubmit: () => { checks++; if (retired) throw refusal; },
+      });
+      const settledQueued = queued.then(() => "resolved", (error) => error);
+      // retired during the lease wait, before anything reached the engine
+      retired = true;
+      await holder.adapter.interruptTurn("t-fence-holder");
+      await holderEvents.until((e) => e.type === "turn.completed");
+      expect(await settledQueued).toBe(refusal);
+      expect(checks).toBe(1);
+      // the queued child was never spawned for the prompt: at most the version probe ran
+      if (existsSync(dump)) {
+        const written = JSON.parse(readFileSync(dump, "utf8"));
+        expect(written.argv).toContain("--version");
+        expect(written.prompt).toBeUndefined();
+      }
+      expect(recorder.events.some((e) => e.type === "turn.started")).toBe(false);
+      expect(instance.adapter.hasSession("t-fence-queued")).toBe(false);
+      // the thread is free again: a later turn runs normally
+      const next = await instance.adapter.sendTurn({ threadId: "t-fence-queued", text: "fresh" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === next.turnId);
+    } finally {
+      await holder.adapter.interruptTurn("t-fence-holder").catch(() => undefined);
       holderEvents.stop();
       await holder.dispose();
       rmSync(home, { recursive: true, force: true });
@@ -869,10 +959,12 @@ describe("Antigravity Murage MCP config", () => {
     try {
       expect(fullAuto.adapter.capabilities.computerMcp).toBe(true);
       expect(fullAuto.adapter.capabilities.agentsMcp).toBe(true);
+      expect(fullAuto.adapter.capabilities.customMcp).toBe(true);
       // accept-edits print mode auto-denies tools that would prompt, so a
       // mount there could never fire — the capability must not be offered.
       expect(acceptEdits.adapter.capabilities.computerMcp).toBe(false);
       expect(acceptEdits.adapter.capabilities.agentsMcp).toBe(false);
+      expect(acceptEdits.adapter.capabilities.customMcp).toBe(false);
       // The host desktop needs per-action human approval; print mode has no
       // approval channel in any mode.
       expect(fullAuto.adapter.capabilities.localComputerMcp).toBeUndefined();
@@ -880,6 +972,162 @@ describe("Antigravity Murage MCP config", () => {
     } finally {
       await fullAuto.dispose();
       await acceptEdits.dispose();
+    }
+  });
+
+  const customIntegrations = () => ({
+    custom: {
+      comfy: {
+        command: process.execPath, args: [SPAWNED_PROXIES.remoteMcp, "--server", "comfy"], env: {},
+        harnessEnv: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:8799", MURAGE_MCP_TOKEN: "turn-tok" },
+      },
+      notes: { command: "npx", args: ["-y", "@x/notes"], env: { NOTES_TOKEN: "n" } },
+      forged: { command: "x", args: [], env: { MURAGE_MCP_TOKEN: "forged" } },
+    },
+  });
+
+  it("mounts the owner's servers under murage-custom- keys, merged with the harness environment (MCP-LINK T9)", () => {
+    expect(antigravityMcpServers(customIntegrations())).toEqual({
+      [`${ANTIGRAVITY_CUSTOM_MCP_PREFIX}comfy`]: {
+        command: process.execPath, args: [SPAWNED_PROXIES.remoteMcp, "--server", "comfy"],
+        env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:8799", MURAGE_MCP_TOKEN: "turn-tok" },
+      },
+      [`${ANTIGRAVITY_CUSTOM_MCP_PREFIX}notes`]: { command: "npx", args: ["-y", "@x/notes"], env: { NOTES_TOKEN: "n" } },
+    });
+  });
+
+  it("keeps the owner's own entry of the same name, drops a stale custom key for good, and restores the rest after the turn", () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-custom-"));
+    try {
+      mkdirSync(join(home, ".gemini", "config"), { recursive: true });
+      const original = JSON.stringify({
+        mcpServers: {
+          comfy: { command: "their-own-comfy", args: [] },
+          [`${ANTIGRAVITY_CUSTOM_MCP_PREFIX}gone`]: { command: "left-over", args: [] },
+        },
+      });
+      writeFileSync(configPath(home), original);
+      const restore = ensureAntigravityMcpServers(antigravityMcpServers(customIntegrations()), { HOME: home });
+      const mounted = readConfig(home);
+      expect(mounted.mcpServers.comfy).toEqual({ command: "their-own-comfy", args: [] });
+      expect(mounted.mcpServers[`${ANTIGRAVITY_CUSTOM_MCP_PREFIX}comfy`].env.MURAGE_MCP_TOKEN).toBe("turn-tok");
+      expect(mounted.mcpServers[`${ANTIGRAVITY_CUSTOM_MCP_PREFIX}gone`]).toBeUndefined();
+      restore();
+      // every murage-custom-* key is Murage's: the stale one is not written back
+      expect(readConfig(home)).toEqual({ mcpServers: { comfy: { command: "their-own-comfy", args: [] } } });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("a turn that crashes before it restores leaves no env value behind for the next turn to write back (review M3)", () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-crash-"));
+    try {
+      mkdirSync(join(home, ".gemini", "config"), { recursive: true });
+      writeFileSync(configPath(home), JSON.stringify({ mcpServers: { mine: { command: "m", args: [] } } }));
+      const secrets = { custom: { notes: { command: "npx", args: ["-y", "@x/notes"], env: { NOTES_TOKEN: "HELD-SECRET-VALUE-1" } } } };
+      // turn 1 never restores (crash)
+      ensureAntigravityMcpServers(antigravityMcpServers(secrets as never), { HOME: home });
+      expect(readFileSync(configPath(home), "utf8")).toContain("HELD-SECRET-VALUE-1");
+      // turn 2 mounts nothing and restores normally
+      const restore2 = ensureAntigravityMcpServers(antigravityMcpServers({} as never), { HOME: home });
+      expect(readFileSync(configPath(home), "utf8")).not.toContain("HELD-SECRET-VALUE-1");
+      restore2();
+      const after = readFileSync(configPath(home), "utf8");
+      expect(after).not.toContain("HELD-SECRET-VALUE-1");
+      expect(JSON.parse(after).mcpServers.mine).toEqual({ command: "m", args: [] });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("the start-up sweep removes every murage-custom-* key once and leaves the owner's other entries and unknown keys", () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-sweep-"));
+    try {
+      mkdirSync(join(home, ".gemini", "config"), { recursive: true });
+      writeFileSync(configPath(home), JSON.stringify({
+        other: 1,
+        mcpServers: { mine: { command: "m", args: [] }, [`${ANTIGRAVITY_CUSTOM_MCP_PREFIX}a`]: { command: "x", args: [], env: { K: "SECRET" } } },
+      }));
+      expect(sweepAntigravityCustomMcpServers({ HOME: home })).toBe(true);
+      expect(readConfig(home)).toEqual({ other: 1, mcpServers: { mine: { command: "m", args: [] } } });
+      expect(sweepAntigravityCustomMcpServers({ HOME: home })).toBe(false);
+      // a file that is not JSON keeps its bytes
+      writeFileSync(configPath(home), "{ not json");
+      expect(sweepAntigravityCustomMcpServers({ HOME: home })).toBe(false);
+      expect(readFileSync(configPath(home), "utf8")).toBe("{ not json");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("restores only its own custom keys when the owner edited the file during the turn", () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-custom-edit-"));
+    try {
+      mkdirSync(join(home, ".gemini", "config"), { recursive: true });
+      writeFileSync(configPath(home), JSON.stringify({ mcpServers: { mine: { command: "m", args: [] } } }));
+      const restore = ensureAntigravityMcpServers(antigravityMcpServers(customIntegrations()), { HOME: home });
+      const during = readConfig(home);
+      during.mcpServers.added = { command: "a", args: [] };
+      writeFileSync(configPath(home), JSON.stringify(during));
+      restore();
+      const after = readConfig(home);
+      expect(after.mcpServers.added).toEqual({ command: "a", args: [] });
+      expect(after.mcpServers.mine).toEqual({ command: "m", args: [] });
+      expect(Object.keys(after.mcpServers).filter((key) => key.startsWith(ANTIGRAVITY_CUSTOM_MCP_PREFIX))).toEqual([]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("mounts custom servers in a full-auto turn and puts the owner's mcp_config.json back afterwards", async () => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-custom-turn-"));
+    const dump = join(home, "mcp-at-spawn.json");
+    const original = JSON.stringify({ mcpServers: { "sqlite-helper": { command: "sqlite-mcp-server", args: ["/db"] } } });
+    mkdirSync(join(home, ".gemini", "config"), { recursive: true });
+    writeFileSync(configPath(home), original);
+    const instance = await AntigravityDriver.create({
+      instanceId: "agy-custom-turn", displayName: undefined,
+      environment: { HOME: home, FAKE_AGY_DELAY_MS: "100", FAKE_AGY_MCP_DUMP: dump },
+      enabled: true, config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-custom-on", text: "use my tool", integrations: customIntegrations() });
+      await recorder.until((e) => e.type === "turn.completed");
+      const atSpawn = JSON.parse(readFileSync(dump, "utf8"));
+      expect(Object.keys(atSpawn.mcpServers).sort()).toEqual([`${ANTIGRAVITY_CUSTOM_MCP_PREFIX}comfy`, `${ANTIGRAVITY_CUSTOM_MCP_PREFIX}notes`, "sqlite-helper"].sort());
+      await expect.poll(() => readFileSync(configPath(home), "utf8")).toBe(original);
+    } finally {
+      recorder.stop();
+      await instance.dispose();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("never mounts custom servers without full auto, where print mode cannot ask", async () => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-custom-safe-"));
+    const dump = join(home, "mcp-at-spawn.json");
+    const instance = await AntigravityDriver.create({
+      instanceId: "agy-custom-off", displayName: undefined,
+      environment: { HOME: home, FAKE_AGY_MCP_DUMP: dump },
+      enabled: true, config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-custom-off", text: "no tools", integrations: customIntegrations() });
+      await recorder.until((event) => event.type === "turn.completed");
+      const atSpawn = JSON.parse(readFileSync(dump, "utf8"));
+      expect(JSON.stringify(atSpawn)).not.toContain("turn-tok");
+      expect(Object.keys(atSpawn?.mcpServers ?? {}).filter((key) => key.startsWith(ANTIGRAVITY_CUSTOM_MCP_PREFIX))).toEqual([]);
+    } finally {
+      recorder.stop();
+      await instance.dispose();
+      rmSync(home, { recursive: true, force: true });
     }
   });
 

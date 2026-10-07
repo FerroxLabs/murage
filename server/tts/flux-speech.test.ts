@@ -33,7 +33,7 @@ describe("Flux speech", () => {
     expect(sent.url).toMatch(/\/audio\/speech$/);
     expect(sent.body).toEqual({ model: "flux-voice-speak", input: "Hello there.", voice: "cedar", response_format: "mp3" });
     expect(sent.auth).toBe("Bearer flux-test");
-    expect(audio).toEqual({ bytes: new Uint8Array([1, 2, 3]), mime: "audio/mpeg" });
+    expect(audio).toEqual({ bytes: new Uint8Array([1, 2, 3]), mime: "audio/mpeg", timing: { headersMs: expect.any(Number) } });
   });
 
   it("hands the audio on as it arrives when asked to stream, without reading it first", async () => {
@@ -139,18 +139,18 @@ describe("when a speech source is not switched on", () => {
   it("the next source speaks, and the refusing one is skipped on the next sentence", async () => {
     useVoiceRoutes({ speech: () => [FLUX, OPENAI], describe: () => ({ host: null, lookup: null, speech: "flux", transcribe: null }) });
     serve(new Set([FLUX.baseUrl]));
-    const first = await speak(cfg({ provider: "flux" }), "Hello there.");
+    const first = await speak(cfg({ provider: "flux" }), "Hello there.", "marin");
     expect(first.bytes).toEqual(new Uint8Array([7]));
     expect(asked).toEqual([`${FLUX.baseUrl}/audio/speech`, `${OPENAI.baseUrl}/audio/speech`]);
     asked.length = 0;
-    await speak(cfg({ provider: "flux" }), "Second sentence.");
+    await speak(cfg({ provider: "flux" }), "Second sentence.", "marin");
     expect(asked).toEqual([`${OPENAI.baseUrl}/audio/speech`]);
   });
 
   it("with no source left, the computer's own voice speaks instead of nothing", async () => {
     useVoiceRoutes({ speech: () => [FLUX], describe: () => ({ host: null, lookup: null, speech: "flux", transcribe: null }) });
     serve(new Set([FLUX.baseUrl]));
-    const said = await speak(cfg({ provider: "flux" }), "Hello there.", undefined, SILENT_RUN).catch((error) => error);
+    const said = await speak(cfg({ provider: "flux" }), "Hello there.", "marin", SILENT_RUN).catch((error) => error);
     expect(asked).toEqual([`${FLUX.baseUrl}/audio/speech`]);
     // the system runner was used: not the Flux refusal
     expect(said).not.toBeInstanceOf(SpeechUnavailable);
@@ -264,5 +264,192 @@ describe("one Flux list with every Flux voice", () => {
     routes();
     expect(describeVoice(cfg()).xaiKey).toBe(false);
     expect(describeVoice(cfg()).available.xai).toBe(true);
+  });
+});
+
+describe("Flux speech resilience", () => {
+  const ok = () => new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "audio/mpeg" } });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("retries once after a 5xx and then plays", async () => {
+    const call = vi.fn().mockResolvedValueOnce(new Response("{}", { status: 502 })).mockResolvedValueOnce(ok());
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const audio = await synthesize("Hello there.", "cedar", FLUX, call as unknown as typeof fetch);
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(audio).toEqual({ bytes: new Uint8Array([1, 2, 3]), mime: "audio/mpeg", timing: { headersMs: expect.any(Number) } });
+  });
+
+  it("retries once after a network error", async () => {
+    const call = vi.fn().mockRejectedValueOnce(new TypeError("fetch failed")).mockResolvedValueOnce(ok());
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await synthesize("Hello there.", "cedar", FLUX, call as unknown as typeof fetch);
+    expect(call).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after the one retry", async () => {
+    const call = vi.fn().mockResolvedValue(new Response("{}", { status: 502 }));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(synthesize("Hello there.", "cedar", FLUX, call as unknown as typeof fetch)).rejects.toThrow("Speaking failed (502)");
+    expect(call).toHaveBeenCalledTimes(2);
+  });
+
+  it("never retries a 4xx", async () => {
+    const call = vi.fn().mockResolvedValue(new Response("{}", { status: 401 }));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(synthesize("Hello there.", "cedar", FLUX, call as unknown as typeof fetch)).rejects.toThrow(/rejected the saved key/);
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  // A call stub that never answers until its signal aborts, like a provider
+  // that sends no headers.
+  const silent = (calls: number[]) =>
+    ((_url: string, init: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        calls.push(Date.now());
+        init.signal!.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+      })) as unknown as typeof fetch;
+
+  it("gives a short clip 20 s to send headers, a longer one 60 s, and does not retry a slow failure", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const calls: number[] = [];
+    const short = synthesize("Short.", "cedar", FLUX, silent(calls));
+    const shortResult = expect(short).rejects.toThrow(/Couldn't reach/);
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(calls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2);
+    await shortResult;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(calls).toHaveLength(1);
+    const longCalls: number[] = [];
+    const long = synthesize("x".repeat(450), "cedar", FLUX, silent(longCalls));
+    const longResult = expect(long).rejects.toThrow(/Couldn't reach/);
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(longCalls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await longResult;
+    vi.useRealTimers();
+  });
+
+  it("the 20 s limit is for the headers only: a streamed body that keeps arriving is not cut", async () => {
+    vi.useFakeTimers();
+    let chunks = 0;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(c) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        chunks += 1;
+        c.enqueue(new Uint8Array([chunks]));
+        if (chunks === 6) c.close();
+      },
+    });
+    const call = (async (_u: string, init: RequestInit) => { void init; return new Response(body, { status: 200, headers: { "content-type": "audio/mpeg" } }); }) as unknown as typeof fetch;
+    const clip = (await synthesizeClip("Short.", "cedar", FLUX, true, call)) as { stream: ReadableStream<Uint8Array> };
+    const reader = clip.stream.getReader();
+    const got: number[] = [];
+    const reading = (async () => { for (;;) { const r = await reader.read(); if (r.done) break; got.push(r.value![0]); } })();
+    await vi.advanceTimersByTimeAsync(31_000);
+    await reading;
+    expect(got).toEqual([1, 2, 3, 4, 5, 6]);
+    vi.useRealTimers();
+  });
+
+  it("a body that sends nothing for 10 s is cut and logged", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const body = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array([1])); }, pull() { return new Promise(() => {}); } });
+    const call = (async () => new Response(body, { status: 200, headers: { "content-type": "audio/mpeg" } })) as unknown as typeof fetch;
+    const clip = (await synthesizeClip("Short.", "cedar", FLUX, true, call)) as { stream: ReadableStream<Uint8Array> };
+    const reader = clip.stream.getReader();
+    expect((await reader.read()).value).toEqual(new Uint8Array([1]));
+    const next = reader.read().then(() => "value", () => "error");
+    await vi.advanceTimersByTimeAsync(10_500);
+    expect(await next).toBe("error");
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.startsWith("[tts] ") && l.includes("status=body-stall") && l.includes("provider=Flux"))).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("an unstreamed clip whose body stalls rejects", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const body = new ReadableStream<Uint8Array>({ pull() { return new Promise(() => {}); } });
+    const call = (async () => new Response(body, { status: 200, headers: { "content-type": "audio/mpeg" } })) as unknown as typeof fetch;
+    const result = expect(synthesize("Short.", "cedar", FLUX, call)).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(10_500);
+    await result;
+    vi.useRealTimers();
+  });
+
+  it("retries a 5xx only when it failed fast; a slow 5xx is not retried", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    let n = 0;
+    const slow = (async () => { n += 1; await new Promise((r) => setTimeout(r, 9_000)); return new Response("{}", { status: 502 }); }) as unknown as typeof fetch;
+    const result = expect(synthesize("Hello there.", "cedar", FLUX, slow)).rejects.toThrow("Speaking failed (502)");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await result;
+    expect(n).toBe(1);
+    n = 0;
+    const quick = (async () => { n += 1; await new Promise((r) => setTimeout(r, 7_000)); return new Response("{}", { status: 502 }); }) as unknown as typeof fetch;
+    const again = expect(synthesize("Hello there.", "cedar", FLUX, quick)).rejects.toThrow("Speaking failed (502)");
+    await vi.advanceTimersByTimeAsync(20_000);
+    await again;
+    expect(n).toBe(2);
+    vi.useRealTimers();
+  });
+
+  it("logs 4xx and not-audio failures too, with status, provider, model, voice and length, and nothing else", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cases: Array<[Response, string]> = [
+      [new Response('{"error":{"message":"secret words"}}', { status: 401 }), "status=401"],
+      [new Response("{}", { status: 429 }), "status=429"],
+      [new Response("{}", { status: 402 }), "status=402"],
+      [new Response("{}", { status: 404 }), "status=404"],
+      [new Response("{}", { status: 403 }), "status=403"],
+      [new Response("<html>", { status: 200, headers: { "content-type": "text/html" } }), "status=not-audio"],
+    ];
+    for (const [response, status] of cases) {
+      warn.mockClear();
+      await expect(synthesize("Secret sentence here.", "cedar", FLUX, (async () => response) as unknown as typeof fetch)).rejects.toThrow();
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines, status).toHaveLength(1);
+      expect(lines[0]).toContain(status);
+      expect(lines[0]).toContain("provider=Flux");
+      expect(lines[0]).toContain("model=flux-voice-speak");
+      expect(lines[0]).toContain("voice=cedar");
+      expect(lines[0]).toContain("length=21");
+      expect(lines[0]).not.toContain("secret");
+      expect(lines[0]).not.toContain("Secret");
+      expect(lines[0]).not.toContain("flux-test");
+      expect(lines[0]).not.toContain("http");
+    }
+  });
+
+  it("logs each failure with status, provider, model, voice and length, and never the text or key", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const call = vi.fn().mockResolvedValue(new Response("{}", { status: 502 }));
+    await expect(synthesize("Secret sentence here.", "cedar", FLUX, call as unknown as typeof fetch)).rejects.toThrow();
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    for (const line of lines) {
+      expect(line.startsWith("[tts] ")).toBe(true);
+      expect(line).toContain("status=502");
+      expect(line).toContain("provider=Flux");
+      expect(line).toContain("model=flux-voice-speak");
+      expect(line).toContain("voice=cedar");
+      expect(line).toContain(`length=${"Secret sentence here.".length}`);
+      expect(line).not.toContain("Secret sentence");
+      expect(line).not.toContain("flux-test");
+    }
+  });
+});
+
+describe("streamTranscribe", () => {
+  it("is reported from the injected stream check and defaults to false", () => {
+    useVoiceRoutes({ speech: () => [], describe: () => ({ host: null, lookup: null, speech: null, transcribe: null }) });
+    expect(describeVoice(cfg()).streamTranscribe).toBe(false);
+    useVoiceRoutes({ speech: () => [], describe: () => ({ host: null, lookup: null, speech: null, transcribe: null }), stream: () => true });
+    expect(describeVoice(cfg()).streamTranscribe).toBe(true);
+    useVoiceRoutes({ speech: () => [], describe: () => ({ host: null, lookup: null, speech: null, transcribe: null }) });
   });
 });

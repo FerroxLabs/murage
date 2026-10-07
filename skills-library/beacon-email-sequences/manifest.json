@@ -2,7 +2,7 @@
   "id": "beacon-email-sequences",
   "name": "email-sequences",
   "version": "1.0.0",
-  "description": "**Mode skill.** Default-enabled on the Channels specialist.",
+  "description": "Design an email program, from a welcome series to a sales sequence or newsletter. Decide what to send, in what order, to whom and how to measure it.",
   "defaultEnabled": false,
   "triggerTerms": [
     "beacon",

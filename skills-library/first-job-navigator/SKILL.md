@@ -4,7 +4,7 @@ description: |
   Guide for navigating the first 90 days of a new career including workplace culture navigation, professional communication, managing up, building reputation, establishing work-life boundaries, 401k and benefits enrollment, and creating a professional development plan. Use when the user asks about first job navigator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events career planning"
   category: "family-relationships"

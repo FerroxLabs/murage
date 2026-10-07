@@ -6,7 +6,7 @@ description: |
   Do NOT use for project kickoff planning (use project-kickoff), retrospective facilitation (use retrospective-facilitator), or enterprise portfolio reporting (use business project-management skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "project-management report template"
   category: "productivity"

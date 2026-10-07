@@ -8,6 +8,8 @@ import * as yauzl from "yauzl";
 import { ZipFile } from "yazl";
 import { MAX_BOT_PACKAGE_COMPRESSION_RATIO, MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES, normalizeBotPackagePath, parseBotPackageManifest, type BotPackageManifest } from "./bot-package-manifest.ts";
 import { scanBotPackageContents } from "./bot-package-scan.ts";
+import { scanBotPackageForImportAsync } from "./bot-package-guard-runner.ts";
+import { verifyOfficialPackage, type OfficialStatus } from "./package-signature.ts";
 
 export class BotPackageArchiveError extends Error {
   readonly code: string;
@@ -20,7 +22,7 @@ const MAX_ARCHIVE_BYTES = MAX_BOT_PACKAGE_EXPANDED_BYTES + MAX_BOT_PACKAGE_ENTRI
 
 /** Read-only, in-memory intake. This never extracts or executes payloads,
  * resolves dependencies, grants authority, or imports anything into a store. */
-export async function readBotPackageArchive(path: string, options: { signal?: AbortSignal } = {}) {
+export async function readBotPackageArchive(path: string, options: { signal?: AbortSignal; guard?: boolean; scanId?: string } = {}) {
   check(options.signal);
   let fd: number | undefined, zip: yauzl.ZipFile | undefined, inFlight: Promise<void> | undefined;
   try {
@@ -106,8 +108,12 @@ export async function readBotPackageArchive(path: string, options: { signal?: Ab
     }
     const after = lstatSync(path);
     if (after.ino !== before.ino || after.dev !== before.dev || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) fail("PACKAGE_ARCHIVE_CHANGED");
-    const scan = scanBotPackageContents([{ path: "manifest.json", content: manifestBytes }, ...[...payloads].map(([path, content]) => ({ path, content }))]);
-    return { manifest, payloads, scan, sha256: hash.digest("hex") };
+    const contents = [{ path: "manifest.json", content: manifestBytes }, ...[...payloads].map(([path, content]) => ({ path, content }))];
+    // Reading to import runs the full import guard; building an archive of
+    // the owner's own bots does not re-read it that way.
+    const scan = options.guard === false ? scanBotPackageContents(contents) : await scanBotPackageForImportAsync(contents, { signal: options.signal, scanId: options.scanId });
+    const official: OfficialStatus = verifyOfficialPackage(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(manifestBytes)));
+    return { manifest, payloads, scan, official, sha256: hash.digest("hex") };
   } catch (error) {
     if (options.signal?.aborted) fail("PACKAGE_ARCHIVE_CANCELLED");
     throw error instanceof BotPackageArchiveError ? error : new BotPackageArchiveError("INVALID_PACKAGE_ARCHIVE");
@@ -157,7 +163,7 @@ export async function writeBotPackageArchive(destination: string, input: {
     writer.addBuffer(metadata, "manifest.json", { compress: false, mode: 0o100600 });
     for (const [path, content] of payloads) writer.addBuffer(content, path, { compress: false, mode: 0o100600 });
     writer.end(); await completed;
-    const result = await readBotPackageArchive(file, options);
+    const result = await readBotPackageArchive(file, { ...options, guard: false });
     if (result.scan.blocked) fail("PACKAGE_CONTENT_SCAN_BLOCKED");
     const fd = openSync(file, "r+");
     try { fsyncSync(fd); } finally { closeSync(fd); }

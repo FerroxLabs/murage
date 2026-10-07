@@ -1,13 +1,16 @@
 {
   "id": "beacon-funnel-build",
   "name": "funnel-build",
-  "version": "1.0.0",
-  "description": "**When to use.** When the user asks for an end-to-end acquisition funnel — traffic source → landing page → email capture → nurture → offer → conversion — and needs the channel-level structure that ties stages together.",
+  "version": "1.1.0",
+  "description": "Map a full acquisition funnel from traffic source to landing page, email capture, follow-up and offer. Spell out what moves a person from one step to the next.",
   "defaultEnabled": false,
   "triggerTerms": [
-    "beacon",
+    "sales funnel",
+    "lead magnet",
+    "landing page",
     "funnel",
-    "build"
+    "opt-in page",
+    "customer journey"
   ],
   "requiredCapabilities": []
 }

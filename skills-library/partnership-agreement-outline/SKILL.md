@@ -5,7 +5,7 @@ description: |
   Do NOT use for legal contract drafting (recommend an attorney), incorporation decisions (use incorporation-comparison), or investor term sheets (use fundraising-narrative).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship planning strategy decision-making template"
   category: "business-strategy"

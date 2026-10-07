@@ -4,7 +4,7 @@ description: |
   Print-on-demand and merchandise design expertise covering design principles for physical products, platform selection, mockup creation, fulfillment logistics, pricing strategy, product line planning, and brand-aligned merchandise that fans actually want to buy and wear. Use when the user asks about merch designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design marketing entrepreneurship"
   category: "marketing-sales"

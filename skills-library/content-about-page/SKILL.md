@@ -1,13 +1,12 @@
 ---
 name: content-about-page
 description: "Build a long-form About page that converts — not a bio in paragraphs, but a direct-response asset that opens on the reader's problem, tells the story of discovery, proves the path with results, and closes on an explicit next step, delivered as a section brief plus paste-ready copy. Use when an About page reads like a résumé or a career history, or when building one from scratch for a founder, coach or consultant. Do NOT use for a short bio or speaker blurb, for a sales page (use copywriter), or for the underlying positioning work (use personal-brand-strategy)."
-license: MIT
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "content personal-brand about-page storytelling direct-response"
   category: "content"
-  attribution: "The Donahoe Method (Wayland-owned operating system); StoryBrand 'guide not hero' frame (Donald Miller, 2017) inverted into DR sales narrative; DR canon: Gary Halbert (The Boron Letters, 1984), Eugene Schwartz (Breakthrough Advertising, 1966), Joseph Sugarman (AdWeek Copywriting Handbook, 1998); personal brand canon: Justin Welsh, Michael Hyatt (Platform, 2012), Marie Forleo; Sean Donahoe's 28 years of direct-response personal brand operating"
 ---
 
 # Content About Page - The DR About-Page Arc

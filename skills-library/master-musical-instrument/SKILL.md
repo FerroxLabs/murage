@@ -17,7 +17,7 @@ trigger_phrases: >-
   I want to learn an instrument help me learn guitar how to learn piano master a
   musical instrument start playing music learn to play an instrument
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: performing-arts step-by-step study-skills planning
   category: life-event

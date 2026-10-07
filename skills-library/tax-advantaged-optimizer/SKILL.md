@@ -12,7 +12,7 @@ description: |
   or filing taxes (use tax-filing-prep).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "tax-planning investing personal-finance retirement-planning"
   category: "personal-finance"

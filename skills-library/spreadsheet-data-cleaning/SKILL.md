@@ -6,7 +6,7 @@ description: |
   Do NOT use for a full data cleaning protocol across any tool (use data-cleaning-protocol), setting up validation rules (use data-validation-setup), or auditing a spreadsheet model (use spreadsheet-model-audit).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "spreadsheets data-science template"
   category: "data-analysis"

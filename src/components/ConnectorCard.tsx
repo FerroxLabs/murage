@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Check, Loader2, PlugZap, RefreshCw, X } from "lucide-react";
 
 import { api, type Message } from "@/state/store";
 import { openExternalPage } from "@/lib/open-external";
+import { endConnectorWait, startConnectorPoll } from "@/lib/connector-card-poll";
 
 async function openConnectionPage(url: string) {
   await openExternalPage(url, "Your browser blocked the connection page. Allow pop-ups, then try again.");
@@ -12,44 +13,41 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
   const connector = message.connector!;
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const polling = useRef(false);
+  /** the poll ended without a sign-in: the card stops waiting, whatever the transcript says yet */
+  const [timedOut, setTimedOut] = useState(false);
 
   const endpoint = `/api/bots/${encodeURIComponent(botId)}/connector-cards/${encodeURIComponent(message.id)}`;
   const checkStatus = useCallback(async () => {
     const result = await api(`${endpoint}/status?threadId=${encodeURIComponent(threadId)}`);
-    return Boolean(result.connected);
+    return { connected: Boolean(result.connected), failed: result.failed === true };
   }, [endpoint, threadId]);
+
+  /** The poll's budget is spent: the server marks the card timed out (or
+   * connected, if the sign-in finished just now) and says the sentence. */
+  const pollEnded = useCallback(() => endConnectorWait({
+    show: ({ timedOut: ended, error }) => {
+      setTimedOut(ended);
+      setLocalError(error || null);
+    },
+    notify: () => api(`${endpoint}/timeout`, { method: "POST", body: JSON.stringify({ threadId }) }),
+  }), [endpoint, threadId]);
 
   useEffect(() => {
     if (connector.status !== "authorizing" || connector.dismissed) return;
-    polling.current = true;
-    let tries = 0;
-    const timer = setInterval(() => {
-      if (!polling.current) return;
-      void checkStatus()
-        .then((connected) => {
-          tries += 1;
-          if (connected || tries >= 75) {
-            polling.current = false;
-            clearInterval(timer);
-          }
-        })
-        .catch(() => {
-          tries += 1;
-          if (tries >= 75) clearInterval(timer);
-        });
-    }, 4_000);
-    return () => {
-      polling.current = false;
-      clearInterval(timer);
-    };
-  }, [checkStatus, connector.dismissed, connector.status]);
+    return startConnectorPoll({ check: checkStatus, onTimeout: pollEnded });
+  }, [checkStatus, pollEnded, connector.dismissed, connector.status]);
+
+  // A fresh attempt starts a fresh wait.
+  useEffect(() => {
+    if (connector.status === "authorizing") setTimedOut(false);
+  }, [connector.status]);
 
   if (connector.dismissed) return null;
 
   const connect = async () => {
     setBusy(true);
     setLocalError(null);
+    setTimedOut(false);
     try {
       const result = await api(`${endpoint}/authorize`, {
         method: "POST",
@@ -80,7 +78,8 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
   };
 
   const connected = connector.status === "connected";
-  const authorizing = connector.status === "authorizing";
+  const authorizing = connector.status === "authorizing" && !timedOut;
+  const failed = connector.status === "failed" || timedOut;
   const error = localError ?? connector.error;
 
   return (
@@ -131,7 +130,7 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
               className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
               {busy || authorizing ? <Loader2 size={13} className="animate-spin" /> : <PlugZap size={13} />}
-              {authorizing ? "Open again" : connector.status === "failed" ? "Try again" : "Connect securely"}
+              {authorizing ? "Open again" : failed ? "Try again" : "Connect securely"}
             </button>
           ) : !connector.resumed ? (
             <button

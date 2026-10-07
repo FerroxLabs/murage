@@ -28,7 +28,11 @@ async function spawnFixture(mode: "guard" | "bare"): Promise<{ code: number; std
   }
 }
 
-describe("a child's pipe must not be able to kill the server", () => {
+// POSIX only: the fixture's child closes its stdin and lives on, which is what
+// makes a real EPIPE. On Windows a write to that pipe completes with no error
+// (CI Windows VM, 0.1.61: CALLBACK:none), so the negative control cannot die
+// and would prove nothing. The guard itself is platform-neutral.
+describe.skipIf(process.platform === "win32")("a child's pipe must not be able to kill the server", () => {
   it("dies without the guard, exactly the way the owner's server died", async () => {
     const bare = await spawnFixture("bare");
 

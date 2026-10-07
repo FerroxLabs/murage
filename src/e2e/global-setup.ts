@@ -90,6 +90,11 @@ export default async function globalSetup(): Promise<void> {
   await waitForHarness();
   await proveScratchDataDir();
   await emptyWorkspace();
+  // The seeded workspace reads as an install updating from before 0.1.59, so
+  // the What's new page opened over every spec and took every click (0.1.61
+  // CI lane: most human-spec timeouts). A person sees it once; so does the
+  // rig, here. whats-new.human.spec.ts drives the page on its own harness.
+  await api("POST", "/api/whats-new/seen", { version: JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")).version });
 
   // Order matters only in that the sidebar lists newest-first; seeding in
   // this order puts the blank bot at the bottom, which is the shape a real

@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of api first company builder or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "tech-industry strategy checklist guide step-by-step python javascript api-design"
   category: "business-strategy"

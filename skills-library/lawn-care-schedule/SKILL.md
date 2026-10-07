@@ -6,7 +6,7 @@ description: |
   Do NOT use for garden planning (use vegetable-garden-planning), landscape design, weed identification, or commercial turf management.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "gardening checklist planning"
   category: "home-household"

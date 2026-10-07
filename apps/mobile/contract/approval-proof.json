@@ -1,0 +1,555 @@
+{
+  "tag": "murage-approval-proof/1",
+  "ttlMs": 60000,
+  "notes": [
+    "Card digest (digestTag): SHA-256 hex of the JSON array [tag, threadId, requestId, tool, title, subtitle, summary, held, toolInputTruncated===true, approvalScope, taskAllowKey, skillRequest.source, skillRequest.preview, skillRequest.sha256, skillRequest.name, skillRequest.action, skillRequest.warnings, routineRequest.operation]; a missing or non-string field is null. skillRequest.warnings is the JSON array of its strings (null when absent or not a list of strings; an empty list is []). routineRequest.operation is its canonical JSON text: the operation re-serialised with object keys sorted at every depth, no whitespace, array order kept (null when absent). routineDigest carries a routine proposal. skillDigest carries a skill request: before signing, a phone must also check that SHA-256 of the UTF-8 preview equals skillRequest.sha256, and refuse otherwise.",
+    "Signed message: UTF-8 of the tag, threadId, requestId, decision, digest, nonce and decimal expiresAt joined by LF, no trailing newline. The nonce is signed as its base64url string, never decoded.",
+    "Signature: ECDSA P-256 over SHA-256 of that message, encoded as ASN.1 DER, then base64url. Public key: 65-byte uncompressed point (0x04||X||Y), base64url.",
+    "High-S is ACCEPTED. The server verifies with Node crypto, which does not require low-S, and Secure Enclave and AndroidKeyStore emit either form. Swift and Java must send whatever the platform signs and must never normalise, re-encode or reject S. Swift verifiers and tests must use a verifier that accepts high-S too.",
+    "Raw 64-byte r||s (IEEE P1363) is REFUSED. The platform must convert to DER before sending.",
+    "threadId matches [A-Za-z0-9_-]{1,128}. requestId is 1 to 256 characters with no control character (C0, DEL, C1) and no U+2028 or U+2029; an id with a line break is refused at parse, never signed.",
+    "The gate rebuilds the message from the challenge it holds, so a tampered message reaches it as gate.signatureDer, a signature over the altered bytes. args are checked by expect.code (the native parser must refuse with bad_args-class error); gate shows what the server gate returns for the same ids. signatureCases run against accepted[0]'s challenge: expect.verify is the direct verifier result; gate.expect is the outcome when issuedAt is the challenge time and submitAt the proof time."
+  ],
+  "digestTag": "murage-approval-digest/2",
+  "digest": {
+    "threadId": "t1",
+    "requestId": "req-1",
+    "card": {
+      "title": "Run a command?",
+      "subtitle": "{\"command\":\"ls\"}",
+      "tool": "Bash",
+      "summary": "ls"
+    },
+    "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6"
+  },
+  "skillDigest": {
+    "threadId": "t1",
+    "requestId": "req-skill",
+    "card": {
+      "title": "Add a skill?",
+      "subtitle": "tidy-notes",
+      "skillRequest": {
+        "source": "Learned in a chat",
+        "preview": "---\nname: tidy-notes\n---\nTidy my notes every Friday.\n",
+        "sha256": "712502c50e8176e9bc9872e9909a7e81a60a35c297753ed62582e136f79c807f",
+        "name": "tidy-notes",
+        "action": "create",
+        "warnings": [
+          "Runs a script on your computer.",
+          "Reads files in your Notes folder."
+        ]
+      }
+    },
+    "digest": "372599eb5d693c1d310ddeb487e74690ac6ba571882a20d97af28128fba2da80"
+  },
+  "routineDigest": {
+    "threadId": "t1",
+    "requestId": "req-routine",
+    "card": {
+      "title": "Add a routine?",
+      "subtitle": "Friday digest",
+      "routineRequest": {
+        "operation": {
+          "routine": {
+            "prompt": "Send me a summary",
+            "name": "Friday digest",
+            "schedule": {
+              "every": "week",
+              "day": "fri"
+            }
+          },
+          "action": "create"
+        }
+      }
+    },
+    "digest": "3c2860699209ce9d116a6e3cbae896f4a98924adac0b5678c294ad80e8f9985b",
+    "canonicalOperation": "{\"action\":\"create\",\"routine\":{\"name\":\"Friday digest\",\"prompt\":\"Send me a summary\",\"schedule\":{\"day\":\"fri\",\"every\":\"week\"}}}"
+  },
+  "accepted": [
+    {
+      "name": "allow, low-S",
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena: Run a command?"
+      },
+      "message": "murage-approval-proof/1\nt1\nreq-1\nallow\nb2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6\nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\n1700000060000",
+      "publicKey": "BCI4WpolgAX1Kpi-aVSpwgIyFhCebZbHfcGbm0HvcdVbBNkXN2W6KBbPtBju7AFnTUmrOOy7CocRMf7urx7EpS4",
+      "signatureDer": "MEUCIQCh2E-k1LEVov40M2-XOn_2n_NGzHQwSYu0C6LZAysotAIgA2b6UyhTgttOsmBtDsq0ilD2mB5bIGtHGR1xv8zfm4g"
+    },
+    {
+      "name": "allow-task, random nonce",
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow-task",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "SwsrcDZ0zsK43eyNaBGDjnm__nGf88216ZujDUBAYIM",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena: Run a command for this task?"
+      },
+      "message": "murage-approval-proof/1\nt1\nreq-1\nallow-task\nb2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6\nSwsrcDZ0zsK43eyNaBGDjnm__nGf88216ZujDUBAYIM\n1700000060000",
+      "publicKey": "BMFLqppnRJClRR2L9AYEIQJK0VDN4bzF7HhFoGiHVNd4QkMcU3PDYpTNrluqBNomDvDu-WPYWEzj1rgkwwHdx9w",
+      "signatureDer": "MEQCIH5J6GI0UX1vF8lf9Lp16N8yTRCCWhqn4-Swy5m3kBQlAiAyTHfLG_zAI1p97iwPB8HpotPfBqsCbJBeWqyKanvesA"
+    },
+    {
+      "name": "allow, high-S (accepted: Node does not normalise S; Swift and Java must not either)",
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena: Run a command?"
+      },
+      "message": "murage-approval-proof/1\nt1\nreq-1\nallow\nb2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6\nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\n1700000060000",
+      "publicKey": "BCI4WpolgAX1Kpi-aVSpwgIyFhCebZbHfcGbm0HvcdVbBNkXN2W6KBbPtBju7AFnTUmrOOy7CocRMf7urx7EpS4",
+      "signatureDer": "MEUCIA_fHSEDFLff4_DTB2v2836fNdTPKQJ-hK1gKMiWYULAAiEAiajQDMB_fg527yBExQSh6n4bx5HbzgL3vtrbrZDh1TY"
+    }
+  ],
+  "refused": [
+    {
+      "args": {
+        "v": 2,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena: Run a command?"
+      },
+      "why": "unknown version",
+      "expect": {
+        "code": "bad_version"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "answer",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena: Run a command?"
+      },
+      "why": "decision answer is not signable",
+      "expect": {
+        "code": "bad_decision"
+      },
+      "gate": {
+        "status": 403,
+        "code": "answer_on_computer"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena: Run a command?"
+      },
+      "why": "digest not lowercase hex",
+      "expect": {
+        "code": "bad_digest"
+      },
+      "gate": {
+        "status": 403,
+        "code": "fresh_auth_failed"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena: Run a command?"
+      },
+      "why": "nonce length",
+      "expect": {
+        "code": "bad_nonce"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t 1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena: Run a command?"
+      },
+      "why": "thread id characters",
+      "expect": {
+        "code": "bad_thread_id"
+      },
+      "gate": {
+        "status": 403,
+        "code": "fresh_auth_failed"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena: Run a command?"
+      },
+      "why": "empty request id",
+      "expect": {
+        "code": "bad_request_id"
+      },
+      "gate": {
+        "status": 403,
+        "code": "fresh_auth_failed"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1\nallow",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena: Run a command?"
+      },
+      "why": "request id with a newline (would shift the signed fields)",
+      "expect": {
+        "code": "bad_request_id"
+      },
+      "gate": {
+        "status": 403,
+        "code": "fresh_auth_failed"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1\nt2",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena: Run a command?"
+      },
+      "why": "thread id with a newline",
+      "expect": {
+        "code": "bad_thread_id"
+      },
+      "gate": {
+        "status": 403,
+        "code": "fresh_auth_failed"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1.5,
+        "reason": "Allow Lena: Run a command?"
+      },
+      "why": "fractional expiry",
+      "expect": {
+        "code": "bad_expiry"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": "1700000060000",
+        "reason": "Allow Lena: Run a command?"
+      },
+      "why": "expiry as text",
+      "expect": {
+        "code": "bad_expiry"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": ""
+      },
+      "why": "empty reason",
+      "expect": {
+        "code": "bad_reason"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "why": "reason too long",
+      "expect": {
+        "code": "bad_reason"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "line\nbreak"
+      },
+      "why": "control character in reason",
+      "expect": {
+        "code": "bad_reason"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena\u202e: Run a command?"
+      },
+      "why": "bidi override (Cf) in reason is refused, not stripped",
+      "expect": {
+        "code": "bad_reason"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena\u200b: Run a command?"
+      },
+      "why": "zero-width space (Cf) in reason",
+      "expect": {
+        "code": "bad_reason"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow\ufeff Lena: Run a command?"
+      },
+      "why": "byte order mark (Cf) in reason",
+      "expect": {
+        "code": "bad_reason"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow Lena\u061c: Run a command?"
+      },
+      "why": "Arabic letter mark (Cf) in reason",
+      "expect": {
+        "code": "bad_reason"
+      }
+    },
+    {
+      "args": {
+        "v": 1,
+        "threadId": "t1",
+        "requestId": "req-1",
+        "decision": "allow",
+        "digest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "nonce": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "expiresAt": 1700000060000,
+        "reason": "Allow \ud83d\ude00 Lena\udb40\udc01: Run a command?"
+      },
+      "why": "astral format character (language tag U+E0001) in reason",
+      "expect": {
+        "code": "bad_reason"
+      }
+    }
+  ],
+  "signatureCases": [
+    {
+      "name": "wrong key",
+      "why": "valid signature, other device key",
+      "publicKey": "BDCvD90rhLIUCZCP3cryrIF6x9csMoMm7rO5ORmFakamwRyowLokU63Jrzmqu4M1jyQuFwlaTe1bODfb5Qc5YZc",
+      "message": "murage-approval-proof/1\nt1\nreq-1\nallow\nb2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6\nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\n1700000060000",
+      "signatureDer": "MEUCIQCh2E-k1LEVov40M2-XOn_2n_NGzHQwSYu0C6LZAysotAIgA2b6UyhTgttOsmBtDsq0ilD2mB5bIGtHGR1xv8zfm4g",
+      "expect": {
+        "verify": false
+      },
+      "gate": {
+        "issuedAt": 1700000000000,
+        "submitAt": 1700000030000,
+        "submitDigest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "expect": {
+          "status": 403,
+          "code": "fresh_auth_failed"
+        }
+      }
+    },
+    {
+      "name": "tampered message byte",
+      "why": "signature over a message whose last digit was changed",
+      "publicKey": "BCI4WpolgAX1Kpi-aVSpwgIyFhCebZbHfcGbm0HvcdVbBNkXN2W6KBbPtBju7AFnTUmrOOy7CocRMf7urx7EpS4",
+      "message": "murage-approval-proof/1\nt1\nreq-1\nallow\nb2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6\nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\n1700000060001",
+      "signatureDer": "MEUCIQCh2E-k1LEVov40M2-XOn_2n_NGzHQwSYu0C6LZAysotAIgA2b6UyhTgttOsmBtDsq0ilD2mB5bIGtHGR1xv8zfm4g",
+      "expect": {
+        "verify": false
+      },
+      "gate": {
+        "issuedAt": 1700000000000,
+        "submitAt": 1700000030000,
+        "submitDigest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "signatureDer": "MEQCIEMwYCiI_qc1zgLxooTMHrLWEPcvwvTmcodW_C9ZhgKwAiBtW_lYoYshzEsSiTiuDGUpd_zG31qsHBTKM5Q43T-eQw",
+        "expect": {
+          "status": 403,
+          "code": "fresh_auth_failed"
+        }
+      }
+    },
+    {
+      "name": "malformed DER",
+      "why": "SEQUENCE tag 0x30 replaced by 0x31",
+      "publicKey": "BCI4WpolgAX1Kpi-aVSpwgIyFhCebZbHfcGbm0HvcdVbBNkXN2W6KBbPtBju7AFnTUmrOOy7CocRMf7urx7EpS4",
+      "message": "murage-approval-proof/1\nt1\nreq-1\nallow\nb2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6\nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\n1700000060000",
+      "signatureDer": "MUUCIQCh2E-k1LEVov40M2-XOn_2n_NGzHQwSYu0C6LZAysotAIgA2b6UyhTgttOsmBtDsq0ilD2mB5bIGtHGR1xv8zfm4g",
+      "expect": {
+        "verify": false
+      },
+      "gate": {
+        "issuedAt": 1700000000000,
+        "submitAt": 1700000030000,
+        "submitDigest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "expect": {
+          "status": 403,
+          "code": "fresh_auth_failed"
+        }
+      }
+    },
+    {
+      "name": "raw r||s, 64 bytes",
+      "why": "IEEE P1363 form is never accepted; the proof is ASN.1 DER only",
+      "publicKey": "BCI4WpolgAX1Kpi-aVSpwgIyFhCebZbHfcGbm0HvcdVbBNkXN2W6KBbPtBju7AFnTUmrOOy7CocRMf7urx7EpS4",
+      "message": "murage-approval-proof/1\nt1\nreq-1\nallow\nb2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6\nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\n1700000060000",
+      "signatureDer": "VRy79Ho5ztBJySROoHdDxLpjYmO3NpswEfshkegcvFYxZng6i55hwU7sAtR9D1IY67kP8d3OyewoHTD-v5YNww",
+      "expect": {
+        "verify": false
+      },
+      "gate": {
+        "issuedAt": 1700000000000,
+        "submitAt": 1700000030000,
+        "submitDigest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "expect": {
+          "status": 403,
+          "code": "fresh_auth_failed"
+        }
+      }
+    },
+    {
+      "name": "wrong digest",
+      "why": "signature over a message carrying a different card digest",
+      "publicKey": "BCI4WpolgAX1Kpi-aVSpwgIyFhCebZbHfcGbm0HvcdVbBNkXN2W6KBbPtBju7AFnTUmrOOy7CocRMf7urx7EpS4",
+      "message": "murage-approval-proof/1\nt1\nreq-1\nallow\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\n1700000060000",
+      "signatureDer": "MEUCIQCh2E-k1LEVov40M2-XOn_2n_NGzHQwSYu0C6LZAysotAIgA2b6UyhTgttOsmBtDsq0ilD2mB5bIGtHGR1xv8zfm4g",
+      "expect": {
+        "verify": false
+      },
+      "gate": {
+        "issuedAt": 1700000000000,
+        "submitAt": 1700000030000,
+        "submitDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "expect": {
+          "status": 409,
+          "code": "fresh_auth_changed"
+        }
+      }
+    },
+    {
+      "name": "expired proof",
+      "why": "valid signature, submitted at expiresAt: the gate issues a new challenge",
+      "publicKey": "BCI4WpolgAX1Kpi-aVSpwgIyFhCebZbHfcGbm0HvcdVbBNkXN2W6KBbPtBju7AFnTUmrOOy7CocRMf7urx7EpS4",
+      "message": "murage-approval-proof/1\nt1\nreq-1\nallow\nb2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6\nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\n1700000060000",
+      "signatureDer": "MEUCIQCh2E-k1LEVov40M2-XOn_2n_NGzHQwSYu0C6LZAysotAIgA2b6UyhTgttOsmBtDsq0ilD2mB5bIGtHGR1xv8zfm4g",
+      "expect": {
+        "verify": true
+      },
+      "gate": {
+        "issuedAt": 1700000000000,
+        "submitAt": 1700000060000,
+        "submitDigest": "b2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6",
+        "expect": {
+          "status": 403,
+          "code": "fresh_auth",
+          "reason": "expired"
+        }
+      }
+    }
+  ],
+  "signature": {
+    "publicKey": "BCI4WpolgAX1Kpi-aVSpwgIyFhCebZbHfcGbm0HvcdVbBNkXN2W6KBbPtBju7AFnTUmrOOy7CocRMf7urx7EpS4",
+    "message": "murage-approval-proof/1\nt1\nreq-1\nallow\nb2fc768c660b3d06d8379a280b2e45f38142a929346c7caa5d5076b5828415a6\nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\n1700000060000",
+    "signatureDer": "MEUCIQCh2E-k1LEVov40M2-XOn_2n_NGzHQwSYu0C6LZAysotAIgA2b6UyhTgttOsmBtDsq0ilD2mB5bIGtHGR1xv8zfm4g"
+  }
+}

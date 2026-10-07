@@ -6,7 +6,7 @@ description: |
   Do NOT use for general editing (use copy-editing), proofreading without a style guide focus (use proofreading), or citation-specific formatting (use citation-reference).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "editing writing template"
   category: "writing"

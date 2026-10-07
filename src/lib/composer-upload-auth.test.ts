@@ -16,11 +16,14 @@ it("sends desktop proof only to the same-origin thread-bound image upload", asyn
   }));
 });
 
-it("leaves legacy unbound uploads unchanged without claiming thread authority", async () => {
+it("sends desktop proof on legacy unbound uploads too, without claiming thread authority", async () => {
   const fetcher = vi.fn(async () => new Response(JSON.stringify({ path: "/fixture/image.png", mime: "image/png", bytes: 3 })));
   vi.stubGlobal("fetch", fetcher);
   const file = { name: "image.png", type: "image/png", size: 3, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as File;
   await imageAttachmentFromFile(file);
-  expect(auth.ensure).not.toHaveBeenCalled();
-  expect(fetcher).toHaveBeenCalledWith("/api/attachments", expect.objectContaining({ headers: { "content-type": "image/png" } }));
+  // The route is a conversation route: the proof is needed with or without a thread, but no threadId is claimed.
+  expect(auth.ensure).toHaveBeenCalledOnce();
+  expect(fetcher).toHaveBeenCalledWith("/api/attachments", expect.objectContaining({
+    headers: { "content-type": "image/png", "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-surface" },
+  }));
 });

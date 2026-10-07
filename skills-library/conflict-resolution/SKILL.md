@@ -6,7 +6,7 @@ description: |
   Do NOT use for workplace conflict mediation, legal disputes, assessing whether a relationship is healthy, or replacing couples counseling.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "relationships decision-making template"
   category: "family-relationships"

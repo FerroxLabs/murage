@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of boundary setter or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "relationships journaling habits beginner-friendly testing safety emergency-preparedness performing-arts"
   category: "family-relationships"

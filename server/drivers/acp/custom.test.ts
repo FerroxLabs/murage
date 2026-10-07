@@ -2,6 +2,7 @@
 // CLI stands in for "any agent that speaks ACP over stdio" — exactly the
 // promise the driver makes to users.
 import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -115,7 +116,7 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string | undefined> };
-    expect(seen.env.MY_AGENT_TOKEN).toBe("tok-123");
+    expect(seen.env.MY_AGENT_TOKEN).toBe(fixtureCredentialFingerprint("tok-123"));
     // deny-by-default credential hygiene: a custom CLI never inherits
     // another provider's billing key
     expect(seen.env.XAI_API_KEY).toBeUndefined();

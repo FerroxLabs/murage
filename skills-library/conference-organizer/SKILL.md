@@ -4,7 +4,7 @@ description: |
   Complete guide to organizing conferences and large events covering venue selection, speaker management, agenda design, sponsorship acquisition, registration systems, A/V requirements, volunteer coordination, post-event follow-up, and budget management. Use when the user asks about conference organizer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "event-planning planning strategy"
   category: "travel-experiences"

@@ -1,3 +1,5 @@
+export const CLOUD_ROUTINE_NOT_YET = "Cloud runs begin when Cloud approvals arrive. Run this routine on this computer for now.";
+
 /** Durable, non-actionable projection of one background routine run.
  *
  * The provider still runs in its isolated execution task. This small card is

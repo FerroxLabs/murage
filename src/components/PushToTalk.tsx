@@ -2,6 +2,8 @@ import { Loader2, Mic } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
+import { desktopCallerHeaders } from "@/lib/live-events";
+import type { CleanupTarget } from "@/lib/dictation-cleanup";
 
 // Voice typing for every surface the native macOS helper cannot reach.
 //
@@ -78,6 +80,16 @@ import { cn } from "@/lib/cn";
  * clip would not. */
 export const MAX_CLIP_MS = 120_000;
 
+/** Under this a press is a tap, not speech. */
+export const MIN_HOLD_MS = 350;
+/** A recording below this is a container header with no audio in it. Kept in
+ *  step with the route's own floor (server/voice/transcribe-route.ts). */
+export const MIN_CLIP_BYTES = 1024;
+export const TOO_SHORT_NOTE = "That was too short to hear. Hold the button and try again.";
+const UNREADABLE_NOTE = "That recording couldn’t be read. Hold the button a little longer and try again.";
+
+const appleWebKit = () => typeof navigator !== "undefined" && isAppleWebKit(navigator.userAgent ?? "");
+
 /**
  * Containers to try, best first.
  *
@@ -93,9 +105,23 @@ export const PREFERRED_TYPES = [
   "audio/webm",
 ] as const;
 
+/** Apple WebKit (iPhone, iPad, Safari): the recorder there makes audio/mp4 with
+ *  AAC natively, and it is the recording the speech service reads most
+ *  reliably, so it leads for that engine. Chromium and Electron are not Apple
+ *  WebKit even when their user agent says "Safari". */
+export const APPLE_PREFERRED_TYPES = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"] as const;
+
+export function isAppleWebKit(userAgent: string): boolean {
+  if (/iPhone|iPad|iPod/.test(userAgent)) return true;
+  return /AppleWebKit/.test(userAgent) && !/Chrome|Chromium|Electron|Edg|Firefox|Android/.test(userAgent);
+}
+
 /** Pure so the preference order can be tested without a browser. */
-export function pickMimeType(isTypeSupported: (type: string) => boolean): string | null {
-  for (const type of PREFERRED_TYPES) {
+export function pickMimeType(
+  isTypeSupported: (type: string) => boolean,
+  options: { appleWebKit?: boolean } = {},
+): string | null {
+  for (const type of options.appleWebKit ? APPLE_PREFERRED_TYPES : PREFERRED_TYPES) {
     if (isTypeSupported(type)) return type;
   }
   return null;
@@ -134,7 +160,7 @@ export function browserPushToTalkFacts(known: {
     secure: typeof window !== "undefined" && window.isSecureContext,
     // A container we can name matters as much as a recorder existing: without
     // one the route would answer 415 and the button would be decoration.
-    canRecord: recorder && microphone && pickMimeType((type) => MediaRecorder.isTypeSupported(type)) !== null,
+    canRecord: recorder && microphone && pickMimeType((type) => MediaRecorder.isTypeSupported(type), { appleWebKit: appleWebKit() }) !== null,
   };
 }
 
@@ -202,12 +228,17 @@ export function noteForReason(reason: string | undefined, fallback: string): str
       return "Flux rejected that key. Paste a fresh one in Settings on the computer.";
     case "unavailable":
       return "Voice typing isn’t switched on for this Flux account yet.";
+    case "too_short":
+      return TOO_SHORT_NOTE;
+    case "format":
+      return UNREADABLE_NOTE;
     case "too_large":
       return "That was too long. Try again in shorter bursts.";
     case "rate_limit":
       return "Flux is busy right now. Wait a moment and try again.";
     default:
-      return fallback;
+      // An upstream audio-format complaint is never shown as it came.
+      return /(unsupported|unrecognized|invalid|unknown).*(audio|format|codec)/i.test(fallback) ? UNREADABLE_NOTE : fallback;
   }
 }
 
@@ -236,14 +267,16 @@ export const CLIP_TIMEOUT_MS = 45_000;
  * driven: it is the one that used to throw away two minutes of speech.
  */
 export interface ClipDelivery {
-  transcribe: (clip: Blob) => Promise<{ text: string }>;
+  transcribe: (clip: Blob) => Promise<{ text: string; raw?: string }>;
   /** Where the finished utterance goes. Called whether or not the button is
    *  still on screen — see below. */
-  onTranscript: (text: string) => void;
+  onTranscript: (text: string, raw?: string) => void;
   onNote?: (note: string | null) => void;
   /** Is the button still mounted? Gates the SPINNER, and nothing else. */
   mounted: () => boolean;
   setPhase: (phase: Phase) => void;
+  /** How long the button was held, when known. A tap never goes upstream. */
+  heldMs?: number;
 }
 
 /**
@@ -266,16 +299,22 @@ export interface ClipDelivery {
  * element that may no longer exist — is gated.
  */
 export async function deliverClip(clip: Blob, deps: ClipDelivery): Promise<void> {
-  if (!clip.size) {
+  // An empty clip, a header with no audio behind it, or a tap: nothing to
+  // hear, so nothing goes upstream and the person is told what to do.
+  if (clip.size < MIN_CLIP_BYTES || (deps.heldMs !== undefined && deps.heldMs < MIN_HOLD_MS)) {
     if (deps.mounted()) deps.setPhase("idle");
+    deps.onNote?.(TOO_SHORT_NOTE);
     return;
   }
   try {
     const result = await deps.transcribe(clip);
     if (deps.mounted()) deps.setPhase("idle");
     const text = result.text.trim();
-    if (text) deps.onTranscript(text);
-    else deps.onNote?.("Nothing was said in that recording.");
+    const raw = result.raw?.trim();
+    if (text) {
+      if (raw && raw !== text) deps.onTranscript(text, raw);
+      else deps.onTranscript(text);
+    } else deps.onNote?.("Nothing was said in that recording.");
   } catch (error) {
     if (deps.mounted()) deps.setPhase("idle");
     const fallback = error instanceof Error ? error.message : String(error);
@@ -284,14 +323,18 @@ export async function deliverClip(clip: Blob, deps: ClipDelivery): Promise<void>
 }
 
 export interface PushToTalkProps {
-  /** Called with the finished utterance. The composer decides where it goes. */
-  onTranscript: (text: string) => void;
+  /** Called with the finished utterance. The composer decides where it goes.
+   *  `raw` is the transcript as spoken, present only when clean-up changed it. */
+  onTranscript: (text: string, raw?: string) => void;
   /** Reported so the composer can show it in the same place it shows the
    *  native dictation errors, rather than inventing a second error surface. */
   onNote?: (note: string | null) => void;
   facts: PushToTalkFacts;
   /** Injected by the test; production leaves it alone. */
-  transcribe?: (clip: Blob) => Promise<{ text: string }>;
+  transcribe?: (clip: Blob) => Promise<{ text: string; raw?: string }>;
+  /** Ask the server to tidy the transcript (`?cleanup=1`), for the bot or room
+   *  the message is going to. Absent means raw, which is what calls want. */
+  cleanup?: CleanupTarget;
 }
 
 /**
@@ -302,7 +345,12 @@ export interface PushToTalkProps {
  * rather than as multipart is what lets the route answer 413 from the
  * content-length before the upload starts.
  */
-export async function postClip(clip: Blob, timeoutMs: number = CLIP_TIMEOUT_MS, signal?: AbortSignal): Promise<{ text: string }> {
+export async function postClip(
+  clip: Blob,
+  timeoutMs: number = CLIP_TIMEOUT_MS,
+  signal?: AbortSignal,
+  cleanup?: CleanupTarget,
+): Promise<{ text: string; raw?: string }> {
   // A deadline, because the button is DISABLED while this is outstanding. A
   // socket that never answers — a tailnet that dropped between the release
   // and the response is the ordinary way this happens — otherwise leaves
@@ -315,15 +363,21 @@ export async function postClip(clip: Blob, timeoutMs: number = CLIP_TIMEOUT_MS, 
   const deadline = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
-    response = await fetch("/api/voice/transcribe", {
+    const query = cleanup
+      ? `?cleanup=1${cleanup.botId ? `&botId=${encodeURIComponent(cleanup.botId)}` : ""}${cleanup.groupId ? `&groupId=${encodeURIComponent(cleanup.groupId)}` : ""}`
+      : "";
+    response = await fetch(`/api/voice/transcribe${query}`, {
       method: "POST",
-      headers: { "content-type": clip.type || "application/octet-stream" },
+      headers: { "content-type": clip.type || "application/octet-stream", ...desktopCallerHeaders() },
       body: clip,
       signal: controller.signal,
     });
     const body = await response.json().catch((error) => { if (controller.signal.aborted) throw error; return null; });
     if (!response.ok) throw Object.assign(new Error(body?.error ?? "Transcribing failed."), { reason: body?.reason });
-    return { text: typeof body?.text === "string" ? body.text : "" };
+    return {
+      text: typeof body?.text === "string" ? body.text : "",
+      ...(cleanup && body?.cleaned === true && typeof body?.raw === "string" ? { raw: body.raw } : {}),
+    };
   } catch (error) {
     if (signal?.aborted) throw new Error("Cancelled locally. Flux may still process audio that was already uploaded.");
     // An abort is our own deadline, and it gets a sentence about what to do
@@ -343,9 +397,10 @@ export async function postClip(clip: Blob, timeoutMs: number = CLIP_TIMEOUT_MS, 
  * thumb off the control mid-sentence loses the pointerup and leaves the
  * microphone open with nothing listening for the release.
  */
-export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip }: PushToTalkProps) {
+export function PushToTalk({ onTranscript, onNote, facts, transcribe, cleanup }: PushToTalkProps) {
   const [phase, setPhase] = useState<Phase>("idle");
   const recorder = useRef<MediaRecorder | null>(null);
+  const startedAt = useRef(0);
   const stream = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -355,8 +410,8 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip 
   // composer's `onTranscript` closes over its own `text`, and that text can
   // change while the clip is in flight. Calling the captured one would append
   // to a stale draft and overwrite whatever the person typed in the meantime.
-  const latest = useRef({ onTranscript, onNote });
-  latest.current = { onTranscript, onNote };
+  const latest = useRef({ onTranscript, onNote, cleanup });
+  latest.current = { onTranscript, onNote, cleanup };
   const gate = pushToTalkGate(facts);
 
   const release = useCallback(() => {
@@ -408,7 +463,7 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip 
       mic.getTracks().forEach((track) => track.stop());
       return;
     }
-    const mimeType = pickMimeType((type) => MediaRecorder.isTypeSupported(type));
+    const mimeType = pickMimeType((type) => MediaRecorder.isTypeSupported(type), { appleWebKit: appleWebKit() });
     stream.current = mic;
     chunks.current = [];
     const active = new MediaRecorder(mic, mimeType ? { mimeType } : undefined);
@@ -426,13 +481,15 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe = postClip 
       // stops a running recorder, which lands here — and a clip that has been
       // recorded must reach the composer or say why, never evaporate.
       void deliverClip(clip, {
-        transcribe,
-        onTranscript: (said) => latest.current.onTranscript(said),
+        transcribe: transcribe ?? ((blob) => postClip(blob, CLIP_TIMEOUT_MS, undefined, latest.current.cleanup)),
+        onTranscript: (said, raw) => latest.current.onTranscript(said, raw),
         onNote: (note) => latest.current.onNote?.(note),
         mounted: () => alive.current,
         setPhase,
+        heldMs: Date.now() - startedAt.current,
       });
     };
+    startedAt.current = Date.now();
     active.start();
     setPhase("listening");
     // A held button can be forgotten. Stopping ourselves keeps a pocket from

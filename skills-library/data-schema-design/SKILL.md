@@ -6,7 +6,7 @@ description: |
   Do NOT use for data warehouse star/snowflake design (use data-warehouse-design), ETL pipeline logic (use etl-pipeline-design), or application code database migrations (that is software engineering).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science sql template"
   category: "data-analysis"

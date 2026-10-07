@@ -13,7 +13,7 @@ description: |
   fiction writing (use writing category skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "tabletop-rpg planning template creative-writing"
   category: "hobbies-crafts"

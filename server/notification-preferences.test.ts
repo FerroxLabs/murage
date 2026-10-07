@@ -42,3 +42,12 @@ describe("notification preference delivery policy", () => {
     expect(notification.body).toBe("Private content");
   });
 });
+
+describe("a config with notifications: null", () => {
+  it("uses the defaults instead of throwing (review host: every push silently lost)", () => {
+    expect(() => resolveNotificationPreferences(null)).not.toThrow();
+    expect(resolveNotificationPreferences(null)).toEqual(resolveNotificationPreferences(undefined));
+    const approval = { kind: "approval" as const, botId: "b", threadId: "t", title: "Trip Planner", body: "wants to run a command", requestId: "r" };
+    expect(applyNotificationPreferences(approval, null, new Date("2026-10-06T06:30:00Z"))).not.toBeNull();
+  });
+});

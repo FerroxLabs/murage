@@ -1,3 +1,4 @@
+import { renderMurageTools, CLAUDE_TOOL_SURFACE } from "./murage-tool-surface.ts";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, it } from "vitest";
@@ -61,5 +62,5 @@ it("does not advertise remote outputs or promise unadmitted publication; custom 
   expect(text).toContain("replaces earlier scratch-folder advice");
   expect(text).toContain("checks new or changed files");
   expect(outputDestinationInstructions(managed, false, false)).toContain("Automatic publication is unavailable");
-  expect(outputDestinationInstructions({ ...managed, managed: false }, false, true)).toContain("call register_artifact");
+  expect(renderMurageTools(outputDestinationInstructions({ ...managed, managed: false }, false, true), CLAUDE_TOOL_SURFACE, { agents: "agents" })).toContain("call mcp__agents__register_artifact");
 });

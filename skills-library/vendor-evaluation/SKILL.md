@@ -11,7 +11,7 @@ description: |
   or procurement contract review (requires legal review).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis planning decision-making template"
   category: "business-strategy"

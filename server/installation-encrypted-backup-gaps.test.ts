@@ -8,7 +8,7 @@ import { assertRestoreReviewed } from "../electron/restore-review.mjs";
 import * as encryption from "./installation-backup-encryption.ts";
 import * as fidelity from "./installation-fidelity-snapshot.ts";
 import { inspectEncryptedInstallationBackup, restoreEncryptedInstallationNew, writeEncryptedInstallationBackup } from "./installation-encrypted-backup.ts";
-import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture, testAgeKeys,rawAgeHost } from "./testing/backup-fixture.ts";
 
 // B20 recovery gaps on a genuinely closed synthetic installation with the real
 // pinned age tool: in-flight cancellation, a destination raced into existence,
@@ -48,7 +48,7 @@ function closedFixture(){
 }
 const leftovers=(directory:string)=>readdirSync(directory).filter(name=>name.startsWith(".murage-encrypted"));
 
-it("cancels an in-flight capture, stops the pinned age child, publishes nothing and releases ownership",async()=>{
+it.skipIf(!rawAgeHost)("cancels an in-flight capture, stops the pinned age child, publishes nothing and releases ownership",async()=>{
   const f=closedFixture(),before=digestTree(f.data),archive=join(f.parent,"backup.age"),controller=new AbortController();
   const open=fidelity.openFidelitySource;let observed:{running:string[];staged:boolean}|undefined;
   const hook=vi.spyOn(fidelity,"openFidelitySource").mockImplementation(item=>{
@@ -75,7 +75,7 @@ it("cancels an in-flight capture, stops the pinned age child, publishes nothing 
   }finally{hook.mockRestore();rmSync(f.parent,{recursive:true,force:true});}
 },60000);
 
-it("refuses a destination another writer creates during capture and keeps that writer's bytes",async()=>{
+it.skipIf(!rawAgeHost)("refuses a destination another writer creates during capture and keeps that writer's bytes",async()=>{
   const f=closedFixture(),before=digestTree(f.data),archive=join(f.parent,"backup.age");
   const open=fidelity.openFidelitySource;let raced=false;
   const hook=vi.spyOn(fidelity,"openFidelitySource").mockImplementation(item=>{
@@ -91,7 +91,7 @@ it("refuses a destination another writer creates during capture and keeps that w
   }finally{hook.mockRestore();rmSync(f.parent,{recursive:true,force:true});}
 },60000);
 
-it("refuses truncated ciphertext and an in-flight restore cancellation; the durable receipt then matches the archive",async()=>{
+it.skipIf(!rawAgeHost)("refuses truncated ciphertext and an in-flight restore cancellation; the durable receipt then matches the archive",async()=>{
   const f=closedFixture(),before=digestTree(f.data),archive=join(f.parent,"backup.age"),restores=join(f.parent,"restores");mkdirSync(restores);
   try{
     const saved=await writeEncryptedInstallationBackup(f.data,archive,{...f.keys,selection});

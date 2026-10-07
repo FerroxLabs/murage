@@ -11,7 +11,7 @@ description: |
   situations, or room layout and furniture arrangement (use room-organization-system).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decluttering cleaning guide"
   category: "home-household"

@@ -4,7 +4,7 @@ description: |
   Complete customer service system design covering support channel strategy, response template libraries, escalation frameworks, service level agreements, customer satisfaction metrics, team training programs, complaint resolution workflows, and building a service culture that drives retention and referrals. Use when the user asks about customer service architect or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy planning template"
   category: "business-strategy"

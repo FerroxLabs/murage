@@ -11,7 +11,7 @@ description: |
   (use solo-travel-planner), or group travel without children.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "travel planning parenting itinerary"
   category: "travel-experiences"

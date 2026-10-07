@@ -18,6 +18,7 @@ function fixture(platform,arch){
   const server=path.join(root,"server"),runtimePath="node_modules/@huggingface/transformers/node_modules/onnxruntime-node",runtime=path.join(server,runtimePath),native=path.join(runtime,"bin/napi-v6",platform,arch);
   fs.mkdirSync(native,{recursive:true});fs.mkdirSync(path.join(server,"memory"),{recursive:true});
   fs.writeFileSync(path.join(server,"memory/worker.js"),"// fixture module presence only\n");
+  fs.writeFileSync(path.join(server,"bot-package-guard-worker.js"),"// fixture module presence only\n");
   fs.writeFileSync(path.join(server,"memory-model-manifest.json"),JSON.stringify({runtimeVersion:"4.2.0"}));
   fs.writeFileSync(path.join(runtime,"package.json"),JSON.stringify({name:"onnxruntime-node",version:"1.24.3"}));
   const manifest=path.join(server,"memory-runtime-manifest.json");

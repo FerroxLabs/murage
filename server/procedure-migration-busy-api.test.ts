@@ -119,6 +119,45 @@ posixOnly("the first turn of a new bot while another of its turns runs", () => {
     }
   }, 120000);
 
+  it("a room turn that fails before it starts hands the room back, and the next message is answered", async () => {
+    await hideEveryone();
+    const quinn = await bot("Quill");
+    const desk = await room("Desk", [quinn.id]);
+    // Quinn's desk turn is running (held at the engine's handshake)
+    hold();
+    expect((await api("POST", `/api/bots/${quinn.id}/messages`, { text: "a long one, please" })).status).toBeLessThan(300);
+    await expect.poll(() => existsSync(`${gate}.waiting`), { timeout: 15000 }).toBe(true);
+    // A workspace from a release before task desks: an app-made skill link
+    // in the bot's own folder, not yet moved. Moving it while the desk turn
+    // runs could pull the skill out from under that turn, so the room turn
+    // refuses before it starts.
+    const root = join(fixture.info.dataDir, "workspaces", quinn.id);
+    mkdirSync(join(root, "skills", "old-habit"), { recursive: true });
+    writeFileSync(join(root, "skills", "old-habit", "SKILL.md"), "---\nname: old-habit\ndescription: An old habit\n---\nBe old.\n");
+    mkdirSync(join(root, ".agents", "skills"), { recursive: true });
+    symlinkSync("../../skills/old-habit", join(root, ".agents", "skills", "old-habit"));
+    rmSync(join(fixture.info.dataDir, "skill-state", quinn.id, "task-discovery.json"), { force: true });
+
+    expect((await api("POST", `/api/groups/${desk.id}/messages`, { text: "and one line here" })).status).toBe(202);
+    const report = async () => `desk:\n${lines(await messages(quinn.threadId))}\nroom:\n${lines(await messages(desk.threadId))}\nstate: ${JSON.stringify((await state()).groups.find((g) => g.id === desk.id))}`;
+    // the room says the turn could not start, and does not stay busy
+    await expect.poll(async () => {
+      const group = (await state()).groups.find((g) => g.id === desk.id);
+      return said(await messages(desk.threadId), "could not answer: it is still finishing other work.") && !group.busyBotId && !group.working;
+    }, { timeout: 10000 }).toBe(true).catch(async (error) => { throw new Error(`${error}\n${await report()}`); });
+    expect(rawCodes(await messages(desk.threadId))).toBe(false);
+    writeFileSync(gate, "");
+    await expect.poll(async () => replied(await messages(quinn.threadId), quinn.id), { timeout: 30000 }).toBe(true)
+      .catch(async (error) => { throw new Error(`${error}\n${await report()}`); });
+    await expect.poll(() => settled(desk.id, quinn.id), { timeout: 20000 }).toBe(true);
+    // nothing else of Quinn's runs now: the next room message moves the old link and is answered
+    expect((await api("POST", `/api/groups/${desk.id}/messages`, { text: "one more line" })).status).toBe(202);
+    await expect.poll(async () => (await messages(desk.threadId)).filter((m) => m.from?.botId === quinn.id && m.kind === "text" && m.text).length, { timeout: 30000 }).toBeGreaterThanOrEqual(1)
+      .catch(async (error) => { throw new Error(`${error}\n${await report()}`); });
+    await expect.poll(() => settled(desk.id, quinn.id), { timeout: 20000 }).toBe(true);
+    expect(existsSync(join(root, ".agents", "skills", "old-habit"))).toBe(false);
+  }, 120000);
+
   // Nothing else of the bot runs, but the old link cannot be moved (its
   // folder is read-only): the migration refuses, and the room is handed
   // back all the same.

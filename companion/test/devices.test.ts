@@ -182,6 +182,19 @@ describe("DeviceRegistry", () => {
     });
   });
 
+  it("a replayed request must carry the same install id as the first", () => {
+    const registry = new DeviceRegistry();
+    const { token: credential } = registry.openPairing();
+    const requestId = "4c825d5b-cf40-4db7-aac5-2455f805a8ec";
+    const first = registry.redeem(credential, "iPhone", requestId, "ios-install-0123456789abcdef");
+    expect(first).toHaveProperty("token");
+    // A different install id, or none, is not the same request.
+    expect(registry.redeem(credential, "iPhone", requestId, "ios-install-fedcba9876543210")).toMatchObject({ reason: "used" });
+    expect(registry.redeem(credential, "iPhone", requestId)).toMatchObject({ reason: "used" });
+    expect(registry.redeem(credential, "iPhone", requestId, "ios-install-0123456789abcdef")).toEqual(first);
+    expect(registry.count()).toBe(1);
+  });
+
   it("forgets a redemption replay when a fresh pairing window opens", () => {
     const registry = new DeviceRegistry();
     const { token: firstCredential } = registry.openPairing();
@@ -189,9 +202,58 @@ describe("DeviceRegistry", () => {
     expect(registry.redeem(firstCredential, "iPhone", requestId)).toHaveProperty("token");
 
     registry.openPairing();
+    // No longer a bare wrong guess: the first credential was truly spent
+    // ("used") by the redemption above, before the fresh window ever opened,
+    // and the registry now recognises that on a live-window mismatch too —
+    // an honest already-used code, not a guess against the new window — and
+    // says so instead of "not right". Either way it is not signed in again.
     expect(registry.redeem(firstCredential, "iPhone", requestId)).toMatchObject({
-      error: expect.stringContaining("not right"),
+      error: expect.stringContaining("already"),
+      reason: "used",
     });
+  });
+
+  // RES-005: one deadline. The replay window is five minutes from the first
+  // redemption, inside the longer pairing window.
+  it("honours a replay for five minutes from the first redemption, then refuses it as used", () => {
+    vi.useFakeTimers();
+    try {
+      const registry = new DeviceRegistry();
+      const { token: credential } = registry.openPairing();
+      const requestId = "4c825d5b-cf40-4db7-aac5-2455f805a8ec";
+      const first = registry.redeem(credential, "iPhone", requestId);
+      expect(first).toHaveProperty("token");
+      expect(registry.wasReplay(first as object)).toBe(false);
+      vi.advanceTimersByTime(devicesModule.PAIRING_REPLAY_MS - 1);
+      const again = registry.redeem(credential, "iPhone", requestId);
+      expect(again).toEqual(first);
+      expect(registry.wasReplay(again as object)).toBe(true);
+      vi.advanceTimersByTime(2);
+      expect(PAIRING_TTL_MS).toBeGreaterThan(devicesModule.PAIRING_REPLAY_MS);
+      expect(registry.redeem(credential, "iPhone", requestId)).toMatchObject({ reason: "used" });
+      expect(registry.count()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("revoking the device, or signing it out, clears its replay record", () => {
+    const requestId = "4c825d5b-cf40-4db7-aac5-2455f805a8ec";
+    const revoked = new DeviceRegistry();
+    const { token: a } = revoked.openPairing();
+    const first = revoked.redeem(a, "iPhone", requestId);
+    if ("error" in first) throw new Error(first.error);
+    expect(revoked.revoke(first.device.id)).toBe(true);
+    expect(revoked.redeem(a, "iPhone", requestId)).toMatchObject({ reason: "used" });
+    expect(revoked.count()).toBe(0);
+
+    const signedOut = new DeviceRegistry();
+    const { token: b } = signedOut.openPairing();
+    const second = signedOut.redeem(b, "iPhone", requestId);
+    if ("error" in second) throw new Error(second.error);
+    const opened = signedOut.openSession(second.device.id, "Safari");
+    expect(signedOut.closeSession(opened!.value)).toBe(true);
+    expect(signedOut.redeem(b, "iPhone", requestId)).toMatchObject({ reason: "used" });
   });
 
   it("actively erases a redemption replay at the original window expiry", () => {
@@ -287,6 +349,152 @@ describe("DeviceRegistry", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("tells a stale-but-still-live code it was replaced, without spending an attempt", () => {
+    const registry = new DeviceRegistry();
+    const first = registry.openPairing();
+    // Still live — nowhere near its TTL — when this second call supersedes
+    // it. That is the distinction from an ordinary expiry: nothing about the
+    // first window ran out on its own.
+    const second = registry.openPairing();
+    expect(registry.pairing()?.token).toBe(second.token);
+
+    expect(registry.redeem(first.code, "iPhone")).toEqual({
+      error: "That code was replaced by a newer one on your computer. Scan the code it shows now.",
+      reason: "replaced",
+    });
+    // Honest and stale, not a guess: the live window's budget is untouched.
+    expect(registry.pairing()?.attemptsLeft).toBe(MAX_PAIRING_ATTEMPTS);
+    // The other half of the same window is remembered the same way.
+    expect(registry.redeem(first.token, "iPhone")).toMatchObject({ reason: "replaced" });
+    expect(registry.pairing()?.attemptsLeft).toBe(MAX_PAIRING_ATTEMPTS);
+
+    // No device was ever created for it.
+    expect(registry.count()).toBe(0);
+  });
+
+  it("still charges an attempt for an ordinary wrong guess against a live window", () => {
+    const registry = new DeviceRegistry();
+    const first = registry.openPairing();
+    const second = registry.openPairing();
+    // Present the replaced code first — costs nothing, as pinned above —
+    // then confirm a guess that matches nothing remembered (not the
+    // replaced code, not the live window's own code) is still charged
+    // exactly as it was before this change.
+    registry.redeem(first.code, "iPhone");
+    expect(registry.pairing()?.attemptsLeft).toBe(MAX_PAIRING_ATTEMPTS);
+    // Three candidates, at most two excluded by the two real codes above, so
+    // this always finds one that cannot accidentally BE either window's
+    // code — no flake, not just an unlikely one.
+    const guess = ["000000", "111111", "222222"].find((c) => c !== first.code && c !== second.code)!;
+    expect(registry.redeem(guess, "iPhone")).toEqual({
+      error: "That pairing code or link is not right. Check it and try again.",
+      reason: "wrong",
+    });
+    expect(registry.pairing()?.attemptsLeft).toBe(MAX_PAIRING_ATTEMPTS - 1);
+  });
+
+  it("also recognises a replaced code once its window has since gone too, and still refuses it a sign-in", () => {
+    const registry = new DeviceRegistry();
+    const first = registry.openPairing();
+    registry.openPairing();
+    registry.closePairing(); // the replacement window is gone now too
+    expect(registry.pairing()).toBeNull();
+
+    expect(registry.redeem(first.code, "iPhone")).toEqual({
+      error: "That code was replaced by a newer one on your computer. Scan the code it shows now.",
+      reason: "replaced",
+    });
+    expect(registry.count()).toBe(0);
+  });
+
+  it("forgets a replaced code after the same memory window as the others", () => {
+    vi.useFakeTimers();
+    try {
+      const registry = new DeviceRegistry();
+      const { code: oldCode } = registry.openPairing();
+      registry.openPairing(); // replaces the still-live window above
+      expect(registry.redeem(oldCode, "iPhone")).toMatchObject({ reason: "replaced" });
+
+      // SPENT_MEMORY_MS mirrors PAIRING_TTL_MS, so the window that replaced
+      // it runs out of its own time at the same moment the memory of the old
+      // one would lapse. Once that natural expiry is noticed, the stale
+      // "replaced" row is pruned right along with it — same bounded memory
+      // as `used`, `burned` and `expired` get, not a permanent record.
+      vi.advanceTimersByTime(PAIRING_TTL_MS + 1);
+      expect(registry.pairing()).toBeNull();
+      expect(registry.redeem(oldCode, "iPhone")).toMatchObject({ reason: "no-pairing" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a replaced code presented at the live window's last attempt does not burn it", () => {
+    const registry = new DeviceRegistry();
+    const first = registry.openPairing();
+    const second = registry.openPairing();
+    // Drive the live window down to its last attempt with guesses that
+    // cannot match anything real: not either window's own code, and (since
+    // nothing has been spent yet) nothing remembered either.
+    const guess = ["000000", "111111", "222222"].find((c) => c !== first.code && c !== second.code)!;
+    for (let i = 1; i < MAX_PAIRING_ATTEMPTS; i++) {
+      expect(registry.redeem(guess, "iPhone")).toMatchObject({ reason: "wrong" });
+    }
+    expect(registry.pairing()?.attemptsLeft).toBe(1);
+
+    // The recall runs before the decrement, so this still reads as an honest
+    // stale code rather than the fifth wrong guess — it must not burn the
+    // window it would otherwise have just enough budget to destroy.
+    expect(registry.redeem(first.code, "iPhone")).toEqual({
+      error: "That code was replaced by a newer one on your computer. Scan the code it shows now.",
+      reason: "replaced",
+    });
+    expect(registry.pairing()).not.toBeNull();
+    expect(registry.pairing()?.attemptsLeft).toBe(1);
+  });
+
+  it("a remembered expired code presented during a later live window still costs an attempt", () => {
+    vi.useFakeTimers();
+    try {
+      const registry = new DeviceRegistry();
+      const { code: oldCode } = registry.openPairing();
+      vi.advanceTimersByTime(PAIRING_TTL_MS + 1);
+      // Noticed and spent as "expired" here, read through the getter exactly
+      // as `redeem` itself does.
+      expect(registry.pairing()).toBeNull();
+
+      const second = registry.openPairing();
+      // Only `used` and `replaced` get the free pass. An `expired` row is
+      // still just a dead code from a different window, and presenting it
+      // against this new live one is an ordinary wrong guess.
+      expect(oldCode).not.toBe(second.code);
+      expect(registry.redeem(oldCode, "iPhone")).toEqual({
+        error: "That pairing code or link is not right. Check it and try again.",
+        reason: "wrong",
+      });
+      expect(registry.pairing()?.attemptsLeft).toBe(MAX_PAIRING_ATTEMPTS - 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a remembered burned code presented during a later live window still costs an attempt", () => {
+    const registry = new DeviceRegistry();
+    const { code: oldCode } = registry.openPairing();
+    const wrong = oldCode === "000000" ? "111111" : "000000";
+    for (let i = 0; i < MAX_PAIRING_ATTEMPTS; i++) registry.redeem(wrong, "iPhone");
+    expect(registry.pairing()).toBeNull(); // burned
+
+    const second = registry.openPairing();
+    // Same reasoning as the expired case: `burned` does not get the pass
+    // either, only `used` and `replaced` do.
+    expect(oldCode).not.toBe(second.code);
+    expect(registry.redeem(oldCode, "iPhone")).toEqual({
+      error: "That pairing code or link is not right. Check it and try again.",
+      reason: "wrong",
+    });
+    expect(registry.pairing()?.attemptsLeft).toBe(MAX_PAIRING_ATTEMPTS - 1);
   });
 
   it("revokes one device without touching the others", () => {
@@ -894,7 +1102,7 @@ describe("pairing again from the same app install", () => {
     expect(registry.count()).toBe(MAX_DEVICES);
   });
 
-  it("answers a replayed request with its original device, whatever install id the replay carries", () => {
+  it("refuses a replayed request that carries another install id, and leaves every record alone", () => {
     const registry = new DeviceRegistry();
     const other = pairAs(registry, "android-install-fedcba9876543210", "Pixel");
     const { code } = registry.openPairing();
@@ -903,7 +1111,8 @@ describe("pairing again from the same app install", () => {
     if ("error" in first) throw new Error(`pairing failed: ${first.error}`);
 
     const replay = registry.redeem(code, "iPhone", requestId, "android-install-fedcba9876543210");
-    expect(replay).toEqual(first);
+    expect(replay).toMatchObject({ reason: "used" });
+    expect(registry.redeem(code, "iPhone", requestId, INSTALL)).toEqual(first);
     expect(registry.count()).toBe(2);
     expect(registry.authenticate(other.token)?.id).toBe(other.device.id);
     expect(registry.list().map((d) => d.id).sort()).toEqual([first.device.id, other.device.id].sort());

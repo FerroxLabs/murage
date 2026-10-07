@@ -1,7 +1,7 @@
 import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { humanMayReadRecord } from "../human-principals.ts";
 import { database } from "../database.ts";
-import { accessIncludesRoom, assertMemoryAccess, type MemoryAccess } from "./policy.ts";
+import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, type MemoryAccess } from "./policy.ts";
 import type { IndexHit } from "./index.ts";
 import { createHash } from "node:crypto";
 import { MemoryQueryCache } from "./cache.ts";
@@ -10,30 +10,39 @@ import { materializeRecentMemory, recentMemoryHits } from "./recent.ts";
 import { recordMemoryRetrieval } from "./health.ts";
 import { unsettledIntention } from "./checkpoints.ts";
 import { recordRestsOnWithheldMessage } from "./replay-lineage.ts";
+import { noteMemorySearch } from "./turn-stats.ts";
 const queryCache=new MemoryQueryCache<{hits:IndexHit[];degradedReason?:string;vectorRows:number;nextCursor?:string;coverageComplete?:boolean}>();
 
 import { CURRENT_MEMORY,HISTORICAL_MEMORY } from "./eligibility.ts";
+import { isPipKind } from "./pip-kinds.ts";
 import type { MemorySearchInput } from "./worker-protocol.ts";
 export { CURRENT_MEMORY } from "./eligibility.ts";
+/** What a turn waits for recall. The worker is told when it ends. */
+export const SEARCH_BUDGET_MS=500;
+/** Past this much total time hydration stops and what is read so far is returned, flagged degraded. */
+const HYDRATION_LIMIT_MS=SEARCH_BUDGET_MS*2;
 export interface MemorySearchBridge {
   search(input:MemorySearchInput,signal:AbortSignal):Promise<{hits:IndexHit[];degradedReason?:string;vectorRows:number;nextCursor?:string;coverageComplete?:boolean}>;
   completedSource?(jobId:string):void;
 }
 export async function searchMemory(query:string,access:MemoryAccess,bridge:MemorySearchBridge,options:{limit?:number;historical?:boolean;cursor?:string;signal?:AbortSignal;profile?:boolean;evolutionPolicy?:MemoryEvolutionPolicy;withheldMessage?:(threadId:string,messageId:string)=>boolean}={}){
-  const evolutionPolicy=options.evolutionPolicy??readMemoryEvolutionPolicy();
   const serviceStarted=performance.now();
+  // The budget starts here, before the synchronous preparation below, and the
+  // worker is handed the same deadline.
+  const deadlineAt=Date.now()+SEARCH_BUDGET_MS;
+  const signal=AbortSignal.any([options.signal??new AbortController().signal,AbortSignal.timeout(SEARCH_BUDGET_MS)]);
   assertMemoryAccess(access);
+  const evolutionPolicy=options.evolutionPolicy??readMemoryEvolutionPolicy();
   if(!query.trim()||Buffer.byteLength(query)>4096)throw new Error("INVALID_MEMORY_QUERY");
   const limit=Math.min(20,Math.max(1,options.limit??10));
   const historical=HISTORICAL_MEMORY;
   if(!options.historical)materializeRecentMemory(access,options.signal,jobId=>bridge.completedSource?.(jobId));
   const meta=database().prepare("SELECT data_revision FROM memory_meta WHERE id=1").get()!;
-  const signal=AbortSignal.any([options.signal??new AbortController().signal,AbortSignal.timeout(500)]);
   const cacheKey=createHash("sha256").update(JSON.stringify([query,limit,access.scopeIds,access.policyRevision,access.deletionEpoch,meta.data_revision,options.historical??false,options.cursor??""])).digest("hex");
   const cached=queryCache.get(cacheKey);
   const bridgeStarted=performance.now();
   let result;
-  try{result=cached??await bridge.search({query,scopeIds:[...access.scopeIds],policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,historical:options.historical??false,cursor:options.cursor??"",limit,semantic:true,...options.profile?{profile:true}:{}},signal);}
+  try{result=cached??await withinDeadline(bridge.search({query,scopeIds:[...access.scopeIds],policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,historical:options.historical??false,cursor:options.cursor??"",limit,semantic:true,deadlineAt,...options.profile?{profile:true}:{}},signal),signal);}
   catch{options.signal?.throwIfAborted();assertMemoryAccess(access);result={hits:[] as IndexHit[],vectorRows:0,degradedReason:"MEMORY_RECALL_UNAVAILABLE",coverageComplete:false};}
   const bridgeDone=performance.now();
   if(!result.degradedReason && result.coverageComplete && result.vectorRows>0)queryCache.set(cacheKey,result);
@@ -46,9 +55,11 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   // Owner-private identity stays in direct turns; a room member's own bot
   // scope does not carry it into the room (same rule as bundle hydration).
   const room=accessIncludesRoom(access);
-  const hits=combined.map(hit=>{
+  let partial=false;
+  const hits=inMemoryAccessPass(()=>combined.map(hit=>{
+    if(partial||performance.now()-serviceStarted>HYDRATION_LIMIT_MS){partial=true;return null;}
     const record=database().prepare(`SELECT * FROM memory_records r WHERE id=? AND version=? AND ${options.historical?historical:CURRENT_MEMORY}`).get(hit.id,hit.version);
-    if(!record || !humanMayReadRecord(database(),hit.id,hit.version,access.humanPrincipal))return null;
+    if(!record || isPipKind(record.kind) || !humanMayReadRecord(database(),hit.id,hit.version,access.humanPrincipal))return null;
     if(room && database().prepare("SELECT 1 FROM memory_record_details WHERE record_id=? AND record_version=? AND partition='identity'").get(hit.id,hit.version))return null;
     const scopeId=String(record.scope_id);
     if(!checkedScopes.has(scopeId)){assertMemoryAccess(access,scopeId);checkedScopes.add(scopeId);}
@@ -66,10 +77,23 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     return {...hit,text:String(record.text),scopeId:String(record.scope_id),assertion:String(record.assertion),state:String(record.state),pinned:record.owner_pinned===1,...outcome,
       validFrom:Number(record.valid_from),validTo:record.valid_to===null?null:Number(record.valid_to),recordedAt:Number(record.created_at),
       evidence:database().prepare("SELECT e.source_id AS sourceId,e.source_revision AS revision,e.start_byte AS startByte,e.end_byte AS endByte,json_extract(v.payload,'$.occurredAt') AS occurredAt FROM memory_evidence e JOIN memory_source_versions v ON v.source_id=e.source_id AND v.revision=e.source_revision WHERE e.record_id=? AND e.record_version=?").all(hit.id,hit.version)};
-  }).filter((row):row is NonNullable<typeof row>=>row!==null);
+  }).filter((row):row is NonNullable<typeof row>=>row!==null));
   assertMemoryAccess(access);
   const optional=new Set(selectMemoryEvidence(query,hits.filter(hit=>!hit.pinned),evolutionPolicy));
   const selected=hits.filter(hit=>hit.pinned||optional.has(hit)).slice(0,limit);
   recordMemoryRetrieval(selected.length);
-  return {...result,evolutionPolicyRevision:evolutionPolicy.revision,...recent.length?{coverageComplete:false,recentFallback:true}:{},hits:selected,...options.profile?{profileCacheHit:Boolean(cached),serviceProfile:{preparationMs:bridgeStarted-serviceStarted,bridgeMs:bridgeDone-bridgeStarted,hydrationMs:performance.now()-bridgeDone}}:{}};
+  noteMemorySearch(selected.length,performance.now()-serviceStarted,{prepMs:bridgeStarted-serviceStarted,bridgeMs:bridgeDone-bridgeStarted,hydrationMs:performance.now()-bridgeDone});
+  return {...result,...partial&&!result.degradedReason?{degradedReason:"MEMORY_RECALL_UNAVAILABLE",coverageComplete:false}:{},evolutionPolicyRevision:evolutionPolicy.revision,...recent.length?{coverageComplete:false,recentFallback:true}:{},hits:selected,...options.profile?{profileCacheHit:Boolean(cached),serviceProfile:{preparationMs:bridgeStarted-serviceStarted,bridgeMs:bridgeDone-bridgeStarted,hydrationMs:performance.now()-bridgeDone}}:{}};
+}
+
+/** A bridge that is busy with a long job (or deaf to the abort) cannot hold the turn: the
+ * wait ends when the signal does, whether or not the bridge answers. */
+function withinDeadline<T>(work:Promise<T>,signal:AbortSignal):Promise<T>{
+  work.catch(()=>{});
+  return new Promise<T>((resolve,reject)=>{
+    const stop=()=>reject(new Error("MEMORY_QUERY_DEADLINE"));
+    if(signal.aborted)return stop();
+    signal.addEventListener("abort",stop,{once:true});
+    work.then(resolve,reject).finally(()=>signal.removeEventListener("abort",stop));
+  });
 }

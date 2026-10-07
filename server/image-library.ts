@@ -19,7 +19,7 @@ import { IMAGE_GENERATION_REFERENCE_MAX } from "../shared/media-assets.ts";
 import { GENERATED_IMAGE_MAX_BYTES } from "./attachments.ts";
 import { IMAGE_PROMPT_HARD_MAX } from "../shared/image-capabilities.ts";
 import type { ImageReference } from "./image-generation.ts";
-import { murageTool } from "./tool-call-context.ts";
+import { murageToolOnThisServer } from "./murage-tool-surface.ts";
 
 export type ImageLibraryScope = "workspace" | "bot";
 /** Who is asking: a bot (its own scope plus the workspace) or the owner (everything). */
@@ -107,7 +107,7 @@ function visibleBlockRows(db: DatabaseSync, actor: ImageLibraryActor, name: stri
 export function getPromptBlock(db: DatabaseSync, actor: ImageLibraryActor, ref: string): PromptBlock {
   const { name, version } = parseLibraryRef(ref, "block");
   const rows = visibleBlockRows(db, actor, name);
-  if (!rows.length) refuse(404, `No saved prompt block is named ${name}. ${murageTool("list_prompt_blocks")} shows the ones you can use.`);
+  if (!rows.length) refuse(404, `No saved prompt block is named ${name}. ${murageToolOnThisServer("list_prompt_blocks")} shows the ones you can use.`);
   const row = version === undefined ? rows[0] : rows.find(item => item.version === version);
   if (!row) refuse(404, `${name} has no version ${version}. Its latest is v${rows[0]!.version}.`);
   return blockOf(row!);
@@ -133,17 +133,25 @@ export function listPromptBlocksForOwner(db: DatabaseSync): PromptBlockSummary[]
   return rows.map(blockSummary);
 }
 
+/** Does a row belong to the library key a request is scoped to? No key: the owner's whole view. */
+const inScope = (row: { scope: ImageLibraryScope; bot_id: string }, scopeKey?: string): boolean =>
+  scopeKey === undefined || row.scope === "workspace" || row.bot_id === scopeKey;
+
 /** One version by its id, for the owner. */
-export function promptBlockById(db: DatabaseSync, id: string): PromptBlock {
+export function promptBlockById(db: DatabaseSync, id: string, scopeKey?: string): PromptBlock {
   const row = prepared(db).prepare("SELECT * FROM image_prompt_blocks WHERE id=? AND deleted_at IS NULL").get(id) as BlockRow | undefined;
-  if (!row) refuse(404, "That prompt block is not saved any more.");
+  // A request scoped to one library key (a bot's home or one of its partitions)
+  // reads what that key's list shows: its own rows and the workspace's. Another
+  // partition's id answers exactly like a missing one.
+  if (!row || !inScope(row, scopeKey)) refuse(404, "That prompt block is not saved any more.");
   return blockOf(row!);
 }
 
 /** Soft-deletes every version of the block this id belongs to. */
-export function deletePromptBlock(db: DatabaseSync, id: string, now = Date.now()): { name: string; versions: number } {
+export function deletePromptBlock(db: DatabaseSync, id: string, options: { scopeKey?: string; now?: number } = {}): { name: string; versions: number } {
+  const now = options.now ?? Date.now();
   const row = prepared(db).prepare("SELECT scope,bot_id,name FROM image_prompt_blocks WHERE id=?").get(id) as Pick<BlockRow, "scope" | "bot_id" | "name"> | undefined;
-  if (!row) refuse(404, "That prompt block is not saved any more.");
+  if (!row || !inScope(row, options.scopeKey)) refuse(404, "That prompt block is not saved any more.");
   const result = db.prepare("UPDATE image_prompt_blocks SET deleted_at=? WHERE scope=? AND bot_id=? AND name=? AND deleted_at IS NULL").run(now, row!.scope, row!.bot_id, row!.name);
   return { name: row!.name, versions: Number(result.changes ?? 0) };
 }
@@ -214,9 +222,10 @@ export function listReferencePacksForOwner(db: DatabaseSync): ReferencePackSumma
   return (prepared(db).prepare(`SELECT p.* FROM image_reference_packs p WHERE p.deleted_at IS NULL
     AND p.version=(SELECT MAX(version) FROM image_reference_packs q WHERE q.scope=p.scope AND q.bot_id=p.bot_id AND q.name=p.name AND q.deleted_at IS NULL) ORDER BY p.scope DESC, p.bot_id, p.name`).all() as unknown as PackRow[]).map(packSummary);
 }
-export function deleteReferencePack(db: DatabaseSync, id: string, now = Date.now()): { name: string; versions: number } {
+export function deleteReferencePack(db: DatabaseSync, id: string, options: { scopeKey?: string; now?: number } = {}): { name: string; versions: number } {
+  const now = options.now ?? Date.now();
   const row = prepared(db).prepare("SELECT scope,bot_id,name FROM image_reference_packs WHERE id=?").get(id) as Pick<PackRow, "scope" | "bot_id" | "name"> | undefined;
-  if (!row) refuse(404, "That reference pack is not saved any more.");
+  if (!row || !inScope(row, options.scopeKey)) refuse(404, "That reference pack is not saved any more.");
   const result = db.prepare("UPDATE image_reference_packs SET deleted_at=? WHERE scope=? AND bot_id=? AND name=? AND deleted_at IS NULL").run(now, row!.scope, row!.bot_id, row!.name);
   return { name: row!.name, versions: Number(result.changes ?? 0) };
 }
@@ -230,7 +239,7 @@ export function resolveReferencePack(db: DatabaseSync, dataDir: string, actor: I
   const rows = (scope: ImageLibraryScope, botId: string) => database.prepare("SELECT * FROM image_reference_packs WHERE scope=? AND bot_id=? AND name=? AND deleted_at IS NULL ORDER BY version DESC").all(scope, botId, name) as unknown as PackRow[];
   let found = actor.kind === "bot" ? rows("bot", actor.botId) : [];
   if (!found.length) found = rows("workspace", "");
-  if (!found.length) refuse(404, `No saved reference pack is named ${name}. ${murageTool("list_reference_packs")} shows the ones you can use. Nothing was sent.`);
+  if (!found.length) refuse(404, `No saved reference pack is named ${name}. ${murageToolOnThisServer("list_reference_packs")} shows the ones you can use. Nothing was sent.`);
   const row = version === undefined ? found[0] : found.find(item => item.version === version);
   if (!row) refuse(404, `Reference pack ${name} has no version ${version}. Its latest is v${found[0]!.version}. Nothing was sent.`);
   let images: PackImage[] = [];
@@ -300,3 +309,18 @@ export function applyImageAvailability<T extends AvailabilityFields & { id: stri
     return probe.ok ? { ...model, ...facts, availability: "verified" } : { ...model, ...facts, availability: "failed", lastError: [probe.errorCode, probe.errorMessage].filter(Boolean).join(": ").slice(0, 400) };
   });
 }
+
+/** The bot a library key belongs to: a partitioned bot's library outside
+ * its home is keyed `<botId>#<partition>` (execution-audience.ts
+ * imageLibraryKey); the owner sees it as that bot's. */
+export function imageLibraryBotId(key: string): string {
+  return key.split("#", 1)[0]!;
+}
+/** The key already holds a saved block or pack. */
+export function imageLibraryKeyInUse(db: DatabaseSync, key: string): boolean {
+  const database = prepared(db);
+  return Boolean(database.prepare("SELECT 1 FROM image_prompt_blocks WHERE scope='bot' AND bot_id=? LIMIT 1").get(key)
+    ?? database.prepare("SELECT 1 FROM image_reference_packs WHERE scope='bot' AND bot_id=? LIMIT 1").get(key));
+}
+/** A bot id, or one of its partition keys. */
+export const IMAGE_LIBRARY_OWNER_KEY = /^[\w-]+(?:#(?:team|project|room|isolated|general)(?::[\w-]+)?)?$/;

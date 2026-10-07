@@ -371,15 +371,15 @@ describe("the rest of the walk", () => {
   // to a real list would be a test that mailed real people. Disabled is the
   // interesting case anyway, because it is the one that used to be silent.
   it("takes a signup without a credential in sight and without ever blocking", async () => {
-    const answered = await api("POST", "/api/subscribe", { email: "someone@example.com", name: "Someone" });
+    const answered = await api("POST", "/api/subscribe", { email: "someone@example.com", name: "Someone" }, desktop);
     // 200 whatever happened downstream. Entry to the app has never been
     // allowed to depend on a marketing list being reachable.
-    expect(answered.status).toBe(200);
+    expect(answered.status, JSON.stringify(answered.body)).toBe(200);
     expect(answered.body).toEqual({ ok: false, reason: "disabled" });
 
     // And an address that is not an address is refused before anything leaves
     // the machine, which is also a 200: it is not the person's problem.
-    const rubbish = await api("POST", "/api/subscribe", { email: "not-an-address" });
+    const rubbish = await api("POST", "/api/subscribe", { email: "not-an-address" }, desktop);
     expect(rubbish.status).toBe(200);
     expect(rubbish.body.ok).toBe(false);
   });

@@ -6,12 +6,6 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { loopbackFetch } from "./testing/conversation-proof.ts";
-
-/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
- * credential (the server below is started with it), without the desktop proof. */
-const TEST_COMPANION_TOKEN = "c".repeat(64);
-const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 const serverDirectory = dirname(fileURLToPath(import.meta.url));
 const root = join(serverDirectory, "..");
@@ -38,7 +32,7 @@ async function launch(home: string, data: string, extra: Record<string, string> 
       PATH: dirname(process.execPath),
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home, USERPROFILE: home, MURAGE_DATA_DIR: data,
-      MURAGE_PORT: String(port), MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN, MURAGE_WEBHOOK_PORT: String(port + 1),
+      MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1),
       ...extra,
     },
     stdio: ["ignore", "pipe", "pipe"],

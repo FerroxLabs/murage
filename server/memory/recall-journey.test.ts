@@ -8,6 +8,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { turnSecret } from "../turn-credential.ts";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 
 const ORIGINAL = "My weekly report colour is B30_CHARCOAL_CANARY.";
@@ -51,14 +52,15 @@ async function withHeldTurn(threadId: string, text: string, work: (search: (body
   try {
     const find = (value: any): Record<string, string> | undefined => {
       if (!value || typeof value !== "object") return undefined;
-      if (typeof value.env?.MURAGE_MEMORY_TOKEN === "string") return value.env;
+      // The token rides in the per-process credential file, not the env (turn-credentials.ts).
+      if (typeof value.env?.MURAGE_MEMORY_TOKEN === "string" || (value.env?.MURAGE_CRED_FILE && value.env?.MURAGE_CRED_SERVER === "murage-memory")) return value.env;
       for (const child of Object.values(value)) { const found = find(child); if (found) return found; }
       return undefined;
     };
     const env = find(dump.mcpConfig);
     expect(env, "memory capability mounted for the held turn").toBeTruthy();
     await work(async body => {
-      const response = await fetch(new URL("/api/internal/memory/search", env!.MURAGE_HARNESS_URL), { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${env!.MURAGE_MEMORY_TOKEN}` }, body: JSON.stringify(body) });
+      const response = await fetch(new URL("/api/internal/memory/search", env!.MURAGE_HARNESS_URL), { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${turnSecret("MURAGE_MEMORY_TOKEN", env!)}` }, body: JSON.stringify(body) });
       return { status: response.status, body: await response.json() as any };
     });
   } finally {
@@ -76,7 +78,7 @@ posixOnly("B30 fresh, deep and corrected recall through actual dispatch", () => 
   }, 30000);
   afterAll(async () => { await fixture?.close(); });
 
-  it("recalls an earlier task's owner statement in a new task, but not for another bot or a room", async () => {
+  it("recalls an earlier task's owner statement in a new task, but not for another bot, in a room they share either", async () => {
     const create = async (name: string) => {
       const bot = (await api("POST", "/api/bots", { name, modelSelection: { instanceId: "verification", model } })).bot;
       await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false });
@@ -89,7 +91,7 @@ posixOnly("B30 fresh, deep and corrected recall through actual dispatch", () => 
     const fresh = await turn(recaller.id, task, QUESTION);
     expect(rememberedLines(fresh, "B30_CHARCOAL_CANARY").some(line => line.includes("(the owner said; source)")), fresh.slice(0, 4000)).toBe(true);
     expect(await turn(other.id, other.threadId, QUESTION)).not.toContain("B30_CHARCOAL_CANARY");
-    const room = (await api("POST", "/api/groups", { name: "Report room", memberIds: [recaller.id, other.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: recaller.id } } })).group;
+    const room = (await api("POST", "/api/groups", { name: "Report room", memberIds: [recaller.id, other.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: other.id } } })).group;
     const tag = marker();
     await api("POST", `/api/groups/${room.id}/messages`, { text: `${QUESTION} ${tag}` });
     let dump: any;

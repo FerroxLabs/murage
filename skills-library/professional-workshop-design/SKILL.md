@@ -6,7 +6,7 @@ description: |
   Do NOT use for academic or K-12 workshops (use `workshop-design`), for full course design (use `online-course-design`), or for conference presentations (not an education skill).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching curriculum step-by-step guide"
   category: "education"

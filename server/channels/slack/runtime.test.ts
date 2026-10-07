@@ -10,7 +10,7 @@ function fixture() {
   let valid = true, busy = true;
   const startTurn = vi.fn(async () => {}), createTask = vi.fn(() => ({ threadId: "detached" }));
   const options = { file: join(dir, "routines.json"), automaticPaused: () => true,
-    isChannelCurrent: (origin: { platform: "slack" | "discord"; connectionId: string }, botId: string) => valid && origin.platform === "slack" && origin.connectionId === "binding" && botId === "chief",
+    isChannelCurrent: (origin: { platform: "slack" | "discord" | "whatsapp"; connectionId: string }, botId: string) => valid && origin.platform === "slack" && origin.connectionId === "binding" && botId === "chief",
     botState: (): "busy" | "ready" => busy ? "busy" : "ready", startTurn, createTask, channelThread: () => ({ threadId: "chief-thread" }) };
   const input = { webhookId: "slack:binding", webhookName: "Slack", deliveryId: "EvONE", prompt: "hello", botId: "chief", runOn: "ember" as const, receivedAt: 1,
     channelOrigin: { platform: "slack" as const, connectionId: "binding" },

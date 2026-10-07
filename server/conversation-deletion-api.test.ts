@@ -30,7 +30,7 @@ beforeAll(async () => {
     const {setMemoryMode}=await import(${JSON.stringify(new URL("./memory/repository.ts", import.meta.url).href)});
     setMemoryMode('capture');
   ` });
-  data = realpathSync(fixture.info.dataDir);
+  data = realpathSync.native(fixture.info.dataDir);
   const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
 }, 30000);
@@ -83,8 +83,13 @@ it("removes a deleted conversation's content everywhere Murage and its engines p
   touch(join(desk, "report.md"), `# Report ${MARKER}`);
   const saved = await api("POST", "/api/artifacts/register", { botId: bot.id, threadId: doomed, relativePath: "report.md" });
   expect(saved.status, JSON.stringify(saved.body)).toBeLessThan(300);
-  expect((await api("GET", `/api/deletion-preview?botId=${bot.id}&threadId=${doomed}`)).body).toEqual({ savedFiles: 1 });
-  expect((await api("GET", `/api/deletion-preview?botId=${bot.id}&threadId=${keep}`)).body).toEqual({ savedFiles: 0 });
+  const doomedPreview = (await api("GET", `/api/deletion-preview?botId=${bot.id}&threadId=${doomed}`)).body;
+  const keepPreview = (await api("GET", `/api/deletion-preview?botId=${bot.id}&threadId=${keep}`)).body;
+  expect(doomedPreview).toMatchObject({ savedFiles: 1 });
+  expect(keepPreview).toMatchObject({ savedFiles: 0 });
+  // The confirmation also counts the messages that go: the typed message and the reply.
+  expect(doomedPreview.messages).toBeGreaterThanOrEqual(2);
+  expect((await api("GET", `/api/deletion-preview?botId=${bot.id}`)).body).toEqual({ savedFiles: 1, messages: doomedPreview.messages + keepPreview.messages });
   writeFileSync(join(data, "decisions.ndjson.1"), `${JSON.stringify({ at: new Date().toISOString(), threadId: doomed, botName: "Delete fixture", tool: "Bash", summary: MARKER, decision: "user-allowed", source: "user" })}\n`);
   const deleted = await api("DELETE", `/api/bots/${bot.id}/tasks/${doomed}`);
   expect(deleted.status).toBe(200);

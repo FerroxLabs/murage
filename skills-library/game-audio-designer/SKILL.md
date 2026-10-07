@@ -4,7 +4,7 @@ description: |
   Game audio design expertise covering adaptive music systems, sound effect creation and implementation, ambient soundscapes, audio middleware integration, interactive audio programming, spatial audio, mixing for games, and the craft of using sound to enhance immersion, communicate feedback, and create emotional resonance. Use when the user asks about game audio designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design design"
   category: "game-development"

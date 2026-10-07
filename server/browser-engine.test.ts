@@ -2,15 +2,16 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const macAdmission = vi.hoisted(() => vi.fn());
 vi.mock("./browser-macos-identity.ts", () => ({ verifyPackagedMacBrowser: macAdmission }));
 import { AGENT_BROWSER_VERSION, agentBrowserReleaseUrl, resolveAgentBrowserReleaseAsset } from "./browser-engine-release.ts";
-import { UNIFIED_BROWSER_SYSTEM_PROMPT, unifiedBrowserSystemPrompt, agentBrowserIntegration, browserEngineEncryptionKey, browserEngineStatus, browserSessionId, userChromeSessionId, closeAgentBrowserSession, installAgentBrowserBinary, pinnedBinaryPath, resolveAgentBrowserBinary, verifyAgentBrowserBinary } from "./browser-engine.ts";
+import { CLAUDE_TOOL_SURFACE, renderMurageTools } from "./murage-tool-surface.ts";
+import { ADMISSION_CACHE_TTL_MS, admissionWalkLimits, clearBrowserAdmissionCache, UNIFIED_BROWSER_SYSTEM_PROMPT, unifiedBrowserSystemPrompt, agentBrowserIntegration, BEFOREUNLOAD_GUARD_SCRIPT, browserEngineEncryptionKey, browserEngineStatus, browserSessionId, userChromeSessionId, closeAgentBrowserSession, installAgentBrowserBinary, pinnedBinaryPath, resolveAgentBrowserBinary, verifyAgentBrowserBinary } from "./browser-engine.ts";
 
 const scratch: string[] = [];
 function temporary() { const path = mkdtempSync(join(tmpdir(), "murage-browser-test-")); scratch.push(path); return path; }
-afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
+afterEach(() => { clearBrowserAdmissionCache(); for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
 function fixtureAsset(body: Buffer) { return { target: "linux-x64", asset: "agent-browser-linux-x64", sha256: createHash("sha256").update(body).digest("hex"), bytes: body.length }; }
 
 describe("optional browser resolver and installation", () => {
@@ -38,6 +39,162 @@ describe("optional browser resolver and installation", () => {
     const status = browserEngineStatus({ platform: "darwin", arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources } });
     expect(status).toMatchObject({ kind: "unavailable", installable: false });
     expect(status.kind === "unavailable" && status.reason).toBe("The browser that comes with Murage didn't pass its signature check, so it wasn't started. Reinstall Murage from the download to fix it.");
+  });
+  describe("packaged admission cache", () => {
+    // Fixtures are created "now"; the cache refuses files touched in the last
+    // 2s, so these tests run with the clock a minute ahead of real time.
+    beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(Date.now() + 60_000); });
+    afterEach(() => { vi.useRealTimers(); });
+    it("does not cache a bundle touched within the last 2 seconds", () => {
+      vi.useRealTimers();
+      const { options } = packaged();
+      macAdmission.mockReset(); macAdmission.mockReturnValue(true);
+      resolveAgentBrowserBinary(options); resolveAgentBrowserBinary(options);
+      expect(macAdmission).toHaveBeenCalledTimes(2);
+    });
+    // Coarse filesystem timestamps: let the clock tick between a cached admission and a tamper.
+    const tick = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    function packaged() {
+      const app = temporary(), resources = join(app, "Murage.app/Contents/Resources"), bundle = join(resources, "browser-engine");
+      mkdirSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64"), { recursive: true });
+      mkdirSync(join(app, "Murage.app/Contents/_CodeSignature"), { recursive: true });
+      writeFileSync(join(app, "Murage.app/Contents/_CodeSignature/CodeResources"), "seal");
+      const engine = join(bundle, "agent-browser"), chrome = join(bundle, "chrome/chrome-headless-shell-mac-arm64/chrome-headless-shell");
+      mkdirSync(join(bundle, "licenses"));
+      writeFileSync(join(bundle, "manifest.json"), "{}");
+      writeFileSync(engine, "signed engine", { mode: 0o700 });
+      writeFileSync(chrome, "signed Chrome", { mode: 0o700 });
+      return { resources, engine, chrome, options: { platform: "darwin" as const, arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources } } };
+    }
+    it("verifies once, then skips the codesign admission for the byte-identical bundle", () => {
+      const { resources, engine, options } = packaged();
+      macAdmission.mockReset(); macAdmission.mockReturnValue(true);
+      expect(resolveAgentBrowserBinary(options)).toBe(engine);
+      expect(macAdmission).toHaveBeenCalledTimes(1);
+      expect(resolveAgentBrowserBinary(options)).toBe(engine);
+      expect(browserEngineStatus(options).kind).toBe("ready");
+      expect(macAdmission).toHaveBeenCalledTimes(1);
+      expect(macAdmission).toHaveBeenCalledWith(resources);
+    });
+    it("re-verifies when the engine, Chrome, seal or app identity changes (stale cache never admits a swapped binary)", () => {
+      const { engine, chrome, options } = packaged();
+      macAdmission.mockReset(); macAdmission.mockReturnValue(true);
+      resolveAgentBrowserBinary(options);
+      expect(macAdmission).toHaveBeenCalledTimes(1);
+      // Same-size content swap, as an attacker would do.
+      tick(); writeFileSync(engine, "evil!! engine");
+      macAdmission.mockReturnValue(false);
+      expect(resolveAgentBrowserBinary(options)).toBeNull();
+      expect(macAdmission).toHaveBeenCalledTimes(2);
+      // A refusal is never cached, and a restored-and-admitted binary is cached afresh.
+      macAdmission.mockReturnValue(true);
+      expect(resolveAgentBrowserBinary(options)).toBe(engine);
+      expect(macAdmission).toHaveBeenCalledTimes(3);
+      resolveAgentBrowserBinary(options);
+      expect(macAdmission).toHaveBeenCalledTimes(3);
+      tick(); writeFileSync(chrome, "tampered Chrome");
+      resolveAgentBrowserBinary(options);
+      expect(macAdmission).toHaveBeenCalledTimes(4);
+      tick(); chmodSync(chrome, 0o755);
+      resolveAgentBrowserBinary(options);
+      expect(macAdmission).toHaveBeenCalledTimes(5);
+    });
+    it("re-verifies when app.asar is rewritten in place at the same size (sealed payload is keyed)", () => {
+      const { resources, options } = packaged();
+      const asar = join(resources, "app.asar"), unpacked = join(resources, "app.asar.unpacked/node_modules/x");
+      writeFileSync(asar, "signed asar!!");
+      mkdirSync(unpacked, { recursive: true });
+      const native = join(unpacked, "addon.node");
+      writeFileSync(native, "signed addon");
+      macAdmission.mockReset(); macAdmission.mockReturnValue(true);
+      resolveAgentBrowserBinary(options);
+      resolveAgentBrowserBinary(options);
+      expect(macAdmission).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(Date.now() + 5_000);
+      tick(); writeFileSync(asar, "evil!!  asar!");
+      expect(readFileSync(asar).length).toBe("signed asar!!".length);
+      resolveAgentBrowserBinary(options);
+      expect(macAdmission).toHaveBeenCalledTimes(2);
+      resolveAgentBrowserBinary(options);
+      expect(macAdmission).toHaveBeenCalledTimes(2);
+      vi.setSystemTime(Date.now() + 5_000);
+      tick(); writeFileSync(native, "evil addon!");
+      resolveAgentBrowserBinary(options);
+      expect(macAdmission).toHaveBeenCalledTimes(3);
+    });
+    // Chrome loads every file under browser-engine at run time; the key walks the whole tree.
+    describe("covers the whole browser-engine tree", () => {
+      const siblings = ["chrome/chrome-headless-shell-mac-arm64/libGLESv2.dylib", "chrome/chrome-headless-shell-mac-arm64/resources.pak", "chrome/chrome-headless-shell-mac-arm64/icudtl.dat", "licenses/LICENSE.chromium"];
+      for (const sibling of siblings) {
+        it(`re-verifies when ${sibling.split("/").pop()} is swapped at the same size`, () => {
+          const { resources, options } = packaged();
+          const file = join(resources, "browser-engine", sibling);
+          writeFileSync(file, "signed bytes");
+          macAdmission.mockReset(); macAdmission.mockReturnValue(true);
+          resolveAgentBrowserBinary(options); resolveAgentBrowserBinary(options);
+          expect(macAdmission).toHaveBeenCalledTimes(1);
+          vi.setSystemTime(Date.now() + 5_000);
+          tick(); writeFileSync(file, "evil!! bytes");
+          resolveAgentBrowserBinary(options);
+          expect(macAdmission).toHaveBeenCalledTimes(2);
+        });
+      }
+      it("re-verifies when a file is added to or removed from the tree", () => {
+        const { resources, options } = packaged();
+        const extra = join(resources, "browser-engine/chrome/chrome-headless-shell-mac-arm64/libextra.dylib");
+        macAdmission.mockReset(); macAdmission.mockReturnValue(true);
+        resolveAgentBrowserBinary(options);
+        vi.setSystemTime(Date.now() + 5_000);
+        tick(); writeFileSync(extra, "planted");
+        resolveAgentBrowserBinary(options);
+        expect(macAdmission).toHaveBeenCalledTimes(2);
+      });
+      it("does not cache a tree containing a symlink", () => {
+        const { resources, options } = packaged();
+        symlinkSync("/etc/hosts", join(resources, "browser-engine/chrome/link.dylib"));
+        macAdmission.mockReset(); macAdmission.mockReturnValue(true);
+        resolveAgentBrowserBinary(options); resolveAgentBrowserBinary(options);
+        expect(macAdmission).toHaveBeenCalledTimes(2);
+      });
+      it("caches nothing and verifies in full when the tree exceeds the entry cap or the time budget", () => {
+        const { resources, options } = packaged();
+        for (let index = 0; index < 20; index++) writeFileSync(join(resources, "browser-engine/chrome", `f${index}.pak`), "x");
+        macAdmission.mockReset(); macAdmission.mockReturnValue(true);
+        const saved = { ...admissionWalkLimits };
+        try {
+          admissionWalkLimits.maxEntries = 10;
+          resolveAgentBrowserBinary(options); resolveAgentBrowserBinary(options);
+          expect(macAdmission).toHaveBeenCalledTimes(2);
+          Object.assign(admissionWalkLimits, saved, { budgetMs: -1 });
+          resolveAgentBrowserBinary(options); resolveAgentBrowserBinary(options);
+          expect(macAdmission).toHaveBeenCalledTimes(4);
+        } finally { Object.assign(admissionWalkLimits, saved); }
+        resolveAgentBrowserBinary(options); resolveAgentBrowserBinary(options);
+        expect(macAdmission).toHaveBeenCalledTimes(5); // within bounds: cached once more
+      });
+      it("walks a large tree within the time budget", () => {
+        const { resources, options } = packaged();
+        const dir = join(resources, "browser-engine/chrome/locales");
+        mkdirSync(dir);
+        for (let index = 0; index < 1500; index++) writeFileSync(join(dir, `l${index}.pak`), "x");
+        macAdmission.mockReset(); macAdmission.mockReturnValue(true);
+        resolveAgentBrowserBinary(options);
+        const began = performance.now();
+        resolveAgentBrowserBinary(options);
+        const elapsed = performance.now() - began;
+        expect(macAdmission).toHaveBeenCalledTimes(1); // 1500 files fit the cap and the budget
+        console.log(`browser-engine walk of ~1500 entries: ${elapsed.toFixed(1)} ms`);
+        expect(elapsed).toBeLessThan(admissionWalkLimits.budgetMs * 2);
+      });
+    });
+    it("re-verifies after the cache lifetime", () => {
+      const { options } = packaged();
+      macAdmission.mockReset(); macAdmission.mockReturnValue(true);
+      resolveAgentBrowserBinary(options);
+      vi.setSystemTime(Date.now() + ADMISSION_CACHE_TTL_MS + 1);
+      resolveAgentBrowserBinary(options);
+      expect(macAdmission).toHaveBeenCalledTimes(2);
+    });
   });
   it("says the built-in browser is missing, and to reinstall, when a packaged app has none", () => {
     const status = browserEngineStatus({ platform: "darwin", arch: "arm64", env: { MURAGE_RESOURCES_PATH: temporary() } });
@@ -126,6 +283,25 @@ describe("protected browser state", () => {
     symlinkSync(file, join(other, "browser-engine-key"));
     expect(() => browserEngineEncryptionKey(other)).toThrow(/refusing to regenerate/u);
   });
+  it("on win32 turns the engine's dead alert auto-answer off and loads the dialog tools; elsewhere leaves it on", () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const make = (os: string) => {
+      Object.defineProperty(process, "platform", { value: os });
+      try {
+        const spec = agentBrowserIntegration({ dataDir: temporary(), realmId: "realm", binaryPath: "/fixture/agent-browser", encryptionKey: "a".repeat(64), session: browserSessionId("a", "profile", "realm"), env: { PATH: "/bin" } });
+        scratch.push(spec.env.AGENT_BROWSER_SOCKET_DIR!);
+        return spec;
+      } finally { Object.defineProperty(process, "platform", platform); }
+    };
+    const win = make("win32");
+    expect(win.env.AGENT_BROWSER_NO_AUTO_DIALOG).toBe("1");
+    expect(win.args).toEqual(["mcp", "--tools", "core,tabs", "--no-webmcp"]);
+    for (const os of ["darwin", "freebsd"]) {
+      const spec = make(os);
+      expect(spec.env.AGENT_BROWSER_NO_AUTO_DIALOG).toBeUndefined();
+      expect(spec.args).toEqual(["mcp", "--tools", "core", "--no-webmcp"]);
+    }
+  });
   it("separates realms, profiles, colliding names, and every guest invocation", () => {
     expect(browserSessionId("a", "profile", "realm")).toBe(browserSessionId("b", "profile", "realm"));
     expect(browserSessionId("a", "", "realm")).not.toBe(browserSessionId("b", "", "realm"));
@@ -133,6 +309,41 @@ describe("protected browser state", () => {
     expect(browserSessionId("a", "profile", "realm")).not.toBe(browserSessionId("a", "profile", "restored"));
     expect(browserSessionId("a", "guest", "realm")).not.toBe(browserSessionId("a", "guest", "realm"));
     expect(() => browserSessionId("a", "p", "")).toThrow(/realm/u);
+  });
+  describe("beforeunload guard on Windows", () => {
+    const withPlatform = <T,>(platform: string, fn: () => T): T => {
+      const real = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { value: platform });
+      try { return fn(); } finally { Object.defineProperty(process, "platform", real); }
+    };
+    const input = () => ({ dataDir: temporary(), realmId: "realm", binaryPath: "/fixture/agent-browser", encryptionKey: "a".repeat(64), session: browserSessionId("a", "profile", "realm"), env: { PATH: "/bin" } });
+    it("registers the guard as an engine init script only on win32", () => {
+      const win = withPlatform("win32", () => agentBrowserIntegration(input()));
+      scratch.push(win.env.AGENT_BROWSER_SOCKET_DIR!);
+      expect(win.env.AGENT_BROWSER_NO_AUTO_DIALOG).toBe("1");
+      expect(win.env.AGENT_BROWSER_INIT_SCRIPTS).toMatch(/beforeunload-guard\.js$/u);
+      expect(readFileSync(win.env.AGENT_BROWSER_INIT_SCRIPTS!, "utf8")).toBe(BEFOREUNLOAD_GUARD_SCRIPT);
+      const other = withPlatform("darwin", () => agentBrowserIntegration(input()));
+      scratch.push(other.env.AGENT_BROWSER_SOCKET_DIR!);
+      expect(other.env.AGENT_BROWSER_INIT_SCRIPTS).toBeUndefined();
+      expect(other.env.AGENT_BROWSER_NO_AUTO_DIALOG).toBeUndefined();
+    });
+    it("stops the page registering or setting a beforeunload handler", () => {
+      class FakeTarget { listeners: Array<[string, unknown, unknown]> = []; addEventListener(type: string, fn: unknown, opt?: unknown) { this.listeners.push([type, fn, opt]); } }
+      const fakeWindow = new FakeTarget() as FakeTarget & { onbeforeunload?: unknown };
+      new Function("window", "EventTarget", BEFOREUNLOAD_GUARD_SCRIPT)(fakeWindow, FakeTarget);
+      // the guard's own capture listener went in through the original method, before any page script
+      expect(fakeWindow.listeners.map(([t, , o]) => [t, o])).toEqual([["beforeunload", true]]);
+      const calls: string[] = [];
+      (fakeWindow as unknown as FakeTarget).addEventListener("beforeunload", () => calls.push("page"));
+      (fakeWindow as unknown as FakeTarget).addEventListener("click", () => {});
+      expect(fakeWindow.listeners.map(([t]) => t)).toEqual(["beforeunload", "click"]);
+      fakeWindow.onbeforeunload = () => "leave?";
+      expect(fakeWindow.onbeforeunload).toBeNull();
+      let stopped = false;
+      (fakeWindow.listeners[0][1] as (e: unknown) => void)({ stopImmediatePropagation: () => { stopped = true; } });
+      expect(stopped).toBe(true);
+    });
   });
   it("isolates engine storage, disables guest persistence, and does not copy ambient auth/browser overrides", () => {
     const dataDir = temporary();
@@ -214,7 +425,13 @@ describe("browser prompt for a protected profile", () => {
     const text = unifiedBrowserSystemPrompt("sensitive-page");
     expect(text.startsWith(UNIFIED_BROWSER_SYSTEM_PROMPT)).toBe(true);
     expect(text).toContain("Your browser is locked: its page has a password, one-time-code or payment field, an embedded frame");
-    expect(text).toContain("Opening a different address with agent_browser_open clears the lock");
+    // The tool is named the way the turn's engine calls it, at dispatch.
+    expect(renderMurageTools(text, CLAUDE_TOOL_SURFACE, { browser: "browser" })).toContain("Opening a different address with mcp__browser__agent_browser_open clears the lock");
     expect(text).toContain("Never use another browser, a browser plugin, or run the browser program yourself instead");
   });
+});
+
+it("the browser prompt says what the bot must not do in plain words", () => {
+  expect(UNIFIED_BROWSER_SYSTEM_PROMPT).not.toMatch(/safeguard|\bsafe|unsafe|safety|\u2014/i);
+  expect(UNIFIED_BROWSER_SYSTEM_PROMPT).toContain("turn off a protection");
 });

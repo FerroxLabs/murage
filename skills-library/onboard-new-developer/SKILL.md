@@ -14,7 +14,7 @@ type: workflow
 skills: technical-documentation git-pr-workflow code-review-patterns tdd-workflow conventional-commits
 trigger_phrases: onboard new developer new team member setup developer onboarding process new hire developer
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: teaching career step-by-step planning guide
   category: software-project

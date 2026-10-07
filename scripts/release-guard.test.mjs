@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { createHash } from "node:crypto";
-import { apiGet, findRelease, inspectReleaseBranch, nextVersion, parseVersion, shouldRelease, uploadDraft } from "./release-guard.mjs";
+import { apiGet, assertReleaseUpdateFeed, findRelease, inspectReleaseBranch, nextVersion, parseVersion, shouldRelease, uploadDraft } from "./release-guard.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const workflow = (name) => parse(readFileSync(join(ROOT, ".github/workflows", name), "utf8"));
@@ -284,5 +284,37 @@ describe("draft uploads against a changing remote", () => {
     expect(result.error).toBeDefined();
     expect(result.calls.filter(call=>call.includes("POST"))).toHaveLength(1);
     expect(result.calls.flat()).not.toContain("DELETE");
+  });
+});
+
+describe("the updater feed a release build may carry (L18 qualification feed)", () => {
+  // What electron-builder writes into app-update.yml for electron-builder.yml.
+  const mac = "owner: FerroxLabs\nrepo: murage-releases\nprovider: github\nupdaterCacheDirName: murage-updater\n";
+  const win = "owner: FerroxLabs\nrepo: murage-releases\nprovider: github\npublisherName:\n  - Ferrox Labs, LLC\nupdaterCacheDirName: murage-updater\n";
+  it("accepts the public GitHub releases feed, signed Windows publisher list included", () => {
+    expect(assertReleaseUpdateFeed(mac)).toBe(true);
+    expect(assertReleaseUpdateFeed(win.replace(/\n/g, "\r\n"))).toBe(true);
+  });
+  it("refuses a qualification build's feed, and any other feed", () => {
+    const qualification = parse(readFileSync(join(ROOT, "electron-builder.qualification.yml"), "utf8"));
+    expect(qualification.extends).toBe("./electron-builder.yml");
+    expect(qualification.publish).toEqual([{ provider: "generic", url: "${env.MURAGE_QUALIFICATION_FEED_URL}", channel: "latest", updaterCacheDirName: "murage-qualification-updater" }]);
+    const baked = "provider: generic\nurl: https://feed.example.invalid/murage\nchannel: latest\nupdaterCacheDirName: murage-qualification-updater\n";
+    expect(() => assertReleaseUpdateFeed(baked)).toThrow("qualification");
+    expect(() => assertReleaseUpdateFeed(baked.replace("murage-qualification-updater", "murage-updater"))).toThrow("not the GitHub releases feed");
+    for (const bad of [
+      mac.replace("FerroxLabs", "SomeoneElse"),
+      mac.replace("repo: murage-releases", "repo: murage-releases-fork"),
+      `${mac}updaterCacheDirName: again\n`,
+      `${mac}url: https://feed.example.invalid\n`,
+      `${mac}private: true\n`,
+      mac.replace("provider: github", "provider: s3"),
+    ]) expect(() => assertReleaseUpdateFeed(bad)).toThrow(/app-update\.yml/);
+  });
+  it("every platform's release job runs the feed guard on its packaged app", () => {
+    const text = readFileSync(join(ROOT, ".github/workflows/release.yml"), "utf8");
+    for (const file of ["release/mac-arm64/Murage.app/Contents/Resources/app-update.yml", "release/mac/Murage.app/Contents/Resources/app-update.yml", "release/win-unpacked/resources/app-update.yml", "release/linux-unpacked/resources/app-update.yml"]) {
+      expect(text.split("\n").some(line => line.includes("node scripts/release-guard.mjs update-feed ") && line.includes(` ${file}`)), file).toBe(true);
+    }
   });
 });

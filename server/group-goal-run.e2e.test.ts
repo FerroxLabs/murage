@@ -9,12 +9,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { redactSecrets } from "./redact.ts";
-import { loopbackFetch } from "./testing/conversation-proof.ts";
-
-/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
- * credential (the server below is started with it), without the desktop proof. */
-const TEST_COMPANION_TOKEN = "c".repeat(64);
-const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -25,6 +19,7 @@ let child: ChildProcess;
 let home = "";
 let base = "";
 let stderr = "";
+let stdout = "";
 
 const completeReplies = [
   [
@@ -212,7 +207,6 @@ beforeAll(async () => {
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(port),
-      MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
       MURAGE_WEBHOOK_PORT: String(port + 1),
       MURAGE_STATIC_DIR: staticDir,
       MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
@@ -220,6 +214,7 @@ beforeAll(async () => {
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stderr!.on("data", (chunk) => (stderr += chunk));
+  child.stdout!.on("data", (chunk) => (stdout += chunk));
 
   const deadline = Date.now() + 20_000;
   for (;;) {
@@ -477,7 +472,9 @@ describe("goal-driven channel runs", () => {
     }
   });
 
-  it("stops a waiting goal without interrupting unrelated direct work, while chat still skips busy bots", async () => {
+  // (Ordinary chat no longer skips a busy member: it is queued, or admitted
+  // on a free thread. server/room-turn-engine-api.test.ts covers that.)
+  it("stops a waiting goal without interrupting unrelated direct work", async () => {
     const lead = (await api("POST", "/api/bots", {
       name: "Occupied lead",
       modelSelection: { instanceId: "directHang", model: "claude-sonnet-5" },
@@ -496,18 +493,6 @@ describe("goal-driven channel runs", () => {
         const state = (await api("GET", "/api/bots?messages=0")).body;
         return state.bots.find((bot: { id: string }) => bot.id === lead.id)?.busy;
       }).toBe(true);
-
-      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Ordinary room chat" })).status).toBe(202);
-      await expect.poll(async () => {
-        const state = (await api("GET", "/api/bots?messages=30")).body;
-        const current = state.groups.find((group: { id: string }) => group.id === room.id);
-        return {
-          working: current?.working,
-          skipped: current?.messages.some((message: { tool?: { name?: string } }) =>
-            /busy in another conversation.+skipped this round/i.test(message.tool?.name ?? "")
-          ),
-        };
-      }).toEqual({ working: false, skipped: true });
 
       expect((await api("POST", `/api/groups/${room.id}/messages`, {
         text: "Wait and run this as a goal",
@@ -588,7 +573,7 @@ describe("goal-driven channel runs", () => {
         durationMinutes: 30,
       });
       expect(created.status).toBe(201);
-      const started = await api("POST", `/api/routines/${created.body.routine.id}/run`);
+      const started = await desktopApi("POST", `/api/routines/${created.body.routine.id}/run`);
       expect(started.status).toBe(201);
       const runId = started.body.run.id;
 
@@ -683,7 +668,7 @@ describe("goal-driven channel runs", () => {
         durationMinutes: 30,
       });
       expect(created.status).toBe(201);
-      const started = await api("POST", `/api/routines/${created.body.routine.id}/run`);
+      const started = await desktopApi("POST", `/api/routines/${created.body.routine.id}/run`);
       expect(started.status).toBe(201);
       const runId = started.body.run.id;
 
@@ -792,7 +777,7 @@ describe("goal-driven channel runs", () => {
         durationMinutes: 30,
       });
       expect(created.status).toBe(201);
-      const started = await api("POST", `/api/routines/${created.body.routine.id}/run`);
+      const started = await desktopApi("POST", `/api/routines/${created.body.routine.id}/run`);
       expect(started.status).toBe(201);
       const runId = started.body.run.id;
 
@@ -984,7 +969,7 @@ describe("goal-driven channel runs", () => {
         botId: lead.id,
       });
 
-      const started = await api("POST", `/api/routines/${created.body.routine.id}/run`);
+      const started = await desktopApi("POST", `/api/routines/${created.body.routine.id}/run`);
       expect(started.status).toBe(201);
       const runId = started.body.run.id;
 
@@ -1034,6 +1019,9 @@ describe("goal-driven channel runs", () => {
 
       const calendar = (await api("GET", "/api/routines")).body;
       const completedRun = calendar.runs.find((run: { id: string }) => run.id === runId);
+      // the unattended team goal's member turn was dispatched as background work: its engine
+      // earns no warm spare and the run renews no user activity
+      await expect.poll(() => stdout.includes(`warm pool evict engine=claude thread=${completedRun.threadId} reason=background turn`), { timeout: 5_000 }).toBe(true);
       const state = (await api("GET", "/api/bots?messages=0")).body;
       const backgroundRoom = state.groups.find((group: { id: string }) => group.id === room.id);
       expect(backgroundRoom.threadId).toBe(completedRun.threadId);

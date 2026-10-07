@@ -2,6 +2,11 @@
 import { diagnosticFailureKind, type DiagnosticFailureKind } from "../../../shared/error-diagnostic.ts";
 export const failureKind=diagnosticFailureKind;
 
+/** Fuigo stamps events with its own process clock. Two processes' Date.now()
+ * can disagree by up to a system tick (15.6 ms on Windows), so a stamp is
+ * judged against the prompt start and against now with that much slack. */
+const CROSS_PROCESS_CLOCK_SKEW_MS = 20;
+
 export function createFuigoFailureObservations() {
   const seen = new Set<string>();
   let latestTimestamp = 0;
@@ -14,7 +19,7 @@ export function createFuigoFailureObservations() {
     }) {
       if (context.source !== "fuigo.acp" || !context.sessionId || !context.promptSent
         || context.promptStartedAt === null || context.pendingPrompts !== 1
-        || context.settled || context.cancelRequested || msg?.method !== "_fuigo/session_notification") return;
+        || context.settled || context.cancelRequested || (msg?.method !== "_fuigo/session_notification" && msg?.method !== "_fuigo/session/update")) return;
       const p = msg.params;
       if (!p || Array.isArray(p) || p.sessionId !== context.sessionId || p._meta?.isReplay === true) return;
       // A small diagnostic envelope is enough; never retain raw vendor text.
@@ -22,8 +27,8 @@ export function createFuigoFailureObservations() {
       const meta = p._meta;
       const timestamp = meta?.agentTimestampMs;
       if (typeof meta?.eventId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(meta.eventId)
-        || !Number.isSafeInteger(timestamp) || timestamp < context.promptStartedAt
-        || timestamp > Date.now() || timestamp < latestTimestamp
+        || !Number.isSafeInteger(timestamp) || timestamp < context.promptStartedAt - CROSS_PROCESS_CLOCK_SKEW_MS
+        || timestamp > Date.now() + CROSS_PROCESS_CLOCK_SKEW_MS || timestamp < latestTimestamp
         || seen.has(meta.eventId) || seen.size >= 64) return;
       const u = p.update;
       if (!u || Array.isArray(u) || u.sessionUpdate !== "retry_state" || u.type !== "failed") return;

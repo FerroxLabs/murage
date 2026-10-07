@@ -20,9 +20,11 @@
 //
 // THREE RULES.
 //
-// 1. A clean exit is a DECISION. Code 0 means the child meant it, and a
-//    supervisor that argues with an intentional shutdown is a bug that fights
-//    the quit button.
+// 1. Only a stop WE asked for is a decision. The exit code proves nothing:
+//    on 2026-10-05 an outside `killall "Murage Helper"` sent SIGTERM, the
+//    server shut down gracefully and exited 0, and trusting that 0 left the
+//    app black for 2.5 hours. The caller says whether it asked (quit, update
+//    install, backup restart, explicit stop); anything else is a crash.
 // 2. A crash gets a replacement, with a widening gap. The first is almost
 //    always a one-off like the one above, and should cost the owner a blink.
 // 3. A crash that keeps happening must STOP and say so. Restarting for ever is
@@ -43,7 +45,7 @@ export const RESTART_DELAYS_MS = [500, 2_000, 8_000];
 
 /**
  * @typedef {{ action: "restart", delayMs: number, attempt: number }
- *   | { action: "stay-down", reason: "intentional" | "clean-exit" }
+ *   | { action: "stay-down", reason: "intentional" }
  *   | { action: "give-up", reason: "crash-loop", crashes: number }} SupervisorDecision
  */
 
@@ -59,10 +61,9 @@ export function createServerSupervisor({ now = () => Date.now() } = {}) {
      * @param {{ code: number | null | undefined, intentional?: boolean, at?: number }} exit
      * @returns {SupervisorDecision}
      */
-    decide({ code, intentional = false, at = now() }) {
+    decide({ intentional = false, at = now() }) {
       // The quit button, a relaunch, a port handover. Never argue with these.
       if (intentional) return { action: "stay-down", reason: "intentional" };
-      if (code === 0) return { action: "stay-down", reason: "clean-exit" };
 
       forget(at);
       crashes.push(at);

@@ -37,6 +37,17 @@ func fail(_ message: String) -> Never {
   exit(1)
 }
 
+// macOS can authorize this helper while system Dictation is switched off, and
+// then reports kLSRErrorDomain 201. Keep that apart from other recognition
+// failures so the app points at the right setting (upstream #2033).
+func failRecognition(_ error: Error) -> Never {
+  let nsError = error as NSError
+  if nsError.domain == "kLSRErrorDomain" && nsError.code == 201 {
+    fail("dictation-disabled")
+  }
+  fail("recognition-error")
+}
+
 let endpointMs: Int = {
   let args = CommandLine.arguments
   guard
@@ -46,6 +57,51 @@ let endpointMs: Int = {
   else { return 0 }
   return min(5_000, max(250, value))
 }()
+
+/// Used instead of `endpointMs` while the transcript's last word sounds
+/// unfinished (a breath mid-sentence). Never shorter than `endpointMs`.
+let endpointLongMs: Int = {
+  let args = CommandLine.arguments
+  guard
+    let index = args.firstIndex(of: "--endpoint-long-ms"),
+    index + 1 < args.count,
+    let value = Int(args[index + 1])
+  else { return max(endpointMs, 2_800) }
+  return max(endpointMs, min(8_000, max(250, value)))
+}()
+
+/// Words a clause cannot end on. The very same list as `UNFINISHED_WORDS`
+/// in src/lib/call-turns.ts; a test keeps the two together.
+let unfinishedWords: Set<String> = [
+  "and", "but", "because", "so", "or", "then", "also", "plus", "if", "which", "while", "though", "although", "since", "until", "unless",
+  "the", "a", "an",
+  "to", "of", "with", "at", "by", "from", "about", "into",
+  "my", "your", "is", "are", "was",
+  "um", "uh", "er", "erm", "hmm",
+]
+
+/// True when the line sounds like the speaker will go on. The same four
+/// rules as `soundsUnfinished` in src/lib/call-turns.ts, and both run the
+/// table in src/lib/unfinished-cases.json:
+/// 1. trailing whitespace is ignored;
+/// 2. a trailing comma, "…" or "..." means unfinished;
+/// 3. a sentence end (. ? !, then any closing quote or bracket) means done;
+/// 4. otherwise the last token (split on whitespace and commas, stripped of
+///    leading and trailing punctuation) is unfinished when the WHOLE token
+///    is a listed word.
+func soundsUnfinished(_ text: String) -> Bool {
+  let line = text.trimmingCharacters(in: .whitespacesAndNewlines)
+  if line.isEmpty { return false }
+  if line.hasSuffix(",") || line.hasSuffix("…") || line.hasSuffix("...") { return true }
+  var end = Substring(line)
+  while let last = end.last, "\"'”’)]".contains(last) { end = end.dropLast() }
+  if let last = end.last, ".?!".contains(last) { return false }
+  let token = line.split(whereSeparator: { $0.isWhitespace || $0 == "," }).last.map(String.init) ?? ""
+  let word = token.drop(while: { !($0.isLetter || $0.isNumber) })
+  var core = Substring(word)
+  while let last = core.last, !(last.isLetter || last.isNumber) { core = core.dropLast() }
+  return unfinishedWords.contains(core.lowercased())
+}
 
 let stopFile: String? = {
   let args = CommandLine.arguments
@@ -112,14 +168,18 @@ if let finishFile {
 final class SilenceEndpointer {
   private let queue = DispatchQueue(label: "com.murage.speech.endpoint")
   private let gap: TimeInterval
+  private let longGap: TimeInterval
   private let finish: () -> Void
   private var timer: DispatchSourceTimer?
   private var lastText = ""
   private var lastChange = DispatchTime.now()
   private var finished = false
+  /// True once the turn ended on the long window.
+  private(set) var usedLong = false
 
-  init(gapMs: Int, finish: @escaping () -> Void) {
+  init(gapMs: Int, longGapMs: Int, finish: @escaping () -> Void) {
     gap = Double(gapMs) / 1_000
+    longGap = Double(max(gapMs, longGapMs)) / 1_000
     self.finish = finish
   }
 
@@ -144,11 +204,96 @@ final class SilenceEndpointer {
     // user needs before they begin speaking.
     guard !finished, !lastText.isEmpty else { return }
     let silentFor = Double(DispatchTime.now().uptimeNanoseconds - lastChange.uptimeNanoseconds) / 1_000_000_000
-    guard silentFor >= gap else { return }
+    let unfinished = soundsUnfinished(lastText)
+    guard silentFor >= (unfinished ? longGap : gap) else { return }
+    usedLong = unfinished && longGap > gap
     finished = true
     timer?.cancel()
     timer = nil
     finish()
+  }
+}
+
+/// What this session has heard. Apple can reset the transcript to "" after a
+/// pause (or close a segment) and carry on in the same utterance, and can end
+/// with an empty final or an error. The words before a reset are kept in
+/// `committedText`, the words since in `currentText`; what is emitted, and
+/// what a recovered final delivers, is both.
+private var committedText = ""
+private var currentText = ""
+/// Set when Apple marks the segment it just reported as closed.
+private var segmentClosed = false
+
+private func joinText(_ a: String, _ b: String) -> String {
+  if a.isEmpty { return b }
+  if b.isEmpty { return a }
+  return a + " " + b
+}
+
+private func ruleWords(_ t: String) -> [String] {
+  t.lowercased().split(whereSeparator: { $0.isWhitespace }).map { w in
+    var s = String(w)
+    while let last = s.last, ".,?!".contains(last) { s.removeLast() }
+    return s
+  }.filter { !$0.isEmpty }
+}
+
+/// THE shared segment rule (also speech.mjs and call-turns.ts `restates`):
+/// `text` restates `kept` when it is the same words, or those words followed
+/// by more. Whole words, ignoring case and trailing punctuation.
+private func restates(_ kept: String, _ text: String) -> Bool {
+  let k = ruleWords(kept)
+  if k.isEmpty { return false }
+  let t = ruleWords(text)
+  return t.count >= k.count && zip(k, t).allSatisfy { $0 == $1 }
+}
+
+private var heardText: String { joinText(committedText, currentText) }
+
+private func commitCurrent() {
+  guard !currentText.isEmpty else { return }
+  committedText = joinText(committedText, currentText)
+  currentText = ""
+}
+
+private func handleRecognition(_ result: SFSpeechRecognitionResult?, _ error: Error?, _ endpointer: SilenceEndpointer?) {
+  if let result = result {
+    let raw = result.bestTranscription.formattedString
+    if raw.isEmpty {
+      // reset: the words so far are kept in front of whatever comes next
+      commitCurrent()
+    } else {
+      // a closed segment's next text is a new one, unless it only revises it
+      if segmentClosed && !currentText.isEmpty && !restates(currentText, raw) {
+        commitCurrent()
+      }
+      segmentClosed = false
+      // Apple re-sends the kept words at the start of its next text after an
+      // empty result, sometimes a word at a time: the kept words are not said twice
+      if restates(committedText, raw) {
+        committedText = ""
+      }
+      currentText = raw
+    }
+    if #available(macOS 14, *), !result.isFinal, result.speechRecognitionMetadata != nil {
+      segmentClosed = true
+    }
+    let text = heardText
+    endpointer?.saw(text)
+    var event: [String: Any] = ["partial": !result.isFinal, "text": text]
+    // tell the call the owner already waited the long window for this line
+    if result.isFinal, endpointer?.usedLong == true { event["longEndpoint"] = true }
+    emit(event)
+    if result.isFinal { exit(0) }
+  }
+  if let error = error {
+    if !heardText.isEmpty {
+      var event: [String: Any] = ["partial": false, "text": heardText, "recovered": true]
+      if endpointer?.usedLong == true { event["longEndpoint"] = true }
+      emit(event)
+      exit(0)
+    }
+    failRecognition(error)
   }
 }
 
@@ -167,6 +312,9 @@ SFSpeechRecognizer.requestAuthorization { status in
 
   let request = SFSpeechAudioBufferRecognitionRequest()
   request.shouldReportPartialResults = true
+  // Apple's own sentence-final punctuation tells a finished sentence from a
+  // breath, so the short window is only used when it really ended.
+  if #available(macOS 13, *) { request.addsPunctuation = true }
   if !hints.isEmpty { request.contextualStrings = Array(hints.prefix(20)) }
   if recognizer.supportsOnDeviceRecognition {
     request.requiresOnDeviceRecognition = true
@@ -189,7 +337,7 @@ SFSpeechRecognizer.requestAuthorization { status in
     finishHandler = finishAudio
     var endpointer: SilenceEndpointer?
     if endpointMs > 0 {
-      endpointer = SilenceEndpointer(gapMs: endpointMs) { finishAudio() }
+      endpointer = SilenceEndpointer(gapMs: endpointMs, longGapMs: endpointLongMs) { finishAudio() }
       endpointer?.start()
     }
     let reader = DispatchSource.makeTimerSource(queue: .main)
@@ -213,13 +361,7 @@ SFSpeechRecognizer.requestAuthorization { status in
     reader.resume()
     pcmReader = reader
     recognizer.recognitionTask(with: request) { result, error in
-      if let result = result {
-        let text = result.bestTranscription.formattedString
-        endpointer?.saw(text)
-        emit(["partial": !result.isFinal, "text": text])
-        if result.isFinal { exit(0) }
-      }
-      if error != nil { fail("recognition-error") }
+      handleRecognition(result, error, endpointer)
     }
     return
   }
@@ -239,7 +381,7 @@ SFSpeechRecognizer.requestAuthorization { status in
   finishHandler = finishAudio
   var endpointer: SilenceEndpointer?
   if endpointMs > 0 {
-    endpointer = SilenceEndpointer(gapMs: endpointMs) {
+    endpointer = SilenceEndpointer(gapMs: endpointMs, longGapMs: endpointLongMs) {
       // Stop capture before ending the request: appending another audio
       // buffer after endAudio() can make the recognition task fail instead
       // of delivering its final transcript.
@@ -256,13 +398,7 @@ SFSpeechRecognizer.requestAuthorization { status in
   } catch { fail("mic-failed") }
 
   recognizer.recognitionTask(with: request) { result, error in
-    if let result = result {
-      let text = result.bestTranscription.formattedString
-      endpointer?.saw(text)
-      emit(["partial": !result.isFinal, "text": text])
-      if result.isFinal { exit(0) }
-    }
-    if error != nil { fail("recognition-error") }
+    handleRecognition(result, error, endpointer)
   }
 }
 

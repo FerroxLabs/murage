@@ -4,7 +4,7 @@ description: |
   Complete guide to creating and selling digital products including ebooks, templates, printables, Notion templates, Figma kits, and code snippets with platform setup, pricing strategies, launch tactics, and passive income calculations. Use when the user asks about digital product creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship marketing content-marketing"
   category: "marketing-sales"

@@ -44,7 +44,7 @@ export function mentionsEveryone(text: string): boolean {
 /** Resolve @mentions against a roster: names match case-insensitively,
  * longest name wins (so "@New Bot 2" never half-matches "New Bot"), hidden
  * bots are skipped and results are deduped, in order of first mention. */
-export function mentionedPeers<T extends { name: string; hidden?: boolean }>(text: string, peers: readonly T[]): T[] {
+export function mentionedPeers<T extends { name: string; hidden?: boolean }>(text: string, peers: readonly T[], onMatch?: (peer: T, at: number) => void): T[] {
   const candidates = peers
     .filter((p) => !p.hidden && p.name.trim())
     .sort((a, b) => b.name.length - a.name.length);
@@ -52,7 +52,7 @@ export function mentionedPeers<T extends { name: string; hidden?: boolean }>(tex
   for (let at = text.indexOf("@"); at !== -1; at = text.indexOf("@", at + 1)) {
     if (!isMentionBoundary(text, at)) continue;
     const hit = candidates.find((p) => mentionAt(text, at, p.name));
-    if (hit && !found.includes(hit)) found.push(hit);
+    if (hit && !found.includes(hit)) { found.push(hit); onMatch?.(hit, at); }
   }
   return found;
 }

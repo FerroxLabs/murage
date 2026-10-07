@@ -1,81 +1,12 @@
-/** Direct administration requires the renderer's per-launch proof. Keep this
- * inventory at the HTTP boundary, before parsing bodies or performing work.
- * Normal conversation sends and owner-bound single-use confirmations are
- * separate from changing durable execution authority. */
-export const DESKTOP_AUTHORITY_ROUTES: ReadonlyArray<{
-  methods: readonly string[];
-  path: RegExp;
-  purpose: string;
-}> = [
-  { methods: ["GET"], path: /^\/api\/diagnostics\/incident$/, purpose: "owner-selected privacy-safe incident export" },
-  { methods: ["GET", "POST", "PATCH", "DELETE"], path: new RegExp("^/api/claude-accounts(?:/|$)"), purpose: "named native Claude account configuration" },
-  { methods: ["GET", "POST"], path: new RegExp("^/api/automation-admission$"), purpose: "pause or resume automatic work" },
-  { methods: ["GET", "POST"], path: new RegExp("^/api/artifacts(?:/|$)"), purpose: "verified private workspace deliverables" },
-  { methods: ["GET", "POST"], path: /^\/api\/workspace-files(?:\/|$)/, purpose: "workspace discovery, bounded file read, revision-conditioned write and native open/reveal" },
-  // Byte URLs are authorized by a short-lived capability instead: media
-  // elements cannot send the desktop header (U-03).
-  { methods: ["GET", "POST"], path: /^\/api\/media(?:$|\/(?!bytes(?:\/|$)))/, purpose: "resolve scoped media and issue byte capabilities" },
-  { methods: ["GET", "POST"], path: new RegExp("^/api/inbox(?:/|$)"), purpose: "owner-only durable results and attention" },
-  { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/provider-connections(?:\/|$)/, purpose: "model provider connection custody and catalogs" },
-  { methods: ["GET", "POST", "PATCH", "DELETE"], path: /^\/api\/local-models(?:\/|$)/, purpose: "local model server addresses, keys, detection and tool tests" },
-  { methods: ["GET", "POST"], path: /^\/api\/images\/settings$/, purpose: "image provider and billing selection" },
-  // A model check sends a real render; the library holds every bot's saved
-  // prompt blocks and reference packs. Owner only, like the settings.
-  { methods: ["GET", "POST", "DELETE"], path: /^\/api\/images\/(?:probe|library|prompt-blocks|reference-packs)(?:\/|$)/, purpose: "image model checks and the saved prompt block and reference pack library" },
-  { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/memory(?:\/|$)/, purpose: "memory authority, sharing, retention and configuration" },
-  { methods: ["PATCH", "PUT"], path: /^\/api\/config$/, purpose: "application, credentials, browser and computer configuration" },
-  // The packaged app writes through /replace with its commit token; this
-  // plain-file path serves dev and headless launches and must not let a
-  // local process swap the owner's Flux key.
-  { methods: ["POST"], path: /^\/api\/flux-connection\/mutate$/, purpose: "replace, select or remove the Flux key" },
-  { methods: ["PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+$/, purpose: "bot authority, engine, working folder and deletion" },
-  { methods: ["GET", "DELETE"], path: /^\/api\/folder-trust$/, purpose: "per-folder trust record for an engine that gates repo-local files" },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/always-allow$/, purpose: "persistent permission grants" },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/always-allow\/remove$/, purpose: "remove a persistent permission grant" },
-  { methods: ["PATCH", "DELETE"], path: /^\/api\/groups\/[\w-]+$/, purpose: "room configuration and deletion" },
-  { methods: ["PATCH"], path: /^\/api\/groups\/[\w-]+\/setup$/, purpose: "room working folder and execution setup" },
-  { methods: ["POST"], path: /^\/api\/teams\/(import|export)$/, purpose: "team configuration and filesystem import/export" },
-  { methods: ["GET", "POST"], path: /^\/api\/team-sections(?:\/|$)/, purpose: "rename, delete and change the members and lead of a team" },
-  { methods: ["POST"], path: /^\/api\/packages\/import$/, purpose: "review and commit a local package archive" },
-  { methods: ["POST"], path: /^\/api\/packages\/export$/, purpose: "review and export selected local skill files" },
-  { methods: ["POST"], path: /^\/api\/starter-profiles$/, purpose: "review and install a local starter profile" },
-  { methods: ["GET", "POST"], path: /^\/api\/telegram\/(status|pair|resume|revoke)$/, purpose: "pair and revoke the Telegram owner channel" },
-  { methods: ["GET", "POST", "PATCH", "PUT", "DELETE"], path: /^\/api\/slack(?:\/|$)/, purpose: "private Slack owner-channel configuration and lifecycle" },
-  { methods: ["GET", "POST", "PATCH", "PUT", "DELETE"], path: /^\/api\/discord(?:\/|$)/, purpose: "private Discord owner-channel configuration and lifecycle" },
-  { methods: ["POST"], path: /^\/api\/team-library\/github$/, purpose: "download team packages to disk" },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/(assistant-profile|skills(?:\/library)?)$/, purpose: "install executable instructions" },
-  { methods: ["PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+\/skills\/[^/]+$/, purpose: "enable, change or delete installed skills" },
-  { methods: ["GET"], path: /^\/api\/bots\/[\w-]+\/skills\/[^/]+\/history$/, purpose: "inspect retained private skill revisions" },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/skills\/[^/]+\/rollback$/, purpose: "restore a retained skill version" },
-  { methods: ["PUT"], path: /^\/api\/(section-context|bots\/[\w-]+\/memory)$/, purpose: "persistent workspace instructions" },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/checkpoints\/restore$/, purpose: "restore files in a working folder" },
-  { methods: ["POST"], path: /^\/api\/local-computer\/(pull|run|start|stop|remove|interrupt|screenshot)$/, purpose: "shared host computer lifecycle and capture" },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/local-computer\/(run|stop|remove|screenshot)$/, purpose: "per-bot host computer lifecycle and capture" },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/computer\/(provision|sleep|exec|screenshot|remove|control|viewer-close)$/, purpose: "cloud computer provisioning and control" },
-  { methods: ["POST"], path: /^\/api\/cli-test$/, purpose: "execute a supplied engine binary" },
-  { methods: ["POST"], path: /^\/api\/engine-setup-command$/, purpose: "resolve a trusted engine setup recipe" },
-  { methods: ["GET", "POST"], path: /^\/api\/engine-management\/[\w.-]+$/, purpose: "inspect and install managed engines" },
-  // Guided first run. It reports which engine the Chief is on and what is
-  // connected, and its answers steer installing a crew and connecting apps,
-  // so it belongs with the rest of the administration surface rather than on
-  // a phone. Nested so a later step route cannot be added outside the gate.
-  { methods: ["GET", "POST"], path: /^\/api\/setup(?:\/|$)/, purpose: "the first-run checklist and its recorded answers" },
-  { methods: ["GET", "PUT"], path: /^\/api\/bots\/[\w-]+\/access$/, purpose: "review scoped connected-app authority" },
-  { methods: ["PATCH"], path: /^\/api\/instances\/[\w.-]+$/, purpose: "change engine launch configuration" },
-  { methods: ["POST"], path: /^\/api\/mcp\/servers(?:\/[a-z][a-z0-9_-]{0,31}\/test)?$/, purpose: "install and probe MCP servers" },
-  { methods: ["PUT", "PATCH", "DELETE"], path: /^\/api\/mcp\/servers\/[a-z][a-z0-9_-]{0,31}$/, purpose: "change MCP launch configuration" },
-  { methods: ["POST"], path: /^\/api\/(routines|calendar-calls)$/, purpose: "create a durable spawn schedule" },
-  { methods: ["POST"], path: /^\/api\/routines\/[\w-]+\/instructions\/rollback$/, purpose: "restore a retained routine instruction version" },
-  { methods: ["POST"], path: /^\/api\/routines\/[\w-]+\/always-allow(?:\/remove)?$/, purpose: "remember or remove a routine's own permission grant" },
-  { methods: ["PATCH", "DELETE"], path: /^\/api\/(routines|calendar-calls)\/[\w-]+$/, purpose: "change a durable spawn schedule" },
-  { methods: ["POST"], path: /^\/api\/webhooks(?:\/[\w-]+\/(rotate|test))?$/, purpose: "create or exercise external triggers" },
-  { methods: ["PATCH", "DELETE"], path: /^\/api\/webhooks\/[\w-]+$/, purpose: "change external trigger configuration" },
-  { methods: ["POST"], path: /^\/api\/connectors\/[\w-]+\/authorize$/, purpose: "authorize a connected account" },
-  { methods: ["DELETE"], path: /^\/api\/connectors\/[\w-]+(?:\/accounts\/[A-Za-z0-9][A-Za-z0-9_-]{0,127})?$/, purpose: "revoke connected accounts" },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/connector-cards\/[\w-]+\/authorize$/, purpose: "authorize an account through an inline card" },
-  { methods: ["PUT", "DELETE"], path: /^\/api\/thread-snoozes\/[^/]+$/, purpose: "snooze or wake a conversation" },
-];
+/** Direct administration requires the renderer's per-launch proof.
+ *
+ * Until 0.1.61 this file was a denylist of the routes that needed it, and
+ * every route missing from the list was open to any process on the computer.
+ * The decision now lives in route-policy.ts, where a route with no entry is
+ * desktop-only by construction; this stays as the question the feature
+ * modules and their tests ask. */
+import { routeClass } from "./route-policy.ts";
 
 export function requiresDesktopAuthority(method: string, path: string): boolean {
-  return DESKTOP_AUTHORITY_ROUTES.some((route) => route.methods.includes(method) && route.path.test(path));
+  return routeClass(method, path) === "desktop";
 }

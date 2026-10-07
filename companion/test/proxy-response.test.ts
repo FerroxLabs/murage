@@ -130,10 +130,10 @@ describe("preparing a harness response for a device", () => {
       res.end(deeplyNested);
     };
 
-    const { status, text } = await device();
+    const { status, text } = await device("/api/instances");
     expect(status === 200 && text.includes("resumeCursors")).toBe(false);
     expect(text).not.toContain("cursor-value");
-    expect(companionProof).toBe(COMPANION_TOKEN);
+    expect(companionProof).toBe("");
   });
 
   it("answers 502 when scrubbing actually throws", async () => {
@@ -226,5 +226,29 @@ describe("preparing a harness response for a device", () => {
     expect(status).toBe(200);
     expect(text).not.toContain("cursor-value");
     expect(text).not.toContain("resumeCursors");
+  });
+});
+
+// SPEC-X 12.3: the owner's paired phone gets a shared bot's team rows on the
+// fleet and the event stream, which the harness fills only for a caller with
+// the launch proof. The device door vouches for those two reads and nothing
+// near them; the browser door never does (routes.test.ts).
+describe("the owner phone's reads that carry shared rows", () => {
+  it("forwards the launch proof on GET /api/bots and GET /api/events, and not on other reads", async () => {
+    respond = (res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    };
+    for (const path of ["/api/bots", "/api/bots?messages=0", "/api/events", "/api/events?since=a%3A1"]) {
+      companionProof = "";
+      expect((await device(path)).status, path).toBe(200);
+      expect(companionMarker, path).toBe("1");
+      expect(companionProof, path).toBe(COMPANION_TOKEN);
+    }
+    for (const path of ["/api/instances", "/api/config", "/api/bots/b1/engine-commands"]) {
+      companionProof = "x";
+      expect((await device(path)).status, path).toBe(200);
+      expect(companionProof, path).toBe("");
+    }
   });
 });

@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 import { openSidebar } from "./fixtures.ts";
+import { PHONE_HYDRATE_PAGE } from "../lib/scrollback.ts";
 
 const TOTAL = 1000;
 const PAGE = 100;
@@ -70,14 +71,19 @@ async function open(page: Page, requests: string[]) {
 test("opens on the newest page and loads older ones in place when scrolled to the top", async ({ page }, info) => {
   const requests: string[] = [];
   await open(page, requests);
-  // hydration asked for a page, and only that page is on screen
-  expect(requests.some((path) => path === `/api/bots?messages=${PAGE}`)).toBe(true);
+  // hydration asked for a page, and only that page is on screen. A phone
+  // boots on a slim page (PHONE_HYDRATE_PAGE) and the store tops the open
+  // conversation up to the newest page (scrollback needsNewestPage).
+  const phone = info.project.name === "mobile";
+  expect(requests.some((path) => path === `/api/bots?messages=${phone ? PHONE_HYDRATE_PAGE : PAGE}`)).toBe(true);
   expect(requests.some((path) => path === "/api/bots")).toBe(false);
+  await expect.poll(() => mountedSeeded(page)).toBeGreaterThanOrEqual(PAGE - 2);
   // the harness may have added a live message of its own, which then
   // counts toward the newest page
   const held = await mountedSeeded(page);
   expect(held).toBeGreaterThanOrEqual(PAGE - 2);
-  expect(held).toBeLessThanOrEqual(PAGE);
+  // The phone's top-up is a full page before its slim one.
+  expect(held).toBeLessThanOrEqual(phone ? PHONE_HYDRATE_PAGE + PAGE : PAGE);
   const oldest = TOTAL - held;
   await expect(row(page, oldest)).toBeAttached();
   await expect(row(page, oldest - 1)).toHaveCount(0);
@@ -113,7 +119,12 @@ test("a search hit older than the held page walks back to it and lands on it", a
   const requests: string[] = [];
   await open(page, requests);
   await expect(row(page, NEEDLE)).toHaveCount(0);
+  // A phone boots on a slim page and the store tops it up to the newest page
+  // with a `before=` request of its own (scrollback needsNewestPage). Let that
+  // settle, and count only the requests the search makes.
+  await expect.poll(() => mountedSeeded(page)).toBeGreaterThanOrEqual(PAGE - 2);
   const oldest = TOTAL - await mountedSeeded(page);
+  const searchFrom = requests.length;
   await page.keyboard.press("ControlOrMeta+f");
   const find = page.getByRole("textbox", { name: "Find in this conversation", exact: true });
   await find.fill(`needle-${String(NEEDLE).padStart(4, "0")}`);
@@ -121,8 +132,8 @@ test("a search hit older than the held page walks back to it and lands on it", a
   await expect(row(page, NEEDLE)).toContainText(`Paging row ${String(NEEDLE).padStart(4, "0")}`);
   // One existence probe, then contiguous pages from the oldest held row, so
   // the transcript between the hit and the newest message has no hole.
-  expect(requests.some((path) => path.includes(`around=${ids[NEEDLE]}&limit=1`))).toBe(true);
-  const walk = requests.filter((path) => /\/messages\?limit=\d+&before=/.test(path));
+  expect(requests.slice(searchFrom).some((path) => path.includes(`around=${ids[NEEDLE]}&limit=1`))).toBe(true);
+  const walk = requests.slice(searchFrom).filter((path) => /\/messages\?limit=\d+&before=/.test(path));
   expect(walk.length).toBeGreaterThan(0);
   expect(walk[0]).toContain(`before=${ids[oldest]}`);
   // the rows either side of the hit are mounted, and so is the reader's way

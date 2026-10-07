@@ -11,7 +11,7 @@ description: |
   networking-message-writer), or resume summaries (use resume-summary-writer).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "linkedin career analysis"
   category: "career-development"

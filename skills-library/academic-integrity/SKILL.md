@@ -6,7 +6,7 @@ description: |
   Do NOT use for citation format specifics (use `citation-management`), for writing the paper itself (use writing category skills), or for institutional policy questions (refer to their institution).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "academic-writing research study-skills guide"
   category: "education"

@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { APPS_CLAIM, APPS_KEY_FIELD_LABEL, COMPOSIO_KEY_FIELD_SELECTOR } from "./ConnectedAppsLock";
+import { APPS_CLAIM, showOwnKeyRetiredLine } from "./ConnectedAppsLock";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 
@@ -40,7 +40,7 @@ describe("the connected-apps catalog", () => {
   it("is 500+ apps, named by the apps people know", () => {
     expect(APPS_CLAIM).toBe("500+ apps, including Gmail, Slack, Notion and GitHub");
     // The panel's own headline sentence uses the constant, not a copy of it.
-    expect(read("./PluginsPanel.tsx")).toContain("One Flux Router key connects ${APPS_CLAIM}.");
+    expect(read("./PluginsPanel.tsx")).toContain("One Flux Router key connects ${appsClaimFor(catalog?.total, APPS_CLAIM)}.");
     for (const file of SURFACES) {
       expect(visibleWords(read(file)).filter((text) => /hundreds of/i.test(text)), file).toEqual([]);
     }
@@ -63,19 +63,22 @@ describe("the connected-apps catalog", () => {
   });
 });
 
-describe("the Settings deep-link and the field it looks for", () => {
-  // The lock's secondary way in puts the cursor in the key field by finding
-  // it with a selector built out of the field's visible label. Rewriting the
-  // label used to leave the link hunting for a field that no longer answered
-  // to that name, and it failed in silence.
-  it("agrees with the label ApiKeys actually renders", () => {
-    expect(COMPOSIO_KEY_FIELD_SELECTOR).toBe(`input[aria-label="${APPS_KEY_FIELD_LABEL}"]:not([disabled])`);
-    const keys = read("./ApiKeys.tsx");
-    // The row takes the label from the same constant the selector is built
-    // from, and the input is labelled with the row's label.
-    expect(keys).toContain("label: APPS_KEY_FIELD_LABEL,");
-    expect(keys).toContain("aria-label={credential.label}");
-    // Never spelled out again here, which is how the two drifted apart.
-    expect(keys).not.toMatch(/label:\s*"[^"]*project key"/i);
+describe("the one quiet line for someone who once saved a key of their own", () => {
+  it("shows until an app is connected through Flux Router, not merely until the broker answers", () => {
+    const base = { composio: { configured: false, ownKeyRetired: true } };
+    expect(showOwnKeyRetiredLine(base)).toBe(true);
+    // Flux reachable but nothing connected yet: still shown (and again after an outage).
+    expect(showOwnKeyRetiredLine({ composio: { ...base.composio, configured: true, broker: "flux" } })).toBe(true);
+    expect(showOwnKeyRetiredLine({ composio: { ...base.composio, configured: true, broker: "flux" } }, { anyConnected: true })).toBe(false);
+    expect(showOwnKeyRetiredLine({ composio: { configured: false, ownKeyRetired: false } })).toBe(false);
+    expect(showOwnKeyRetiredLine({ composio: { configured: false } })).toBe(false);
+    expect(showOwnKeyRetiredLine(null)).toBe(false);
+  });
+
+  it("is a plain line, not a dialog", () => {
+    const source = read("./ConnectedAppsLock.tsx");
+    const line = source.slice(source.indexOf("export function OwnKeyRetiredLine"), source.indexOf("/** One headline"));
+    expect(line).toContain('t("connectedApps.ownKeyRetired")');
+    expect(line).not.toMatch(/role="dialog"|aria-modal|onClick|<button/);
   });
 });

@@ -1,5 +1,5 @@
 import {it,expect} from "vitest";
-import {leavesStatusCurrent,remoteBackupInput,remoteBackupStatus,remoteBackupError,remoteBackupCatalogue,remoteRetentionPolicy,remoteRetentionPreview,type RemoteDraft} from "./BackupRemoteSettings";
+import {showsRemoteUnavailable,REMOTE_CHECKING,leavesStatusCurrent,remoteBackupInput,remoteBackupStatus,remoteBackupError,remoteBackupCatalogue,remoteRetentionPolicy,remoteRetentionPreview,type RemoteDraft} from "./BackupRemoteSettings";
 const draft:RemoteDraft={label:"Backup",endpoint:"https://s3.example.invalid",bucket:"fixture-bucket",prefix:"murage",region:"auto",bucketLookup:"auto",accessKeyId:"FAKE_ACCESS",secretAccessKey:"FAKE_SECRET",sessionToken:""};
 it("validates explicit S3 settings without choosing a provider or embedding credentials in URLs",()=>{
  expect(remoteBackupInput(draft)).toMatchObject({endpoint:draft.endpoint,credentials:{accessKeyId:"FAKE_ACCESS",secretAccessKey:"FAKE_SECRET"}});
@@ -96,4 +96,13 @@ it("a refused password file leaves the page usable; everything else asks for a r
       expect(leavesStatusCurrent(Error(`Error invoking remote method 'backupRemote:selectPassword': Error: ${code}`)),code).toBe(true);
     for(const code of ["BACKUP_REMOTE_REVIEW_REQUIRED","BACKUP_REMOTE_CONTROL_UNAVAILABLE","BACKUP_REMOTE_PASSWORD_NOT_CREATED","BACKUP_REMOTE_CHANGED","BACKUP_REMOTE_PASSWORD_FILE_SHAREDX"])
       expect(leavesStatusCurrent(Error(code)),code).toBe(false);
+});
+
+it("a starting host reads as checking, never as unavailable or needing a verified tool",()=>{
+  expect(showsRemoteUnavailable({supported:false,checking:true})).toBe(false);
+  expect(showsRemoteUnavailable({supported:false})).toBe(true);
+  expect(showsRemoteUnavailable({supported:true})).toBe(false);
+  expect(showsRemoteUnavailable(null)).toBe(false);
+  expect(remoteBackupStatus({supported:false,pending:false,configured:false,state:"unavailable",checking:true}).checking).toBe(true);
+  expect(REMOTE_CHECKING).not.toMatch(/\u2014|\bsafe|safety|unavailable/i);
 });

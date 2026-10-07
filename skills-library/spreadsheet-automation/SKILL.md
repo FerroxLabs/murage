@@ -6,7 +6,7 @@ description: |
   Do NOT use for data validation rule design (use data-validation-setup), data cleaning formulas (use spreadsheet-data-cleaning), or Google Apps Script programming (software-development scope).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "spreadsheets automation template"
   category: "data-analysis"

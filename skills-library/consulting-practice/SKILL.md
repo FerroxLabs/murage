@@ -4,7 +4,7 @@ description: |
   Complete guide to building and running an independent consulting practice including niche positioning, proposal and SOW creation, rate setting, client acquisition, project management, deliverable design, retainer structures, and scaling strategies. Use when the user asks about consulting practice or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning freelancing"
   category: "business-strategy"

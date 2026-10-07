@@ -6,7 +6,7 @@ description: |
   Do NOT use for selecting flooring type (use flooring-selection instead), removing existing tile, or heated floor installation under tile.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-maintenance step-by-step planning"
   category: "home-household"

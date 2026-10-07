@@ -20,7 +20,7 @@ trigger_phrases: >-
   I want to set up monitoring I need to build an observability stack How do I
   create alerts and dashboards I want to implement SLOs
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: step-by-step planning
   category: software-project

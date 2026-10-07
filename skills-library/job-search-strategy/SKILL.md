@@ -11,7 +11,7 @@ description: |
   career pivot planning (use career-pivot-roadmap in career-development).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "career planning goal-setting"
   category: "career-development"

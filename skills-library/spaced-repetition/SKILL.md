@@ -6,7 +6,7 @@ description: |
   Do NOT use for flashcard content creation (use `flashcard-generation`), for general study planning (use `study-plan`), or for exam-specific preparation (use `exam-prep-plan`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "spaced-repetition study-skills active-recall step-by-step"
   category: "education"

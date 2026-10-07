@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of surgery preparation guide or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness breathing checklist guide step-by-step beginner-friendly planning performing-arts"
   category: "health-wellness"

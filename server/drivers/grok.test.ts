@@ -308,7 +308,7 @@ describe("GrokDriver usage request", () => {
       if (!body.stream) {
         return new Response(JSON.stringify({ choices: [{ message: { content: "a title" } }] }), { status: 200 });
       }
-      return sseResponse(SSE_BODY("hello"));
+      return sseResponse(SSE_BODY("hello").replace("data: [DONE]", 'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}\n\ndata: [DONE]'));
     }) as typeof fetch;
     const instance = await GrokDriver.create({
       instanceId: "grok-usage",
@@ -319,8 +319,9 @@ describe("GrokDriver usage request", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-usage", text: "hi" });
-      await recorder.until((e) => e.type === "turn.completed");
+      for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({ threadId: "t-usage", text: "hi" });
+        await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);}
+      expect(recorder.events.filter(e=>e.type==="turn.completed")).toMatchObject([{usage:{input:10,output:5}},{usage:{input:10,output:5}}]);
       await expect(instance.generateText?.("name this")).resolves.toBe("a title");
     } finally {
       recorder.stop();

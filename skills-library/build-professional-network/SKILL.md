@@ -20,7 +20,7 @@ trigger_phrases: >-
   strategy guide build professional connections grow my network networking for
   introverts strategic networking plan
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: networking career relationships linkedin step-by-step planning
   category: career

@@ -45,7 +45,7 @@ const FIXTURE_MESSAGES = [
 ];
 
 async function seedTranscript(page: Page): Promise<void> {
-  await page.route("**/api/bots", async (route) => {
+  await page.route((url) => url.pathname === "/api/bots", async (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     const response = await route.fetch();
     const body = await response.json();

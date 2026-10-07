@@ -12,7 +12,7 @@ description: |
   (use investment-account-types).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-buying personal-finance planning checklist"
   category: "personal-finance"

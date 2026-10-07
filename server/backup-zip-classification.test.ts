@@ -37,15 +37,19 @@ it("the .zip recovery file keeps a bot's shortcuts and real names, and restores 
   mkdirSync(join(desk, "lib"), { recursive: true });
   writeFileSync(join(desk, "lib", "index.js"), "x\n");
   symlinkSync("lib/index.js", join(desk, "main.js"));
-  writeFileSync(join(desk, "log 10:30.txt"), "timestamped\n");
+  // A colon cannot be in a Windows file name (a write there makes an alternate data stream).
+  const colon = process.platform !== "win32";
+  if (colon) writeFileSync(join(desk, "log 10:30.txt"), "timestamped\n");
   mkdirSync(join(desk, "node_modules", "dep"), { recursive: true }); writeFileSync(join(desk, "node_modules", "dep", "a.js"), "x");
   try {
     const saved = await writeInstallationArchive(f.data, join(f.parent, "recovery.zip"));
     expect(saved.manifest.skipped).toEqual([{ path: "workspaces/bot/node_modules", reason: "rebuildable" }]);
     const target = join(f.parent, "restored");
     await restoreInstallation(target, saved.path, saved.sha256, { requireNew: true });
-    expect(readlinkSync(join(target, "workspaces", "bot", "main.js"))).toBe("lib/index.js");
-    expect(readFileSync(join(target, "workspaces", "bot", "log 10:30.txt"), "utf8")).toBe("timestamped\n");
+    // Kept portable in the file ("/"), and native once restored (Windows reads it back with "\\").
+    expect(saved.manifest.links).toContainEqual(expect.objectContaining({ path: "workspaces/bot/main.js", target: "lib/index.js" }));
+    expect(readlinkSync(join(target, "workspaces", "bot", "main.js")).replaceAll("\\", "/")).toBe("lib/index.js");
+    if (colon) expect(readFileSync(join(target, "workspaces", "bot", "log 10:30.txt"), "utf8")).toBe("timestamped\n");
     expect(existsSync(join(target, "workspaces", "bot", "node_modules"))).toBe(false);
   } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }
 });

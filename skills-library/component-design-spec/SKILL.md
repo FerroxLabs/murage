@@ -6,7 +6,7 @@ description: |
   Do NOT use for full page wireframes (use wireframe-specification), design token systems (use design-system-foundations), or coded component implementation (use a software-development skill).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design accessibility template"
   category: "design-creative"

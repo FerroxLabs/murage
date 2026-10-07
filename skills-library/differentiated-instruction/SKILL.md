@@ -6,7 +6,7 @@ description: |
   Do NOT use for creating the original lesson plan (use `lesson-plan-design`), for individual student feedback (use `student-feedback`), or for student self-paced learning (use `study-plan`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching lesson-plan step-by-step guide"
   category: "education"

@@ -4,7 +4,7 @@ description: |
   Complete comic book creation guidance covering panel layout, sequential storytelling, character design, lettering, page composition, script formatting, inking techniques, coloring approaches, and distribution options for both print and digital publication. Use when the user asks about comic book creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design creative-writing guide"
   category: "creative-arts"

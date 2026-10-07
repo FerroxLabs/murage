@@ -1,3 +1,4 @@
+import { initializeTeamIdentityTables } from "./team-identities.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, rmSync, statSync, writeSync, type Stats } from "node:fs";
@@ -11,19 +12,13 @@ import { initializeArtifacts } from "./artifacts.ts";
 import { initializeInbox } from "./inbox.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { initializeImageLibrary, initializeImageOperations } from "./image-operations-schema.ts";
+import { initializeProjectTables } from "./project-tables.ts";
+import { initializeMobilePush } from "./mobile-push-store.ts";
+import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
 
-export class InstallationSnapshotError extends Error {
-  readonly code: string;
-  /** The item in the data folder the refusal is about, relative to it and
-   * with "/" separators, so the person is told which file to look at. */
-  readonly path?: string;
-  constructor(code: string, options?: { cause?: unknown; path?: string }) {
-    super(`Murage database snapshot refused (${code}). Original installation data was preserved.`, options?.cause === undefined ? undefined : { cause: options.cause });
-    this.name = "InstallationSnapshotError";
-    this.code = code;
-    if (options?.path) this.path = options.path.split("\\").join("/");
-  }
-}
+import { InstallationSnapshotError } from "./installation-snapshot-error.ts";
+import { flushCoalesced } from "./atomic.ts";
+export { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 
 function regularFile(path: string, missing = false) {
   try {
@@ -53,6 +48,16 @@ function count(db: DatabaseSync, sql: string): number {
 const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Object.entries({
   messages: { required: true, optional: [] },
   thread_state: { required: true, optional: [] },
+  // The substring-search index (message-search-index.ts): a contentless FTS5
+  // virtual table plus the four shadow tables SQLite keeps for it. Not
+  // required: an archive from before the index lacks them and the app builds
+  // the index on first open. Each is accepted only with exactly the definition
+  // the harness writes, like every other object here.
+  messages_fts: { required: false, optional: [] },
+  messages_fts_data: { required: false, optional: [] },
+  messages_fts_idx: { required: false, optional: [] },
+  messages_fts_docsize: { required: false, optional: [] },
+  messages_fts_config: { required: false, optional: [] },
   inbox_item_state: { required: false, optional: ["cleared_at"] },
   artifacts: { required: false, optional: ["producer", "publication_id"] },
   output_publications: { required: false, optional: [] },
@@ -63,8 +68,36 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   image_render_prompts: { required: false, optional: [] },
   image_reference_packs: { required: false, optional: [] },
   image_model_probes: { required: false, optional: [] },
-  // conversation snooze (server/thread-snooze.ts), new in 0.1.60
-  thread_snooze: { required: false, optional: [] },
+  // conversation snooze (server/thread-snooze.ts), new in 0.1.60;
+  // until_activity ("until new activity") added in 0.1.61
+  thread_snooze: { required: false, optional: ["until_activity"] },
+  // the projects overhaul (server/project-tables.ts), new in 0.1.61; all
+  // required: false so an archive from before the release still restores
+  team_identities: { required: false, optional: [] },
+  project_settings: { required: false, optional: [] },
+  room_requests: { required: false, optional: [] },
+  project_work_items: { required: false, optional: [] },
+  project_board_columns: { required: false, optional: [] },
+  project_briefs: { required: false, optional: [] },
+  project_goals: { required: false, optional: [] },
+  project_budgets: { required: false, optional: [] },
+  usage_ledger: { required: false, optional: [] },
+  project_summaries: { required: false, optional: [] },
+  project_activity: { required: false, optional: [] },
+  project_member_state: { required: false, optional: [] },
+  // phone push state (server/mobile-push-store.ts, Plan 3a H2): bindings,
+  // outbox rows, risk ratings, first decisions, and the relay removals still
+  // owed (H8). An archive from before these landed simply lacks the tables;
+  // nothing here is required.
+  // Appended by ALTER: key_secret (M2), then per-phone preview consent.
+  push_bindings: { required: false, optional: ["key_secret", "preview_content", "token_expires_at"] },
+  push_events: { required: false, optional: [] },
+  // revision appended by ALTER in H9 fix round 1
+  push_risk: { required: false, optional: ["revision"] },
+  push_decisions: { required: false, optional: ["outcome"] },
+  push_relay_removals: { required: false, optional: [] },
+  // routine provenance of shared requests (shared-provenance-schema.ts); an older archive lacks it
+  shared_request_provenance: { required: false, optional: [] },
 }));
 
 type SchemaRow = { type: string; name: string; tbl_name: string; sql: string | null };
@@ -92,7 +125,7 @@ function referenceSchema(): Map<string, ReferenceObject> {
   const db = new DatabaseSync(":memory:");
   try {
     initializeMessageTables(db); initializeInbox(db); initializeArtifacts(db);
-    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db);
+    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db);
     const objects = new Map<string, ReferenceObject>();
     for (const row of db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[]) {
       if (!APP_TABLES.has(row.tbl_name)) throw new Error(`initializer created an object outside APP_TABLES: ${row.name}`);
@@ -301,6 +334,8 @@ export interface OfflineInstallation {
  * Escaped callbacks are rejected after release. A caller that forgets to await
  * a database copy still cannot release the lease while SQLite is writing. */
 export async function withOfflineInstallation<T>(dataDir: string, operation: (installation: OfflineInstallation) => Promise<T>): Promise<T> {
+  // Deferred (coalesced) store writes reach disk before any copy is taken.
+  flushCoalesced();
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
   const lease = acquireDataDirLeaseForProcess(root);
   let active = true;

@@ -5,7 +5,7 @@ description: |
   Do NOT use for partnership agreements (use partnership-agreement-outline), startup fundraising structure (use fundraising-narrative), or cap table modeling (use cap-table-basics).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship planning strategy decision-making analysis"
   category: "business-strategy"

@@ -65,7 +65,7 @@ const staged = it.skipIf(!caseFoldingScratch);
 
 /** The default Windows layout: the data folder and the backup folder side by side. */
 function fixture() {
-  const original = realpathSync(mkdtempSync(join(tmpdir(), "murage-win-pins-")));
+  const original = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-win-pins-")));
   const home = join(dirname(original), original.slice(dirname(original).length + 1).toLowerCase());
   if (original !== home) renameSync(original, home); roots.push(home);
   const data = join(home, ".murage"); mkdirSync(data);

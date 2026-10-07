@@ -12,7 +12,7 @@ description: |
   renovation planning.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "elder-care checklist home-maintenance"
   category: "family-relationships"

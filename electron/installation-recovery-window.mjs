@@ -20,8 +20,16 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
     await verifyEncrypted?.();
     if (!trusted(event) || !isAvailable() || encryptedAvailable?.() !== true) throw Error("RECOVERY_OWNERSHIP_REQUIRED");
   };
+  // Undoing the restore of a separate copy hands the next start back to the
+  // original folder; the page then names that folder, not the restored copy
+  // it can no longer open (0.1.60 Windows rt4 L4).
+  const runAndFollow = run && (async (operation, parameters) => {
+    const result = await run(operation, parameters);
+    if (operation === "rollback" && result?.status === "rolled-back" && typeof result.opensNext === "string" && result.opensNext) context.dataDirectory = result.opensNext;
+    return result;
+  });
   const controller = createInstallationRecoveryController({
-    isTrustedSender: trusted, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, retainedDestination, run, retry, openDiagnostics,
+    isTrustedSender: trusted, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, retainedDestination, run: runAndFollow, retry, openDiagnostics,
     chooseEncryptedBackup: async () => {
       const picked=await dialog.showOpenDialog(win,{title:"Choose the backup to restore",properties:["openFile"],filters:[{name:"Encrypted Murage backup",extensions:["age"]}]});
       return picked.canceled||picked.filePaths.length!==1?null:{path:picked.filePaths[0],name:path.basename(picked.filePaths[0])};
@@ -49,13 +57,13 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
     confirm: async (_event, action, name, destination, installation) => {
       if(action==="backup-encrypted"||action==="restore-encrypted-new"){
         const restore=action==="restore-encrypted-new";
-        const answer=await dialog.showMessageBox(win,{type:"warning",buttons:["Cancel",restore?"Restore and restart":"Make backup"],defaultId:0,cancelId:0,noLink:true,
+        const answer=await dialog.showMessageBox(win,{title:"Murage",type:"warning",buttons:["Cancel",restore?"Restore and restart":"Make backup"],defaultId:0,cancelId:0,noLink:true,
           message:restore?"Restore this backup into a new folder?":"Make an encrypted backup of your Murage data?",
           detail:restore?`Backup: ${name}\nYour current data stays as it is: ${context.dataDirectory}\nThe restored copy goes to: ${destination}\n\nWhen the restore has finished, Murage restarts so you can review the restored copy. It comes back paused: AI engines, schedules and messaging apps stay off until you connect them again.`:`Save to: ${destination}\n\nThe backup is encrypted with your recovery key and holds your settings, bots, conversations, files and channel history. It does not hold the local VM or folders outside Murage. Keep a copy of your recovery key somewhere else: without it the backup can't be opened.`});
         return answer.response===1;
       }
       if (action === "capture-separate") {
-        const answer = await dialog.showMessageBox(win, {
+        const answer = await dialog.showMessageBox(win, { title: "Murage",
           type: "warning", buttons: ["Cancel", "Make recovery copy"], defaultId: 0, cancelId: 0, noLink: true,
           message: "Make a recovery copy from the data on this computer?",
           detail: "Your current data: " + context.dataDirectory + "\n\nRecovery copy: " + destination + "\nRestored copy goes to: " + installation +
@@ -64,7 +72,7 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
         return answer.response === 1;
       }
       if (action === "restore-separate") {
-        const answer = await dialog.showMessageBox(win, {
+        const answer = await dialog.showMessageBox(win, { title: "Murage",
           type: "warning", buttons: ["Cancel", "Restore into a new folder"], defaultId: 0, cancelId: 0, noLink: true,
           message: "Restore " + name + " into a new folder?",
           detail: "Your current data stays as it is: " + context.dataDirectory + "\n\nThe restored copy goes to: " + destination +
@@ -72,7 +80,7 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
         });
         return answer.response === 1;
       }
-      const answer = await dialog.showMessageBox(win, {
+      const answer = await dialog.showMessageBox(win, { title: "Murage",
         type: "warning", buttons: ["Cancel", action === "activate" ? "Open restored copy" : action === "restore" ? "Restore backup" : "Undo restore"], defaultId: 0, cancelId: 0, noLink: true,
         message: action === "activate" ? "Open the restored copy?" : action === "restore" ? "Restore " + name + "?" : "Undo the restore and go back to your previous data?",
         detail: action === "activate" ? "Murage restarts with the restored copy. AI engines and schedules stay off and no unfinished work restarts. Turn engines on and reconnect your phone and messaging apps in Settings when you're ready." : action === "restore"

@@ -6,7 +6,7 @@ description: |
   Do NOT use for spaced repetition scheduling (use `spaced-repetition`), for practice test questions (use `active-recall-practice`), or for concept mapping (use `concept-mapping`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "spaced-repetition study-skills active-recall note-taking"
   category: "education"

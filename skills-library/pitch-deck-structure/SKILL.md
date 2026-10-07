@@ -10,7 +10,7 @@ description: |
   writing (use business-plan).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "presentation planning template"
   category: "design-creative"

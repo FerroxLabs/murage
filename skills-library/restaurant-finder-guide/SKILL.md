@@ -13,7 +13,7 @@ description: |
   discovery, or food tourism itinerary building (use trip-planning skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "travel research guide step-by-step"
   category: "travel-experiences"

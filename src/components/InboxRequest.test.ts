@@ -1,5 +1,7 @@
 // A waiting request in the Inbox says what the bot asked, and can be
 // answered without walking to the conversation.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -9,6 +11,7 @@ import type { OptionCardData } from "@/state/store";
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { InboxRequestAnswer, inlineAnswerKind, requestHeadline, requestOpen } = await import("./InboxRequest");
+const { approvalButtonProps } = await import("./ApprovalFeedback");
 const { Inbox, botNameFromSource, INBOX_VIEWS } = await import("./Inbox");
 
 const question: OptionCardData = {
@@ -71,12 +74,22 @@ describe("answering in place", () => {
     expect(markup).toContain('data-question-state="open"');
   });
 
-  it("offers allow and deny for a tool approval, and leaves the command in the conversation", () => {
-    const markup = render(approval);
+  it("offers allow and deny for a low-rated tool approval, and leaves the command in the conversation", () => {
+    const markup = render({ ...approval, lowRisk: true });
     expect(markup).toContain("Allow once");
     expect(markup).toContain("Deny");
     expect(markup).toContain("Open the request to see exactly what Ember would run.");
     expect(markup).not.toContain("rm -rf build");
+  });
+
+  it("shows the digest-bound details inline before Allow, when the card may need fresh authentication", () => {
+    const markup = render({ ...approval, summary: "remove the build folder", held: "outside its folder" });
+    expect(markup).toContain("Allow once");
+    expect(markup).toContain('data-testid="inbox-request-details"');
+    for (const shown of ["Bash", "rm -rf build", "remove the build folder", "outside its folder"]) expect(markup).toContain(shown);
+    // the details come before the button that can start native authentication
+    expect(markup.indexOf("rm -rf build")).toBeLessThan(markup.indexOf("Allow once"));
+    expect(markup).not.toContain("Open the request to see exactly what Ember would run.");
   });
 
   it("offers Allow for this task only on a stop-line card", () => {
@@ -171,6 +184,43 @@ describe("the two answers a person can give from the Inbox", () => {
     // version of this check did exactly that.
     const allow = markup().match(/<button[^>]*>\s*Allow once/)![0];
     expect(allow).not.toMatch(/disabled=""/);
-    expect(allow, "the guard has to be able to see a real one").toMatch(/disabled:opacity-50/);
+    // Buttons are held with aria-disabled (never `disabled`), and only while an answer is in flight.
+    expect(allow).not.toMatch(/aria-disabled/);
+    expect(allow, "the guard has to be able to see a real one").toMatch(/inline-flex min-h-10/);
+    expect(approvalButtonProps({ busy: "deny", sent: false }, "allow")["aria-disabled"], "a held button is marked aria-disabled, not disabled").toBe(true);
+  });
+});
+
+describe("an inline Allow in the Inbox goes through fresh authentication", () => {
+  const source = readFileSync(join(__dirname, "InboxRequest.tsx"), "utf8");
+  it("answers through decideWithFreshAuth, with the card and the bot name", () => {
+    expect(source).toMatch(/decideWithFreshAuth\(/);
+    expect(source).toMatch(/card,\s*botName/);
+    expect(source).not.toMatch(/await api\(`\/api\/threads\/\$\{threadId\}\/respond`/);
+  });
+  it("keeps an error line for a failure with no message, but none for a cancelled Face ID", () => {
+    expect(source).toMatch(/onError: \(message, code\)/);
+    expect(source).toContain("This answer could not be sent. Open the request instead.");
+    expect(source).toMatch(/code === "cancelled"/);
+  });
+  it("names the choice: allow once is allow, allow for this task is allow-task", () => {
+    expect(source).toMatch(/allowForTask \? "allow-task" : "allow"/);
+  });
+});
+
+describe("an inline Allow in the Inbox goes through fresh authentication", () => {
+  const source = readFileSync(join(__dirname, "InboxRequest.tsx"), "utf8");
+  it("answers through decideWithFreshAuth, with the card and the bot name", () => {
+    expect(source).toMatch(/decideWithFreshAuth\(/);
+    expect(source).toMatch(/card,\s*botName/);
+    expect(source).not.toMatch(/await api\(`\/api\/threads\/\$\{threadId\}\/respond`/);
+  });
+  it("keeps an error line for a failure with no message, but none for a cancelled Face ID", () => {
+    expect(source).toMatch(/onError: \(message, code\)/);
+    expect(source).toContain("This answer could not be sent. Open the request instead.");
+    expect(source).toMatch(/code === "cancelled"/);
+  });
+  it("names the choice: allow once is allow, allow for this task is allow-task", () => {
+    expect(source).toMatch(/allowForTask \? "allow-task" : "allow"/);
   });
 });

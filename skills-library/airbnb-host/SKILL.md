@@ -4,7 +4,7 @@ description: |
   Expert guidance for short-term rental hosting covering listing optimization, dynamic pricing, guest communication, cleaning protocols, review management, Superhost qualification, legal and tax considerations, and scaling to a multi-property portfolio. Use when the user asks about airbnb host or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning guide"
   category: "business-strategy"

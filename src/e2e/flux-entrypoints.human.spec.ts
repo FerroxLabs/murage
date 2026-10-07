@@ -8,7 +8,10 @@ import { join } from 'node:path';
 import type { ConfigStatus } from '../state/store';
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
-// Real onboarding/settings/Models/PasteKeys, controlled empty-workspace backend.
+// Real settings/Models/PasteKeys, controlled empty-workspace backend. The
+// onboarding screen that used to open Models (Onboarding.tsx) was replaced by
+// the first-run conversation in 0.1.58 (311387b1); Models opens here as the
+// first-run Flux card and PasteKeys open it (toggleAppSettings, section models).
 // This fixture verifies navigation and write boundaries, not provider readiness.
 let server: ViteDevServer, origin: string, cache: string;
 let failStatus = false;
@@ -37,9 +40,8 @@ test.beforeAll(async () => {
       load(id) {
         if (id.endsWith('/src/styles.css')) return readFileSync(id, 'utf8').replace('@import "tailwindcss";', '@import "tailwindcss" source(none);\n@source "./components";');
         if (id !== '\0flux-entrypoint-fixture') return;
-        return `import React from 'react';import {createRoot} from 'react-dom/client';import {StoreProvider,useStore} from '/src/state/store.tsx';import {Onboarding} from '/src/components/Onboarding.tsx';import {SettingsModal} from '/src/components/SettingsModal.tsx';import '/src/styles.css';
-          window.onboardingDone=0;
-          function Fixture(){const store=useStore();window.fixtureStore=store;return React.createElement(React.Fragment,null,store.state.appSettingsOpen&&React.createElement(SettingsModal),React.createElement(Onboarding,{onDone:()=>window.onboardingDone++}));}
+        return `import React from 'react';import {createRoot} from 'react-dom/client';import {StoreProvider,useStore} from '/src/state/store.tsx';import {SettingsModal} from '/src/components/SettingsModal.tsx';import '/src/styles.css';
+          function Fixture(){const store=useStore();window.fixtureStore=store;return React.createElement(React.Fragment,null,store.state.appSettingsOpen&&React.createElement(SettingsModal),React.createElement('button',{type:'button',onClick:()=>store.dispatch({type:'toggleAppSettings',open:true,section:'models'})},'Open Models settings'));}
           createRoot(document.getElementById('root')).render(React.createElement(StoreProvider,null,React.createElement(Fixture)));`;
       },
       configureServer(vite) { vite.middlewares.use((req,res,next) => {
@@ -66,41 +68,19 @@ test.beforeEach(async ({page}) => { writes=[];failStatus=false;composioConfigure
 test.afterEach(()=>{expect(pageErrors).toEqual([]);});
 test.afterAll(async()=>{await server?.close();if(cache)safeWipeSync(cache);});
 
-async function openFromOnboarding(page: import('@playwright/test').Page) {
+async function openModels(page: import('@playwright/test').Page) {
   await page.goto(`${origin}/__flux-entry`, { waitUntil:'domcontentloaded' });
-  await page.getByLabel('Choose your first outcome').getByRole('button').first().click();
-  await page.getByLabel('Choose an engine').getByRole('button', {name:/Fuigo/}).click();
-  await expect(page.locator('input[type=password]')).toHaveCount(0);
-  await page.getByRole('button',{name:'Open Flux Router in Models',exact:true}).click();
+  await page.getByRole('button',{name:'Open Models settings',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'Settings',exact:true})).toBeVisible();
   await expect(page.getByRole('heading',{name:'Flux Router',exact:true})).toBeVisible();
   await expect(page.getByLabel('Flux Router key',{exact:true})).toBeEnabled();
 }
-test('onboarding opens the one Models card and resumes its selected engine',async({page},testInfo)=>{
-  await openFromOnboarding(page);
-  expect(await page.evaluate(()=>(window as any).onboardingDone)).toBe(0);
-  for(const skin of ['light','dark'])for(const width of [390,1440]){
-    await page.setViewportSize({width,height:900});await page.evaluate(value=>{document.documentElement.dataset.skin=value;},skin);
-    await page.screenshot({path:testInfo.outputPath(`${skin}-${width}.png`)});
-    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  }
-  await page.getByRole('dialog',{name:'Settings',exact:true}).getByRole('button',{name:'Close settings',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'Choose an engine',exact:true})).toBeVisible();
-  await expect(page.getByLabel('Choose an engine').getByRole('button',{name:/Fuigo/})).toHaveAttribute('aria-pressed','true');
-  await expect(page.getByRole('button',{name:'Open Flux Router in Models',exact:true})).toBeVisible();
-  for(const skin of ['light','dark'])for(const width of [390,1440]){
-    await page.setViewportSize({width,height:900});await page.evaluate(value=>{document.documentElement.dataset.skin=value;},skin);
-    await page.getByRole('button',{name:'Open Flux Router in Models',exact:true}).scrollIntoViewIfNeeded();
-    await page.screenshot({path:testInfo.outputPath(`setup-${skin}-${width}.png`)});
-  }
-  expect(writes).toEqual([]);
-});
-test('Tools Flux paste navigates without saving or carrying the pasted key',async({page},testInfo)=>{
-  await openFromOnboarding(page);
-  const dialog=page.getByRole('dialog',{name:'Settings',exact:true});
-  await dialog.getByRole('button',{name:'Tools & Connections',exact:true}).click();
-  await expect(page.getByLabel('Box API key',{exact:true})).toBeVisible();
-  await page.getByText('Advanced: Add or replace keys',{exact:true}).click();
+// 0.1.62: "Paste any keys" sits folded at the foot of Models (it was
+// Tools & Connections > Advanced), so a pasted Flux key sends the cursor up
+// to the Flux Router card on the same page.
+test('Models Flux paste navigates without saving or carrying the pasted key',async({page},testInfo)=>{
+  await openModels(page);
+  await page.getByText('Paste any keys',{exact:true}).click();
   expect(pageErrors).toEqual([]);
   const key='sk-flux-'+ 'F'.repeat(40);
   await page.getByLabel('Paste keys to look through').fill(`FLUX_API_KEY=${key}\nCOMPOSIO_API_KEY=ak_${'c'.repeat(32)}`);
@@ -110,19 +90,20 @@ test('Tools Flux paste navigates without saving or carrying the pasted key',asyn
   await page.getByRole('button',{name:'Open Flux Router in Models',exact:true}).click();
   await expect(page.getByRole('alert').filter({hasText:'Save or dismiss the other pasted keys'})).toBeVisible();
   await expect(page.getByTestId('paste-key-row')).toHaveCount(2);
-  await expect(page.getByLabel('Flux Router key',{exact:true})).toHaveCount(0);
+  // nothing moved: the cursor stays with the pasted keys
+  await expect(page.getByLabel('Flux Router key',{exact:true})).not.toBeFocused();
   await page.setViewportSize({width:390,height:900});
   await page.screenshot({path:testInfo.outputPath('tools-pending-keys-390.png')});
   await page.getByTestId('paste-key-row').filter({hasText:'COMPOSIO_API_KEY'}).getByRole('button',{name:'Ignore',exact:true}).click();
   await expect(page.getByTestId('paste-key-row')).toHaveCount(1);
   await page.getByRole('button',{name:'Open Flux Router in Models',exact:true}).click();
   await expect(page.getByLabel('Flux Router key',{exact:true})).toHaveValue('');
+  await expect(page.getByLabel('Flux Router key',{exact:true})).toBeFocused();
   expect(writes).toEqual([]);expect(await page.content()).not.toContain(key);
 });
 test('advanced key review preserves canonical Add and Replace mutations',async({page},testInfo)=>{
-  await openFromOnboarding(page);
-  await page.getByRole('dialog',{name:'Settings',exact:true}).getByRole('button',{name:'Tools & Connections',exact:true}).click();
-  const disclosure=page.getByText('Advanced: Add or replace keys',{exact:true});
+  await openModels(page);
+  const disclosure=page.locator('summary').filter({hasText:'Paste any keys'});
   const input=page.getByLabel('Paste keys to look through');
   await expect(input).toBeHidden();
   await disclosure.focus();await page.keyboard.press('Enter');await expect(input).toBeVisible();
@@ -152,7 +133,7 @@ test('advanced key review preserves canonical Add and Replace mutations',async({
   await page.keyboard.press('Enter');await expect(input).toHaveValue('');
 });
 test('ambiguous nonFlux keys retain provider choice; failure has no legacy Flux input',async({page})=>{
-  await openFromOnboarding(page);
+  await openModels(page);
   await page.getByLabel('Model API key',{exact:true}).fill('sk-'+ 'a'.repeat(32));
   const choices=page.getByRole('group',{name:'Which provider issued this key?',exact:true});
   await expect(choices.getByRole('button',{name:'OpenAI',exact:true})).toBeVisible();

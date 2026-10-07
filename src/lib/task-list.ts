@@ -10,6 +10,8 @@ export interface TaskListTask {
   threadId: string;
   title: string;
   createdAt: number;
+  /** a work thread for a team this bot is shared with: listed under Team work */
+  sharedWork?: { teamId: string };
   /** last message time, from the server; absent = no messages yet */
   lastActivityAt?: number;
   pinned?: boolean;
@@ -127,6 +129,29 @@ export function formatListTime(at: number, now: number, clock: Clock = {}): stri
     if (day.format(at) !== day.format(now)) return day.format(at);
   }
   return formatTaskWhen(at, now, clock);
+}
+
+/** How long ago, for work from today (upstream #1854): "Just now", "5 min
+ * ago", "3 hr ago". null for anything older, or more than a minute ahead
+ * (a skewed clock), so the caller keeps its own date words. */
+export function formatAgo(at: number, now: number, clock: Clock = {}): string | null {
+  const age = now - at;
+  if (age < -60_000) return null;
+  // Only today's work: a row from before midnight keeps "Yesterday".
+  if (age >= 0 && dateBucket(at, now, clock).key !== "today") return null;
+  if (age < 60_000) return "Just now";
+  if (age < 60 * 60_000) return `${Math.floor(age / 60_000)} min ago`;
+  return `${Math.floor(age / (60 * 60_000))} hr ago`;
+}
+
+/** formatListTime, with today's work as how long ago. */
+export function formatRelativeListTime(at: number, now: number, clock: Clock = {}): string {
+  return formatAgo(at, now, clock) ?? formatListTime(at, now, clock);
+}
+
+/** formatTaskWhen, with today's work as how long ago. */
+export function formatRelativeTaskWhen(at: number, now: number, clock: Clock = {}): string {
+  return formatAgo(at, now, clock) ?? formatTaskWhen(at, now, clock);
 }
 
 /** The full date and time, for a hover title. */
@@ -337,7 +362,11 @@ export function buildTaskListView<T extends TaskListTask>(tasks: readonly T[], o
     };
   }
 
-  const shown = listed.filter((task) => matchesFilter(options.filter, kindOf(task), task));
+  const filtered = listed.filter((task) => matchesFilter(options.filter, kindOf(task), task));
+  // Work threads for other teams sit together under Team work, after the
+  // bot's own conversations (SPEC-X 13.2).
+  const teamWork = filtered.filter((task) => task.sharedWork);
+  const shown = filtered.filter((task) => !task.sharedWork);
   const runsByRoutine = new Map<string, T[]>();
   for (const task of shown) {
     if (task.pinned) continue;
@@ -377,6 +406,10 @@ export function buildTaskListView<T extends TaskListTask>(tasks: readonly T[], o
       });
       navigable.push(...(expanded ? runs : [task]));
     }
+  }
+  if (teamWork.length) {
+    sections.push({ key: "team-work", label: "Team work", entries: teamWork.map((task) => ({ type: "task" as const, task, kind: kindOf(task) })) });
+    navigable.push(...teamWork);
   }
   return { sections, navigable };
 }

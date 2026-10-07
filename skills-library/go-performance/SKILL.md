@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Go idioms (use `go-idioms`), Go concurrency (use `go-concurrency-patterns`), general performance testing (use `performance-testing`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "go optimization debugging"
   category: "software-engineering"

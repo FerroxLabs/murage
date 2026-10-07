@@ -303,6 +303,46 @@ function transcriptFileName(path: string, suppliedName?: string): string {
   return Array.from(safe || fallback || "Attached file").slice(0, 180).join("");
 }
 
+/** The exact wrapper lines composeMessage writes around a pasted block. The
+ * bot needs them to tell pasted from typed text; a person reading their own
+ * message does not. Anything else on the line keeps the tag visible. */
+const PASTED_TEXT_OPEN = /^ {0,3}<pasted-text(?:[\t ]+index="\d+")?[\t ]*>[\t ]*$/i;
+const PASTED_TEXT_CLOSE = /^[\t ]*<\/pasted-text>[\t ]*$/i;
+const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})/;
+
+/** Drop the `<pasted-text>` wrapper lines and keep what was pasted (upstream
+ * #1840). A block ends at the first line naming the closing tag, as the bot
+ * reads it; that line is dropped only when it is exactly the closing tag. A
+ * wrapper inside typed fenced code stays, since it was typed. */
+function hidePastedTextWrappers(text: string): string {
+  const kept: string[] = [];
+  let fence: string | null = null;
+  let inPaste = false;
+  for (const line of text.split("\n")) {
+    const bare = line.replace(/\r$/, "");
+    if (inPaste) {
+      if (bare.toLowerCase().includes("</pasted-text>")) {
+        inPaste = false;
+        if (PASTED_TEXT_CLOSE.test(bare)) continue;
+      }
+      kept.push(line);
+      continue;
+    }
+    const marker = CODE_FENCE.exec(bare)?.[1];
+    if (fence) {
+      // A closing fence is the same character, at least as long, and nothing after it.
+      if (marker && marker[0] === fence[0] && marker.length >= fence.length && /^[\t ]*$/.test(bare.trimStart().slice(marker.length))) fence = null;
+    } else if (marker) {
+      fence = marker;
+    } else if (PASTED_TEXT_OPEN.test(bare)) {
+      inPaste = true;
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join("\n");
+}
+
 /** One `<attached-image|file>` tag on a line of its own: the only form a
  * transcript, a turn's image collection or a left-out removal treats as one. */
 const ATTACHMENT_TAG = /^[\t ]*<attached-(image|file)\b((?:[\t ]+[A-Za-z_:][\w:.-]*="[^"\r\n]*")*)[\t ]*\/>[\t ]*(?:\r?\n)?/gm;
@@ -329,8 +369,12 @@ export function withoutImageTags(text: string, paths: Iterable<string>): string 
 }
 
 /** Split a stored user message into its display text and attachments for
- * transcript rendering. Prompt-only tags never show in the bubble. */
-export function splitTranscriptAttachments(text: string): TranscriptAttachments {
+ * transcript rendering. Prompt-only tags never show in the bubble; a bubble
+ * also asks to hide the pasted-text wrapper. Server callers leave it. */
+export function splitTranscriptAttachments(
+  text: string,
+  options: { hidePasteWrappers?: boolean } = {},
+): TranscriptAttachments {
   const images: string[] = [];
   const files: TranscriptFileAttachment[] = [];
   const display = text.replace(
@@ -349,7 +393,7 @@ export function splitTranscriptAttachments(text: string): TranscriptAttachments 
       return "";
     },
   );
-  return { display: display.trim(), images, files };
+  return { display: (options.hidePasteWrappers ? hidePastedTextWrappers(display) : display).trim(), images, files };
 }
 
 /** Kept for callers outside the desktop bundle that used the old helper. */
@@ -507,9 +551,39 @@ export function composerShouldRefocus(active: FocusNode | null, input: ComposerI
   return Boolean(input.closest("[data-composer]")?.contains(active));
 }
 
+/**
+ * Whether a freshly opened thread's composer should take keyboard focus
+ * (upstream #1872). Opening a thread from the sidebar leaves focus on the row
+ * or the New thread button, so the composer takes it from any plain control.
+ * It never takes it from another text field (the sidebar search, a rename) or
+ * from an open dialog, where the person is typing or deciding something else.
+ */
+export function composerTakesFocusOnOpen(active: OpenFocusNode | null, input: ComposerInputNode): boolean {
+  if (composerShouldRefocus(active, input)) return true;
+  if (!active) return true;
+  const tag = active.tagName?.toUpperCase();
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || active.isContentEditable) return false;
+  return !active.closest?.("[role=dialog], [role=alertdialog], [aria-modal=true]");
+}
+
+/**
+ * Whether a change of reply target should put the caret in the composer.
+ * Choosing a message to reply to means the next thing is typing the reply, so
+ * a newly chosen target takes focus (upstream #1932). Clearing the reply, or
+ * the same target arriving again as the draft re-renders, does not.
+ */
+export function replyTargetTakesFocus(previousId: string | null | undefined, nextId: string | null | undefined): boolean {
+  return Boolean(nextId) && nextId !== previousId;
+}
+
 // This file is also compiled for the server, which has no DOM types; the rule
 // only needs these members of the real elements.
 type FocusNode = object;
+interface OpenFocusNode {
+  tagName?: string;
+  isContentEditable?: boolean;
+  closest?(selector: string): object | null;
+}
 interface ComposerInputNode {
   ownerDocument: { body: FocusNode | null; documentElement: FocusNode | null };
   closest(selector: string): { contains(node: FocusNode | null): boolean } | null;

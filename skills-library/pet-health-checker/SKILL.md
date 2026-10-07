@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request requires professional specialized advice or falls outside the scope of pet health checker.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "pet-care guide health-wellness"
   category: "home-household"

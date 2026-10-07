@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Where an imported skill's files come from besides a dropped file or
-// folder: a zip, read in memory with hard bounds, or a GitHub link.
+// folder: a zip, read in memory with hard bounds, or a GitHub or skills.sh link.
 import { PassThrough, Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createInflateRaw } from "node:zlib";
@@ -96,12 +96,15 @@ export async function readSkillZip(bytes: Buffer): Promise<{ files: SkillFile[];
   }
 }
 
-/** The first skill at a GitHub link (a repo, a folder in one, or a SKILL.md). */
+/** The first skill at a GitHub link (a repo, a folder in one, or a SKILL.md)
+ *  or a skills.sh page (the one skill it names). */
 export async function fetchSkillFromLink(link: string, fetcher: typeof fetch = fetch): Promise<{ files: SkillFile[] } | { error: string; code: "invalid" | "unreachable" }> {
   const parsed = parseSkillSource(link.trim());
-  if ("error" in parsed) return { error: "That link doesn't point to a skill. Paste a GitHub link to a skill folder or its SKILL.md.", code: "invalid" };
+  if ("error" in parsed) return { error: "That link doesn't point to a skill. Paste a GitHub link to a skill folder or its SKILL.md, or a skills.sh link.", code: "invalid" };
   const fetched = await fetchSkillFromSource(link.trim(), fetcher);
   if ("error" in fetched) {
+    if (fetched.error.startsWith("no skill named ")) return { error: "That skills.sh page names a skill that isn't in its repository.", code: "invalid" };
+    if (fetched.error.startsWith("too many folders ")) return { error: "That repository has too many folders to search for this skill. Paste the GitHub link to the skill's own folder instead.", code: "invalid" };
     return /no SKILL\.md/i.test(fetched.error)
       ? { error: "That link doesn't point to a skill. A skill is a folder with a SKILL.md file in it.", code: "invalid" }
       : { error: "Couldn't reach that link. Check it and try again.", code: "unreachable" };

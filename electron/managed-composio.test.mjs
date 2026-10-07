@@ -339,3 +339,24 @@ describe("the desktop's side of moving connected apps to FluxRouter", () => {
     expect(abandoned.credentials.composioBrokerToken).toBeUndefined();
   });
 });
+
+// 0.1.62 review F6: the "another device took over" marker is written by the
+// token-rejection handler while a lifecycle pass may be mid-flight. A pass whose
+// snapshot predates the marker must not apply, or its stale copy of the error
+// field would erase the marker.
+describe("a lifecycle result computed before the taken-over marker", () => {
+  const T = "a".repeat(64);
+  it("is discarded, so the marker survives", () => {
+    const snapshot = { fluxComposioBrokerToken: T };
+    const current = { fluxComposioBrokerToken: T, fluxComposioTokenError: "token_taken_over" };
+    const result = applyComposioCredentialResult(current, snapshot, { fluxComposioBrokerToken: T });
+    expect(result.applied).toBe(false);
+    expect(result.credentials.fluxComposioTokenError).toBe("token_taken_over");
+  });
+
+  it("still applies when the error field did not change meanwhile", () => {
+    const snapshot = { fluxComposioBrokerToken: T, fluxComposioTokenError: "flux_key_budget_exhausted" };
+    const result = applyComposioCredentialResult({ ...snapshot }, snapshot, { fluxComposioBrokerToken: T });
+    expect(result.applied).toBe(true);
+  });
+});

@@ -54,7 +54,7 @@ let harnessPort = 0;
 let door: Server;
 let doorPort = 0;
 
-const DEVICE = { id: "dev_1", name: "Sam's iPhone", cloudDesktopAccess: false };
+const DEVICE = { id: "dev_1", name: "Sam's iPhone", cloudDesktopAccess: false, scriptAccess: false };
 const sessions = new Map<string, { id: string; expiresAt: number }>();
 const devices: BrowserDeviceStore = {
   redeem: (credential) =>
@@ -79,6 +79,7 @@ const devices: BrowserDeviceStore = {
   closeSession: (value) => (value ? sessions.delete(value) : false),
   renewSession: () => null,
   signOutDevice: () => null,
+  issuePushTokens: () => null, pushBinding: () => null, approvalIdentity: () => null, authenticatePush: () => null,
 };
 
 /** A limiter that records being consulted at all, and can be set locked. */
@@ -214,7 +215,7 @@ describe("the launcher's probe", () => {
   it("says what this door is and what it is called, with no session", async () => {
     const answer = await knock("GET", "/healthz");
     expect(answer.status).toBe(200);
-    expect(JSON.parse(answer.body)).toEqual({ ok: true, name: "Sam's computer", mobile: 1 });
+    expect(JSON.parse(answer.body)).toEqual({ ok: true, name: "Sam's computer", mobile: 1, mobileFeatures: 1, approvalProof: 1 });
     expect(answer.headers["content-type"]).toBe("application/json");
     expect(answer.headers["cache-control"]).toBe("private, no-store");
     expect(answer.headers["set-cookie"]).toBeUndefined();

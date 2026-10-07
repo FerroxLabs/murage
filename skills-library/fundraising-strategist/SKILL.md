@@ -4,7 +4,7 @@ description: |
   Guide to comprehensive fundraising strategy including annual campaigns, major gifts, crowdfunding, events, corporate sponsorship, planned giving, donor stewardship, and calendar management. Use when the user asks about fundraising strategist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy planning entrepreneurship"
   category: "business-strategy"

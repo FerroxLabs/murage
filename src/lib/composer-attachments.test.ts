@@ -1,5 +1,6 @@
 // composeMessage with images, the image tag round-trip through
 // transcript attachment splitting, and the mime gate the composer pastes through.
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -12,9 +13,12 @@ import {
   composeMessage,
   isImageFile,
   mediaHintForPath,
+  splitAttachedImages,
   splitTranscriptAttachments,
   type ImageAttachment,
   composerShouldRefocus,
+  composerTakesFocusOnOpen,
+  replyTargetTakesFocus,
 } from "./composer-attachments";
 
 /** Exercises the spacing and empty-draft cases for pasted text insertion. */
@@ -133,6 +137,51 @@ describe("splitTranscriptAttachments", () => {
     expect(display).toBe(stored);
     expect(images).toEqual([]);
     expect(files).toEqual([]);
+  });
+
+  // Upstream #1840: bubbles show only what was pasted, not the wrapper the
+  // bot reads. The server's callers keep the text exactly as stored.
+  const bubble = { hidePasteWrappers: true };
+
+  it("shows only what was pasted in a bubble", () => {
+    const stored = 'this is for 31/08/26\n\n<pasted-text index="1">\nWe, personally, been using it\n\nsecond paragraph\n</pasted-text>';
+    expect(splitTranscriptAttachments(stored, bubble)).toEqual({
+      display: "this is for 31/08/26\n\nWe, personally, been using it\n\nsecond paragraph",
+      images: [],
+      files: [],
+    });
+    expect(splitTranscriptAttachments(composeMessage("typed", [{ kind: "paste", id: "p", text: "pasted\nlines", lines: 2, size: 12 }]), bubble).display)
+      .toBe("typed\n\npasted\nlines");
+  });
+
+  it("hides every pasted block, and keeps a closing tag that belongs to the paste", () => {
+    const stored = [
+      '<pasted-text index="1">', "first", "</pasted-text>", "",
+      '<pasted-text index="2">', "a literal </pasted-text> mention", "</pasted-text>",
+    ].join("\n");
+    // the first line naming the closing token ends the block, as the bot sees it
+    expect(splitTranscriptAttachments(stored, bubble).display).toBe(["first", "", "a literal </pasted-text> mention", "</pasted-text>"].join("\n"));
+  });
+
+  it("keeps tags visible when they are not the exact wrapper lines, or inside typed code", () => {
+    const inline = '<pasted-text index="1">hi</pasted-text>';
+    expect(splitTranscriptAttachments(inline, bubble).display).toBe(inline);
+    const fenced = '```\n<pasted-text index="1">\nhi\n</pasted-text>\n```';
+    expect(splitTranscriptAttachments(fenced, bubble).display).toBe(fenced);
+    const unclosed = 'note\n<pasted-text index="1">\nhi';
+    expect(splitTranscriptAttachments(unclosed, bubble).display).toBe("note\nhi");
+  });
+
+  it("hides it in 1:1 and room bubbles only", () => {
+    const hides = /splitTranscriptAttachments\([^)]*\{ hidePasteWrappers: true \}\)/;
+    expect(readFileSync(new URL("../components/ChatView.tsx", import.meta.url), "utf8")).toMatch(hides);
+    expect(readFileSync(new URL("../components/GroupView.tsx", import.meta.url), "utf8")).toMatch(hides);
+  });
+
+  it("keeps the wrapper for every caller that did not ask to hide it", () => {
+    const stored = '<pasted-text index="1">\nhi\n</pasted-text>';
+    expect(splitTranscriptAttachments(stored).display).toBe(stored);
+    expect(splitAttachedImages(stored).display).toBe(stored);
   });
 });
 
@@ -301,5 +350,77 @@ describe("composerShouldRefocus", () => {
 
   it("leaves focus alone when the writer moved elsewhere", () => {
     expect(composerShouldRefocus(sidebar, input)).toBe(false);
+  });
+});
+
+// Upstream #1872: opening a thread from the sidebar leaves focus on the row,
+// so the writer had to click the draft before typing.
+// upstream #1932: clicking Reply left the caret outside the draft, so the reply
+// could not be typed without clicking the box first.
+describe("replyTargetTakesFocus", () => {
+  it("focuses the draft when a message is chosen to reply to, or the target changes", () => {
+    expect(replyTargetTakesFocus(null, "m1")).toBe(true);
+    expect(replyTargetTakesFocus(undefined, "m1")).toBe(true);
+    expect(replyTargetTakesFocus("m1", "m2")).toBe(true);
+  });
+  it("leaves focus alone when the reply is cleared or the same target renders again", () => {
+    expect(replyTargetTakesFocus("m1", null)).toBe(false);
+    expect(replyTargetTakesFocus(null, null)).toBe(false);
+    expect(replyTargetTakesFocus("m1", "m1")).toBe(false);
+  });
+});
+
+describe("composerTakesFocusOnOpen", () => {
+  type Fake = {
+    parent?: Fake;
+    role?: string;
+    tagName?: string;
+    isContentEditable?: boolean;
+    closest: (sel: string) => Fake | null;
+    contains: (el: unknown) => boolean;
+  };
+  const node = (props: Omit<Fake, "closest" | "contains">): Fake => {
+    const self: Fake = {
+      ...props,
+      closest: (sel) => {
+        for (let cur: Fake | undefined = self; cur; cur = cur.parent) {
+          if (sel === "[data-composer]" && cur.role === "composer") return cur;
+          if (sel.includes("[role=dialog]") && cur.role === "dialog") return cur;
+        }
+        return null;
+      },
+      contains: (el) => {
+        for (let cur = el as Fake | undefined; cur; cur = cur.parent) if (cur === self) return true;
+        return false;
+      },
+    };
+    return self;
+  };
+  const html = node({ tagName: "HTML" });
+  const body = node({ tagName: "BODY", parent: html });
+  const composer = node({ tagName: "DIV", role: "composer", parent: body });
+  const sidebar = node({ tagName: "NAV", parent: body });
+  const input = Object.assign(node({ tagName: "TEXTAREA", parent: composer }), { ownerDocument: { body, documentElement: html } });
+
+  it("takes focus from the thread row or New thread button that opened the thread", () => {
+    expect(composerTakesFocusOnOpen(node({ tagName: "DIV", parent: sidebar }), input)).toBe(true);
+    expect(composerTakesFocusOnOpen(node({ tagName: "BUTTON", parent: sidebar }), input)).toBe(true);
+  });
+
+  it("takes focus when nothing else holds it", () => {
+    expect(composerTakesFocusOnOpen(null, input)).toBe(true);
+    expect(composerTakesFocusOnOpen(body, input)).toBe(true);
+  });
+
+  it("leaves another text field alone, such as the sidebar search or a rename", () => {
+    expect(composerTakesFocusOnOpen(node({ tagName: "INPUT", parent: sidebar }), input)).toBe(false);
+    expect(composerTakesFocusOnOpen(node({ tagName: "textarea", parent: sidebar }), input)).toBe(false);
+    expect(composerTakesFocusOnOpen(node({ tagName: "SELECT", parent: sidebar }), input)).toBe(false);
+    expect(composerTakesFocusOnOpen(node({ tagName: "DIV", isContentEditable: true, parent: sidebar }), input)).toBe(false);
+  });
+
+  it("leaves an open dialog alone", () => {
+    const dialog = node({ tagName: "DIV", role: "dialog", parent: body });
+    expect(composerTakesFocusOnOpen(node({ tagName: "BUTTON", parent: dialog }), input)).toBe(false);
   });
 });

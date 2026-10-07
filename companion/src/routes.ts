@@ -78,10 +78,30 @@ const CALL_ROUTE = /^\/api\/bots\/[\w-]+\/(?:voice-host|call-note)$/;
 export function isImageUpload(method: string, path: string): boolean {
   return method === "POST" && path === "/api/attachments";
 }
+/** Presence (Plan 3a H3): a visible desktop or browser tab telling the host
+ *  someone is at the desk, so phones stay quiet. The harness scopes nothing
+ *  by device here — it is a single in-memory flag — but the launch proof
+ *  still gates it, same as the other routes below, so a stray process on the
+ *  loopback port cannot toggle it. */
+export function isPresenceRoute(method: string, path: string): boolean {
+  return method === "POST" && path === "/api/presence";
+}
+/** The single-use ticket for the call's streaming voice websocket
+ *  (stream-upgrade.ts). Reads no key; returns an opaque ticket bound to the
+ *  principal this door stamps. */
+export const STREAM_TICKET_ROUTE = /^\/api\/voice\/stream\/ticket$/;
+export const isStreamTicket = (method: string, path: string): boolean => method === "POST" && STREAM_TICKET_ROUTE.test(path);
+
 /** Routes the harness answers only when the sidecar proves it forwarded them:
- *  the Inbox (C2), a call's two routes (C9) and an image upload. */
+ *  the Inbox (C2), a call's two routes (C9), an image upload, and presence. */
 export function needsLaunchProof(method: string, path: string): boolean {
-  return isInboxRoute(method, path) || (method === "POST" && CALL_ROUTE.test(path)) || isImageUpload(method, path);
+  return (
+    isInboxRoute(method, path) ||
+    (method === "POST" && CALL_ROUTE.test(path)) ||
+    isImageUpload(method, path) ||
+    isPresenceRoute(method, path) ||
+    isStreamTicket(method, path)
+  );
 }
 
 /** Requests that speak as the owner: answering a card, and the owner's own
@@ -98,23 +118,131 @@ export const OWNER_VOICE_ROUTES = [
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/messages$/ },
 ] as const;
 
-/** The private launch proof to add when forwarding any request. It is only
- * ever the value this door was started with, never the client's.
+/** Routes the door forwards with its launch proof: owner decisions, project
+ * reads, and the owner-material reads of the companion class (SPEC-P 11.1).
  *
- * Every request the door forwards carries it. The harness answers its
- * conversation routes (bots, threads, rooms, search and the event stream) only
- * to the desktop app or to a caller holding this credential, because any
- * process on the computer can reach the harness's loopback port and a request
- * with no proof is not the owner's phone. The door has already decided, from
- * the paired device and the allowlist, that this request may go; the proof is
- * how the harness learns it came through the door. A door started without a
- * usable credential adds nothing, and the harness then answers those routes
- * as it would an unknown one. A cloud-desktop join is refused earlier without
- * a usable credential, and an owner-voice request is recorded by the harness
- * as the owner's only because of this proof. */
-export function launchProofHeaders(_method: string, _path: string, token: string | undefined): Record<string, string> {
+ * Owner decisions the harness takes only with proof it is the owner
+ * (server/route-policy.ts, 0.1.61): filing bots into a team decides who they
+ * can reach and which brief they read, running a routine runs it with the
+ * permissions it was given, a bot made without proof starts with no access,
+ * a bot's profile carries the persona every turn of it reads, deleting a
+ * task destroys its transcript, and watching or steering a bot's browser is
+ * the owner's relay. A paired
+ * device is the owner, so the door vouches for these too. */
+export const OWNER_DECISION_ROUTES = [
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/project$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/viewed$/ },
+  { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/brief$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/project\/brief\/versions$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/project\/brief\/versions\/[0-9]+$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/goals$/ },
+  { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/goals\/[\w-]+$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/board$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/board\/cards$/ },
+  { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/board\/cards\/[\w-]+$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/activity$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/usage$/ },
+  { method: "POST", path: /^\/api\/sidebar-sections$/ },
+  { method: "POST", path: /^\/api\/routines\/[\w-]+\/run$/ },
+  { method: "POST", path: /^\/api\/bots$/ },
+  { method: "PATCH", path: /^\/api\/bots\/[\w-]+\/profile$/ },
+  { method: "DELETE", path: /^\/api\/(?:bots|groups)\/[\w-]+\/tasks\/[\w-]+$/ },
+  // the owner's work thread for a team a bot is shared with (SPEC-X 12.1)
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/work-threads$/ },
+  { method: "GET", path: /^\/api\/bots\/[\w-]+\/browser(?:\/frame)?$/ },
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/browser$/ },
+  // the room queue's reads and owner steering (SPEC-P 11.1, companion class)
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/requests$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/requests\/[\w-]+\/(?:cancel|retry)$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/control\/(?:stop|pause|resume|redirect)$/ },
+] as const;
+
+/** The private launch proof to add when forwarding this request, if any. It
+ * is only ever the value this door was started with, never the client's. A
+ * cloud-desktop join has already been refused without a usable credential;
+ * an owner-voice request without one is still forwarded, and the harness then
+ * takes only a decline and records the words as unproven. */
+export function launchProofHeaders(method: string, path: string, token: string | undefined): Record<string, string> {
+  if (isCloudDesktopJoin(method, path)) return { "x-murage-companion-token": token! };
   const usable = typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
-  return usable ? { "x-murage-companion-token": token } : {};
+  if (usable && isStreamTicket(method, path)) return { "x-murage-companion-token": token };
+  if (usable && [...OWNER_VOICE_ROUTES, ...OWNER_DECISION_ROUTES].some((route) => route.method === method && route.path.test(path))) return { "x-murage-companion-token": token };
+  return {};
+}
+
+const RESPOND_ROUTES = [/^\/api\/threads\/[\w-]+\/respond$/, /^\/api\/bots\/[\w-]+\/respond$/];
+
+/** True when the door holds a usable launch credential. The approval headers
+ *  below mean something to the harness only beside that proof, so a door
+ *  without one forwards none of them. */
+export const hasLaunchCredential = (token: string | undefined): token is string => typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
+
+/** SEC-006: which paired device is answering a card, from the registry. The
+ *  harness reads these only beside the launch proof. Built here, never copied
+ *  from the client (forwardedHeaders is an allowlist).
+ *  TODO(D15): the class is "app" only with a relay-verified attestation;
+ *  until D15 lands this forwards whatever class the registry holds. */
+export function approvalDeviceHeaders(method: string, path: string, identity: { id: string; cls: "app" | "browser"; key?: string } | null): Record<string, string> {
+  if (method !== "POST" || !identity || !RESPOND_ROUTES.some((route) => route.test(path))) return {};
+  return { "x-murage-approval-device": identity.id, "x-murage-approval-class": identity.cls, ...(identity.key ? { "x-murage-approval-key": identity.key } : {}) };
+}
+
+/** The header that tells the harness a request came through this door and not
+ * from a bare loopback caller (audit C5). It carries the same launch secret as
+ * `x-murage-companion-token` but claims no owner authority; the harness admits
+ * conversation routes on it and keeps owner-only behaviour on the other header.
+ * Always the value this door was started with, never the client's. */
+export const DOOR_FORWARD_HEADER = "x-murage-door-token";
+export function doorForwardHeaders(token: string | undefined): Record<string, string> {
+  return typeof token === "string" && /^[a-f0-9]{64}$/.test(token) ? { [DOOR_FORWARD_HEADER]: token } : {};
+}
+
+/** The owner's reads that carry a shared bot's team rows (SPEC-X 12.3):
+ * the fleet and the event stream (its snapshot, live frames and replay). The
+ * harness fills `sharedRows` only for a caller that proved it is the owner,
+ * and the rows are the owner phone's alone, so only the device door vouches
+ * for these (proxy.ts). The browser door never does: a browser session gets
+ * no rows. */
+export const DEVICE_OWNER_READS = [
+  { method: "GET", path: /^\/api\/bots$/ },
+  { method: "GET", path: /^\/api\/events$/ },
+] as const;
+
+/** Script access (server/mcp-grants.ts), for a headless install that has no
+ * desktop to make a grant on (S1b review R2). The owner's OWN browser door is
+ * the only door that forwards these, and only with the launch proof. A paired
+ * phone's device door neither allows them nor vouches for them, and a bot or
+ * script has no companion proof at all, so none of them can make or revoke a
+ * grant. Kept out of OWNER_DECISION_ROUTES on purpose: that list is shared
+ * with the device door, and a line added there for the browser would reach the
+ * phone. */
+export const OWNER_BROWSER_ONLY_ROUTES = [
+  { method: "GET", path: /^\/api\/mcp-grants$/ },
+  { method: "POST", path: /^\/api\/mcp-grants$/ },
+  { method: "DELETE", path: /^\/api\/mcp-grants\/[\w-]+$/ },
+] as const;
+
+/** Whether this is one of the script-access routes above. */
+export function isScriptAccessRoute(method: string, path: string): boolean {
+  return OWNER_BROWSER_ONLY_ROUTES.some((route) => route.method === method && route.path.test(path));
+}
+
+/** The browser door's launch proof: everything `launchProofHeaders` adds, plus
+ * the owner-only routes above. */
+export function browserProofHeaders(method: string, path: string, token: string | undefined): Record<string, string> {
+  const shared = launchProofHeaders(method, path, token);
+  if (Object.keys(shared).length) return shared;
+  const usable = typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
+  return usable && OWNER_BROWSER_ONLY_ROUTES.some((route) => route.method === method && route.path.test(path)) ? { "x-murage-companion-token": token } : {};
+}
+
+/** The device door's launch proof: everything `launchProofHeaders` adds,
+ * plus the owner's reads above. */
+export function deviceProofHeaders(method: string, path: string, token: string | undefined): Record<string, string> {
+  const shared = launchProofHeaders(method, path, token);
+  if (Object.keys(shared).length) return shared;
+  const usable = typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
+  return usable && DEVICE_OWNER_READS.some((route) => route.method === method && route.path.test(path)) ? { "x-murage-companion-token": token } : {};
 }
 
 /** The two routine routes that can carry a `runOn` field.
@@ -137,6 +265,18 @@ export function isRoutineWrite(method: string, path: string): boolean {
  * fails to match and is denied rather than forwarded — the failure mode of
  * a strict pattern is a closed door, which is the one to have. */
 const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/project$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/viewed$/ },
+  { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/brief$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/project\/brief\/versions$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/project\/brief\/versions\/[0-9]+$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/goals$/ },
+  { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/goals\/[\w-]+$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/board$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/board\/cards$/ },
+  { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/board\/cards\/[\w-]+$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/activity$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/usage$/ },
   // configured-or-not booleans. The write side is refused below: reading
   // which providers are set up is not reading their keys.
   { method: "GET", path: /^\/api\/config$/ },
@@ -153,6 +293,8 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // unlike the desktop's broad PATCH it cannot alter execution policy.
   { method: "POST", path: /^\/api\/sidebar-sections$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages$/ },
+  // open the owner's work thread for a team a bot is shared with (SPEC-X 12.1)
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/work-threads$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/interrupt$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/read$/ },
   // The composer's "/" menu: names and descriptions of the bot's own engine
@@ -182,6 +324,11 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "DELETE", path: /^\/api\/groups\/[\w-]+\/tasks\/[\w-]+$/ },
+  // a room's queue (SPEC-P 11.1): read it, cancel a waiting request, ask again
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/requests$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/requests\/[\w-]+\/(?:cancel|retry)$/ },
+  // project Stop all, pause, resume, and a steering note to the lead
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/control\/(?:stop|pause|resume|redirect)$/ },
 
   // a transcript, its images, and answering an approval
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages$/ },
@@ -210,6 +357,11 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // Voice IN. Uploads audio and receives text; the Flux key stays on the
   // harness and never appears in a request or a response.
   { method: "POST", path: /^\/api\/voice\/transcribe$/ },
+  // the single-use ticket for the streaming voice websocket (stream-upgrade.ts)
+  { method: "POST", path: STREAM_TICKET_ROUTE },
+  // Tidies a finished dictation (`server/voice/dictation-cleanup-route.ts`):
+  // text in, text out, gated exactly like transcribe above.
+  { method: "POST", path: /^\/api\/voice\/cleanup$/ },
 
   // Routines create ordinary tasks using an existing agent configuration.
   // Webhook management remains explicitly denied below.
@@ -348,9 +500,23 @@ export const BROWSER_DENIED: ReadonlyArray<{ method: string; path: RegExp }> = [
  * visible transcript dressed as a search. Adding it wants the query bound
  * from plan-security §5 first. */
 const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/project$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/viewed$/ },
+  { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/brief$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/project\/brief\/versions$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/project\/brief\/versions\/[0-9]+$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/goals$/ },
+  { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/project\/goals\/[\w-]+$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/board$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/board\/cards$/ },
+  { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/board\/cards\/[\w-]+$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/activity$/ },
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/usage$/ },
   // Authenticated owner relay; the harness checks bot visibility and profile ownership.
   { method: "GET", path: /^\/api\/bots\/[\w-]+\/browser(?:\/frame)?$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/browser$/ },
+  // Script access for a headless install (S1b R2): browser door only, with owner proof.
+  ...OWNER_BROWSER_ONLY_ROUTES,
   ...BROWSER_STATIC,
 
   // configured-or-not booleans, and the live stream the whole app hangs off.
@@ -365,6 +531,8 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/bots$/ },
   { method: "POST", path: /^\/api\/sidebar-sections$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages$/ },
+  // open the owner's work thread for a team a bot is shared with (SPEC-X 12.1)
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/work-threads$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/interrupt$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/read$/ },
   // The composer's "/" menu: names and descriptions of the bot's own engine
@@ -393,6 +561,11 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "DELETE", path: /^\/api\/groups\/[\w-]+\/tasks\/[\w-]+$/ },
+  // a room's queue (SPEC-P 11.1): read it, cancel a waiting request, ask again
+  { method: "GET", path: /^\/api\/groups\/[\w-]+\/requests$/ },
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/requests\/[\w-]+\/(?:cancel|retry)$/ },
+  // project Stop all, pause, resume, and a steering note to the lead
+  { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/control\/(?:stop|pause|resume|redirect)$/ },
 
   // a transcript, its images, and answering an approval
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages$/ },
@@ -430,6 +603,15 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // voice in, same rule — and the whole reason this exists, since the browser
   // door is the surface with no native dictation helper at all
   { method: "POST", path: /^\/api\/voice\/transcribe$/ },
+  // the single-use ticket for the streaming voice websocket (stream-upgrade.ts)
+  { method: "POST", path: STREAM_TICKET_ROUTE },
+  // dictation clean-up, same rule as transcribe
+  { method: "POST", path: /^\/api\/voice\/cleanup$/ },
+
+  // Presence (Plan 3a H3): this tab is visible, so phones stay quiet. Same
+  // launch-proof rule as the routes above (server/index.ts route added in
+  // H10).
+  { method: "POST", path: /^\/api\/presence$/ },
 
   // routines
   { method: "GET", path: /^\/api\/routines$/ },
@@ -488,6 +670,7 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
  * bug in the companion rather than a decision about where host configuration
  * happens. Order matters only in that the first match wins. */
 const EXPLAINED: ReadonlyArray<{ path: RegExp; error: string }> = [
+  { path: /^\/api\/groups\/[\w-]+\/project\/(?:budget|work-roots|work-profile)$/, error: "This needs the Murage app on your computer." },
   {
     path: /^\/api\/(companion|devices)(\/|$)/,
     // Losing the phone must not mean losing the ability to lock it out.

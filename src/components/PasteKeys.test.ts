@@ -30,7 +30,7 @@ type Row = Props["rows"][number];
 const FLUX = `sk-flux-${"F".repeat(40)}`;
 const XAI = `xai-${"7".repeat(32)}`;
 const BARE = `sk-${"o".repeat(40)}`;
-const COMPOSIO = `ak_${"c".repeat(32)}`;
+const BOX = "bx-9f8e7d6c5b4a32100112233445566778";
 const GOOGLE = `AIza${"g".repeat(35)}`;
 const ANTHROPIC = `sk-ant-api03-${"a".repeat(40)}`;
 
@@ -193,9 +193,11 @@ describe("extraction is a suggestion, never an action", () => {
 
   it("offers every possible provider and pre-selects none of them", () => {
     const html = render({ rows: [row(`my key is ${BARE}`)], scanned: true });
-    for (const label of ["OpenAI key", "OpenAI key for avatars", "Flux Router key"]) {
+    for (const label of ["OpenAI key", "OpenAI key for avatars"]) {
       expect(html).toContain(label);
     }
+    // A bare sk- is never a Flux key (every Flux key is sk-flux-).
+    expect(html).not.toContain("Flux Router key");
     expect(html).not.toContain('aria-pressed="true"');
   });
 
@@ -266,27 +268,27 @@ describe("each key is confirmed on its own", () => {
 describe("a key that is already saved is shown as saved", () => {
   it("says connected and offers to replace rather than silently re-saving", () => {
     const html = render({
-      rows: [row(`COMPOSIO_API_KEY=${COMPOSIO}`)],
+      rows: [row(`BOX_TOKEN=${BOX}`)],
       scanned: true,
-      configured: { composio: { configured: true } },
+      configured: { box: { configured: true } },
     });
     expect(html).toContain("Already connected");
     expect(html).toContain("Replace");
     expect(html).toContain("Replacing updates the saved service key");
     // With known empty storage the review offers Add.
-    const empty = render({ rows: [row(`COMPOSIO_API_KEY=${COMPOSIO}`)], scanned: true, configured: { composio: { configured: false } } });
+    const empty = render({ rows: [row(`BOX_TOKEN=${BOX}`)], scanned: true, configured: { box: { configured: false } } });
     expect(empty).not.toContain("Already connected");
     expect(empty).toContain("Add key");
   });
 
   it("never claims connected from a config that has not loaded", () => {
-    expect(render({ rows: [row(`COMPOSIO_API_KEY=${COMPOSIO}`)], scanned: true, configured: null })).not.toContain(
+    expect(render({ rows: [row(`BOX_TOKEN=${BOX}`)], scanned: true, configured: null })).not.toContain(
       "Already connected",
     );
   });
   it("disables service writes until that service's status is known", () => {
-    for (const configured of [null, {}, { box: { configured: false } }]) {
-      const html = render({ rows: [row(`COMPOSIO_API_KEY=${COMPOSIO}`)], configured });
+    for (const configured of [null, {}, { xai: { configured: false } }]) {
+      const html = render({ rows: [row(`BOX_TOKEN=${BOX}`)], configured });
       expect(html).toContain("Checking saved key…");
       expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[^]*?Checking saved key/);
       expect(html).not.toContain(">Add key<");
@@ -383,7 +385,7 @@ describe("a confirmed row is the row that gets confirmed", () => {
     expect(saves).toEqual([{ target: "xai", value: XAI }]);
 
     // …and pastes something else before it lands, which reorders the list.
-    controller.scan(`COMPOSIO_API_KEY=${COMPOSIO}`);
+    controller.scan(`BOX_TOKEN=${BOX}`);
 
     gates[0]!.resolve({});
     await writing;
@@ -391,7 +393,7 @@ describe("a confirmed row is the row that gets confirmed", () => {
     // Exactly one key was written, and it is the one the person confirmed.
     expect(saves).toEqual([{ target: "xai", value: XAI }]);
     expect(
-      statusOf(controller, "COMPOSIO_API_KEY"),
+      statusOf(controller, "BOX_TOKEN"),
       "a key nothing was written for must not be marked saved",
     ).toBe("pending");
     expect(statusOf(controller, "XAI_API_KEY"), "the key that was written is the one marked saved").toBe(
@@ -400,10 +402,10 @@ describe("a confirmed row is the row that gets confirmed", () => {
 
     // And the untouched key is still saveable — its value was not destroyed
     // by somebody else's write landing.
-    const second = controller.accept(find(controller, "COMPOSIO_API_KEY").id);
+    const second = controller.accept(find(controller, "BOX_TOKEN").id);
     expect(saves).toEqual([
       { target: "xai", value: XAI },
-      { target: "composio", value: COMPOSIO },
+      { target: "box", value: BOX },
     ]);
     gates[1]!.resolve({});
     await second;
@@ -436,11 +438,11 @@ describe("a re-scan adds to the list; it does not replace it", () => {
     // A second paste. Nothing has been decided about the first two, so nothing
     // about them may disappear — an undecided key that vanishes is a key the
     // person can no longer save and was never told about.
-    controller.scan(`COMPOSIO_API_KEY=${COMPOSIO}`);
+    controller.scan(`BOX_TOKEN=${BOX}`);
     expect(controller.rows().map((r) => r.name)).toEqual([
       "FLUX_API_KEY",
       "XAI_API_KEY",
-      "COMPOSIO_API_KEY",
+      "BOX_TOKEN",
     ]);
     expect(statusOf(controller, "FLUX_API_KEY")).toBe("pending");
     expect(statusOf(controller, "XAI_API_KEY")).toBe("pending");

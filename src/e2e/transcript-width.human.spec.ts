@@ -79,7 +79,8 @@ async function seedTranscript(page: Page): Promise<void> {
     await route.fulfill({ response, json: body });
   });
 
-  await page.route("**/api/bots", async (route) => {
+  // Hydration asks for a page (/api/bots?messages=N), so match the path.
+  await page.route((url) => url.pathname === "/api/bots", async (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     const response = await route.fetch();
     const body = await response.json();

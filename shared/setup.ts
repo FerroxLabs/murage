@@ -463,7 +463,10 @@ const FOREIGN_KEY_PREFIXES = ["sk-ant-", "sk-or-", "sk-proj-", "sk-svcacct-", "s
 export function fluxKeyLooksValid(key: string | null | undefined): boolean {
   const value = (key ?? "").trim();
   if (value.length < 8 || value.length > 4096 || /\s/.test(value)) return false;
-  return !FOREIGN_KEY_PREFIXES.some((prefix) => value.startsWith(prefix));
+  if (FOREIGN_KEY_PREFIXES.some((prefix) => value.startsWith(prefix))) return false;
+  // Every Flux key is `sk-flux-…` (electron/provider-connections.mjs
+  // isFluxKeyShape). A base URL or a short value pasted in its place is not.
+  return /^sk-flux-[A-Za-z0-9_-]+$/.test(value);
 }
 
 /**

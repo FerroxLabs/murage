@@ -225,7 +225,7 @@ export async function validatePackagedMemoryRuntime(resources, platform, archVal
   const arch = typeof archValue === "string" ? archValue : ({ 1: "x64", 3: "arm64" })[archValue];
   const target = `${platform}-${arch}`;
   if (!["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"].includes(target)) throw new Error(`Unsupported packaged memory target: ${target}`);
-  for (const file of [manifestFile, path.join(server, "memory-model-manifest.json"), path.join(server, "memory/worker.js")]) await requireRegularFile(file);
+  for (const file of [manifestFile, path.join(server, "memory-model-manifest.json"), path.join(server, "memory/worker.js"), path.join(server, "bot-package-guard-worker.js")]) await requireRegularFile(file);
   const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
   const model = JSON.parse(await readFile(path.join(server, "memory-model-manifest.json"), "utf8"));
   const runtimes = manifest.packages?.filter(entry => entry.name === "onnxruntime-node");

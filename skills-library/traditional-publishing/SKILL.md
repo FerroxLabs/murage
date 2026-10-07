@@ -4,7 +4,7 @@ description: |
   Complete guide to the traditional publishing path, covering query letters, agent research, book proposals, submission tracking, the publishing timeline, contract terms, working with editors, and understanding advances and royalties. Use when the user asks about traditional publishing or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing guide"
   category: "writing"

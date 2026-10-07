@@ -6,7 +6,7 @@ description: |
   Do NOT use for structural editing (use structural-editing), content revision (use copy-editing), tone changes (use tone-adjustment), or improving readability (use readability-improvement).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "editing writing planning"
   category: "writing"

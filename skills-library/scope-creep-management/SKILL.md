@@ -6,7 +6,7 @@ description: |
   Do NOT use for initial project scoping (use project-kickoff), enterprise change management (use business project-management skills), or product roadmap prioritization (use business strategy skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "project-management template planning"
   category: "productivity"

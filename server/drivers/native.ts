@@ -1,14 +1,58 @@
 // Native (un-normalized) protocol tee — the debugging trick from upstream's
 // EventNdjsonLogger and agentcal's onRaw: every provider-native message is
 // retained next to the canonical stream, within a bounded diagnostic window.
-import { appendFileSync, chmodSync, closeSync, openSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, openSync, readdirSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { NATIVE_DIR } from "../config.ts";
 import { redactSecrets } from "../redact.ts";
+import { redactPageOutputDeep } from "../browser-output-redaction.ts";
 
 const RECORD_BYTES = 64 * 1024;
 const SEGMENT_BYTES = 4 * 1024 * 1024;
+/** The diagnostic folder as a whole, across every conversation: at most this much, for at most this long. */
+export const NATIVE_BUDGET_BYTES = 256 * 1024 * 1024;
+export const NATIVE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Tunable for tests only. A sweep runs after a write when this long has passed, or when this many bytes have been written since the last one. */
+export const nativeBudget = { maxBytes: NATIVE_BUDGET_BYTES, maxAgeMs: NATIVE_MAX_AGE_MS, sweepEveryMs: 60_000, sweepEveryBytes: 8 * 1024 * 1024 };
+let lastSweep = 0;
+let writtenSinceSweep = 0;
+let ageTimer: ReturnType<typeof setInterval> | undefined;
+
+/** Keeps the diagnostic folder inside its global budget: traces older than the age limit go first (including idle previous segments), then the
+ * oldest traces until the total fits. Files named in `keep` (the segment being written right now) are never evicted for size. Returns the number
+ * of files removed. Best effort, never throws. */
+export function enforceNativeBudget(dir: string = NATIVE_DIR, options: { maxBytes?: number; maxAgeMs?: number; now?: number; keep?: readonly string[] } = {}): number {
+  const maxBytes = options.maxBytes ?? nativeBudget.maxBytes, maxAge = options.maxAgeMs ?? nativeBudget.maxAgeMs, now = options.now ?? Date.now();
+  const keep = new Set(options.keep ?? []);
+  let removed = 0;
+  try {
+    const files: { path: string; name: string; bytes: number; at: number }[] = [];
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".ndjson")) continue;
+      try { const path = join(dir, name), st = statSync(path); if (st.isFile()) files.push({ path, name, bytes: st.size, at: st.mtimeMs }); } catch { /* gone already */ }
+    }
+    const drop = (file: { path: string }) => { try { unlinkSync(file.path); removed++; return true; } catch { return false; } };
+    const live = files.filter(file => now - file.at <= maxAge || !drop(file));
+    live.sort((a, b) => a.at - b.at);
+    let total = live.reduce((sum, file) => sum + file.bytes, 0);
+    for (const file of live) {
+      if (total <= maxBytes) break;
+      if (keep.has(file.name)) continue;
+      if (drop(file)) total -= file.bytes;
+    }
+  } catch { /* the folder may not exist yet */ }
+  return removed;
+}
+function sweepAfterWrite(threadId: string, bytes: number): void {
+  writtenSinceSweep += bytes;
+  const now = Date.now();
+  if (now - lastSweep < nativeBudget.sweepEveryMs && writtenSinceSweep < nativeBudget.sweepEveryBytes) return;
+  lastSweep = now; writtenSinceSweep = 0;
+  enforceNativeBudget(NATIVE_DIR, { keep: [`${threadId}.ndjson`] });
+  // Idle folders age out too: a timer, not only a write, expires traces.
+  if (!ageTimer) { ageTimer = setInterval(() => { enforceNativeBudget(NATIVE_DIR); }, 60 * 60 * 1000); ageTimer.unref?.(); }
+}
 
 function marker(type: string, detail: Record<string, number | string> = {}): string {
   return JSON.stringify({ at: new Date().toISOString(), dir: "out", source: "murage.native-log",
@@ -52,14 +96,25 @@ function capExisting(file: string): number {
 
 /** `lifecycle` rows are harness-authored engine_lifecycle diagnostics
  * (lifecycle-diagnostic.ts), kept apart from in/out protocol messages. */
+/** Threads whose engine protocol is never written (the Chief's hidden
+ * New project proposal turns): set once by the harness. */
+let omitThread: (threadId: string) => boolean = () => false;
+export function omitNativeLog(predicate: (threadId: string) => boolean): void { omitThread = predicate; }
+
 export function appendNative(threadId: string, entry: { dir: "in" | "out" | "lifecycle"; source: string; msg: unknown }) {
+  if (omitThread(threadId)) return;
   try {
     // The session-setup messages carry the credentials the agent is handed —
     // the box and comms tokens ride inside session/new's mcpServers env, and
     // an MCP header can carry a Composio key. People paste these diagnostic
     // files into bug reports, so values are masked while
     // the shape stays intact unless the record exceeds its byte budget.
-    let encoded = JSON.stringify({ at: new Date().toISOString(), ...entry, msg: redactSecrets(entry.msg) }) + "\n";
+    // Lifecycle rows are harness-authored and allowlisted field by field
+    // (lifecycle-diagnostic.ts): their ids are random UUIDs. The page-output
+    // scrub reads a run of digits inside a UUID as a secret number and rewrote
+    // the turn id to "ab[hidden]-...", so a trace could no longer be tied to
+    // its turn. Secret-name masking still applies.
+    let encoded = JSON.stringify({ at: new Date().toISOString(), ...entry, msg: entry.dir === "lifecycle" ? redactSecrets(entry.msg) : redactPageOutputDeep(redactSecrets(entry.msg)) }) + "\n";
     const encodedBytes = Buffer.byteLength(encoded);
     if (encodedBytes > RECORD_BYTES) encoded = marker("native_trace_record_omitted", { encodedBytes, limitBytes: RECORD_BYTES });
     const current = join(NATIVE_DIR, `${threadId}.ndjson`);
@@ -73,6 +128,7 @@ export function appendNative(threadId: string, entry: { dir: "in" | "out" | "lif
     }
     appendFileSync(current, encoded, { mode: 0o600 });
     chmodSync(current, 0o600);
+    sweepAfterWrite(threadId, Buffer.byteLength(encoded));
   } catch {
     /* never let logging break a run */
   }

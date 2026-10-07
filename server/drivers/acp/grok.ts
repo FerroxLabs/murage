@@ -10,6 +10,8 @@ import { join } from "node:path";
 import type { ModelCatalog } from "../../contracts.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
 import { readTomlConfigForEdit, removeTomlTables } from "./kimi.ts";
+import { DATA_DIR } from "../../config.ts";
+import { headlessTextOnlyTurn } from "../headless-text-only.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 export const STATIC_GROK_MODELS: ModelCatalog = {
@@ -289,6 +291,8 @@ const support: AcpSupport = {
   // reach the agent-stdio system prompt (verified against 1.0.0), so the
   // persona is prepended codex-style.
   buildPromptText: (turn) => (turn.system ? `${turn.system}\n\n${turn.text}` : turn.text),
+  // PIP reflection: a dedicated headless spawn; the credential is the copied auth.json of the parent Grok home.
+  textOnlyTurn: (turn, config) => headlessTextOnlyTurn(turn, { engine: "grok", cli: config.cli, tmpBase: join(DATA_DIR, "pip-tmp"), parentGrokHome: grokHome(process.env) }),
 };
 
 export const GrokAgentDriver = createAcpDriver(support);

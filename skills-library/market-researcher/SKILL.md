@@ -4,7 +4,7 @@ description: |
   Comprehensive market research including TAM/SAM/SOM analysis, primary and secondary research methods, customer persona creation, Jobs-to-be-Done framework, competitive intelligence, and research report generation. Use when the user asks about market researcher or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research analysis strategy planning"
   category: "business-strategy"

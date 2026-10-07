@@ -6,7 +6,7 @@ description: |
   Do NOT use for casual text messages (too informal for this skill), business follow-up emails (use business email skills), or general appreciation messages to teams (use business communication skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "writing email personal-communication"
   category: "writing"

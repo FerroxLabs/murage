@@ -58,11 +58,14 @@ function read(path: string): string | undefined {
 
 // ── keys, each as the engine computes it ────────────────────────────────
 
-/** Gemini CLI projectRegistry.ts: the registry key and the new-slug rule. */
+/** Gemini CLI projectRegistry.ts: the registry key and the new-slug rule.
+ * Gemini lowercases every path on a Windows host (os.platform() === "win32"),
+ * and compares a .project_root marker only after normalizing it the same way. */
 export function geminiNormalizedPath(folder: string): string {
   const resolved = api(folder).resolve(folder);
-  return isWindowsPath(folder) ? resolved.toLowerCase() : resolved;
+  return isWindowsPath(folder) || process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
+const geminiMarker = (marker: string | undefined) => marker === undefined ? undefined : geminiNormalizedPath(marker.trim());
 export function geminiSlug(folder: string): string {
   return api(folder).basename(folder).toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "project";
 }
@@ -135,12 +138,12 @@ function removeGemini(geminiDir: string, folders: string[], out: EngineRemoval):
     // The registry may not have caught up; the marker inside each folder is
     // the engine's own ownership proof.
     for (const name of list(p.join(geminiDir, "tmp"))) {
-      if (name.startsWith(geminiSlug(folder)) && read(p.join(geminiDir, "tmp", name, ".project_root"))?.trim() === normalized) slugs.add(name);
+      if (name.startsWith(geminiSlug(folder)) && geminiMarker(read(p.join(geminiDir, "tmp", name, ".project_root"))) === normalized) slugs.add(name);
     }
     for (const slug of slugs) {
       for (const base of ["tmp", "history"]) {
         const dir = p.join(geminiDir, base, slug);
-        const marker = read(p.join(dir, ".project_root"))?.trim();
+        const marker = geminiMarker(read(p.join(dir, ".project_root")));
         if (marker === undefined && base === "history" && !list(dir).length) continue;
         if (marker !== undefined && marker !== normalized) continue;
         out.remove(p.join(geminiDir, base), dir);

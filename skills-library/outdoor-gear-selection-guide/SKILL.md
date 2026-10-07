@@ -6,7 +6,7 @@ description: |
   Do NOT use for specific brand or product recommendations, professional mountaineering equipment, cycling-specific gear (use cycling-route-planner), or fishing, hunting, or water sports equipment.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research checklist guide analysis"
   category: "hobbies-crafts"

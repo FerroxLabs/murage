@@ -16,7 +16,7 @@ beforeEach(()=>{
 });
 afterEach(()=>vi.useRealTimers());
 function complete(text:string){
-  captureSource(database(),{id:"resume-source",threadId:"thread",messageId:"source-message",kind:"text",speaker:"owner",outcome:"recorded",text});
+  captureSource(database(),{id:"resume-source",threadId:"thread",messageId:"source-message",origin:{kind:"attended"},kind:"text",speaker:"owner",outcome:"recorded",text});
   let id="";
   for(;;){
     const work=claimMemoryJob("resume-fixture");if(!work)throw Error("fixture source not captured completely");
@@ -63,12 +63,12 @@ it("rolls back candidate and cursor together, then retries an expired interrupte
   expect(database().prepare("SELECT count(*) AS n FROM memory_records WHERE state='candidate'").get()?.n).toBe(2);
 });
 
-it("keeps large sources resumable across the unchanged daily budget without spending on refusal",async()=>{
+it("keeps large sources resumable across the v2 daily budget without spending on refusal",async()=>{
   const job=complete("b".repeat(80000));let calls=0;
   const extractor=async()=>{calls++;return "[]";};
   const first=await consolidateMemorySource(job,extractor,new AbortController().signal);
   expect(first).toMatchObject({status:"partial",cursor:16384});
-  database().prepare("UPDATE memory_scope_bindings SET intent=json_set(intent,'$.input',100000) WHERE id=?").run("extract-budget:2026-09-07");
+  database().prepare("UPDATE memory_scope_bindings SET intent=json_set(intent,'$.input',400000) WHERE id=?").run("extract-budget:2026-09-07");
   const stopped=await consolidateMemorySource(job,extractor,new AbortController().signal);
   expect(stopped).toMatchObject({status:"deferred",reason:"budget-exhausted",cursor:16384,retryAfter:Date.parse("2026-09-08T00:00:00Z")});
   expect(calls).toBe(1);expect(pendingMemoryConsolidationJobs()).not.toContain(job);
@@ -76,4 +76,27 @@ it("keeps large sources resumable across the unchanged daily budget without spen
   expect(pendingMemoryConsolidationJobs()).toContain(job);
   const resumed=await consolidateMemorySource(job,extractor,new AbortController().signal);
   expect(resumed).toMatchObject({status:"partial",cursor:32768});expect(calls).toBe(2);
+});
+
+it("a due slice before the scan cursor is found on the next visit, not after a wrap-around pass",async()=>{
+  const text="abcไทย".repeat(2100),job=complete(text);
+  expect((await consolidateMemorySource(job,async chunk=>quoted(chunk),new AbortController().signal)).status).toBe("partial");
+  const scopeId=String(database().prepare("SELECT scope_id FROM memory_scope_bindings WHERE id LIKE 'consolidation:%'").get()!.scope_id);
+  database().prepare("INSERT INTO memory_scope_bindings VALUES('consolidation:later',?,'system','consolidation-pending',0,'granted',?)").run(scopeId,JSON.stringify({status:"deferred",retryAfter:Date.now()+60_000,jobId:"later"}));
+  expect(pendingMemoryConsolidationJobs()).toEqual([job]);
+  // The cursor now sits on the due row; the rows after it hold nothing due. The same visit wraps back to it.
+  expect(pendingMemoryConsolidationJobs()).toEqual([job]);
+  expect(pendingMemoryConsolidationJobs()).toEqual([job]);
+});
+
+it("reaches a due slice behind more than 128 ineligible receipts within a bounded number of scans",async()=>{
+  const text="abcไทย".repeat(2100),job=complete(text);
+  expect((await consolidateMemorySource(job,async chunk=>quoted(chunk),new AbortController().signal)).status).toBe("partial");
+  const db=database(),scopeId=String(db.prepare("SELECT scope_id FROM memory_scope_bindings WHERE id LIKE 'consolidation:%'").get()!.scope_id);
+  for(let i=0;i<200;i++)db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','consolidation-pending',0,'granted',?)").run(`consolidation:parked-${i}`,scopeId,JSON.stringify({status:"deferred",retryAfter:null,jobId:`parked-${i}`}));
+  // The due receipt now sits behind 200 ineligible rows (four forward pages).
+  db.prepare("UPDATE memory_scope_bindings SET rowid=100000 WHERE id LIKE 'consolidation:%' AND id NOT LIKE 'consolidation:parked-%'").run();
+  const seen:string[]=[];
+  for(let scan=0;scan<8&&!seen.includes(job);scan++)seen.push(...pendingMemoryConsolidationJobs());
+  expect(seen).toContain(job);
 });

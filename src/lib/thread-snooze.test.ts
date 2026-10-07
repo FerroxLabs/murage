@@ -78,6 +78,10 @@ describe("the snoozed marker", () => {
     expect(formatSnoozedUntil(Date.UTC(2026, 8, 28, 13, 0), THURSDAY, clock)).toBe("Snoozed until Mon 9:00 AM");
     expect(formatSnoozedUntil(Date.UTC(2026, 9, 14, 13, 0), THURSDAY, clock)).toBe("Snoozed until Oct 14, 9:00 AM");
   });
+
+  it("says a snooze waiting for news waits for news, not for its latest time", () => {
+    expect(formatSnoozedUntil(Date.UTC(2026, 9, 14, 13, 0), THURSDAY, clock, true)).toBe("Snoozed until new activity");
+  });
 });
 
 describe("what a snooze quiets", () => {
@@ -146,5 +150,12 @@ describe("a sidebar row", () => {
     const woke = sidebarGroupAttention(group, attention, THURSDAY + 1000);
     expect(woke.group.unread).toBe(true);
     expect(woke.snoozedUntil).toBeUndefined();
+  });
+
+  it("says when a row's open conversation waits for new activity", () => {
+    const waits = { ...attention, untilActivity: new Set(["open", "room"]) };
+    expect(sidebarBotAttention({ threadId: "open", unread: true }, waits, THURSDAY)).toMatchObject({ snoozedUntil: THURSDAY + 1000, snoozedUntilActivity: true });
+    expect(sidebarGroupAttention({ threadId: "room", unread: true }, waits, THURSDAY)).toMatchObject({ snoozedUntilActivity: true });
+    expect(sidebarBotAttention({ threadId: "open", unread: true }, attention, THURSDAY).snoozedUntilActivity).toBeUndefined();
   });
 });

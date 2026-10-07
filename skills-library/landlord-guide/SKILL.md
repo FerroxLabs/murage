@@ -4,7 +4,7 @@ description: |
   Comprehensive operational guide for landlords covering tenant screening processes, lease creation, rent collection systems, maintenance management, legal compliance including Fair Housing and eviction procedures, accounting and record-keeping, property inspection schedules, and tenant conflict resolution strategies. Use when the user asks about landlord guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance investing planning guide"
   category: "personal-finance"

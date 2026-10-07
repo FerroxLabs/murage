@@ -4,7 +4,7 @@ description: |
   A curated collection of essential mental models for better thinking and decision-making, including inversion, second-order thinking, Occam's razor, Hanlon's razor, circle of competence, map vs territory, opportunity cost, margin of safety, via negativa, Lindy effect, and antifragility, with guidance on when to apply each model. Use when the user asks about mental model toolkit or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decision-making strategy frameworks"
   category: "productivity"

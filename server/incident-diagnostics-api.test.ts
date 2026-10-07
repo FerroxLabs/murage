@@ -45,7 +45,8 @@ afterAll(async () => { await fixture?.close(); });
 
 it("gates incident reads before selection handling and refuses absent or spoofed desktop proof", async () => {
   expect(requiresDesktopAuthority("GET", "/api/diagnostics/incident")).toBe(true);
-  expect(requiresDesktopAuthority("GET", "/api/diagnostics/incident-other")).toBe(false);
+  // 0.1.61: a route nobody classified is desktop-only too (route-policy.ts).
+  expect(requiresDesktopAuthority("GET", "/api/diagnostics/incident-other")).toBe(true);
   expect((await get(route(selected), {})).status).toBe(404);
   expect((await get(route(selected), { "x-murage-surface": "desktop", "x-murage-surface-secret": "fake-proof" })).status).toBe(404);
   expect((await get("/api/diagnostics/incident?path=private", {})).status).toBe(404);

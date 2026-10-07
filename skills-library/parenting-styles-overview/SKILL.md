@@ -6,7 +6,7 @@ description: |
   Do NOT use for evaluating or judging a user's parenting, diagnosing parenting problems, or replacing family therapy.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "parenting guide research"
   category: "family-relationships"

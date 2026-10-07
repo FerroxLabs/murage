@@ -6,7 +6,7 @@ description: |
   Do NOT use for authenticating collectibles (use collectible-authentication-guide), cataloguing inventory (use collection-inventory-builder), financial investment advice on collectibles, or professional appraisals for legal proceedings.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research analysis guide checklist"
   category: "hobbies-crafts"

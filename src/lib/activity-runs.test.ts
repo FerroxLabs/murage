@@ -4,6 +4,7 @@ import { describeRun, groupActivityRuns, groupTranscript } from "./activity-runs
 import type { Message } from "@/state/store";
 import { STOPPED_MID_DESKTOP_ACTION } from "../../shared/host-stop";
 import { browserUnavailableActivityName } from "../../shared/browser-unavailable";
+import { imagesLeftOutActivityName } from "../../shared/images-left-out";
 import { imagesNotSentActivityName } from "../../shared/turn-image-note";
 import { folderTrustWithheldName } from "../../shared/folder-trust";
 import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
@@ -181,6 +182,7 @@ describe("the quiet notes are never folded into a run", () => {
     ["a stop that caught a desktop action", STOPPED_MID_DESKTOP_ACTION],
     ["a folder whose sources were withheld", folderTrustWithheldName(["CLAUDE.md"])],
     ["a turn that ran without its browser", browserUnavailableActivityName("the browser engine did not start")],
+    ["a picture left out for a model that cannot see", imagesLeftOutActivityName(1)],
     ["a turn that left images out", imagesNotSentActivityName({ sent: 10, overCount: 2, tooLarge: 0 })],
   ])("keeps %s on its own after a stretch of tool calls", (_what, name) => {
     const items = groupActivityRuns([tool("Edit"), tool("Bash"), note(name)]);

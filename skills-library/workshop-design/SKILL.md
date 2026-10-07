@@ -6,7 +6,7 @@ description: |
   Do NOT use for corporate or professional development workshops (use `professional-workshop-design`), for full course design (use `online-course-design`), or for single lesson plans (use `lesson-plan-design`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching curriculum lesson-plan step-by-step"
   category: "education"

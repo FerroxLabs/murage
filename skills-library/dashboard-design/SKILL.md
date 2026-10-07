@@ -6,7 +6,7 @@ description: |
   Do NOT use for selecting a single chart type (use chart-type-selector), defining KPI metrics (use kpi-definition), or formatting individual charts (use chart-formatting).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-visualization design analysis"
   category: "data-analysis"

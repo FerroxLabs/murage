@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { BROWSER_DENIED, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isInboxRoute, launchProofHeaders, needsLaunchProof, type Surface } from "../src/routes.ts";
+import { approvalDeviceHeaders, BROWSER_DENIED, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, deviceProofHeaders, isInboxRoute, launchProofHeaders, needsLaunchProof, type Surface } from "../src/routes.ts";
 
 const ask = (method: string, path: string, authenticated = true, surface: Surface = "device") =>
   denyReason({ method, path, authenticated, surface });
@@ -80,6 +80,8 @@ describe("what the app may do", () => {
     ["POST", "/api/files"],
     ["GET", "/api/tts/voices"],
     ["POST", "/api/tts/speak"],
+    ["POST", "/api/voice/transcribe"],
+    ["POST", "/api/voice/cleanup"],
     ["GET", "/api/routines"],
     ["POST", "/api/routines"],
     ["PATCH", "/api/routines/routine_1"],
@@ -595,18 +597,6 @@ describe("the Inbox reaches the browser door", () => {
   });
 });
 
-describe("the launch proof on every forwarded request", () => {
-  const token = "a1".repeat(32);
-  it("adds the door's own credential to any route it forwards", () => {
-    for (const [method, path] of [["GET", "/api/bots"], ["GET", "/api/events"], ["GET", "/api/search"], ["POST", "/api/bots/b1/messages"], ["POST", "/api/bots/b1/interrupt"], ["GET", "/api/threads/t1/messages"], ["POST", "/api/groups/g1/interrupt"], ["GET", "/api/config"]] as const) {
-      expect(launchProofHeaders(method, path, token), `${method} ${path}`).toEqual({ "x-murage-companion-token": token });
-    }
-  });
-  it("adds nothing when the door was started without a usable credential", () => {
-    for (const bad of [undefined, "", "short", "G".repeat(64), "A1".repeat(32)]) expect(launchProofHeaders("GET", "/api/bots", bad)).toEqual({});
-  });
-});
-
 describe("routes that carry the sidecar's launch proof", () => {
   it("covers the Inbox and both call routes", () => {
     expect(needsLaunchProof("GET", "/api/inbox")).toBe(true);
@@ -629,5 +619,164 @@ describe("routes that carry the sidecar's launch proof", () => {
   it("lets a signed-in browser reach voice-host", () => {
     expect(askBrowser("POST", "/api/bots/bot_1/voice-host")).toBeNull();
     expect(askBrowser("GET", "/api/bots/bot_1/voice-host")).not.toBeNull();
+  });
+});
+
+// 0.1.61 deny by default: the harness takes these owner decisions only with
+// the launch proof, so both doors vouch for them (server/route-policy.ts).
+describe("owner decisions carry the launch proof", () => {
+  const token = "d".repeat(64);
+  it("stamps filing, running a routine, making a bot, a bot's profile, deleting a task and the browser relay", () => {
+    for (const [method, path] of [["POST", "/api/sidebar-sections"], ["POST", "/api/routines/r1/run"], ["POST", "/api/bots"], ["GET", "/api/bots/b1/browser"], ["GET", "/api/bots/b1/browser/frame"], ["POST", "/api/bots/b1/browser"], ["PATCH", "/api/bots/b1/profile"], ["DELETE", "/api/bots/b1/tasks/t1"], ["DELETE", "/api/groups/g1/tasks/t1"]])
+      expect(launchProofHeaders(method, path, token), `${method} ${path}`).toEqual({ "x-murage-companion-token": token });
+  });
+  it("stamps the room queue's reads and steering (SPEC-P 11.1), which both doors allow", () => {
+    for (const [method, path] of [["GET", "/api/groups/g1/requests"], ["POST", "/api/groups/g1/requests/r1/cancel"], ["POST", "/api/groups/g1/requests/r1/retry"],
+      ["POST", "/api/groups/g1/project/control/stop"], ["POST", "/api/groups/g1/project/control/pause"], ["POST", "/api/groups/g1/project/control/resume"], ["POST", "/api/groups/g1/project/control/redirect"]]) {
+      expect(launchProofHeaders(method, path, token), `${method} ${path}`).toEqual({ "x-murage-companion-token": token });
+      expect(ask(method, path), `${method} ${path} device`).toBeNull();
+      expect(askBrowser(method, path), `${method} ${path} browser`).toBeNull();
+    }
+    expect(ask("POST", "/api/groups/g1/requests/r1/delete")).not.toBeNull();
+    expect(ask("DELETE", "/api/groups/g1/requests/r1")).not.toBeNull();
+    expect(ask("POST", "/api/groups/g1/project/control/delete")).not.toBeNull();
+  });
+  it("adds nothing elsewhere, and nothing without a usable token", () => {
+    expect(launchProofHeaders("GET", "/api/bots", token)).toEqual({});
+    expect(launchProofHeaders("PATCH", "/api/routines/r1", token)).toEqual({});
+    expect(launchProofHeaders("POST", "/api/sidebar-sections", undefined)).toEqual({});
+  });
+});
+
+describe("project phone routes", () => {
+  const paths: Array<[string, string]> = [
+    ["GET", "project"], ["POST", "project/viewed"], ["PATCH", "project/brief"],
+    ["GET", "project/brief/versions"], ["GET", "project/brief/versions/1"],
+    ["POST", "project/goals"], ["PATCH", "project/goals/goal"],
+    ["GET", "board"], ["POST", "board/cards"], ["PATCH", "board/cards/card"], ["GET", "activity"],
+  ];
+  it.each(paths)("forwards %s %s with owner proof", (method, tail) => {
+    const path = `/api/groups/group/${tail}`;
+    expect(ask(method, path)).toBeNull();
+    expect(askBrowser(method, path)).toBeNull();
+    expect(launchProofHeaders(method, path, "a".repeat(64))).toEqual({ "x-murage-companion-token": "a".repeat(64) });
+  });
+  it("keeps settings and columns on desktop", () => {
+    expect(ask("PATCH", "/api/groups/group/project/settings")).not.toBeNull();
+    expect(ask("PUT", "/api/groups/group/board/columns")).not.toBeNull();
+  });
+});
+
+it("project usage is owner-readable on both doors but authority writes stay desktop",()=>{
+  for(const surface of ["device","browser"] as const){
+    expect(ask("GET","/api/groups/g/usage",true,surface)).toBeNull();
+    for(const [method,path] of [["POST","budget"],["PATCH","budget"],["PUT","work-roots"],["PATCH","work-profile"]])expect(ask(method!,`/api/groups/g/project/${path}`,true,surface)?.status).toBe(403);
+  }
+  expect(launchProofHeaders("GET","/api/groups/g/usage","a".repeat(64))).toEqual({"x-murage-companion-token":"a".repeat(64)});
+});
+
+describe("the owner's work thread for a shared bot (SPEC-X 12.1)", () => {
+  it("opens on both doors with the launch proof, and nothing else about sharing does", () => {
+    const token = "e".repeat(64);
+    expect(ask("POST", "/api/bots/b1/work-threads")).toBeNull();
+    expect(askBrowser("POST", "/api/bots/b1/work-threads")).toBeNull();
+    expect(launchProofHeaders("POST", "/api/bots/b1/work-threads", token)).toEqual({ "x-murage-companion-token": token });
+    expect(ask("GET", "/api/bots/b1/work-threads")).not.toBeNull();
+    expect(ask("POST", "/api/bots/b1/work-threads", false)).not.toBeNull();
+    for (const [method, path] of [["GET", "/api/bots/b1/sharing"], ["PATCH", "/api/bots/b1/sharing"], ["POST", "/api/bots/b1/sharing/skills"], ["POST", "/api/bots/b1/sharing/copy"], ["GET", "/api/bots/b1/general-notes"], ["PUT", "/api/bots/b1/general-notes"]]) {
+      expect(ask(method, path), `${method} ${path} device`).not.toBeNull();
+      expect(askBrowser(method, path), `${method} ${path} browser`).not.toBeNull();
+      expect(launchProofHeaders(method, path, token)).toEqual({});
+    }
+  });
+});
+
+// SPEC-X 12.3 (supervisor ruling, round 4): the owner phone's rows. Only the
+// device door adds the proof on the fleet and the event stream; the browser
+// door's proof (`launchProofHeaders`, plus its own `needsLaunchProof`) adds
+// nothing there, so a browser session gets no rows.
+describe("the owner phone's reads carry the proof on the device door only", () => {
+  const token = "f".repeat(64);
+  it("device: GET /api/bots and GET /api/events, and everything the shared list already stamps", () => {
+    for (const path of ["/api/bots", "/api/events"]) {
+      expect(ask("GET", path), `${path} device`).toBeNull();
+      expect(deviceProofHeaders("GET", path, token), path).toEqual({ "x-murage-companion-token": token });
+    }
+    expect(deviceProofHeaders("POST", "/api/bots/b1/work-threads", token)).toEqual({ "x-murage-companion-token": token });
+    expect(deviceProofHeaders("POST", "/api/bots/b1/messages", token)).toEqual({ "x-murage-companion-token": token });
+  });
+  it("browser: the same reads get no proof", () => {
+    for (const path of ["/api/bots", "/api/events"]) {
+      expect(askBrowser("GET", path), `${path} browser`).toBeNull();
+      expect(launchProofHeaders("GET", path, token), path).toEqual({});
+      expect(needsLaunchProof("GET", path), path).toBe(false);
+    }
+  });
+  it("nothing near them, and nothing without a usable token", () => {
+    for (const [method, path] of [["GET", "/api/bots/b1"], ["GET", "/api/bots/b1/engine-commands"], ["GET", "/api/instances"], ["DELETE", "/api/bots"], ["GET", "/api/events/x"]])
+      expect(deviceProofHeaders(method, path, token), `${method} ${path}`).toEqual({});
+    expect(deviceProofHeaders("GET", "/api/bots", undefined)).toEqual({});
+    expect(deviceProofHeaders("GET", "/api/bots", "short")).toEqual({});
+  });
+});
+
+describe("Plan 3a H3: presence through the browser door", () => {
+  it("is allowed with a session and carries the launch proof", () => {
+    expect(denyReason({ path: "/api/presence", method: "POST", authenticated: true, surface: "browser" })).toBeNull();
+    expect(needsLaunchProof("POST", "/api/presence")).toBe(true);
+    expect(denyReason({ path: "/api/presence", method: "GET", authenticated: true, surface: "browser" })?.status).toBe(404);
+  });
+});
+
+// Audit C5: the harness admits a conversation route only from a proven caller,
+// and the door proves itself with the launch secret in a header of its own that
+// claims no owner authority.
+describe("doorForwardHeaders", () => {
+  it("carries the launch secret in the door header and nothing else", async () => {
+    const { doorForwardHeaders } = await import("../src/routes.ts");
+    const token = "e".repeat(64);
+    expect(doorForwardHeaders(token)).toEqual({ "x-murage-door-token": token });
+    expect(Object.keys(doorForwardHeaders(token))).not.toContain("x-murage-companion-token");
+  });
+  it("sends nothing when this door has no usable secret", async () => {
+    const { doorForwardHeaders } = await import("../src/routes.ts");
+    expect(doorForwardHeaders(undefined)).toEqual({});
+    expect(doorForwardHeaders("short")).toEqual({});
+    expect(doorForwardHeaders("E".repeat(64))).toEqual({});
+  });
+});
+
+describe("the streaming voice ticket", () => {
+  const token = "d".repeat(64);
+  it("is allowed on both doors, POST only", () => {
+    expect(ask("POST", "/api/voice/stream/ticket")).toBeNull();
+    expect(askBrowser("POST", "/api/voice/stream/ticket")).toBeNull();
+    expect(ask("GET", "/api/voice/stream/ticket")).not.toBeNull();
+    expect(askBrowser("GET", "/api/voice/stream/ticket")).not.toBeNull();
+    expect(ask("POST", "/api/voice/stream/ticket/extra")).not.toBeNull();
+    expect(askBrowser("POST", "/api/voice/stream")).not.toBeNull();
+  });
+  it("needs the launch proof, and gets it from both proof helpers", () => {
+    expect(needsLaunchProof("POST", "/api/voice/stream/ticket")).toBe(true);
+    expect(needsLaunchProof("GET", "/api/voice/stream/ticket")).toBe(false);
+    expect(launchProofHeaders("POST", "/api/voice/stream/ticket", token)).toEqual({ "x-murage-companion-token": token });
+    expect(deviceProofHeaders("POST", "/api/voice/stream/ticket", token)).toEqual({ "x-murage-companion-token": token });
+    expect(launchProofHeaders("POST", "/api/voice/stream/ticket", undefined)).toEqual({});
+    expect(launchProofHeaders("POST", "/api/voice/stream/ticket", "short")).toEqual({});
+  });
+});
+
+describe("approvalDeviceHeaders", () => {
+  const id = { id: "4b7a3f6c-1a52-4d1e-9c2e-5a0d7e41b9f3", cls: "app" as const, key: "B".repeat(87) };
+  it("names the device on both respond routes only", () => {
+    for (const path of ["/api/threads/t1/respond", "/api/bots/b1/respond"]) {
+      expect(approvalDeviceHeaders("POST", path, id)).toEqual({ "x-murage-approval-device": id.id, "x-murage-approval-class": "app", "x-murage-approval-key": id.key });
+    }
+    expect(approvalDeviceHeaders("POST", "/api/bots/b1/messages", id)).toEqual({});
+    expect(approvalDeviceHeaders("GET", "/api/threads/t1/respond", id)).toEqual({});
+    expect(approvalDeviceHeaders("POST", "/api/threads/t1/respond", null)).toEqual({});
+  });
+  it("sends no key header for a device without one", () => {
+    expect(approvalDeviceHeaders("POST", "/api/threads/t1/respond", { id: id.id, cls: "browser" })).toEqual({ "x-murage-approval-device": id.id, "x-murage-approval-class": "browser" });
   });
 });

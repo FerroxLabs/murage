@@ -6,7 +6,7 @@ description: |
   Do NOT use for reconciliation after separation, assessing whether to continue a relationship, or replacing couples therapy.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "relationships planning guide"
   category: "family-relationships"

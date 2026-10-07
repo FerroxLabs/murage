@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about C# project setup (use `csharp-project-setup`), C# ASP.NET (use `csharp-aspnet-patterns`), general testing concepts (use `unit-testing-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "csharp testing tdd"
   category: "software-engineering"

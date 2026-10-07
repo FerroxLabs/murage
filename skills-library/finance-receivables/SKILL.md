@@ -3,7 +3,7 @@ name: finance-receivables
 description: "Age accounts receivable, calculate DSO, and generate an escalating collection sequence for overdue invoices with FDCPA and state-UDAP-aware language, intent-gated escalation, and statute-of-limitations-aware bad-debt write-off guidance. Use when invoices are past due and someone has to write the emails. Do NOT use for money the business owes out (use finance-payroll-prep for payroll liabilities or finance-sales-tax for tax liabilities) or for whether the period was profitable (use finance-pl). Templates only — a demand that escalates to litigation belongs with an attorney."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "receivables collections dso finance smb"
   category: "finance"

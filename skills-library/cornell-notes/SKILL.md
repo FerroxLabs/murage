@@ -6,7 +6,7 @@ description: |
   Do NOT use for concept mapping (use `concept-mapping`), for note synthesis across sources (use `note-synthesis`), or for flashcard creation (use `flashcard-generation`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "note-taking study-skills step-by-step guide"
   category: "education"

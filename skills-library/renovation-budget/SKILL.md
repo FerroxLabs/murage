@@ -6,7 +6,7 @@ description: |
   Do NOT use for new construction budgets, commercial renovation, real estate investment analysis, or interior decorating without structural changes (use interior-design-principles instead).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-maintenance planning decision-making budgeting"
   category: "home-household"

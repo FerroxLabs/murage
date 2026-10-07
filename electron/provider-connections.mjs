@@ -8,6 +8,7 @@ export const PROVIDER_PRESETS = Object.freeze({
   flux: { label: "Flux Router", baseUrl: "https://api.fluxrouter.ai/v1", catalogUrl: "https://api.fluxrouter.ai/v1/models", protocol: "openai" },
   groq: { label: "Groq", baseUrl: "https://api.groq.com/openai/v1", catalogUrl: "https://api.groq.com/openai/v1/models", protocol: "openai" },
   xai: { label: "xAI", baseUrl: "https://api.x.ai/v1", catalogUrl: "https://api.x.ai/v1/models", protocol: "openai" },
+  requesty: { label: "Requesty", baseUrl: "https://router.requesty.ai/v1", catalogUrl: "https://router.requesty.ai/v1/models", protocol: "openai" },
   // Gemini API (Google AI Studio key), through Google's OpenAI-compatible
   // endpoint: https://ai.google.dev/gemini-api/docs/openai (checked 2026-09-28).
   google: { label: "Google", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", catalogUrl: "https://generativelanguage.googleapis.com/v1beta/openai/models", protocol: "openai" },
@@ -35,8 +36,19 @@ export function keyIssuer(key) {
   const value = typeof key === "string" ? key.trim() : "";
   return value.startsWith("sk-ant-") ? "anthropic" : value.startsWith("sk-flux-") ? "flux" : value.startsWith("sk-or-") ? "openrouter" : /^sk-(?:proj|svcacct)-/.test(value) ? "openai" : value.startsWith("xai-") ? "xai" : value.startsWith("gsk_") ? "groq" : /^AIza[A-Za-z0-9_-]{35}$/.test(value) ? "google" : null;
 }
+/** Every key Flux Router issues is `sk-flux-…` (flux-router-app
+ * key-issuance.service.ts). Shape only, never a liveness check. Nothing that
+ * fails this is ever sent to api.fluxrouter.ai: on 2026-10-01 installs sent
+ * Flux the base URL, a short non-sk value and another provider's sk- key as
+ * the bearer, every minute. */
+const FLUX_KEY_SHAPE = /^sk-flux-[A-Za-z0-9_-]+$/;
+export function isFluxKeyShape(key) {
+  return typeof key === "string" && FLUX_KEY_SHAPE.test(key.trim());
+}
+export const NOT_A_FLUX_KEY = "That is not a Flux Router key. A Flux Router key starts with sk-flux-. Copy the key, not the web address, from your Flux Router account.";
 export function assertProviderKey(preset, key) {
   if (!Object.hasOwn(PROVIDER_PRESETS, preset) || !secret(key)) fail("Choose a provider and paste a valid model API key.");
+  if (preset === "flux" && !isFluxKeyShape(key) && !keyIssuer(key)) fail(NOT_A_FLUX_KEY);
   if (key.trim().startsWith("sk-admin-")) fail("Use an inference API key, not an OpenAI admin key.");
   const known = keyIssuer(key);
   if (known && known !== preset) fail("This key appears to belong to a different provider. Choose its provider before saving.");

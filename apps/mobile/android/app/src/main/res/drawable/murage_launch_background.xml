@@ -1,0 +1,1 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:drawable="@color/murage_canvas"/><item android:width="240dp" android:height="50dp" android:gravity="center"><bitmap android:src="@drawable/murage_wordmark" android:gravity="fill"/></item></layer-list>

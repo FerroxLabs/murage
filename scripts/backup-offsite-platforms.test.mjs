@@ -60,6 +60,11 @@ describe("pins", () => {
   });
 });
 
+// A Windows host has no POSIX exec or mode bits and no /usr/bin/bzip2, so it
+// cannot stand in for a macOS or Linux package: those cases run on the macOS
+// and Ubuntu shards, where their release jobs run too.
+const posixOnWindows = platform => process.platform === "win32" && platform !== "win32";
+
 describe("staging", () => {
   // Synthetic archives stand in for the release assets; the pins are swapped
   // for the synthetic hashes so the real code path runs, with no download.
@@ -68,7 +73,7 @@ describe("staging", () => {
     const zip = new ZipFile(), chunks = []; zip.addBuffer(bytes, pin.member); zip.addBuffer(Buffer.from("notes"), "README.md"); zip.end();
     for await (const chunk of zip.outputStream) chunks.push(chunk); return Buffer.concat(chunks);
   }
-  it.each(Object.keys(RESTIC_PINS))("stages %s from its pinned archive, refuses a mismatch and a changed staged file", async target => {
+  it.each(Object.keys(RESTIC_PINS).filter(target => !posixOnWindows(target.split("-")[0])))("stages %s from its pinned archive, refuses a mismatch and a changed staged file", async target => {
     const root = scratch(); fs.mkdirSync(path.join(root, "third_party", "restic"), { recursive: true });
     fs.copyFileSync(new URL("../third_party/restic/LICENSE", import.meta.url), path.join(root, "third_party", "restic", "LICENSE"));
     const original = RESTIC_PINS[target], bytes = Buffer.from(`synthetic restic for ${target}`), archive = await archiveFor(original, bytes, root);
@@ -116,7 +121,7 @@ describe("packaging and the release gate", () => {
     for (const [name, bytes] of Object.entries(tools)) { const file = path.join(resources, "backup-tools", arch, name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes, { mode: 0o755 }); }
     return resources;
   }
-  it("Linux: exact upstream bytes pass; a changed or non-executable tool fails", () => {
+  it.skipIf(posixOnWindows("linux"))("Linux: exact upstream bytes pass; a changed or non-executable tool fails", () => {
     const age = Buffer.from("age"), restic = Buffer.from("restic");
     const pinsAge = { ...BACKUP_AGE_PINS["linux-x64"] }, pinsRestic = { ...RESTIC_PINS["linux-x64"] };
     const resources = packaged("linux", "x64", { age, restic });
@@ -124,7 +129,7 @@ describe("packaging and the release gate", () => {
     expect(pinsAge.executableSha256).toMatch(hex); expect(pinsRestic.originalSha256).toMatch(hex);
     expect(() => verifyPackagedBackupTools(resources, "linux", "arm64")).toThrow("TARGET_UNSUPPORTED");
   });
-  it("macOS: the pinned payload with the app's team passes; another team or payload fails", () => {
+  it.skipIf(posixOnWindows("darwin"))("macOS: the pinned payload with the app's team passes; another team or payload fails", () => {
     const signedLike = bytes => bytes; // payloads are compared through normalizedAgePayloadHash
     const resources = packaged("darwin", "x64", { age: signedLike(Buffer.from("x")), restic: Buffer.from("y") });
     expect(() => verifyPackagedBackupTools(resources, "darwin", "x64", { run: () => ({ status: 0, stderr: "TeamIdentifier=ABCDE12345" }) })).toThrow("PIN_MISMATCH: age");
@@ -154,7 +159,7 @@ describe("runtime attestation and capability, per platform", () => {
     expect(packagedResticPath(resources, platform, arch)).toBe(expected);
   });
   it("unshipped targets have no restic", () => { expect(packagedResticPath("/r", "linux", "arm64")).toBeNull(); expect(packagedResticPath("/r", "freebsd", "x64")).toBeNull(); });
-  it.each([["linux", "x64"], ["win32", "x64"], ["darwin", "x64"]])("%s-%s: exact pinned bytes are trusted, anything else is not", async (platform, arch) => {
+  it.each([["linux", "x64"], ["win32", "x64"], ["darwin", "x64"]].filter(([platform]) => !posixOnWindows(platform)))("%s-%s: exact pinned bytes are trusted, anything else is not", async (platform, arch) => {
     const root = scratch(), file = path.join(root, "restic"), good = Buffer.from(`pinned ${platform}`);
     fs.writeFileSync(file, good, { mode: 0o755 });
     const target = `${platform}-${arch}`; overrides.set(target, { ...RESTIC_PINS[target], originalSha256: sha(good) });

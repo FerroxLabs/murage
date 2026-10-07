@@ -22,12 +22,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
-import { loopbackFetch } from "./testing/conversation-proof.ts";
-
-/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
- * credential (the server below is started with it), without the desktop proof. */
-const TEST_COMPANION_TOKEN = "c".repeat(64);
-const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -59,7 +54,7 @@ async function readJsonWhenReady<T>(file: string, timeout = 20_000): Promise<T> 
   let parsed: unknown;
   await expect.poll(() => {
     try {
-      parsed = JSON.parse(readFileSync(file, "utf8"));
+      parsed = withTurnSecrets(JSON.parse(readFileSync(file, "utf8")));
       return true;
     } catch {
       return false;
@@ -68,12 +63,12 @@ async function readJsonWhenReady<T>(file: string, timeout = 20_000): Promise<T> 
   return parsed as T;
 }
 
-/** The agents MCP env an ACP session was handed, as `{name, value}` rows. */
+/** The agents MCP env an ACP session was handed (the fake's capability
+ * file; its dumps keep only fingerprints), as `{name, value}` rows. */
 function acpAgentsEnv(file: string): Record<string, string> {
-  const servers = JSON.parse(readFileSync(file, "utf8")) as Array<{ name: string; env?: Array<{ name: string; value: string }> }>;
-  const agents = servers.find((server) => server.name === "agents");
-  expect(agents, "the operator's turn was not given the agents MCP server").toBeTruthy();
-  return Object.fromEntries((agents!.env ?? []).map((row) => [row.name, row.value]));
+  const rows = JSON.parse(readFileSync(file, "utf8")) as Array<{ name: string; value: string }>;
+  expect(rows.length, "the operator's turn was not given the agents MCP server").toBeGreaterThan(0);
+  return Object.fromEntries(rows.map((row) => [row.name, row.value]));
 }
 
 posixOnly("Auto operators created by the Chief still ask the person", () => {
@@ -101,7 +96,7 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
           // permission request, the way Claude Code reaches the permission host
           asker: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "question-tool", FAKE_ACP_DUMP: acpDump },
+            environment: { FAKE_ACP_MODE: "question-tool", FAKE_ACP_DUMP: acpDump, FAKE_ACP_AGENTS_CAPABILITY: `${acpDump}.agents.json` },
             config: { cli: FAKE_ACP, fullAuto: false },
           },
         },
@@ -114,7 +109,6 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
         HOME: home,
         USERPROFILE: home,
         MURAGE_PORT: String(port),
-        MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
         FAKE_CLAUDE_MODE: "hang",
@@ -191,7 +185,7 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
       //    mode must not answer it: the card must be live, unanswered, held
       //    as a question, and offer no "Always allow".
       rmSync(acpDump, { force: true });
-      rmSync(`${acpDump}.mcp.json`, { force: true });
+      rmSync(`${acpDump}.agents.json`, { force: true });
       expect((await desktopApi("POST", `/api/bots/${operator.id}/messages`, { text: "go", threadId: operator.threadId })).status).toBe(202);
       let card: any = null;
       await expect.poll(async () => {
@@ -207,8 +201,8 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
 
       // 3. while that same Auto turn is in flight, a credential request from
       //    the operator lands as a secret card for the person, not an answer.
-      await expect.poll(() => existsSync(`${acpDump}.mcp.json`), { timeout: 10_000 }).toBe(true);
-      const operatorEnv = acpAgentsEnv(`${acpDump}.mcp.json`);
+      await expect.poll(() => existsSync(`${acpDump}.agents.json`), { timeout: 10_000 }).toBe(true);
+      const operatorEnv = acpAgentsEnv(`${acpDump}.agents.json`);
       expect(operatorEnv.MURAGE_BOT_ID).toBe(operator.id);
       const credential = await fetch(`${base}/api/internal/request-credential`, {
         method: "POST",

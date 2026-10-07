@@ -23,8 +23,8 @@ function permission() {
 }
 createInterface({ input: process.stdin }).on("line", line => {
   const message = JSON.parse(line);
-  if (message.id === "memory-permission" && message.result) {
-    observed.decisions.push(message.result); save();
+  if (message.id === "memory-permission" && (message.result || message.error)) {
+    observed.decisions.push(message.result ?? { error: message.error }); save();
     if (scenario === "before-prompt" && newId !== undefined) { send(result(newId, { sessionId: session })); newId = undefined; }
     else if (promptId !== undefined) send(result(promptId, { stopReason: "end_turn" }));
   } else if (message.method === "initialize") send(result(message.id, { protocolVersion: 1 }));

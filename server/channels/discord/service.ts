@@ -28,6 +28,8 @@ interface Options {
   revokeRuns: (connectionId: string) => Promise<void>;
   approvals?: Pick<TelegramApprovalActions, "pending" | "resolve">;
   now?: () => number;
+  /** What Discord calls the owner who wrote (kept to keep names out of customer turns). */
+  onSender?: (binding: DiscordBinding, display: { name?: string; username?: string }) => void;
 }
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
 export class DiscordService {
@@ -178,6 +180,7 @@ export class DiscordService {
       const binding = discordBindingSchema.parse({ ...c.chosen, botUserId: c.identity.botUserId, dmId: message.dmId, connectionId: randomUUID() });
       this.save({ ...c, binding, pairing: null }); this.makeLedger(binding); this.state = "connected";
     } else if (message.dmId !== c.binding.dmId) { return; }
+    if (c.binding && (message.sender.name || message.sender.username)) { try { this.options.onSender?.(c.binding, message.sender); } catch { /* optional */ } }
     const pairedNow = !c.binding;
     this.ledger!.accept({ deliveryId: message.deliveryId, occurredAt: message.occurredAt,
       ...(pairedNow ? { prompt: "", response: "Discord is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again." } : discordPrompt(message.text)) });

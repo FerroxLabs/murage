@@ -28,11 +28,12 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BindRefused, resolveBindFromEnv } from "../lib/bind.mjs";
+import { feedLaunchSecretStdin, launchSecretVia } from "../lib/launch-secret.mjs";
 import { companionEnv, ownChild, resolveCompanionEntry, spawnCompanion, startupProbe, waitForDoor } from "../lib/companion.mjs";
 import { createDoorNonce, deploymentOwner, doorVersion, probeDoor, readDoorNonce, writeDoorNonce } from "../lib/door-identity.mjs";
 import { envFilePermissions, inspectEnvFile, readEnvFile, retainRecoveryCopy, writeEnvFile } from "../lib/env-file.mjs";
 import { tailnetAddresses } from "../lib/network-trust.mjs";
-import { closePairing, controlPort, controlRequest, expiryText, fullFleet, openPairing, removeDevice, watchPairing } from "../lib/pair.mjs";
+import { closePairing, controlPort, controlRequest, expiryText, fullFleet, openPairing, removeDevice, setScriptAccess, watchPairing } from "../lib/pair.mjs";
 import { NotPlainFile, asAccount } from "../lib/private-files.mjs";
 import {
   ServiceAccountRefused,
@@ -1140,7 +1141,14 @@ async function start(argv = []) {
   // A headless deployment never exposes a desktop developer credential,
   // including when the operator launched it from a development shell.
   env.MURAGE_NO_DEV_DESKTOP_SECRET = "1";
-  env.MURAGE_COMPANION_TOKEN = randomBytes(32).toString("hex");
+  // The launch token goes to each child over its stdin pipe, which it reads
+  // once, never the environment, an argument or a file: an environment copy
+  // stays readable at /proc/<pid>/environ on Linux and a file can be raced by a
+  // same-user process (audit P1, S1b R8). Nothing ambient may stand in for it.
+  delete env.MURAGE_COMPANION_TOKEN;
+  delete env.MURAGE_COMPANION_TOKEN_FILE;
+  delete env.MURAGE_COMPANION_TOKEN_VIA;
+  const launchToken = randomBytes(32).toString("hex");
   // This start's door identity (lib/door-identity.mjs): recorded 0600 for
   // `setup` and `status`, handed to the sidecar only. An inherited one belongs
   // to some other start, and the harness has no use for it.
@@ -1179,7 +1187,8 @@ async function start(argv = []) {
   process.on("SIGINT", () => { void shutdown(130, "SIGINT"); });
   process.on("SIGTERM", () => { void shutdown(143); });
   try {
-    harness = ownChild(spawn(process.execPath, args, { env, stdio: "inherit" }));
+    harness = ownChild(spawn(process.execPath, args, { env: { ...env, ...launchSecretVia("MURAGE_COMPANION_TOKEN", "stdin") }, stdio: ["pipe", "inherit", "inherit"] }));
+    feedLaunchSecretStdin(harness.child, launchToken);
     harness.child.once("error", error => {
       if (!stopping) fail(`the harness could not start: ${error.message}`);
       void shutdown(1);
@@ -1189,6 +1198,7 @@ async function start(argv = []) {
       signal: startup.signal,
       doorNonce,
       doorVersion: INSTALLER_VERSION,
+      companionToken: launchToken,
       onStarted: child => { sidecar = child; },
       onError: error => {
         if (!stopping) fail(`the companion sidecar could not start: ${error.message}`);
@@ -1242,19 +1252,28 @@ export async function startSidecar(env, harnessPort, deps = {}) {
   // Said here as well as in `setup` because a box that was set up months ago
   // is restarted far more often than it is set up.
   log(c.dim("  device door  not opened (MURAGE_COMPANION_BIND=off)"));
-  const sidecar = spawn_({
+  let sidecar;
+  try {
+    sidecar = spawn_({
     resolved,
-    env: companionEnv({
-      base: env,
-      harnessPort,
-      doorPort: door,
-      dataDir: env.MURAGE_DATA_DIR || DATA_DIR,
-      publicOrigin: origin,
-      doorNonce: deps.doorNonce ?? null,
-      doorVersion: deps.doorVersion ?? INSTALLER_VERSION,
-    }),
-    stdio: "inherit",
+    env: {
+      ...companionEnv({
+        base: env,
+        harnessPort,
+        doorPort: door,
+        dataDir: env.MURAGE_DATA_DIR || DATA_DIR,
+        publicOrigin: origin,
+        doorNonce: deps.doorNonce ?? null,
+        doorVersion: deps.doorVersion ?? INSTALLER_VERSION,
+      }),
+      ...(deps.companionToken ? launchSecretVia("MURAGE_COMPANION_TOKEN", "stdin") : {}),
+    },
+    stdio: deps.companionToken ? ["pipe", "inherit", "inherit"] : "inherit",
   });
+  } catch (error) {
+    throw error;
+  }
+  if (deps.companionToken && sidecar.child?.stdin) feedLaunchSecretStdin(sidecar.child, deps.companionToken);
   deps.onStarted?.(sidecar);
   if (deps.onError) sidecar.child.on("error", deps.onError);
   if (deps.onExit) sidecar.child.on("exit", (code) => deps.onExit(code));
@@ -1624,12 +1643,19 @@ async function pair(argv = []) {
  */
 async function devices(argv = []) {
   heading("Murage: paired devices");
-  const [action, id, ...rest] = argv[0] === "remove" ? argv : [null, null, ...argv];
-  if (action === "remove" && !id) {
-    fail("say which device: `murage devices remove <id>`. Run `murage devices` to list them.");
+  const [action, id, ...rest] = argv[0] === "remove" || argv[0] === "script-access" ? argv : [null, null, ...argv];
+  if ((action === "remove" || action === "script-access") && !id) {
+    fail(`say which device: \`murage devices ${action} <id>\`. Run \`murage devices\` to list them.`);
     process.exit(EXIT.USAGE);
   }
-  const port = await provenControlPort(rest, "devices");
+  const port = await provenControlPort(action === "script-access" && rest[0] === "off" ? rest.slice(1) : rest, "devices");
+  if (action === "script-access") {
+    const allowed = rest[0] !== "off";
+    const done = await setScriptAccess({ port, id, allowed });
+    if (!done.ok) { fail(done.reason); process.exit(EXIT.ENVIRONMENT); }
+    ok(allowed ? "done. That device's browser can now make and switch off script access in Settings.\n" : "done. That device's browser can no longer make script access.\n");
+    return;
+  }
   if (action === "remove") {
     const removed = await removeDevice({ port, id });
     if (!removed.ok) { fail(removed.reason); process.exit(EXIT.ENVIRONMENT); }
@@ -1659,6 +1685,7 @@ function help() {
   ${c.b("murage status")}      Verify the posture: bind policy, enrolment, no public share
       ${c.dim("[--service-user <account>]")}  look where \`setup --service-user\` put things (when run as root)
   ${c.b("murage resetpass")}   Break-glass admin reset, if this build has one
+  ${c.b("murage devices script-access <id> [off]")}  Let that device's browser make script access (MCP, control CLI); \`off\` stops it
   ${c.b("murage pair")}        Pair a phone: show a QR and a 6-digit code, then wait for it
       ${c.dim("[--no-wait]")}  print the code and exit; the window stays open until used or expired
   ${c.b("murage devices")}     List paired phones and browsers, least recently used first

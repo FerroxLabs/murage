@@ -21,6 +21,7 @@ import { useMemo, useRef, useState } from "react";
 import { Bug, Folder, Monitor, Search, Square } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { OpenBotListButton } from "./OpenBotListButton";
 import { COMPACT_BUBBLE, COMPACT_SQUARE } from "@/lib/compact-chip";
 import { t } from "@/lib/i18n";
 import { possessive } from "@/lib/possessive";
@@ -35,7 +36,7 @@ import { CallButton } from "./CallControls";
 import { ChatHeaderMenu, type HeaderMenuItem } from "./ChatHeaderMenu";
 import { openFiles } from "./Files";
 import { MemoryLauncher } from "./MemoryLauncher";
-import { modShortcut } from "@/lib/keyboard-shortcuts";
+import { modShortcut } from "@/lib/mod-shortcut";
 import { ModelPicker } from "./ModelPicker";
 import { RenameTitle } from "./RenameTitle";
 import { RoleBadge } from "./RoleBadge";
@@ -303,8 +304,9 @@ export function ChatHeader({
       className={cn(
         "flex items-center gap-2 px-5 py-3",
         twoRow ? "flex-wrap" : "flex-nowrap",
-        // Room for the drawer button, which overlays this corner below md.
-        "pl-11 md:pl-5",
+        // Below md the drawer button is this row's first item, so the row
+        // starts nearer the edge; the desktop keeps its px-5.
+        "pl-3 md:pl-5",
         // The status bar sits over this row in a standalone install. calc()
         // rather than a bare pt-[env()] so the desktop keeps its py-3 top
         // padding when the inset resolves to 0px.
@@ -315,6 +317,9 @@ export function ChatHeader({
           space the controls leave instead of being the only thing that gives.
           `nameTrackMinimum` in the layout hook is what stops "what is left"
           from meaning zero. */}
+      {/* Phones only: the way into the bot list, on this row so it is centred
+          with the avatar, the name and the ••• (OpenBotListButton.tsx). */}
+      <OpenBotListButton />
       <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-1 chip-trim:gap-1.5 chip-trim:px-0">
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: true })}
@@ -429,7 +434,7 @@ export function ChatHeader({
               "shrink-0 rounded-md p-1.5 hover:bg-raised",
               state.computerOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
             )}
-            title={t("chatHeader.computer")}
+            title={t("chatHeader.computerTip")}
           >
             <Monitor size={18} />
           </button>

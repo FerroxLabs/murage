@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
-import { canRetryMemoryEvolution, memoryEvolutionCost, memoryEvolutionHistorySource, memoryEvolutionReason, runMemoryEvolutionAction, type MemoryEvolutionStatus } from "./memory-evolution-controls";
+import { canRetryMemoryEvolution, memoryEvolutionHistorySource, memoryEvolutionReason, runMemoryEvolutionAction, type MemoryEvolutionStatus } from "./memory-evolution-controls";
 const status=(patch:Partial<MemoryEvolutionStatus>={}):MemoryEvolutionStatus=>({authorized:false,corpus:{id:"memory-recall-groups",version:"1",kind:"synthetic"},policy:{revision:"baseline"},job:null,...patch});
-const job:NonNullable<MemoryEvolutionStatus["job"]>={id:"job",status:"deferred",reason:"MEMORY_EVOLUTION_INTERRUPTED",started:true,decision:null,publishedRevision:null,costKnown:false,actualCostUsd:null,heldout:null};
+const job:NonNullable<MemoryEvolutionStatus["job"]>={id:"job",status:"deferred",reason:"MEMORY_EVOLUTION_INTERRUPTED",started:true,decision:null,publishedRevision:null,heldout:null};
 it("enable authorizes only the shipped check and never sends a corpus hash or privacy label",async()=>{
   const request=vi.fn().mockResolvedValue(status({authorized:true}));await runMemoryEvolutionAction(request,status(),{action:"evolution-authorize"});
   expect(request.mock.calls[0]![0]).toBe("/api/memory/action");expect(JSON.parse(request.mock.calls[0]![1].body)).toEqual({action:"evolution-authorize"});
@@ -13,9 +13,7 @@ it("only the exact authorized started deferred job can be retried",async()=>{
   }
   await runMemoryEvolutionAction(request,status({authorized:true,job}),{action:"evolution-retry",jobId:"job"});expect(request).toHaveBeenCalledTimes(1);
 });
-it("unknown cost stays unknown and a passed but unapplied result is not labelled applied",()=>{
-  expect(memoryEvolutionCost(status({job:{...job,actualCostUsd:0}}))).toBe("Cost unavailable");
-  expect(memoryEvolutionCost(status({job:{...job,costKnown:true,actualCostUsd:0.001}}))).toBe("$0.001");
+it("a passed but unapplied result is not labelled applied",()=>{
   expect(memoryEvolutionReason(status({job:{...job,status:"complete",decision:"accepted"}}))).toContain("application has not been recorded");
 });
 it("policy restore uses the exact refreshed revision and supports the built-in baseline",async()=>{

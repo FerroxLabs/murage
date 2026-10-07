@@ -4,7 +4,7 @@ description: |
   Guide to crafting personal narrative from raw memory into structured memoir, covering truth versus story, ethical considerations, timeline selection, emotional distance, narrative structure, voice development, and protecting the people in your story. Use when the user asks about memoir writer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing"
   category: "writing"

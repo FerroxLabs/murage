@@ -38,9 +38,39 @@ export type NativeMethod =
   | "appLock"
   | "signOut"
   | "rePair"
-  | "setBadgeCount";
+  | "setBadgeCount"
+  // Plan 2: native remembers the open thread (Decision 2) and can show its
+  // list of computers. Additive; an older app simply does not list them.
+  | "setRoute"
+  | "showLauncher"
+  // iPhone native call audio (spec §4.1). iOS only: an older app, or
+  // Android, simply never lists them, and the call falls back to the web
+  // path (spec §4.3.2).
+  | "callAudioOpen"
+  | "callAudioClose"
+  | "callAudioPlay"
+  | "callAudioControl"
+  // Both platforms now (callbar-rereview.md M4; callbar-rereview2.md G3):
+  // this is the page telling native, fire-and-forget, that a call is open
+  // or has really ended, so a notification tap's reload can keep the
+  // route pending instead of silently ending the call the
+  // moss-approval-bug way. Started as Android's own addition — Android's
+  // native layer has no call-audio engine of its own and so no other way
+  // to know a call is live — but iOS needs it too: its own native
+  // call-audio session closes and reopens on every `lost`, Resume and a
+  // retry's stale close, none of which are a real hang-up, so it cannot
+  // tell when to actually deliver a held route. An older app simply never
+  // lists it.
+  | "callSessionOpen"
+  | "callSessionClose"
+  // Both platforms: one `[call-diag]` or `[call-trace]` console line, kept
+  // in a file on the device so a device call test leaves a readable record
+  // (src/lib/call-diag-forward.ts). A string argument, counts and enums only.
+  | "diagLine"
+  // SEC-006: native fresh authentication for a high-risk Allow. Both platforms; an older app never lists it and the page says to update.
+  | "approveWithDevice";
 
-export type NativeEventName = "resume" | "pause" | "notificationOpened" | "backButton";
+export type NativeEventName = "resume" | "pause" | "notificationOpened" | "backButton" | "callAudio";
 
 export interface NativeHello {
   version: number;
@@ -52,6 +82,25 @@ export interface NotificationOpened {
   threadId: string;
   messageId?: string;
 }
+
+/** The reply to `callAudioOpen`, sent once the microphone is running (spec
+ * §4.1). */
+export interface CallAudioOpened {
+  session: string;
+  sampleRate: 16000;
+  frame: 1024;
+}
+
+/** The `callAudio` event's detail shapes (spec §4.1). Every variant carries
+ * the open's `session`, so a stray event from a session the page already
+ * closed can be told apart from the current one. */
+export type CallAudioEvent =
+  | { type: "mic"; session: string; pcm: string }
+  | { type: "clip"; session: string; clip: string; state: "playing" | "progress" | "ended" | "failed" | "cut"; reason?: "stop" | "hold" | "next" }
+  | { type: "hold"; session: string; reason: "interrupted" | "background" | "media-reset" }
+  | { type: "resume"; session: string }
+  | { type: "lost"; session: string; reason: string }
+  | { type: "route"; session: string; output: "speaker" | "receiver" | "headphones" | "bluetooth" | "other" };
 
 const KNOWN_METHODS: ReadonlySet<string> = new Set<NativeMethod>([
   "ready",
@@ -65,6 +114,16 @@ const KNOWN_METHODS: ReadonlySet<string> = new Set<NativeMethod>([
   "signOut",
   "rePair",
   "setBadgeCount",
+  "setRoute",
+  "showLauncher",
+  "callAudioOpen",
+  "callAudioClose",
+  "callAudioPlay",
+  "callAudioControl",
+  "callSessionOpen",
+  "callSessionClose",
+  "diagLine",
+  "approveWithDevice",
 ]);
 
 type Bridge = Record<string, unknown> & { hello: () => unknown };
@@ -165,28 +224,126 @@ export function parseNotificationOpened(value: unknown): NotificationOpened | nu
   };
 }
 
+const MAX_CALL_AUDIO_PCM = 8_192;
+
+const CALL_AUDIO_CLIP_STATES = new Set(["playing", "progress", "ended", "failed", "cut"]);
+const CALL_AUDIO_CLIP_CUT_REASONS = new Set(["stop", "hold", "next"]);
+const CALL_AUDIO_HOLD_REASONS = new Set(["interrupted", "background", "media-reset"]);
+const CALL_AUDIO_ROUTE_OUTPUTS = new Set(["speaker", "receiver", "headphones", "bluetooth", "other"]);
+
+const isCallAudioClipState = (value: unknown): value is Extract<CallAudioEvent, { type: "clip" }>["state"] =>
+  typeof value === "string" && CALL_AUDIO_CLIP_STATES.has(value);
+const isCallAudioClipCutReason = (value: unknown): value is "stop" | "hold" | "next" =>
+  typeof value === "string" && CALL_AUDIO_CLIP_CUT_REASONS.has(value);
+const isCallAudioHoldReason = (value: unknown): value is Extract<CallAudioEvent, { type: "hold" }>["reason"] =>
+  typeof value === "string" && CALL_AUDIO_HOLD_REASONS.has(value);
+const isCallAudioRouteOutput = (value: unknown): value is Extract<CallAudioEvent, { type: "route" }>["output"] =>
+  typeof value === "string" && CALL_AUDIO_ROUTE_OUTPUTS.has(value);
+
+/** Drops anything native did not send exactly as spec §4.1 describes: an
+ * unknown `type`, a missing or wrong-typed field, or a `session`/`clip` past
+ * its id cap or a `pcm` past its own (2,048 bytes of PCM is about 2.7 KB of
+ * base64 text, so 8,192 chars leaves headroom without accepting anything
+ * unbounded). Nothing here is trusted enough to widen without a matching
+ * case in `CallAudioEvent`. */
+export function parseCallAudioEvent(value: unknown): CallAudioEvent | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const detail = value as Record<string, unknown>;
+  const session = detail.session;
+  if (!id(session)) return null;
+  switch (detail.type) {
+    case "mic": {
+      const pcm = detail.pcm;
+      if (typeof pcm !== "string" || pcm.length > MAX_CALL_AUDIO_PCM) return null;
+      return { type: "mic", session, pcm };
+    }
+    case "clip": {
+      const clip = detail.clip;
+      const state = detail.state;
+      if (!id(clip) || !isCallAudioClipState(state)) return null;
+      // reason is only meaningful with state "cut" (spec §4.1 rev 3); an
+      // unrecognised reason is dropped on its own, not the whole event, and
+      // a reason sent alongside any other state is ignored outright.
+      if (state === "cut" && isCallAudioClipCutReason(detail.reason)) {
+        return { type: "clip", session, clip, state, reason: detail.reason };
+      }
+      return { type: "clip", session, clip, state };
+    }
+    case "hold": {
+      const reason = detail.reason;
+      if (!isCallAudioHoldReason(reason)) return null;
+      return { type: "hold", session, reason };
+    }
+    case "resume":
+      return { type: "resume", session };
+    case "lost": {
+      const reason = detail.reason;
+      if (typeof reason !== "string" || reason.length === 0) return null;
+      return { type: "lost", session, reason };
+    }
+    case "route": {
+      const output = detail.output;
+      if (!isCallAudioRouteOutput(output)) return null;
+      return { type: "route", session, output };
+    }
+    default:
+      return null;
+  }
+}
+
 /** Subscribe to one of the app's events. Returns the unsubscribe, which is
- * always safe to call. A bridge without `on()` simply never fires. */
+ * always safe to call. A bridge without `on()` simply never fires.
+ *
+ * The wrapper handed to native's `on()` answers `true` for
+ * `notificationOpened` and `callAudio` exactly when the payload parsed, the
+ * subscription is still active, and the listener ran without throwing;
+ * otherwise it answers nothing. The native shells (`ChannelScript.java` /
+ * `.swift`) treat any other answer as unhandled: for `notificationOpened`
+ * that means a full reload onto the notification's thread route instead of
+ * the page updating in place; for `callAudio` it feeds the mic liveness
+ * watchdog (spec §4.2.7) — after 32 consecutive unhandled mic events (about
+ * 2 s) native closes the engine, on the theory that nothing is listening.
+ * Other events (`resume`, `pause`, `backButton`) always answer nothing,
+ * whatever the listener returns. */
 export function onNativeEvent(name: "notificationOpened", listener: (opened: NotificationOpened) => void): () => void;
-export function onNativeEvent(name: Exclude<NativeEventName, "notificationOpened">, listener: () => void): () => void;
+export function onNativeEvent(name: "callAudio", listener: (event: CallAudioEvent) => void): () => void;
+export function onNativeEvent(
+  name: Exclude<NativeEventName, "notificationOpened" | "callAudio">,
+  listener: () => void,
+): () => void;
 export function onNativeEvent(
   name: NativeEventName,
-  listener: ((opened: NotificationOpened) => void) | (() => void),
+  listener: ((opened: NotificationOpened) => void) | ((event: CallAudioEvent) => void) | (() => void),
 ): () => void {
   const native = bridge();
   if (!native || typeof native.on !== "function") return () => {};
   let active = true;
   let off: unknown;
   try {
-    const call = listener as (opened?: NotificationOpened) => void;
-    off = (native.on as (event: string, handler: (detail?: unknown) => void) => unknown)(name, (detail) => {
+    off = (native.on as (event: string, handler: (detail?: unknown) => unknown) => unknown)(name, (detail) => {
       if (!active) return;
-      if (name !== "notificationOpened") {
-        call();
-        return;
+      if (name === "notificationOpened") {
+        const opened = parseNotificationOpened(detail);
+        if (!opened) return;
+        try {
+          (listener as (opened: NotificationOpened) => void)(opened);
+        } catch {
+          return;
+        }
+        return true;
       }
-      const opened = parseNotificationOpened(detail);
-      if (opened) call(opened);
+      if (name === "callAudio") {
+        const event = parseCallAudioEvent(detail);
+        if (!event) return;
+        try {
+          (listener as (event: CallAudioEvent) => void)(event);
+        } catch {
+          return;
+        }
+        return true;
+      }
+      (listener as () => void)();
+      return;
     });
   } catch {
     return () => {};

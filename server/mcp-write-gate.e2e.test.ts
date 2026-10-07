@@ -29,6 +29,8 @@ const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const DESKTOP_SECRET = "0123456789abcdef".repeat(4);
+const COMMIT_TOKEN = "fedcba9876543210".repeat(4); // the link routes' own token (MURAGE_MCP_COMMIT_TOKEN)
+const MODEL_PROVIDER_TOKEN = "0011223344556677".repeat(4); // the model provider commit token: must NOT open them
 const DESKTOP_HEADERS = {
   "x-murage-surface": "desktop",
   "x-murage-surface-secret": DESKTOP_SECRET,
@@ -67,12 +69,15 @@ const REMOTE_SURFACES: Array<[string, Record<string, string>]> = [
 const storedServers = (): Record<string, any> =>
   JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8")).mcpServers ?? {};
 
+// This harness runs the packaged rule (MURAGE_SECRETS_EXTERNAL=1): an env value
+// never rides the body (MCP-LINK T16). The body names it with `true`, and main
+// pushes the value over the commit route (commitEnv below).
 const addServer = (name: string) =>
   desktop("POST", "/api/mcp/servers", {
     name,
     command: "notes-mcp",
     args: ["--stdio"],
-    env: { NOTES_TOKEN: "stored-secret-value" },
+    env: { NOTES_TOKEN: true },
   });
 
 beforeAll(async () => {
@@ -109,6 +114,11 @@ beforeAll(async () => {
       MURAGE_WEBHOOK_PORT: String(port + 1),
       MURAGE_STATIC_DIR: staticDir,
       MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
+      // The two locks of the link routes: the per-launch commit token the
+      // desktop shell holds, and the packaged rule that a body never carries a secret.
+      MURAGE_MODEL_PROVIDER_COMMIT_TOKEN: MODEL_PROVIDER_TOKEN,
+      MURAGE_MCP_COMMIT_TOKEN: COMMIT_TOKEN,
+      MURAGE_SECRETS_EXTERNAL: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -134,36 +144,57 @@ afterAll(async () => {
 
 describe("custom MCP routes are desktop-only", () => {
   it("lets the desktop add, list, edit, toggle, test and delete a server", async () => {
+    // T16: a value in the body is refused in the packaged app, and nothing is stored
+    const plaintext = await desktop("POST", "/api/mcp/servers", { name: "lifecycle", command: "notes-mcp", env: { NOTES_TOKEN: "stored-secret-value" } });
+    expect([plaintext.status, plaintext.body]).toEqual([400, { error: "Enter the value in its field." }]);
+    expect(storedServers()).toEqual({});
     const created = await addServer("lifecycle");
     expect(created.status).toBe(201);
     // a new command is inert until the person turns it on
     expect(created.body.servers).toEqual([{
+      kind: "stdio",
       name: "lifecycle",
       command: "notes-mcp",
       args: ["--stdio"],
       envKeys: ["NOTES_TOKEN"],
       enabled: false,
+      status: "needs-key",
     }]);
-    // the configured value is never echoed back, only its name
-    expect(JSON.stringify(created.body)).not.toContain("stored-secret-value");
-    expect(storedServers().lifecycle.env).toEqual({ NOTES_TOKEN: "stored-secret-value" });
+    // main pushes the value; config.json keeps `true`, the listing only the name
+    expect(await commit("PUT", "/api/mcp/servers/lifecycle/secrets", { env: { NOTES_TOKEN: "stored-secret-value" } })).toEqual({ status: 200, body: { ok: true } });
+    // a command server's push carries no origin
+    expect((await commit("PUT", "/api/mcp/servers/lifecycle/secrets", { origin: "http://127.0.0.1:1", env: { NOTES_TOKEN: "x" } })).status).toBe(400);
+    expect(storedServers().lifecycle.env).toEqual({ NOTES_TOKEN: true });
+    expect(JSON.stringify(storedServers())).not.toContain("stored-secret-value");
 
     const listed = await desktop("GET", "/api/mcp/servers");
     expect(listed.status).toBe(200);
     expect(listed.body.servers).toHaveLength(1);
+    expect(listed.body.servers[0]).toMatchObject({ status: "ready" });
+    expect(JSON.stringify(listed.body)).not.toContain("stored-secret-value");
 
-    // an empty value beside a saved key means "keep it"
+    // `true` beside a saved key means "keep it"; a new name arrives from main
+    // a new command with saved values must say whether to keep them (review L6)
+    const unsaid = await desktop("PUT", "/api/mcp/servers/lifecycle", {
+      command: "notes-mcp",
+      args: ["--stdio", "--verbose"],
+      env: { NOTES_TOKEN: true, MODE: true },
+    });
+    expect(unsaid.status).toBe(400);
+    expect(unsaid.body.code).toBe("env-choice");
     const edited = await desktop("PUT", "/api/mcp/servers/lifecycle", {
       command: "notes-mcp",
       args: ["--stdio", "--verbose"],
-      env: { NOTES_TOKEN: true, MODE: "read-only" },
+      env: { NOTES_TOKEN: true, MODE: true },
+      keepSavedValues: true,
     });
     expect(edited.status).toBe(200);
     expect(edited.body.servers[0].envKeys).toEqual(["MODE", "NOTES_TOKEN"]);
-    expect(storedServers().lifecycle.env).toEqual({
-      NOTES_TOKEN: "stored-secret-value",
-      MODE: "read-only",
-    });
+    expect(storedServers().lifecycle.env).toEqual({ NOTES_TOKEN: true, MODE: true });
+    // the test route needs every held value before it spawns anything
+    const missing = await desktop("POST", "/api/mcp/servers/lifecycle/test");
+    expect(missing.body).toEqual({ ok: false, reason: "needs-key", error: "This server needs a value for MODE. Enter it again." });
+    expect((await commit("PUT", "/api/mcp/servers/lifecycle/secrets", { env: { NOTES_TOKEN: "stored-secret-value", MODE: "read-only" } })).status).toBe(200);
 
     const toggled = await desktop("PATCH", "/api/mcp/servers/lifecycle", { enabled: true });
     expect(toggled.status).toBe(200);
@@ -269,5 +300,163 @@ describe("custom MCP routes are desktop-only", () => {
     expect(JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8")).language).toBe("en");
 
     expect((await desktop("DELETE", "/api/mcp/servers/guarded")).status).toBe(200);
+  });
+});
+
+// ── servers added by link (spec MCP-LINK 3.11) ───────────────────────────
+
+const COMMIT_HEADERS = { ...DESKTOP_HEADERS, authorization: `Bearer ${COMMIT_TOKEN}` } as const;
+const commit = (method: string, path: string, body?: unknown) => api(method, path, body, { ...COMMIT_HEADERS });
+const DEAD_LINK = "http://127.0.0.1:1/mcp";
+const addRemote = (name: string, extra: Record<string, unknown> = {}) =>
+  desktop("POST", "/api/mcp/servers", { name, url: DEAD_LINK, confirmLocal: "this-computer", headers: { "X-API-Key": true }, ...extra });
+
+describe("link routes are desktop-only, and the commit routes need the commit token too", () => {
+  it.each(REMOTE_SURFACES)("refuses inspect, secrets and sign-in target from a %s surface", async (_label, headers) => {
+    expect((await addRemote("gated")).status).toBe(201);
+    const before = storedServers();
+    for (const [method, path, body] of [
+      ["POST", "/api/mcp/inspect", { input: DEAD_LINK }],
+      ["PUT", "/api/mcp/servers/gated/secrets", { headers: { "X-API-Key": "smuggled" } }],
+      ["DELETE", "/api/mcp/servers/gated/secrets", undefined],
+      ["GET", "/api/mcp/servers/gated/oauth-target", undefined],
+    ] as const) {
+      const blocked = await api(method, path, body, { ...headers, authorization: `Bearer ${COMMIT_TOKEN}` });
+      expect([method, path, blocked.status, blocked.body]).toEqual([method, path, 404, { error: "no such route" }]);
+    }
+    expect(storedServers()).toEqual(before);
+    expect((await desktop("DELETE", "/api/mcp/servers/gated")).status).toBe(200);
+  });
+
+  it("M2: the model provider's commit token does not open the link routes, and the link token does not open the provider's", async () => {
+    expect((await addRemote("ownlock")).status).toBe(201);
+    const withProvider = { ...DESKTOP_HEADERS, authorization: `Bearer ${MODEL_PROVIDER_TOKEN}` };
+    for (const [method, path, body] of [
+      ["PUT", "/api/mcp/servers/ownlock/secrets", { headers: { "X-API-Key": "k" } }],
+      ["DELETE", "/api/mcp/servers/ownlock/secrets", undefined],
+      ["GET", "/api/mcp/servers/ownlock/oauth-target", undefined],
+    ] as const) {
+      const blocked = await api(method, path, body, withProvider);
+      expect([method, blocked.status]).toEqual([method, 404]);
+    }
+    const withMcp = { ...DESKTOP_HEADERS, authorization: `Bearer ${COMMIT_TOKEN}` };
+    for (const path of ["/api/flux-connection/replace", "/api/provider-connections/replace"]) {
+      const blocked = await api("POST", path, { bank: "", expectedRevision: "" }, withMcp);
+      expect([path, blocked.status]).toEqual([path, 404]);
+    }
+    expect((await api("GET", "/api/provider-connections/revision", undefined, withMcp)).status).toBe(404);
+    expect((await api("PUT", "/api/mcp/servers/ownlock/secrets", { origin: "http://127.0.0.1:1", headers: { "X-API-Key": "k" } }, withMcp)).status).toBe(200);
+    expect((await desktop("DELETE", "/api/mcp/servers/ownlock")).status).toBe(200);
+  });
+
+  it("the desktop proof alone is not enough for the commit routes: no token, a wrong token and a malformed token all get 404", async () => {
+    expect((await addRemote("locked")).status).toBe(201);
+    for (const authorization of [undefined, `Bearer ${"0".repeat(64)}`, `Bearer ${COMMIT_TOKEN.slice(1)}`, COMMIT_TOKEN, `Bearer ${COMMIT_TOKEN.toUpperCase()}`]) {
+      const headers: Record<string, string> = { ...DESKTOP_HEADERS, ...(authorization ? { authorization } : {}) };
+      for (const [method, path, body] of [
+        ["PUT", "/api/mcp/servers/locked/secrets", { headers: { "X-API-Key": "k" } }],
+        ["DELETE", "/api/mcp/servers/locked/secrets", undefined],
+        ["GET", "/api/mcp/servers/locked/oauth-target", undefined],
+      ] as const) {
+        const blocked = await api(method, path, body, headers);
+        expect([String(authorization), method, blocked.status]).toEqual([String(authorization), method, 404]);
+      }
+    }
+    expect((await desktop("GET", "/api/mcp/servers")).body.servers[0]).toMatchObject({ name: "locked", status: "needs-key" });
+    expect((await desktop("DELETE", "/api/mcp/servers/locked")).status).toBe(200);
+  });
+});
+
+describe("link servers through the routes", () => {
+  it("adds a link server, never takes a secret in the body, takes it through the commit route, and forgets it on delete", async () => {
+    // a literal key in the body is refused; nothing is stored
+    const refused = await addRemote("keyed", { headers: { "X-API-Key": "sk-live-IN-THE-BODY" } });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toBe("Enter the key in the key field.");
+    expect(JSON.stringify(refused.body)).not.toContain("sk-live-IN-THE-BODY");
+    expect(storedServers()).toEqual({});
+    // a link that holds a key is refused too
+    expect((await addRemote("keyed", { url: "http://127.0.0.1:1/mcp?key=abc" })).status).toBe(400);
+
+    const created = await addRemote("keyed");
+    expect(created.status).toBe(201);
+    expect(created.body.servers).toEqual([{
+      kind: "remote", name: "keyed", url: DEAD_LINK, host: "127.0.0.1", auth: "header",
+      headerNames: ["X-API-Key"], local: "this-computer", enabled: false, status: "needs-key",
+    }]);
+    // the stored entry has the name and a true placeholder, never a value
+    expect(storedServers().keyed).toMatchObject({ url: DEAD_LINK, headers: { "X-API-Key": true }, local: "this-computer", enabled: false });
+
+    // main pushes the value over the commit route
+    const pushed = await commit("PUT", "/api/mcp/servers/keyed/secrets", { origin: "http://127.0.0.1:1", headers: { "X-API-Key": "sk-live-FROM-MAIN" }, oauth: { accessToken: "at-1", refreshToken: "RT-NEVER-HERE" } });
+    expect(pushed).toEqual({ status: 200, body: { ok: true } });
+    const listed = await desktop("GET", "/api/mcp/servers");
+    expect(listed.body.servers[0]).toMatchObject({ name: "keyed", status: "ready" });
+    expect(JSON.stringify(listed.body)).not.toMatch(/sk-live-FROM-MAIN|at-1|RT-NEVER-HERE/);
+    expect(JSON.stringify(storedServers())).not.toMatch(/sk-live-FROM-MAIN|at-1|RT-NEVER-HERE/);
+
+    // the test route uses the stored value and reports in public language; nothing listens on port 1
+    const tested = await desktop("POST", "/api/mcp/servers/keyed/test");
+    expect(tested.status).toBe(200);
+    expect(tested.body).toMatchObject({ ok: false, reason: "unreachable" });
+    expect(JSON.stringify(tested.body)).not.toContain("sk-live-FROM-MAIN");
+
+    // a bad push is refused
+    expect((await commit("PUT", "/api/mcp/servers/keyed/secrets", { nothing: "useful" })).status).toBe(400);
+    expect((await commit("PUT", "/api/mcp/servers/nosuch/secrets", { headers: { K: "v" } })).status).toBe(404);
+
+    // deleting the entry clears its secrets: a new entry of the same name starts empty
+    expect((await desktop("DELETE", "/api/mcp/servers/keyed")).status).toBe(200);
+    expect((await addRemote("keyed")).body.servers[0]).toMatchObject({ status: "needs-key" });
+    expect((await desktop("DELETE", "/api/mcp/servers/keyed")).status).toBe(200);
+  });
+
+  it("clears a server's secrets through the commit route", async () => {
+    expect((await addRemote("clearing")).status).toBe(201);
+    await commit("PUT", "/api/mcp/servers/clearing/secrets", { origin: "http://127.0.0.1:1", headers: { "X-API-Key": "k-1234" } });
+    expect((await desktop("GET", "/api/mcp/servers")).body.servers[0].status).toBe("ready");
+    expect(await commit("DELETE", "/api/mcp/servers/clearing/secrets")).toEqual({ status: 200, body: { ok: true } });
+    expect((await desktop("GET", "/api/mcp/servers")).body.servers[0].status).toBe("needs-key");
+    expect((await desktop("DELETE", "/api/mcp/servers/clearing")).status).toBe(200);
+  });
+
+  it("inspect saves nothing, asks before connecting to a local link, and needs JSON", async () => {
+    const before = storedServers();
+    const asked = await desktop("POST", "/api/mcp/inspect", { input: DEAD_LINK });
+    expect(asked.status).toBe(200);
+    expect(asked.body).toMatchObject({ ok: true, source: "link", drafts: [{ kind: "remote", name: expect.any(String), probe: { ok: false, reason: "local-confirm", needs: "this-computer" } }] });
+    const again = await desktop("POST", "/api/mcp/inspect", { input: DEAD_LINK, confirmLocal: "this-computer" });
+    expect(again.body.drafts[0].probe).toMatchObject({ ok: false, reason: "unreachable" });
+    expect(storedServers()).toEqual(before);
+    expect((await desktop("POST", "/api/mcp/inspect", { input: "x", confirmLocal: "bogus" })).status).toBe(400);
+    const textPlain = await fetch(`${base}/api/mcp/inspect`, { method: "POST", headers: { ...DESKTOP_HEADERS, "content-type": "text/plain" }, body: "{}" });
+    expect(textPlain.status).toBe(415);
+  });
+
+  it("a local confirmation in the body comes only from confirmLocal, a pasted local key is ignored", async () => {
+    const res = await desktop("POST", "/api/mcp/servers", { name: "sneaky", url: "http://192.168.1.5/mcp", local: "local-network", headers: { "X-K": true } });
+    expect(res.status).toBe(201);
+    expect(storedServers().sneaky).not.toHaveProperty("local");
+    expect((await desktop("DELETE", "/api/mcp/servers/sneaky")).status).toBe(200);
+  });
+
+  it("counts link and command servers together against the limit of 20", async () => {
+    for (let index = 0; index < 20; index += 1) {
+      const res = index % 2 === 0 ? await addServer(`fill${index}`) : await addRemote(`fill${index}`);
+      expect([index, res.status]).toEqual([index, 201]);
+    }
+    const over = await addRemote("fill20");
+    expect(over.status).toBe(400);
+    expect(over.body.error).toMatch(/at most 20/);
+    for (let index = 0; index < 20; index += 1) await desktop("DELETE", `/api/mcp/servers/fill${index}`);
+    expect(storedServers()).toEqual({});
+  });
+
+  it("the sign-in target needs the desktop shell: without one it says so", async () => {
+    expect((await addRemote("signin", { auth: "oauth", headers: undefined })).status).toBe(201);
+    const target = await commit("GET", "/api/mcp/servers/signin/oauth-target");
+    expect(target.status).toBe(409);
+    expect(target.body.error).toBe("Sign in needs the Murage desktop app.");
+    expect((await desktop("DELETE", "/api/mcp/servers/signin")).status).toBe(200);
   });
 });

@@ -310,7 +310,6 @@ invokes; `rmSync`/`rm`/`rm -rf` rows are the allowlisted ones in section 5.
 | `electron/vendor-updater.node-test.mjs:153` | `safeWipeSync` | `workspace` | L152 `mkdtempSync(join(tmpdir(), "murage-appimage-failed-"));` |
 | `electron/workspace-file-actions.node-test.mjs:20` | `safeWipeSync` | `root` | `scratch()` mkdtemp under tmpdir (L15-24) |
 | `electron/workspace-file-actions.node-test.mjs:132` | `safeWipeSync` | `join(nested.root` | `nested.root` from `fixture()`, a mkdtemp under tmpdir (L128) |
-| `ember-rename.sh:54` | `safe_wipe` | `$D` | L46 `"$(mktemp -d)"; R="$D/rules.pl"` |
 | `installer/lib/tailscale.mjs:272` | `rmSync` | `join(path` | `path` is the auth-key file inside the private mkdtemp dir `shredAuthKeyFile` created; `join(path, "..")` is that mkdtemp dir (runtime, allowlisted) |
 | `installer/test/door-port.test.mjs:60` | `safeWipeSync` | `dir` | L56 `realpathSync(mkdtempSync(join(tmpdir(), "murage-door-test-")));` |
 | `installer/test/no-public-exposure.test.mjs:119` | `safeWipeSync` | `dir` | L111 `mkdtempSync(join(tmpdir(), "murage-lane-scan-"));` |
@@ -319,7 +318,6 @@ invokes; `rmSync`/`rm`/`rm -rf` rows are the allowlisted ones in section 5.
 | `installer/test/systemd.test.mjs:69` | `safeWipeSync` | `dir` | L64 `realpathSync(mkdtempSync(join(tmpdir(), "murage-systemd-test-")));` |
 | `installer/test/ui-secret.test.mjs:129` | `safeWipeSync` | `dir` | `dir` is `realpathSync(mkdtempSync(join(tmpdir(), "murage-ui-secret-")))` (L138) |
 | `installer/test/unattended.test.mjs:56` | `safeWipeSync` | `dir` | L51 `realpathSync(mkdtempSync(join(tmpdir(), "murage-unattended-test-")));` |
-| `rebrand.sh:81` | `safe_wipe` | `$RULESDIR` | L70 `"$(mktemp -d)"; RULES="$RULESDIR/rules.pl"` |
 | `scripts/bench-concurrency.ts:158` | `removeTempDir` | `home` | L12 `mkdtempSync(join(tmpdir(), "murage-concurrency-"));` |
 | `scripts/bench-memory-service.ts:85` | `safeWipeSync` | `root` | L19 `mkdtempSync(join(tmpdir(),"murage-memory-service-benchmark-"));process.env.MURAGE_DATA_DIR` |
 | `scripts/bench-memory.ts:64` | `safeWipeSync` | `dir` | L24 `mkdtempSync(join(tmpdir(), "murage-memory-baseline-"));` |
@@ -466,7 +464,6 @@ invokes; `rmSync`/`rm`/`rm -rf` rows are the allowlisted ones in section 5.
 | `src/e2e/memory-provenance-fuigo.human.spec.ts:51` | `safeWipeSync` | `DATA_DIR` | L31 `laneDataDir("this proof never uses ~/.murage");` |
 | `src/e2e/model-catalog-refresh.human.spec.ts:44` | `safeWipeSync` | `cache` | L12 `mkdtempSync(join(tmpdir(), "murage-model-refresh-"));` |
 | `src/e2e/notification-settings.human.spec.ts:39` | `safeWipeSync` | `cache` | L15 `mkdtempSync(join(tmpdir(), "murage-notification-settings-ui-"));` |
-| `src/e2e/onboarding-save.human.spec.ts:84` | `safeWipeSync` | `cache` | L23 `mkdtempSync(join(tmpdir(), "murage-onboarding-vite-"));` |
 | `src/e2e/prepare-scratch.mjs:24` | `safeWipeSync` | `resolved` | L20 `== resolve(join(homedir(), ".murage"))) {` |
 | `src/e2e/provider-error.human.spec.ts:35` | `safeWipeSync` | `cache` | L12 `mkdtempSync(join(tmpdir(), "murage-provider-error-ui-"));` |
 | `src/e2e/question-card.human.spec.ts:127` | `safeWipeSync` | `cache` | L83 `mkdtempSync(join(tmpdir(), "murage-question-card-"));` |

@@ -207,13 +207,10 @@ describe("nothing in the app is gated on a Flux key", () => {
     "components/Composer.tsx",
     // ConnectedAppsLock reads it to decide whether the Connected apps panel is
     // the offer or the catalog. It clears the same bar: Ferrox-paid Composio
-    // is brokered only through FluxRouter, so with no key of either kind the
-    // panel has nothing it could fetch — but a person's OWN Composio key
-    // (`composio.configured`, server/composio.ts "self-hosted") unlocks it
-    // with no Flux key at all, a remembered inventory stays visible, MCP
+    // is brokered only through FluxRouter, so with no Flux key the panel has
+    // nothing it could fetch, a remembered inventory stays visible, MCP
     // servers are untouched, and the locked panel says where to unlock
-    // (Add FluxRouter key, or the own-key link to Advanced). If the lock ever
-    // stops honouring the own key, this entry has to go with it.
+    // (Add FluxRouter key).
     "components/ConnectedAppsLock.tsx",
   ]);
 
@@ -242,17 +239,13 @@ describe("nothing in the app is gated on a Flux key", () => {
     expect(readers).toContain("lib/use-flux-invite.ts");
   });
 
-  it("Connected apps lock opens on the person's own Composio key, with no Flux key", () => {
-    // The condition ConnectedAppsLock's OWNERS entry rests on: the lock is an
-    // offer, not a Flux gate. Without a key of either kind it points at both
-    // ways in; the person's own key alone unlocks it.
+  it("Connected apps lock is an offer with one way in: the Flux key", () => {
     const noKeys = { composio: { configured: false, mode: "unavailable" as const }, flux: { configured: false } };
     expect(connectedAppsLockState(noKeys)).toBe("locked");
-    expect(connectedAppsLockState({ composio: { configured: true, mode: "self-hosted" }, flux: { configured: false } })).toBe("unlocked");
-    expect(connectedAppsLockState({ composio: { configured: true, mode: "self-hosted" } })).toBe("unlocked");
+    expect(connectedAppsLockState({ composio: { configured: false, mode: "unavailable", ownKeyRetired: true }, flux: { configured: false } })).toBe("locked");
     const lock = readFileSync(join(srcRoot, "components/ConnectedAppsLock.tsx"), "utf8");
-    expect(lock).toContain("onOwnKey");
-    expect(lock).toContain('t("connectedApps.lock.ownKey")');
+    expect(lock).not.toContain("onOwnKey");
+    expect(lock).not.toContain("connectedApps.lock.ownKey");
   });
 
   it("Models uses Flux configuration only as saved-key status", () => {

@@ -6,7 +6,7 @@ description: |
   Do NOT use for full paper structure (use research-paper-structure), abstract writing (use abstract-writing), or non-academic arguments (use different writing skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "academic-writing writing research"
   category: "writing"

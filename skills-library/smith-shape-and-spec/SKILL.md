@@ -1,8 +1,9 @@
 ---
 name: smith-shape-and-spec
 description: "Use this skill when the team is about to start a build and the appetite is unspoken. If a teammate or the user hands you a feature request without naming how long they're willing to bet on it, run this procedure before any spec. Also use it when an in-flight build is sliding past its budget and some"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "smith"
 ---

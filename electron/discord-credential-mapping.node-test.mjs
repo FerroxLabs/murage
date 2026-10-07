@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { secretWriteRefusal } from "./secret-storage-policy.mjs";
 import { migrateWorkspaceCredentials, workspaceCredentialEnv, WORKSPACE_CREDENTIALS } from "./workspace-credentials.mjs";
 const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
 test("Discord credentials use canonical encrypted rows and preserve chosen identity", () => {
@@ -22,14 +23,15 @@ test("actual Discord credential IPC uses encrypted commit even in dev, and refus
     let invoke, persisted = 0, posted = 0, proofAsked = 0;
     // The handler asks for the desktop proof on demand (the harness may not be
     // one this process forked), so the fixture answers that request too.
-    new Function("ipcMain", "safeStorage", "updateSecureCredentialDocument", "fetch", "ensureDesktopSurfaceSecret", `
+    new Function("ipcMain", "safeStorage", "updateSecureCredentialDocument", "fetch", "ensureDesktopSurfaceSecret", "secretWriteRefusal", `
+      const assertSecretStorageWritable=async()=>{const r=await secretWriteRefusal({safeStorage,platform:"darwin"});if(r)throw new Error(r);};
       const app={isPackaged:false},desktopSurfaceSecret="fixture-proof",SERVER_PORT=1;
       const CREDENTIAL_PATCH={discordBotToken:value=>({discord:{botToken:value}})};
       ${handler}
     `)({ handle: (_name, fn) => { invoke = fn; } }, { isAsyncEncryptionAvailable: async () => encrypted },
       async (derive, apply) => { assert.equal(derive({}).discordBotToken, "fake-secret"); persisted++; return apply(); },
       async (url, init) => { assert.match(url, /secretStorage=external$/); assert.equal(init.headers["x-murage-surface-secret"], "fixture-proof"); posted++; return { ok: true, json: async () => ({ saved: true }) }; },
-      async () => { proofAsked++; return "fixture-proof"; });
+      async () => { proofAsked++; return "fixture-proof"; }, secretWriteRefusal);
     if (encrypted) { await invoke({}, "discordBotToken", "fake-secret"); assert.equal(persisted, 1); assert.equal(posted, 1); assert.equal(proofAsked, 1); }
     else { await assert.rejects(invoke({}, "discordBotToken", "fake-secret"), /credential store is unavailable/); assert.equal(persisted, 0); assert.equal(posted, 0); assert.equal(proofAsked, 0); }
   }

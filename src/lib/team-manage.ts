@@ -16,6 +16,10 @@ export interface TeamView {
   members: Array<{ id: string; name: string; lead: boolean; chief: boolean; archived: boolean }>;
   channels: Array<{ id: string; name: string; archived: boolean }>;
   hasInstructions: boolean;
+  /** The team's stable id (SPEC-X 12.2); null before anything named it. */
+  id?: string | null;
+  /** Bots from other teams shared with this one, each with the owner's load line. */
+  sharedIn?: Array<{ botId: string; name: string; from: string; load: string }>;
 }
 
 /** What a change touched, every field spelled out (null = none). */

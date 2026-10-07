@@ -28,7 +28,9 @@ it("separates private, room and team scopes even at deep delegation", () => {
   expect(() => assertMemoryAccess(f.access,ensureScope("team","alpha"))).not.toThrow();
   expect(() => assertMemoryAccess(f.access,ensureScope("bot","b"))).toThrow("MEMORY_SCOPE_DENIED");
   expect(() => assertMemoryAccess(f.access,ensureScope("team","beta"))).toThrow("MEMORY_SCOPE_DENIED");
-  expect(() => assertMemoryAccess(f.access,ensureScope("conversation","private-a"))).toThrow("MEMORY_SCOPE_DENIED");
+  // 0.1.61 lane M recall both ways: its own direct chat too, never a teammate's
+  expect(() => assertMemoryAccess(f.access,ensureScope("conversation","private-a"))).not.toThrow();
+  expect(() => assertMemoryAccess(f.access,ensureScope("conversation","private-b"))).toThrow("MEMORY_SCOPE_DENIED");
   expect(() => assertMemoryAccess({...f.access})).toThrow("MEMORY_UNAUTHORIZED");
 });
 it("checks current membership on every read and invalidates generations", () => {

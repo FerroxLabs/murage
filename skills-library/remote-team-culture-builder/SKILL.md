@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of remote team culture builder or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management budgeting template safety performing-arts investing tax-planning pet-care"
   category: "productivity"

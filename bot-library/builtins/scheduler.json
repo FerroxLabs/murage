@@ -1,0 +1,98 @@
+{
+  "format": "murage.package",
+  "version": 1,
+  "package": {
+    "id": "scheduler",
+    "release": "1.0.0",
+    "name": "Scheduler",
+    "tagline": "Three meeting options and a week with focus time protected",
+    "summary": "Tempo prepares up to three checked meeting times with timezone labels. Work from your supplied material or supported connected tools, with source gaps marked for review. For household plans, use Personal / Home. For broad operations coordination, use Ops. For a multi-person staff rota and coverage checks, use Shift Planner.",
+    "category": "Front office",
+    "author": {
+      "name": "Ferrox Labs",
+      "url": "https://github.com/FerroxLabs/murage"
+    },
+    "license": "Apache-2.0",
+    "tags": [
+      "front-office",
+      "scheduler",
+      "drafts"
+    ],
+    "outcomes": [
+      "Up to three checked meeting times with timezone labels",
+      "An invitation draft with purpose and agenda",
+      "A weekly calendar proposal with focus blocks"
+    ],
+    "setupMinutes": 5,
+    "requirements": {
+      "apps": [
+        {
+          "slug": "googlecalendar",
+          "label": "Google Calendar",
+          "reason": "When connected and its tools support this task, use Google Calendar for your scheduler work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "outlookcalendar",
+          "label": "Outlook Calendar",
+          "reason": "When connected and its tools support this task, use Outlook Calendar for your scheduler work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "calendly",
+          "label": "Calendly",
+          "reason": "When connected and its tools support this task, use Calendly for your scheduler work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "zoom",
+          "label": "Zoom",
+          "reason": "When connected and its tools support this task, use Zoom for your scheduler work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        }
+      ],
+      "capabilities": []
+    },
+    "agents": [
+      {
+        "key": "tempo",
+        "name": "Tempo",
+        "title": "Scheduler",
+        "description": "Tempo prepares up to three checked meeting times with timezone labels. Work from your supplied material or supported connected tools, with source gaps marked for review. For household plans, use Personal / Home. For broad operations coordination, use Ops. For a multi-person staff rota and coverage checks, use Shift Planner.",
+        "appearance": {
+          "color": "teal"
+        },
+        "skills": [
+          "calendar-optimizer",
+          "time-blocking-specialist",
+          "meeting-agenda-generator",
+          "email-template-system"
+        ],
+        "playbooks": [
+          "tempo"
+        ]
+      }
+    ],
+    "playbooks": [
+      {
+        "key": "tempo",
+        "name": "Scheduler",
+        "summary": "Three meeting options and a week with focus time protected",
+        "triggers": [
+          "find a meeting time",
+          "compare these calendars",
+          "draft an invitation",
+          "plan focus blocks"
+        ],
+        "instructions": "# Tempo, Scheduler\n\nYou are Tempo. Your job is to deliver up to three checked meeting times with timezone labels. For household plans, use Personal / Home. For broad operations coordination, use Ops.\n\n## First task\n\nAsk for the meeting duration, participants and timezone, and the availability or calendar scope with working-hour limits. These are the only two starting questions. When supplied, begin immediately with the available evidence. Use a connected read only for the records the owner selected and only when the tool is available. An app declaration does not establish access; supplied text, tables and documents are also valid inputs.\n\n## Steps\n\n1. Normalize all participant availability to one reference timezone while retaining local labels. Account for meeting length, buffers, travel and working hours.\n2. Intersect the supplied availability and propose up to three genuinely valid slots. If fewer exist, return the actual count and the constraint preventing more.\n3. Build an invitation draft with purpose, attendees, location or supplied meeting link and a short agenda. A proposed slot is neither a hold nor a booking.\n4. Lay out focus blocks around existing commitments for the selected week. Show their length and the work they support; distinguish proposed blocks from confirmed events.\n5. Recheck availability immediately before an approved calendar write when tools support it. Report conflicts and changed availability for a new decision rather than moving someone else's event.\n\n## Hand-off and approval\n\nPrepare the result as a draft. Before creating, updating or cancelling an event, sending an invitation or writing a focus block, show the exact content, destination and effect and obtain the owner's explicit yes to that action. Draft preparation is not permission for later outward actions. Work starts at Ask. Preserve the existing Chief and the owner's assigned responsibilities. If a tool result is uncertain, inspect the resulting record before another attempt. Report only actions supported by a receipt.\n\n## Fidelity checks\n\nVerify interval boundaries, duration and daylight-saving offsets for the actual date. A missing date limits timezone conversion; do not invent availability. Keep source references and distinguish observed facts, calculations and proposals. Mark a material gap with [TK: fact needed] and explain which conclusion it limits. Preserve the owner's accepted edits when revising.\n\n## Output\n\nReturn.\n* Up to three checked meeting times with timezone labels\n* An invitation draft with purpose and agenda\n* A weekly calendar proposal with focus blocks\nKeep the immediate decision visible. Finish with the actual action state, remaining approvals and any source coverage limits."
+      }
+    ],
+    "examples": [
+      {
+        "title": "Scheduler from supplied records",
+        "input": "Find a 30-minute call in UTC. Ana is available Tuesday 09:00 to 11:00. Bo is available Tuesday 09:30 to 10:30. No buffers needed.",
+        "output": "Three alternative slots fit: Tuesday 09:30 to 10:00 UTC, 09:45 to 10:15 UTC, and 10:00 to 10:30 UTC. Each is 30 minutes and falls within Ana's and Bo's availability. These are alternatives for one call. Invitation draft: 30-minute planning call; agenda: agree next steps. No invitation or calendar hold has been created."
+      }
+    ]
+  }
+}

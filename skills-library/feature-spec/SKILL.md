@@ -5,7 +5,7 @@ description: |
   Do NOT use for high-level PRDs (use prd-writing), technical architecture specs (use technical-specification), or user stories only (use user-story-writing).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "planning template strategy agile project-management"
   category: "business-strategy"

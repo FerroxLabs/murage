@@ -1,9 +1,10 @@
 // Where a link or a tapped phone notification lands. Mounted once, in Shell.
 import { useEffect, useMemo, useRef } from "react";
 
-import { useStore } from "@/state/store";
+import { useStore, visibleNotificationThread } from "@/state/store";
 import { createDeepLinkQueue, openDeepLink, openHashHref, parseOpenHash } from "@/lib/deep-link";
 import { callNative, nativeAvailable, onNativeEvent } from "@/lib/native-shell";
+import { reportRoute } from "@/lib/native-route";
 
 export function useDeepLinks() {
   const { state, dispatch } = useStore();
@@ -51,4 +52,12 @@ export function useDeepLinks() {
     toldNativeReady.current = true;
     void nativeAvailable("ready").then((available) => (available ? callNative("ready") : undefined)).catch(() => {});
   }, [state.hydrated, queue]);
+
+  // Which chat is open, for the phone app to reopen after its WebView dies or
+  // the app is killed (Plan 2, Decision 2). Nothing before the first snapshot:
+  // until then there is no real answer.
+  const onScreen = state.hydrated ? visibleNotificationThread(state) : null;
+  useEffect(() => {
+    reportRoute(onScreen);
+  }, [onScreen]);
 }

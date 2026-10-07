@@ -37,6 +37,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { openSidebar } from "./fixtures.ts";
 import type { Artifact } from "../../shared/artifacts.ts";
 import type { MediaResolveResponse } from "../../shared/media-assets.ts";
+import { openSidebarPlace } from "./sidebar-nav";
 
 interface Fixture {
   info: { url: string; dataDir: string; logPath: string }; fixtureDumpPath: string; child: ChildProcess;
@@ -81,6 +82,9 @@ let first: { referenceId: string; artifactId: string };
 async function ownerProof() {
   const proof = await (await fetch(fixture.info.url + "/api/desktop-secret")).json() as { secret: string };
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
+  // This workspace reads as an update, so What's new would open over the
+  // page; a person sees it once, and so does this fixture.
+  await request("/api/whats-new/seen", "POST", { version: JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version });
 }
 async function request(path: string, method = "GET", body?: unknown) {
   return fetch(fixture.info.url + path, { method, headers: { ...headers, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(10_000) });
@@ -234,13 +238,9 @@ async function openApp(page: Page) {
 }
 async function selectBot(page: Page, bot: Bot) {
   const sidebar = await openSidebar(page);
-  // The row's name label sits over its select button's centre, so a pointer
-  // click lands on the label; sidebar-hit-areas.human.spec.ts owns pointer
-  // hit-testing, and this spec selects the row the keyboard way.
-  const row = sidebar.locator(`[data-sidebar-select="${bot.id}"]`).first();
-  await row.focus();
-  await page.keyboard.press("Enter");
-  await expect(row).toHaveAttribute("aria-pressed", "true");
+  // Click the row where a person does, on its name: the row's select button
+  // sits underneath the name, which takes the click (and a double-click renames).
+  await sidebar.getByText(bot.name, { exact: true }).first().click();
   return sidebar;
 }
 const lightbox = (page: Page) => page.getByTestId("image-lightbox");
@@ -415,8 +415,7 @@ test("one approved generation is one attachment, one receipt and one saved versi
   await selectBot(page, imageBot);
   await expect(thumbs).toHaveCount(1);
 
-  await sidebar.getByRole("button", { name: /^Tools/ }).click();
-  await sidebar.getByRole("menu", { name: "Tools" }).getByRole("menuitem", { name: "Files", exact: true }).click();
+  await openSidebarPlace(sidebar, "files");
   const files = page.getByRole("dialog", { name: "Files", exact: true });
   await expect(files).toBeVisible();
   const card = files.locator(`[data-artifact-id="${artifactId}"]`);
@@ -508,8 +507,7 @@ test("a received image whose attachment cannot be written is retained, shown as 
   await page.keyboard.press("Escape");
   await expect(lightbox(page)).toHaveCount(0);
   const sidebar = await openSidebar(page);
-  await sidebar.getByRole("button", { name: /^Tools/ }).click();
-  await sidebar.getByRole("menu", { name: "Tools" }).getByRole("menuitem", { name: "Files", exact: true }).click();
+  await openSidebarPlace(sidebar, "files");
   const files = page.getByRole("dialog", { name: "Files", exact: true });
   await expect(files.locator("[data-artifact-id]")).toHaveCount(2);
   await expect(files.locator(`[data-artifact-id="${recovered.artifact_id}"]`)).toContainText("Saved copy");

@@ -1,0 +1,13 @@
+{
+  "approvalKey": "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU",
+  "challenge": "ccccccccccccccccccccccccccccccccccccccccccc",
+  "installId": "install-0123456789abcdef",
+  "keyHash": "698bea63dc44a344663ff1429aea10842df27b6b991ef25866b2c6c02cdcc5be",
+  "bindingNonce": "UN2c6c0F-1AOnOUvSdQGdncHDywJnuy_rPVYm56KLhI",
+  "iosClientDataHashHex": "df45c0e3ac68cc431601f75595398501891217baef7ef14adbc4ec2414c7c2ae",
+  "testKid": "test-1",
+  "testPkcs8": "MC4CAQAwBQYDK2VwBCIEIAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH",
+  "testPublicKey": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+  "issuedAt": 1790000000000,
+  "statement": "bXVyYWdlLWFwcHJvdmFsLWF0dGVzdGF0aW9uLzEKdGVzdC0xCmlvcwpwcm9kdWN0aW9uCmluc3RhbGwtMDEyMzQ1Njc4OWFiY2RlZgo2OThiZWE2M2RjNDRhMzQ0NjYzZmYxNDI5YWVhMTA4NDJkZjI3YjZiOTkxZWYyNTg2NmIyYzZjMDJjZGNjNWJlCjE3OTAwMDAwMDAwMDAKMTc5MDAwMDYwMDAwMA.mHBxs15-vGm46N8c5GoYlNOj3JG-Ghf5BwdyzwJ9ubbxjkN-AP8ePvSiWLzHnpgEsNwtocAIb51zwyGqczNUDg"
+}

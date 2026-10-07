@@ -44,6 +44,20 @@ it.each(["autoApprove", "alwaysAllow"])("task %s authority refuses review even w
   expect(() => reviewInstallation(f.target)).toThrowError(expect.objectContaining({ code: "RESTORE_WORK_NOT_PAUSED" }));
   expect(() => assertRestoreReviewed(f.target)).toThrow();
 });
+it.each([["useMyChrome", true], ["browserTransport", "extension"], ["browserExtensionProfileId", "profile_1"], ["messageAllow", { mode: "list", botIds: ["x"] }], ["imageApproval", "allow"], ["browserApproval", "full"], ["browserApproval", "step"]])("restored bot field %s refuses review", async (field, value) => {
+  const f = await fixture();
+  const path = join(f.target, "bots.json"), bots = JSON.parse(readFileSync(path, "utf8"));
+  expect(bots[0].useMyChrome).toBe(false);
+  bots[0][field] = value;
+  writeFileSync(path, JSON.stringify(bots));
+  expect(() => reviewInstallation(f.target)).toThrowError(expect.objectContaining({ code: "RESTORE_WORK_NOT_PAUSED" }));
+});
+it("a restored browser setup card that could still continue refuses review", async () => {
+  const f = await fixture();
+  const path = join(f.target, "messages-thread.json");
+  writeFileSync(path, JSON.stringify([{ id: "setup", at: 1, role: "bot", kind: "options", card: { title: "Use your browser for this task?", options: [], browserSetup: { requestKey: "k", botId: "bot", threadId: "thread", ownerMessageId: "m", decision: "declined", continueRequested: true } } }]));
+  expect(() => reviewInstallation(f.target)).toThrowError(expect.objectContaining({ code: "RESTORE_WORK_NOT_PAUSED" }));
+});
 it("changed data invalidates approval without unlocking startup", async () => {
   const f = await fixture(), review = reviewInstallation(f.target);
   writeFileSync(join(f.target, "new-note.txt"), "changed after review");
@@ -129,4 +143,20 @@ it("the first review of a restored WAL-mode database succeeds", async () => {
   expect(review.status).toBe("ready-for-review");
   // Approval binds to the reviewed state; the review's own sidecars are part of it.
   expect(activateInstallation(target, review.reviewHash).status).toBe("reviewed-engines-disabled");
+});
+
+// SPEC-P 15.2 (lane E1): a room request left open refuses review.
+it("an open room request refuses review", async () => {
+  const f = await fixture();
+  const { DatabaseSync } = await import("node:sqlite");
+  const { initializeMessageTables } = await import("./message-tables.ts");
+  const { initializeProjectTables } = await import("./project-tables.ts");
+  const { insertRoomRequest } = await import("./room-requests.ts");
+  const db = new DatabaseSync(join(f.target, "messages.db"));
+  try {
+    initializeMessageTables(db);
+    initializeProjectTables(db);
+    insertRoomRequest(db, { groupId: "g", verb: "owner_send", fromKind: "owner", admissionKey: "k", lineage: { rootThreadId: "t", origin: "desktop", audienceFingerprint: "owner", notOwnerAudience: false, unattended: false }, now: 1 });
+  } finally { db.close(); }
+  expect(() => reviewInstallation(f.target)).toThrowError(expect.objectContaining({ code: "RESTORE_WORK_NOT_PAUSED" }));
 });

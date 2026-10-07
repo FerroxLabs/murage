@@ -274,12 +274,41 @@ export function inspectReleaseBranch(version, repository, run = execute) {
   return { branch_exists: true, pr_url: prs[0]?.url ?? "" };
 }
 
+/** The only updater feed a release build may carry: the public GitHub
+ * releases repo, read from the packaged app-update.yml. A qualification
+ * build (electron-builder.qualification.yml) carries a generic feed and a
+ * qualification cache folder, and is refused here, whatever else it says. */
+export function assertReleaseUpdateFeed(text) {
+  const fields = new Map();
+  let last = "";
+  for (const line of String(text).split(/\r?\n/)) {
+    if (!line.trim() || line.trimStart().startsWith("#")) continue;
+    // A signed Windows build lists its publisher names under publisherName.
+    if (last === "publisherName" && /^\s+-\s+\S/.test(line)) continue;
+    const match = /^([A-Za-z]+):\s*(.*?)\s*$/.exec(line);
+    if (!match) throw new Error("app-update.yml has an unexpected line");
+    if (fields.has(match[1])) throw new Error(`app-update.yml repeats ${match[1]}`);
+    fields.set(match[1], match[2].replace(/^(['"])(.*)\1$/, "$2"));
+    last = match[1];
+  }
+  if (/qualification/i.test(String(text))) throw new Error("app-update.yml carries a qualification feed");
+  if (fields.get("provider") !== "github") throw new Error("app-update.yml is not the GitHub releases feed");
+  if (fields.get("owner") !== "FerroxLabs" || fields.get("repo") !== "murage-releases") throw new Error("app-update.yml does not point at FerroxLabs/murage-releases");
+  for (const key of fields.keys()) {
+    if (!["provider", "owner", "repo", "updaterCacheDirName", "publisherName", "releaseType", "vPrefixedTagName", "private"].includes(key)) {
+      throw new Error(`app-update.yml carries ${key}`);
+    }
+  }
+  if (fields.has("private") && fields.get("private") !== "false") throw new Error("app-update.yml asks for a private feed");
+  return true;
+}
+
 function output(values) {
   if (!process.env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
   for (const [key, value] of Object.entries(values)) appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
 }
 
-function main([command, ...args]) {
+async function main([command, ...args]) {
   if (command === "version") {
     const version = JSON.parse(readFileSync("package.json", "utf8")).version;
     parseVersion(version); console.log(version);
@@ -295,10 +324,28 @@ function main([command, ...args]) {
   else if (command === "publish") {
     const [version, rawId, assetsDir] = args;
     publishDraft(version, Number(rawId), assetsDir);
+  } else if (command === "browser-extension" || command === "browser-extension-optional") {
+    // Prints the packaging env line for $GITHUB_ENV. A release needs the real
+    // Murage for Chrome identity; a qualification build before the store
+    // item exists goes without one (Use my browser then says so).
+    const { readBrowserExtensionReleaseConfig } = await import("./browser-extension-release-config.mjs");
+    const config = readBrowserExtensionReleaseConfig(resolve(args[0]));
+    if (config.status === "ready") console.log(`MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG=${config.path}`);
+    else if (config.status === "placeholder" && command === "browser-extension-optional") console.error("::warning::Murage for Chrome release identity is not set yet; this build carries no extension identity");
+    else if (config.status === "placeholder") throw new Error(`Murage for Chrome release identity is not set: replace the placeholders in ${args[0]} with the Chrome Web Store item ID and public key`);
+    else throw new Error(`Murage for Chrome ${config.reason}`);
+  } else if (command === "browser-extension-build") {
+    const { checkBrowserExtensionBuild } = await import("./browser-extension-release-config.mjs");
+    const problems = checkBrowserExtensionBuild(resolve(args[0]), resolve(args[1]));
+    if (problems.length) throw new Error(`packaged Murage for Chrome identity: ${problems.join("; ")}`);
+  } else if (command === "update-feed") {
+    if (!args.length) throw new Error("name at least one packaged app-update.yml");
+    for (const file of args) assertReleaseUpdateFeed(readFileSync(file, "utf8"));
   } else throw new Error("unknown release guard command");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  try { main(process.argv.slice(2)); }
-  catch (error) { console.error(`::error::${error.message}`); process.exitCode = 1; }
+  // The browser-extension commands load their module on demand, so the other
+  // commands keep working from a lone copy of this file.
+  main(process.argv.slice(2)).catch(error => { console.error(`::error::${error.message}`); process.exitCode = 1; });
 }

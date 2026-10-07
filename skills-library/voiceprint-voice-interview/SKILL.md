@@ -1,8 +1,9 @@
 ---
 name: voiceprint-voice-interview
 description: "**Mode skill.** Default-enabled on the Voiceprint specialist. Runs in the Full path; skipped in the Lite and Refresh paths."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "voiceprint"
 ---

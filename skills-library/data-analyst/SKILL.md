@@ -10,7 +10,7 @@ description: |
   or production database administration.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science data-visualization report analysis best-practices"
   category: "operations"

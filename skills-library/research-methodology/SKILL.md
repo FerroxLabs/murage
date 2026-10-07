@@ -6,7 +6,7 @@ description: |
   Do NOT use for developing a research question (use `research-question`), for data collection instrument design (use `data-collection-plan`), or for statistical analysis (not an education skill).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research academic-writing study-skills step-by-step"
   category: "education"

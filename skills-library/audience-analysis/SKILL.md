@@ -9,7 +9,7 @@ description: |
   and tone documentation (use `voice-tone-guide`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "content-marketing marketing research"
   category: "writing"

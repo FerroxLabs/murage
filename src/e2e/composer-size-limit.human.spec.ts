@@ -27,9 +27,10 @@ import { closeSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSyn
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { MESSAGE_TEXT_MAX_BYTES } from "../../shared/message-limits.ts";
-import { openSidebar } from "./fixtures.ts";
+import { openSidebar, SEND_KEY } from "./fixtures.ts";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { laneDataDir } from "./lane-data-dir";
+import { seedWhatsNewSeen } from "../../scripts/control-murage.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const DATA_DIR = resolve(laneDataDir("this spec never uses ~/.murage"), "composer-size-limit-data");
@@ -61,6 +62,7 @@ async function startHarness() {
   safeWipeSync(DATA_DIR);
   for (const dir of [DATA_DIR, EVIDENCE, join(DATA_DIR, "home"), join(DATA_DIR, "tmp"), join(DATA_DIR, "bin")]) mkdirSync(dir, { recursive: true });
   symlinkSync(process.execPath, join(DATA_DIR, "bin", "node"));
+  seedWhatsNewSeen(DATA_DIR);
   writeFileSync(join(DATA_DIR, "config.json"), JSON.stringify({ instances: { verification: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLI } } } }, null, 2) + "\n", { mode: 0o600 });
   const home = join(DATA_DIR, "home"), tmp = join(DATA_DIR, "tmp");
   const env: NodeJS.ProcessEnv = {
@@ -140,25 +142,13 @@ async function selectBot(page: Page, who: Bot) {
   await expect(composer(page, who)).toBeVisible();
   await settleIntake(page, who);
 }
-/** Every new bot opens with its two-question setup quiz, and the composer's
- *  first messages answer it. The fixture bot is taken through it the way a
- *  person would ("general it is") so the message under test reaches the
- *  engine rather than the quiz. Same walk as the user smoke's settleIntake. */
-async function settleIntake(page: Page, who: Bot) {
+/** Every new bot opens with its setup question. Since 749fe559 a first
+ *  message runs as an ordinary turn and a weak match posts no follow-up, so
+ *  nothing has to be answered first: the message under test reaches the
+ *  engine directly. Waiting for the opening question keeps the page settled. */
+async function settleIntake(page: Page, _who: Bot) {
   const log = page.locator("main");
   await expect(log.getByText(/What do you actually want me for\?|Fine, general it is|Right, I'm/).first()).toBeVisible();
-  if (await log.getByText("Fine, general it is.").count() || await log.getByText(/^Right, I'm /).count()) return;
-  const box = composer(page, who);
-  if (!(await log.getByText("Give me one real thing you'd rather hand over.").count())) {
-    await box.fill("just chat with me");
-    await box.press("Enter");
-    await expect(log.getByText("Give me one real thing you'd rather hand over.")).toBeVisible();
-  }
-  await box.fill("nothing specific, general chat");
-  await box.press("Enter");
-  await expect(log.getByText("I don't think you need a specialist for this.")).toBeVisible();
-  await page.getByRole("button", { name: "That's fine", exact: true }).click();
-  await expect(log.getByText("Fine, general it is.")).toBeVisible();
 }
 const composer = (page: Page, who: Bot) => page.getByRole("textbox", { name: `Message ${who.name}`, exact: true });
 /** The message bubbles only: the composer sits inside <main> too, and a textarea's value is text. */
@@ -181,7 +171,8 @@ async function harnessSaw(who: Bot) {
   const messages: Array<{ role?: string; text?: string }> = state?.messages ?? [];
   return { busy: Boolean(state?.busy), userMessages: messages.filter((m) => m.role === "user").map((m) => String(m.text ?? "").slice(0, 24)) };
 }
-const QUIZ_ANSWERS = ["just chat with me", "nothing specific, genera"];
+/** Nothing is sent to answer the setup question any more (see settleIntake). */
+const QUIZ_ANSWERS: string[] = [];
 
 test("a 4 MB typed message is refused on screen with the size and the limit, and the text stays in the box", async ({ page }) => {
   const bot = await makeBot("Size limit bot");
@@ -190,7 +181,7 @@ test("a 4 MB typed message is refused on screen with the size and the limit, and
   const box = composer(page, bot);
   await box.click();
   await box.fill(SMOKE_MESSAGE);
-  await box.press("Enter");
+  await box.press(SEND_KEY);
 
   // The reason, where the person is looking, as an alert a screen reader announces.
   const alert = notice(page);
@@ -217,7 +208,7 @@ test("a 4 MB typed message is refused on screen with the size and the limit, and
   expect(await box.evaluate((element) => (element as HTMLTextAreaElement).value.length)).toBe(SMOKE_MESSAGE.length);
 
   // Enter again says it again; an edit is the person acting on it, and clears it.
-  await box.press("Enter");
+  await box.press(SEND_KEY);
   await expect(notice(page)).toBeVisible();
   await box.press("End");
   await box.press("!");
@@ -237,7 +228,7 @@ test("a pasted wall of text over the limit is refused the same way and the paste
   // A long paste lands as a chip rather than burying the box.
   await expect(page.getByText("PASTED", { exact: true })).toBeVisible();
   await expect(page.getByText(/lines, 1\.5 MB/)).toBeVisible();
-  await box.press("Enter");
+  await box.press(SEND_KEY);
 
   const alert = notice(page);
   await expect(alert).toBeVisible();
@@ -259,7 +250,7 @@ test("a message exactly at the 1 MB limit sends and gets its reply", async ({ pa
   const box = composer(page, bot);
   await box.click();
   await box.fill(AT_LIMIT_MESSAGE);
-  await box.press("Enter");
+  await box.press(SEND_KEY);
 
   // Sent: the box empties, no notice, the message is in the transcript and the engine answers it.
   await expect(box).toHaveValue("", { timeout: 30_000 });

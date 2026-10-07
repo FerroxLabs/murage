@@ -20,6 +20,8 @@ export function coveredForCall(pending: Pending): boolean {
   if (isRoutineApproval(pending) || isSkillApproval(pending) || isHostConsentApproval(pending)) return false;
   const card = pending.message.card;
   if (!card || isQuestionCard(card)) return false;
+  // only a card the engine rated low is auto-answered; the stamp is advisory and the server still decides
+  if (card.lowRisk !== true) return false;
   if (card.taskAllowKey || card.approvalScope || card.folderTrust || card.held) return false;
   if (card.allowKey && card.allowKey.startsWith("stop:")) return false;
   if (PRIVATE_LOOKING.test(`${pending.tool}\n${pending.detail}`)) return false;

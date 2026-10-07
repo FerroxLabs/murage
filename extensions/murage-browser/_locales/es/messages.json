@@ -1,0 +1,421 @@
+{
+  "extName": {
+    "message": "Murage for Chrome"
+  },
+  "extDescription": {
+    "message": "Comparte pestañas elegidas del navegador con tus bots de Murage y mantén el control con Pausa y Detener."
+  },
+  "groupTitle": {
+    "message": "Murage"
+  },
+  "groupTitleBot": {
+    "message": "Murage · $BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "groupSuffixPaused": {
+    "message": " · en pausa"
+  },
+  "groupSuffixStopped": {
+    "message": " · detenido"
+  },
+  "groupSuffixYourTurn": {
+    "message": " · te toca"
+  },
+  "groupSuffixFull": {
+    "message": " · total"
+  },
+  "groupSuffixWorking": {
+    "message": " · trabajando"
+  },
+  "groupSuffixDone": {
+    "message": " · listo"
+  },
+  "overlayWorking": {
+    "message": "$BOT$ está trabajando",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPause": {
+    "message": "Pausa"
+  },
+  "overlayStop": {
+    "message": "Detener"
+  },
+  "overlayWaiting": {
+    "message": "Esperándote en Murage"
+  },
+  "overlayFull": {
+    "message": "Totalmente permisivo"
+  },
+  "overlayAria": {
+    "message": "$BOT$ está usando esta pestaña. Pausa o detén aquí.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPointer": {
+    "message": "$BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHeader": {
+    "message": "Murage for Chrome"
+  },
+  "spConnected": {
+    "message": "Conectado a Murage"
+  },
+  "spNotConnected": {
+    "message": "Murage no está conectado"
+  },
+  "spBotLine": {
+    "message": "$BOT$ en «$CONVERSATION$»",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      },
+      "conversation": {
+        "content": "$2"
+      }
+    }
+  },
+  "spStateWorking": {
+    "message": "Trabajando"
+  },
+  "spStateWaiting": {
+    "message": "Esperándote"
+  },
+  "spStatePaused": {
+    "message": "En pausa"
+  },
+  "spStateStopped": {
+    "message": "Detenido"
+  },
+  "spStateYourTurn": {
+    "message": "Te toca"
+  },
+  "spModeStep": {
+    "message": "Pregunta en cada paso"
+  },
+  "spModeTask": {
+    "message": "Pregunta una vez por tarea"
+  },
+  "spModeFull": {
+    "message": "Totalmente permisivo"
+  },
+  "btnPause": {
+    "message": "Pausa"
+  },
+  "btnStop": {
+    "message": "Detener"
+  },
+  "btnResume": {
+    "message": "Reanudar"
+  },
+  "btnEndTask": {
+    "message": "Terminar tarea"
+  },
+  "btnContinue": {
+    "message": "Continuar"
+  },
+  "btnShare": {
+    "message": "Compartir esta pestaña"
+  },
+  "btnUnshare": {
+    "message": "Dejar de compartir"
+  },
+  "spTaskTitle": {
+    "message": "Esta tarea"
+  },
+  "spAllowedForTask": {
+    "message": "Permitido para esta tarea:"
+  },
+  "spRevoke": {
+    "message": "Revocar"
+  },
+  "spActivityTitle": {
+    "message": "Lo que hizo $BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spActivityEmpty": {
+    "message": "Todavía nada."
+  },
+  "spSitesTitle": {
+    "message": "Sitios que $BOT$ puede usar",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spSiteAlways": {
+    "message": "Siempre"
+  },
+  "spSiteNever": {
+    "message": "Nunca"
+  },
+  "spSiteAsks": {
+    "message": "Pregunta en cada paso"
+  },
+  "spShareTitle": {
+    "message": "¿Compartir esta pestaña con $BOT$?",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spShare": {
+    "message": "Compartir"
+  },
+  "spNotNow": {
+    "message": "Ahora no"
+  },
+  "spUnshareTitle": {
+    "message": "¿Dejar de compartir esta pestaña con $BOT$?",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshare": {
+    "message": "Dejar de compartir"
+  },
+  "spKeep": {
+    "message": "Mantener"
+  },
+  "spDebugNote": {
+    "message": "Mientras $BOT$ trabaja, Chrome muestra una barra que dice que Murage for Chrome empezó a depurar este navegador. Es Chrome avisándote de que una extensión puede actuar en tus pestañas. Si pulsas Cancelar en esa barra, $BOT$ se pausa.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUpdateWaiting": {
+    "message": "Murage for Chrome se actualizará cuando $BOT$ termine este paso.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spOldExtension": {
+    "message": "Actualiza Murage for Chrome para obtener los nuevos controles."
+  },
+  "spOldApp": {
+    "message": "Actualiza Murage en este ordenador para usar esta versión de Murage for Chrome."
+  },
+  "spShortcutHint": {
+    "message": "Pausa desde el teclado: $SHORTCUT$",
+    "placeholders": {
+      "shortcut": {
+        "content": "$1"
+      }
+    }
+  },
+  "spYourTurn": {
+    "message": "Te toca: $LINE$",
+    "placeholders": {
+      "line": {
+        "content": "$1"
+      }
+    }
+  },
+  "spFullOn": {
+    "message": "Totalmente permisivo está activado."
+  },
+  "spTurnOff": {
+    "message": "Desactivar"
+  },
+  "spModeTitle": {
+    "message": "Modo de aprobación"
+  },
+  "spHintStep": {
+    "message": "$BOT$ pregunta antes de cada acción que cambia un sitio.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintTask": {
+    "message": "Una tarjeta por sitio y luego $BOT$ completa la tarea.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintFull": {
+    "message": "Sin tarjetas para acciones normales. Lo que solo puedes hacer tú te sigue volviendo a ti."
+  },
+  "spRevokeAria": {
+    "message": "Revocar el acceso a $SITE$",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshareAria": {
+    "message": "Dejar de compartir $SITE$",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spNewTab": {
+    "message": "Pestaña nueva"
+  },
+  "spSharedTitle": {
+    "message": "Pestañas compartidas"
+  },
+  "spNoTabs": {
+    "message": "No hay pestañas compartidas."
+  },
+  "spNoSites": {
+    "message": "Aún no hay sitios."
+  },
+  "spShareHint": {
+    "message": "Solo las pestañas que compartes aquí pertenecen a este bot. Mover una pestaña a su grupo no la comparte."
+  },
+  "spSetupTitle": {
+    "message": "Conectar con Murage"
+  },
+  "spSetupBody": {
+    "message": "Abre Murage en este equipo y activa el acompañante del navegador en los ajustes del navegador."
+  },
+  "spCheckConnection": {
+    "message": "Comprobar la conexión"
+  },
+  "spProfile": {
+    "message": "Perfil de Chrome: $PROFILE$",
+    "placeholders": {
+      "profile": {
+        "content": "$1"
+      }
+    }
+  },
+  "spBodyWorking": {
+    "message": "Trabajando en las pestañas que compartiste."
+  },
+  "spBodyPaused": {
+    "message": "Las pestañas siguen privadas hasta que reanudes."
+  },
+  "spBodyStopped": {
+    "message": "Esta tarea se detuvo. Pide al bot que empiece de nuevo en una conversación nueva."
+  },
+  "spBodyReconnect": {
+    "message": "Esperando a que Murage vuelva a conectar este bot."
+  },
+  "spErrHostOffline": {
+    "message": "Abre Murage y vuelve a comprobar la conexión."
+  },
+  "spErrSiteDenied": {
+    "message": "Murage te pidió permitir este sitio. Permítelo allí y vuelve a pulsar Compartir."
+  },
+  "spErrHumanHandover": {
+    "message": "Este sitio necesita que lo uses tú directamente."
+  },
+  "spErrBindingInactive": {
+    "message": "Reanuda este bot en Murage antes de compartir pestañas."
+  },
+  "spErrTabOwned": {
+    "message": "Otro bot ya es dueño de esta pestaña."
+  },
+  "spErrUnknownBinding": {
+    "message": "Primero inicia una tarea de navegador en Murage."
+  },
+  "spErrBindingStopped": {
+    "message": "Esta tarea se detuvo. Pide al bot que empiece de nuevo en una conversación nueva."
+  },
+  "spErrGeneric": {
+    "message": "La acción del navegador no pudo terminar. Comprueba la conexión e inténtalo de nuevo."
+  },
+  "spHeaderBrand": {
+    "message": "Murage"
+  },
+  "spHeaderSuffix": {
+    "message": "para Chrome"
+  },
+  "spTaskAccess": {
+    "message": "Acceso de la tarea"
+  },
+  "overlayYourTurn": {
+    "message": "Te toca: $BOT$ te está esperando",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayStopTask": {
+    "message": "Detener tarea"
+  },
+  "cmdPauseDescription": {
+    "message": "Pausar Murage for Chrome"
+  },
+  "spSwitchTitle": {
+    "message": "Bots"
+  },
+  "spBodyYourTurn": {
+    "message": "Haz este paso tú mismo en el navegador y deja que tu bot continúe."
+  },
+  "spPending": {
+    "message": "Un momento"
+  },
+  "spPhaseStarting": {
+    "message": "Iniciando tu bot"
+  },
+  "spPhaseConnecting": {
+    "message": "Conectando las herramientas del navegador"
+  },
+  "spPhaseReading": {
+    "message": "Leyendo esta página"
+  },
+  "spPhaseWaiting": {
+    "message": "Esperándote"
+  },
+  "btnNewTask": {
+    "message": "Iniciar una tarea nueva"
+  },
+  "spRecoveryReshare": {
+    "message": "Murage for Chrome empezó de cero. Comparte tus pestañas otra vez para continuar."
+  },
+  "spErrHandoffUseContinue": {
+    "message": "Tu bot te está esperando. Pulsa Continuar cuando hayas terminado el paso."
+  },
+  "spErrNotHandoff": {
+    "message": "Tu bot no te está esperando ahora, así que no hay nada que continuar."
+  },
+  "spErrIncognitoDenied": {
+    "message": "Murage for Chrome no funciona en ventanas privadas. Abre el sitio en una ventana normal y compártelo."
+  },
+  "spErrPersistenceFailed": {
+    "message": "Chrome no pudo guardar tus cambios. Inténtalo de nuevo en un momento."
+  },
+  "spErrUpdateRequired": {
+    "message": "Este perfil lo guardó una versión más reciente de Murage for Chrome. Actualiza la extensión para continuar."
+  },
+  "spErrStorageUnavailable": {
+    "message": "No se pudo leer el almacenamiento de Chrome. Reinicia Chrome y comparte tus pestañas otra vez."
+  }
+}

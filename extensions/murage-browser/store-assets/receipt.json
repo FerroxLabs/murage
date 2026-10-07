@@ -1,0 +1,32 @@
+{
+  "draft": true,
+  "published": false,
+  "nativeProof": false,
+  "sourceFiles": {
+    "index.html": "3051385c402d10cf65311c8f3326daea7430373448ffda2d4e0a6fb0218b5c6f",
+    "panel.css": "9b2b92e7d15fc20cb6c2bd3cfb413eed7d403749139a9c5957e1f7a5f2862933",
+    "panel.js": "edd9c70b19979d2afc5b92e87e14e4ee6f9abc65f50209c5cf3045329ab85102"
+  },
+  "images": {
+    "01-browser-controls-1280x800.png": {
+      "width": 1280,
+      "height": 800,
+      "sha256": "7b92ccb7ff0c90e09239e8a57bb17307684603564e3684d7e2101fce45a0e1cd"
+    },
+    "02-paused-1280x800.png": {
+      "width": 1280,
+      "height": 800,
+      "sha256": "45558f8b72b4be8c5a451a55582f7de5cc515697e277a85b8652e8c8c8818b5b"
+    },
+    "promo-440x280.png": {
+      "width": 440,
+      "height": 280,
+      "sha256": "f685e6ea15e396c6017c1b23331bf2aa4786ea81370466475f9f5fb83d576da7"
+    },
+    "icon128.png": {
+      "width": 128,
+      "height": 128,
+      "sha256": "d825e4147783bdb37d829a9a53f56e38f56e4435702390ee61cab3b67e734e25"
+    }
+  }
+}

@@ -6,7 +6,7 @@ description: |
   Do NOT use for full garden design and layout (use vegetable-garden-planning), plant problem diagnosis (use plant-care-troubleshooting), or indoor houseplant schedules (use indoor-plant-care).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "gardening planning checklist"
   category: "home-household"

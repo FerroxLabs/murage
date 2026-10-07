@@ -1,7 +1,9 @@
 ---
 name: multi-pane-analysis
 description: Cross-asset reasoning across a multi-pane layout — set a 2x2 grid, assign correlated symbols to each pane, and identify leader/laggard/divergence. Use when the user asks to "compare indices", "watch the complex", or wants correlated-asset reasoning.
-license: MIT
+license: Apache-2.0
+metadata:
+  author: Ferrox Labs
 ---
 
 # Multi-Pane Cross-Asset Analysis

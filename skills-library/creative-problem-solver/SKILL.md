@@ -4,7 +4,7 @@ description: |
   Structured creativity methodologies including TRIZ (Theory of Inventive Problem Solving), lateral thinking (Edward de Bono), design thinking (5 stages), brainstorming techniques (SCAMPER, reverse brainstorming, worst possible idea), constraint-based creativity, and analogical thinking for innovation. Use when the user asks about creative problem solver or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decision-making strategy frameworks"
   category: "productivity"

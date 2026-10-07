@@ -6,7 +6,7 @@ description: |
   Do NOT use for full budget creation (use budget-planning), one-time expense analysis (use spending-analysis), or business SaaS audit.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "budgeting personal-finance expenses savings"
   category: "personal-finance"

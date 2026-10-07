@@ -60,3 +60,26 @@ it("does not cache authority from a mutable allowed-set argument",()=>{
     expect(index.search("sharedneedle",allowed,null,"none").hits.map(r=>r.id)).toEqual(["second"]);
   }finally{index.close();rmSync(root,{recursive:true,force:true});}
 });
+
+// 0.1.60 low (Windows RE-TEST 4 L6): after a forget, the raw memory-index.db
+// still held copies of the deleted words. The content row was zeroed by
+// secure_delete, but FTS5 keeps a deleted document's terms in its index
+// segments until they are merged. The file must not contain them.
+it("leaves no copy of a deleted memory's words anywhere in the file",async()=>{
+  const {readFileSync,existsSync}=await import("node:fs");
+  const root=mkdtempSync(join(tmpdir(),"memory-index-scrub-")),path=join(root,"index.db");
+  let index=new MemoryIndex(path);
+  try{
+    const secret={id:"gone",version:1,scopeId:"scope",text:"zanzibarquokka forgotten sentence",deleted:false};
+    index.upsert([secret,{id:"kept",version:1,scopeId:"scope",text:"keptwords stay here",deleted:false}]);
+    // Several writes so the index has more than one segment to merge.
+    for(let i=0;i<5;i++)index.upsert([{id:`filler-${i}`,version:1,scopeId:"scope",text:`filler text ${i}`,deleted:false}]);
+    index.upsert([{...secret,deleted:true}]);
+    index.close();
+    const raw=()=>[path,`${path}-wal`].filter(existsSync).map(file=>readFileSync(file).toString("latin1")).join("");
+    expect(raw()).not.toContain("zanzibarquokka");
+    expect(raw()).toContain("keptwords");
+    index=new MemoryIndex(path);
+    expect(index.search("keptwords",[{id:"kept",version:1}],null,"unused").hits.map(h=>h.id)).toEqual(["kept"]);
+  }finally{index.close();rmSync(root,{recursive:true,force:true});}
+});

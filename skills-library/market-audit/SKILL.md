@@ -1,13 +1,12 @@
 ---
 name: market-audit
 description: "Run a five-dimension marketing audit on a business URL — content and messaging, conversion, SEO, competitive position, and brand and strategy — scored in parallel and aggregated into a weighted overall score with a prioritised action plan. Use when the user wants to know what is wrong with their marketing as a whole. Do NOT use for a single page's conversion teardown (use market-landing), for brand identity and visual system work (use mira-brand-foundation) or for a funnel-stage drop-off diagnosis (use marketing-funnel-diagnosis)."
-license: MIT
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing audit scoring cro seo smb"
   category: "market"
-  attribution: "zubair-trabzada/ai-marketing-claude (skills/market-audit + scripts/analyze_page.py)"
 ---
 
 # Marketing Audit (5-way fan-out)

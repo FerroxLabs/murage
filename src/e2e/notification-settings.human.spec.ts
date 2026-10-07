@@ -50,7 +50,7 @@ for (const locale of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) test("transl
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(origin + "/__notifications?lang=" + locale);
   await expect(page.getByRole("heading", { name: pack["notificationSettings.title"] })).toBeVisible();
-  await page.getByRole("checkbox", { name: pack["notificationSettings.quietLabel"], exact: true }).check();
+  await page.getByRole("switch", { name: pack["notificationSettings.quietLabel"], exact: true }).check();
   await page.getByLabel(pack["notificationSettings.timeZoneAccessible"], { exact: true }).fill("Invalid/Zone");
   await page.getByRole("button", { name: pack["notificationSettings.save"], exact: true }).click();
   await expect(page.getByRole("alert")).toHaveText(pack["notificationSettings.errorZone"]);
@@ -88,10 +88,10 @@ test("explicit save and reload retain false preferences and the stored quiet-hou
     return route.fulfill({ json: { notifications } });
   });
   await page.goto(origin + "/__notifications");
-  await expect(page.getByRole("checkbox", { name: /^Task completed/ })).not.toBeChecked();
-  await expect(page.getByRole("checkbox", { name: /^Show notification previews/ })).not.toBeChecked();
-  await page.getByRole("checkbox", { name: /^Needs your attention/ }).check();
-  await page.getByRole("checkbox", { name: "Quiet hours", exact: true }).check();
+  await expect(page.getByRole("switch", { name: /^Task completed/ })).not.toBeChecked();
+  await expect(page.getByRole("switch", { name: /^Show notification previews/ })).not.toBeChecked();
+  await page.getByRole("switch", { name: /^Needs your attention/ }).check();
+  await page.getByRole("switch", { name: "Quiet hours", exact: true }).check();
   await expect(page.getByLabel("Quiet hours time zone")).toHaveValue("Europe/London");
   expect(writes).toHaveLength(0);
   expect(await page.evaluate(() => (window as any).permissionCalls)).toBe(0);
@@ -102,8 +102,8 @@ test("explicit save and reload retain false preferences and the stored quiet-hou
   await expect(page.getByRole("status")).toContainText("Notification preferences saved");
   expect(writes[0]).toEqual({ notifications: { attention: true, completion: false, failures: true, previewContent: false, quietHours: { enabled: true, start: "23:00", end: "07:00", timeZone: "Europe/London" } } });
   await page.reload();
-  await expect(page.getByRole("checkbox", { name: /^Task completed/ })).not.toBeChecked();
-  await expect(page.getByRole("checkbox", { name: /^Show notification previews/ })).not.toBeChecked();
+  await expect(page.getByRole("switch", { name: /^Task completed/ })).not.toBeChecked();
+  await expect(page.getByRole("switch", { name: /^Show notification previews/ })).not.toBeChecked();
   await expect(page.getByLabel("Quiet hours time zone")).toHaveValue("Europe/London");
   await expect(page.getByRole("button", { name: "Save notifications" })).toBeDisabled();
 });
@@ -119,7 +119,7 @@ test("quiet hours validate before writing and failed saves preserve edits withou
   });
   await page.goto(origin + "/__notifications");
   await expect(page.getByLabel("Quiet hours time zone")).toHaveCount(0);
-  await page.getByRole("checkbox", { name: "Quiet hours", exact: true }).check();
+  await page.getByRole("switch", { name: "Quiet hours", exact: true }).check();
   await expect(page.getByLabel("Quiet hours time zone")).toHaveValue("Asia/Bangkok");
   await page.getByLabel("Quiet hours end").fill("22:00");
   await page.getByRole("button", { name: "Save notifications" }).click();
@@ -131,11 +131,11 @@ test("quiet hours validate before writing and failed saves preserve edits withou
   await expect(page.getByRole("alert")).toContainText("valid named time zone");
   expect(writes).toBe(0);
   await page.getByLabel("Quiet hours time zone").fill("Asia/Bangkok");
-  await page.getByRole("checkbox", { name: /^Show notification previews/ }).uncheck();
+  await page.getByRole("switch", { name: /^Show notification previews/ }).uncheck();
   await page.getByRole("button", { name: "Save notifications" }).click();
   await expect(page.getByRole("alert")).toContainText("Your edits are still here");
   await expect(page.getByRole("status")).toHaveCount(0);
-  await expect(page.getByRole("checkbox", { name: /^Show notification previews/ })).not.toBeChecked();
+  await expect(page.getByRole("switch", { name: /^Show notification previews/ })).not.toBeChecked();
   await expect(page.getByText(/Clicking still opens the right conversation/)).toBeVisible();
   fail = false;
   await page.getByRole("button", { name: "Save notifications" }).click();

@@ -12,7 +12,7 @@ description: |
   business legal skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "freelancing career template legal-literacy"
   category: "career-development"

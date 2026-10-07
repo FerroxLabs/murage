@@ -3,13 +3,15 @@ import { expect, it, vi } from "vitest";
 
 function fixture(models: Record<string, unknown>[], extra = {}) {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  const match = source.match(/function selectedProviderRoute\(selection: ModelSelection, driverKind: string\): ProviderTurnRoute \| undefined \{([\s\S]*?)\n\}/);
+  const match = source.match(/function selectedProviderRoute\(selection: ModelSelection, driverKind: string, options: \{ admission\?: boolean \} = \{\}\): ProviderTurnRoute \| undefined \{([\s\S]*?)\n\}/);
   expect(match).not.toBeNull();
   const connection = { id: "fixture", enabled: true, preset: "flux", protocol: "openai", baseUrl: "https://fixture.invalid/v1", key: "FAKE_PRIVATE_ONLY", revision: "r1" };
   const getCatalog = vi.fn(() => ({ models, stale: false, ...extra }));
   const validate = vi.fn();
-  const route = new Function("selection", "driverKind", "providerConnections", "providerEngineProtocol", "validateProviderTurnRoute", match![1]);
-  const run = () => route({ connectionId: "fixture", model: "selected-pin" }, "claude", { resolve: () => connection, getCatalog }, () => "openai", validate);
+  // A pasted-key connection: the plan sign-in branch (modelSignIns) stays out of it.
+  const modelSignIns = { info: () => undefined, has: () => false };
+  const route = new Function("selection", "driverKind", "options", "providerConnections", "providerEngineProtocol", "validateProviderTurnRoute", "modelSignIns", match![1]);
+  const run = () => route({ connectionId: "fixture", model: "selected-pin" }, "claude", {}, { resolve: () => connection, getCatalog }, () => "openai", validate, modelSignIns);
   return { run, validate, connection };
 }
 

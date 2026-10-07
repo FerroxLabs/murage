@@ -1,0 +1,303 @@
+/* Murage tokens (src/styles.css at the repo root, --color-*), light and dark. */
+:root {
+  color-scheme: light dark;
+  --app: #f7f7f7;
+  --card: #ffffff;
+  --ink: #0d0d0d;
+  --ink-2: #555555;
+  --hairline: #bfbfbf;
+  --accent: #b8481f;
+  --accent-ink: #ffffff;
+  --danger: #b3261e;
+  --focus: #b8481f;
+  --radius: 12px;
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --app: #0a0a0a;
+    --card: #1f1f1f;
+    --ink: #f5f5f5;
+    --ink-2: #a8a8a8;
+    --hairline: #4d4d4d;
+    --accent: #ff6b35;
+    --accent-ink: #2a1207;
+    --danger: #f87171;
+    --focus: #ff8255;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--app);
+}
+
+body {
+  margin: 0;
+  background: var(--app);
+  color: var(--ink);
+  font-family: var(--font);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  max-width: 480px;
+  margin: 0 auto;
+  /* Android's WebView may report a zero top inset under forced edge-to-edge. */
+  padding: max(env(safe-area-inset-top, 0px), 48px) max(env(safe-area-inset-right, 0px), 16px)
+    max(env(safe-area-inset-bottom, 0px), 24px) max(env(safe-area-inset-left, 0px), 16px);
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* First run: the text sits in the upper middle, the buttons at the bottom
+   within thumb reach (#app's padding keeps them above the home indicator). */
+.screen.first-run {
+  flex: 1;
+  padding-top: 8vh;
+}
+
+.first-run .actions {
+  margin-top: auto;
+  padding-top: 24px;
+}
+
+.mark {
+  display: block;
+  width: 72px;
+  height: 72px;
+  /* The tile sits 100/1024 inside its box: line its edge up with the text. */
+  margin: 0 0 4px -7px;
+}
+
+.step {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+}
+
+.first-run .step + .title {
+  margin-top: -8px;
+}
+
+.title {
+  margin: 8px 0 0;
+  font-size: 26px;
+  line-height: 1.2;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+
+.line {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* Get your code ready: the desktop page, as wide as the text, never taller than it needs. */
+.shot {
+  display: block;
+  margin: 0;
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 40vh;
+  object-fit: contain;
+  object-position: left top;
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline);
+}
+
+.error {
+  margin: 0;
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.button {
+  min-height: 48px;
+  width: 100%;
+  padding: 0 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  color: var(--ink);
+  font: 500 16px/1.2 var(--font);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.button:active,
+.row-main:active:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.button.danger {
+  color: var(--danger);
+}
+
+.button.small {
+  width: auto;
+  flex: none;
+}
+
+.button:focus-visible,
+.row-main:focus-visible,
+.field-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 56px;
+  padding: 10px 16px;
+  text-align: left;
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--font);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+/* In edit mode the row is a label, not a dimmed control. */
+.row-main:disabled {
+  opacity: 1;
+  color: var(--ink);
+  cursor: default;
+}
+
+.row-name {
+  display: block;
+  font-size: 17px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.row-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field-label {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.field-input {
+  min-height: 48px;
+  width: 100%;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 16px;
+  font-family: var(--font);
+}
+
+.field-input::placeholder {
+  color: var(--ink-2);
+  opacity: 0.8;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--hairline);
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+.notice {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: #1f1f1f;
+  color: #f5f5f5;
+  font-size: 15px;
+}

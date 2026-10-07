@@ -1,0 +1,19 @@
+{
+  "inputs": [
+    { "type": "promptString", "id": "perplexity-key", "description": "Perplexity API Key", "password": true },
+    { "type": "promptString", "id": "github_token", "description": "GitHub Personal Access Token", "password": true }
+  ],
+  "servers": {
+    "Perplexity": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@perplexity-ai/mcp-server"],
+      "env": { "PERPLEXITY_API_KEY": "${input:perplexity-key}", "MODE": "fast" }
+    },
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${input:github_token}" }
+    }
+  }
+}

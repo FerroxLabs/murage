@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Python project setup (use `python-project-setup`), testing async code (use `python-testing-patterns`), or general performance optimization (use `python-performance`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "python backend optimization"
   category: "software-engineering"

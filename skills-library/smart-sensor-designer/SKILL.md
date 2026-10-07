@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of smart sensor designer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "advanced iot budgeting checklist template guide python energy-efficiency"
   category: "emerging-tech"

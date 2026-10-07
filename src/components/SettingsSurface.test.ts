@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { sectionsForSurface } from "./SettingsModal";
+import { sectionsForSurface, settingsSectionRedirect } from "./SettingsModal";
+import { SETTINGS_SECTIONS } from "@/lib/settings-sections";
 
 const source = readFileSync(fileURLToPath(new URL("./SettingsModal.tsx", import.meta.url)), "utf8");
 
@@ -23,6 +24,7 @@ const SECTIONS = [
   { id: "channels", desktopOnly: true },
   { id: "companion", desktopOnly: true },
   { id: "computer", desktopOnly: true },
+  { id: "memory", desktopOnly: true },
   { id: "usage", desktopOnly: undefined },
 ] as unknown as Parameters<typeof sectionsForSurface>[0];
 
@@ -45,6 +47,20 @@ describe("which settings a surface may see", () => {
     expect(sectionsForSurface(SECTIONS, undefined).map((entry) => entry.id)).toEqual(["general", "usage"]);
   });
 
+  it("waits for the surface before leaving a desktop section it was opened on", () => {
+    // Opened on Models before the surface answered: stay, do not land on General for good.
+    expect(settingsSectionRedirect(SECTIONS, "connections" as never, undefined, sectionsForSurface(SECTIONS, undefined))).toBeNull();
+    // Once the phone answers, the withheld pane is left.
+    expect(settingsSectionRedirect(SECTIONS, "connections" as never, false, sectionsForSurface(SECTIONS, false))).toBe("general");
+    // A failed first ask answers false without confirming anything: a desktop
+    // whose /api/config blipped once must not be moved to General for good.
+    expect(settingsSectionRedirect(SECTIONS, "connections" as never, false, sectionsForSurface(SECTIONS, false), false)).toBeNull();
+    expect(source).toContain("settingsSectionRedirect(SECTIONS, section, desktop, visible, confirmed)");
+    // A section on offer is kept; one filtered out by search moves to the first match.
+    expect(settingsSectionRedirect(SECTIONS, "usage" as never, undefined, sectionsForSurface(SECTIONS, undefined))).toBeNull();
+    expect(settingsSectionRedirect(SECTIONS, "general" as never, true, SECTIONS.filter((entry) => entry.id === "usage"))).toBe("usage");
+  });
+
   it("changes nothing on the desktop", () => {
     expect(sectionsForSurface(SECTIONS, true)).toEqual(SECTIONS);
   });
@@ -53,7 +69,7 @@ describe("which settings a surface may see", () => {
     // A stale `appSettingsSection` — set on the desktop, or restored from
     // state — must not render a withheld pane just because the nav no longer
     // offers it.
-    for (const id of ["connections", "engines", "channels", "computer", "companion"]) {
+    for (const id of ["connections", "engines", "channels", "computer", "companion", "memory", "botDefaults", "images", "webSearch", "voice", "models", "backups", "experimental", "aboutMe", "houseRules", "skills"]) {
       expect(source, `${id} renders without a surface check`).toContain(`desktop === true && section === "${id}"`);
     }
   });
@@ -63,3 +79,7 @@ describe("which settings a surface may see", () => {
     expect(source).not.toMatch(/desktop\s*\?\?\s*true/);
   });
 });
+
+it("loads Memory as a separate chunk after About me",()=>{expect(source).toMatch(/retryableLazy\(\(\) => import\("\.\/MemorySection"\)\)/);expect(source).not.toMatch(/import .* from "\.\/MemorySection"/);const ids=SETTINGS_SECTIONS.map(entry=>entry.id);expect(ids.indexOf("memory")).toBeGreaterThan(ids.indexOf("aboutMe"));expect(SETTINGS_SECTIONS.find(entry=>entry.id==="memory")).toMatchObject({group:"bots",desktopOnly:true});});
+
+it("Memory uses the retryable component and its retry boundary",()=>{expect(source).toContain("<MemorySection.Component />");expect(source).toContain("onRetry={MemorySection.retry}");});

@@ -19,7 +19,7 @@ trigger_phrases: >-
   become a conference speaker keynote speaking guide start speaking at events
   get paid to speak
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: presentation content-marketing career step-by-step planning
   category: career

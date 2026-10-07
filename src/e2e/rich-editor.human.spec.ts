@@ -103,7 +103,8 @@ for (const skin of ["dark", "light"] as const) {
     const bubble = page.getByRole("toolbar", { name: "Selection formatting" });
     await expect(bubble).toBeVisible();
     await page.screenshot({ path: info.outputPath(`bubble-${skin}.png`) });
-    await bubble.getByRole("button", { name: "Bold (⌘B)" }).click();
+    // ⌘B on a Mac, Ctrl+B elsewhere (keyboard-shortcuts.ts modShortcut, d83ee060).
+    await bubble.getByRole("button", { name: /^Bold \((⌘|Ctrl\+)B\)$/ }).click();
 
     // Link the selection with the inline field.
     await bubble.getByRole("button", { name: "Link" }).click();

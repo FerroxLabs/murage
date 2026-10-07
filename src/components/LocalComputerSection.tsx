@@ -14,6 +14,7 @@ import {
 import { Card, CommandLine } from "./SettingsPrimitives";
 import { cn } from "@/lib/cn";
 import { api } from "@/state/store";
+import { confirmInWindow, oneAtATime } from "@/lib/window-confirm";
 
 type Action = "pull" | "run" | "start" | "stop" | "remove" | "recreate";
 
@@ -151,18 +152,15 @@ export function LocalComputerSection() {
     setStatus(body as Status);
   };
 
-  const act = async (action: Action) => {
-    if (
-      action === "remove" &&
-      !window.confirm("Delete the Local VM? Files and browser sign-ins in its durable workspace will remain.")
-    ) return;
-    if (
-      action === "recreate" &&
-      !window.confirm("Replace the existing Local VM with the pinned image and resource limits? Files and browser sign-ins in its durable workspace will remain.")
-    ) return;
+  // A double click, or a click while the question is open, must not start
+  // the same action twice; the buttons also stay disabled meanwhile.
+  const [runOne] = useState(oneAtATime);
+  const act = (action: Action) => runOne(async () => {
     setPending(action);
     setError(null);
     try {
+      if (action === "remove" && !(await confirmInWindow("Delete the Local VM? Files and browser sign-ins in its durable workspace will remain.", "Delete"))) return;
+      if (action === "recreate" && !(await confirmInWindow("Replace the existing Local VM with the pinned image and resource limits? Files and browser sign-ins in its durable workspace will remain.", "Replace"))) return;
       if (action === "recreate") {
         await post("remove");
         await post("run");
@@ -177,7 +175,7 @@ export function LocalComputerSection() {
     } finally {
       setPending(null);
     }
-  };
+  });
 
   const savePolicy = async (mode: Status["mode"], maxInstances: number) => {
     setPolicyPending(true);

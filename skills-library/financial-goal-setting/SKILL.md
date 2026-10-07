@@ -6,7 +6,7 @@ description: |
   Do NOT use for creating a budget (use budget-planning), tracking multiple existing savings goals (use savings-goals-tracker), or investment planning.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance budgeting goal-setting planning savings"
   category: "personal-finance"

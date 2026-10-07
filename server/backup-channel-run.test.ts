@@ -12,7 +12,8 @@
 // These runs are written by the real RoutineManager, then backed up through
 // the real stage + fidelity path, and (with the age tools) encrypted,
 // restored into a new folder and checked.
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { RoutineManager } from "./routines.ts";
@@ -51,7 +52,7 @@ it("backs up after messages from Telegram, Slack and Discord reached a bot", asy
   const f = backupFixture();
   const routines = manager(f.data);
   (["telegram", "slack", "discord"] as const).forEach((platform, index) => channelMessage(routines, platform, index));
-  const runs = JSON.parse(readFileSync(join(f.data, "routines.json"), "utf8")).runs;
+  const runs = readRoutinesWithRuns(join(f.data, "routines.json")).runs;
   expect(runs.map((run: { triggerSource: string }) => run.triggerSource)).toEqual(["channel", "channel", "channel"]);
   try {
     await withOfflineInstallation(f.data, async installation => {
@@ -93,7 +94,7 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("a channel run survives an en
     const saved = await writeEncryptedInstallationBackup(f.data, archive, { ...keys, selection });
     const restored = join(f.parent, "restored");
     await restoreEncryptedInstallationNew(restored, archive, saved.sha256, keys);
-    const run = JSON.parse(readFileSync(join(restored, "routines.json"), "utf8")).runs[0];
+    const run = readRoutinesWithRuns(join(restored, "routines.json")).runs[0];
     expect({ trigger: run.triggerSource, routineId: run.routineId, status: run.status }).toEqual({ trigger: "channel", routineId: "telegram:paired-owner-telegram", status: "cancelled" });
     expect(reviewInstallation(restored).status).toBe("ready-for-review");
   } finally { f.db.close(); rmSync(f.parent, { recursive: true, force: true }); }

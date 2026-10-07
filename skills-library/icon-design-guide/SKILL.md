@@ -6,7 +6,7 @@ description: |
   Do NOT use for logo design (use logo-design-brief), full design systems (use design-system-foundations), or AI-generated images (use an AI image generation skill).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design template checklist"
   category: "design-creative"

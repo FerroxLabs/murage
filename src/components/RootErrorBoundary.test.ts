@@ -61,7 +61,7 @@ describe("the shell's height", () => {
       .flatMap(([, , declarations]) => [...declarations.matchAll(/\bheight\s*:\s*([^;]+);/g)].map((match) => match[1].trim()));
     expect(heights.length).toBeGreaterThan(0);
     expect(new Set(heights)).toEqual(new Set(["100%"]));
-    expect(css).toMatch(/html\[data-keyboard="open"\]\s*#root\s*\{\s*height:\s*var\(--vvh,\s*100%\);\s*\}/);
+    expect(css).toMatch(/html\[data-keyboard="open"\]\s*#root\s*\{[^{}]*\bheight:\s*var\(--vvh,\s*100%\);[^{}]*\}/);
   });
 
   it("re-measures on the two events a visualViewport listener misses", () => {

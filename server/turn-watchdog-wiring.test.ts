@@ -134,6 +134,30 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     expect(SOURCE).toContain("if (pendingRoomStop) { const turnId = event.turnId; queueMicrotask(() => pendingRoomStop.terminal(turnId)); }");
   });
 
+  it("exempts a project write approval held for a folder another writer holds", () => {
+    // SPEC-P 5.4 late writer: the ask waits "Waiting for the folder". That is
+    // a wait, not silence, for a room reply and a direct turn alike.
+    const body = fn("holdProjectWriteApproval");
+    const held = body.indexOf('store.setTaskWaiting(claim.botId, event.threadId, { resource: "working-folder" });');
+    expect(held).toBeGreaterThan(-1);
+    expect(body).toContain('heldWriteWaits.set(key, watchdog.waitingOn(event.threadId, "working-folder", generation));');
+    // the wait ends when the approval is shown, or when its turn is gone
+    expect(body).toContain("endHeldWriteWait(key);");
+    expect(SOURCE).toContain("endHeldWriteWaits(event.threadId);");
+  });
+
+  it("card work has no clock: its budget stops only its own turn, and an estimate is not clipped", () => {
+    const body = fn("sendProjectUsageTurn");
+    expect(body).toContain("interruptDirectThread(owner.botId, turn.threadId, owner.generation, reason?.note)");
+    // a budget stop says so in the thread (not "Stopped by you"), only for its own turn
+    expect(body).toContain("=== owner.generation) noteHostStoppedTurn(turn.threadId, owner.botId, reason.line);");
+    // SPEC-P 5.4 (2026-09-29): no 30-minute cap anywhere
+    expect(SOURCE).not.toContain("PROJECT_CARD_TURN_WORK_MINUTES");
+    expect(SOURCE).not.toContain("CardWorkDeadline");
+    expect(SOURCE).not.toContain("workCapMs");
+    expect(SOURCE).toContain("stop:(groupId,goalId)=>{stopRunsOverBudget([...projectUsageTurns.values(),...projectUsagePending.values()],groupId,goalId);},");
+  });
+
   it("a Stop during direct setup ends that setup's watch", () => {
     expect(fn("interruptDirectThread")).toContain("watchdog.settleSetup(threadId,run.generation)");
   });

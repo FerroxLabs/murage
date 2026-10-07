@@ -6,7 +6,7 @@ description: |
   Do NOT use for predicting one variable from another (use regression-guide), testing whether a difference is significant (use hypothesis-testing), or building dashboards (use dashboard-design).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "statistics analysis data-science"
   category: "data-analysis"

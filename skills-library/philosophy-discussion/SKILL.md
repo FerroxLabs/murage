@@ -6,7 +6,7 @@ description: |
   Do NOT use for philosophy course design (use `lesson-plan-design`), for essay writing (use writing category skills), or for debate competition prep (not an education skill).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "tutoring teaching step-by-step research"
   category: "education"

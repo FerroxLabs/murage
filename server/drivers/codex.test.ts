@@ -1,3 +1,4 @@
+import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 // Codex driver contract tests, run against the scripted fake app-server
 // in server/testing/fake-codex-app-server.ts — the driver must drive the
 // JSON-RPC handshake, normalize notifications into canonical events, and
@@ -15,6 +16,7 @@ import * as procs from "../procs.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver } from "./codex.ts";
+import { buildRemoteMount } from "../custom-mcp-mounts.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { NATIVE_DIR } from "../config.ts";
 
@@ -59,6 +61,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     delete process.env.FAKE_CODEX_MCP_SERVER;
     delete process.env.FAKE_CODEX_MCP_TOOL;
     delete process.env.FAKE_CODEX_DUMP;
+    delete process.env.FAKE_CODEX_APPROVAL;
     delete process.env.FAKE_CODEX_TRANSIENTS;
     delete process.env.FAKE_CODEX_PARTIAL_FAILS;
     delete process.env.FAKE_CODEX_STATE;
@@ -76,9 +79,34 @@ describe("CodexDriver turns (fake app-server)", () => {
     delete process.env.BOX_TOKEN;
     delete process.env.MURAGE_TTS_KEY;
     delete process.env.FAKE_CODEX_SKILLS;
+    delete process.env.FAKE_CODEX_SKILLS_BATCHED;
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
+  });
+
+  it("banks only the difference of resumed totals and drops the baseline on reset", async () => {
+    await create({ mode: "resume" });
+    for (const resumeCursor of [undefined, "thread-fake", undefined]) {
+      const sent = await instance.adapter.sendTurn({ threadId: "t-total-bank", text: "hi", cwd: scratch, resumeCursor });
+      await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
+    }
+    const completed = recorder.events.filter(e => e.type === "turn.completed");
+    expect(completed).toHaveLength(3);
+    expect(completed[0]).not.toHaveProperty("usage");
+    expect(completed[1]).toMatchObject({ usage: { input: 0, output: 0, cachedInput: 0 } });
+    expect(completed[2]).not.toHaveProperty("usage");
+  });
+
+  it("F9 discards the total baseline when resume falls back to a new session", async () => {
+    await create();
+    for (const resumeCursor of [undefined, "missing-session"]) {
+      const sent = await instance.adapter.sendTurn({ threadId: "t-resume-failure", text: "hi", cwd: scratch, resumeCursor });
+      await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
+    }
+    const completed = recorder.events.filter(e => e.type === "turn.completed");
+    expect(completed).toHaveLength(2);
+    expect(completed[1]).not.toHaveProperty("usage");
   });
 
   // Codex's app-server has no command list; the built-in pair is mapped to
@@ -92,6 +120,25 @@ describe("CodexDriver turns (fake app-server)", () => {
       await create();
       await instance.adapter.sendTurn({ threadId: "t-skills", text: "hi", cwd: scratch });
       await recorder.until((e) => e.type === "turn.completed");
+      expect(await recorder.until((e) => e.type === "engine.commands")).toMatchObject({
+        provider: "codex",
+        commands: [
+          { name: "review", hint: "[what to review]" },
+          { name: "compact" },
+          { name: "release-notes", description: "Draft the notes" },
+        ],
+      });
+    });
+
+    // The skills answer and the turn's end can reach the driver in one read
+    // (a fast turn on a busy machine). The list is the bot's, not the turn's:
+    // it is still reported after the turn settles.
+    it("reports the skills Codex lists when the answer lands in the same read as the turn's end", async () => {
+      process.env.FAKE_CODEX_SKILLS = JSON.stringify([SKILL]);
+      process.env.FAKE_CODEX_SKILLS_BATCHED = "1";
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-skills-batched", text: "hi", cwd: scratch });
+      expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
       expect(await recorder.until((e) => e.type === "engine.commands")).toMatchObject({
         provider: "codex",
         commands: [
@@ -270,7 +317,8 @@ describe("CodexDriver turns (fake app-server)", () => {
     ]);
     // codex reports the THREAD total; the driver turns it into this turn's
     // figure so the harness never sums a running total
-    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: true, usage: { input: 7, output: 3, cachedInput: 4 } });
+    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: true });
+    expect(recorder.events.at(-1)).not.toHaveProperty("usage");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.env.OPENAI_API_KEY).toBeUndefined();
@@ -414,7 +462,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       expect(argv).toContain("model_context_window=129024");
       // argv is world-readable in `ps`; only the env-key NAME may appear there
       expect(argv).not.toContain("sk-flux-test-key");
-      expect(seen.env.MURAGE_FLUX_API_KEY).toBe("sk-flux-test-key");
+      expect(seen.env.MURAGE_FLUX_API_KEY).toBe(fixtureCredentialFingerprint("sk-flux-test-key"));
       // FLUX_API_KEY is workspace-scoped — the child gets the copy, never it
       expect(seen.env.FLUX_API_KEY).toBeUndefined();
 
@@ -579,7 +627,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.argv.join(" ")).toContain("mcp_servers.murage_connectors.command");
     expect(seen.argv.join(" ")).toContain("MURAGE_COMMS_TOKEN");
     expect(seen.argv.join(" ")).not.toContain("per-boot-token");
-    expect(seen.env.MURAGE_COMMS_TOKEN).toBe("per-boot-token");
+    expect(seen.env.MURAGE_COMMS_TOKEN).toBe(fixtureCredentialFingerprint("per-boot-token"));
   });
 
   it("skips custom MCP entries before copying reserved env or requesting a bearer, preserving built-ins and approval behavior", async () => {
@@ -622,7 +670,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     }
     expect(argv).not.toContain("attacker-mcp");
     expect(seen.env.CUSTOM_REJECTED_MARKER).toBeUndefined();
-    expect(seen.env.MURAGE_COMMS_TOKEN).toBe("per-boot-token");
+    expect(seen.env.MURAGE_COMMS_TOKEN).toBe(fixtureCredentialFingerprint("per-boot-token"));
     expect(seen.env.MURAGE_CONNECTOR_UPSTREAM_URL).toBe("http://127.0.0.1:8799/api/internal/connectors/mcp");
     expect(seen.argv.find((arg: string) => arg.startsWith("mcp_servers.notes.env_vars=")))
       .toBe('mcp_servers.notes.env_vars=["NOTES_TOKEN"]');
@@ -630,7 +678,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     // env value stays in the child env; argv carries names only
     expect(argv).toContain("NOTES_TOKEN");
     expect(argv).not.toContain("tok-notes");
-    expect(seen.env.NOTES_TOKEN).toBe("tok-notes");
+    expect(seen.env.NOTES_TOKEN).toBe(fixtureCredentialFingerprint("tok-notes"));
     // the built-in keeps codex's pre-quieted approval mode; the custom
     // server does NOT — its tool calls arrive as approval cards
     expect(argv).toContain('mcp_servers.murage_connectors.default_tools_approval_mode');
@@ -643,6 +691,43 @@ describe("CodexDriver turns (fake app-server)", () => {
       expect(seen.argv).toContain(`mcp_servers.${name}.tool_timeout_sec=${CODEX_MCP_TOOL_TIMEOUT_SEC}`);
     }
     expect(CODEX_MCP_TOOL_TIMEOUT_SEC).toBeGreaterThan(24 * 60 * 60);
+    // a custom stdio server often downloads on its first turn: it gets 60 s
+    // to start; Murage's own (already installed) servers keep codex's default
+    expect(seen.argv).toContain("mcp_servers.notes.startup_timeout_sec=60");
+    expect(argv).not.toContain("mcp_servers.murage_connectors.startup_timeout_sec");
+  });
+
+  it("mounts two link servers as the proxy: names in argv, one shared child environment without a collision, no secret anywhere", async () => {
+    await create();
+    const dump = join(scratch, "remote-mounts.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    const token = "b2".repeat(24);
+    const context = { execPath: process.execPath, proxyPath: "/fake/remote-mcp-proxy.js", harnessUrl: "http://127.0.0.1:1", token: () => token };
+    await instance.adapter.sendTurn({
+      threadId: "t-remote-mounts",
+      text: "go",
+      integrations: {
+        custom: {
+          svc: buildRemoteMount("svc", context, token),
+          svc2: buildRemoteMount("svc2", context, token),
+          forged: { command: "attacker-mcp", args: [], env: { MURAGE_MCP_TOKEN: "forged" } },
+          notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-notes" } },
+        },
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    for (const name of ["svc", "svc2"]) {
+      expect(seen.argv).toContain(`mcp_servers.${name}.args=${JSON.stringify(["/fake/remote-mcp-proxy.js", "--server", name])}`);
+      expect(seen.argv).toContain(`mcp_servers.${name}.env_vars=${JSON.stringify(["ELECTRON_RUN_AS_NODE", "MURAGE_HARNESS_URL", "MURAGE_MCP_TOKEN"])}`);
+      expect(seen.argv).toContain(`mcp_servers.${name}.startup_timeout_sec=60`);
+      expect(seen.argv).not.toContain(`mcp_servers.${name}.default_tools_approval_mode="auto"`);
+    }
+    // one child environment, one value each: the two servers agree, so nothing collides
+    expect(seen.env.MURAGE_MCP_TOKEN).toBe(fixtureCredentialFingerprint(token));
+    expect(JSON.stringify(seen.argv)).not.toContain(token);
+    expect(JSON.stringify(seen.argv)).not.toContain("attacker-mcp");
+    expect(seen.argv.find((arg: string) => arg.startsWith("mcp_servers.notes.env_vars="))).toBe('mcp_servers.notes.env_vars=["NOTES_TOKEN"]');
   });
 
   it("gives a custom server its own mount name when the owner's config.toml already declares one by that name", async () => {
@@ -828,7 +913,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(argv).toContain("/fake/memory-proxy.js");
     expect(argv).not.toContain("attacker-mcp");
     expect(argv).not.toContain("memory-fixture-secret");
-    expect(seen.env.MURAGE_MEMORY_TOKEN).toBe("memory-fixture-secret");
+    expect(seen.env.MURAGE_MEMORY_TOKEN).toBe(fixtureCredentialFingerprint("memory-fixture-secret"));
     expect(argv).not.toContain("mcp_servers.agents.command");
   });
 
@@ -862,7 +947,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.argv.join(" ")).toContain("/tmp/agents-proxy.js");
     expect(seen.argv.join(" ")).toContain("MURAGE_COMMS_TOKEN");
     expect(seen.argv.join(" ")).not.toContain("peer-comms-secret");
-    expect(seen.env.MURAGE_COMMS_TOKEN).toBe("peer-comms-secret");
+    expect(seen.env.MURAGE_COMMS_TOKEN).toBe(fixtureCredentialFingerprint("peer-comms-secret"));
     expect(instance.adapter.capabilities.agentsMcp).toBe(true);
   });
 
@@ -890,7 +975,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.argv.join(" ")).toContain("/tmp/container-mcp.js");
     expect(seen.argv.join(" ")).toContain("MURAGE_VM_TOKEN");
     expect(seen.argv.join(" ")).not.toContain("vm-secret");
-    expect(seen.env.MURAGE_VM_TOKEN).toBe("vm-secret");
+    expect(seen.env.MURAGE_VM_TOKEN).toBe(fixtureCredentialFingerprint("vm-secret"));
   });
 
   it("mounts the remote computer proxy without placing its token in argv", async () => {
@@ -913,7 +998,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.argv.join(" ")).toContain("MURAGEBOX_BOX_TOKEN");
     expect(seen.argv.join(" ")).not.toContain("remote-secret");
     expect(seen.env.MURAGEBOX_BOX_ID).toBe("box-123");
-    expect(seen.env.MURAGEBOX_BOX_TOKEN).toBe("remote-secret");
+    expect(seen.env.MURAGEBOX_BOX_TOKEN).toBe(fixtureCredentialFingerprint("remote-secret"));
   });
 
   it("sends the local provider when the picker id is custom-encoded", async () => {
@@ -934,7 +1019,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv).toContain("model_providers.unsloth.base_url=\"http://127.0.0.1:8888/v1\"");
     expect(JSON.stringify(seen.argv)).not.toContain("unsloth-secret");
-    expect(seen.env.MURAGE_LOCAL_UNSLOTH_API_KEY).toBe("unsloth-secret");
+    expect(seen.env.MURAGE_LOCAL_UNSLOTH_API_KEY).toBe(fixtureCredentialFingerprint("unsloth-secret"));
   });
 
   it("streams agentMessage deltas without re-emitting the settled text", async () => {
@@ -996,6 +1081,32 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ decision: "approved" });
   });
 
+  it("headlines the real command of a legacy shell approval and labels the reason apart", async () => {
+    process.env.FAKE_CODEX_APPROVAL = JSON.stringify({
+      method: "execCommandApproval",
+      params: { command: ["rm", "-rf", "build dir"], reason: "Just tidying the workspace" },
+    });
+    await create({ mode: "approval" });
+    await instance.adapter.sendTurn({ threadId: "t-approve-argv", text: "clean up" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ tool: "shell", summary: "rm -rf 'build dir'", reason: "Just tidying the workspace" });
+    await instance.adapter.respondToRequest("t-approve-argv", opened.requestId!, { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
+  it("headlines the files of a legacy apply_patch approval, not the reason", async () => {
+    process.env.FAKE_CODEX_APPROVAL = JSON.stringify({
+      method: "applyPatchApproval",
+      params: { fileChanges: { "src/a.ts": { type: "update" }, "src/b.ts": { type: "add" } }, reason: "Fixing the bug" },
+    });
+    await create({ mode: "approval" });
+    await instance.adapter.sendTurn({ threadId: "t-approve-patch", text: "patch" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ tool: "edit", summary: "src/a.ts, src/b.ts", reason: "Fixing the bug" });
+    await instance.adapter.respondToRequest("t-approve-patch", opened.requestId!, { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
   it("answers Codex 0.149 MCP elicitation with the MCP result shape", async () => {
     await create({ mode: "mcp-elicitation" });
     const dump = join(scratch, "mcp-elicitation.json");
@@ -1008,10 +1119,28 @@ describe("CodexDriver turns (fake app-server)", () => {
       tool: "list_bots",
       summary: 'Allow the agents MCP server to run tool "list_bots"?',
     });
+    // the arguments reach the card, not only the question
+    expect(JSON.parse((opened as any).toolInput)).toEqual({ bot: "lena", limit: 3 });
 
     await instance.adapter.respondToRequest("t-mcp-elicitation", opened.requestId!, { behavior: "allow" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ action: "accept", content: {} });
+  });
+
+  it("a project question stays open past its normal deadline", async () => {
+    await create({ mode: "form-elicitation" });
+    const original = globalThis.setTimeout;
+    const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
+      original(callback, delay === 30 * 60_000 ? 50 : delay, ...args)) as typeof setTimeout);
+    try {
+      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose", holdProjectAsks: true, holdPermissionAsks: true });
+      const opened = await recorder.until(event => event.type === "request.opened");
+      expect(opened).toMatchObject({ requestType: "question" });
+      await new Promise(resolve => original(resolve, 200));
+      expect(recorder.events.some(event => event.type === "request.resolved")).toBe(false);
+      await instance.adapter.respondToRequest("project-question", opened.requestId!, { behavior: "deny" });
+      expect(await recorder.until(event => event.type === "request.resolved")).toMatchObject({ source: "user" });
+    } finally { timer.mockRestore(); }
   });
 
   it("shows a form elicitation as a question, never auto-answers it in fullAuto, and accepts typed content (ASK1, ASK3)", async () => {
@@ -1194,6 +1323,41 @@ describe("CodexDriver turns (fake app-server)", () => {
   // Murage's Full access stops before deleting outside its folder, paying
   // and messaging someone new (server/stop-line.ts): a fullAuto instance
   // keeps its reach but asks, so those three can wait for the owner.
+  // Gap 4: routeAsks replaces never on both Codex thread/start and turn/start.
+  it("routeAsks overrides only Codex skip-all approval policy", async () => {
+    for (const fullAuto of [false, true]) {
+      if (fullAuto) { recorder.stop(); await instance.dispose(); }
+      await create({ mode: "approval", fullAuto });
+      const dump = join(scratch, `enforce-asks-${fullAuto}.json`);
+      process.env.FAKE_CODEX_DUMP = dump;
+      for (const [turn, enforced] of [false, true, false].entries()) {
+        const threadId = `t-enforce-${fullAuto}-${turn}`;
+        const sent = await instance.adapter.sendTurn({
+          threadId, text: "hi",
+          ...(enforced ? { routeAsks: true as const } : {}),
+        });
+        const event = await recorder.until((event) => event.turnId === sent.turnId &&
+          (event.type === "request.opened" || event.type === "turn.completed"));
+        expect(event.type).toBe(!fullAuto || enforced ? "request.opened" : "turn.completed");
+        if (event.type === "request.opened") {
+          expect(event).toMatchObject({ requestType: "permission", tool: "shell" });
+          await instance.adapter.respondToRequest(threadId, event.requestId!, { behavior: "deny" });
+        }
+        await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
+        const seen = JSON.parse(readFileSync(dump, "utf8"));
+        const start = seen.calls.find((call: { method: string }) => call.method === "thread/start");
+        const prompt = seen.calls.find((call: { method: string }) => call.method === "turn/start");
+        expect(start.params).toMatchObject({
+          sandbox: fullAuto ? "danger-full-access" : "workspace-write",
+          approvalPolicy: fullAuto ? enforced ? "untrusted" : "never" : "on-request",
+        });
+        expect(prompt).toBeDefined();
+        if (fullAuto && enforced) expect(prompt.params.approvalPolicy).toBe("untrusted");
+        else expect(prompt.params).not.toHaveProperty("approvalPolicy");
+      }
+    }
+  });
+
   it("asks instead of auto-accepting under the stop line, and reports the command", async () => {
     await create({ mode: "approval", fullAuto: true });
     const dump = join(scratch, "dump-stop-line.json");

@@ -53,10 +53,10 @@ import type { CalendarCall, CalendarCallAttachment, CalendarCallInput } from "@/
 import { botRole } from "@/lib/bot-role";
 import { cn } from "@/lib/cn";
 import {
-  imageAttachmentFromFile,
   intakeFiles,
   type Attachment,
 } from "@/lib/composer-attachments";
+import { imageAttachmentFromFile } from "@/lib/composer-image-upload";
 import { EMBER_COLORS, type EmberState } from "@/lib/mascot";
 import {
   addDays,
@@ -146,6 +146,18 @@ function roomCanRunGoal(group: Group): boolean {
     group.setupCompletedAt != null ||
     group.setupSkippedAt != null ||
     (group.messages?.length ?? 0) > 0;
+}
+
+/** What "Choose a channel" says when no channel can run a goal yet. A
+ * channel whose setup was never finished is left out of the list, so the
+ * sentence names it rather than telling the person to create a channel that
+ * is already in their sidebar (0.1.60 low). */
+export function goalChannelHint(groups: Group[]): string {
+  const waiting = groups.filter((group) => !group.dm && !group.hidden && !roomCanRunGoal(group)).map((group) => group.name);
+  if (!waiting.length) return "Create a channel from the sidebar first, then come back to schedule its goal.";
+  if (waiting.length === 1) return `${waiting[0]} needs its setup finished before it can run a goal. Open it in the sidebar, finish setup, then come back.`;
+  const names = waiting.length === 2 ? `${waiting[0]} and ${waiting[1]}` : `${waiting.slice(0, -1).join(", ")} and ${waiting.at(-1)}`;
+  return `${names} need their setup finished before they can run a goal. Open one in the sidebar, finish setup, then come back.`;
 }
 
 function preferredRoomLead(group: Group | undefined, bots: Bot[], preferredId?: string): Bot | undefined {
@@ -423,7 +435,7 @@ function EventEditor({
   const [groupId, setGroupId] = useState(existingRoutine?.groupId ?? "");
   const [runOn, setRunOn] = useState<RoutineRunOn>(existingRoutine?.runOn ?? defaultRunOn ?? "ember");
   const [overlap, setOverlap] = useState<"skip" | "queue">(existingRoutine?.overlap ?? "skip");
-  const [permissionMode, setPermissionMode] = useState<RoutineLevelChoice>(existingRoutine?.permissionMode ?? "inherit");
+  const [permissionMode, setPermissionMode] = useState<RoutineLevelChoice>(existingRoutine?.permissionMode ?? permissionModeOf(state.bots.find((bot) => bot.id === botIds[0]) ?? { autoApprove: false, fullAccess: false }));
   const [attachments, setAttachments] = useState<Array<RoutineContextAttachment | CalendarCallAttachment>>(
     existingRoutine?.target === "room-goal" ? [] : existingRoutine?.attachments ?? existingCall?.attachments ?? [],
   );
@@ -563,7 +575,7 @@ function EventEditor({
   const canSwitchKind = !existingRoutine && !existingCall && !lockedBotId;
 
   return (
-    <div className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/65 p-3 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/65 p-3 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div role="dialog" aria-modal="true" aria-label={existingRoutine || existingCall ? "Edit routine" : "New routine"} className="max-h-[calc(0.94*var(--vvh,100dvh))] w-full max-w-[760px] overflow-y-auto rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
         <div className="sticky top-0 z-20 flex items-center justify-between border-b border-hairline/40 bg-panel/95 px-5 py-3.5 backdrop-blur">
           <div className="text-[15px] font-semibold text-ink">{existingRoutine || existingCall ? (kind === "call" ? "Edit call" : "Edit routine") : (kind === "call" ? "New call" : "New routine")}</div>
@@ -730,7 +742,7 @@ function EventEditor({
                         {rooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}
                       </select>
                     ) : (
-                      <div className="rounded-xl border border-dashed border-hairline/60 bg-inset px-3.5 py-3 text-[11.5px] leading-relaxed text-ink-secondary">Create a channel from the sidebar first, then come back to schedule its goal.</div>
+                      <div className="rounded-xl border border-dashed border-hairline/60 bg-inset px-3.5 py-3 text-[11.5px] leading-relaxed text-ink-secondary">{goalChannelHint(state.groups)}</div>
                     )}
                   </div>
                   {selectedRoom && (
@@ -1330,7 +1342,7 @@ function EventDetails({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 backdrop-blur-[2px]" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 backdrop-blur-[2px]" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div role="dialog" aria-modal="true" aria-label="Routine details" className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
         <div className="flex items-start gap-4 border-b border-hairline/40 px-5 py-4">
           <span className={cn("mt-1 size-4 shrink-0 rounded", isCall ? "bg-[#6d7cff]" : "bg-accent")} />
@@ -1424,7 +1436,7 @@ function PausedList({
     }
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div role="dialog" aria-modal="true" aria-label="Paused routines" className="w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
         <div className="flex items-center justify-between border-b border-hairline/40 px-5 py-4"><div><div className="text-[16px] font-semibold text-ink">Paused routines</div><div className="mt-0.5 text-[11.5px] text-ink-secondary">History is kept; no new tasks will run.</div></div><button onClick={onClose} aria-label="Close" className="rounded-full p-2 text-ink-secondary hover:bg-raised"><X size={17} /></button></div>
         <div className="max-h-[55vh] space-y-1 overflow-y-auto p-3">
@@ -1468,7 +1480,7 @@ export function RoutineEditor({
 }) {
   const canEdit = useDesktopSurface() === true;
   if (!canEdit) return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div role="dialog" aria-modal="true" aria-label="Routine editing" className="max-w-md rounded-xl border border-hairline bg-panel p-5 text-ink">
         <p>Create or change schedules in the desktop app, or ask the bot to propose a routine for your review here.</p>
         <button autoFocus onClick={onClose} className="mt-4 rounded-lg bg-accent px-4 py-2 text-white">Close</button>
@@ -1620,7 +1632,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col bg-app animate-workspace-in">
       <header
-        className={cn("shrink-0 border-b border-hairline/35 bg-app py-3 pr-4", macInset ? "pl-[86px]" : "pl-4")}
+        className={cn("shrink-0 border-b border-hairline/35 bg-app py-3 pt-[calc(0.75rem+env(safe-area-inset-top))] pr-4", macInset ? "pl-[86px]" : "pl-4")}
         style={windowDragStyle}
       >
         <div className="flex flex-wrap items-center gap-2">

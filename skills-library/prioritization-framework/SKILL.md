@@ -5,7 +5,7 @@ description: |
   Do NOT use for product roadmap creation (use product-roadmap), user story writing (use user-story-writing), or strategic planning (use strategic-roadmap).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis planning strategy decision-making agile"
   category: "business-strategy"

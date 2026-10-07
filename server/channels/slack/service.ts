@@ -28,9 +28,12 @@ interface Options {
   revokeRuns: (connectionId: string) => Promise<void>;
   approvals?: Pick<TelegramApprovalActions, "pending" | "resolve">;
   now?: () => number;
+  /** What Slack calls the owner who wrote (kept to keep names out of customer turns). */
+  onSender?: (binding: SlackBinding, display: { name?: string; username?: string }) => void;
 }
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
 export class SlackService {
+  private namedSender = false;
   private connection?: Connection;
   private transport?: SlackTransport;
   private ledger?: DurableDelivery;
@@ -166,6 +169,11 @@ export class SlackService {
       const binding = slackBindingSchema.parse({ ...c.chosen, botUserId: c.identity.userId, botId: c.identity.botId, dmId: message.dmId, connectionId: randomUUID() });
       this.save({ ...c, binding, pairing: null }); this.makeLedger(binding); this.state = "connected";
     } else if (message.dmId !== c.binding.dmId) { await ack(); return; }
+    if (c.binding && !this.namedSender) {
+      this.namedSender = true;
+      const binding = c.binding, transport = this.transport;
+      void transport?.userDisplay?.(binding.ownerUserId).then(display => { if (display.name || display.username) this.options.onSender?.(binding, display); else this.namedSender = false; }, () => { this.namedSender = false; });
+    }
     const pairedNow = !c.binding;
     this.ledger!.accept({ deliveryId: message.deliveryId, occurredAt: message.occurredAt,
       ...(pairedNow ? { prompt: "", response: "Slack is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again." } : slackPrompt(message.text)) });

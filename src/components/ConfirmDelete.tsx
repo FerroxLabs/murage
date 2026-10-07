@@ -43,7 +43,7 @@ export function ConfirmDelete({
   const [typed, setTyped] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const matches = typed.trim().toLowerCase() === name.trim().toLowerCase();
-  const savedFiles = useSavedFileCount(preview);
+  const counts = useDeletionCounts(preview);
 
   useEffect(() => inputRef.current?.focus(), []);
   useEffect(() => {
@@ -59,7 +59,7 @@ export function ConfirmDelete({
       // against the layout viewport, which iOS does not shrink, and would centre
       // the dialog in the full pre-keyboard height with the confirm button
       // behind the keys. See the overlay convention in styles.css.
-      className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/60 p-6"
+      className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/60 p-6"
       onClick={onCancel}
       role="presentation"
     >
@@ -77,7 +77,7 @@ export function ConfirmDelete({
               {title ?? <>Delete {kind} “{name}”?</>}
             </h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">{detail}</p>
-            {preview && deletionConsequenceLines(savedFiles).map((line) => (
+            {preview && deletionConsequenceLines(counts?.savedFiles, counts?.messages).map((line) => (
               <p key={line} className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{line}</p>
             ))}
             {items && items.length > 0 && (
@@ -127,17 +127,17 @@ export function ConfirmDelete({
   );
 }
 
-/** How many saved files a Delete takes with it; null until known. */
-export function useSavedFileCount(preview: { botId?: string; groupId?: string; threadId?: string } | undefined): number | null {
-  const [count, setCount] = useState<number | null>(null);
+/** How many messages and saved files a Delete takes with it; null until known. */
+export function useDeletionCounts(preview: { botId?: string; groupId?: string; threadId?: string } | undefined): { savedFiles: number; messages: number | null } | null {
+  const [counts, setCounts] = useState<{ savedFiles: number; messages: number | null } | null>(null);
   const query = preview ? new URLSearchParams(Object.entries(preview).filter((entry): entry is [string, string] => Boolean(entry[1]))).toString() : "";
   useEffect(() => {
     if (!query) return;
     let live = true;
-    api(`/api/deletion-preview?${query}`).then((body: { savedFiles?: unknown }) => {
-      if (live && typeof body?.savedFiles === "number") setCount(body.savedFiles);
+    api(`/api/deletion-preview?${query}`).then((body: { savedFiles?: unknown; messages?: unknown }) => {
+      if (live && typeof body?.savedFiles === "number") setCounts({ savedFiles: body.savedFiles, messages: typeof body.messages === "number" ? body.messages : null });
     }).catch(() => {});
     return () => { live = false; };
   }, [query]);
-  return count;
+  return counts;
 }

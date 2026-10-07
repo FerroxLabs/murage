@@ -20,12 +20,12 @@ test.beforeAll(async () => {
       load(id) {
         if (id === "\0starter-store") return "import {useSyncExternalStore} from 'react';let state={instances:[]};const listeners=new Set();export async function api(path,init){const r=await fetch(path,init);const data=await r.json();if(!r.ok)throw Object.assign(new Error(data.error),{status:r.status});return data;}function dispatch(action){(window.fixtureActions??=[]).push(action);if(action.type==='instances'){state={...state,instances:action.instances};listeners.forEach(fn=>fn())}}export function useStore(){return {state:useSyncExternalStore(fn=>{listeners.add(fn);return ()=>listeners.delete(fn)},()=>state),dispatch}}";
         if (id !== "\0starter-profiles") return;
-        return "import React from 'react';import {createRoot} from 'react-dom/client';import {StarterProfiles} from '/src/components/StarterProfiles.tsx';import {Onboarding} from '/src/components/Onboarding.tsx';import '/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'dark';window.fixtureActions=[];function Fixture(){const [done,setDone]=React.useState(false);return done?React.createElement('p',null,'Workspace open'):React.createElement(Onboarding,{onDone:()=>setDone(true)})}createRoot(document.getElementById('root')).render(React.createElement(location.search.includes('onboarding')?Fixture:StarterProfiles));";
+        return "import React from 'react';import {createRoot} from 'react-dom/client';import {StarterProfiles} from '/src/components/StarterProfiles.tsx';import '/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'dark';window.fixtureActions=[];createRoot(document.getElementById('root')).render(React.createElement(StarterProfiles));";
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith("/__starters?") && req.url !== "/__starters") return next();
         res.setHeader("content-type", "text/html");
-        res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;background:var(--color-app)"><main id="root" style="padding:16px;max-width:620px;margin:16px auto"></main><script type="module" src="/__starters.js"></script>');
+        res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><body style="margin:0;background:var(--color-app)"><main id="root" style="padding:16px;max-width:620px;margin:0 auto;box-sizing:border-box;height:100dvh;overflow-y:auto"></main><script type="module" src="/__starters.js"></script>');
       }); },
     }],
   });
@@ -134,7 +134,7 @@ test("import failure and unavailable draft storage never claim completion or a s
   await expect(page.getByRole("button", { name: "Open first task" })).toBeVisible();
   await page.evaluate(() => { Object.defineProperty(window, "localStorage", { configurable: true, get() { throw new Error("Storage denied"); } }); });
   await page.getByRole("button", { name: "Open first task" }).click();
-  await expect(page.getByRole("alert")).toContainText("draft could not be saved safely");
+  await expect(page.getByRole("alert")).toContainText("The first-task draft could not be saved.");
   expect((await page.evaluate(() => (window as any).fixtureActions)).some((action: any) => action.type === "select")).toBe(false);
 });
 
@@ -149,98 +149,6 @@ for (const skin of ["light", "dark"]) test("mobile " + skin + " starter review i
   await page.screenshot({ path: info.outputPath("starter-review-" + skin + "-mobile.png"), fullPage: true });
 });
 
-const engine = { instanceId: "fuigo", driverKind: "fuigoAgent", displayName: "Fuigo", access: "cloud", enabled: true,
-  snapshot: { state: "available", authenticated: true }, models: { default: "fixture-model", options: [{ id: "fixture-model", label: "Fixture model" }] },
-  install: { command: { win32: "npm install -g forbidden-fixture" } } };
-async function onboardingFixture(page: Page, options: { established?: boolean; repair?: boolean } = {}) {
-  let checks = 0;
-  await page.addInitScript(() => { (window as any).muragebox = { platform: "win32" }; });
-  await page.route("**/api/config", route => route.fulfill({ json: { surface: "desktop" } }));
-  await page.route("**/api/bots?messages=0", route => route.fulfill({ json: { bots: options.established ? [importedBot] : [], groups: [] } }));
-  await page.route("**/api/instances", route => {
-    checks++;
-    if (options.repair && checks === 2) return route.fulfill({ status: 503, json: { error: "Fixture recheck unavailable" } });
-    const value = options.repair && checks < 4 ? { ...engine, snapshot: { state: "unavailable", setupAction: "repair", reason: "Bundled engine could not start" }, models: { default: "", options: [] } } : engine;
-    return route.fulfill({ json: { instances: [value] } });
-  });
-  return fixture(page);
-}
-
-test("outcome-first onboarding requires an explicit engine and model, reviews a crew and opens a draft", async ({ page }, info) => {
-  const requests = await onboardingFixture(page);
-  await page.goto(origin + "/__starters?onboarding&skin=dark");
-  await expect(page.getByRole("button", { name: /^Organize my day/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Run my business/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Build and create/ })).toBeVisible();
-  await page.screenshot({ path: info.outputPath("onboarding-desktop.png"), fullPage: true });
-  await page.getByRole("button", { name: /^Organize my day/ }).click();
-  await expect(page.getByRole("button", { name: "Preview my crew" })).toBeDisabled();
-  await page.getByRole("button", { name: "Fuigo Included" }).click();
-  await expect(page.getByRole("combobox", { name: "Model" })).toHaveValue("");
-  await page.getByRole("combobox", { name: "Model" }).selectOption("fixture-model");
-  await page.getByRole("button", { name: "Preview my crew" }).click();
-  await expect(page.getByRole("heading", { name: "Preview your crew" })).toBeVisible();
-  await page.getByRole("button", { name: "Review profile", exact: true }).click();
-  await page.getByRole("button", { name: "Import starter profile" }).click();
-  expect(requests.find(request => request.action === "import")).toMatchObject({ modelSelection: { instanceId: "fuigo", model: "fixture-model" }, firstRun: true });
-  await expect(page.getByRole("status")).toContainText("No task has been sent");
-  await page.getByRole("button", { name: "Open first task" }).click();
-  await expect(page.getByText("Workspace open", { exact: true })).toBeVisible();
-  expect(await page.evaluate(id => JSON.parse(localStorage.getItem("murage-drafts") ?? "{}")[id], draftId)).toContain("My notes:");
-});
-
-test("bundled Fuigo stays unavailable through failed checks and only unlocks after actual successful recheck", async ({ page }, info) => {
-  await onboardingFixture(page, { repair: true });
-  await page.goto(origin + "/__starters?onboarding&skin=dark");
-  await page.getByRole("button", { name: /^Build and create/ }).click();
-  await page.getByRole("button", { name: "Fuigo Included" }).click();
-  await expect(page.getByText("Repair bundled Fuigo", { exact: true })).toBeVisible();
-  await expect(page.getByText(/^npm install -g/)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Preview my crew" })).toBeDisabled();
-  await page.screenshot({ path: info.outputPath("bundled-fuigo-repair.png"), fullPage: true });
-  await page.getByRole("button", { name: "Check again", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("Fixture recheck unavailable");
-  await expect(page.getByRole("button", { name: "Preview my crew" })).toBeDisabled();
-  await page.getByRole("button", { name: "Check again", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Bundled engine could not start");
-  await expect(page.getByRole("combobox", { name: "Model" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Check again", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "Model" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Preview my crew" })).toBeDisabled();
-  await page.getByRole("combobox", { name: "Model" }).selectOption("fixture-model");
-  await expect(page.getByRole("button", { name: "Preview my crew" })).toBeEnabled();
-});
-
-test("interrupted selection resumes, while an established workspace never creates another crew", async ({ page }) => {
-  const requests = await onboardingFixture(page);
-  await page.goto(origin + "/__starters?onboarding");
-  await page.getByRole("button", { name: /^Run my business/ }).click();
-  await page.getByRole("button", { name: "Fuigo Included" }).click();
-  await page.getByRole("combobox", { name: "Model" }).selectOption("fixture-model");
-  await page.reload();
-  await expect(page.getByRole("heading", { name: "Choose an engine" })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "Model" })).toHaveValue("fixture-model");
-  expect(requests.filter(request => request.action === "import")).toHaveLength(0);
-  await page.unroute("**/api/bots?messages=0");
-  await page.route("**/api/bots?messages=0", route => route.fulfill({ json: { bots: [importedBot], groups: [] } }));
-  await page.reload();
-  await expect(page.getByText("Workspace open", { exact: true })).toBeVisible();
-  expect(requests.filter(request => request.action === "import")).toHaveLength(0);
-});
-
-for (const action of ["Start empty", "Import existing"]) test(action + " opens the existing workspace flow without importing a starter", async ({ page }) => {
-  const requests = await onboardingFixture(page);
-  await page.goto(origin + "/__starters?onboarding");
-  await page.getByRole("button", { name: action, exact: true }).click();
-  await expect(page.getByText("Workspace open", { exact: true })).toBeVisible();
-  expect(requests).toEqual([]);
-  if (action === "Import existing") expect(await page.evaluate(() => (window as any).fixtureActions)).toContainEqual({ type: "showTeamLibrary", view: "teams" });
-});
-
-for (const skin of ["light", "dark"]) test("onboarding outcome choices fit mobile " + skin, async ({ page }, info) => {
-  await onboardingFixture(page); await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(origin + "/__starters?onboarding&skin=" + skin);
-  await expect(page.getByRole("button", { name: "Start empty", exact: true })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: info.outputPath("onboarding-" + skin + "-mobile.png"), fullPage: true });
-});
+// The outcome-first onboarding these starters used to open from (Onboarding.tsx)
+// was replaced in 0.1.58 by the Chief's first-run conversation (311387b1);
+// its specs went with it. The first run is covered by first-run-*.human.spec.ts.

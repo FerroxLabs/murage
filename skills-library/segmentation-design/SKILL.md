@@ -6,7 +6,7 @@ description: |
   Do NOT use for cohort analysis by time period (use cohort-analysis), funnel conversion between steps (use funnel-analysis), or individual KPI definition (use kpi-definition).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis data-science planning"
   category: "data-analysis"

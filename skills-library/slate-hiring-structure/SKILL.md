@@ -1,8 +1,9 @@
 ---
 name: slate-hiring-structure
 description: "User has an outcome and gap (per `role-design.md`) and is deciding *how* to fill it. Or an FTE that isn't working and wonders about converting to contractor. Or is pitched an agency and isn't sure if it beats hiring. Load when the question is \"FTE or contractor\" or \"agency or in-house.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "slate"
 ---

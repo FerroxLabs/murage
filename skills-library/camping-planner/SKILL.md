@@ -4,7 +4,7 @@ description: |
   Guide to camping including gear selection, campsite selection, meal planning, Leave No Trace principles, weather preparation, wildlife safety, trip planning by difficulty, and camping with children. Use when the user asks about camping planner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "hiking planning guide checklist"
   category: "hobbies-crafts"

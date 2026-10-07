@@ -21,19 +21,18 @@
 //
 // Model keys are saved as named, endpoint-bound provider connections. Other
 // tool credentials retain their existing custody path. Detection is local only.
-import type { ProviderPreset } from "./provider-connections";
+import type { KeyProviderPreset as ProviderPreset } from "./provider-connections.ts";
 
 /** A Murage config section that holds a secret a renderer may write. */
 export type ProviderId =
   | "xai"
   | "flux"
-  | "composio"
   | "box"
   | "opencodeGo"
   | "tts"
   | "imageGen"
   | "openaiCompat"
-  | "anthropic" | "openai" | "openrouter" | "deepseek" | "mistral" | "groq" | "google";
+  | "anthropic" | "openai" | "openrouter" | "deepseek" | "mistral" | "groq" | "requesty" | "google";
 
 /** Something we can name but cannot store. Row explains, offers no save. */
 export type UnsupportedId = "stripe" | "openai-admin";
@@ -43,7 +42,6 @@ export type UnsupportedId = "stripe" | "openai-admin";
  * the shell has no row for this secret yet and PUT /api/config is the only
  * door — the situation FluxKeyCard.tsx documents for the Flux key. */
 export type ElectronCredential =
-  | "composioApiKey"
   | "xaiApiKey"
   | "boxToken"
   | "opencodeGoApiKey"
@@ -67,11 +65,10 @@ export interface ProviderRow {
 export const PROVIDER_ORDER: readonly ProviderId[] = [
   "flux",
   "xai",
-  "anthropic", "openai", "openrouter", "deepseek", "mistral", "groq", "google",
+  "anthropic", "openai", "openrouter", "deepseek", "mistral", "groq", "requesty", "google",
   "openaiCompat",
   "imageGen",
   "tts",
-  "composio",
   "box",
   "opencodeGo",
 ];
@@ -88,6 +85,7 @@ export const PROVIDERS: Readonly<Record<ProviderId, ProviderRow>> = {
   deepseek: modelRow("deepseek", "DeepSeek key"),
   mistral: modelRow("mistral", "Mistral key"),
   groq: modelRow("groq", "Groq key"),
+  requesty: modelRow("requesty", "Requesty key"),
   google: modelRow("google", "Google AI key"),
   xai: {
     id: "xai",
@@ -104,13 +102,6 @@ export const PROVIDERS: Readonly<Record<ProviderId, ProviderRow>> = {
     blurb: "Adds the Flux model rows to the picker for Claude, Codex and Qwen bots.",
     credential: null,
     body: (v) => ({ flux: { apiKey: v } }),
-  },
-  composio: {
-    id: "composio",
-    label: "Composio project key",
-    blurb: "Connects Gmail, GitHub, Slack and Notion through your own Composio project.",
-    credential: "composioApiKey",
-    body: (v) => ({ composio: { apiKey: v } }),
   },
   box: {
     id: "box",
@@ -220,9 +211,6 @@ const NAMES: Readonly<Record<string, Target>> = {
   FLUX_APIKEY: ["flux"],
   FLUXROUTER_API_KEY: ["flux"],
   FLUX_ROUTER_API_KEY: ["flux"],
-  // composio — env COMPOSIO_API_KEY, config composio.apiKey
-  COMPOSIO_API_KEY: ["composio"],
-  COMPOSIO_APIKEY: ["composio"],
   // box — env BOX_TOKEN, config box.token
   BOX_TOKEN: ["box"],
   BOX_API_KEY: ["box"],
@@ -238,8 +226,8 @@ const NAMES: Readonly<Record<string, Target>> = {
   MURAGE_OPENAI_IMAGE_KEY: ["imageGen"],
   IMAGEGEN_KEY: ["imageGen"],
   // openai-compatible engine — env OPENAI_COMPAT_API_KEY, config openaiCompat.key
-  OPENAI_COMPAT_API_KEY: ["openai", "openrouter", "deepseek", "mistral", "flux", "groq", "xai"],
-  OPENAICOMPAT_KEY: ["openai", "openrouter", "deepseek", "mistral", "flux", "groq", "xai"],
+  OPENAI_COMPAT_API_KEY: ["openai", "openrouter", "deepseek", "mistral", "flux", "groq", "xai", "requesty"],
+  OPENAICOMPAT_KEY: ["openai", "openrouter", "deepseek", "mistral", "flux", "groq", "xai", "requesty"],
   OPENROUTER_API_KEY: ["openrouter"],
   // A plain OPENAI_API_KEY names the issuer, not the destination: Murage has
   // TWO places an OpenAI key can live. Ambiguous on purpose.
@@ -247,6 +235,7 @@ const NAMES: Readonly<Record<string, Target>> = {
   DEEPSEEK_API_KEY: ["deepseek"],
   MISTRAL_API_KEY: ["mistral"],
   GROQ_API_KEY: ["groq"],
+  REQUESTY_API_KEY: ["requesty"],
   ANTHROPIC_API_KEY: ["anthropic"],
   ANTHROPIC_AUTH_TOKEN: ["anthropic"],
   CLAUDE_API_KEY: ["anthropic"],
@@ -294,8 +283,6 @@ const SHAPES: ReadonlyArray<readonly [RegExp, Target]> = [
   [/^xai-[A-Za-z0-9_-]{16,}$/, ["xai"]],
   // Google AI Studio: AIza + exactly 35.
   [/^AIza[A-Za-z0-9_-]{35}$/, ["google"]],
-  // Composio project key.
-  [/^ak_[A-Za-z0-9_-]{16,}$/, ["composio"]],
   // Stripe. BEFORE the ElevenLabs `sk_` rule, so a payment key is never filed
   // as a voice key — the exact wrong-write this parser exists to avoid.
   [/^[sprw]k_(live|test)_[A-Za-z0-9]{16,}$/, "stripe"],
@@ -305,9 +292,11 @@ const SHAPES: ReadonlyArray<readonly [RegExp, Target]> = [
   // OpenAI project key. Certain about the ISSUER, ambiguous about the
   // DESTINATION: Murage has two OpenAI-shaped homes.
   [/^sk-(?:proj|svcacct)-[A-Za-z0-9_-]{20,}$/, ["openai"]],
-  // A bare sk-. Shared by OpenAI, OpenRouter, Flux and a dozen resellers.
-  // This is the row that must always ask.
-  [/^sk-[A-Za-z0-9_-]{16,}$/, ["openai", "openrouter", "deepseek", "mistral", "flux", "imageGen"]],
+  // A bare sk-. Shared by OpenAI, OpenRouter and a dozen resellers.
+  // This is the row that must always ask. Never Flux: every Flux key is
+  // `sk-flux-…`, so a bare sk- saved as one is another provider's key that
+  // would only be refused by Flux (2026-10-01 ingress evidence).
+  [/^sk-[A-Za-z0-9_-]{16,}$/, ["openai", "openrouter", "deepseek", "mistral", "imageGen"]],
 ];
 
 function matchShape(value: string): Target | undefined {
@@ -541,7 +530,6 @@ export function extractKeys(blob: string): KeyCandidate[] {
  * ConfigStatus entirely, so its row can never claim to be already connected. */
 export interface ConfiguredFlags {
   xai?: { configured: boolean };
-  composio?: { configured: boolean };
   box?: { configured: boolean };
   opencodeGo?: { configured: boolean };
   tts?: { configured: boolean };

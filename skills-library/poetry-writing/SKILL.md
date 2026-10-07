@@ -6,7 +6,7 @@ description: |
   Do NOT use for song lyrics (different structure), prose poetry that is really flash fiction (use flash-fiction), or literary analysis of existing poems.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing analysis"
   category: "writing"

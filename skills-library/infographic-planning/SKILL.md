@@ -6,7 +6,7 @@ description: |
   Do NOT use for chart type selection (use chart-type-selector), dashboard layout (use dashboard-design), or detailed report formatting (use report-formatting).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-visualization design planning"
   category: "data-analysis"

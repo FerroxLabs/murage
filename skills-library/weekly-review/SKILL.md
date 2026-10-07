@@ -6,7 +6,7 @@ description: |
   Do NOT use for daily planning (use daily-planning), quarterly or annual planning (use quarterly-planning or annual-review), or team retrospectives (use retrospective-facilitator).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management planning checklist"
   category: "productivity"

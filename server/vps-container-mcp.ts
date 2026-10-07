@@ -5,6 +5,7 @@
 // mcp-bridge.ts, shared with the Local VM entry point.
 import { runMcpBridge } from "./mcp-bridge.ts";
 import { vpsContainerMcpArgs, vpsDockerArgs } from "./vps-computer.ts";
+import { turnSecret, turnSecretWired } from "./turn-credential.ts";
 
 const [alias, containerName] = process.argv.slice(2);
 const sshAlias = alias ?? "";
@@ -19,7 +20,7 @@ try {
 // The who-is-driving pair rides in env, not argv — argv is world-readable
 // through `ps`, and the token guards a loopback endpoint.
 const controlUrl = process.env.MURAGE_CONTROL_URL ?? "";
-const controlToken = process.env.MURAGE_CONTROL_TOKEN ?? "";
+const controlToken = () => turnSecret("MURAGE_CONTROL_TOKEN");
 
 runMcpBridge({
   command: "docker",
@@ -29,5 +30,5 @@ runMcpBridge({
   // driver: a busy desktop mid-tool-call must never look dead, while an
   // unreachable VPS must, and `docker version` distinguishes exactly that.
   liveness: { command: "docker", args: vpsDockerArgs(sshAlias, ["version", "--format", "{{.Server.Version}}"]) },
-  ...(controlUrl && controlToken ? { gate: { url: controlUrl, token: controlToken } } : {}),
+  ...(controlUrl && turnSecretWired("MURAGE_CONTROL_TOKEN") ? { gate: { url: controlUrl, token: controlToken } } : {}),
 });

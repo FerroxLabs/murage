@@ -6,7 +6,7 @@ description: |
   Do NOT use for understanding what a credit score is (use credit-score-explainer), debt payoff sequencing (use debt management skills), or credit repair disputes.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance debt-management planning goal-setting"
   category: "personal-finance"

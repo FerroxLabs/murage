@@ -6,7 +6,7 @@ description: |
   Do NOT use for high-fidelity visual design (use design-system-foundations), user flow diagrams (use user-flow-mapping), or interactive prototype definitions (use prototype-spec).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design planning template"
   category: "design-creative"

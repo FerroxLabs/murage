@@ -1,0 +1,14 @@
+{
+  "id": "payables-match-checklist",
+  "name": "Payables Match Checklist",
+  "version": "1.0.0",
+  "description": "Matches supplier invoices to approved orders, delivery or service evidence and credit notes. Produces a source-linked review queue with duplicate, quantity, amount, due-date and supplier-detail exceptions. Use before an owner reviews bills for payment. Use the supplied rules and records; payment execution and supplier changes remain separate owner decisions.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "payables",
+    "invoice",
+    "matching",
+    "exceptions"
+  ],
+  "requiredCapabilities": []
+}

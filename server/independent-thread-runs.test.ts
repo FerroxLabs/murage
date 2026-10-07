@@ -391,3 +391,28 @@ it("never yields a resource outside the policy: a needed screen is still waited 
   expect(result).toBe(true);
   expect(runs.owns(chat, "screen:bot:b")).toBe(true);
 });
+
+// ── owner first (SPEC-P 7.2 step 8 [AMB-6], lane E1) ─────────────────────
+it("gives the owner's own send one reserved slot above the limit, and a second waits ahead of automation", async () => {
+  const runs = new IndependentThreadRuns<object>();
+  const held = ["a", "b", "c"].map(id => runs.admit("bot", id, {}));
+  const routine = runs.admit("bot", "routine", {}, [], { queueForSlot: true });
+  const routineSlot = runs.awaitSlot(routine);
+  // the owner is never refused with thread_limit: the reserved slot is free
+  const owner = runs.admit("bot", "owner-1", {}, [], { ownerFirst: true });
+  expect(await runs.awaitSlot(owner)).toBe(true);
+  // the reserved slot is taken: the next owner send waits, ahead of the routine
+  const second = runs.admit("bot", "owner-2", {}, [], { ownerFirst: true });
+  const secondSlot = runs.awaitSlot(second);
+  expect((await settled(secondSlot)).done).toBe(false);
+  runs.release(held[0]);
+  expect(await secondSlot).toBe(true);
+  expect((await settled(routineSlot)).done).toBe(false);
+  // the reserved slot frees none of the three: the routine waits for a real one
+  runs.release(owner);
+  expect((await settled(routineSlot)).done).toBe(false);
+  runs.release(held[1]);
+  expect(await routineSlot).toBe(true);
+  // and a plain (non-owner) send is still refused at the limit
+  expect(() => runs.admit("bot", "chat", {})).toThrow("three threads");
+});

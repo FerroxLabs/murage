@@ -75,8 +75,11 @@ it("grounds through the admitted OpenAI compatible route with an independent too
   const instance=await OpenAICompatDriver.create({instanceId:"ground",displayName:"Fixture",environment:{},enabled:true,config:{url,key:"fixture-key",apiKeyEnv:"P09_UNUSED_KEY",model:"fixture-model"}});
   try{
     expect(await instance.groundMemory!({text:"Prefers brevity",quote:"Please keep answers concise",claimType:"owner-statement",speaker:"owner",outcome:"recorded"},500,new AbortController().signal)).toBe('{"supported":true}');
-    expect(body).toMatchObject({model:"fixture-model",max_tokens:500,stream:false});
+    // V2 grounding has its own 64-token output cap.
+    expect(body).toMatchObject({model:"fixture-model",max_tokens:64,stream:false});
     expect(body).not.toHaveProperty("tools");expect(JSON.stringify(body)).toContain("Independently judge");
+    await instance.groundMemory!({text:"Prefers brevity",quote:"Please keep answers concise",claimType:"owner-statement",speaker:"owner",outcome:"recorded"},8,new AbortController().signal);
+    expect(body).toMatchObject({max_tokens:8});
     expect(JSON.stringify(body)).toContain("Please keep answers concise");
   }finally{await instance.dispose();}
 });

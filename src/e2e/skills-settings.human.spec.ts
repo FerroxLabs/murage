@@ -5,7 +5,7 @@ import { test, expect } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ZipFile } from "yazl";
@@ -18,6 +18,9 @@ test.beforeAll(async () => {
   harness = await launchVerificationServer(process.env);
   const secret = ((await (await fetch(harness.info.url + "/api/desktop-secret")).json()) as { secret: string }).secret;
   const headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret, "content-type": "application/json" };
+  // This workspace reads as an update, so What's new would open over the
+  // page; a person sees it once, and so does this fixture.
+  await fetch(harness.info.url + "/api/whats-new/seen", { method: "POST", headers, body: JSON.stringify({ version: JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version }) });
   sable = ((await (await fetch(harness.info.url + "/api/bots", { method: "POST", headers, body: JSON.stringify({ name: "Sable", modelSelection: { instanceId: "verification", model: "fake" } }) })).json()) as { bot: typeof sable }).bot;
 
   const root = fileURLToPath(new URL("../../", import.meta.url));

@@ -2,7 +2,7 @@
   "id": "vault-agentic-geo",
   "name": "agentic-geo",
   "version": "1.0.0",
-  "description": "As of: 2026-05-16",
+  "description": "Get your products recommended by AI shopping assistants and answer engines. Test where you appear today, make your catalog readable by machines and earn mentions elsewhere.",
   "defaultEnabled": false,
   "triggerTerms": [
     "vault",

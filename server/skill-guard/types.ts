@@ -5,7 +5,8 @@
 // red flags found", never "safe". Brought in from Ferrox Labs' Wayland app.
 export type SkillSeverity = "critical" | "high" | "medium" | "low";
 export type SkillVerdict = "clean" | "review" | "blocked";
-export interface SkillScanFile { path: string; content: string }
+/** `both`: read the text as code and as prose (import review of a package field). */
+export interface SkillScanFile { path: string; content: string; both?: boolean }
 export interface SkillScanInput { name: string; description: string; triggerTerms: string[]; files: SkillScanFile[] }
 export interface SkillFinding {
   rule: string;

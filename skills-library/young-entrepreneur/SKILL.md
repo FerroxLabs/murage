@@ -4,7 +4,7 @@ description: |
   Age-appropriate guidance for young entrepreneurs ages 8-17, covering business ideas by age group, business plan basics, pricing strategies, marketing approaches (neighborhood, social media, school), money management, legal considerations for minors running businesses, scaling strategies, and developing an entrepreneurial mindset. Use when the user asks about young entrepreneur or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching entrepreneurship guide"
   category: "education"

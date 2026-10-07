@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Rust ownership patterns (use `rust-ownership-patterns`), Rust testing (use `rust-testing-patterns`), Rust async (use `rust-async-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "rust best-practices template"
   category: "software-engineering"

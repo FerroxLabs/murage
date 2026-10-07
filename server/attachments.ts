@@ -370,6 +370,12 @@ async function digestFile(path: string): Promise<string> {
   return hash.digest("hex");
 }
 
+/** Results of saveImage that wrote a NEW file in that call (not an idempotent
+ * retry that found the committed file). Kept off the result's own shape, which
+ * is the upload route's JSON answer. */
+const newlyWritten = new WeakSet<object>();
+export const savedAsNewFile = (saved: object): boolean => newlyWritten.has(saved);
+
 export interface SavedAttachment {
   path: string;
   mime: string;
@@ -565,11 +571,13 @@ export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: strin
   const partialPath = join(ATTACHMENTS_DIR, `.murage-upload-${id}-${randomUUID()}.partial`);
   activePartials.add(partialPath);
   let partialCleanupFailed = false;
+  let createdHere = false;
   try {
     writeFileSync(partialPath, bytes, { mode: 0o600, flag: "wx" });
     try {
       linkSync(partialPath, path);
       addCommittedBytes(bytes.byteLength);
+      createdHere = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const saved = readFileSync(path);
@@ -578,7 +586,9 @@ export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: strin
       }
     }
     unlinkSync(partialPath);
-    return { path, mime: mime.split(";")[0]!.trim().toLowerCase(), bytes: bytes.byteLength };
+    const result = { path, mime: mime.split(";")[0]!.trim().toLowerCase(), bytes: bytes.byteLength };
+    if (createdHere) newlyWritten.add(result);
+    return result;
   } catch (error) {
     try {
       unlinkSync(partialPath);
@@ -624,11 +634,11 @@ export function attachmentExists(name: string): boolean {
  * filename (no separators, no dotfiles) inside ATTACHMENTS_DIR resolve —
  * the route must never become a general file server for the data dir.
  *
- * `version` names these bytes without hashing them: size, modification time
- * in nanoseconds and inode, read from the same open file as the bytes. A
- * name is reused only when its file was deleted and saved again under the
- * same uploadId, which writes a new file (a fresh partial linked into place),
- * so the version changes with the bytes. */
+ * `version` names these bytes: their size and a digest of the bytes read.
+ * A name is reused when its file was deleted and saved again under the same
+ * uploadId. Size, mtime and inode did not tell those apart on Linux: the
+ * freed inode came straight back and both writes landed in one clock tick,
+ * so a cached thumbnail of the old image matched the new one (0.1.61 CI). */
 export function readAttachment(name: string): { bytes: Buffer; mime: string; version: string } | null {
   if (!/^[A-Za-z0-9-]+\.(png|jpg|jpeg|gif|webp)$/.test(name)) return null;
   const path = join(ATTACHMENTS_DIR, name);
@@ -637,7 +647,8 @@ export function readAttachment(name: string): { bytes: Buffer; mime: string; ver
   try {
     fd = openSync(path, "r");
     const stat = fstatSync(fd, { bigint: true });
-    return { bytes: readFileSync(fd), mime: mimeForExt(extname(path)), version: `${stat.size}:${stat.mtimeNs}:${stat.ino}` };
+    const bytes = readFileSync(fd);
+    return { bytes, mime: mimeForExt(extname(path)), version: `${stat.size}:${createHash("sha256").update(bytes).digest("hex").slice(0, 32)}` };
   } catch {
     return null;
   } finally {

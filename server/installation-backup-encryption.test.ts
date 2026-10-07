@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { PassThrough,Readable } from "node:stream";
 import { expect,it } from "vitest";
 import { backupIdentity,backupRecipient,encryptBackupStream,decryptBackupFile,stopBackupAgeProcess } from "./installation-backup-encryption.ts";
-import { testAgeKeys } from "./testing/backup-fixture.ts";
-it("round trips through pinned age with private identity on stdin; wrong key and tampering refuse",async()=>{
+import { testAgeKeys,rawAgeHost } from "./testing/backup-fixture.ts";
+it.skipIf(!rawAgeHost)("round trips through pinned age with private identity on stdin; wrong key and tampering refuse",async()=>{
   const keys=testAgeKeys(),other=testAgeKeys(),root=mkdtempSync(join(tmpdir(),"murage-age-roundtrip-test-"));
   try{
     const encrypted=join(root,"backup.age"),plain=join(root,"restored.txt");
@@ -21,7 +21,7 @@ it("rejects plugin, passphrase and malformed recipient/identity inputs before ex
   for(const key of ["AGE-PLUGIN-1COMMAND","ssh-private-key", "AGE-SECRET-KEY-1ABC\nAGE-SECRET-KEY-1DEF"])expect(()=>backupIdentity(key)).toThrow();
   for(const recipient of ["-p","ssh-rsa AAAA","age1\n--plugin"])expect(()=>backupRecipient(recipient)).toThrow();
 });
-it("bounds an actual tool waiting forever on input and removes output only after close",async()=>{
+it.skipIf(!rawAgeHost)("bounds an actual tool waiting forever on input and removes output only after close",async()=>{
   const keys=testAgeKeys(),root=mkdtempSync(join(tmpdir(),"murage-age-timeout-test-")),input=new PassThrough(),output=join(root,"partial.age");
   try{
     await expect(encryptBackupStream(keys.ageExecutable,keys.recipient,input,output,{maxBytes:4096,timeoutMs:50,closeTimeoutMs:1000})).rejects.toMatchObject({code:"AGE_TOOL_TIMEOUT"});

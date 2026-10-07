@@ -47,13 +47,32 @@ export function initializeInbox(db: DatabaseSync) {
     source_key TEXT PRIMARY KEY, read_version TEXT, read_at INTEGER, snoozed_until INTEGER);
     CREATE INDEX IF NOT EXISTS messages_inbox_kind_thread_at ON messages(kind,thread_id,at DESC);
     -- The projection starts from role='bot' and a kind list, so role leads.
-    CREATE INDEX IF NOT EXISTS messages_inbox ON messages(role,kind,thread_id,at);`);
+    CREATE INDEX IF NOT EXISTS messages_inbox ON messages(role,kind,thread_id,at);
+    -- Plain chat text is the bulk of any busy history and is never an item;
+    -- only a saved file (artifactIds[0]) is. This lets the Needs-you scan
+    -- reach those without json_extract-ing every ordinary message.
+    CREATE INDEX IF NOT EXISTS messages_inbox_text_artifact ON messages(thread_id,at)
+      WHERE role='bot' AND kind='text' AND json_extract(json,'$.artifactIds[0]') IS NOT NULL;`);
   // Cleared: set aside by the owner until something newer happens to it.
   // Added after the table shipped, so an existing database gains the column.
   const columns = db.prepare("PRAGMA table_info(inbox_item_state)").all() as Array<{ name: string }>;
   if (!columns.some(column => column.name === "cleared_at")) db.exec("ALTER TABLE inbox_item_state ADD COLUMN cleared_at INTEGER");
 }
 
+// The full leg's row set, as two index-reachable branches. Plain chat text
+// (kind='text' with no saved file) is the bulk of a busy history and can never
+// pass the CASE in raw, but reading it meant visiting and json_extract-ing
+// every such row (the 60 s cold load). A single OR/IN over kind cannot be
+// split by the planner, so the text branch is its own SELECT over the partial
+// index messages_inbox_text_artifact (created in initializeInbox), unioned by
+// rowid. ?1 is the same thread list the rest of the query uses.
+const FULL_ROWS = `(
+  SELECT rowid AS r FROM messages WHERE role='bot' AND kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity')
+    AND thread_id IN (SELECT value FROM json_each(?1))
+  UNION ALL
+  SELECT rowid FROM messages INDEXED BY messages_inbox_text_artifact WHERE role='bot' AND kind='text'
+    AND json_extract(json,'$.artifactIds[0]') IS NOT NULL AND thread_id IN (SELECT value FROM json_each(?1))
+) src`;
 // Restrict sources to permitted threads before grouping or searching. A
 // resolved copy wins over a replayed pending request with the same identity.
 // No secret/connector descriptions, option subtitles or tool commands enter
@@ -64,7 +83,7 @@ export function initializeInbox(db: DatabaseSync) {
 // SQLite temp files on every poll. It now carries only the columns extracted
 // from the json. The page query joins the json back for the rows it returns,
 // because the read mark is a hash of the full message.
-const buildSource = (rawFilter: string) => `WITH raw AS (
+const buildSource = (rawFilter: string, pruneText = false) => `WITH raw AS (
   SELECT m.rowid AS source_row, m.thread_id, m.id AS message_id, m.at, m.kind,
     COALESCE(json_extract(m.json,'$.card.expired'),0) AS expired,
     json_extract(m.json,'$.routineRun.runId') AS run_id, json_extract(m.json,'$.routineRun.routineId') AS routine_id,
@@ -72,6 +91,7 @@ const buildSource = (rawFilter: string) => `WITH raw AS (
       WHEN 'options' THEN COALESCE(json_extract(m.json,'$.card.requestId'),json_extract(m.json,'$.card.routineRequest.requestId'),json_extract(m.json,'$.card.skillRequest.requestId'),m.id)
       WHEN 'secret' THEN COALESCE(json_extract(m.json,'$.secret.requestKey'),m.id)
       WHEN 'connector' THEN COALESCE(json_extract(m.json,'$.connector.resumeKey') || ':' || json_extract(m.json,'$.connector.slug'),m.id)
+      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.resumeKey') || ':' || json_extract(m.json,'$.mcpSignIn.name'),m.id)
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.runId'),m.id)
       WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.runId'),m.id)
       WHEN 'text' THEN json_extract(m.json,'$.artifactIds[0]')
@@ -94,10 +114,16 @@ const buildSource = (rawFilter: string) => `WITH raw AS (
         WHEN json_extract(m.json,'$.card.orphaned')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'secret' THEN CASE WHEN json_extract(m.json,'$.secret.provided')=1 OR json_extract(m.json,'$.secret.dismissed')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'connector' THEN CASE WHEN json_extract(m.json,'$.connector.status')='connected' OR json_extract(m.json,'$.connector.dismissed')=1 THEN 'resolved' ELSE 'pending' END
+      -- A link server's sign-in that ended mid-turn (MCP-LINK 3.12): owed until
+      -- the owner signs in again or sets the card aside.
+      WHEN 'mcpSignIn' THEN CASE WHEN json_extract(m.json,'$.mcpSignIn.status')='signed-in' OR json_extract(m.json,'$.mcpSignIn.dismissed')=1 THEN 'resolved' ELSE 'pending' END
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.goalStatus'),json_extract(m.json,'$.routineRun.status'))
+      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'digest' ELSE 'failed' END
       WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status') WHEN 'text' THEN 'completed' ELSE 'failed' END AS status,
-    CASE m.kind WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.summary'),json_extract(m.json,'$.routineRun.error'),'')
-      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.detail'),'') WHEN 'text' THEN COALESCE(json_extract(m.json,'$.text'),'Saved file') ELSE '' END AS summary,
+    CASE m.kind WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN COALESCE(json_extract(m.json,'$.tool.name'),'') ELSE '' END
+      WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.summary'),json_extract(m.json,'$.routineRun.error'),'')
+      WHEN 'goal.run' THEN COALESCE(json_extract(m.json,'$.goalRun.detail'),'') WHEN 'text' THEN COALESCE(json_extract(m.json,'$.text'),'Saved file')
+      WHEN 'mcpSignIn' THEN COALESCE(json_extract(m.json,'$.mcpSignIn.body'),'') ELSE '' END AS summary,
     CASE m.kind WHEN 'options' THEN CASE
       WHEN json_type(m.json,'$.card.routineRequest')='object' THEN 'Routine proposal'
       WHEN json_type(m.json,'$.card.skillRequest')='object' THEN 'Skill proposal'
@@ -109,11 +135,13 @@ const buildSource = (rawFilter: string) => `WITH raw AS (
         CASE WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval expired' ELSE 'Question expired' END
       WHEN json_type(m.json,'$.card.tool')='text' THEN 'Approval requested' ELSE 'Question needs an answer' END
       WHEN 'secret' THEN 'Credential setup requested' WHEN 'connector' THEN 'Connection setup'
+      WHEN 'mcpSignIn' THEN 'Sign in to ' || COALESCE(json_extract(m.json,'$.mcpSignIn.host'),'a server')
       WHEN 'routine.run' THEN COALESCE(json_extract(m.json,'$.routineRun.routineName'),'Routine result')
       WHEN 'goal.run' THEN 'Team goal result' WHEN 'text' THEN 'Saved file'
       -- A provider having a bad morning and an engine that is not signed in
       -- are not the same news, and only one of them is anybody's job.
       WHEN 'activity' THEN CASE
+        WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'Daily digest'
         WHEN json_extract(m.json,'$.tool.authRequired')=1 THEN 'Sign in needed'
         WHEN json_extract(m.json,'$.tool.setup')=1 THEN 'Setup needed'
         ELSE 'Provider needs attention' END
@@ -135,20 +163,21 @@ const buildSource = (rawFilter: string) => `WITH raw AS (
     -- amount of waiting fixes it. A provider simply erroring is news.
     CASE m.kind
       WHEN 'options' THEN CASE WHEN json_type(m.json,'$.card.tool')='text' THEN 'approval' ELSE 'question' END
-      WHEN 'secret' THEN 'connection' WHEN 'connector' THEN 'connection'
-      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection' ELSE 'routine' END
+      WHEN 'secret' THEN 'connection' WHEN 'connector' THEN 'connection' WHEN 'mcpSignIn' THEN 'connection'
+      WHEN 'activity' THEN CASE WHEN json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text' THEN 'result' WHEN json_extract(m.json,'$.tool.authRequired')=1 OR json_extract(m.json,'$.tool.setup')=1 THEN 'connection' ELSE 'routine' END
       WHEN 'routine.run' THEN 'routine' WHEN 'goal.run' THEN 'routine'
       ELSE 'result' END AS kind_segment
-  FROM messages m
-  WHERE m.role='bot' AND m.thread_id IN (SELECT value FROM json_each(?))${rawFilter}
-    AND m.kind IN ('options','secret','connector','routine.run','goal.run','activity','text')
+  FROM ${pruneText ? `${FULL_ROWS} JOIN messages m ON m.rowid=src.r` : "messages m"}
+  WHERE m.role='bot' AND m.thread_id IN (SELECT value FROM json_each(${pruneText ? "?1" : "?"}))${rawFilter}
+    AND m.kind IN ('options','secret','connector','mcpSignIn','routine.run','goal.run','activity','text')
     AND CASE m.kind
       WHEN 'options' THEN json_type(m.json,'$.card.requestId')='text' OR json_type(m.json,'$.card.routineRequest')='object' OR json_type(m.json,'$.card.skillRequest')='object'
       WHEN 'secret' THEN json_type(m.json,'$.secret')='object'
       WHEN 'connector' THEN json_type(m.json,'$.connector')='object'
+      WHEN 'mcpSignIn' THEN json_type(m.json,'$.mcpSignIn')='object'
       WHEN 'routine.run' THEN json_extract(m.json,'$.routineRun.status') NOT IN ('queued','running')
       WHEN 'goal.run' THEN json_extract(m.json,'$.goalRun.status')!='working'
-      WHEN 'activity' THEN json_extract(m.json,'$.tool.ok')=0 AND (json_extract(m.json,'$.tool.setup')=1 OR json_extract(m.json,'$.tool.authRequired')=1 OR json_type(m.json,'$.tool.providerError')='object')
+      WHEN 'activity' THEN (json_extract(m.json,'$.actorKind')='murage' AND json_extract(m.json,'$.murage.kind')='status' AND json_type(m.json,'$.murage.digestDay')='text') OR (json_extract(m.json,'$.tool.ok')=0 AND (json_extract(m.json,'$.tool.setup')=1 OR json_extract(m.json,'$.tool.authRequired')=1 OR json_type(m.json,'$.tool.providerError')='object'))
       WHEN 'text' THEN json_type(m.json,'$.artifactIds[0]')='text' AND length(json_extract(m.json,'$.artifactIds[0]'))=36
     END
 ), ranked AS (
@@ -210,7 +239,7 @@ const buildSource = (rawFilter: string) => `WITH raw AS (
   FROM ranked r LEFT JOIN inbox_item_state s ON s.source_key=r.source_key
   WHERE position=1 AND NOT(status='completed' AND length(trim(summary))=0)
 ) `;
-const SOURCE = buildSource("");
+const SOURCE = buildSource("", true);
 /** Same projection restricted to the kinds that can be kind_segment
  *  'routine' (the only rows the rollup reads): routine and goal runs AND
  *  failed tool activity, which raw files under 'routine' (a provider error is
@@ -299,17 +328,25 @@ function item(row: Row, access: InboxAccess): InboxItem {
   const source = access.threads.find(thread => thread.threadId === row.thread_id)!;
   const message = JSON.parse(row.json);
   const runId = row.kind === "routine.run" ? message.routineRun?.runId : row.kind === "goal.run" ? message.goalRun?.runId : undefined;
-  const kind = row.kind === "options" ? "request" : row.kind === "secret" || row.kind === "connector" ? "connection" : row.kind === "activity" ? "error" : row.kind === "routine.run" ? "routine" : row.kind === "text" ? "artifact" : "goal";
+  const kind = row.kind === "options" ? "request" : row.kind === "secret" || row.kind === "connector" || row.kind === "mcpSignIn" ? "connection" : row.kind === "activity" ? "error" : row.kind === "routine.run" ? "routine" : row.kind === "text" ? "artifact" : "goal";
   const revision = version(row.json);
   const segment = (["approval", "question", "connection", "routine", "result"] as const)
     .find(value => value === row.segment) ?? "result";
   return { id: Buffer.from(row.source_key).toString("base64url"), version: revision, kind, segment, status: row.status,
-    decision: row.decision === 1, toRead: row.to_read === 1, title: text(row.title, 120), summary: text(row.summary),
+    decision: row.decision === 1, toRead: row.to_read === 1, title: text(row.title, 120), summary: text(row.summary, row.status === "digest" ? 1000 : 280),
     sourceLabel: text(source.label, 100), ...(source.botId ? { botId: source.botId } : {}), at: row.at,
     read: row.read_version === revision, snoozedUntil: row.snoozed_until, duplicates: row.copies,
     ...(row.kind === "connector" && row.status === "pending" && source.botId ? { dismissible: true as const } : {}),
+    // A sign-in card is set aside through its own route, which names the bot
+    // that posted it (in a room that is not the thread's own bot).
+    ...(row.kind === "mcpSignIn" ? mcpSignInRow(row, message, source) : {}),
     ...(row.decision !== 1 ? { clearable: true as const } : {}),
     link: { threadId: row.thread_id, messageId: row.message_id, ...(typeof runId === "string" ? { runId } : {}), ...(row.kind === "text" ? { artifactId: message.artifactIds[0] as string } : {}) } };
+}
+function mcpSignInRow(row: Row, message: { from?: { botId?: unknown }; mcpSignIn?: { botId?: unknown } }, source: InboxThread): Partial<InboxItem> {
+  const botId = source.botId ?? (typeof message.mcpSignIn?.botId === "string" ? message.mcpSignIn.botId : typeof message.from?.botId === "string" ? message.from.botId : undefined);
+  if (!botId) return {};
+  return { botId, ...(row.status === "pending" ? { dismissible: true as const, dismissVia: "mcp-sign-in" as const } : {}) };
 }
 function queryValues(query: InboxQuery) {
   const view = query.view ?? "decisions", page = query.page ?? 0, pageSize = query.pageSize ?? 25;
@@ -408,7 +445,7 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
       OR (?='questions' AND owed_or_over=1 AND segment='question')
       OR (?='connections' AND owed_or_over=1 AND segment='connection')
       OR (?='routines' AND kind_segment='routine')
-      OR (?='to-read' AND to_read=1)
+      OR (?='to-read' AND to_read=1 AND (status<>'digest' OR read_version IS NULL))
       OR (?='results' AND decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text')))
     AND (?=1 OR ((snoozed_until IS NULL OR snoozed_until<=?) AND (cleared_at IS NULL OR at>cleared_at)))
     AND (?='' OR instr(lower(title || ' ' || summary || ' ' || status),?)>0

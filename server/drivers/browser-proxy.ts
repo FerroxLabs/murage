@@ -23,16 +23,12 @@ import { z } from "zod";
 
 import { safeBrowserUrl } from "../computer-observation.ts";
 import { createControlClient } from "../control-client.ts";
-import { TOOL_CALL_STYLE_ENV, TOOL_SERVER_NAME_ENV, murageToolDescriptions, murageToolText, parseToolCallStyle } from "../../shared/murage-tool-names.ts";
-
-/** Text written here, with this server's tools named the way the turn's
- * engine calls them (set by the driver that mounted this server). */
-const engineStyle = () => parseToolCallStyle(process.env[TOOL_CALL_STYLE_ENV]);
-const engineMount = () => ({ browser: process.env[TOOL_SERVER_NAME_ENV] || "browser" });
-export const engineText = (text: string) => murageToolText(text, engineStyle(), ["browser"], engineMount());
+import { murageToolOnThisServer } from "../murage-tool-surface.ts";
+import { BuiltinFloorGate } from "../browser-floor-builtin.ts";
+import { turnSecret } from "../turn-credential.ts";
 
 const HOST = (process.env.MURAGE_BROWSER_URL ?? "").replace(/\/$/, "");
-const TOKEN = process.env.MURAGE_BROWSER_TOKEN ?? "";
+const token = () => turnSecret("MURAGE_BROWSER_TOKEN");
 const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
 const PROFILE = process.env.MURAGE_BROWSER_PROFILE ?? "";
 const control = createControlClient();
@@ -64,8 +60,7 @@ export type ObservedElement = z.infer<typeof elementSchema>;
 export type ObservedPage = Omit<z.infer<typeof pageSchema>, "notes" | "yaml"> & { notes?: string[]; yaml?: string | null };
 
 // ── what the model sends ─────────────────────────────────────────────────
-const REF_REQUIRED = "a ref from browser_snapshot is required";
-const refSchema = z.string().trim().min(1, REF_REQUIRED);
+const refSchema = z.string().trim().min(1, `a ref from ${murageToolOnThisServer("browser_snapshot")} is required`);
 const navigateArgs = z.object({ url: z.string().trim().min(1, "a url is required") });
 const clickArgs = z.object({ ref: refSchema, double: z.boolean().optional() });
 const fillArgs = z.object({ ref: refSchema, text: z.string().max(4_000).default("") });
@@ -126,9 +121,9 @@ export function classifyWall(page: { url: string; title: string; yaml?: string |
 }
 
 function wallNote(kind: WallKind): string {
-  return engineText(kind === "verification"
-    ? "This looks like a bot check or verification page. Do not try to solve it: call browser_request_takeover so the user can complete it in the Browser panel, then continue from the page you get back."
-    : "This looks like a sign-in step. Never type the user's password or a one-time code: call browser_request_takeover so they can sign in in the Browser panel, then continue from the page you get back.");
+  return kind === "verification"
+    ? `This looks like a bot check or verification page. Do not try to solve it: call ${murageToolOnThisServer("browser_request_takeover")} so the user can complete it in the Browser panel, then continue from the page you get back.`
+    : `This looks like a sign-in step. Never type the user's password or a one-time code: call ${murageToolOnThisServer("browser_request_takeover")} so they can sign in in the Browser panel, then continue from the page you get back.`;
 }
 
 const PROTECTED_FIELD_NAME = /\b(password|passwd|passcode|client[ _-]?secret|api[ _-]?key|secret[ _-]?key|private[ _-]?key|signing[ _-]?key|webhook[ _-]?secret|(?:aws[ _-]?)?secret[ _-]?access[ _-]?key|access[ _-]?token|auth[ _-]?token|refresh[ _-]?token|bearer[ _-]?token|one[ _-]?time(?:[ _-]?code)?|verification[ _-]?code|security[ _-]?(?:code|answer)|recovery[ _-]?(?:code|phrase)|seed[ _-]?phrase|mnemonic|otp|pin|card[ _-]?(?:number|security|cvv|cvc)|cvv|cvc|bank[ _-]?(?:account|routing)|routing[ _-]?(?:number|code)|account[ _-]?(?:number|no)|social[ _-]?(?:security|insurance)|ssn|tax[ _-]?id)\b/i;
@@ -199,10 +194,10 @@ export function browserHostTimeoutMs(operation: string, body: object = {}): numb
  * own sentence (stale ref, refused address, no previous page) — that text
  * is exactly what the model should read, so it is thrown as-is. */
 export async function hostRequest(operation: string, body: object = {}, fetchImpl: typeof fetch = fetch): Promise<unknown> {
-  if (!HOST || !TOKEN || !BOT_ID) throw new Error("the built-in browser is not connected for this bot");
+  if (!HOST || !token() || !BOT_ID) throw new Error("the built-in browser is not connected for this bot");
   const res = await fetchImpl(`${HOST}/v1/bots/${encodeURIComponent(BOT_ID)}/${operation}`, {
     method: "POST",
-    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" },
     body: JSON.stringify({ ...body, profile: PROFILE }),
     signal: AbortSignal.timeout(browserHostTimeoutMs(operation, body)),
   });
@@ -352,10 +347,7 @@ function textResult(text: string, isError = false): ToolResult {
 function argumentError(tool: string, error: z.ZodError): ToolResult {
   const issue = error.issues[0];
   const where = issue?.path.length ? ` (${issue.path.join(".")})` : "";
-  // Only this file's own words are named for the engine; a validation
-  // message can quote what the bot sent.
-  const message = issue?.message === REF_REQUIRED ? engineText(REF_REQUIRED) : issue?.message ?? "invalid arguments";
-  return textResult(`${engineText(tool)}: ${message}${where}`, true);
+  return textResult(`${tool}: ${issue?.message ?? "invalid arguments"}${where}`, true);
 }
 
 const TAKEOVER_WAIT_MS = 10 * 60_000;
@@ -399,65 +391,98 @@ async function requestTakeover(reason: string, request: HostRequest, waitMs = TA
 const BROWSER_CONTROL_REFUSAL =
   "A person has taken control of this browser, so nothing was read or changed. " +
   "Do not inspect, screenshot, or retry while they may be typing private information. " +
-  "Call browser_request_takeover to wait for them to hand control back.";
+  `Call ${murageToolOnThisServer("browser_request_takeover")} to wait for them to hand control back.`;
 
-async function observed(request: HostRequest, operation: string, body?: object): Promise<ToolResult> {
-  return textResult(formatObserved(pageSchema.parse(await request(operation, body))));
+// The hard floor (T39): the same steps the extension path stops, stopped here before anything reaches the host.
+const floorGate = new BuiltinFloorGate();
+
+async function observed(request: HostRequest, operation: string, body?: object, gate: BuiltinFloorGate = floorGate): Promise<ToolResult> {
+  const page = pageSchema.parse(await request(operation, body));
+  gate.remember(page);
+  return textResult(formatObserved(page));
 }
 
-export async function callTool(name: string, args: unknown, request: HostRequest = hostRequest): Promise<ToolResult> {
+export async function callTool(name: string, args: unknown, request: HostRequest = hostRequest, gate: BuiltinFloorGate = floorGate): Promise<ToolResult> {
+  const stepped = (operation: string, target: { ref?: string; key?: string }) => gate.check(operation, target);
+  const watched = (operation: string, body?: object) => observed(request, operation, body, gate);
   // The person driving in the panel wins. Reads are private too: a snapshot
   // or screenshot taken while they enter a password would leak it straight
   // into model context. Only the takeover wait choreography remains open.
   if (name !== "browser_request_takeover" && (await control.state(true)).held) {
-    return textResult(engineText(BROWSER_CONTROL_REFUSAL), true);
+    return textResult(BROWSER_CONTROL_REFUSAL, true);
   }
   if (name === "browser_navigate") {
     const parsed = navigateArgs.safeParse(args);
     if (!parsed.success) return argumentError(name, parsed.error);
-    return observed(request, "navigate", { url: parsed.data.url });
+    return watched("navigate", { url: parsed.data.url });
   }
-  if (name === "browser_snapshot") return observed(request, "snapshot");
+  if (name === "browser_snapshot") return watched("snapshot");
   if (name === "browser_click") {
     const parsed = clickArgs.safeParse(args);
     if (!parsed.success) return argumentError(name, parsed.error);
-    return observed(request, "click", { ref: parsed.data.ref, double: parsed.data.double === true });
+    {
+      const stop = await stepped("click", { ref: parsed.data.ref });
+      if (stop !== null) return textResult(stop);
+    }
+    gate.noteFocus(parsed.data.ref);
+    return watched("click", { ref: parsed.data.ref, double: parsed.data.double === true });
   }
   if (name === "browser_fill") {
     const parsed = fillArgs.safeParse(args);
     if (!parsed.success) return argumentError(name, parsed.error);
-    return observed(request, "fill", { ref: parsed.data.ref, text: parsed.data.text });
+    {
+      const stop = await stepped("fill", { ref: parsed.data.ref });
+      if (stop !== null) return textResult(stop);
+    }
+    gate.noteFocus(parsed.data.ref);
+    return watched("fill", { ref: parsed.data.ref, text: parsed.data.text });
   }
   if (name === "browser_type") {
     const parsed = typeArgs.safeParse(args);
     if (!parsed.success) return argumentError(name, parsed.error);
-    return observed(request, "type", { text: parsed.data.text });
+    {
+      const stop = await stepped("type", {});
+      if (stop !== null) return textResult(stop);
+    }
+    return watched("type", { text: parsed.data.text });
   }
   if (name === "browser_press") {
     const parsed = pressArgs.safeParse(args);
     if (!parsed.success) return argumentError(name, parsed.error);
-    return observed(request, "press", { key: parsed.data.key });
+    {
+      const stop = await stepped("press", { key: parsed.data.key });
+      if (stop !== null) return textResult(stop);
+    }
+    return watched("press", { key: parsed.data.key });
   }
   if (name === "browser_scroll") {
     const parsed = scrollArgs.safeParse(args ?? {});
     if (!parsed.success) return argumentError(name, parsed.error);
-    return observed(request, "scroll", parsed.data);
+    return watched("scroll", parsed.data);
   }
   if (name === "browser_hover") {
     const parsed = hoverArgs.safeParse(args);
     if (!parsed.success) return argumentError(name, parsed.error);
-    return observed(request, "hover", { ref: parsed.data.ref });
+    return watched("hover", { ref: parsed.data.ref });
   }
   if (name === "browser_drag") {
     const parsed = dragArgs.safeParse(args);
     if (!parsed.success) return argumentError(name, parsed.error);
-    return observed(request, "drag", { from: parsed.data.from, to: parsed.data.to });
+    {
+      const stop = await stepped("click", { ref: parsed.data.from });
+      if (stop !== null) return textResult(stop);
+    }
+    return watched("drag", { from: parsed.data.from, to: parsed.data.to });
   }
   if (name === "browser_select_option") {
     const parsed = selectArgs.safeParse(args);
     if (!parsed.success) return argumentError(name, parsed.error);
+    {
+      const stop = await stepped("select", { ref: parsed.data.ref });
+      if (stop !== null) return textResult(stop);
+    }
     const values = Array.isArray(parsed.data.values) ? parsed.data.values : [parsed.data.values];
-    return observed(request, "select", { ref: parsed.data.ref, values });
+    return watched("select", { ref: parsed.data.ref, values });
   }
   if (name === "browser_wait_for") {
     const parsed = waitArgs.safeParse(args);
@@ -466,7 +491,7 @@ export async function callTool(name: string, args: unknown, request: HostRequest
     if (parsed.data.text) body.text = parsed.data.text;
     if (parsed.data.url) body.url = parsed.data.url;
     if (parsed.data.timeout_ms) body.timeoutMs = parsed.data.timeout_ms;
-    return observed(request, "wait", body);
+    return watched("wait", body);
   }
   if (name === "browser_read") {
     const page = readSchema.parse(await request("read"));
@@ -474,8 +499,8 @@ export async function callTool(name: string, args: unknown, request: HostRequest
     if (!page.text.trim()) return textResult(`${page.title || "Untitled"}: ${url}\n(The page has no readable text.)`);
     return textResult(`${page.title || "Untitled"}: ${url}\n\n${page.text}`);
   }
-  if (name === "browser_back") return observed(request, "back");
-  if (name === "browser_forward") return observed(request, "forward");
+  if (name === "browser_back") return watched("back");
+  if (name === "browser_forward") return watched("forward");
   if (name === "browser_request_takeover") {
     const parsed = takeoverArgs.safeParse(args);
     if (!parsed.success) return argumentError(name, parsed.error);
@@ -483,7 +508,7 @@ export async function callTool(name: string, args: unknown, request: HostRequest
   }
   if (name === "browser_state") {
     const state = stateSchema.parse(await request("state"));
-    if (!state.url || state.url === "about:blank") return textResult(engineText("The browser tab is empty. Use browser_navigate to open a page."));
+    if (!state.url || state.url === "about:blank") return textResult(`The browser tab is empty. Use ${murageToolOnThisServer("browser_navigate")} to open a page.`);
     return textResult(`${state.title || "Untitled"}: ${safeBrowserUrl(state.url) ?? "URL unavailable"}${state.loading === true ? " (still loading)" : ""}`);
   }
   if (name === "browser_screenshot") {
@@ -511,7 +536,7 @@ async function handle(line: string) {
   }
   if (method === "notifications/initialized" || method === "notifications/cancelled") return;
   if (method === "ping") return ok(id, {});
-  if (method === "tools/list") return ok(id, { tools: murageToolDescriptions(TOOLS, engineStyle(), ["browser"], engineMount()) });
+  if (method === "tools/list") return ok(id, { tools: TOOLS });
   if (method === "tools/call") {
     const name = params?.name ?? "";
     if (!TOOLS.some((tool) => tool.name === name)) return rpcError(id, -32602, `Unknown tool: ${name}`);

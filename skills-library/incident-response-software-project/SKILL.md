@@ -6,7 +6,7 @@ description: |
   Do NOT use for non-production issues, planned maintenance, or post-incident analysis only (use technical-documentation directly for standalone postmortems).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "devops troubleshooting security step-by-step"
   category: "software-development"

@@ -14,7 +14,7 @@ description: |
   setup (use game-streaming-setup-guide).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide template writing step-by-step"
   category: "hobbies-crafts"

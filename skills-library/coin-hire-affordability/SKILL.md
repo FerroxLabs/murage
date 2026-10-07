@@ -1,8 +1,9 @@
 ---
 name: coin-hire-affordability
 description: "The user is asking whether they can afford to bring someone on — not whether the role would be useful, but whether the math survives. Load when you hear \"should I hire a [role],\" \"can I afford a $X salary,\" \"is it time for our first hire,\" \"when do we hire our second engineer,\" or \"should we go cont"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "coin"
 ---

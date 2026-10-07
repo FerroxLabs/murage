@@ -6,7 +6,7 @@ description: |
   Do NOT use for grocery or food shopping (use waste-reduction-planner for food waste), investment decisions on green technology, business procurement sustainability, or evaluating corporate sustainability claims.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sustainable-shopping sustainability checklist guide"
   category: "sustainability"

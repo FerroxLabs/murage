@@ -6,7 +6,7 @@ description: |
   Do NOT use for data cleaning beyond outlier handling (use data-cleaning-protocol), distribution analysis (use eda-framework), or hypothesis testing (use hypothesis-testing).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "statistics analysis data-science"
   category: "data-analysis"

@@ -1,3 +1,4 @@
+import { PI_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // pi — the pi coding agent (@earendil-works/pi-coding-agent) as a native engine.
 //
 // pi exposes a JSON-RPC mode over stdio (`pi --mode rpc --no-session`) rather
@@ -31,6 +32,7 @@ import { augmentedPath } from "../env-path.ts";
 import { describeSpawnFailure, killCliTree, spawnCli } from "../procs.ts";
 import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
+import { customMountEntries } from "../custom-mcp-mounts.ts";
 
 import type {
   DriverCreateInput,
@@ -58,9 +60,13 @@ import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
 import { localContextWindow, type LocalHost } from "./local-inject.ts";
 import { isPlainObject, readNativeJsonConfig } from "./native-config-file.ts";
 import { primeLocalContext } from "../local-server-probe.ts";
+import { approvalSummary } from "../../shared/approval-summary.ts";
+import { boundedToolInput } from "../approval-text.ts";
 import { PI_GATE_TITLE_PREFIX } from "./pi-permission-gate.ts";
 import { createTodoBlockFilter, extractTodoBlocks, type TodoFilterOutput } from "../../shared/todo-block.ts";
 import { plainDuration } from "./stop-copy.ts";
+import { redactSecretsInText } from "../redact.ts";
+import { toolFailureText } from "../../shared/tool-activity.ts";
 
 /** Pi's window for a local model whose server has not reported one. */
 const PI_UNKNOWN_CONTEXT_WINDOW = 131072;
@@ -83,6 +89,22 @@ const DRIVER_KIND = "piAgent";
 const PI_ARGS = ["--mode", "rpc", "--no-session"];
 const NODE_ENV_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
 
+const PI_ERROR_DETAIL_MAX = 200;
+// Absolute paths under a home, data or temp root. Only the last segment
+// survives, so the row does not reveal the machine's layout.
+const PI_ABS_PATH = /(?:[A-Za-z]:\\(?:[^\s\\'"`]+\\)+|\/(?:Users|home|root|data|var|opt|tmp|private|Volumes|mnt|srv)(?:\/[^\s/'"`]+)*\/)([^\s/\\'"`]+)/g;
+
+/** The short reason a failed pi tool call gives, for its activity row: the
+ * result's own text (a string, or text content parts), first line, redacted,
+ * paths cut to their last segment. Never the call's arguments. */
+export function piToolErrorDetail(evt: { result?: unknown; error?: unknown }): string | undefined {
+  const raw = typeof evt.result === "string" ? evt.result : toolFailureText(evt.result) ?? (typeof evt.error === "string" ? evt.error : undefined);
+  const line = raw?.split("\n").map((l) => l.trim()).find(Boolean);
+  if (!line) return undefined;
+  const text = redactSecretsInText(line.replace(PI_ABS_PATH, "…/$1")).slice(0, PI_ERROR_DETAIL_MAX).trim();
+  return text || undefined;
+}
+
 /** Harness effort → pi thinking level (`set_thinking_level`). The sets match
  * one-for-one except for the name of the lowest rung: the harness calls it
  * "none", pi calls it "off". Exported for the test. */
@@ -93,7 +115,7 @@ export function piThinkingLevel(effort: EffortLevel): (typeof EFFORT_LEVELS)[num
 /** Mirror of the Claude driver's integration → stdio MCP mount: every entry is
  * a JSON-RPC 2.0 stdio server the pi-mcp-extension consumes. Returns null when
  * there is nothing to mount (the common case). */
-export function buildMcpServers(turn: SendTurnInput): Record<string, unknown> | null {
+export function buildMcpServers(turn: SendTurnInput, options: { askBeforeCustom?: boolean } = {}): Record<string, unknown> | null {
   const servers: Record<string, unknown> = {};
   if (turn.integrations?.composio) servers.composio = { ...turn.integrations.composio };
   if (turn.integrations?.computer) {
@@ -121,6 +143,19 @@ export function buildMcpServers(turn: SendTurnInput): Record<string, unknown> | 
       command: process.execPath,
       args: [SPAWNED_PROXIES.dweb],
       env: { ...NODE_ENV_FLAG, DWEB_URL: turn.integrations.dweb.url },
+    };
+  }
+  // The owner's own servers (command or link). Not pre-allowed anywhere: the
+  // extension gates a `custom` scope behind the same permission card as the
+  // host computer, so every call asks, as Claude's Allow/Deny card does. An
+  // instance that runs without asks (Full access) mounts them ungated, which
+  // is what Claude's bypass mode does for the same servers.
+  for (const mount of customMountEntries(turn.integrations?.custom, (name) => name in servers)) {
+    servers[mount.name] = {
+      command: mount.command,
+      args: mount.args,
+      env: mount.env,
+      ...(options.askBeforeCustom === false ? {} : { scope: "custom" }),
     };
   }
   return Object.keys(servers).length ? servers : null;
@@ -424,6 +459,8 @@ interface PiEvent {
   // tool_execution_*
   toolCallId?: string;
   toolName?: string;
+  args?: unknown;
+  result?: unknown;
   isError?: boolean;
   // turn_end / message_end
   message?: { stopReason?: string; errorMessage?: string; usage?: { input?: number; output?: number } };
@@ -467,7 +504,7 @@ const PI_COMPOSIO_TOOL_PREFIX = "composio_";
  * does not parse still becomes a card, with no `toolCall`: the stop line then
  * cannot clear it, so under Full access it waits for the owner.
  */
-export function piGateAsk(message: string): { tool: string; summary: string; toolCall?: { name: string; input: unknown }; filePaths?: string[] } {
+export function piGateAsk(message: string): { tool: string; summary: string; toolInput?: string; toolCall?: { name: string; input: unknown }; filePaths?: string[] } {
   let parsed: { tool?: unknown; input?: unknown } = {};
   try {
     const value: unknown = JSON.parse(message);
@@ -478,7 +515,7 @@ export function piGateAsk(message: string): { tool: string; summary: string; too
   const tool = typeof parsed.tool === "string" ? parsed.tool : "";
   const input = parsed.input && typeof parsed.input === "object" && !Array.isArray(parsed.input) ? (parsed.input as Record<string, unknown>) : undefined;
   if ((tool === "bash" || tool === "powershell") && typeof input?.command === "string") {
-    return { tool: tool === "bash" ? "Bash" : "PowerShell", summary: input.command.slice(0, 2_000), toolCall: { name: tool, input: { command: input.command } } };
+    return { tool: tool === "bash" ? "Bash" : "PowerShell", summary: approvalSummary(input.command), toolCall: { name: tool, input: { command: input.command } } };
   }
   if ((tool === "edit" || tool === "write") && typeof input?.path === "string") {
     const name = tool === "edit" ? "Edit" : "Write";
@@ -486,7 +523,7 @@ export function piGateAsk(message: string): { tool: string; summary: string; too
   }
   if (tool.startsWith(PI_COMPOSIO_TOOL_PREFIX) && input) {
     const rest = tool.slice(PI_COMPOSIO_TOOL_PREFIX.length);
-    return { tool: "Connected app", summary: rest.slice(0, 300), toolCall: { name: `mcp__composio__${rest.toUpperCase()}`, input } };
+    return { tool: "Connected app", summary: rest.slice(0, 300), ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), toolCall: { name: `mcp__composio__${rest.toUpperCase()}`, input } };
   }
   return { tool: "pi", summary: tool ? `pi wants to use ${tool.slice(0, 80)}` : "pi wants to run a tool" };
 }
@@ -568,7 +605,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       // never get unapproved hands on the user's machine (same guard as the
       // Claude and ACP drivers).
       const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
-      if (controlsHost && config.fullAuto) {
+      const skipPermissions = config.fullAuto && !turn.stopLine && !turn.routeAsks;
+      if (controlsHost && skipPermissions) {
         throw new Error("local computer control requires the interactive approval broker");
       }
       const turnId = newId();
@@ -606,7 +644,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       // integrations → stdio MCP servers for the pi-mcp-extension. The config
       // carries credentials (box token, composio key, comms token), so it goes
       // into a 0600 temp file removed when the turn settles — never on argv.
-      const mcpServers = buildMcpServers(turn);
+      const mcpServers = buildMcpServers(turn, { askBeforeCustom: !skipPermissions });
+      turn = renderMurageTurn(turn, PI_TOOL_SURFACE, { agents: mcpServers?.agents ? "agents" : undefined, memory: mcpServers?.["murage-memory"] ? "murage-memory" : undefined, phone: mcpServers?.phone ? "phone" : undefined });
       let mcpTempDir: string | null = null;
       if (mcpServers) {
         mcpTempDir = mkdtempSync(join(tmpdir(), "murage-pi-mcp-"));
@@ -626,9 +665,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       // Murage's approvals (pi-permission-gate.ts). Pi runs its tools without
       // asking anyone, so without the gate Ask mode never asked and Full
       // access could not stop before a delete, a payment or a new contact.
-      // Off only when this instance is set to skip asks AND the bot is not on
-      // Full access or No limits, exactly when Claude runs bypassPermissions.
-      const gateSecret = !config.fullAuto || turn.stopLine === true || turn.routeAsks === true ? randomBytes(24).toString("hex") : null;
+      // Off only when the instance skips asks and this turn requests neither
+      // broker enforcement nor the stop line.
+      const gateSecret = !skipPermissions || turn.proposalOnly === true ? randomBytes(24).toString("hex") : null;
       // Connected-app calls are asked about only when the stop line has to
       // see them, as Claude pre-allows its connected-apps tool otherwise.
       const gatePrefixes = (turn.stopLine === true || turn.routeAsks === true) && turn.integrations?.composio ? [PI_COMPOSIO_TOOL_PREFIX] : [];
@@ -651,6 +690,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               ...input.environment,
               ...(mcpServers && mcpTempDir ? { MURAGE_MCP_CONFIG: join(mcpTempDir, "mcp.json") } : {}),
               ...(gateSecret ? { MURAGE_PI_GATE: gateSecret, MURAGE_PI_GATE_PREFIXES: JSON.stringify(gatePrefixes) } : {}),
+              // The Chief's proposal turn: the agents server's propose tool, as
+              // pi-mcp-extension.ts names it, is the one tool that runs unasked.
+              ...(gateSecret && turn.proposalOnly ? { MURAGE_PI_GATE_ONLY: "agents_project_propose" } : {}),
             }),
           });
         } catch (err) {
@@ -793,6 +835,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               itemType: "tool",
               itemId: evt.toolCallId,
               title: String(evt.toolName ?? "tool").slice(0, 80),
+              toolIdentity: { name: evt.toolName },
+              input: evt.args,
             });
             return;
           }
@@ -803,6 +847,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               itemType: "tool",
               itemId: evt.toolCallId,
               ok: !evt.isError,
+              result: evt.result,
+              detail: evt.isError ? piToolErrorDetail(evt) : undefined,
             });
             return;
           }
@@ -844,7 +890,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               // limit, then pi gets an honest {cancelled:true} — never a guess
               // in the owner's name. (pi's own `timeout` field, when set, may
               // auto-resolve sooner on its side.)
-              const timer = questions
+              const timer = questions && !turn.holdProjectAsks
                 ? setTimeout(() => {
                     if (!pending.delete(reqId)) return;
                     send({ type: "extension_ui_response", id: reqId, cancelled: true });
@@ -884,6 +930,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                 requestType: questions ? "question" : "permission",
                 tool: questions ? String(evt.method) : gate ? gate.tool : String(evt.title ?? "pi"),
                 summary: questions ? questions[0]!.question.slice(0, 300) : gate ? gate.summary : String(evt.title ?? "pi wants confirmation"),
+                ...(gate?.toolInput ? { toolInput: gate.toolInput } : {}),
                 ...(gate?.toolCall ? { toolCall: gate.toolCall } : {}),
                 ...(gate?.filePaths ? { filePaths: gate.filePaths } : {}),
                 ...(questions ? { choices: questions[0]!.options.map((option) => option.label), questions } : {}),
@@ -1082,6 +1129,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       snapshot,
       adapter: {
         provider: DRIVER_KIND,
+        mcpToolSurface: PI_TOOL_SURFACE,
         capabilities: {
           // model is set per turn via set_model before prompt
           sessionModelSwitch: "in-session",
@@ -1092,6 +1140,10 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           computerMcp: true,
           composioMcp: true,
           phoneMcp: true,
+          // The owner's own MCP servers (MCP-LINK T9): mounted by the same
+          // extension, each call behind pi's permission card unless the
+          // instance is on Full access.
+          customMcp: true,
           // Host control (the user's real Mac) rides the pi-native permission
           // card (`ctx.ui.confirm` → extension_ui_request) gated in the
           // extension, so it is offered exactly when the other engines offer

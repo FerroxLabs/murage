@@ -5,6 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { openSidebar } from "./fixtures.ts";
+import { sidebarPlace } from "./sidebar-nav";
 
 // Runtime URL import keeps the Node-only control tool out of app compilation.
 interface VerificationServer { info: { url: string; dataDir: string }; close(): Promise<void> }
@@ -61,20 +62,20 @@ for (const scenario of [{ width: 1440, skin: "light" }, { width: 390, skin: "dar
     const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });
     if (await invitation.isVisible()) await invitation.getByRole("button", { name: "Not now", exact: true }).last().click();
     const sidebar = await openSidebar(page);
-    // 0.1.57: the Inbox is a sidebar row of its own ("Needs you"), not an
-    // entry folded under Tools — and Tools no longer offers a second door.
-    const tools = sidebar.getByRole("button", { name: /^Tools(?:,.*)?$/ });
-    await expect(tools).toBeVisible(); await tools.focus(); await page.keyboard.press("Enter");
-    await expect(sidebar.getByRole("menuitem", { name: "Inbox", exact: true })).toHaveCount(0);
-    await expect(sidebar.getByRole("menuitem", { name: "Team map", exact: true })).toBeVisible();
-    await tools.click(); // fold it back without closing the drawer
+    // 0.1.57: the Inbox is a sidebar row of its own ("Needs you"), and
+    // nothing else offers a second door: the place strip (0.1.62) holds four
+    // places, none of them the Inbox.
+    await expect(sidebarPlace(sidebar, "map")).toBeVisible();
+    await expect(sidebar.locator("[data-sidebar-place]")).toHaveCount(4);
+    await expect(sidebar.locator('[data-sidebar-place="inbox"]')).toHaveCount(0);
     const needsYou = sidebar.locator("[data-sidebar-needs-you]");
     await expect(needsYou).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`inbox-tools-${scenario.width}-${scenario.skin}.png`), fullPage: true });
     await needsYou.click();
     await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
     // Routines counts runs that worked in the routine's own conversation too
-    await page.getByRole("button", { name: "Routines", exact: true }).click();
+    // the Inbox's own Routines view, not the sidebar place of the same name
+    await page.getByRole("dialog", { name: "Inbox" }).getByRole("button", { name: "Routines", exact: true }).click();
     const routineList = page.getByRole("list", { name: "Routines" });
     await expect(routineList.getByText("Log tick", { exact: true })).toBeVisible();
     await expect(routineList.getByText("3 runs, 1 failed", { exact: true })).toBeVisible();

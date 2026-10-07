@@ -6,7 +6,7 @@ description: |
   Do NOT use for structural changes (use structural-editing), tone changes (use tone-adjustment), or proofreading (use proofreading).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "editing writing guide"
   category: "writing"

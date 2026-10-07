@@ -12,6 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { TURN_STOPPED_NOTE } from "./turn-outcome.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 
 let fixture: VerificationServer;
 let headers: Record<string, string> = {};
@@ -63,7 +64,7 @@ const holdTurnWithAuthority = async (bot: any, text: string) => {
   rmSync(fixture.fixtureDumpPath, { force: true });
   expect((await api("POST", `/api/bots/${bot.id}/messages`, { text, threadId: bot.threadId })).status).toBe(202);
   await promptReachedEngine(text);
-  const dump = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"));
+  const dump = withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")));
   const token = dump.mcpConfig?.mcpServers?.agents?.env?.MURAGE_COMMS_TOKEN as string;
   expect(token).toMatch(/^[a-f0-9]{48}$/);
   return { pid: dump.pid as number, internal: { authorization: `Bearer ${token}`, "content-type": "application/json" } };
@@ -117,6 +118,11 @@ it("Stop on a direct Claude turn leaves the normal stopped state, not an error c
     .filter((m) => m.kind === "activity" && m.tool?.name === TURN_STOPPED_NOTE);
   expect(stopNotes).toHaveLength(1);
   expect(stopNotes[0].tool.ok).toBe(true);
+  // The person pressed Stop: their own action does not light the conversation
+  // up as unread (on Windows the stopped engine's close lands late, after the
+  // person has read on, and marked it unread again).
+  const task = (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id).tasks.find((t: any) => t.threadId === bot.threadId);
+  expect(task.unread).toBe(false);
 
   // U-02: the stopped turn's file keeps a verified receipt and nothing else.
   // The receipt is written in the same synchronous sweep that would post the
@@ -157,6 +163,8 @@ it("a host stop (this computer switched off for the bot) leaves a stopped notice
   const settled = await messages(bot.threadId);
   expect(settled.filter((m) => m.kind === "activity" && m.tool?.name === TURN_STOPPED_NOTE)).toEqual([]);
   expect(settled.at(-1)?.tool?.name).toBe("stopped: this computer was switched off for the bot");
+  // Nobody pressed Stop here, so the conversation does say it has news.
+  expect((await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id).tasks.find((t: any) => t.threadId === bot.threadId).unread).toBe(true);
 }, 60_000);
 
 it("Stop on a source turn drops the delegation it queued instead of running it", async () => {

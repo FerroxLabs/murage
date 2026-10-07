@@ -21,8 +21,11 @@ import {
 import type { Readable, Writable } from "node:stream";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
+import { powershellArgs, stopWindowsJob } from "./memory/pip-job.ts";
 import { createHash } from "node:crypto";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
+import { platformConfirmStopped, recordProcessHandle } from "./platform-process-hooks.ts";
 
 export function resolveCli(cli: string, args: string[] = []): ResolvedSpawn {
   return resolveCliSpawn(cli, args);
@@ -60,6 +63,7 @@ export const CLI_FORCE_WAIT_MS = 1_000;
 interface CliOwnership {
   pid: number | undefined;
   platform: NodeJS.Platform;
+  jobName?: string;
   closed: boolean;
   stopped: boolean;
   stopping?: Promise<boolean>;
@@ -74,13 +78,20 @@ export function spawnCli(
   cli: string,
   args: string[],
   opts: SpawnOptions,
+  job?: { name: string; argsFile: string },
 ): ChildProcessByStdio<Writable, Readable, Readable> {
   const resolved = resolveCli(cli, args);
   assertSafeCliArgv(resolved);
-  const child = spawn(resolved.command, resolved.args, {
+  let command = resolved.command, launchArgs = resolved.args;
+  if (process.platform === "win32" && job) {
+    writeFileSync(job.argsFile, JSON.stringify(resolved), { mode: 0o600 });
+    command = "powershell.exe";
+    launchArgs = [...powershellArgs, "-JobName", job.name, "-Cwd", String(opts.cwd), "-ArgsFile", job.argsFile];
+  }
+  const child = spawn(command, launchArgs, {
     ...opts,
     // posix: own process group so kill(-pid) reaps child MCP servers;
-    // win32: taskkill /T does the reaping instead (see killCliTree)
+    // win32: PIP uses a named job; other CLIs use taskkill /T.
     ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
   }) as ChildProcessByStdio<Writable, Readable, Readable>; // callers always pipe all three
 
@@ -96,13 +107,14 @@ export function spawnCli(
   // is where every one of them settles the turn — so it is swallowed, not
   // logged.
   child.stdin?.on("error", () => {});
-  const ownership: CliOwnership = { pid: child.pid, platform: process.platform, closed: false, stopped: false, observations: [], observers: new Set() };
+  const ownership: CliOwnership = { pid: child.pid, platform: process.platform, jobName: job?.name, closed: false, stopped: false, observations: [], observers: new Set() };
   cliOwnership.set(child, ownership);
+  recordProcessHandle(child, [command, ...launchArgs].join(" "), opts.env);
   child.once("close", () => {
     ownership.closed = true;
-    // The CLI owns its same-group helpers until its lifecycle ends. Root
-    // close does not surrender them; escaped groups are outside this scope.
-    if (ownership.platform !== "win32") void awaitCliTreeStopped(child);
+    // Root close keeps ownership of POSIX group members and Windows job
+    // members until the corresponding tree confirmation finishes.
+    if (ownership.platform !== "win32" || ownership.jobName) void awaitCliTreeStopped(child);
   });
   return child;
 }
@@ -187,7 +199,7 @@ const REAL_KILL_DEPS: KillCliTreeDeps = {
  * optional observer reports the route; it can never change or break it. */
 export function killCliTree(child: ChildProcess, observer?: StopRouteObserver): void {
   const ownership = cliOwnership.get(child);
-  if (ownership?.platform !== "win32" && ownership) {
+  if (ownership && (ownership.platform !== "win32" || ownership.jobName)) {
     void stopOwnedCli(child, ownership, observer);
     return;
   }
@@ -201,8 +213,8 @@ export function killCliTree(child: ChildProcess, observer?: StopRouteObserver): 
 }
 
 /** Request termination and confirm the owned lifecycle. POSIX requires root
- * close AND group disappearance; Windows retains its existing root-close
- * contract and taskkill route, not a claim about already-orphaned helpers. */
+ * close and group disappearance; Windows PIP requires named job confirmation.
+ * Other Windows callers retain their root-close and taskkill contract. */
 export function awaitCliTreeStopped(child: ChildProcess, termGraceMs = CLI_TERM_GRACE_MS): Promise<boolean> {
   const ownership = cliOwnership.get(child);
   if (!ownership) return Promise.resolve(false);
@@ -230,6 +242,20 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
   };
   const run = async () => {
     if (owned.platform === "win32") {
+      if (owned.jobName) {
+        // End the exact supervisor first, including its pre-job startup window.
+        // Its last handle closes on exit and terminates every job member.
+        if (!owned.closed) {
+          const closed = await new Promise<boolean>(resolve => {
+            const onClose = () => { clearTimeout(timer); resolve(true); };
+            const timer = setTimeout(() => { child.off("close", onClose); resolve(false); }, termGraceMs + CLI_FORCE_WAIT_MS);
+            child.once("close", onClose);
+            try { child.kill(); } catch { /* confirmation still required */ }
+          });
+          if (!closed) return false;
+        }
+        return stopWindowsJob(owned.jobName, termGraceMs + CLI_FORCE_WAIT_MS);
+      }
       if (owned.closed) return true;
       return new Promise<boolean>((resolve) => {
         const finish = (value: boolean) => { clearTimeout(timer); child.off("close", closed); resolve(value); };
@@ -274,7 +300,8 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
     signal("SIGKILL");
     return wait(CLI_FORCE_WAIT_MS);
   };
-  const attempt = run().catch(() => false);
+  // A platform hook (Murage Cloud) can only veto: its answer is ANDed with ours.
+  const attempt = run().then(async (stopped) => stopped && await platformConfirmStopped(child)).catch(() => false);
   owned.stopping = attempt;
   void attempt.then((stopped) => {
     owned.stopped = stopped;

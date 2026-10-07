@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of blockchain security auditor or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "advanced blockchain checklist template testing analysis emergency-preparedness performing-arts"
   category: "emerging-tech"

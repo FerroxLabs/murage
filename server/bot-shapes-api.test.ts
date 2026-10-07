@@ -51,13 +51,15 @@ const shapes = () => api("GET", `/api/bots/${moss.id}/shapes`);
 const rowOf = (view: any, id: string) => view.rows.find((row: any) => row.id === id);
 
 /** Every string in the dumped engine launch that looks like a credential. */
-function credentialValues(dump: { mcpConfig?: unknown; env?: Record<string, string> }): string[] {
+function credentialValues(dump: { mcpConfig?: unknown; env?: Record<string, string>; credFile?: { content?: unknown } | null }): string[] {
   const found: string[] = [];
   const walk = (value: unknown, key = "") => {
     if (typeof value === "string") { if (/token|secret|key|password/i.test(key) && value.length >= 12) found.push(value); return; }
     if (value && typeof value === "object") for (const [k, v] of Object.entries(value)) walk(v, k);
   };
   walk(dump.mcpConfig);
+  // Warm Claude: per-turn tokens ride the process credential file, not the MCP config.
+  walk(dump.credFile?.content);
   for (const [key, value] of Object.entries(dump.env ?? {})) if (/^MURAGE_.*(TOKEN|SECRET)/.test(key) && value.length >= 12) found.push(value);
   return found;
 }

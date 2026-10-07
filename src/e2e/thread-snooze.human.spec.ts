@@ -61,10 +61,24 @@ async function openApp(page: Page) {
   return openSidebar(page);
 }
 const row = (page: Page) => page.locator(`[data-sidebar-select="${botId}"]`);
+/** Back to the conversation. On a phone the drawer covers the chat header and
+ * its "All threads" picker; choosing the bot again closes it there. A desktop
+ * has no drawer and returns at once. */
+async function showChat(page: Page) {
+  const menu = page.getByRole("button", { name: "Open bot list" });
+  if (!(await menu.isVisible()) || (await menu.getAttribute("aria-expanded")) !== "true") return;
+  // The name sits over the row's select button; one click on it selects (a
+  // double click renames), as a person taps it.
+  await page.locator(`[data-sidebar-bot-row="${botId}"]`).getByText("Snooze proof bot", { exact: true }).click();
+  await expect(menu).toHaveAttribute("aria-expanded", "false");
+}
 async function shot(page: Page, name: string, testInfo: { outputPath(name: string): string }) {
   // On a phone the sidebar is a drawer that slides in; photograph it settled.
+  // A closed drawer is translated off-screen but still "visible" to
+  // Playwright, so ask the toggle whether it is open.
   const drawer = page.getByRole("complementary", { name: "Bots and navigation" });
-  if (await drawer.isVisible()) await expect.poll(async () => (await drawer.boundingBox())?.x ?? -1).toBeGreaterThanOrEqual(0);
+  const menu = page.getByRole("button", { name: "Open bot list" });
+  if (await menu.isVisible() && (await menu.getAttribute("aria-expanded")) === "true") await expect.poll(async () => (await drawer.boundingBox())?.x ?? -1).toBeGreaterThanOrEqual(0);
   await page.waitForTimeout(400);
   await page.screenshot({ path: testInfo.outputPath(`${name}.png`), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name} has no sideways scroll`).toBe(true);
@@ -124,6 +138,7 @@ test("a question wakes a snoozed conversation, badges it, and the badge clears o
   const sidebar = await openApp(page);
   // Snooze from the bot's conversation list this time.
   await row(page).focus(); await page.keyboard.press("Enter");
+  await showChat(page);
   await page.getByRole("button", { name: "All threads" }).click();
   await page.getByRole("button", { name: "Snooze Older chat" }).click();
   await page.getByRole("group", { name: "Snooze Older chat" }).getByRole("button", { name: /^Snooze for 1 hour/ }).click();
@@ -142,6 +157,7 @@ test("a question wakes a snoozed conversation, badges it, and the badge clears o
   // Attributed, not added: Needs you still says one.
   await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("1");
   await shot(page, "08-question-badge-1440", testInfo);
+  await showChat(page);
   await page.getByRole("button", { name: "All threads" }).click();
   await expect(page.getByRole("img", { name: "1 question for you" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Unsnooze Older chat" })).toHaveCount(0);

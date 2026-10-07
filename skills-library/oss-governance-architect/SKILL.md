@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of oss governance architect or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "best-practices budgeting template api-design planning game-design performing-arts video-production"
   category: "software-engineering"

@@ -4,7 +4,7 @@ description: |
   Complete board game design guide covering mechanic selection (worker placement, deck building, area control, etc.), theme integration, prototype creation, playtesting methodology, balance iteration, rulebook writing, art direction, Kickstarter launch strategy, and publisher submission process. Use when the user asks about board game creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design design guide board-games"
   category: "game-development"

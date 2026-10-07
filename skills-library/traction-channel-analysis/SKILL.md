@@ -5,7 +5,7 @@ description: |
   Do NOT use for marketing strategy (use marketing-strategy), paid ad copy (use paid-ad-copy), or growth experiments (use growth-experiment).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning analysis marketing"
   category: "business-strategy"

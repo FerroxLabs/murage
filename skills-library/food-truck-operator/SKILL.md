@@ -4,7 +4,7 @@ description: |
   Comprehensive guide for food truck operations covering permits and licensing, mobile menu design, equipment selection, route planning, event booking, commissary kitchen requirements, social media marketing, seasonal adaptation, and financial planning. Use when the user asks about food truck operator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning"
   category: "business-strategy"

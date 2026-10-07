@@ -37,6 +37,7 @@ const ENGINE_LABELS: Record<string, string> = {
   kimiAgent: "Kimi",
   droidAgent: "Droid",
   hermesAgent: "Hermes",
+  openclawAgent: "OpenClaw",
 };
 
 /** Drivers that can report commands. Every ACP engine goes through the
@@ -53,7 +54,7 @@ const ENGINE_LABELS: Record<string, string> = {
  * own: its bots show only Murage's. */
 const REPORTING_DRIVERS = new Set([
   "claudeAgent", "codex",
-  "fuigoAgent", "grokAgent", "geminiAgent", "qwenAgent", "kimiAgent", "hermesAgent",
+  "fuigoAgent", "grokAgent", "geminiAgent", "qwenAgent", "kimiAgent", "hermesAgent", "openclawAgent",
   "cursorAgent", "droidAgent", "opencodeGo", "customAcp",
 ]);
 

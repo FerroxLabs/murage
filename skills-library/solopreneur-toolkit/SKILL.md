@@ -4,7 +4,7 @@ description: |
   One-person business operations advisor covering automation strategies, time management, tool stack selection, financial management, legal basics, productized services, sustainable growth without employees, and the mindset shifts required to run every function of a business as a single operator. Use when the user asks about solopreneur toolkit or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning"
   category: "business-strategy"

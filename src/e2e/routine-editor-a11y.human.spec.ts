@@ -17,6 +17,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openSidebar } from "./fixtures.ts";
 import { axeScriptPath } from "./axe.ts";
+import { openSidebarPlace } from "./sidebar-nav";
 
 interface VerificationServer { info: { url: string; dataDir: string }; close(): Promise<void> }
 type LaunchVerificationServer = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<VerificationServer>;
@@ -52,8 +53,7 @@ async function openRoutines(page: import("@playwright/test").Page) {
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); });
   await page.goto(origin);
   const sidebar = await openSidebar(page);
-  await sidebar.locator("[data-sidebar-more-trigger]").click();
-  await sidebar.getByRole("menuitem", { name: "Routines", exact: true }).click();
+  await openSidebarPlace(sidebar, "routines");
   await expect(page.getByRole("heading", { name: "Routines", exact: true })).toBeVisible();
 }
 

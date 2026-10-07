@@ -1,8 +1,9 @@
 ---
 name: mend-onboarding-flow
 description: "You're designing what happens between signup and \"this is working.\" Load when someone asks \"how do we onboard,\" \"what's the activation path,\" \"why are signups dropping off,\" or \"what do we send on day 1, 7, 30.\" Not for ticket replies (`ticket-triage.md`), not for the customer who went quiet (`churn"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "mend"
 ---

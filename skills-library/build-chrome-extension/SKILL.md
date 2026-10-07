@@ -21,7 +21,7 @@ trigger_phrases: >-
   I want to build a Chrome extension I want to create a browser extension How do
   I publish to the Chrome Web Store I want to build a browser plugin
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: javascript content-marketing entrepreneurship step-by-step planning
   category: software-project

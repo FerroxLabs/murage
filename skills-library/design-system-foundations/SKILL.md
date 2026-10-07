@@ -6,7 +6,7 @@ description: |
   Do NOT use for full brand identity (use brand-identity-brief), color palette creation (use color-palette-design), or typography pairing decisions (use typography-system).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design template planning"
   category: "design-creative"

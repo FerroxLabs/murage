@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user needs a different languages runtimes capability -- check sibling skills in the languages runtimes subcategory.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "php best-practices clean-code"
   category: "software-engineering"

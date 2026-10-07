@@ -13,7 +13,7 @@ description: |
   (use trip-itinerary-builder).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "travel budgeting planning personal-finance"
   category: "travel-experiences"

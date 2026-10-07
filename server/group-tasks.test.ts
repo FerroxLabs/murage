@@ -190,3 +190,50 @@ describe("channel tasks", () => {
     ]);
   });
 });
+
+it("persists visible background-task counts, ignores tool noise and resets on switch", async () => {
+  const { store, Store } = await freshStore();
+  const bot = store.createBot(), group = store.createGroup("Unread", [bot.id]);
+  const task = store.createGroupTask(group.id, "Background", false)!;
+  expect(task.unreadCount ?? 0).toBe(0);
+  store.appendMessage(task.threadId, { role: "bot", kind: "activity", text: "Tool started" });
+  store.appendMessage(group.threadId, { role: "bot", kind: "text", text: "Active" });
+  expect(task.unreadCount ?? 0).toBe(0);
+  store.appendMessage(task.threadId, { role: "bot", kind: "text", text: "Result" });
+  store.appendMessage(task.threadId, { role: "user", kind: "text", text: "Visible reply" });
+  expect(task.unreadCount).toBe(2);
+  const restored = new Store(() => ({ instanceId: "claude", model: "m" }));
+  expect(restored.groupTaskByThread(group.id, task.threadId)?.unreadCount).toBe(2);
+  restored.switchGroupTask(group.id, task.threadId);
+  expect(restored.groupTaskByThread(group.id, task.threadId)?.unreadCount).toBe(0);
+  expect(new Store(() => ({ instanceId: "claude", model: "m" })).groupTaskByThread(group.id, task.threadId)?.unreadCount).toBe(0);
+});
+
+it("keeps old task records without unread counts readable", async () => {
+  const { store, Store } = await freshStore();
+  const group = store.createGroup("Legacy", [store.createBot().id]);
+  expect(group.tasks?.[0].unreadCount).toBeUndefined();
+  expect(new Store(() => ({ instanceId: "claude", model: "m" })).groupTasks(group.id)[0].unreadCount ?? 0).toBe(0);
+});
+
+it("counts a visible Murage system row while ignoring ordinary tool activity", async () => {
+  const { store } = await freshStore();
+  const group = store.createGroup("System lines", [store.createBot().id]);
+  const task = store.createGroupTask(group.id, "Background", false)!;
+  const line = { role: "bot" as const, kind: "activity" as const, actorKind: "murage" as const, text: "This step needs you" };
+  store.appendMessage(task.threadId, line);
+  expect(task.unreadCount).toBe(1);
+});
+
+it("counts background error activity without actorKind but excludes successful tools", async () => {
+  const { store, Store } = await freshStore();
+  const group = store.createGroup("Errors", [store.createBot().id]);
+  const task = store.createGroupTask(group.id, "Background", false)!;
+  store.appendMessage(task.threadId, { role: "bot", kind: "activity", text: "Done", tool: { name: "read", ok: true } });
+  expect(task.unreadCount ?? 0).toBe(0);
+  store.appendMessage(task.threadId, { role: "bot", kind: "activity", text: "Failed", tool: { name: "read", ok: false } });
+  expect(task.unreadCount).toBe(1);
+  store.appendMessage(task.threadId, { role: "bot", kind: "activity", text: "Stop unconfirmed", tool: { name: "error: provider stop is unconfirmed" } });
+  expect(task.unreadCount).toBe(2);
+  expect(new Store(() => ({ instanceId: "claude", model: "m" })).groupTaskByThread(group.id, task.threadId)?.unreadCount).toBe(2);
+});

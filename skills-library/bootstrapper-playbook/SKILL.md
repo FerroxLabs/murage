@@ -4,7 +4,7 @@ description: |
   Revenue-first business building without venture funding, covering lean operations, early profitability strategies, customer-funded growth, pricing for bootstrappers, hiring decisions, managing cash flow, and scaling sustainably on your own terms. Use when the user asks about bootstrapper playbook or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning step-by-step"
   category: "business-strategy"

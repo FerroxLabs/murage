@@ -28,6 +28,14 @@ Pass the printed URL explicitly from a second terminal:
 pnpm control:murage doctor --url http://127.0.0.1:PORT
 ```
 
+The harness answers these routes only to a caller that proved who it is, and
+the CLI proves itself with the key the harness keeps in its data folder. Run
+the CLI with `MURAGE_DATA_DIR` set to the `dataDir` that `launch` printed:
+
+```sh
+MURAGE_DATA_DIR=/path/printed/by/launch pnpm control:murage doctor --url http://127.0.0.1:PORT
+```
+
 Mutating commands refuse silent port discovery. This prevents a verification
 recipe from sending messages to the user's running app by accident.
 

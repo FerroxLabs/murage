@@ -48,6 +48,10 @@ jobs:
           at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb
           build-essential binutils libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
       - run: pnpm install --frozen-lockfile
+      # Murage for Chrome: the store item ID and public key when the owner has
+      # set them (plan 2.3); until then this build carries no extension identity.
+      - name: Murage for Chrome identity, when set
+        run: node scripts/release-guard.mjs browser-extension-optional extensions/murage-browser/release.json >> "$GITHUB_ENV"
       - name: Verify the package-owned install hook
         run: pnpm exec vitest run scripts/linux-after-install.test.mjs
       - name: Clean generated output
@@ -64,6 +68,14 @@ jobs:
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           pnpm package:linux:offline "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"
+      # The FINAL packaged build.json, not a pre-build directory (handoff 9):
+      # release mode, the store identity, no development ID.
+      - name: Murage for Chrome identity in the packaged app
+        run: |
+          set -euo pipefail
+          test -f "release/linux-unpacked/resources/browser-extension/build.json"
+          test -f "release/linux-unpacked/resources/browser-extension/native-host.mjs"
+          if [ -n "${MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG:-}" ]; then node scripts/release-guard.mjs browser-extension-build "release/linux-unpacked/resources/browser-extension/build.json" "$MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG"; fi
       - name: Verify package contents and metadata
         run: node scripts/verify-linux-package.mjs
       - name: Match a normal Ubuntu package parent on the ephemeral runner

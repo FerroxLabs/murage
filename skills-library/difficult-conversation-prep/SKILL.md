@@ -6,7 +6,7 @@ description: |
   Do NOT use for workplace difficult conversations (use business communication skills), couples therapy preparation, or assessing relationship health.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "relationships planning strategy"
   category: "family-relationships"

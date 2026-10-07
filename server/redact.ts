@@ -13,7 +13,7 @@
 
 /** Key names whose value is a credential. Matched case-insensitively as a
  * substring, so KEY catches ANTHROPIC_API_KEY and x-api-key. */
-const SECRET_KEY_PARTS = ["token", "secret", "password", "passwd", "apikey", "api_key", "authorization", "auth_token"];
+const SECRET_KEY_PARTS = ["token", "secret", "password", "passwd", "apikey", "api_key", "authorization", "auth_token", "cookie"];
 
 /** `key` alone is too broad — it matches `keyboard`, `keys`, `hotkey`. Only
  * treat it as a credential when it stands alone or is a suffix, which is how
@@ -90,7 +90,7 @@ const KEY_PREFIXES: RegExp[] = [
  * characters; the lazy group then walks to the first `\b`+`eyJ` inside the
  * run, exactly where the original `\beyJ…` started. */
 const JWT =
-  /(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)([A-Za-z0-9_-]*?)\b(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)/g;
+  /(?<!:\/\/)(?<!@)(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)([A-Za-z0-9_-]*?)\b(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b)/g;
 const BEARER = /(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})/g;
 /** A PEM private-key block: the header, everything up to the FIRST footer,
  * the footer. The original `(-----BEGIN …)([\s\S]*?)(-----END …)` scanned
@@ -203,7 +203,23 @@ export function redactSecretsInText(text: string): string {
  * AT the limit: see below. */
 const MAX_DEPTH = 12;
 
+/** Approval cards show the owner what is asked, so a name-shaped key with a
+ * short plain value ({token: "USDC"}) stays readable; the text rules still
+ * catch real credentials. These names are always masked. */
+const ALWAYS_MASK_NAMES = new Set(["password", "passwd", "authorization", "cookie"]);
+const CARD_NAME_MIN_VALUE = 8;
+
+export function redactSecretsForCard(input: unknown): unknown {
+  return redactWalk(input, 0, true);
+}
+
 export function redactSecrets(input: unknown, depth = 0): unknown {
+  return redactWalk(input, depth, false);
+}
+
+function redactWalk(input: unknown, depth: number, card: boolean): unknown {
+  const secretName = (name: string, value: string) =>
+    isSecretName(name) && (!card || ALWAYS_MASK_NAMES.has(name.toLowerCase()) || value.length >= CARD_NAME_MIN_VALUE);
   if (typeof input === "string") return redactSecretsInText(input);
   if (input === null || typeof input !== "object") return input;
   if (depth > MAX_DEPTH) {
@@ -244,29 +260,29 @@ export function redactSecrets(input: unknown, depth = 0): unknown {
         // `{name, value, authorization: "Bearer …", metadata: {password}}`
         // therefore defeated the only scrub standing between a provider
         // payload and the on-disk log.
-        const scrubbed = redactSecrets({ ...entry }, depth + 1) as Record<string, unknown>;
+        const scrubbed = redactWalk({ ...entry }, depth + 1, card) as Record<string, unknown>;
         // A non-secret-shaped name (a custom env var, a feature flag) does
         // not clear the value of suspicion — the same content pass every
         // other string in this tree gets is what catches a credential
         // someone stashed under an ordinary-looking name.
         return {
           ...scrubbed,
-          value: isSecretName(entry.name) ? mask(entry.value) : redactSecretsInText(entry.value),
+          value: secretName(entry.name, entry.value) ? mask(entry.value) : redactSecretsInText(entry.value),
         };
       }
-      return redactSecrets(item, depth + 1);
+      return redactWalk(item, depth + 1, card);
     });
   }
 
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-    if (typeof value === "string" && isSecretName(key)) {
+    if (typeof value === "string" && secretName(key, value)) {
       out[key] = mask(value);
       continue;
     }
     // any other string may still CONTAIN a credential (a command line, a
     // header value, a bot's reply) — the content pass catches those
-    out[key] = redactSecrets(value, depth + 1);
+    out[key] = redactWalk(value, depth + 1, card);
   }
   return out;
 }

@@ -6,6 +6,9 @@ export interface SafeWipeOptions {
   within?: string;
   /** Environment to read MURAGE_DATA_DIR / MURAGE_COMPANION_DIR from. Default process.env. */
   env?: Record<string, string | undefined>;
+  /** Further data directories to refuse unless they are scratch (an ambient
+   * MURAGE_DATA_DIR scrubbed from the environment before tests ran). */
+  protect?: string[];
   /** Override for os.homedir(); the account home from os.userInfo() is always protected too. */
   homedir?: string;
   /** Override for os.tmpdir(). */

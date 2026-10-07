@@ -6,7 +6,7 @@ description: |
   Do NOT use for daily task scheduling (use daily-planning), full project kickoff documents (use project-kickoff), or enterprise program management (use business project-management skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "project-management planning checklist"
   category: "productivity"

@@ -18,7 +18,7 @@ trigger_phrases: >-
   get fit and eat better total health overhaul improve my health start living
   healthier
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: health-wellness fitness nutrition sleep habits step-by-step planning
   category: life-event

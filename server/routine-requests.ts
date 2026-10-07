@@ -25,7 +25,7 @@ import type {
 } from "../shared/routine-request.ts";
 import type { RoutineWatchSource } from "../shared/routine-watch.ts";
 import { routineFileWatchProposalSchema, routineWatchInput, routineWatchInputSchema } from "./routine-watch-integration.ts";
-import { murageTool } from "./tool-call-context.ts";
+import { murageToolOnThisServer } from "./murage-tool-surface.ts";
 
 const WEEKDAY_NUMBER = {
   sunday: 0,
@@ -767,7 +767,7 @@ function revalidateOperation(operation: RoutineRequestOperation, manager: Routin
     // where results go, so creating a second copy is never the right recovery.
     if (duplicate) {
       throw new RoutineRequestError(
-        `An enabled routine with the same instructions and settings already exists (${duplicate.id}). Use ${murageTool("list_routines")} to review it, then update or run that routine instead.`,
+        `An enabled routine with the same instructions and settings already exists (${duplicate.id}). Use ${murageToolOnThisServer("list_routines")} to review it, then update or run that routine instead.`,
         409,
       );
     }

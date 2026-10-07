@@ -18,7 +18,8 @@ it("rejects malformed IDs/fields and requires private authority for all Discord 
   const invalid: Array<Record<string,string|number>> = [{ownerUserId:"../owner"},{applicationId:123},{webhookUrl:"https://example.invalid"},{botToken:"x".repeat(513)}];
   for(const discord of invalid)expect(()=>parseConfigPatch({discord})).toThrow();
   for(const method of ["GET","POST","PATCH","PUT","DELETE"])for(const path of ["/api/discord/status","/api/discord/pair","/api/discord/resume","/api/discord/revoke"])expect(requiresDesktopAuthority(method,path)).toBe(true);
-  expect(requiresDesktopAuthority("GET","/api/discord-other")).toBe(false);
+  // 0.1.61: a route nobody classified is desktop-only too (route-policy.ts).
+  expect(requiresDesktopAuthority("GET","/api/discord-other")).toBe(true);
 });
 it("adds Discord provenance without replacing Slack or Telegram",()=>{
   for(const platform of ["slack","discord"] as const){const channelOrigin={platform,connectionId:"connection"};expect(channelOriginSchema.safeParse(channelOrigin).success).toBe(true);expect(createRoutineEvent({runId:"run",definitionId:"definition",receivedAt:1,source:"channel",channelOrigin}).origin).toEqual({kind:"channel",channel:platform,connectionId:"connection"});}

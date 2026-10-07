@@ -4,7 +4,7 @@ description: |
   Complete operations guide for independent retail store owners covering merchandising strategy, POS setup, inventory management, visual display, customer experience, seasonal planning, loyalty programs, and e-commerce integration. Use when the user asks about retail shop or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning"
   category: "business-strategy"

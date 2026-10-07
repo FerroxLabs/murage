@@ -1,8 +1,9 @@
 // The voice, driven against a stub rather than the live service — same
 // rule as the box and computer-proxy contract tests: what we send, and how
 // a refusal is reported, are the things that break.
+import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "../config.ts";
 
@@ -74,7 +75,7 @@ describe("configuration", () => {
   it("never reports the key itself", async () => {
     const { describeVoice } = await voice();
     const described = describeVoice(cfg({ key: "sk-secret", voice: "v-1" }));
-    expect(described).toEqual({ configured: true, ready: true, voice: "v-1", provider: "elevenlabs", routes: null, available: expect.objectContaining({ elevenlabs: true, xai: false }), xaiKey: false });
+    expect(described).toEqual({ configured: true, ready: true, voice: "v-1", provider: "elevenlabs", routes: null, streamTranscribe: false, available: expect.objectContaining({ elevenlabs: true, xai: false }), xaiKey: false });
     expect(JSON.stringify(described)).not.toContain("sk-secret");
   });
 
@@ -187,7 +188,10 @@ describe("built-in macOS voices", () => {
   };
 
   const system = { provider: "system" as const, voice: "Albert" };
-  const onMac = process.platform === "darwin";
+  // Windows has built-in voices too (SAPI, windows-voices.ts), so "system"
+  // needs no key there either; the `say` table and synthesis are macOS's.
+  const onMac = process.platform === "darwin" || process.platform === "win32";
+  const sayHere = process.platform !== "win32";
 
   it("needs no key — only a picked voice — once selected", async () => {
     const { voiceConfigured, voiceReady, describeVoice } = await voice();
@@ -201,12 +205,13 @@ describe("built-in macOS voices", () => {
       voice: "Albert",
       provider: "system",
       routes: null,
+      streamTranscribe: false,
       available: expect.objectContaining({ system: onMac }),
       xaiKey: false,
     });
   });
 
-  it("parses the say voice table, header junk and all", async () => {
+  it.skipIf(!sayHere)("parses the say voice table, header junk and all", async () => {
     const { listVoices } = await voice();
     const record: string[][] = [];
     expect(await listVoices(cfg({ provider: "system" }), fakeSay(record))).toEqual([
@@ -217,7 +222,7 @@ describe("built-in macOS voices", () => {
     expect(record[0].slice(0, 2)).toEqual(["-v", "?"]);
   });
 
-  it("synthesizes to a WAV without any key or network", async () => {
+  it.skipIf(!sayHere)("synthesizes to a WAV without any key or network", async () => {
     const { speak } = await voice();
     const record: string[][] = [];
     const audio = await speak(cfg({ provider: "system" }), "hello there", "Albert", fakeSay(record));
@@ -241,5 +246,78 @@ describe("built-in macOS voices", () => {
     expect(() => speak(cfg({ provider: "system" }), "hi", undefined, fakeSay([]))).toThrow(
       "Pick a voice in the bot's settings.",
     );
+  });
+});
+
+describe("timedClip", () => {
+  it("logs headers 120 and first audio 420 for a stream whose chunk lands 300 ms later", async () => {
+    vi.useFakeTimers();
+    try {
+      const { timedClip } = await voice();
+      const startedAt = Date.now();
+      await vi.advanceTimersByTimeAsync(120);
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+          setTimeout(() => {
+            c.enqueue(new Uint8Array([1, 2]));
+            c.close();
+          }, 300);
+        },
+      });
+      const lines: string[] = [];
+      const clip = timedClip({ stream, mime: "audio/mpeg" }, startedAt, (l) => lines.push(l), { length: 42, via: "flux" });
+      expect(lines).toEqual([]);
+      const reader = (clip as { stream: ReadableStream<Uint8Array> }).stream.getReader();
+      const first = reader.read();
+      await vi.advanceTimersByTimeAsync(300);
+      expect((await first).value).toEqual(new Uint8Array([1, 2]));
+      await reader.read();
+      await reader.read();
+      expect(lines).toEqual(["[tts] speak timing: headers 120 ms, first audio 420 ms, length 42, via flux"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a bytes clip logs first audio equal to headers, once, never the text", async () => {
+    vi.useFakeTimers();
+    try {
+      const { timedClip } = await voice();
+      const startedAt = Date.now();
+      await vi.advanceTimersByTimeAsync(80);
+      const lines: string[] = [];
+      const clip = timedClip({ bytes: new Uint8Array([9]), mime: "audio/mpeg" }, startedAt, (l) => lines.push(l), { length: 5, via: "system" });
+      expect("bytes" in clip).toBe(true);
+      expect(lines).toEqual(["[tts] speak timing: headers 80 ms, first audio 80 ms, length 5, via system"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a stream cancelled before any audio logs nothing", async () => {
+    const { timedClip } = await voice();
+    const lines: string[] = [];
+    const stream = new ReadableStream<Uint8Array>({ pull: () => new Promise(() => {}) });
+    const clip = timedClip({ stream, mime: "audio/mpeg" }, Date.now(), (l) => lines.push(l), { length: 3, via: "flux" });
+    await (clip as { stream: ReadableStream<Uint8Array> }).stream.cancel();
+    expect(lines).toEqual([]);
+  });
+});
+
+describe("the speak route's timing", () => {
+  const index = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+  const start = index.indexOf('path === "/api/tts/speak"');
+  const route = index.slice(start, index.indexOf("// The fast half of a call", start));
+
+  it("writes one timing line per clip, the server's own", () => {
+    expect(start).toBeGreaterThan(0);
+    expect(route.match(/\[voice-diag\] tts-ttfb/g)).toHaveLength(1);
+    expect(route).not.toContain("timedClip(");
+    expect(route).not.toContain("[tts] speak timing");
+  });
+
+  it("starts its clock before the retry wrapper, as the first parent did", () => {
+    expect(route).toMatch(/const askedAt = Date\.now\(\);[\s\S]{0,300}retryOnRateLimit\([\s\S]{0,900}const serverMs = Date\.now\(\) - askedAt;/);
+    expect(route).toContain('"x-murage-ttfb-ms": String(serverMs)');
   });
 });

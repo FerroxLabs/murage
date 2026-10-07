@@ -6,7 +6,7 @@ description: |
   Do NOT use for drafting contracts, providing legal advice on whether to sign, negotiating contract terms on behalf of the user, or reviewing jurisdiction-specific regulatory compliance.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy contracts guide checklist"
   category: "legal-civic"

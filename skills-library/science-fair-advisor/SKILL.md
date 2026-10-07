@@ -4,7 +4,7 @@ description: |
   Complete guidance for science fair projects including project selection by age, interest, and available resources, scientific method walkthrough, hypothesis formation, experiment design, data collection and analysis, display board creation, presentation coaching, and understanding judging criteria. Use when the user asks about science fair advisor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching parenting guide research"
   category: "education"

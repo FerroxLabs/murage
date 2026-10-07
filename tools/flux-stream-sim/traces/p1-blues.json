@@ -1,0 +1,122 @@
+[
+ {
+  "at_ms": 300,
+  "msg": {
+   "type": "SpeechStarted",
+   "timestamp": 240
+  }
+ },
+ {
+  "at_ms": 900,
+  "msg": {
+   "type": "Turn",
+   "turn_order": 0,
+   "end_of_turn": false,
+   "turn_is_formatted": false,
+   "end_of_turn_confidence": 0.3,
+   "transcript": "",
+   "words": [
+    {
+     "text": "blues",
+     "start": 600,
+     "end": 900,
+     "confidence": 0.9,
+     "word_is_final": false
+    }
+   ]
+  }
+ },
+ {
+  "at_ms": 1300,
+  "msg": {
+   "type": "Turn",
+   "turn_order": 0,
+   "end_of_turn": false,
+   "turn_is_formatted": false,
+   "end_of_turn_confidence": 0.3,
+   "transcript": "",
+   "words": [
+    {
+     "text": "blues",
+     "start": 600,
+     "end": 900,
+     "confidence": 0.9,
+     "word_is_final": false
+    },
+    {
+     "text": "brothers",
+     "start": 950,
+     "end": 1300,
+     "confidence": 0.9,
+     "word_is_final": false
+    }
+   ]
+  }
+ },
+ {
+  "at_ms": 2200,
+  "msg": {
+   "type": "Turn",
+   "turn_order": 0,
+   "end_of_turn": true,
+   "turn_is_formatted": false,
+   "end_of_turn_confidence": 1.0,
+   "transcript": "blues brothers",
+   "words": [
+    {
+     "text": "blues",
+     "start": 600,
+     "end": 900,
+     "confidence": 0.9,
+     "word_is_final": true
+    },
+    {
+     "text": "brothers",
+     "start": 950,
+     "end": 1300,
+     "confidence": 0.9,
+     "word_is_final": true
+    }
+   ]
+  }
+ },
+ {
+  "at_ms": 2250,
+  "msg": {
+   "type": "Turn",
+   "turn_order": 0,
+   "end_of_turn": true,
+   "turn_is_formatted": true,
+   "end_of_turn_confidence": 1.0,
+   "transcript": "Blues Brothers.",
+   "words": [
+    {
+     "text": "Blues",
+     "start": 600,
+     "end": 900,
+     "confidence": 0.9,
+     "word_is_final": true
+    },
+    {
+     "text": "Brothers.",
+     "start": 950,
+     "end": 1300,
+     "confidence": 0.9,
+     "word_is_final": true
+    }
+   ]
+  }
+ },
+ {
+  "at_ms": 2400,
+  "msg": {
+   "type": "Turn",
+   "turn_order": 1,
+   "end_of_turn": true,
+   "turn_is_formatted": true,
+   "end_of_turn_confidence": 1.0,
+   "transcript": "",
+   "words": []
+  }
+ }
+]

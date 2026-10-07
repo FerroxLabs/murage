@@ -71,6 +71,7 @@ export function MemorySettings(){return React.createElement('textarea',{'aria-la
           return `import React from 'react';import {createRoot} from 'react-dom/client';
 import {initialState} from '/src/state/store.tsx?original';
 import {ChatHeader} from '/src/components/ChatHeader.tsx';
+import {BotListDrawerProvider} from '/src/components/OpenBotListButton.tsx';
 import {en,localeLoaders} from '/src/locales/index.ts';
 import {setLocale} from '/src/lib/i18n.ts';
 import '/src/styles.css';
@@ -132,7 +133,13 @@ function HeaderFixture(){
     onToggleFind:()=>setFindOpen(open=>!open)});
 }
 window.setColumnWidth=width=>{document.getElementById('column').style.width=width+'px';};
-createRoot(document.getElementById('mount')).render(React.createElement(HeaderFixture));`;
+// ?drawer=1: mounted the way App.tsx mounts it, with a bot list to open, so
+// the phone's drawer button is drawn as the row's first item.
+window.drawerOpened=0;
+const drawerRef=React.createRef();
+const drawer={expanded:false,open:()=>{window.drawerOpened+=1;},buttonRef:drawerRef,takeFocusReturn:()=>false};
+const fixture=React.createElement(HeaderFixture);
+createRoot(document.getElementById('mount')).render(q.get('drawer')==='1'?React.createElement(BotListDrawerProvider,{value:drawer},fixture):fixture);`;
         },
         configureServer(vite) {
           vite.middlewares.use((request, response, next) => {
@@ -755,12 +762,14 @@ test("long translated labels fold earlier instead of overlapping", async ({ page
   await page.keyboard.press("Escape");
 });
 
-test("a real phone viewport, where the drawer button owns the corner too", async ({ page }, info) => {
+test("a real phone viewport, where the drawer button is the row's first item", async ({ page }, info) => {
   // Every other test here narrows the COLUMN inside a wide window, which is
   // the case a viewport breakpoint would miss. This one is the other half:
-  // an actual 390x844 phone, where `pl-11` reserves the top-left corner for
-  // the drawer button and the header has 44px less to spend.
-  await open(page, { skin: "light" });
+  // an actual 390x844 phone, where the drawer button is drawn in the row.
+  // It used to float over the corner from App.tsx at a fixed top offset and
+  // sat a few points above the name on an iPhone and a Samsung; as a flex
+  // item of this `items-center` row it shares the name's centre line.
+  await open(page, { skin: "light", query: "?drawer=1" });
   await page.setViewportSize({ width: 390, height: 844 });
   await setWidth(page, 390);
   const box = await headerBox(page);
@@ -777,12 +786,47 @@ test("a real phone viewport, where the drawer button owns the corner too", async
         intersection(found[i]!.rect, found[j]!.rect),
         `phone: "${found[i]!.name}" overlaps "${found[j]!.name}"`,
       ).toBeLessThanOrEqual(1);
-  // Nothing may sit under the drawer button's corner.
-  const corner = found.filter((control) => control.rect.x < 44 && control.rect.y < 44);
-  expect(corner.map((control) => control.name), "a control sits under the drawer button").toEqual([]);
+  // The drawer button is inside the header, first, and leftmost.
+  expect(found[0]?.name, "the header's first control").toBe("Open bot list");
+  const menu = found[0]!.rect;
+  // (On its own row: a two-row header's second row starts at the left edge.)
+  for (const other of found.slice(1).filter((control) => control.rect.y < menu.y + menu.height))
+    expect(other.rect.x, `"${other.name}" sits left of the drawer button`).toBeGreaterThanOrEqual(menu.x + menu.width - 1);
+  // One centre line for the drawer button, the bot's name and the ••• menu.
+  const centres = await page.evaluate(() => {
+    const header = document.querySelector("[data-chat-header]")!;
+    const mid = (node: Element | null) => {
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return rect.y + rect.height / 2;
+    };
+    return {
+      menu: mid(header.querySelector('[aria-label="Open bot list"]')),
+      name: mid(header.querySelector("[data-chat-header-name] :is(button, input)")),
+      more: mid(header.querySelector('[aria-label^="More actions"]')),
+    };
+  });
+  expect(centres.menu).not.toBeNull();
+  expect(centres.name).not.toBeNull();
+  expect(Math.abs(centres.menu! - centres.name!), `drawer button ${centres.menu} vs name ${centres.name}`).toBeLessThanOrEqual(0.5);
+  // The ••• stays on the first row at 390px; if a later layout drops it to
+  // the second row, it is no longer on this line to compare.
+  if (centres.more !== null && centres.more < menu.y + menu.height)
+    expect(Math.abs(centres.menu! - centres.more), `drawer button ${centres.menu} vs ••• ${centres.more}`).toBeLessThanOrEqual(0.5);
+  // It opens the drawer.
+  await page.getByRole("button", { name: "Open bot list", exact: true }).click();
+  expect(await page.evaluate(() => (window as unknown as { drawerOpened: number }).drawerOpened)).toBe(1);
   // eslint-disable-next-line no-console
   console.log(
-    `[chat header] 390x844 phone → rows ${box.rows}, content ${Math.round(box.contentWidth)}px, name ${Math.round(box.nameWidth)}px, ${found.length} controls`,
+    `[chat header] 390x844 phone → rows ${box.rows}, content ${Math.round(box.contentWidth)}px, name ${Math.round(box.nameWidth)}px, centres menu ${centres.menu} name ${centres.name} more ${centres.more}, ${found.length} controls`,
   );
   await page.screenshot({ path: info.outputPath("header-phone-390.png") });
+});
+
+test("no drawer button at md and up, and the desktop row is unchanged", async ({ page }) => {
+  await open(page, { query: "?drawer=1" });
+  await setWidth(page, 1024);
+  await expect(page.getByRole("button", { name: "Open bot list", exact: true })).toBeHidden();
+  const padding = await page.evaluate(() => getComputedStyle(document.querySelector("[data-chat-header]")!).paddingLeft);
+  expect(padding).toBe("20px");
 });

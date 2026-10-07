@@ -4,7 +4,7 @@ description: |
   Comprehensive digital illustration guide covering Procreate and Photoshop workflows, layer management and blending modes, brush customization, composition principles, color theory application, digital painting techniques, style development, and portfolio building for professional illustrators. Use when the user asks about digital illustration guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design guide step-by-step"
   category: "creative-arts"

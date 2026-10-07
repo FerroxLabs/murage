@@ -4,7 +4,7 @@ description: |
   Breaking problems down to their fundamental truths and reasoning up from there. Covers Socratic questioning, assumption identification, reasoning from ground truth, practical application methods, innovation through first principles, physics thinking, and structured practice exercises for developing first-principles reasoning ability. Use when the user asks about first principles thinker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decision-making analysis strategy frameworks"
   category: "productivity"

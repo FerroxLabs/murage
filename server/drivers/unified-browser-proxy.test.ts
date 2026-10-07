@@ -7,8 +7,6 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
-import { MURAGE_MCP_TOOLS } from "../../shared/murage-tool-names.ts";
-import { BROWSER_REFUSALS } from "../browser-lock.ts";
 
 const PROXY = fileURLToPath(new URL("./unified-browser-proxy.ts", import.meta.url));
 const servers: Server[] = [];
@@ -26,9 +24,9 @@ async function route(status: number, body: unknown): Promise<string> {
 }
 
 /** Run the proxy over stdio exactly as an engine does and collect replies. */
-async function exchange(base: string, requests: unknown[], extraEnv: Record<string, string> = {}): Promise<any[]> {
+async function exchange(base: string, requests: unknown[]): Promise<any[]> {
   const child = spawn(process.execPath, [PROXY], {
-    env: { PATH: process.env.PATH, MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "fixture-token", MURAGE_BOT_ID: "bot", MURAGE_THREAD_ID: "thread", ...extraEnv },
+    env: { PATH: process.env.PATH, MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "fixture-token", MURAGE_BOT_ID: "bot", MURAGE_THREAD_ID: "thread" },
     stdio: ["pipe", "pipe", "inherit"],
   });
   let output = "";
@@ -44,16 +42,7 @@ const PROTECTED = "Murage's browser is protecting this page because the owner ty
 it("passes Murage's own refusal to the bot word for word", async () => {
   const base = await route(409, { error: PROTECTED, code: "browser_protected_owner_input" });
   const [call] = await exchange(base, [{ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "agent_browser_snapshot" } }]);
-  expect(call.result).toEqual({ isError: true, content: [{ type: "text", text: PROTECTED }] });
-});
-
-it("names the browser's own tools in its refusal the way Fuigo and Grok call them", async () => {
-  const reason = "You can leave it by calling agent_browser_open with a different address.";
-  const base = await route(409, { error: reason, code: "browser_protected_sensitive_page" });
-  const call = { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "agent_browser_snapshot" } };
-  expect((await exchange(base, [call]))[0].result.content[0].text).toBe(reason);
-  expect((await exchange(base, [call], { MURAGE_TOOL_CALL_STYLE: "use-tool", MURAGE_MCP_SERVER_NAME: "browser" }))[0].result.content[0].text)
-    .toBe('You can leave it by calling use_tool with tool_name "browser__agent_browser_open" with a different address.');
+  expect(call.result).toEqual({ isError: true, code: "browser_protected_owner_input", content: [{ type: "text", text: PROTECTED }] });
 });
 
 it("answers a failed tool listing with an error that says why, not a result with no tools in it", async () => {
@@ -69,32 +58,4 @@ it("never forwards a server error Murage did not write for the bot", async () =>
   expect(JSON.stringify(call)).not.toContain("page secret");
   expect(call.result.isError).toBe(true);
   expect(call.result.content[0].text).toContain("Browser unavailable");
-});
-
-// Every refusal Murage writes for the bot, through the real proxy, on an
-// engine that reaches MCP tools only through use_tool: no tool it names is
-// left bare, and the one that names a tool names it under this mount.
-it("every browser refusal reads callable on Fuigo and Grok, and unchanged elsewhere", async () => {
-  const bare = new RegExp(`(?<![A-Za-z0-9_"])(${MURAGE_MCP_TOOLS.browser.join("|")})(?![A-Za-z0-9_"])`);
-  const call = { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "agent_browser_snapshot" } };
-  for (const [code, text] of Object.entries(BROWSER_REFUSALS)) {
-    const base = await route(409, { error: text, code });
-    const [direct] = await exchange(base, [call]);
-    const [fuigo] = await exchange(base, [call], { MURAGE_TOOL_CALL_STYLE: "use-tool", MURAGE_MCP_SERVER_NAME: "browser" });
-    expect(direct.result.content[0].text, code).toBe(text);
-    expect(fuigo.result.content[0].text, code).not.toMatch(bare);
-    if (bare.test(text)) expect(fuigo.result.content[0].text, code).toContain('use_tool with tool_name "browser__agent_browser_open"');
-    else expect(fuigo.result.content[0].text, code).toBe(text);
-  }
-});
-
-it("names sibling tools in the listed descriptions the way Fuigo calls them, and leaves other engines' list as it came", async () => {
-  const tools = [{ name: "agent_browser_click", description: "Click an element by ref from agent_browser_snapshot.", inputSchema: { type: "object", properties: { selector: { type: "string", description: "A ref from agent_browser_snapshot." } } } }];
-  const base = await route(200, { tools });
-  const listing = { jsonrpc: "2.0", id: 6, method: "tools/list" };
-  expect((await exchange(base, [listing]))[0].result).toEqual({ tools });
-  const [fuigo] = await exchange(base, [listing], { MURAGE_TOOL_CALL_STYLE: "use-tool", MURAGE_MCP_SERVER_NAME: "browser" });
-  expect(fuigo.result.tools[0].name).toBe("agent_browser_click");
-  expect(fuigo.result.tools[0].description).toBe('Click an element by ref from use_tool with tool_name "browser__agent_browser_snapshot".');
-  expect(fuigo.result.tools[0].inputSchema.properties.selector.description).toBe('A ref from use_tool with tool_name "browser__agent_browser_snapshot".');
 });

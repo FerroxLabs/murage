@@ -6,7 +6,7 @@ description: |
   Do NOT use for citation formatting (use citation-reference), academic peer review (use academic-paper-review), or general editing (use copy-editing).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "editing writing research"
   category: "writing"

@@ -1,0 +1,82 @@
+{
+  "cases": [
+    { "name": "binding routes to its own origin", "steps": [
+      { "op": "bind", "bindingId": "B1", "origin": "https://mac.tailnet123.ts.net" },
+      { "op": "bind", "bindingId": "B2", "origin": "https://studio.tailnet123.ts.net" },
+      { "op": "origin", "bindingId": "B1", "expect": "https://mac.tailnet123.ts.net" },
+      { "op": "origin", "bindingId": "B2", "expect": "https://studio.tailnet123.ts.net" },
+      { "op": "origin", "bindingId": "B3", "expect": null },
+      { "op": "binding", "origin": "https://studio.tailnet123.ts.net", "expect": "B2" } ] },
+    { "name": "sum across bindings", "steps": [
+      { "op": "bind", "bindingId": "B1", "origin": "https://mac.tailnet123.ts.net" },
+      { "op": "bind", "bindingId": "B2", "origin": "https://studio.tailnet123.ts.net" },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c1", "revision": 1, "workspaceBadge": 2, "expect": "show", "total": 2 },
+      { "op": "accept", "bindingId": "B2", "collapseKey": "c2", "revision": 1, "workspaceBadge": 3, "expect": "show", "total": 5 },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c3", "revision": 1, "workspaceBadge": 1, "expect": "show", "total": 4 } ] },
+    { "name": "an older or repeated revision is stale", "steps": [
+      { "op": "bind", "bindingId": "B1", "origin": "https://mac.tailnet123.ts.net" },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c1", "revision": 2, "workspaceBadge": 1, "expect": "show", "total": 1 },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c1", "revision": 1, "workspaceBadge": 9, "expect": "stale", "total": 1 },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c1", "revision": 2, "workspaceBadge": 9, "expect": "stale", "total": 1 },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c1", "revision": 3, "workspaceBadge": 0, "expect": "show", "total": 0 } ] },
+    { "name": "a binding this phone no longer has is unknown and changes nothing", "steps": [
+      { "op": "bind", "bindingId": "B1", "origin": "https://mac.tailnet123.ts.net" },
+      { "op": "setBadge", "bindingId": "B1", "count": 2, "total": 2 },
+      { "op": "accept", "bindingId": "B9", "collapseKey": "c1", "revision": 1, "workspaceBadge": 5, "expect": "unknown", "total": 2 } ] },
+    { "name": "reconcile removes answered and corrects the count", "steps": [
+      { "op": "bind", "bindingId": "B1", "origin": "https://mac.tailnet123.ts.net" },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c1", "revision": 1, "workspaceBadge": 2, "expect": "show", "total": 2 },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c2", "revision": 1, "workspaceBadge": 2, "expect": "show", "total": 2 },
+      { "op": "reconcile", "bindingId": "B1", "badge": 1, "pending": [{ "collapseKey": "c2", "revision": 1 }], "shown": ["c2", "c1"], "expect": ["c1"], "total": 1 } ] },
+    { "name": "reconcile keeps a live one and raises its seen revision", "steps": [
+      { "op": "bind", "bindingId": "B1", "origin": "https://mac.tailnet123.ts.net" },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c1", "revision": 1, "workspaceBadge": 1, "expect": "show", "total": 1 },
+      { "op": "reconcile", "bindingId": "B1", "badge": 1, "pending": [{ "collapseKey": "c1", "revision": 2 }], "shown": ["c1"], "expect": [], "total": 1 },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c1", "revision": 1, "workspaceBadge": 1, "expect": "stale", "total": 1 } ] },
+    { "name": "removing a workspace drops its binding and its badge", "steps": [
+      { "op": "bind", "bindingId": "B1", "origin": "https://mac.tailnet123.ts.net" },
+      { "op": "bind", "bindingId": "B2", "origin": "https://studio.tailnet123.ts.net" },
+      { "op": "setBadge", "bindingId": "B1", "count": 2, "total": 2 },
+      { "op": "setBadge", "bindingId": "B2", "count": 3, "total": 5 },
+      { "op": "unbindOrigin", "origin": "https://mac.tailnet123.ts.net", "expect": "B1", "total": 3 },
+      { "op": "origin", "bindingId": "B1", "expect": null },
+      { "op": "unbindOrigin", "origin": "https://mac.tailnet123.ts.net", "expect": null, "total": 3 } ] },
+    { "name": "rebinding an origin replaces its old binding", "steps": [
+      { "op": "bind", "bindingId": "B1", "origin": "https://mac.tailnet123.ts.net" },
+      { "op": "setBadge", "bindingId": "B1", "count": 4, "total": 4 },
+      { "op": "bind", "bindingId": "B2", "origin": "https://mac.tailnet123.ts.net" },
+      { "op": "origin", "bindingId": "B1", "expect": null },
+      { "op": "origin", "bindingId": "B2", "expect": "https://mac.tailnet123.ts.net" },
+      { "op": "setBadge", "bindingId": "B9", "count": 1, "total": 0 } ] },
+    { "name": "the seen list is bounded, oldest first out", "steps": [
+      { "op": "bind", "bindingId": "B1", "origin": "https://mac.tailnet123.ts.net" },
+      { "op": "acceptMany", "bindingId": "B1", "prefix": "k", "count": 501, "revision": 1, "workspaceBadge": 0 },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "k0", "revision": 1, "workspaceBadge": 0, "expect": "show", "total": 0 },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "k500", "revision": 1, "workspaceBadge": 0, "expect": "stale", "total": 0 } ] },
+    { "name": "survives encode and decode", "steps": [
+      { "op": "bind", "bindingId": "B1", "origin": "https://mac.tailnet123.ts.net" },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c1", "revision": 2, "workspaceBadge": 2, "expect": "show", "total": 2 },
+      { "op": "roundTrip" },
+      { "op": "origin", "bindingId": "B1", "expect": "https://mac.tailnet123.ts.net" },
+      { "op": "accept", "bindingId": "B1", "collapseKey": "c1", "revision": 2, "workspaceBadge": 2, "expect": "stale", "total": 2 } ] },
+    { "name": "round trip keeps bindingIds in insertion order, not alphabetical", "steps": [
+      { "op": "bind", "bindingId": "B3", "origin": "https://gamma.tailnet123.ts.net" },
+      { "op": "bind", "bindingId": "B1", "origin": "https://alpha.tailnet123.ts.net" },
+      { "op": "bind", "bindingId": "B2", "origin": "https://beta.tailnet123.ts.net" },
+      { "op": "bindingIds", "expect": ["B3", "B1", "B2"] },
+      { "op": "roundTrip" },
+      { "op": "bindingIds", "expect": ["B3", "B1", "B2"] } ] },
+    { "name": "rebinding an existing id to a new unclaimed origin keeps its position", "steps": [
+      { "op": "bind", "bindingId": "B1", "origin": "https://x.tailnet123.ts.net" },
+      { "op": "bind", "bindingId": "B2", "origin": "https://z.tailnet123.ts.net" },
+      { "op": "bind", "bindingId": "B3", "origin": "https://y.tailnet123.ts.net" },
+      { "op": "bind", "bindingId": "B1", "origin": "https://w.tailnet123.ts.net" },
+      { "op": "bindingIds", "expect": ["B1", "B2", "B3"] },
+      { "op": "origin", "bindingId": "B1", "expect": "https://w.tailnet123.ts.net" } ] }
+  ],
+  "decode": [
+    { "input": "not json", "total": 0 },
+    { "input": "{\"bindings\":{\"B1\":{\"origin\":\"https://mac.tailnet123.ts.net\",\"badge\":-3}},\"seen\":[[\"c1\",\"x\"]]}", "total": 0 },
+    { "input": "{\"bindings\":{\"B1\":{\"origin\":\"http://mac.tailnet123.ts.net\",\"badge\":2}}}", "total": 0 }
+  ]
+}

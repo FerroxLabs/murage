@@ -4,7 +4,7 @@ description: |
   Complete vlogging guidance from concept to growth. Covers daily and weekly content structures, talking head setups, B-roll shooting techniques, travel vlog methods, editing style development, thumbnail and title optimization, audience building strategies, and sustainable content creation practices. Use when the user asks about vlog creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "video-production social-media"
   category: "design-creative"

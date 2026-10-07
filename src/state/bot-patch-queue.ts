@@ -20,6 +20,8 @@ export type BotUpdatePatch = Partial<
     | "noLimits"
     | "fullAccessChannelMessages"
     | "fullAccessSetupRequests"
+    | "imageApproval"
+    | "imageAskAfter"
     | "speakReplies"
     | "voice"
     | "pinned"
@@ -32,6 +34,8 @@ export type BotUpdatePatch = Partial<
     | "approvePeerComms"
     | "composio"
     | "browser"
+    | "continuity"
+    | "continuityOptions"
     | "browserProfile"
     | "modelSelection"
   >

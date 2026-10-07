@@ -81,7 +81,7 @@ test("owner account CRUD preserves credentials, selected identity and active wor
   const roster = (await api("/api/instances")).instances;
   expect(roster.find((entry: any) => entry.instanceId === work.instanceId).install.signInCommand).toBe(work.signInCommand);
   expect((await api("/api/engine-setup-command", "POST", { instanceId: work.instanceId, action: "connect" })).command).toBe(work.signInCommand);
-  expect((await api("/api/engine-setup-command", "POST", { instanceId: "verification", action: "connect" })).command).toBe("claude");
+  expect((await api("/api/engine-setup-command", "POST", { instanceId: "verification", action: "connect" })).command).toBe("claude auth login");
   await page.getByText("Sign-in instructions for Work", { exact: true }).click();
   await page.getByRole("button", { name: "Copy sign-in command for Work", exact: true }).click();
   expect(await page.evaluate(() => (window as any).copied)).toEqual([work.signInCommand]);

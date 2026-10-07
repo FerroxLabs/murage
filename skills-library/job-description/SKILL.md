@@ -5,7 +5,7 @@ description: |
   Do NOT use for resume writing (use resume-builder), interview preparation (use interview-guide), or career advice.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "template planning checklist report strategy"
   category: "business-strategy"

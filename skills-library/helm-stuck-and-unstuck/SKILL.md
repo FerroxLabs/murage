@@ -1,8 +1,9 @@
 ---
 name: helm-stuck-and-unstuck
 description: "The founder says \"I don't know what to do,\" \"should I keep going or walk away,\" or \"I'm burnt out.\" Load when they're paralyzed, when the question is push vs. pivot, or when they're asking permission to quit. No pep talks."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "helm"
 ---

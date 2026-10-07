@@ -11,7 +11,7 @@ description: |
   or booking strategy (use airfare-search-strategy for flights).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "travel research checklist analysis"
   category: "travel-experiences"

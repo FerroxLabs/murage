@@ -54,7 +54,13 @@ jobs:
   prepare:
     name: Pin the release commit
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # Waits for the CI run a push to main starts alongside this one (the gate
+    # below), so this is the CI cap, not the five minutes pinning needs.
+    timeout-minutes: 90
+    # actions: read lets the gate list CI's runs; nothing here writes.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       sha: ${{ steps.pin.outputs.sha }}
       version: ${{ steps.pin.outputs.version }}
@@ -89,6 +95,19 @@ jobs:
             should_release=$(node scripts/release-guard.mjs should-release "$current" "$previous")
           fi
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+      - name: Require that CI passed on the pinned commit
+        # Audit C8: nothing here used to check that CI ever ran on this SHA, so
+        # a dispatched release or a fast merge could sign and publish a commit
+        # whose tests were red or never started. The CI workflow is ci.yml
+        # (name: CI). A push to main starts both, so a run still in progress is
+        # waited for; a failed, cancelled or missing one stops the release
+        # before any signed build begins.
+        if: steps.pin.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.pin.outputs.sha }}
+          CI_WORKFLOW: ci.yml
+        run: node scripts/release-ci-gate.mjs
       - name: Refuse to overwrite a published release
         if: steps.pin.outputs.should_release == 'true'
         env:
@@ -131,7 +150,13 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Check the shipped Murage release key
+        run: node scripts/check-release-key.mjs
       - run: pnpm install --frozen-lockfile
+      # Murage for Chrome: the store item ID and public key (plan 2.3). The
+      # committed placeholder fails here, so a release cannot ship without it.
+      - name: Murage for Chrome release identity
+        run: node scripts/release-guard.mjs browser-extension extensions/murage-browser/release.json >> "$GITHUB_ENV"
       - name: Clean generated output
         run: rm -rf dist dist-server dist-native release qualification-evidence
 
@@ -174,6 +199,40 @@ jobs:
             "--config.extraMetadata.murageGepaManifests.darwin-arm64=$gepa_hash" \
             "--config.extraMetadata.murageGepaManifests.darwin-x64=unavailable"
 
+      - name: Qualify packaged WhatsApp (darwin-arm64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p qualification-evidence
+          node scripts/whatsapp-inventory.mjs "release/mac-arm64/Murage.app/Contents/Resources/server" --check
+          cp "release/mac-arm64/Murage.app/Contents/Resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-darwin-arm64-inventory.json
+          node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/mac-arm64/Murage.app/Contents/Resources/server" --runtime "release/mac-arm64/Murage.app/Contents/MacOS/Murage" --platform darwin --arch arm64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-darwin-arm64.json 2> qualification-evidence/whatsapp-darwin-arm64-probe.log
+
+      - name: Qualify packaged WhatsApp (darwin-x64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Check x64 execution before installing Rosetta on this arm64 runner.
+          if ! /usr/bin/arch -x86_64 /usr/bin/true; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          /usr/bin/arch -x86_64 /usr/bin/true
+          mkdir -p qualification-evidence
+          node scripts/whatsapp-inventory.mjs "release/mac/Murage.app/Contents/Resources/server" --check
+          cp "release/mac/Murage.app/Contents/Resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-darwin-x64-inventory.json
+          node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/mac/Murage.app/Contents/Resources/server" --runtime "release/mac/Murage.app/Contents/MacOS/Murage" --platform darwin --arch x64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-darwin-x64.json 2> qualification-evidence/whatsapp-darwin-x64-probe.log
+
+      # The FINAL packaged build.json, not a pre-build directory (handoff 9):
+      # release mode, the store identity, no development ID.
+      - name: Murage for Chrome identity in the packaged app
+        run: |
+          set -euo pipefail
+          test -f "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/build.json"
+          test -f "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/native-host.mjs"
+          node scripts/release-guard.mjs browser-extension-build "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/build.json" "$MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG"
+          test -f "release/mac/Murage.app/Contents/Resources/browser-extension/build.json"
+          test -f "release/mac/Murage.app/Contents/Resources/browser-extension/native-host.mjs"
+          node scripts/release-guard.mjs browser-extension-build "release/mac/Murage.app/Contents/Resources/browser-extension/build.json" "$MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG"
       - name: "Gate: arm64 carries the pinned GEPA worker, x64 carries none"
         run: |
           set -euo pipefail
@@ -197,6 +256,8 @@ jobs:
             grep -Eq '^owner: FerroxLabs$' "$update" || { echo "::error::wrong update owner in $update"; exit 1; }
             grep -Eq '^repo: murage-releases$' "$update" || { echo "::error::wrong update repo in $update"; exit 1; }
           done
+          # Exactly the public feed: a qualification build's feed never ships.
+          node scripts/release-guard.mjs update-feed release/mac-arm64/Murage.app/Contents/Resources/app-update.yml release/mac/Murage.app/Contents/Resources/app-update.yml
 
       - name: "Gate: the signature must verify BEFORE notarization"
         run: |
@@ -301,6 +362,21 @@ jobs:
           cp "release/Murage-$v-arm64.dmg" release/Murage.dmg
           cp "release/Murage-$v-x64.dmg" release/Murage-intel.dmg
 
+      - name: Bind WhatsApp reports to final artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bind-whatsapp-artifacts.mjs qualification-evidence/whatsapp-darwin-arm64.json release/Murage-*-arm64.dmg release/Murage-*-arm64.zip release/Murage-*-arm64.*.blockmap release/Murage.dmg release/latest-mac.yml
+          node scripts/bind-whatsapp-artifacts.mjs qualification-evidence/whatsapp-darwin-x64.json release/Murage-*-x64.dmg release/Murage-*-x64.zip release/Murage-*-x64.*.blockmap release/Murage-intel.dmg release/latest-mac.yml
+      - name: Preserve WhatsApp qualification reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # Retain the existing evidence suffix; assemble selects only *-release.
+          name: mac-whatsapp-gepa-evidence
+          path: qualification-evidence/whatsapp-*
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mac-release
@@ -338,7 +414,14 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Check the shipped Murage release key
+        run: node scripts/check-release-key.mjs
       - run: pnpm install --frozen-lockfile
+      # Murage for Chrome: the store item ID and public key (plan 2.3). The
+      # committed placeholder fails here, so a release cannot ship without it.
+      - name: Murage for Chrome release identity
+        shell: bash
+        run: node scripts/release-guard.mjs browser-extension extensions/murage-browser/release.json >> "$GITHUB_ENV"
       - name: Clean generated output
         shell: bash
         run: rm -rf dist dist-server dist-native release qualification-evidence
@@ -396,6 +479,25 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
 
+      - name: Qualify packaged WhatsApp (win32-x64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p qualification-evidence
+          node scripts/whatsapp-inventory.mjs "release/win-unpacked/resources/server" --check
+          cp "release/win-unpacked/resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-win32-x64-inventory.json
+          node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/win-unpacked/resources/server" --runtime "release/win-unpacked/Murage.exe" --platform win32 --arch x64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-win32-x64.json 2> qualification-evidence/whatsapp-win32-x64-probe.log
+
+      # The FINAL packaged build.json, not a pre-build directory (handoff 9):
+      # release mode, the store identity, no development ID, and the x64 helper.
+      - name: Murage for Chrome identity in the packaged app
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "release/win-unpacked/resources/browser-extension/build.json"
+          test -f "release/win-unpacked/resources/browser-extension/native-host.mjs"
+          test -f "release/win-unpacked/resources/browser-extension/win32-x64/murage-browser-host.exe" || { echo "::error::missing the Windows browser helper release/win-unpacked/resources/browser-extension/win32-x64/murage-browser-host.exe"; exit 1; }
+          node scripts/release-guard.mjs browser-extension-build "release/win-unpacked/resources/browser-extension/build.json" "$MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG"
       # The mac job gates on codesign BEFORE notarizing, for the same reason
       # this gate exists: a build that silently skipped signing looks entirely
       # normal until a user's SmartScreen says otherwise. Prove it, do not
@@ -440,8 +542,9 @@ jobs:
               Write-Host "::error::$($_.Name) signed by an unexpected subject: $subject"; $script:fail = 1
             }
           }
-          # The app and bundled first-party engine must be signed by us.
-          foreach ($required in @('Murage.exe', 'Murage-*-setup.exe', 'fuigo.exe')) {
+          # The app, the bundled first-party engine and the Murage for Chrome
+          # helper (Chrome starts it directly) must be signed by us.
+          foreach ($required in @('Murage.exe', 'Murage-*-setup.exe', 'fuigo.exe', 'murage-browser-host.exe')) {
             Get-ChildItem release -Filter $required -Recurse | ForEach-Object {
               $subject = (Get-AuthenticodeSignature $_.FullName).SignerCertificate.Subject
               if ($subject -notmatch 'Ferrox Labs, LLC') {
@@ -485,6 +588,7 @@ jobs:
           [ -f "$res/app-update.yml" ] || { echo "::error::missing app-update.yml"; exit 1; }
           grep -Eq '^owner: FerroxLabs$' "$res/app-update.yml" || { echo "::error::wrong update owner"; exit 1; }
           grep -Eq '^repo: murage-releases$' "$res/app-update.yml" || { echo "::error::wrong update repo"; exit 1; }
+          node scripts/release-guard.mjs update-feed release/win-unpacked/resources/app-update.yml
           # Now that the build is signed, the inverse is the danger: without
           # publisherName electron-updater skips verification entirely, and a
           # mismatch rejects every update as untrusted.
@@ -508,6 +612,19 @@ jobs:
         run: |
           v=$(node -p "require('./package.json').version")
           cp "release/Murage-$v-setup.exe" release/Murage-setup.exe
+      - name: Bind WhatsApp reports to final artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bind-whatsapp-artifacts.mjs qualification-evidence/whatsapp-win32-x64.json release/*.exe release/*.exe.blockmap release/latest.yml
+      - name: Preserve WhatsApp qualification reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-whatsapp-gepa-evidence
+          path: qualification-evidence/whatsapp-*
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-release
@@ -531,6 +648,12 @@ jobs:
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    # id-token and attestations let the provenance step below sign with the
+    # workflow's identity; the job still cannot write contents.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -541,6 +664,8 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Check the shipped Murage release key
+        run: node scripts/check-release-key.mjs
       - name: Install package validation, native smoke and GEPA build tools
         # the second line is the CPython build toolchain build-linux.py needs
         run: >-
@@ -548,6 +673,10 @@ jobs:
           at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb
           build-essential binutils libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
       - run: pnpm install --frozen-lockfile
+      # Murage for Chrome: the store item ID and public key (plan 2.3). The
+      # committed placeholder fails here, so a release cannot ship without it.
+      - name: Murage for Chrome release identity
+        run: node scripts/release-guard.mjs browser-extension extensions/murage-browser/release.json >> "$GITHUB_ENV"
       - name: Clean generated output
         run: pnpm clean && rm -rf qualification-evidence
       - name: Stage the pinned CUA runtime
@@ -565,12 +694,30 @@ jobs:
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           pnpm package:linux "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"
+      - name: Qualify packaged WhatsApp (linux-x64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p qualification-evidence
+          node scripts/whatsapp-inventory.mjs "release/linux-unpacked/resources/server" --check
+          cp "release/linux-unpacked/resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-linux-x64-inventory.json
+          node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/linux-unpacked/resources/server" --runtime "release/linux-unpacked/murage" --platform linux --arch x64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-linux-x64.json 2> qualification-evidence/whatsapp-linux-x64-probe.log
+
+      # The FINAL packaged build.json, not a pre-build directory (handoff 9):
+      # release mode, the store identity, no development ID.
+      - name: Murage for Chrome identity in the packaged app
+        run: |
+          set -euo pipefail
+          test -f "release/linux-unpacked/resources/browser-extension/build.json"
+          test -f "release/linux-unpacked/resources/browser-extension/native-host.mjs"
+          node scripts/release-guard.mjs browser-extension-build "release/linux-unpacked/resources/browser-extension/build.json" "$MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG"
       - name: Verify the packaged updater target
         run: |
           update=release/linux-unpacked/resources/app-update.yml
           test -f "$update" || { echo "::error::missing $update"; exit 1; }
           grep -Eq '^owner: FerroxLabs$' "$update" || { echo "::error::wrong update owner"; exit 1; }
           grep -Eq '^repo: murage-releases$' "$update" || { echo "::error::wrong update repo"; exit 1; }
+          node scripts/release-guard.mjs update-feed release/linux-unpacked/resources/app-update.yml
       - name: Verify package contents and metadata
         run: node scripts/verify-linux-package.mjs
       - name: "Gate: local and off-site backup tools are the pinned x64 builds"
@@ -621,6 +768,53 @@ jobs:
           cp "release/Murage-$v-amd64.deb" release/Murage-amd64.deb
           cp "release/Murage-$v-x86_64.AppImage" release/Murage.AppImage
           (cd release && sha256sum Murage-$v-amd64.deb Murage-$v-x86_64.AppImage > SHA256SUMS-ubuntu-x64.txt)
+      - name: Sign the checksums
+        # Audit C8: a checksum file served from the same place as the files it
+        # covers proves nothing on its own. Detached GPG signature, made with a
+        # key Sean adds as RELEASE_GPG_PRIVATE_KEY (armored private key) and,
+        # if it has one, RELEASE_GPG_PASSPHRASE; see docs/releasing.md. Until
+        # the secret exists the release still builds and says so loudly, and
+        # the assemble gate requires the .asc whenever one was made.
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            echo "::warning::RELEASE_GPG_PRIVATE_KEY is not set; SHA256SUMS-ubuntu-x64.txt is NOT signed in this run"
+            exit 0
+          fi
+          export GNUPGHOME="$(mktemp -d)"
+          chmod 700 "$GNUPGHOME"
+          trap 'gpgconf --kill gpg-agent >/dev/null 2>&1 || true; rm -rf "$GNUPGHOME"' EXIT
+          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+            --armor --detach-sign --output release/SHA256SUMS-ubuntu-x64.txt.asc release/SHA256SUMS-ubuntu-x64.txt
+          gpg --batch --verify release/SHA256SUMS-ubuntu-x64.txt.asc release/SHA256SUMS-ubuntu-x64.txt
+          echo "signed SHA256SUMS-ubuntu-x64.txt"
+      - name: Attest build provenance for the Linux packages
+        # Audit C8: a signed statement that these exact bytes were built by this
+        # workflow from the pinned commit. Check with
+        # `gh attestation verify <file> --repo <owner>/<repo>`.
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release/*.deb
+            release/*.AppImage
+            release/SHA256SUMS-ubuntu-x64.txt
+      - name: Bind WhatsApp reports to final artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bind-whatsapp-artifacts.mjs qualification-evidence/whatsapp-linux-x64.json release/*.deb release/*.AppImage release/latest-linux.yml release/SHA256SUMS-ubuntu-x64.txt*
+      - name: Preserve WhatsApp qualification reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-whatsapp-gepa-evidence
+          path: qualification-evidence/whatsapp-*
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linux-release
@@ -628,6 +822,7 @@ jobs:
             release/*.deb
             release/*.AppImage
             release/SHA256SUMS-ubuntu-x64.txt
+            release/SHA256SUMS-ubuntu-x64.txt.asc
             release/latest-linux.yml
           if-no-files-found: error
           retention-days: 7
@@ -698,6 +893,10 @@ jobs:
             Murage-amd64.deb Murage-intel.dmg Murage-setup.exe
             Murage.AppImage Murage.dmg SHA256SUMS-ubuntu-x64.txt
           )
+          # The Linux checksum signature (audit C8): required whenever the
+          # Linux job made one, so a signed release cannot lose it on the way.
+          # (The job warns when the signing key is not configured.)
+          if [ -e assets/SHA256SUMS-ubuntu-x64.txt.asc ]; then required+=(SHA256SUMS-ubuntu-x64.txt.asc); fi
           for file in "${required[@]}"; do
             test -s "assets/$file" || { echo "::error::missing or empty release asset: $file"; exit 1; }
           done

@@ -205,16 +205,18 @@ export async function scanHostKey(tools:SshTools,rawTarget:ResticSftpTarget,cwd:
 const FXP={INIT:1,VERSION:2,OPEN:3,CLOSE:4,WRITE:6,OPENDIR:11,READDIR:12,REMOVE:13,MKDIR:14,STAT:17,STATUS:101,HANDLE:102,NAME:104,ATTRS:105} as const;
 const STATUS={OK:0,EOF:1,NO_SUCH_FILE:2,PERMISSION_DENIED:3} as const;
 class Reader{
-  private offset=0;constructor(private bytes:Buffer){}
+  private offset=0;private bytes:Buffer;constructor(bytes:Buffer){this.bytes=bytes;}
   u32(){if(this.offset+4>this.bytes.length)throw Error("RESTIC_SFTP_PROTOCOL");const value=this.bytes.readUInt32BE(this.offset);this.offset+=4;return value;}
   u64(){this.u32();this.u32();}
   string(){const length=this.u32();if(this.offset+length>this.bytes.length)throw Error("RESTIC_SFTP_PROTOCOL");const value=this.bytes.subarray(this.offset,this.offset+length);this.offset+=length;return value;}
   attrs(){const flags=this.u32();let permissions:number|undefined;if(flags&1)this.u64();if(flags&2){this.u32();this.u32();}if(flags&4)permissions=this.u32();if(flags&8){this.u32();this.u32();}if(flags&0x80000000){const count=this.u32();for(let i=0;i<count;i++){this.string();this.string();}}return{permissions};}
 }
-class SftpError extends Error{constructor(readonly status:number){super("RESTIC_SFTP_STATUS");}}
+class SftpError extends Error{readonly status:number;constructor(status:number){super("RESTIC_SFTP_STATUS");this.status=status;}}
 class SftpSession{
   private buffer=Buffer.alloc(0);private waiters=new Map<number,(packet:{type:number;body:Buffer})=>void>();private id=0;private version?:(ok:boolean)=>void;private failed=false;
-  constructor(private child:ReturnType<typeof spawn>){
+  private child:ReturnType<typeof spawn>;
+  constructor(child:ReturnType<typeof spawn>){
+    this.child=child;
     child.stdout!.on("data",(chunk:Buffer)=>{this.buffer=Buffer.concat([this.buffer,chunk]);this.drain();});
     child.once("close",()=>this.fail());child.stdin!.on("error",()=>this.fail());
   }

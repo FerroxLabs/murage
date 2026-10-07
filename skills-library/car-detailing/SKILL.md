@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request requires professional specialized advice or falls outside the scope of car detailing.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "automotive home-maintenance step-by-step"
   category: "home-household"

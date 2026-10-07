@@ -1,8 +1,9 @@
 ---
 name: helm-founder-cadence
 description: "The founder says \"my weeks just disappear,\" \"I never have time for the real work,\" or \"I'm always reactive.\" Load for personal-rhythm questions, weekly-review design, or deep-work installation. If they ask for a company operating rhythm, route to Ops — that's the team layer."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "helm"
 ---

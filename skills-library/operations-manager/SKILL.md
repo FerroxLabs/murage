@@ -10,7 +10,7 @@ description: |
   design, financial auditing, or HR policy creation.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "planning analysis template best-practices automation"
   category: "operations"

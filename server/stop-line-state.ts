@@ -18,7 +18,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 
-import { normalizeRecipient, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
+import { canonPath, nativePath, normalizeRecipient, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 
 export const TASK_ALLOWANCE_TTL_MS = 12 * 60 * 60_000;
 const MAX_ALLOWANCES_PER_TASK = 50;
@@ -97,6 +97,22 @@ export interface ChatAllowanceRequest {
   app?: string;
 }
 
+/** Whether `said` names `path` as a whole path: not as the start of a folder
+ * inside it ("/Users" in "/Users/ada/site") and not as the tail of another
+ * path ("/tmp/x" in "/private/tmp/x"). A trailing slash, quote or sentence
+ * punctuation still ends it. */
+function namesWholePath(said: string, path: string): boolean {
+  const form = path.replace(/[\\/]+$/, "");
+  if (!form) return false;
+  for (let at = said.indexOf(form); at >= 0; at = said.indexOf(form, at + 1)) {
+    const before = at === 0 ? "" : said[at - 1];
+    const after = said.slice(at + form.length);
+    if (before && !/[\s"'`(<[]/.test(before)) continue;
+    if (/^[\\/]?(?:$|[\s"'`,;:)!?\]>]|\.(?:$|[\s"'`)]))/.test(after)) return true;
+  }
+  return false;
+}
+
 /** Turn what the owner said in chat ("you can delete anything in
  * ~/Projects/site today") into a task allowance, or refuse it.
  *
@@ -116,17 +132,26 @@ export function chatAllowance(
   const place = request.place.trim();
   if (!place) return { ok: false, error: "Say which folder, person or payee the owner named." };
   if (request.kind === "delete") {
-    const home_ = home.replace(/\/+$/, "");
-    const absolute = place === "~" || place.startsWith("~/") ? `${home_}${place.slice(1)}` : place;
+    // The stop line's own form: POSIX, with a Windows folder as /C:/Users/…
+    // (stop-line.ts canonPath), compared without regard to case there.
+    const home_ = canonPath(home).replace(/\/+$/, "");
+    const windows = /^\/(?:[A-Z]:|UNC)(?:\/|$)/.test(home_);
+    const same = (path: string) => (windows ? path.toLowerCase() : path);
+    // A backslash separates folders only on Windows; elsewhere it is part of a name.
+    const fromHome = windows ? /^~[\\/]/.test(place) : place.startsWith("~/");
+    const absolute = place === "~" || fromHome ? `${home_}${windows ? place.slice(1).replace(/\\/g, "/") : place.slice(1)}` : canonPath(place);
     if (!absolute.startsWith("/")) return { ok: false, error: "Give the folder as a full path or starting with ~/." };
     const clean = absolute.replace(/\/+$/, "").replace(/\/\.(?=\/|$)/g, "");
     if (clean.split("/").includes("..")) return { ok: false, error: "Give the folder without .. in it." };
-    if (!clean || clean === home_) return { ok: false, error: "Murage does not allow deleting across the whole home folder or disk. Ask the owner to name a folder." };
-    const tilde = clean.startsWith(`${home_}/`) ? `~${clean.slice(home_.length)}` : clean;
-    if (![place, clean, tilde].some((form) => said.includes(form.toLowerCase()))) {
+    // A folder that holds the home (/Users, C:\Users) or a whole disk is as
+    // broad as the home itself: its grant covers every other account.
+    const broad = !clean || same(clean) === same(home_) || same(home_).startsWith(`${same(clean)}/`) || (windows && /^\/(?:[A-Za-z]:|UNC(?:\/[^/]+)?)$/i.test(clean));
+    if (broad) return { ok: false, error: "Murage does not allow deleting across the whole home folder or disk. Ask the owner to name a folder." };
+    const tilde = same(clean).startsWith(`${same(home_)}/`) ? `~${clean.slice(home_.length)}` : clean;
+    if (![place, clean, tilde, nativePath(clean)].some((form) => namesWholePath(said, form.toLowerCase()))) {
       return { ok: false, error: "The owner's latest message does not name that folder. Ask the owner to say it in their own words." };
     }
-    return { ok: true, key: `stop:delete:${realpath(clean)}`, note: `You allowed deleting anything in ${tilde} for the rest of this task.` };
+    return { ok: true, key: `stop:delete:${canonPath(realpath(nativePath(clean)))}`, note: `You allowed deleting anything in ${tilde} for the rest of this task.` };
   }
   const who = normalizeRecipient(place);
   const bare = who.replace(/^[@#]/, "");

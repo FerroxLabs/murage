@@ -133,6 +133,9 @@ export function managedComposioChildEnvironment(
     "MURAGE_FLUX_COMPOSIO_ACCOUNT_KIND",
     "MURAGE_COMPOSIO_LEGACY_BROKER_UNTIL",
     "MURAGE_COMPOSIO_LEGACY_CLAIM",
+    // The retired own key is never handed to the harness, whatever the launching shell exported.
+    "COMPOSIO_API_KEY",
+    "MURAGE_CONNECTED_APPS_OWN_KEY_RETIRED",
   ]) delete next[key];
   const access = managedComposioAccess(brokerUrl, credentials, { legacyUntil, now });
   if (access) {
@@ -167,6 +170,7 @@ export const COMPOSIO_CREDENTIAL_FIELDS = Object.freeze([
   "fluxComposioBrokerTokenKeyFingerprint",
   "fluxComposioAccountKind",
   "fluxComposioTokenError",
+  "fluxComposioTokenRefusedKeyFingerprint",
 ]);
 
 /** Apply a lifecycle result computed OUTSIDE the credential lock.
@@ -178,6 +182,11 @@ export const COMPOSIO_CREDENTIAL_FIELDS = Object.freeze([
 export function applyComposioCredentialResult(current, snapshot, next) {
   for (const key of ["composioBrokerToken", "fluxApiKey", "fluxComposioBrokerToken"]) {
     if ((current?.[key] ?? undefined) !== (snapshot?.[key] ?? undefined)) return { credentials: current, applied: false };
+  }
+  // The error field is written between passes too (the "another device took
+  // over" marker). A result computed before such a write is stale.
+  if ((current?.fluxComposioTokenError ?? undefined) !== (snapshot?.fluxComposioTokenError ?? undefined)) {
+    return { credentials: current, applied: false };
   }
   const merged = { ...current };
   for (const key of COMPOSIO_CREDENTIAL_FIELDS) {

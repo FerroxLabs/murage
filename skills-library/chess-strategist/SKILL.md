@@ -4,7 +4,7 @@ description: |
   Comprehensive chess improvement guide covering opening principles and repertoire building, middle game tactical patterns, positional strategy, endgame technique, study methods, rating improvement plans, tournament preparation, and analysis workflow for players from beginner through advanced. Use when the user asks about chess strategist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "board-games strategy guide"
   category: "hobbies-crafts"

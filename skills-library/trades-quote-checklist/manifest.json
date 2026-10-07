@@ -1,0 +1,14 @@
+{
+  "id": "trades-quote-checklist",
+  "name": "Trades Quote Checklist",
+  "version": "1.0.0",
+  "description": "Builds an itemized trade quote from site notes, measurements and supplied rates. Separates labor, materials, allowances, options and exclusions, reconciles quantities and totals, and identifies site checks still needed. Use for a reviewable customer quote; use estimation-guide for software delivery estimates. Sending or accepting a quote requires the owner's approval.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "quotes",
+    "trades",
+    "quantities",
+    "estimates"
+  ],
+  "requiredCapabilities": []
+}

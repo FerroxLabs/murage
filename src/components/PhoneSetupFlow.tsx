@@ -59,6 +59,7 @@ import { useDesktopSurface } from "../lib/use-surface";
 import type { CompanionAccountState } from "../types/muragebox";
 import { ConnectionDetail } from "./ConnectionDetail";
 import { KeepAwakeOffer } from "./KeepAwakeOffer";
+import { LanPairing } from "./LanPairing";
 import { ReplaceOldDevice } from "./ReplaceOldDevice";
 import { TailnetHttpsHelpCard } from "./TailnetHttpsHelp";
 
@@ -86,6 +87,10 @@ export interface CompanionState {
   addresses?: string[];
   tailscale?: string;
   tailnetName?: string;
+  /** The Tailscale account this computer is signed in to, e.g.
+   * `sean@example.com`. Absent when the sidecar could not read it. Shown to
+   * its owner so the phone signs in to the same one; never logged. */
+  tailnetLogin?: string;
   lan?: string | null;
   hosts?: string[];
   endpoints?: CompanionEndpoint[];
@@ -113,6 +118,12 @@ export interface CompanionState {
    * certificate that does not cover it. `desired` is what the user asked for,
    * and it differs from `on` while a toggle is failing. */
   remoteAccess?: CompanionRemoteAccess;
+  /** Where the device door listens. `lan` is plain HTTP on the local network. */
+  deviceDoor?: { mode: "off" | "lan" | "tailnet" | "loopback"; unencrypted: boolean };
+  /** Pairing over the local network is a choice (audit C6). `on` when the door
+   * is there; `note` is "narrowed" once, for an install that never chose and
+   * has phones paired, until they choose. */
+  lanPairing?: { on: boolean; chosen: boolean; mode: string | null; unencrypted: boolean; note: "narrowed" | null };
   error?: string;
 }
 
@@ -232,6 +243,8 @@ export type CompanionBridge = {
   start: () => Promise<CompanionState>;
   stop: () => Promise<CompanionState>;
   keepAwake: (enabled: boolean) => Promise<CompanionState>;
+  /** Pair over the local network (not encrypted), or stop. */
+  lanPairing: (enabled: boolean) => Promise<CompanionState>;
   pairing: (open: boolean, expectedToken?: string) => Promise<CompanionState>;
   cloudDesktop: (deviceId: string, allowed: boolean) => Promise<CompanionState>;
   revoke: (deviceId: string) => Promise<CompanionState>;
@@ -377,6 +390,11 @@ export interface PhoneSetupController {
   changeEmail: () => void;
   start: () => void;
   useLocal: () => void;
+  /** The warning that Wi-Fi pairing is not encrypted is showing. */
+  lanPrompt: boolean;
+  /** Turn Wi-Fi pairing on, then carry on with the pairing that asked for it. */
+  confirmLan: () => void;
+  dismissLan: () => void;
   useTailscale: () => void;
   requestCode: () => void;
   verifyCode: () => void;
@@ -488,6 +506,10 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
           "Phone access could not be updated. Open Advanced & troubleshooting and try again.",
         ),
       );
+      // Whatever half of the action ran, the switches show what is running
+      // now, not what was true before it.
+      const fresh = await companion.state().catch(() => null);
+      if (fresh && mounted.current) setState(fresh);
     } finally {
       if (mounted.current) setActionBusy(false);
     }
@@ -691,7 +713,7 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     }
   }, [account, openPairing, state]);
 
-  const useLocal = useCallback(() => {
+  const startLocal = useCallback(() => {
     const baseline = phoneSetupBaseline(state?.devices ?? null);
     if (!baseline) return;
     if (!flow.active) {
@@ -704,6 +726,21 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     setAccountError(null);
     void openPairing("local", undefined, generation);
   }, [flow.active, openPairing, state?.devices]);
+
+  // The local network is plain HTTP, so the door is not there until the person
+  // says so (audit C6): ask first, with the warning, then pair.
+  const [lanPrompt, setLanPrompt] = useState(false);
+  const lanOff = state?.lanPairing ? !state.lanPairing.on : false;
+  const useLocal = useCallback(() => {
+    if (lanOff) { setLanPrompt(true); return; }
+    startLocal();
+  }, [lanOff, startLocal]);
+  const confirmLan = useCallback(() => {
+    const carryOn = lanPrompt;
+    setLanPrompt(false);
+    void act((companion) => companion.lanPairing(true)).then(() => { if (carryOn) startLocal(); });
+  }, [act, lanPrompt, startLocal]);
+  const dismissLan = useCallback(() => setLanPrompt(false), []);
 
   const useTailscale = useCallback(() => {
     const baseline = phoneSetupBaseline(state?.devices ?? null);
@@ -1045,6 +1082,9 @@ export function usePhoneSetupController(profileEmail = ""): PhoneSetupController
     },
     start,
     useLocal,
+    lanPrompt,
+    confirmLan,
+    dismissLan,
     useTailscale,
     requestCode,
     verifyCode,
@@ -1361,7 +1401,7 @@ export function PhoneSetupFlowView({
               Not now
             </button>
             <p className="mt-2 text-[11.5px] text-ink-secondary">
-              You can resume anytime from Settings → Phone.
+              You can resume anytime from Settings → Phone and other devices.
             </p>
           </>
         )}
@@ -1502,6 +1542,7 @@ export function PhoneSetupFlowView({
         >
           <Wifi size={15} /> Pair on this Wi-Fi instead
         </button>
+        <LanPairing c={c} className="mt-3" />
         <p className="mt-2 text-center text-[11px] leading-relaxed text-ink-secondary">
           Both devices must be on a network that lets them see each other.
         </p>

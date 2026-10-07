@@ -85,7 +85,8 @@ export const FLUX_ANTHROPIC_BASE = "https://api.fluxrouter.ai/anthropic";
  *    (SESSION-HANDOFF-2026-06-05-FLUX-PHASE1-REMEDIATION.md:14: "it is
  *    unproven that any given CLI honors OPENAI_BASE_URL/OPENAI_MODEL").
  *  - `kimiAgent`, `piAgent`, `minimax`, `openai-compat`, `customAcp`,
- *    `boxAgent`, `antigravityAgent` — unclassified. No evidence either way,
+ *    `boxAgent`, `antigravityAgent`, `openclawAgent` — unclassified (OpenClaw
+ *    carries its own gateway and model; Murage sends it no key). No evidence either way,
  *    and an unclassified engine is not routable, so this fails closed.
  *
  * TWO CORRECTIONS to what this comment used to say, both wrong on the facts:

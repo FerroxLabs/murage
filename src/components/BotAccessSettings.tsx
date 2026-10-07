@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Switch } from "./SettingsPrimitives";
 import { api } from "@/state/store";
 import type { AccessGrant, ConnectedAppAccess, PendingPermissionStatus } from "../../shared/bot-access";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
@@ -22,9 +23,9 @@ export function BotAccessSettings({botId}:{botId:string}) {
   {open&&view&&<div className="mt-3 space-y-3 text-[12px] text-ink-secondary">
    {view.pending.map((item,index)=><p key={index}>{item.kind} request · {Math.floor(item.ageSeconds/60)} minutes · {item.blockedReason}</p>)}
    <p>These limits cover Murage’s connected apps. They do not restrict separate app logins, terminal tools or local files.</p>
-   <label className="flex items-start gap-2"><input type="checkbox" checked={mode==="restricted"} disabled={busy} onChange={event=>{setMode(event.target.checked?"restricted":"unrestricted");if(event.target.checked)setWrites(false);}}/>Only allow the accounts and actions I choose</label>
+   <div className="flex min-h-11 items-center justify-between gap-3"><span id="bot-access-restricted">Only allow the accounts and actions I choose</span><Switch aria-labelledby="bot-access-restricted" checked={mode==="restricted"} disabled={busy} onClick={()=>{const restricted=mode!=="restricted";setMode(restricted?"restricted":"unrestricted");if(restricted)setWrites(false);}}/></div>
    {mode==="restricted"&&<>
-    <label className="flex items-start gap-2"><input type="checkbox" checked={writes} disabled={busy} onChange={event=>setWrites(event.target.checked)}/>Allow selected actions to send or change data</label>
+    <div className="flex min-h-11 items-center justify-between gap-3"><span id="bot-access-writes">Allow selected actions to send or change data</span><Switch aria-labelledby="bot-access-writes" checked={writes} disabled={busy} onClick={()=>setWrites(!writes)}/></div>
     <label className="block">Connected account<select aria-label="Connected account for access limits" value={accountId} disabled={busy} onChange={event=>setAccountId(event.target.value)} className="mt-1 w-full rounded-lg bg-inset px-2 py-2 text-ink"><option value="">Choose an account…</option>{view.accounts.map(item=><option key={item.accountId} value={item.accountId}>{item.label??`${item.toolkit} · ${item.accountId.slice(-8)}`}</option>)}</select></label>
     {account&&view.catalog.filter(tool=>tool.toolkit===account.toolkit).map(tool=><label key={tool.tool} className="flex items-start gap-2"><input type="checkbox" checked={grants.some(grant=>grant.accountId===accountId&&grant.tools.includes(tool.tool))} disabled={busy} onChange={()=>toggle(tool.tool)}/>{tool.label}{tool.writes?" (changes data)":""}</label>)}
     <p>{grants.reduce((count,grant)=>count+grant.tools.length,0)} actions selected. Unlisted actions and dynamic tools are blocked.</p>

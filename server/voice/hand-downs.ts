@@ -19,17 +19,26 @@ export interface HandDown {
   /** When the call screen sent it (ms). */
   at: number;
   /** "sending" until the harness answers the send. */
-  state: "sending" | "accepted" | "refused" | "cancelled";
+  state: "sending" | "accepted" | "refused" | "cancelled" | "failed" | "dropped";
   /** Why a send was refused, in plain words. */
   reason?: string;
+  /** The send's id: the owner's message carries it, so it is found by it. */
+  sendId?: string;
+  /** The queue row (or root request) the send became: its receipt. */
+  requestId?: string;
 }
+
+/** What the harness holds for a hand-down's request row, or "missing" when
+ *  the row is gone. Read server-side, never taken from the client. */
+export type HandDownReceipt = { state: string; note?: string | null } | "missing";
 
 export type HandDownStatus =
   | { kind: "starting" }
   | { kind: "running"; steps: string[] }
   | { kind: "failed"; reason: string }
   | { kind: "done"; answer: string }
-  | { kind: "cancelled" };
+  | { kind: "cancelled" }
+  | { kind: "dropped" };
 
 /** The longest finished answer handed back to the host in full. */
 export const ANSWER_MAX_CHARS = 12_000;
@@ -41,9 +50,11 @@ export function parseHandDowns(raw: unknown): HandDown[] {
     const id = typeof entry?.id === "string" && /^[\w-]{1,64}$/.test(entry.id) ? entry.id : "";
     const request = typeof entry?.request === "string" ? entry.request.trim().slice(0, 2_000) : "";
     const at = typeof entry?.at === "number" && Number.isFinite(entry.at) ? entry.at : 0;
-    const state = ["sending", "accepted", "refused", "cancelled"].includes(entry?.state) ? entry.state : "sending";
+    const state = ["sending", "accepted", "refused", "cancelled", "failed", "dropped"].includes(entry?.state) ? entry.state : "sending";
+    const sendId = typeof entry?.sendId === "string" && /^[\w-]{16,80}$/.test(entry.sendId) ? entry.sendId : undefined;
+    const requestId = typeof entry?.requestId === "string" && /^[\w-]{1,80}$/.test(entry.requestId) ? entry.requestId : undefined;
     if (!id || !request) continue;
-    out.push({ id, request, at, state, reason: typeof entry?.reason === "string" ? entry.reason.slice(0, 400) : undefined });
+    out.push({ id, request, at, state, reason: typeof entry?.reason === "string" ? entry.reason.slice(0, 400) : undefined, ...(sendId ? { sendId } : {}), ...(requestId ? { requestId } : {}) });
   }
   return out;
 }
@@ -56,19 +67,33 @@ const failedStep = (m: Message) => m.kind === "activity" && m.tool?.ok === false
  * everything the bot wrote after it, up to the owner's next message, is its
  * outcome.
  */
-export function handDownStatus(handDown: HandDown, path: Message[], busy: boolean): HandDownStatus {
-  if (handDown.state === "refused") return { kind: "failed", reason: handDown.reason || "the request was refused" };
+export function handDownStatus(handDown: HandDown, path: Message[], busy: boolean, receipt?: HandDownReceipt): HandDownStatus {
+  if (handDown.state === "refused" || handDown.state === "failed") return { kind: "failed", reason: handDown.reason || "the request was refused" };
   if (handDown.state === "cancelled") return { kind: "cancelled" };
+  if (handDown.state === "dropped") return { kind: "dropped" };
   const request = handDown.request.trim();
   let start = -1;
   for (let i = path.length - 1; i >= 0; i -= 1) {
     const m = path[i];
-    if (m.role === "user" && m.kind === "text" && m.text?.trim() === request && m.at >= handDown.at - 10_000) {
+    // the send's own id finds its message; older records match by text
+    const mine = handDown.sendId
+      ? m.sendId === handDown.sendId
+      : m.text?.trim() === request && m.at >= handDown.at - 10_000;
+    if (m.role === "user" && m.kind === "text" && mine) {
       start = i;
       break;
     }
   }
-  if (start < 0) return { kind: "starting" };
+  if (start < 0) {
+    // not on the transcript: the harness's receipt says why
+    if (receipt === "missing") return { kind: "dropped" };
+    if (receipt) {
+      if (receipt.state === "cancelled" && /cancelled by you/i.test(receipt.note ?? "")) return { kind: "cancelled" };
+      if (receipt.state === "cancelled" || receipt.state === "expired" || receipt.state === "unknown") return { kind: "dropped" };
+      if (receipt.state === "failed") return { kind: "failed", reason: receipt.note || "the request could not start" };
+    }
+    return { kind: "starting" };
+  }
   let end = path.length;
   for (let i = start + 1; i < path.length; i += 1) {
     if (path[i].role === "user" && path[i].kind === "text") {
@@ -114,6 +139,8 @@ export function handDownResult(status: HandDownStatus): string {
       return `This failed and nothing is running for it: ${status.reason.split("\n")[0]} Tell the owner plainly if they ask. If they ask for it again, news and plain facts go to quick_lookup; other work is handed down again only when they ask you to try again.`;
     case "cancelled":
       return "The owner cancelled this. Nothing is running for it.";
+    case "dropped":
+      return "This was dropped before it started, so nothing is running for it. Say so plainly if asked; hand it down again only when the owner asks you to try again.";
     case "done":
       return `Finished. Your working self's answer, as written in the chat:\n${status.answer}`;
   }

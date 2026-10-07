@@ -6,7 +6,7 @@ description: |
   Do NOT use for spreadsheet-level input validation (use data-validation-setup), ETL pipeline design (use etl-pipeline-design), or data cleaning operations (use data-cleaning-protocol).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science analysis checklist"
   category: "data-analysis"

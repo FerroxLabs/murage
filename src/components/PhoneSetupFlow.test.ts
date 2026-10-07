@@ -115,9 +115,10 @@ describe("the link the QR carries", () => {
 
 describe("what this screen is allowed to promise", () => {
   it("offers a browser, not an app that is not in this repository", () => {
-    // `ios/` was deleted. Any copy naming a phone app describes something a
-    // user cannot obtain, and the button under it leads to a QR that opens
-    // nothing on their phone.
+    // The browser is the route this title and subtitle promise, and they
+    // never send anyone to a store. The Murage phone app is named only in the
+    // scan copy (QrLogin), beside the camera and browser path, and that copy
+    // carries the same ban on store words (CompanionSection.test.ts).
     for (const copy of [WEB_UI_TITLE, WEB_UI_SUBTITLE]) {
       expect(copy).not.toMatch(/\bapp store\b|\bdownload the app\b|\binstall the app\b/i);
     }
@@ -296,5 +297,15 @@ describe("the pairing step puts the code where it can be read", () => {
 
   it("tells that device where to type them", () => {
     expect(pairingStep()).toContain("typed.url");
+  });
+});
+
+describe("a switch action that fails still shows what is running", () => {
+  it("reads the state again after a failed action (review should-fix)", () => {
+    const source = readFileSync(fileURLToPath(new URL("./PhoneSetupFlow.tsx", import.meta.url)), "utf8");
+    const act = source.slice(source.indexOf("const act = useCallback("), source.indexOf("const accountAct = useCallback("));
+    const failure = act.slice(act.indexOf("} catch (cause) {"));
+    expect(failure).toMatch(/companion\.state\(\)/);
+    expect(failure).toContain("setState(");
   });
 });

@@ -126,9 +126,9 @@ posixOnly("a bot carries its own notebook, memory, skills and team brief into ev
     await api("PUT", `/api/section-context?section=${SECTION}`, { text: TEAM_MEMORY });
     await pinImport([{ kind: "section", section: SECTION }]);
     await api("PUT", `/api/section-context?section=${SECTION}`, { text: SECTION_BRIEF });
-    // Owner-private continuity, pinned: it must stay out of rooms without failing the turn.
-    const continuity = await api("POST", "/api/memory/action", { action: "identity-write", botId: moss.id, expectedVersion: 0, basis: "fiction", audience: "owner-private", kind: "continuity-brief", key: "core", text: MOSS_CONTINUITY });
-    await api("POST", "/api/memory/action", { action: "pin", id: continuity.id, version: continuity.version, pinned: true });
+    // Owner-private continuity: it must stay out of rooms without failing the turn. (The brief is a PIP kind
+    // since P2, so it can no longer be pinned; the room skip alone keeps it out.)
+    await api("POST", "/api/memory/action", { action: "identity-write", botId: moss.id, expectedVersion: 0, basis: "fiction", audience: "owner-private", kind: "continuity-brief", key: "core", text: MOSS_CONTINUITY });
 
     const member = await roomTurn("@Moss please answer briefly.");
     expect(speaker(member.system)).toBe("Moss");

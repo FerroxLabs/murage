@@ -1,0 +1,79 @@
+---
+title: Bots working together
+description: Roles (Chief of Staff, team lead, member, individual assistant), who can reach whom, ask_bot and delegate_bot, bot-to-bot chats, the Can talk to setting and approvals for contacting other bots.
+icon: Network
+---
+
+## The four roles
+
+Every bot has one role. Set it in **Bot settings → Overview → Role**. The Role card only shows once you have more than one bot.
+
+- **Chief of Staff**: runs the whole workspace. It hands each team's work to that team's lead and works with individual assistants directly. One per workspace.
+- **Team lead**: leads one team and coordinates its members. One per team.
+- **Team member**: works inside a team alongside the rest of it.
+- **Individual assistant**: works alone, with no team and no lead above it. It reports to the Chief of Staff.
+
+A bot needs an engine that can contact other bots (a Claude or ACP engine) to be a Chief of Staff or a team lead.
+
+## Who can reach whom
+
+By default a bot can contact:
+
+- every bot on its own team (a bot with no team is in the General group),
+- its team lead, if it is a member,
+- the Chief of Staff, if it is a team lead or an individual assistant.
+
+The Chief of Staff can reach every team lead and every individual assistant, plus its own team. It reaches an ordinary member of another team through that team's lead. A team member cannot reach another team's bots on its own.
+
+## No switch for bot-to-bot contact
+
+There is no switch to turn on for bot-to-bot contact or communication. Bots on the same team can already contact each other. If one bot cannot see or reach another, they are on different teams. Change the team, set Can talk to, or use a project. Do not tell an owner to look for a setting that is not described here.
+
+## What list_bots shows
+
+The tool list_bots lists the bots a bot can see, with each one's team, role and whether it is busy. A bot that is not in the list is out of its reach. Using its name with ask_bot or delegate_bot fails with a message that the bot is not on its roster. A lead or the Chief of Staff may see a bot it cannot message directly, marked "coordinate through its team lead".
+
+## ask_bot: ask a quick question
+
+ask_bot asks another bot a short question and waits for the answer inside the same reply. If the other bot is busy or takes longer than about 15 seconds, the question turns into a hand over, and the answer arrives after the asking bot finishes its turn. Use it only when the answer is needed to write the reply.
+
+## delegate_bot: hand over a task
+
+delegate_bot hands a task to another bot and returns at once. The other bot starts after the current turn ends, and its result comes back into the conversation by itself. This is the normal way to assign work. Later, check_delegation shows whether a handed over task is queued, running or finished. wait_delegation waits for one, and is only for when you ask a bot to wait.
+
+## Bot-to-bot chats
+
+When one bot contacts another, Murage keeps the exchange in a bot-to-bot channel. It shows in the sidebar like any room and keeps the full history. Both bots' own chats get a chip that opens it, so you can read what they said and chip in. These exchanges use the same engines as any chat, so they use your quota too.
+
+## Ask me before contacting other bots
+
+**Bot settings → Permissions → Ask me before contacting other bots** adds an approval card. With it on, the bot stops and asks you before it contacts another bot ("@Asker wants to contact @Helper"). With it off, the bot contacts bots it can reach without asking. The card expires after 15 minutes without an answer. This switch does not widen who a bot can reach, it only decides whether you are asked first.
+
+## Full access and contacting bots
+
+Under Full access or No limits, the card is skipped in conversations you start and in routines at that level, even if Ask me before contacting other bots is on. Webhook turns still stop and ask. Switch the bot to Auto to be asked every time.
+
+## Can talk to
+
+**Bot settings → Permissions → Can talk to** decides which bots this bot may contact. It has three choices:
+
+- **My team**: the default. The reach rules above.
+- **Everyone**: any bot in the workspace.
+- **Pick bots**: your team as usual, plus the bots you tick.
+
+Only you can change it, in the desktop app. A bot cannot change its own setting, a phone cannot, and a restore resets it. A bot told it cannot reach someone should tell you to open Can talk to, or hand the work to its team lead or the Chief of Staff.
+
+## Bots in a project
+
+Members of the same project can ask each other for project work, whatever team each belongs to. This is the easy way to get bots from different teams to work together without changing their settings. See Projects.
+
+## Bots shared with other teams
+
+A bot can also work for other teams while keeping its home team: **Bot settings → Teams → Shared with**, with No other team, These teams or All teams. A shared bot does one job for each team at a time.
+
+## Putting bots together: a quick guide
+
+1. To let bots help one another on a team, put them on the same team (Manage team) and pick a lead.
+2. To let a few bots work across teams on one piece of work, make a project and add them as members.
+3. To let one bot talk to many, set its Can talk to to Everyone or Pick bots.
+4. If a bot should not contact others unasked, leave Ask me before contacting other bots on.

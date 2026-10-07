@@ -2,6 +2,7 @@
 // file drop that creates them. A long paste collapses into a card of its
 // first lines instead of flooding the composer; a file dropped anywhere
 // on the window attaches by path.
+import { desktopResourceUrl } from "@/lib/live-events";
 import { useEffect, useRef, useState } from "react";
 import { ClipboardPaste, File as FileIcon, Image as ImageIcon, MessageSquareText, X } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -114,7 +115,7 @@ export function ComposerAttachments({
   return (
     <>
       {dragging && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-10">
+        <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-10">
           <div className="rounded-2xl border-2 border-dashed border-accent/70 bg-panel/90 px-8 py-6 text-[14px] font-medium text-ink shadow-2xl">
             {allowImages
               ? "Drop to attach: images are shown to the bot, other files arrive as a path"
@@ -173,7 +174,7 @@ export function ComposerAttachments({
                   aria-label={`Preview ${a.name}`}
                 >
                   <img
-                    src={attachmentImageUrl(a.path) ?? undefined}
+                    src={desktopResourceUrl(attachmentImageUrl(a.path)) ?? undefined}
                     alt={a.name}
                     loading="lazy"
                     className="max-h-[76px] max-w-full object-contain"

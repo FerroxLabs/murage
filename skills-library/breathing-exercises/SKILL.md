@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical respiratory therapy, hyperventilation treatment, or breathing exercises for diagnosed respiratory conditions.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "mental-wellness self-care breathing stress-management"
   category: "health-wellness"

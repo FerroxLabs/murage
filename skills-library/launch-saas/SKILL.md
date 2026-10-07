@@ -6,7 +6,7 @@ description: |
   Do NOT use for single-page static sites, internal tools without user authentication, or mobile-only apps without a web backend.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "architecture api-design devops cloud security step-by-step planning"
   category: "software-development"

@@ -6,7 +6,7 @@ description: |
   Do NOT use for GraphQL APIs, internal scripts, frontend-only projects, or API gateway configuration without a custom backend.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "api-design backend database testing documentation step-by-step"
   category: "software-development"

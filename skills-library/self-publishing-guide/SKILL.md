@@ -4,7 +4,7 @@ description: |
   End-to-end self-publishing workflow covering KDP and IngramSpark, ebook and print formatting, ISBNs, pricing strategy, category and keyword optimization, cover design briefs, launch strategy, and royalty calculations. Use when the user asks about self publishing guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing entrepreneurship"
   category: "writing"

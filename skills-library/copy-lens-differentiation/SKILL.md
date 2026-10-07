@@ -1,8 +1,9 @@
 ---
 name: copy-lens-differentiation
 description: "**Lens mode.** Source authority: Seth Godin's *Purple Cow* / *Linchpin* lineage — remarkable beats safe; the obvious version of any idea is the one nobody forwards."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "copy"
 ---

@@ -20,6 +20,7 @@
  * Made with Blob Studio.
  */
 import React, { useEffect, useId, useMemo, useRef } from 'react'
+import { avatarTicker, prefersReducedMotion as osPrefersReducedMotion } from '../lib/avatar-ticker'
 
 /* ------------------------------------------------------------------- shape */
 
@@ -2413,8 +2414,9 @@ export const EmberAvatar = React.forwardRef<EmberAvatarHandle, EmberAvatarProps>
       return () => clearTimeout(timer)
     }, [state, autoBlink, paused, activeSequence])
 
+    const stillKey = osPrefersReducedMotion() && motion === undefined ? `${state}|${expression}|${paused}` : ''
+
     useEffect(() => {
-      let frame = 0
       engine.current.last = performance.now()
 
       const draw = (e: typeof engine.current, now: number, spinTurn: number) => {
@@ -2533,7 +2535,6 @@ export const EmberAvatar = React.forwardRef<EmberAvatarHandle, EmberAvatarProps>
       }
 
       const step = (now: number) => {
-        frame = requestAnimationFrame(step)
         const e = engine.current
         const p = e.props
         const dt = Math.min((now - e.last) / 1000, 0.1)
@@ -2569,12 +2570,21 @@ export const EmberAvatar = React.forwardRef<EmberAvatarHandle, EmberAvatarProps>
         draw(e, now, spinTurn)
       }
 
-      frame = requestAnimationFrame(step)
-      return () => cancelAnimationFrame(frame)
+      // One shared 30 fps ticker that sleeps while the document is hidden or the window
+      // is blurred. Reduced motion draws one settled frame and runs no loop; the key in
+      // the dependency list redraws that frame when the face is changed.
+      if (osPrefersReducedMotion() && motion === undefined) {
+        const e = engine.current
+        e.morph = 1
+        e.velocity = 0
+        draw(e, performance.now(), 0)
+        return
+      }
+      return avatarTicker().subscribe(now => step(now))
       // `uid` is stable for the component's life, so listing it re-runs nothing — it is
       // here because the loop genuinely reads it, and a lie in a dependency array is the
       // kind that bites later.
-    }, [uid])
+    }, [uid, stillKey])
 
     /*
       What the extras are made of.

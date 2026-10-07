@@ -219,6 +219,10 @@ const incident: TeamIncident = {
 
 describe("the report the Chief reads", () => {
   const text = teamIncidentText(incident, { count: 1, muted: false });
+  it("persists readable instructions without render placeholders", () => {
+    expect(text).not.toContain("{{murage-tool:");
+    expect(text).toContain('the tool "delegate_bot" on MCP server "agents"');
+  });
 
   it("says up front that it is not the person and that the quotes are data", () => {
     expect(text.split("\n")[0]).toContain("not from the person");

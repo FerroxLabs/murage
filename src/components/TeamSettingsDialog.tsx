@@ -37,6 +37,7 @@ import {
 } from "@/lib/team-manage";
 import { api, useStore, type Bot } from "@/state/store";
 import { BotAvatar } from "./Avatar";
+import { SHARING_COPY, sharedRowLabel } from "@/lib/shared-teams";
 
 const CARD = "rounded-xl border border-hairline/40 bg-panel/60 p-3.5";
 const LABEL = "text-[13px] font-semibold text-ink";
@@ -74,6 +75,8 @@ export interface TeamSettingsDialogBodyProps {
   onConfirmDelete: () => void;
   onCancelDelete: () => void;
   onClose: () => void;
+  /** Opens that bot's Teams settings (SPEC-X 13.2). */
+  onOpenShared?: (botId: string) => void;
 }
 
 /** Rendering only, so the markup can be asserted without a store or a DOM. */
@@ -213,6 +216,29 @@ export function TeamSettingsDialogBody(props: TeamSettingsDialogBodyProps) {
             </button>
           </div>
         </section>
+
+        {team.sharedIn && team.sharedIn.length > 0 && (
+          <section className={CARD} aria-labelledby="team-settings-shared">
+            <h3 id="team-settings-shared" className={LABEL}>
+              {SHARING_COPY.sharedWithTeam}
+            </h3>
+            <ul className="mt-2 space-y-1.5">
+              {team.sharedIn.map((shared) => (
+                <li key={shared.botId} className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] text-ink">{sharedRowLabel(shared.name, shared.from)}</span>
+                    {shared.load && <span className="block truncate text-[12px] text-ink-secondary">{shared.load}</span>}
+                  </span>
+                  {props.onOpenShared && (
+                    <button type="button" className={BUTTON} onClick={() => props.onOpenShared?.(shared.botId)} aria-label={`${SHARING_COPY.openTeams}: ${shared.name}`}>
+                      {SHARING_COPY.openTeams}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         <section className={CARD} aria-labelledby="team-settings-delete">
           <h3 id="team-settings-delete" className={LABEL}>
@@ -452,7 +478,7 @@ export function TeamSettingsDialog({
   return (
     <div
       ref={dialogRef}
-      className="fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
+      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
       onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}
     >
       {team ? (
@@ -496,6 +522,11 @@ export function TeamSettingsDialog({
             window.setTimeout(() => dialogRef.current?.querySelector<HTMLElement>('[data-team-focus="delete-ask"]')?.focus(), 0);
           }}
           onClose={onClose}
+          onOpenShared={(botId) => {
+            dispatch({ type: "select", id: botId });
+            dispatch({ type: "toggleSettings", open: true, intent: { section: "teams" } });
+            onClose();
+          }}
         />
       ) : (
         <div role="dialog" aria-modal="true" aria-label="Team settings" className="rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">

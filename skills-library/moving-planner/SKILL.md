@@ -4,7 +4,7 @@ description: |
   End-to-end relocation guide with an 8-week timeline covering purging and packing strategy, utility transfers, address changes, hiring movers vs DIY, first week priorities in a new home, and community integration. Use when the user asks about moving planner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events planning checklist"
   category: "family-relationships"

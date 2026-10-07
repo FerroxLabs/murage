@@ -1,0 +1,15 @@
+{
+  "id": "website-publisher",
+  "name": "Website Publisher",
+  "version": "1.0.0",
+  "description": "Build, publish, update and take down small static websites for non-technical owners using four templates, Netlify Forms and Murage's publish_site tool. Use for quizzes, surveys, lead capture and landing pages.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "website",
+    "netlify",
+    "publishing",
+    "static-html",
+    "web-development"
+  ],
+  "requiredCapabilities": []
+}

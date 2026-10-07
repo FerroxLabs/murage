@@ -17,7 +17,9 @@ import { botRole } from "@/lib/bot-role";
 import { RoleIcon } from "./RoleBadge";
 import { cn } from "@/lib/cn";
 import { MemorySettings } from "./MemorySettings";
+import { sharedIntoTeam, sharedRowLabel } from "@/lib/shared-teams";
 import { SectionContextDialog } from "./SectionContextDialog";
+import { OpenBotListButton } from "./OpenBotListButton";
 
 const statusTone = {
   success: "bg-success",
@@ -105,11 +107,15 @@ function EdgeRow({ edge, bots }: { edge: TeamMapEdge; bots: Bot[] }) {
  * must not disagree. */
 function TeamCard({
   section,
+  shared = [],
   onEditContext,
 }: {
   section: TeamMapSection<Bot>;
+  /** Bots from other teams shared with this one: drawn with a dashed link (SPEC-X 13.2). */
+  shared?: Array<{ bot: Bot; from: string }>;
   onEditContext: () => void;
 }) {
+  const { dispatch } = useStore();
   const size = section.chiefs.length + section.members.length;
   return (
     <section className="rounded-2xl border border-hairline/50 bg-panel p-4">
@@ -141,6 +147,21 @@ function TeamCard({
           <div className={cn("space-y-2", section.chiefs.length > 0 && "border-l border-hairline/60 pl-3")}>
             {section.members.map((bot) => (
               <BotNode key={bot.id} bot={bot} />
+            ))}
+          </div>
+        )}
+        {shared.length > 0 && (
+          <div className="space-y-1.5 pt-1" data-team-map-shared={section.name}>
+            {shared.map(({ bot, from }) => (
+              <button
+                key={bot.id}
+                type="button"
+                onClick={() => dispatch({ type: "select", id: bot.id })}
+                className="flex w-full items-center gap-2 rounded-xl border border-dashed border-accent/50 px-3 py-2 text-left text-[12px] text-ink-secondary transition hover:bg-raised/50 hover:text-ink"
+              >
+                <span className="w-5 shrink-0 border-t border-dashed border-accent/70" aria-hidden />
+                <span className="min-w-0 truncate">{sharedRowLabel(bot.name, from)}</span>
+              </button>
             ))}
           </div>
         )}
@@ -188,6 +209,7 @@ export function TeamMapPage() {
       <TeamCard
         key={section.key || "__general__"}
         section={section}
+        shared={sharedIntoTeam(bots, section.key)}
         onEditContext={() => setContextEditor({ section: section.key, label: section.name })}
       />
     )),
@@ -213,9 +235,11 @@ export function TeamMapPage() {
 
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-app text-ink">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-hairline/40 px-4 py-5 sm:px-7 max-md:pl-12">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-hairline/40 px-4 pb-5 pt-[calc(1.25rem+env(safe-area-inset-top))] sm:px-7 max-md:pl-3">
         <div>
           <div className="flex items-center gap-2.5">
+            {/* Phones only, on the title's row (OpenBotListButton.tsx). */}
+            <OpenBotListButton />
             <Network size={20} className="text-accent" />
             <h1 className="text-[18px] font-semibold">Team map</h1>
             <span className="flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[10.5px] font-medium text-success">

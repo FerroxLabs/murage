@@ -1,0 +1,421 @@
+{
+  "extName": {
+    "message": "Murage for Chrome"
+  },
+  "extDescription": {
+    "message": "चुने हुए ब्राउज़र टैब अपने Murage बॉट के साथ साझा करें और रोकें और बंद करें से नियंत्रण अपने हाथ में रखें।"
+  },
+  "groupTitle": {
+    "message": "Murage"
+  },
+  "groupTitleBot": {
+    "message": "Murage · $BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "groupSuffixPaused": {
+    "message": " · रुका हुआ"
+  },
+  "groupSuffixStopped": {
+    "message": " · बंद"
+  },
+  "groupSuffixYourTurn": {
+    "message": " · आपकी बारी"
+  },
+  "groupSuffixFull": {
+    "message": " · पूर्ण"
+  },
+  "groupSuffixWorking": {
+    "message": " · काम जारी"
+  },
+  "groupSuffixDone": {
+    "message": " · पूरा"
+  },
+  "overlayWorking": {
+    "message": "$BOT$ काम कर रहा है",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPause": {
+    "message": "रोकें"
+  },
+  "overlayStop": {
+    "message": "बंद करें"
+  },
+  "overlayWaiting": {
+    "message": "Murage में आपका इंतज़ार है"
+  },
+  "overlayFull": {
+    "message": "पूरी तरह अनुमत"
+  },
+  "overlayAria": {
+    "message": "$BOT$ इस टैब का उपयोग कर रहा है। यहाँ से रोकें या बंद करें।",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPointer": {
+    "message": "$BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHeader": {
+    "message": "Murage for Chrome"
+  },
+  "spConnected": {
+    "message": "Murage से जुड़ा है"
+  },
+  "spNotConnected": {
+    "message": "Murage से नहीं जुड़ा है"
+  },
+  "spBotLine": {
+    "message": "$BOT$, \"$CONVERSATION$\" में",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      },
+      "conversation": {
+        "content": "$2"
+      }
+    }
+  },
+  "spStateWorking": {
+    "message": "काम जारी"
+  },
+  "spStateWaiting": {
+    "message": "आपका इंतज़ार"
+  },
+  "spStatePaused": {
+    "message": "रुका हुआ"
+  },
+  "spStateStopped": {
+    "message": "बंद"
+  },
+  "spStateYourTurn": {
+    "message": "आपकी बारी"
+  },
+  "spModeStep": {
+    "message": "हर चरण पर पूछता है"
+  },
+  "spModeTask": {
+    "message": "हर कार्य में एक बार पूछता है"
+  },
+  "spModeFull": {
+    "message": "पूरी तरह अनुमत"
+  },
+  "btnPause": {
+    "message": "रोकें"
+  },
+  "btnStop": {
+    "message": "बंद करें"
+  },
+  "btnResume": {
+    "message": "फिर शुरू करें"
+  },
+  "btnEndTask": {
+    "message": "कार्य समाप्त करें"
+  },
+  "btnContinue": {
+    "message": "जारी रखें"
+  },
+  "btnShare": {
+    "message": "यह टैब साझा करें"
+  },
+  "btnUnshare": {
+    "message": "साझा करना बंद करें"
+  },
+  "spTaskTitle": {
+    "message": "यह कार्य"
+  },
+  "spAllowedForTask": {
+    "message": "इस कार्य के लिए अनुमत:"
+  },
+  "spRevoke": {
+    "message": "रद्द करें"
+  },
+  "spActivityTitle": {
+    "message": "$BOT$ ने क्या किया",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spActivityEmpty": {
+    "message": "अभी कुछ नहीं।"
+  },
+  "spSitesTitle": {
+    "message": "$BOT$ जिन साइटों का उपयोग कर सकता है",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spSiteAlways": {
+    "message": "हमेशा"
+  },
+  "spSiteNever": {
+    "message": "कभी नहीं"
+  },
+  "spSiteAsks": {
+    "message": "हर चरण पर पूछता है"
+  },
+  "spShareTitle": {
+    "message": "यह टैब $BOT$ के साथ साझा करें?",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spShare": {
+    "message": "साझा करें"
+  },
+  "spNotNow": {
+    "message": "अभी नहीं"
+  },
+  "spUnshareTitle": {
+    "message": "यह टैब $BOT$ के साथ साझा करना बंद करें?",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshare": {
+    "message": "साझा करना बंद करें"
+  },
+  "spKeep": {
+    "message": "रखें"
+  },
+  "spDebugNote": {
+    "message": "जब $BOT$ काम करता है, Chrome एक बार दिखाता है जिसमें लिखा होता है कि Murage for Chrome ने इस ब्राउज़र की डीबगिंग शुरू की है। यह Chrome आपको बता रहा है कि कोई एक्सटेंशन आपके टैब में कार्रवाई कर सकता है। उस बार में रद्द करें दबाने से $BOT$ रुक जाता है।",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUpdateWaiting": {
+    "message": "$BOT$ यह चरण पूरा करते ही Murage for Chrome अपडेट हो जाएगा।",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spOldExtension": {
+    "message": "नए नियंत्रण पाने के लिए Murage for Chrome अपडेट करें।"
+  },
+  "spOldApp": {
+    "message": "Murage for Chrome के इस संस्करण का उपयोग करने के लिए इस कंप्यूटर पर Murage अपडेट करें।"
+  },
+  "spShortcutHint": {
+    "message": "कीबोर्ड से रोकें: $SHORTCUT$",
+    "placeholders": {
+      "shortcut": {
+        "content": "$1"
+      }
+    }
+  },
+  "spYourTurn": {
+    "message": "आपकी बारी: $LINE$",
+    "placeholders": {
+      "line": {
+        "content": "$1"
+      }
+    }
+  },
+  "spFullOn": {
+    "message": "पूरी तरह अनुमत मोड चालू है।"
+  },
+  "spTurnOff": {
+    "message": "बंद करें"
+  },
+  "spModeTitle": {
+    "message": "अनुमोदन मोड"
+  },
+  "spHintStep": {
+    "message": "साइट बदलने वाली हर कार्रवाई से पहले $BOT$ पूछता है।",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintTask": {
+    "message": "हर साइट के लिए एक कार्ड, फिर $BOT$ काम पूरा करता है।",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintFull": {
+    "message": "सामान्य कार्रवाइयों के लिए कार्ड नहीं। जो सिर्फ़ आप कर सकते हैं, वह फिर भी आपके पास लौटता है।"
+  },
+  "spRevokeAria": {
+    "message": "$SITE$ की पहुँच रद्द करें",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshareAria": {
+    "message": "$SITE$ साझा करना बंद करें",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spNewTab": {
+    "message": "नया टैब"
+  },
+  "spSharedTitle": {
+    "message": "साझा टैब"
+  },
+  "spNoTabs": {
+    "message": "कोई टैब साझा नहीं है।"
+  },
+  "spNoSites": {
+    "message": "अभी कोई साइट नहीं।"
+  },
+  "spShareHint": {
+    "message": "यहाँ साझा किए गए टैब ही इस बॉट के हैं। किसी टैब को उसके समूह में ले जाने से वह साझा नहीं होता।"
+  },
+  "spSetupTitle": {
+    "message": "Murage से जुड़ें"
+  },
+  "spSetupBody": {
+    "message": "इस कंप्यूटर पर Murage खोलें और ब्राउज़र सेटिंग में ब्राउज़र कंपेनियन चालू करें।"
+  },
+  "spCheckConnection": {
+    "message": "कनेक्शन जाँचें"
+  },
+  "spProfile": {
+    "message": "Chrome प्रोफ़ाइल: $PROFILE$",
+    "placeholders": {
+      "profile": {
+        "content": "$1"
+      }
+    }
+  },
+  "spBodyWorking": {
+    "message": "आपके साझा किए टैब में काम कर रहा है।"
+  },
+  "spBodyPaused": {
+    "message": "आपके फिर से शुरू करने तक टैब निजी रहते हैं।"
+  },
+  "spBodyStopped": {
+    "message": "यह कार्य रोक दिया गया। बॉट से नई बातचीत में फिर शुरू करने को कहें।"
+  },
+  "spBodyReconnect": {
+    "message": "Murage के इस बॉट को फिर से जोड़ने की प्रतीक्षा है।"
+  },
+  "spErrHostOffline": {
+    "message": "Murage खोलें, फिर कनेक्शन दोबारा जाँचें।"
+  },
+  "spErrSiteDenied": {
+    "message": "Murage ने आपसे इस साइट की अनुमति माँगी है। वहाँ अनुमति दें, फिर दोबारा साझा करें दबाएँ।"
+  },
+  "spErrHumanHandover": {
+    "message": "इस साइट का उपयोग आपको खुद करना होगा।"
+  },
+  "spErrBindingInactive": {
+    "message": "टैब साझा करने से पहले Murage में इस बॉट को फिर से शुरू करें।"
+  },
+  "spErrTabOwned": {
+    "message": "इस टैब का स्वामी पहले से कोई दूसरा बॉट है।"
+  },
+  "spErrUnknownBinding": {
+    "message": "पहले Murage में एक ब्राउज़र कार्य शुरू करें।"
+  },
+  "spErrBindingStopped": {
+    "message": "यह कार्य रोक दिया गया। बॉट से नई बातचीत में फिर शुरू करने को कहें।"
+  },
+  "spErrGeneric": {
+    "message": "ब्राउज़र की कार्रवाई पूरी नहीं हो सकी। कनेक्शन जाँचें और फिर कोशिश करें।"
+  },
+  "spHeaderBrand": {
+    "message": "Murage"
+  },
+  "spHeaderSuffix": {
+    "message": "Chrome के लिए"
+  },
+  "spTaskAccess": {
+    "message": "कार्य की पहुँच"
+  },
+  "overlayYourTurn": {
+    "message": "आपकी बारी: $BOT$ आपका इंतज़ार कर रहा है",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayStopTask": {
+    "message": "कार्य रोकें"
+  },
+  "cmdPauseDescription": {
+    "message": "Murage for Chrome को रोकें"
+  },
+  "spSwitchTitle": {
+    "message": "बॉट"
+  },
+  "spBodyYourTurn": {
+    "message": "यह चरण ब्राउज़र में खुद पूरा करें, फिर अपने बॉट को आगे बढ़ने दें।"
+  },
+  "spPending": {
+    "message": "एक पल"
+  },
+  "spPhaseStarting": {
+    "message": "आपका बॉट शुरू हो रहा है"
+  },
+  "spPhaseConnecting": {
+    "message": "ब्राउज़र टूल जोड़े जा रहे हैं"
+  },
+  "spPhaseReading": {
+    "message": "यह पेज पढ़ा जा रहा है"
+  },
+  "spPhaseWaiting": {
+    "message": "आपका इंतज़ार है"
+  },
+  "btnNewTask": {
+    "message": "नया काम शुरू करें"
+  },
+  "spRecoveryReshare": {
+    "message": "Murage for Chrome नए सिरे से शुरू हुआ है। जारी रखने के लिए अपने टैब फिर से साझा करें।"
+  },
+  "spErrHandoffUseContinue": {
+    "message": "आपका बॉट आपका इंतज़ार कर रहा है। यह चरण पूरा होने पर जारी रखें दबाएँ।"
+  },
+  "spErrNotHandoff": {
+    "message": "आपका बॉट अभी आपका इंतज़ार नहीं कर रहा, इसलिए जारी रखने के लिए कुछ नहीं है।"
+  },
+  "spErrIncognitoDenied": {
+    "message": "Murage for Chrome निजी विंडो में काम नहीं करता। साइट को सामान्य विंडो में खोलें, फिर साझा करें।"
+  },
+  "spErrPersistenceFailed": {
+    "message": "Chrome आपके बदलाव सहेज नहीं सका। थोड़ी देर बाद फिर कोशिश करें।"
+  },
+  "spErrUpdateRequired": {
+    "message": "यह प्रोफ़ाइल Murage for Chrome के नए संस्करण से सहेजी गई थी। जारी रखने के लिए एक्सटेंशन अपडेट करें।"
+  },
+  "spErrStorageUnavailable": {
+    "message": "Chrome का स्टोरेज पढ़ा नहीं जा सका। Chrome फिर से शुरू करें, फिर अपने टैब दोबारा साझा करें।"
+  }
+}

@@ -6,7 +6,7 @@ description: |
   Do NOT use for prioritizing tasks without scheduling (use eisenhower-matrix or task-prioritization), building a full GTD system (use gtd-workflow), or enterprise team scheduling (use business project-management skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management planning optimization"
   category: "productivity"

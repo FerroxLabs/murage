@@ -4,7 +4,7 @@ description: |
   Newsletter business strategy covering niche positioning, free versus paid tier design, subscriber acquisition, growth tactics, writing cadence, community features, monetization math, and cross-promotion for sustainable newsletter revenue. Use when the user asks about substack writer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "newsletter writing content-marketing"
   category: "marketing-sales"

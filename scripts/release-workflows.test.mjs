@@ -14,14 +14,84 @@
 //
 // Parsing, not grepping: an `if:` in the wrong place still greps fine.
 
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+
+describe("WhatsApp final release evidence", () => {
+  const jobs = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")).jobs;
+  it.each(["mac", "windows", "linux"])("uploads WhatsApp reports and probe diagnostics after failure on %s", job => {
+    const steps = jobs[job].steps;
+    const evidence = steps.find(step => step.with?.name === `${job}-whatsapp-gepa-evidence`);
+    expect(evidence.if).toBe("always()");
+    expect(evidence.with.path).toBe("qualification-evidence/whatsapp-*");
+    for (const gate of steps.filter(step => step.run?.includes("scripts/smoke-whatsapp-packaged.mjs"))) {
+      expect(gate.if).toBeUndefined(); expect(gate["continue-on-error"]).toBeUndefined();
+      expect(gate.run).toMatch(/2> qualification-evidence\/whatsapp-[\w-]+-probe\.log/);
+    }
+  });
+  it.each(["mac", "windows", "linux"])("binds final bytes and retains failure diagnostics for %s", job => {
+    const steps = jobs[job].steps;
+    const bind = steps.find(step => step.name === "Bind WhatsApp reports to final artifacts");
+    expect(bind).toBeDefined();
+    expect(bind.if).toBeUndefined(); expect(bind["continue-on-error"]).toBeUndefined();
+    expect(bind.run).toContain("set -euo pipefail");
+    const copies = steps.findIndex(step => step.name?.startsWith("Stable-named"));
+    expect(steps.indexOf(bind)).toBeGreaterThan(copies);
+    if (job === "mac") expect(steps.indexOf(bind)).toBeGreaterThan(steps.findIndex(step => step.name?.startsWith("Staple, re-zip")));
+    const evidence = steps.find(step => step.with?.name === `${job}-whatsapp-gepa-evidence`);
+    expect(evidence.if).toBe("always()");
+    expect(evidence.with.path).toBe("qualification-evidence/whatsapp-*");
+    expect(steps.indexOf(evidence)).toBeGreaterThan(steps.indexOf(bind));
+    const targets = job === "mac" ? ["darwin-arm64", "darwin-x64"] : [job === "windows" ? "win32-x64" : "linux-x64"];
+    for (const target of targets) {
+      expect(bind.run).toContain(`scripts/bind-whatsapp-artifacts.mjs qualification-evidence/whatsapp-${target}.json release/`);
+      const gate = steps.find(step => step.run?.includes(`> qualification-evidence/whatsapp-${target}.json`));
+      expect(gate.if).toBeUndefined(); expect(gate["continue-on-error"]).toBeUndefined();
+      expect(gate.run).toContain(`2> qualification-evidence/whatsapp-${target}-probe.log`);
+      expect(gate.run).toContain("set -euo pipefail");
+    }
+    for (const extension of job === "mac" ? [".dmg", ".zip", ".blockmap"] : job === "windows" ? [".exe", ".blockmap"] : [".deb", ".AppImage"]) expect(bind.run).toContain(extension);
+  });
+
+  it("records final file hashes and preserves qualification fields", async () => {
+    const { bindWhatsAppArtifacts } = await import("./bind-whatsapp-artifacts.mjs");
+    const dir = mkdtempSync(join(tmpdir(), "whatsapp-artifacts-"));
+    try {
+      const report = join(dir, "report.json"), dmg = join(dir, "Murage.dmg"), zip = join(dir, "Murage.zip");
+      const qualification = { platform: "darwin", arch: "arm64", socketFree: true, electronVersion: "43.4.0" };
+      writeFileSync(report, JSON.stringify(qualification)); writeFileSync(dmg, "before staple"); writeFileSync(zip, "before archive");
+      writeFileSync(dmg, "final stapled bytes"); writeFileSync(zip, "final archive bytes");
+      await bindWhatsAppArtifacts(report, [dmg, zip]);
+      expect(JSON.parse(readFileSync(report))).toEqual({ ...qualification, artifacts: [
+        { name: "Murage.dmg", sha256: createHash("sha256").update("final stapled bytes").digest("hex") },
+        { name: "Murage.zip", sha256: createHash("sha256").update("final archive bytes").digest("hex") },
+      ] });
+      const bytes = readFileSync(report, "utf8");
+      await bindWhatsAppArtifacts(report, [dmg, zip]); expect(readFileSync(report, "utf8")).toBe(bytes);
+      await expect(bindWhatsAppArtifacts(report, [dmg, join(dir, "missing.zip")])).rejects.toThrow();
+      expect(readFileSync(report, "utf8")).toBe(bytes);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it.each([true, false])("probes x64 execution before Rosetta installation, available %s", available => {
+    const gate = jobs.mac.steps.find(step => step.run?.includes("--install-rosetta"));
+    const start = gate.run.indexOf("if ! /usr/bin/arch -x86_64 /usr/bin/true; then");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = gate.run.indexOf("/usr/bin/arch -x86_64 /usr/bin/true", start + 10);
+    const probe = gate.run.slice(start, end + "/usr/bin/arch -x86_64 /usr/bin/true".length);
+    const mock = probe.replaceAll("/usr/bin/arch -x86_64 /usr/bin/true", "probe_x64").replaceAll("sudo softwareupdate --install-rosetta --agree-to-license", "install_rosetta");
+    const result = spawnSync("bash", ["-c", `set -euo pipefail\nready=${available ? 1 : 0}\nprobe_x64() { echo probe; test "$ready" = 1; }\ninstall_rosetta() { echo install; ready=1; }\n${mock}`], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual(available ? ["probe", "probe"] : ["probe", "install", "probe"]);
+  });
+});
 
 const workflows = join(dirname(dirname(fileURLToPath(import.meta.url))), ".github", "workflows");
 const read = (name) => readFileSync(join(workflows, name), "utf8");
@@ -356,7 +426,8 @@ describe("scoped Ubuntu human confirmation", () => {
     const job = ci.jobs["human-confirmation"];
     expect(job.if).toBe("${{ github.event_name == 'workflow_dispatch' && inputs.human_files != '' }}");
     expect(job["runs-on"]).toBe("ubuntu-latest");
-    expect(job.steps.find(step => step.name === "Confirm selected human specs").run).toContain('playwright test "${human_paths[@]}" --retries=0 --trace=on');
+    expect(job.steps.find(step => step.name === "Confirm selected human specs").run).toContain('playwright test "${shared_paths[@]}" --retries=0 --trace=on');
+    expect(job.steps.find(step => step.name === "Confirm selected human specs").run).toContain('node scripts/run-isolated-human-specs.mjs "${human_paths[@]}" -- --retries=0 --trace=on');
     expect(job.steps.find(step => step.name === "Upload human screenshots and traces").if).toBe("always()");
   });
 
@@ -371,10 +442,10 @@ describe("scoped Ubuntu human confirmation", () => {
     const evidence = "${{ runner.temp }}/murage-e2e-scratch";
     const scoped = ci.jobs["human-confirmation"];
     expect(scoped.steps.find(step => step.name === "Confirm selected human specs").env.MURAGE_E2E_DATA_DIR).toBe(evidence);
-    expect(scoped.steps.find(step => step.name === "Upload human screenshots and traces").with.path).toBe(`${evidence}/human-results`);
+    expect(scoped.steps.find(step => step.name === "Upload human screenshots and traces").with.path).toBe(`${evidence}/human-results\n${evidence}/isolated-results\n`);
     const test = ci.jobs.human;
     expect(test.steps.find(step => step.name === "Run human specs").env.MURAGE_E2E_DATA_DIR).toBe(evidence);
-    expect(test.steps.find(step => step.name === "Upload human spec traces on failure").with.path).toBe(`${evidence}/human-results`);
+    expect(test.steps.find(step => step.name === "Upload human spec traces on failure").with.path).toBe(`${evidence}/human-results\n${evidence}/isolated-results\n`);
     for (const job of Object.values(ci.jobs)) {
       for (const step of job.steps ?? []) expect(String(step.with?.path ?? ""), step.name).not.toMatch(/(^|\n)\s*test-results\s*($|\n)/);
     }
@@ -413,5 +484,85 @@ describe("no upstream identity ships in .github/", () => {
         expect(match[1], name).toBe("FerroxLabs");
       }
     }
+  });
+});
+
+// 0.1.62 audit C8: a release must not start from a commit CI never passed,
+// and the Linux checksums must be signed by a key a downloader can check.
+describe("release.yml provenance gates (audit C8)", () => {
+  const release = load("release.yml");
+  const stepBy = (job, needle) => release.jobs[job].steps.find(step => String(step.name ?? "").includes(needle));
+
+  it.each(["mac", "windows", "linux"])("%s checks the shipped publisher key before packaging", (job) => {
+    const steps = release.jobs[job].steps;
+    const guard = steps.find(step => step.run === "node scripts/check-release-key.mjs");
+    expect(guard).toBeDefined();
+    expect(guard.if).toBeUndefined();
+    expect(steps.indexOf(guard)).toBeLessThan(steps.findIndex(step => step.name?.startsWith("Package")));
+  });
+
+  it("the prepare job refuses a pinned commit CI did not pass", () => {
+    const step = stepBy("prepare", "CI passed");
+    expect(step, "a step named for the CI gate").toBeDefined();
+    expect(step.if).toBe("steps.pin.outputs.should_release == 'true'");
+    expect(step.run).toContain("scripts/release-ci-gate.mjs");
+    expect(step.env.SHA).toBe("${{ steps.pin.outputs.sha }}");
+    expect(step.env.GH_TOKEN).toBe("${{ github.token }}");
+    // reading workflow runs needs actions: read, and nothing wider
+    expect(release.jobs.prepare.permissions).toEqual({ contents: "read", actions: "read" });
+    // it waits for the CI run a push starts alongside this one
+    expect(release.jobs.prepare["timeout-minutes"]).toBeGreaterThanOrEqual(60);
+    // CI itself is the workflow named by ci.yml
+    expect(step.env.CI_WORKFLOW).toBe("ci.yml");
+    expect(load("ci.yml").name).toBe("CI");
+  });
+
+  it("the Linux job signs SHA256SUMS and ships the signature", () => {
+    const sign = stepBy("linux", "Sign the checksums");
+    expect(sign, "a signing step").toBeDefined();
+    expect(sign.env.GPG_PRIVATE_KEY).toBe("${{ secrets.RELEASE_GPG_PRIVATE_KEY }}");
+    expect(sign.run).toContain("--detach-sign");
+    expect(sign.run).toContain("SHA256SUMS-ubuntu-x64.txt.asc");
+    const upload = release.jobs.linux.steps.find(step => step.with?.name === "linux-release");
+    expect(upload.with.path).toContain("release/SHA256SUMS-ubuntu-x64.txt.asc");
+  });
+
+  it("the Linux job attests build provenance with a full-SHA pin and only the permissions it needs", () => {
+    const step = release.jobs.linux.steps.find(item => String(item.uses ?? "").startsWith("actions/attest-build-provenance@"));
+    expect(step, "an attestation step").toBeDefined();
+    expect(step.uses).toMatch(/@[0-9a-f]{40}$/);
+    expect(step.with["subject-path"]).toContain("release/*.AppImage");
+    expect(release.jobs.linux.permissions).toEqual({ contents: "read", "id-token": "write", attestations: "write" });
+  });
+
+  it("assembly requires the signature whenever one was made, and never lets a stray file through", () => {
+    const gate = release.jobs.assemble.steps.find(step => String(step.name).startsWith("Refuse an incomplete installer"));
+    expect(gate.run).toContain("SHA256SUMS-ubuntu-x64.txt.asc");
+    expect(gate.run).toContain("required+=(");
+    expect(gate.run).toContain('"${#required[@]}"');
+  });
+});
+
+describe("release-ci-gate verdict (audit C8)", () => {
+  let ciVerdict;
+  beforeAll(async () => { ({ ciVerdict } = await import("./release-ci-gate.mjs")); });
+  const SHA = "a".repeat(40);
+  const run = (over = {}) => ({ head_sha: SHA, status: "completed", conclusion: "success", event: "push", ...over });
+
+  it("passes when a CI run on that commit concluded success", () => {
+    expect(ciVerdict([run()], SHA)).toEqual({ state: "pass", reason: expect.any(String) });
+  });
+  it("fails on a failed run, even next to an older green one", () => {
+    expect(ciVerdict([run({ conclusion: "failure" })], SHA).state).toBe("fail");
+    expect(ciVerdict([run({ conclusion: "failure", run_attempt: 1 }), run({ run_attempt: 2 })], SHA).state).toBe("pass");
+  });
+  it("waits while the run is queued or in progress, and fails with none at all", () => {
+    expect(ciVerdict([run({ status: "in_progress", conclusion: null })], SHA).state).toBe("wait");
+    expect(ciVerdict([], SHA).state).toBe("none");
+  });
+  it("ignores runs for other commits and cancelled or skipped runs", () => {
+    expect(ciVerdict([run({ head_sha: "b".repeat(40) })], SHA).state).toBe("none");
+    expect(ciVerdict([run({ conclusion: "cancelled" })], SHA).state).toBe("fail");
+    expect(ciVerdict([run({ conclusion: "skipped" })], SHA).state).toBe("fail");
   });
 });

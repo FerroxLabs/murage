@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical burnout diagnosis, workplace harassment situations, or treating occupational stress disorders.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "mental-wellness time-management self-care stress-management"
   category: "health-wellness"

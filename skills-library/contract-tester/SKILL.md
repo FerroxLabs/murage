@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user needs a different specialized skill or is asking about an unrelated technology domain.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "testing best-practices api-design"
   category: "testing-quality"

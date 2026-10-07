@@ -21,6 +21,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
+import { sellsOnPrice } from "@/lib/first-run-copy-rules";
 import { saveHelloAnswer, skipHelloAnswer, type HelloAnswerDeps } from "./FirstRunHelloCard";
 
 interface Call {
@@ -148,6 +150,25 @@ describe("the hello step's answer", () => {
 
 // "Skip for now" passes over the email, not the name. The Windows customer
 // pass typed "Sam", pressed Skip, and was then called "there".
+describe("continuing with a name and no email (O16)", () => {
+  it("saves the name, answers the step, and puts nobody on the list", async () => {
+    const box = harness();
+    const { profile, greeting } = await saveHelloAnswer({ name: "  Sean ", email: "  " }, box.deps);
+    expect(box.calls).toEqual([{ path: "/api/config", method: "PUT", body: { profile: { name: "Sean" } } }]);
+    expect(box.identified).toEqual([]);
+    expect(box.gates).toEqual(["skipped"]);
+    expect(box.answers).toEqual([["hello", "Sean"]]);
+    expect(profile).toEqual({ name: "Sean", email: "" });
+    expect(greeting).toContain("Sean");
+  });
+
+  it("does not answer the step when the name did not save", async () => {
+    const box = harness({ savedProfile: { name: "someone else" } });
+    await expect(saveHelloAnswer({ name: "Sean", email: "" }, box.deps)).rejects.toThrow();
+    expect(box.answers).toEqual([]);
+  });
+});
+
 describe("skipping the hello step", () => {
   const skipDeps = (box: ReturnType<typeof harness>) => {
     const skipped: string[] = [];
@@ -186,5 +207,21 @@ describe("skipping the hello step", () => {
     const { skipped, deps } = skipDeps(box);
     await expect(skipHelloAnswer({ name: "Sam", email: "" }, deps)).rejects.toThrow();
     expect(skipped).toEqual([]);
+  });
+});
+
+describe("the learning line (bot learning, design 7 and 12a)", () => {
+  const line = FIRST_RUN_COPY.hello.welcome.learnLine;
+  it("says how a bot learns in plain words: style starts right away, anything bigger asks with one tap", () => {
+    expect(line).toBe("Tell any bot how you like replies, like shorter, warmer or in bullet points, and it starts right away. For anything bigger, it asks you with one tap.");
+    expect(line).not.toMatch(/[\u2014\u2013]/);
+    expect(line).not.toMatch(/\b(safe|safely|safety|unsafe|composio|always-on|getting smarter)\b/i);
+    expect(sellsOnPrice(line)).toBeNull();
+  });
+  it("is on the card whether or not the form is still showing", () => {
+    const source = readFileSync(fileURLToPath(new URL("./FirstRunHelloCard.tsx", import.meta.url)), "utf8");
+    const line = source.split("\n").find(text => text.includes("copy.learnLine"));
+    expect(line).toBeDefined();
+    expect(line).not.toMatch(/!done/);
   });
 });

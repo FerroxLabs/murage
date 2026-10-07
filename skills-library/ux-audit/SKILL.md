@@ -6,7 +6,7 @@ description: |
   Do NOT use for accessibility-specific audits (use accessibility-review), visual design critique (use visual-hierarchy-review), or user flow analysis (use user-flow-mapping).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design analysis checklist"
   category: "design-creative"

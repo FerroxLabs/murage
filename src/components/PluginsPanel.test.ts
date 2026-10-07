@@ -18,8 +18,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
   connectedAppsLockState,
-  COMPOSIO_KEY_FIELD_SELECTOR,
-  FLUX_KEY_FIELD_SELECTOR,
+    FLUX_KEY_FIELD_SELECTOR,
   focusSettingsField,
   SHOWCASE_APPS,
 } from "./ConnectedAppsLock";
@@ -31,9 +30,13 @@ import {
   connectedTabSummary,
   EMPTY_CONNECTOR_PANEL_FIELDS,
   FLUXROUTER_BILLING_URL,
+  expirePendingSignIn,
   formatLegacyCutoff,
+  initialInventoryPhase,
+  inventoryPhaseAfterAnswer,
   mergeCompleteConnectorStatus,
   migrationFromClaim,
+  withoutAccount,
   PluginsPanel,
   preloadConnectedApps,
   type ConnectorPanelFields,
@@ -103,8 +106,8 @@ describe("pending OAuth recovery", () => {
 });
 
 describe("the connectors panel names its account", () => {
-  it("says which Composio identity is in use", () => {
-    expect(panel).toContain("Connected with your own key");
+  it("says which service holds the apps", () => {
+    expect(panel).not.toContain("Connected with your own key");
     expect(en["connectedApps.flux.legacyPlain"]).toBe("Connected through Murage's service.");
   });
 
@@ -116,18 +119,18 @@ describe("the connectors panel names its account", () => {
   });
 });
 
-describe("a key someone pasted on purpose is the one that gets used", () => {
-  it("lets a workspace key beat the managed broker", () => {
-    // The single choke point. Every other consumer resolves through it, which
-    // is why inverting the rule is one line and why that line has a test.
-    expect(composio).toMatch(/function activeBroker[\s\S]{0,200}if \(cfg\.composio\?\.apiKey\) return null;/);
+describe("a key someone once pasted is never the one that gets used", () => {
+  it("never reads the own key when choosing a broker", () => {
+    // The single choke point. Every other consumer resolves through it, so
+    // nothing in this file may look at the saved key at all.
+    // The one allowed read says a key EXISTS, to show the quiet line.
+    expect(composio.match(/composio\??\.apiKey/g) ?? []).toHaveLength(1);
+    expect(composio).toContain("return Boolean(cfg.composio?.apiKey) ||");
+    expect(composio).not.toContain("x-api-key");
+    expect(composio).not.toContain("self-hosted");
   });
 
-  it("still leaves a managed broker as the default for anyone who configured nothing", () => {
-    // After the workspace key, the order is FluxRouter, then the Murage
-    // Worker, then nothing — and every one of those branches is inside this
-    // one function, so no caller can route around the decision.
-    expect(composio).toMatch(/if \(cfg\.composio\?\.apiKey\) return null;[\s\S]{0,400}return null;\n\}/);
+  it("leaves FluxRouter, then the Murage Worker, then nothing", () => {
     expect(composio).toContain("if (flux && !legacyIdentityLive) return flux;");
     expect(composio).toContain("if (legacy) return legacy;");
   });
@@ -148,7 +151,7 @@ const fields = (over: Partial<ConnectorPanelFields> = {}): ConnectorPanelFields 
 });
 
 const notices = (
-  input: { configured?: boolean; stale?: boolean; mode?: "managed" | "self-hosted" | "unavailable"; consentDismissed?: boolean; now?: number },
+  input: { configured?: boolean; stale?: boolean; mode?: "managed" | "unavailable"; consentDismissed?: boolean; now?: number },
   panelFields: ConnectorPanelFields,
 ) => connectedAppsNotices({
   configured: input.configured ?? true,
@@ -197,14 +200,31 @@ describe("the connected-apps call to action", () => {
     expect(texts([line])).toBe(en["connectedApps.flux.unreachable"]);
   });
 
+  it("offers Try again on the unreachable line, so nobody waits on a timer", () => {
+    const [line] = notices({ configured: false }, fields({ fluxBrokerEnabled: true, fluxConfigured: true }));
+    expect(line).toMatchObject({ kind: "line", action: { id: "retry", label: en["connectedApps.flux.retry"] } });
+    expect(en["connectedApps.flux.retry"]).toBe("Try again");
+    expect(panel).toMatch(/action === "retry"[\s\S]{0,300}loadCatalogRef\.current\?\.\(true\)/);
+  });
+
+  it("asks again by itself when the network returns, the window wakes, and every 20 seconds", () => {
+    expect(panel).toMatch(/addEventListener\("online"/);
+    expect(panel).toMatch(/addEventListener\("visibilitychange"/);
+    expect(panel).toMatch(/RECOVERY_POLL_MS = 20_000/);
+    expect(panel).toMatch(/setInterval\([\s\S]{0,120}RECOVERY_POLL_MS/);
+  });
+
   it("stays quiet while the panel is showing a remembered inventory", () => {
     // The stale banner above already explains this launch; a second notice
     // about the same fact is one too many.
     expect(notices({ configured: false, stale: true }, fields({ fluxBrokerEnabled: true }))).toEqual([]);
   });
 
-  it("says nothing extra for a workspace running its own key", () => {
-    expect(notices({ mode: "self-hosted" }, fields({ fluxBrokerEnabled: true }))).toEqual([]);
+  it("offers no own-key way out when this build has no Flux broker", () => {
+    const list = notices({ configured: false }, fields({ fluxBrokerEnabled: false }));
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ kind: "line", tone: "warning", text: en["connectedApps.flux.notInBuild"] });
+    expect(list[0]).not.toHaveProperty("action");
   });
 });
 
@@ -220,6 +240,17 @@ describe("each FluxRouter key problem gets its own sentence", () => {
     const [notice] = notices({ configured: false }, fields({ fluxBrokerEnabled: true, fluxConfigured: true, migration: { state: "none", legacyUntil: null, tokenError } }));
     expect(texts([notice])).toContain(fragment);
     expect("action" in notice ? notice.action?.id : undefined).toBe(action);
+  });
+
+  it("says another device took over, with a Reconnect button, when this token was pushed out", () => {
+    const tokenError = "token_taken_over";
+    for (const configured of [false, true]) {
+      const list = notices({ configured }, fields({ broker: "flux", fluxBrokerEnabled: true, fluxConfigured: true, migration: { state: "none", legacyUntil: null, tokenError } }));
+      const notice = list.find((item) => item.kind === "line" && item.text === en["connectedApps.flux.takenOver"]);
+      expect(notice).toMatchObject({ kind: "line", tone: "warning", action: { id: "reconnect", label: en["connectedApps.flux.reconnect"] } });
+    }
+    expect(en["connectedApps.flux.takenOver"]).not.toMatch(/—|\bsafe|safety|composio|\$/i);
+    expect(panel).toMatch(/action === "reconnect"[\s\S]{0,400}reconnectConnectedApps/);
   });
 
   it("points the budget case at the billing page rather than at settings", () => {
@@ -366,7 +397,8 @@ describe("reading what the server sent", () => {
 
 const noKeys = { composio: { configured: false, mode: "unavailable" as const }, flux: { configured: false } };
 const fluxKey = { composio: { configured: false, mode: "unavailable" as const }, flux: { configured: true } };
-const ownKey = { composio: { configured: true, mode: "self-hosted" as const }, flux: { configured: false } };
+// Someone who once saved a key of their own: it is kept, unused, so they look like no key at all.
+const oldOwnKey = { composio: { configured: false, mode: "unavailable" as const, ownKeyRetired: true }, flux: { configured: false } };
 
 const render = (config: typeof storeStub.config) => {
   storeStub.config = config;
@@ -375,10 +407,11 @@ const render = (config: typeof storeStub.config) => {
 };
 
 describe("the connected-apps lock", () => {
-  it("locks with no key, and opens for either key", () => {
+  it("locks with no key, and opens for a Flux key", () => {
     expect(connectedAppsLockState(noKeys)).toBe("locked");
     expect(connectedAppsLockState(fluxKey)).toBe("unlocked");
-    expect(connectedAppsLockState(ownKey)).toBe("unlocked");
+    // An old own key opens nothing: connected apps run through Flux Router only.
+    expect(connectedAppsLockState(oldOwnKey)).toBe("locked");
     // A FluxRouter key whose broker is not ready yet is still a key: the
     // panel's own "not reachable" line owns that case, not the lock.
     expect(connectedAppsLockState({ composio: { configured: false, mode: "unavailable" }, flux: { configured: true } })).toBe("unlocked");
@@ -405,7 +438,9 @@ describe("the connected-apps lock", () => {
     );
     expect(Object.values(en).some(value => /\d+\+ (?:more |)apps|and \d+\+ more/.test(value))).toBe(false);
     expect(en["connectedApps.lock.button"]).toBe("Add Flux Router key");
-    expect(en["connectedApps.lock.ownKey"]).toBe("Have your own Composio key? Add it under Advanced.");
+    expect(Object.hasOwn(en, "connectedApps.lock.ownKey")).toBe(false);
+    expect(Object.hasOwn(en, "connectedApps.flux.ctaByok")).toBe(false);
+    expect(en["connectedApps.ownKeyRetired"]).toBe("Connected apps now run through Flux Router. Reconnect your apps here.");
     // The old notice-line CTA strings stay in en.json unreferenced until the locale
     // regeneration lane prunes them; the "flux-cta" notice kind itself is gone (see above).
   });
@@ -415,7 +450,7 @@ describe("the connected-apps lock", () => {
     expect(html).toContain('data-connected-apps-lock=""');
     expect(html).toContain("Connect your apps");
     expect(html).toContain("Add Flux Router key");
-    expect(html).toContain("Have your own Composio key? Add it under Advanced.");
+    expect(html).not.toMatch(/own key/i);
     // One headline, one line, one primary action.
     expect(html.match(/data-connected-apps-lock-primary/g)).toHaveLength(1);
     expect(html.match(/<h3 /g)).toHaveLength(1);
@@ -431,13 +466,34 @@ describe("the connected-apps lock", () => {
     expect(html).not.toContain("Refresh connection status");
   });
 
-  it("is the normal panel once either key exists", () => {
-    for (const config of [fluxKey, ownKey]) {
+  it("is the normal panel once a Flux key exists", () => {
+    for (const config of [fluxKey]) {
       const html = render(config);
       expect(html).not.toContain("data-connected-apps-lock");
       expect(html).toContain("Search apps");
       expect(html).toContain("Refresh connection status");
     }
+  });
+
+  it("shows a person with an old own key the Flux flow and exactly one quiet line", () => {
+    const html = render(oldOwnKey);
+    expect(html).toContain('data-connected-apps-lock=""');
+    expect(html).toContain("Add Flux Router key");
+    expect(html.split("data-own-key-retired").length - 1).toBe(1);
+    expect(html).toContain("Connected apps now run through Flux Router. Reconnect your apps here.");
+    // No own-key way in, no dialog, no mention of the service behind the catalog.
+    expect(html).not.toMatch(/own key|Advanced|composio/i);
+    // The panel is the one dialog; the line adds none.
+    expect(html.split('role="dialog"').length - 1).toBe(1);
+    expect(storeStub.api).not.toHaveBeenCalled();
+  });
+
+  it("says nothing extra to anyone else; the line outlives a healthy broker until an app is connected", () => {
+    expect(render(noKeys)).not.toContain("data-own-key-retired");
+    expect(render(fluxKey)).not.toContain("data-own-key-retired");
+    const connected = { composio: { configured: true, mode: "managed" as const, broker: "flux" as const, ownKeyRetired: true }, flux: { configured: true } };
+    // Flux answers but nothing is connected yet (the static render has no inventory): still shown.
+    expect(render(connected)).toContain("data-own-key-retired");
   });
 
   it("waits, and fetches nothing, until the config answer exists", () => {
@@ -459,14 +515,19 @@ describe("the connected-apps lock", () => {
     // The panel's two requests — the catalog and the inventory — sit behind
     // the one gate, in the one effect, and that effect re-runs when a key
     // is saved (the config frame flips `lockState`).
+    // 0.1.61: the catalog is the cached first paint plus the checked answer
+    // (loadCatalog), both started from the same gated effect.
     expect(panel).toMatch(
-      /useEffect\(\(\) => \{\n\s+if \(lockState !== "unlocked"\) return;\n\s+let alive = true;\n\s+void loadConnectionInventory\(\);\n\s+api\("\/api\/connectors\/catalog"\)[\s\S]*?\}, \[lockState, loadConnectionInventory\]\);/,
+      /useEffect\(\(\) => \{\n\s+if \(lockState !== "unlocked"\) return;\n\s+let alive = true;\n\s+void loadConnectionInventory\(\);[\s\S]*?api\("\/api\/connectors\/catalog\/cached"\)[\s\S]*?void loadCatalog\(\);[\s\S]*?\}, \[lockState, loadConnectionInventory, loadCatalog\]\);/,
     );
-    expect(panel.match(/api\("\/api\/connectors\/catalog"\)/g)).toHaveLength(1);
+    expect(panel.match(/api\(`\/api\/connectors\/catalog\$\{/g)).toHaveLength(1);
+    expect(panel.match(/loadCatalog\(\)/g)?.length).toBeGreaterThanOrEqual(1);
+    // search as you type is behind the same gate
+    expect(panel).toMatch(/if \(lockState !== "unlocked" \|\| tab !== "marketplace" \|\| !query\)/);
     // The locked panel listens for the app's own warm-up request; it never
     // starts one. `pendingConnectedApps` only returns what is in flight.
     expect(panel).toMatch(/if \(lockState === "unlocked"\) return;[\s\S]{0,200}pendingConnectedApps\(\)\?\.then/);
-    expect(panel).toMatch(/export function pendingConnectedApps\(\)[^{]*\{\n\s+return connectorStatusRequest;\n\}/);
+    expect(source(join(here, "../lib/connected-apps-preload.ts"))).toMatch(/export function pendingConnectedApps\(\)[^{]*\{\n\s+return connectorStatusRequest;\n\}/);
     // The header refresh button, which would fetch, is not offered while locked.
     expect(panel).toContain('{surface === "apps" && lockState === "unlocked" && (');
     // And the render did not call `api` at all (effects do not run in a
@@ -477,12 +538,10 @@ describe("the connected-apps lock", () => {
 
   it("lands the cursor in the key field the button names", () => {
     expect(FLUX_KEY_FIELD_SELECTOR).toBe('input[name="flux-router-key"]:not([disabled])');
-    expect(COMPOSIO_KEY_FIELD_SELECTOR).toBe('input[aria-label="Connected apps key"]:not([disabled])');
-    // The primary goes to Models (where the Flux key lives) and the secondary
-    // to Tools & Connections (where the Composio key row lives), each with
-    // the field focus queued behind the dialog opening.
+    // The one button goes to Models (where the Flux key lives), with the
+    // field focus queued behind the dialog opening.
     expect(panel).toMatch(/const addFluxKey = useCallback[\s\S]*?section: "models" \}\);\n\s+focusSettingsField\(FLUX_KEY_FIELD_SELECTOR\);/);
-    expect(panel).toMatch(/const addOwnKey = useCallback[\s\S]*?section: "connections" \}\);\n\s+focusSettingsField\(COMPOSIO_KEY_FIELD_SELECTOR\);/);
+    expect(panel).not.toContain("addOwnKey");
     // The lock's button is the first thing the keyboard reaches.
     expect(panel).toContain('dialog?.querySelector<HTMLElement>("[data-connected-apps-lock-primary]")');
   });
@@ -495,7 +554,7 @@ describe("the connected-apps lock", () => {
     expect(focused).toEqual(["scroll", "field"]);
     stop();
     // Nothing found and no body to observe: a bounded timer, then nothing.
-    const cancel = focusSettingsField(COMPOSIO_KEY_FIELD_SELECTOR, { doc, timeoutMs: 1 });
+    const cancel = focusSettingsField("input[name=\"nothing-here\"]", { doc, timeoutMs: 1 });
     cancel();
     expect(focused).toEqual(["scroll", "field"]);
   });
@@ -551,7 +610,7 @@ describe("the Connected tab's count", () => {
   const card = (slug: string) => ({ slug, label: slug, blurb: "", logo: null, domain: null });
   const cards = ["gmail", "github", "slack", "notion"].map(card);
   it("counts the apps a bot can use, and says how many more are not ready", () => {
-    const summary = connectedTabSummary(cards, {
+    const summary = connectedTabSummary({
       gmail: { connected: true, accounts: [{ id: "a", status: "ACTIVE" }, { id: "b", status: "ACTIVE" }] },
       github: { connected: true, accounts: [{ id: "c", status: "ACTIVE" }] },
       slack: { connected: false, status: "EXPIRED", accounts: [{ id: "d", status: "EXPIRED" }] },
@@ -561,8 +620,18 @@ describe("the Connected tab's count", () => {
     expect(summary).toEqual({ ready: 2, notReady: 1, note: "1 more app is not ready yet. Finish connecting it or reconnect it below." });
   });
   it("says nothing extra when every connection works", () => {
-    expect(connectedTabSummary(cards, { gmail: { connected: true } }).note).toBe("");
-    expect(connectedTabSummary(null, { gmail: { connected: true }, composio: { connected: true } }).ready).toBe(1);
+    expect(connectedTabSummary({ gmail: { connected: true } }).note).toBe("");
+    expect(connectedTabSummary({ gmail: { connected: true }, composio: { connected: true } }).ready).toBe(1);
+  });
+  // 0.1.61 L17 Part B: the count came from the loaded cards, so with the
+  // featured list showing, six of the owner's thirteen were not counted.
+  it("counts every connection in the inventory, loaded card or not", () => {
+    const owner = ["gmail", "googlesuper", "googlecalendar", "stripe", "stripe_mcp", "supabase", "calendly", "dropbox", "slack", "slackbot", "discord", "github"];
+    const status = Object.fromEntries(owner.map(slug => [slug, { connected: true, accounts: [{ id: `ca_${slug}`, status: "ACTIVE" }] }]));
+    const summary = connectedTabSummary({ ...status, freshdesk: { connected: false, status: "EXPIRED", accounts: [{ id: "ca_fd", status: "EXPIRED" }] } });
+    expect(summary.ready).toBe(12);
+    expect(summary.notReady).toBe(1);
+    void cards;
   });
 });
 
@@ -590,5 +659,99 @@ describe("an inventory read before the connection backend is ready", () => {
 
   it("keeps the panel checking, not empty, while it waits for the backend", () => {
     expect(panel).toMatch(/backendReady === false[\s\S]{0,400}setInventoryPhase\("loading"\)/);
+  });
+});
+
+// Cross-audit round 1 (gpt-6-astra, 2026-09-27). The panel has no render
+// harness, so these pin the fixed shapes; the logic they call is tested in
+// src/lib/app-catalog.test.ts and server/app-catalog.test.ts.
+describe("audit round 1, renderer", () => {
+  const rows = source(join(here, "VirtualRows.tsx"));
+  it("A2: a fallback page is never taken for the whole list, and All apps starts again after a Retry", () => {
+    expect(panel).toMatch(/if \(r\?\.source === "curated"\) \{[\s\S]{0,200}failed: true/);
+    expect(panel).toMatch(/current\.failed \? \{ items: \[\], next: null/);
+    expect(panel).toContain("The full list of apps is not available yet.");
+  });
+  it("A3: a search over featured apps only, or a failed one, says so with Retry and runs again when the catalog changes", () => {
+    expect(panel).toContain("Searching featured apps only while the full list loads.");
+    expect(panel).toContain("Search could not reach the full list of apps.");
+    expect(panel).toMatch(/\}, \[lockState, tab, query, searchAgain\]\);/);
+  });
+  it("A5: no catalog is carried across opens, and only the newest request paints", () => {
+    expect(panel).not.toMatch(/^let lastCatalog/m);
+    expect(panel).toMatch(/if \(!mounted\.current \|\| request !== catalogRequest\.current\) return;/);
+  });
+  it("A8: a width change measures every row again", () => {
+    expect(rows).toMatch(/if \(next\.width !== current\.width\) heights\.current\.clear\(\);/);
+  });
+  it("A10: the Browse all count is the count label, not a split claim", () => {
+    expect(panel).toContain("const countLabel = appCountLabel(catalog?.total);");
+    expect(panel).not.toMatch(/\.split\(","\)\[0\]/);
+  });
+});
+
+// 0.1.62, Bug 3: a remembered inventory is a usable one. The panel used to sit
+// on "Checking…" with every button disabled until the broker answered, even
+// when the last known list was already painted from localStorage.
+describe("a remembered inventory is usable at once", () => {
+  const remembered = { gmail: { connected: true } };
+
+  it("opens ready when only localStorage remembers the list (module cache empty)", () => {
+    expect(initialInventoryPhase(null, remembered)).toBe("ready");
+    expect(connectorActionLabel(initialInventoryPhase(null, remembered), { busy: false, included: false, canContinue: false, hasAccounts: true, failed: false })).not.toBe("Checking…");
+  });
+
+  it("opens ready when this window already fetched", () => {
+    expect(initialInventoryPhase({}, null)).toBe("ready");
+  });
+
+  it("still says checking on a first ever open, with nothing remembered", () => {
+    expect(initialInventoryPhase(null, null)).toBe("loading");
+  });
+
+  it("keeps remembered buttons enabled when the answer is not authoritative", () => {
+    expect(inventoryPhaseAfterAnswer({ authoritative: false, hasRemembered: true })).toBe("ready");
+    expect(inventoryPhaseAfterAnswer({ authoritative: false, hasRemembered: false })).toBe("error");
+    expect(inventoryPhaseAfterAnswer({ authoritative: true, hasRemembered: false })).toBe("ready");
+  });
+
+  it("shows a quiet refreshing state while the server revalidates", () => {
+    expect(panel).toMatch(/revalidating[\s\S]{0,200}animate-spin/);
+  });
+});
+
+describe("a disconnected account never outlives the disconnect", () => {
+  const status = { gmail: { connected: true, accounts: [{ id: "a", status: "ACTIVE" }, { id: "b", alias: "work", status: "ACTIVE" }] } };
+
+  it("drops the app when its last account goes", () => {
+    expect(withoutAccount({ gmail: { connected: true, accounts: [{ id: "a", status: "ACTIVE" }] } }, "gmail", "a")).toEqual({});
+  });
+
+  it("keeps the app connected while another account remains", () => {
+    const next = withoutAccount(status, "gmail", "a");
+    expect(next.gmail.accounts).toEqual([{ id: "b", alias: "work", status: "ACTIVE" }]);
+    expect(next.gmail.connected).toBe(true);
+  });
+
+  it("rewrites the copy kept for the next launch", () => {
+    expect(panel).toMatch(/withoutAccount\(statusRef\.current, slug, accountId\);\s*writeCachedInventory\(next/);
+  });
+});
+
+describe("the panel's sign-in wait ends in words, not a spinner", () => {
+  it("turns a pending app whose poll ran out into an expired link", () => {
+    const status = { gmail: { connected: false, pending: true, status: "INITIATED", accounts: [{ id: "a", status: "INITIATED" }] } };
+    expect(expirePendingSignIn(status, "gmail").gmail).toMatchObject({ connected: false, pending: false, status: "EXPIRED" });
+  });
+
+  it("leaves a connected app, and an app that is not pending, alone", () => {
+    const connected = { gmail: { connected: true, pending: false, status: "ACTIVE" } };
+    expect(expirePendingSignIn(connected, "gmail")).toBe(connected);
+    expect(expirePendingSignIn({}, "gmail")).toEqual({});
+  });
+
+  it("polls for the link's whole life, then calls expirePendingSignIn", () => {
+    expect(panel).toMatch(/PANEL_SIGN_IN_POLLS = 120/);
+    expect(panel).toMatch(/\+\+tries >= PANEL_SIGN_IN_POLLS[\s\S]{0,500}expirePendingSignIn/);
   });
 });

@@ -54,7 +54,7 @@ describe("transcript rows", () => {
   });
 
   it.each(views)("%s treats a search window that reaches the newest row as the live tail", (_name, source) => {
-    expect(source).toMatch(/setTranscriptWindow\(\{ key: transcriptKey, \.\.\.asLiveTail\(range, (?:group\.)?messages\.length\) \}\)/);
+    expect(source).toMatch(/setTranscriptWindow\(\{ key: transcriptKey, \.\.\.asLiveTail\(range, (?:group\.|room)?[mM]essages\.length\) \}\)/);
   });
 
   it("skips only rows that have been seen, and keeps them measured", () => {

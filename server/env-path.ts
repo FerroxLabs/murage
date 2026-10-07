@@ -3,16 +3,16 @@
 //
 // A macOS app launched from Finder inherits a bare PATH
 // (/usr/bin:/bin:...): no ~/.local/bin (the claude installer default),
-// no /opt/homebrew/bin, and no nvm/volta/asdf shims — those only exist
+// no /opt/homebrew/bin, and no nvm/volta/asdf/mise shims — those only exist
 // in interactive shells. The terminal sees the CLIs; the packaged app
 // doesn't. So every spawn of an agent CLI goes through augmentedPath():
 // the inherited PATH, plus the well-known install locations that exist
 // on this machine, plus (async, best-effort) whatever PATH the user's
 // real login shell reports.
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { accessSync, closeSync, constants, existsSync, openSync, readFileSync, readSync, statSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, delimiter, dirname, extname, join } from "node:path";
+import { basename, delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
 
 /** nvm keeps every node version's bin dir separately; newest first so a
  * CLI installed under the latest node wins. */
@@ -26,6 +26,16 @@ function nvmBinDirs(): string[] {
   } catch {
     return [];
   }
+}
+
+/** Where mise keeps its shims (upstream #1824): MISE_DATA_DIR, else
+ * $XDG_DATA_HOME/mise, else ~/.local/share/mise. Only an absolute setting
+ * counts; a relative one would resolve against whatever folder we run in. */
+function miseShimsDir(home: string): string {
+  const absolute = (value: string | undefined) => (value && isAbsolute(value) ? value : undefined);
+  const dataDir = absolute(process.env.MISE_DATA_DIR);
+  if (dataDir) return join(dataDir, "shims");
+  return join(absolute(process.env.XDG_DATA_HOME) ?? join(home, ".local", "share"), "mise", "shims");
 }
 
 function knownDirs(): string[] {
@@ -43,6 +53,7 @@ function knownDirs(): string[] {
     join(home, ".volta", "bin"),
     join(home, ".bun", "bin"),
     join(home, ".asdf", "shims"),
+    miseShimsDir(home), // mise installer
     join(home, ".deno", "bin"),
     join(home, "bin"),
     ...nvmBinDirs(),
@@ -100,7 +111,7 @@ function installScanDirs(): string[] {
  * Homebrew still gets a hit, the product correctly prefers their own install,
  * and the test asserts the opposite of what it means to. That is a test
  * defect, not a product one — resolveFuigoCli's documented order (a
- * user-installed engine WINS over the bundled copy) is deliberate.
+ * user-installed engine wins when at least as new as the bundle) is deliberate.
  *
  * UNUSED, THIS CHANGES NOTHING: installScanDirs() returns exactly what
  * knownDirs()/windowsKnownDirs() return today, and env-path.test.ts asserts
@@ -449,17 +460,42 @@ export interface ResolvedEngineBinary {
   command: string;
   /** Which of the two candidates answered. */
   source: "path" | "bundled";
+  reason?: "path-older-than-bundled" | "path-version-unreadable" | "bundled-version-unreadable";
+}
+
+const fuigoVersions = new Map<string, { size: number; mtimeMs: number; version: number[] | null }>();
+
+function fuigoVersion(binary: string): number[] | null {
+  const absolute = resolve(binary);
+  try {
+    const { size, mtimeMs } = statSync(absolute);
+    const cached = fuigoVersions.get(absolute);
+    if (cached && cached.size === size && cached.mtimeMs === mtimeMs) return cached.version;
+    // Only platform launch essentials, never provider credentials or app config.
+    const env: NodeJS.ProcessEnv = { PATH: augmentedPath() };
+    if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
+    const result = spawnSync(absolute, ["--version"], {
+      env, encoding: "utf8", timeout: 3000, windowsHide: true, maxBuffer: 16 * 1024,
+    });
+    const match = !result.error && result.status === 0
+      ? /\bfuigo\s+(\d+)\.(\d+)\.(\d+)\b/i.exec(`${result.stdout}\n${result.stderr}`)
+      : null;
+    const version = match ? match.slice(1).map(Number) : null;
+    fuigoVersions.set(absolute, { size, mtimeMs, version });
+    return version;
+  } catch {
+    return null;
+  }
 }
 
 /**
  * The fuigo binary to spawn.
  *
- * ORDER — a `fuigo` the user installed themselves WINS over the bundled copy.
- * The bundle exists so a clean machine works at all, not to override someone's
- * own install: a user-installed fuigo may be newer than the pinned build, may
- * be a build they are developing against, and is the one their terminal runs,
- * so the app agreeing with their terminal is the least surprising behaviour.
- * The bundled binary is the fallback, and only the fallback.
+ * Prefer PATH only when its readable version is at least the bundled version.
+ * With an executable bundle, unreadable versions select the bundle. Without
+ * an executable bundle, retain PATH behavior without probing its version.
+ * Version probes are synchronous, time bounded, and cached by absolute path,
+ * size and modification time. A skipped PATH copy carries a reason and is logged.
  *
  * FAILS LOUDLY. An unset MURAGE_FUIGO_DIR is the exact shape of the bug that
  * made MURAGE_SKILL_LIBRARY silently install zero skills through 0.1.44, so
@@ -471,9 +507,25 @@ export function resolveFuigoCli(
   platform: NodeJS.Platform = process.platform,
 ): ResolvedEngineBinary {
   const onPath = findCliCandidates(fuigoExecutableName(platform))[0];
-  if (onPath) return { command: onPath, source: "path" };
-
   const bundled = bundledFuigoPath(env, platform);
+  if (onPath) {
+    try {
+      if (!bundled || !statSync(bundled).isFile()) return { command: onPath, source: "path" };
+      accessSync(bundled, constants.X_OK);
+    } catch {
+      return { command: onPath, source: "path" };
+    }
+    const pathVersion = fuigoVersion(onPath);
+    const bundleVersion = fuigoVersion(bundled);
+    const difference = pathVersion && bundleVersion
+      ? pathVersion.map((part, i) => part - bundleVersion[i]!).find((part) => part !== 0) ?? 0
+      : null;
+    if (difference !== null && difference >= 0) return { command: onPath, source: "path" };
+    const reason = !pathVersion ? "path-version-unreadable"
+      : !bundleVersion ? "bundled-version-unreadable" : "path-older-than-bundled";
+    console.info(`[fuigo] Skipping PATH binary ${JSON.stringify(onPath)}: ${reason}`);
+    return { command: bundled, source: "bundled", reason };
+  }
   if (!bundled) {
     throw new Error(
       "fuigo is unavailable: no fuigo on PATH, and MURAGE_FUIGO_DIR is not set so no bundled engine was " +

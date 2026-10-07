@@ -6,7 +6,7 @@ description: |
   Do NOT use for flooring installation instructions (use tile-installation for tile, or general DIY guidance), subfloor repair, or commercial flooring specifications.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-maintenance decision-making analysis"
   category: "home-household"

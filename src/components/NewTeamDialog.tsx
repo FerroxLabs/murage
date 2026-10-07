@@ -2,6 +2,7 @@
 // optional instructions, in one dialog. The rules and the create sequence live
 // in lib/new-team.ts; this draws them and owns the draft.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { botRole, botRolePatch, type RoleBot } from "@/lib/bot-role";
 import { cn } from "@/lib/cn";
@@ -204,9 +205,11 @@ export function NewTeamDialog({ onClose, onDone }: { onClose: () => void; onDone
     onClose();
   };
 
-  return (
+  // Portalled out of the translated phone drawer, whose transform would
+  // otherwise be the containing block of this fixed overlay.
+  return createPortal(
     <div
-      className="fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
+      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
       onMouseDown={(e) => e.target === e.currentTarget && !busyRef.current && onClose()}
     >
       <NewTeamDialogBody
@@ -233,6 +236,7 @@ export function NewTeamDialog({ onClose, onDone }: { onClose: () => void; onDone
         onCreate={() => void create()}
         onClose={onClose}
       />
-    </div>
+    </div>,
+    document.body,
   );
 }

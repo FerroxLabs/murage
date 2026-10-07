@@ -6,7 +6,7 @@ description: |
   Do NOT use for behavior modification of serious issues (aggression, severe anxiety, resource guarding), service dog training, or advanced competition obedience.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "pet-care step-by-step planning"
   category: "home-household"

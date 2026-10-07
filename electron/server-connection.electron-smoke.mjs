@@ -18,7 +18,7 @@ test("native server connection uses the real browser door and isolated fake engi
   console.log(JSON.stringify({ evidence, engine: engine.info }));
   try {
     const entry = join(evidence, "fixture.mjs");
-    await build({ entryPoints: [new URL("./fixtures/server-connection.mjs", import.meta.url).pathname], outfile: entry, bundle: true, platform: "node", format: "esm", external: ["electron"] });
+    await build({ entryPoints: [fileURLToPath(new URL("./fixtures/server-connection.mjs", import.meta.url))], outfile: entry, bundle: true, platform: "node", format: "esm", external: ["electron"] });
     const child = spawn(createRequire(import.meta.url)("electron"), [entry], { env: { PATH: process.env.PATH, HOME: evidence, TMPDIR: tmpdir(), MURAGE_CONNECTION_EVIDENCE: evidence, MURAGE_FIXTURE_HARNESS: engine.info.url }, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     child.stdout.on("data", data => { output += data; });

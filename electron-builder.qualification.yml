@@ -1,0 +1,14 @@
+# Qualification builds only (L18): the same app, with an updater feed that
+# checkpoints publish to, so a qualification install exercises this
+# release's own updater path end to end. Never used for a release: the
+# release guard (scripts/release-guard.mjs update-feed) refuses any packaged
+# app-update.yml that is not exactly the public GitHub feed, and this one is
+# marked twice over (generic provider, qualification cache folder).
+#
+#   MURAGE_QUALIFICATION_FEED_URL=https://… pnpm package:<os> --config electron-builder.qualification.yml
+extends: ./electron-builder.yml
+publish:
+  - provider: generic
+    url: ${env.MURAGE_QUALIFICATION_FEED_URL}
+    channel: latest
+    updaterCacheDirName: murage-qualification-updater

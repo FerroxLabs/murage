@@ -110,6 +110,25 @@ describe("screenTouchingTool", () => {
   }
 });
 
+describe("screenTouchingTool and browsers Murage does not own", () => {
+  it.each([
+    "mcp__plugin_playwright_playwright__browser_click",
+    "mcp__plugin_playwright_playwright__browser_navigate",
+    "mcp__plugin_chrome-devtools-mcp_chrome-devtools__click",
+    "mcp__playwright__browser_take_screenshot",
+    "mcp__chrome-devtools__take_screenshot",
+    "mcp__puppeteer__puppeteer_click",
+    "playwright__browser_click",
+  ])("a tool from another browser server never earns Murage's frame: %s", (tool) => {
+    expect(screenTouchingTool(tool)).toBe(false);
+  });
+  it("Murage's own servers still count", () => {
+    expect(screenTouchingTool("mcp__browser__browser_navigate")).toBe(true);
+    expect(screenTouchingTool("mcp__computer__click")).toBe(true);
+    expect(screenTouchingTool("MCP__LOCAL_VM__SCREENSHOT")).toBe(true);
+  });
+});
+
 describe("settledFrameIsNews", () => {
   const frame = "iVBORw0KGgo-frame-a";
 

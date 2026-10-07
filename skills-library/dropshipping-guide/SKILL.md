@@ -4,7 +4,7 @@ description: |
   Complete guide to building a dropshipping business covering product research methodology, supplier vetting processes, store setup, advertising strategy, margin calculations, customer service operations, returns handling, and scaling techniques. Use when the user asks about dropshipping guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy guide"
   category: "business-strategy"

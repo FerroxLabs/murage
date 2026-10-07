@@ -14,7 +14,7 @@ type: workflow
 skills: incident-response logging-patterns monitoring-alerting technical-documentation retrospective-facilitator
 trigger_phrases: handle production incident manage outage respond to production issue production incident management
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: devops troubleshooting security planning step-by-step
   category: software-project

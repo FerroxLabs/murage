@@ -6,7 +6,7 @@ description: |
   Do NOT use for exploratory statistical analysis (use eda-framework), data cleaning operations (use data-cleaning-protocol), or building data catalogs across multiple tables (use data-catalog-setup).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science analysis spreadsheets"
   category: "data-analysis"

@@ -67,4 +67,42 @@ describe("a refused browser choice", () => {
     expect(refused).toContain("setConfirmMyChrome(false)");
     expect(refused).toContain("setRefusal(");
   });
+  it("closes the Use my browser consent too when that choice is refused", () => {
+    // A failed extension opt-in left the Set up my browser dialog stuck open.
+    const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
+    const choose = source.slice(source.indexOf("const chooseBrowser = "), source.indexOf("const action = "));
+    expect(choose.slice(choose.indexOf("catch"))).toContain("setConfirmMyBrowser(false)");
+  });
+});
+
+// Fix round 1: `connectionError`/`error` used to be set from raw message
+// text (`cause.message`), which is exactly what carries the door's own
+// `no route: ...`/`browser owner authentication required` strings
+// straight into `BrowserPanelAlerts`. Both now go through
+// `describeDesktopOnlyRouteError(routeErrorFrom(cause))`, which decides
+// from `cause.status` (see src/lib/desktop-only-route-error.test.ts for the
+// mapping itself) rather than the text. This pins the wiring, not just the
+// mapper in isolation.
+describe("a raw route/auth string cannot reach connectionError or error (fix round 1)", () => {
+  const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
+
+  it("imports the status-aware mapper", () => {
+    expect(source).toContain(
+      'import { describeDesktopOnlyRouteError, routeErrorFrom } from "@/lib/desktop-only-route-error";',
+    );
+  });
+
+  it("the poll loop's connectionError is never set from raw cause.message", () => {
+    expect(source).toContain(
+      'setConnectionError(describeDesktopOnlyRouteError(cause instanceof Error ? routeErrorFrom(cause) : { message: "Browser connection unavailable" }));',
+    );
+    expect(source).not.toMatch(/setConnectionError\(cause instanceof Error \? cause\.message/);
+  });
+
+  it("the action catch's error is never set from raw cause.message", () => {
+    expect(source).toContain(
+      'setError(describeDesktopOnlyRouteError(cause instanceof Error ? routeErrorFrom(cause) : { message: "Browser action failed" }));',
+    );
+    expect(source).not.toMatch(/setError\(cause instanceof Error \? cause\.message/);
+  });
 });

@@ -127,3 +127,19 @@ it("waits longer each time the same verdict comes back, and starts over when it 
   expect(Math.round((fresh.retryAt - at) / 60_000)).toBe(1);
   vi.useRealTimers();
 });
+
+it("F14 reveals from the authoritative multi-piece turn captured by memory", async () => {
+  canon();
+  appendMessage("private", { id: "piece", at: 0, role: "bot", kind: "text", text, turnId: "turn" });
+  appendMessage("private", { id: "closing", parentId: "piece", at: 1, role: "bot", kind: "text", text: "That is my story.", turnId: "turn", turnTerminal: true });
+  const { setActiveLeaf } = await import("../message-db.ts");
+  setActiveLeaf("private", "closing");
+  const { captureMessage } = await import("./capture.ts");
+  const closing = JSON.parse(String(database().prepare("SELECT json FROM messages WHERE id='closing'").get()!.json));
+  captureMessage(database(), "private", closing);
+  let work; while ((work = claimMemoryJob("fixture"))) publishMemoryWork(work, "fixture", captureWork(work));
+  const job = String(database().prepare("SELECT id FROM memory_jobs WHERE source_id=? ORDER BY rowid DESC LIMIT 1").get("message:private:closing")!.id);
+  const result = await captureBotReveals(job, () => roster, evaluator(true), signal());
+  expect(result, JSON.stringify(result)).toMatchObject({ status: "partial", written: true });
+  expect(reveals()[0].text).toContain(text);
+});

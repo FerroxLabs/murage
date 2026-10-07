@@ -6,7 +6,7 @@ description: |
   Do NOT use for breaking bad habits (use trigger-identification), addiction recovery, or clinical behavior modification programs.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "goal-setting mental-wellness habits self-care"
   category: "health-wellness"

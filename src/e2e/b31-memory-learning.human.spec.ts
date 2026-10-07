@@ -10,7 +10,7 @@ interface Fixture { info: { url: string; dataDir: string }; close(): Promise<voi
 let fixture: Fixture, vite: ViteDevServer, origin: string, headers: Record<string, string>;
 async function api(path: string, body?: unknown, method = body ? "POST" : "GET") {
   const response = await fetch(fixture.info.url + path, { method, headers: { ...headers, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(10000) });
-  expect(response.ok, `${method} ${path}: ${response.status}`).toBe(true); return response.json();
+  expect(response.ok, `${method} ${path}: ${response.status} ${response.ok ? "" : await response.clone().text()}`).toBe(true); return response.json();
 }
 // The verification launcher has no IPC channel, so the existing Slack SDK
 // fixture receives events through files in the isolated data dir, re-emitted
@@ -30,23 +30,13 @@ async function openWorkspaceMemory(page: Page) {
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); });
   await page.goto(origin);
   const sidebar = await openSidebar(page);
-  await sidebar.locator("[data-sidebar-more-trigger]").click();
-  await sidebar.getByRole("menuitem", { name: "Team map", exact: true }).click();
-  await page.getByRole("button", { name: "Manage memory", exact: true }).click();
-  return page.getByRole("region", { name: "Workspace memory", exact: true });
+  await sidebar.getByRole("button", { name: "App settings", exact: true }).click();
+  const settings=page.getByRole("dialog",{name:"Settings",exact:true});
+  await settings.getByRole("navigation").getByRole("button",{name:"Memory",exact:true}).click();
+  return page.getByTestId("memory-section");
 }
 async function inspectWidth(page: Page, width: number, panel: ReturnType<Page["getByRole"]>, target: ReturnType<Page["getByRole"]>, focusTarget: ReturnType<Page["getByRole"]>) {
   await page.setViewportSize({ width, height: 1100 });
-  const menu=page.getByRole("button",{name:"Open bot list",exact:true});
-  if(width<768){
-    if(await menu.getAttribute("aria-expanded")==="true"){
-      await page.keyboard.press("Escape");
-      await expect(menu).toHaveAttribute("aria-expanded","false");
-    }
-    // The drawer's transform can still overlap after its state changes; wait for its actual geometry.
-    const aside=page.getByRole("complementary",{name:"Bots and navigation",exact:true});
-    await expect.poll(()=>aside.evaluate(element=>element.getBoundingClientRect().right)).toBeLessThanOrEqual(0.5);
-  }
   await target.scrollIntoViewIfNeeded();
   await expect(target).toBeInViewport();
   expect(await panel.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
@@ -78,26 +68,24 @@ test.beforeAll(async () => {
 test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
 test("learning choices persist, stale edits require refresh, and workspace activity remains honest", async ({ page }, info) => {
   const panel = await openWorkspaceMemory(page);
-  const controls = panel.getByRole("region", { name: "Workspace automatic learning", exact: true });
-  const facts = controls.getByRole("checkbox", { name: /^Learn facts automatically/ });
-  const procedures = controls.getByRole("checkbox", { name: /^Learn procedures automatically/ });
-  const review = controls.getByRole("checkbox", { name: /^Review new learning before activation/ });
+  // G2 moves the v2 choices to Settings > Memory; switches save with a revision.
+  const controls = panel.getByRole("region", { name: "Learning", exact: true });
+  const facts = controls.getByRole("switch", { name: "Learn facts automatically",exact:true });
+  const procedures = controls.getByRole("switch", { name: "Learn procedures automatically",exact:true });
+  const review = controls.getByRole("switch", { name: "Review before using",exact:true });
   await expect(facts).toBeChecked(); await expect(procedures).toBeChecked(); await expect(review).not.toBeChecked();
   const before = await api("/api/memory/status");
-  await facts.uncheck(); await review.check();
-  const saved = page.waitForResponse(response => response.url().endsWith("/api/memory/action") && response.request().postDataJSON()?.action === "configure");
-  await controls.getByRole("button", { name: "Save learning settings" }).click(); expect((await saved).ok()).toBe(true);
-  await expect.poll(async () => (await api("/api/memory/status")).learning.revision).toBe(before.learning.revision + 1);
-  await expect(facts).not.toBeChecked(); await expect(review).toBeChecked();
+  await facts.click();await expect(facts).not.toBeChecked();await expect(review).toBeEnabled();
+  await review.click();await expect(review).toBeChecked();await expect(review).toBeEnabled();
+  await expect.poll(async () => (await api("/api/memory/status")).learning.revision).toBe(before.learning.revision + 2);
   const current = await api("/api/memory/status");
   expect(current.configuration).toEqual(before.configuration); expect(current.model.state).toBe(before.model.state);
-  expect(current.learning.inputLimit).toBe(before.learning.inputLimit);
+  expect(current.learning.settings.dailyInputTokens).toBe(before.learning.settings.dailyInputTokens);
   await api("/api/memory/action", { action: "configure", learning: { automaticProcedures: false }, learningRevision: current.learning.revision });
-  await controls.getByRole("button", { name: "Save learning settings" }).click();
-  await expect(controls.getByRole("alert")).toContainText("changed elsewhere");
-  await expect(controls.getByRole("button", { name: "Save learning settings" })).toBeDisabled();
-  await controls.getByRole("button", { name: "Refresh learning settings" }).click();
-  await expect(procedures).not.toBeChecked(); await expect(controls.getByRole("button", { name: "Save learning settings" })).toBeEnabled();
+  await review.click();
+  await expect(page.getByRole("alert")).toContainText("changed elsewhere");await expect(review).toBeDisabled();
+  await page.getByRole("button", { name: "Refresh changed settings" }).click();
+  await expect(procedures).not.toBeChecked();await expect(review).toBeEnabled();
   await panel.getByText("Workspace learning activity", { exact: true }).click();
   await expect(panel.getByText(/Counts cover the whole workspace/)).toBeVisible();
   await expect(panel.getByText("No activity recorded", { exact: false }).first()).toBeVisible();
@@ -105,14 +93,16 @@ test("learning choices persist, stale edits require refresh, and workspace activ
   await expect(panel.getByText("Supplied to turns", { exact: true })).toBeVisible();
   for (const width of [390, 820, 1440]) {
     await inspectWidth(page, width, panel, controls, facts);
-    await page.keyboard.press("Space"); await expect(facts).toBeChecked(); await page.keyboard.press("Space");
+    await page.keyboard.press("Space"); await expect(facts).toBeChecked(); await expect(facts).toBeEnabled(); await page.keyboard.press("Space"); await expect(facts).not.toBeChecked(); await expect(facts).toBeEnabled();
     await audit(page, info, String(width));
     await page.screenshot({ path: info.outputPath(`b31-learning-${width}.png`), fullPage: true });
   }
 });
 test("owner assigns, conflicts and revokes an actual verified Slack person through the people controls", async ({ page }, info) => {
   test.setTimeout(90000);
-  const chief = (await api("/api/bots")).bots[0];
+  // The workspace has one Chief (the fixture ships Ember as it); the roster's
+  // order is not a role, so take the Chief, not whichever bot lists first.
+  const roster = (await api("/api/bots")).bots, chief = roster.find((bot: any) => bot.chiefOfStaff) ?? roster[0];
   await api(`/api/bots/${chief.id}`, { chiefOfStaff: true, chiefScope: "workspace", computer: "off", browser: false, composio: false }, "PATCH");
   await api("/api/config?secretStorage=external", { slack: { appToken: "xapp-fixture-not-real", botToken: "xoxb-fixture-not-real", teamId: "TEAM", appId: "APP", ownerUserId: "UOTHER" } }, "PATCH");
   const pairing = await api("/api/slack/pair", { targetBotId: chief.id });

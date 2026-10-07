@@ -28,11 +28,11 @@ const learned=(text:string)=>text.replace("Treat completed as verified.","Verify
 function fixture(kind:"skill"|"routine"="skill",native?:{directory:string;manifest:string;cancelOnEvaluation?:AbortController}){
   const store=new Store(()=>({instanceId:"fixture",model:"fixture"})),bot=store.createBot(),threadId=bot.threadId;
   reconcileMemoryRoster({bots:store.bots,groups:store.groups});setMemoryMode("capture");
-  if(native)transaction(db=>updateMemoryLearning(db,{inputLimit:10_000_000,outputLimit:2_000_000,callsPerMinute:26,dailyCostUsd:null},readMemoryLearning(db).revision));
+  if(native)transaction(db=>updateMemoryLearning(db,{dailyInputTokens:10_000_000,dailyOutputTokens:2_000_000,callsPerMinute:26},readMemoryLearning(db).revision));
   const context=(thread=threadId)=>{const a=backgroundMemoryAudience(bot.id,thread,{bots:store.bots,groups:store.groups})!;return {audienceKey:a.audienceKey,allowedScopeIds:a.scopeIds};};
   let host:ReturnType<typeof createProcedureReviewHost>,evaluator:ProcedureEvaluatorBridge;
   const manager=new RoutineManager({file:join(DATA_DIR,"routines.json"),botState:()=>"busy",createTask:()=>null,startTurn:async()=>{},validateInstructionPromotion:(routine,proposal)=>host.validateRoutinePromotion(routine,proposal),validateInstructionEvidence:(ctx,evidence)=>host.validateRoutineEvidence(ctx,evidence)});
-  const routine=kind==="routine"?manager.create({name:"Outcome check",botId:bot.id,prompt:body,target:"bot",enabled:false,runOn:"ember",schedule:{type:"interval",everyMinutes:5,anchorAt:Date.now()}}):undefined;
+  const routine=kind==="routine"?manager.create({name:"Outcome check",botId:bot.id,prompt:body,target:"bot",enabled:false,runOn:"ember",permissionMode:"ask",schedule:{type:"interval",everyMinutes:5,anchorAt:Date.now()}}):undefined;
   if(kind==="skill"){const stage=stageSkillWrite(bot.id,{action:"create",source:"learn:synthetic",files:[{path:"SKILL.md",content:markdown(body)}]});if("error" in stage)throw Error(stage.error);const result=applyStagedSkillWrite(bot.id,stage.id);if("error" in result)throw Error(result.error);}
   const pin=createProcedurePin(bot.id,threadId,[],[],routine?{id:routine.id,instructionRevision:routineInstructionRevision(routine)}:undefined,context());store.pinTaskProcedures(bot.id,threadId,pin);preparePinnedProcedures(bot.id,threadId,pin,false,context());
   const hostOptions:Parameters<typeof createProcedureReviewHost>[0]={store,routines:()=>manager,automaticFailureRetry:false,evaluate:(snapshot,signal)=>evaluator.evaluate(snapshot,signal),evaluationReadiness:snapshot=>evaluator.readiness(snapshot),onPublished:(snapshot,receipt,current)=>evaluator.published(snapshot,receipt,current),validateEvidence:(a,e)=>{try{assertSkillProcedureEvidence({audienceKey:a.audienceKey,allowedScopeIds:a.scopeIds},e);return true;}catch{return false;}},skills:{
@@ -199,3 +199,20 @@ it.skipIf(!process.env.MURAGE_B33_NATIVE_DIR)("native GEPA cancellation preserve
   const evidence=process.env.MURAGE_B33_NATIVE_RECEIPT;
   if(evidence){expect(receiptOutsideCheckout(evidence)).toBe(true);writeFileSync(evidence+".cancel.json",JSON.stringify({status:"PASS",nativeManifest:native.manifest,reason:review.reason,nativeCounts:f.nativeCounts(),publicationUnchanged:true,restartChargesUnchanged:true,networkProviderCalls:0},null,2)+"\n",{flag:"wx",mode:0o600});}
 },45_000);
+
+it.each(["authorize","retry"] as const)("owner %s releases a destination-parked review without a snapshot",async action=>{
+ const {installLearningDestination}=await import("./learning-destination.ts");
+ const f=fixture(),id=await f.settle(),restore=installLearningDestination(()=>({ok:false,reason:"needs-owner-approval"}));
+ try{
+  const preview=f.evaluator.preview(ownerMemoryTicket(),id);
+  if(action==="retry")f.evaluator.authorize(ownerMemoryTicket(),preview.previewId);
+  // A parked review can predate the owner-authorized marker while retaining its grant.
+  database().prepare("UPDATE memory_scope_bindings SET intent=json_remove(intent,'$.ownerAuthorized') WHERE id=?").run(id);
+  await processProcedureReview(id,f.host.host,new AbortController().signal);
+  const read=()=>JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id)!.intent));
+  expect(read()).toMatchObject({status:"deferred",reason:"needs-owner-approval"});expect(read().snapshot).toBeUndefined();
+  if(action==="authorize")f.evaluator.authorize(ownerMemoryTicket(),preview.previewId);else f.evaluator.retry(ownerMemoryTicket(),id);
+  expect(read().ownerAuthorized).toBe(true);
+  await processProcedureReview(id,f.host.host,new AbortController().signal);expect(read()).toMatchObject({status:"complete",reason:"accepted"});
+ }finally{restore();}
+});

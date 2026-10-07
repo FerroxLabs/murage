@@ -6,7 +6,7 @@ description: |
   Do NOT use for weighted scoring prioritization (use task-prioritization), time-blocking scheduled tasks (use time-blocking), or enterprise resource allocation (use business strategy skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management decision-making planning"
   category: "productivity"

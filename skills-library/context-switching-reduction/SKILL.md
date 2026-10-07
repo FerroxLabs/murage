@@ -6,7 +6,7 @@ description: |
   Do NOT use for general time blocking (use time-blocking), email-specific management (use inbox-zero), or team workflow optimization (use business operations skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management optimization planning"
   category: "productivity"

@@ -1,10 +1,20 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "./config.ts";
+import { resetAppCatalogState } from "./app-catalog.ts";
 import { listToolkits, setManagedBrokerAccess } from "./composio.ts";
 
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); setManagedBrokerAccess(null); });
-const project = (name: string): AppConfig => ({ composio: { apiKey: `fake-catalog-${name}` } });
-const incomplete = "The app catalog could not be loaded completely. Please retry.";
+beforeEach(() => resetAppCatalogState({ disk: true }));
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); setManagedBrokerAccess(null); resetAppCatalogState({ disk: true }); });
+// Each case gets its own managed broker identity, so catalogs never mix.
+const project = (name: string): AppConfig => {
+  setManagedBrokerAccess({ url: `https://broker.example.test/${name}`, token: "c".repeat(64) });
+  return {};
+};
+// 0.1.61: an incomplete walk no longer throws an error the panel could only
+// paint as a red line over a spinner. It falls back to the featured apps with
+// the reason and the counts, the panel says so with Retry, and nothing
+// partial is ever kept (L17 Part A).
+const incomplete = { source: "curated", reason: "incomplete" };
 
 describe("marketplace catalog traversal", () => {
   it("loads beyond 500, deduplicates slugs and caches a complete result", async () => {
@@ -60,7 +70,8 @@ describe("marketplace catalog traversal", () => {
     expect(new URL(String(fetcher.mock.calls[1][0])).searchParams.get("cursor")).toBe("page-2");
   });
 
-  it.each(["http", "json", "network"])("rejects an incomplete %s result without caching or upstream details", async failure => {
+  it.each([["http", "http"], ["json", "incomplete"], ["network", "incomplete"]])("falls back on an incomplete %s result without caching or upstream details", async (failure, reason) => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     let requests = 0;
     const fetcher = vi.fn(async () => {
       requests++;
@@ -71,48 +82,50 @@ describe("marketplace catalog traversal", () => {
     });
     vi.stubGlobal("fetch", fetcher);
     const cfg = project(failure);
-    await expect(listToolkits(cfg)).rejects.toThrow(incomplete);
-    await expect(listToolkits(cfg)).rejects.toThrow(incomplete);
+    const first = await listToolkits(cfg);
+    expect(first).toMatchObject({ source: "curated", reason, detail: { loaded: 1 } });
+    expect(JSON.stringify(first)).not.toContain("fake-private-upstream-detail");
+    expect(await listToolkits(cfg)).toMatchObject({ source: "curated", reason });
     expect(fetcher).toHaveBeenCalledTimes(4);
   });
 
   it("bounds cursor replay, total pages, and total records without unmarked partial output", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const replay = vi.fn(async () => Response.json({ items: [{ slug: "head" }], next_cursor: "same" }));
     vi.stubGlobal("fetch", replay);
-    await expect(listToolkits(project("loop"))).rejects.toThrow(incomplete);
+    expect(await listToolkits(project("loop"))).toMatchObject(incomplete);
     expect(replay).toHaveBeenCalledTimes(2);
     let page = 0;
     const endless = vi.fn(async () => Response.json({ items: [{ slug: `tool-${page}` }], next_cursor: `page-${++page}` }));
     vi.stubGlobal("fetch", endless);
-    await expect(listToolkits(project("ceiling"))).rejects.toThrow(incomplete);
-    expect(endless).toHaveBeenCalledTimes(20);
-    const oversized = vi.fn(async () => Response.json({ items: Array.from({ length: 10_001 }, (_, i) => ({ slug: `tool-${i}` })) }));
+    expect(await listToolkits(project("ceiling"))).toMatchObject(incomplete);
+    expect(endless).toHaveBeenCalledTimes(40);
+    const oversized = vi.fn(async () => Response.json({ items: Array.from({ length: 20_001 }, (_, i) => ({ slug: `tool-${i}` })) }));
     vi.stubGlobal("fetch", oversized);
-    await expect(listToolkits(project("records"))).rejects.toThrow(incomplete);
+    expect(await listToolkits(project("records"))).toMatchObject(incomplete);
     expect(oversized).toHaveBeenCalledTimes(1);
   });
 
   // Upstream #1615: a walk that ends with no cursor on page 1 of 4, or that
   // replays one page behind fresh cursors, used to pass for the whole
   // catalog. It still fails closed, and now says how much arrived.
-  it.each(["project", "managed"])("refuses a %s catalog that stops before its own reported total, with N of M", async (backend) => {
-    if (backend === "managed") setManagedBrokerAccess({ url: "https://broker.example.test", token: "c".repeat(64) });
+  it("refuses a catalog that stops before its own reported total, with N of M", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetcher = vi.fn(async () => Response.json({ items: [{ slug: "gmail" }], current_page: 1, total_pages: 4, total_items: 1540 }));
     vi.stubGlobal("fetch", fetcher);
-    const cfg = backend === "managed" ? {} : project("stalled-total");
-    await expect(listToolkits(cfg)).rejects.toThrow(`${incomplete} Loaded 1 of 1,540 apps.`);
+    const cfg = project("stalled-total");
+    expect(await listToolkits(cfg)).toMatchObject({ ...incomplete, detail: { loaded: 1, total: 1540 } });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("ended-short"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("(incomplete) after 1 of 1,540 apps"));
     // nothing partial was cached
-    await expect(listToolkits(cfg)).rejects.toThrow(incomplete);
+    expect(await listToolkits(cfg)).toMatchObject(incomplete);
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("refuses a catalog that ends early with only page counts to reveal it", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubGlobal("fetch", async () => Response.json({ items: [{ slug: "gmail" }], current_page: 1, total_pages: 4 }));
-    await expect(listToolkits(project("end-short"))).rejects.toThrow(`${incomplete} Loaded 1 apps.`);
+    expect(await listToolkits(project("end-short"))).toMatchObject({ ...incomplete, detail: { loaded: 1, total: null } });
   });
 
   it("stops at the first replayed page instead of walking fresh cursors to the ceiling", async () => {
@@ -120,7 +133,7 @@ describe("marketplace catalog traversal", () => {
     let page = 0;
     const stuck = vi.fn(async () => Response.json({ items: [{ slug: "gmail" }], current_page: 1, total_pages: 2, next_cursor: `fresh-${++page}` }));
     vi.stubGlobal("fetch", stuck);
-    await expect(listToolkits(project("page-stuck"))).rejects.toThrow(incomplete);
+    expect(await listToolkits(project("page-stuck"))).toMatchObject(incomplete);
     expect(stuck).toHaveBeenCalledTimes(2);
   });
 
@@ -142,25 +155,28 @@ describe("marketplace catalog traversal", () => {
       return Response.json({ items: [{ slug: "head" }], next_cursor: "next" });
     });
     vi.stubGlobal("fetch", fetcher);
-    expect((await listToolkits(project("cancel"), { signal: controller.signal })).source).toBe("curated");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await listToolkits(project("cancel"), { signal: controller.signal })).toMatchObject({ source: "curated", reason: "cancelled" });
     expect(signals).toHaveLength(2);
     expect(signals[0]).toBe(signals[1]);
     expect(signals[0]?.aborted).toBe(true);
   });
 
   it("discards a catalog when the selected backend changes mid-page", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const cfg = project("identity-old");
     vi.stubGlobal("fetch", async () => {
-      cfg.composio!.apiKey = "fake-catalog-identity-new";
+      project("identity-new");
       return Response.json({ items: [{ slug: "old-private-card" }], next_cursor: "next" });
     });
-    expect((await listToolkits(cfg)).source).toBe("curated");
+    expect(await listToolkits(cfg)).toMatchObject({ source: "curated", reason: "identity" });
     vi.stubGlobal("fetch", async () => Response.json({ items: [{ slug: "new-card" }] }));
     expect((await listToolkits(cfg)).cards.map(card => card.slug)).toEqual(["new-card"]);
   });
 
-  it("retains curated fallback for a first-page failure", async () => {
+  it("retains curated fallback for a first-page failure, and says why", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubGlobal("fetch", async () => new Response("unavailable", { status: 503 }));
-    expect((await listToolkits(project("unavailable"))).source).toBe("curated");
+    expect(await listToolkits(project("unavailable"))).toMatchObject({ source: "curated", reason: "http" });
   });
 });

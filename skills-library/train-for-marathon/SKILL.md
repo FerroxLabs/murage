@@ -18,7 +18,7 @@ trigger_phrases: >-
   how to prepare for 26.2 miles first marathon training run a marathon in six
   months
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: running fitness step-by-step planning
   category: life-event

@@ -6,7 +6,7 @@ description: |
   Do NOT use for wireframing a single device (use wireframe-specification), defining animations (use prototype-spec), or writing responsive CSS code (use a software-development skill).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "responsive-design design template"
   category: "design-creative"

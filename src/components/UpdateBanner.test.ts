@@ -7,6 +7,18 @@ vi.mock("@/lib/updater",()=>({useUpdaterState:()=>current.value}));
 import {UpdateBanner} from "./UpdateBanner";
 import {UpdatesRow} from "./SettingsModal";
 afterEach(()=>{vi.unstubAllGlobals();current.value=null;});
+it("publisher refusal shows one translated line and the website download action in both surfaces",()=>{
+ vi.stubGlobal("window",{muragebox:{updater:{},openExternal:vi.fn()}});
+ current.value={status:"error",currentVersion:"0.1.63",message:"PRIVATE_DIAGNOSTIC",action:"download-from-murage"};
+ for(const Component of [UpdateBanner,UpdatesRow]){
+  const html=renderToStaticMarkup(createElement(Component));
+  expect(html).toContain("This update could not be verified, so Murage did not install it.");
+  expect(html).toContain("Download from murage.ai");
+  expect(html).not.toContain("PRIVATE_DIAGNOSTIC");
+  expect(html).not.toContain("Update could not finish");
+  expect(html).not.toContain("Try again");
+ }
+});
 it("deferred updater renders fixed backup guidance with no install/download/retry/check action",()=>{
  const calls=vi.fn();vi.stubGlobal("window",{muragebox:{updater:{download:calls,install:calls,retry:calls,check:calls}}});
  current.value={status:"deferred",version:"0.1.54",message:"PRIVATE_UPDATER_CANARY",command:"PRIVATE_COMMAND",installMode:"handoff"};

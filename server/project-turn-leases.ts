@@ -14,6 +14,7 @@ interface TurnLease {
   dispatched: boolean;
   providerKey?: string;
   outputOwnerId?: string;
+  additionalOwnerIds?: string[];
   /** The host asked the engine to stop this turn and no longer counts it as
    * busy. The writer lease stays until the engine's terminal event: a stop
    * is "requested, not observed" (contracts.ts) and the child may still be
@@ -72,6 +73,22 @@ export class ProjectTurnLeases {
       this.abandon(generation);
       throw error;
     }
+  }
+
+  /** A structured write approval can add a root after engine dispatch. */
+  acquireAdditional(threadId: string, generation: string, root: string): ProjectFolderLease & { release(): void } {
+    const owner = this.owners.get(generation);
+    if (!owner || owner.threadId !== threadId) throw new Error("The writing turn is no longer available");
+    const id = `late:${randomUUID()}`;
+    const lease = this.folders.acquireWriter(id, root);
+    (owner.additionalOwnerIds ??= []).push(id);
+    return { ...lease, release: () => {
+      const index = owner.additionalOwnerIds?.indexOf(id) ?? -1;
+      if (index < 0) return;
+      owner.additionalOwnerIds!.splice(index, 1);
+      this.folders.release(id);
+      for (const waiter of this.releaseWaiters) waiter();
+    } };
   }
 
   /** Call immediately before invoking sendTurn, including its async setup. */
@@ -157,7 +174,7 @@ export class ProjectTurnLeases {
       // Released between the refusal and this check: acquire on the next pass.
       if (blockers.length === 0) continue;
       if (!blockers.every(lease => lease.mode === "writer" && (this.owners.get(lease.ownerId)
-        ?? [...this.owners.values()].find(owner => owner.outputOwnerId === lease.ownerId))?.stopRequested === true)) {
+        ?? [...this.owners.values()].find(owner => owner.outputOwnerId === lease.ownerId || owner.additionalOwnerIds?.includes(lease.ownerId)))?.stopRequested === true)) {
         return { ok: false, reason: "conflict", code: "conflict" };
       }
       const remaining = deadline - Date.now();
@@ -194,6 +211,7 @@ export class ProjectTurnLeases {
     this.owners.delete(generation);
     this.folders.release(generation);
     if (owner.outputOwnerId) this.folders.release(owner.outputOwnerId);
+    for (const id of owner.additionalOwnerIds ?? []) this.folders.release(id);
     for (const waiter of [...this.releaseWaiters]) waiter();
   }
 }

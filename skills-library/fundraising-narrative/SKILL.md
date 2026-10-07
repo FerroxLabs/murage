@@ -5,7 +5,7 @@ description: |
   Do NOT use for sales pitch decks (use sales-pitch-deck), personal loan applications, grant proposals (use grant-proposal-writing), or financial model creation (use financial-model-structure).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning presentation sales"
   category: "business-strategy"

@@ -39,6 +39,7 @@
 // below for what this route therefore has to accept.
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import type { CleanupRunner } from "./dictation-cleanup-route.ts";
 import {
   TranscriptionUnavailable,
   transcribe as transcribeWithFlux,
@@ -280,6 +281,11 @@ export function createVoiceBudget(): VoiceBudget {
   };
 }
 
+/** The smallest body that can hold any speech. A very short press leaves a
+ *  container header and nothing else, a few hundred bytes, and the speech
+ *  service answers that with a format error. Below this the clip never leaves. */
+export const MIN_CLIP_BYTES = 1024;
+export const TOO_SHORT = "That was too short to hear. Hold the button and try again.";
 /** One sentence for the size refusal, in the two places that can give it. */
 const TOO_LARGE = "That recording is too long. Keep it under 4MB, or about two minutes.";
 
@@ -305,10 +311,17 @@ export interface TranscribeRouteDeps {
    *  below, which lives as long as the process — the same arrangement the
    *  sign-in limiter makes, for the same reason. */
   budget?: VoiceBudget;
+  /** Where refusals are logged (the server log). Defaults to `console.warn`. */
+  log?: (line: string) => void;
+  /** Dictation clean-up, run only when the request asks (`?cleanup=1`). Call
+   *  turns never ask, so they keep raw transcripts. Any failure inside it
+   *  returns the raw text; see dictation-cleanup.ts. */
+  cleanup?: CleanupRunner;
 }
 
-/** One budget per harness, created once. */
-const processBudget = createVoiceBudget();
+/** One budget per harness, created once. Channel voice notes (server/voice/channel-transcribe.ts) draw on the
+ *  same instance, because `transcribe` alone applies no budget and a chat could otherwise spend around it. */
+export const processBudget = createVoiceBudget();
 
 /**
  * Cut the upload once the answer is on the wire.
@@ -528,7 +541,12 @@ export async function handleTranscribeRoute(
 
   if (bytes.byteLength === 0) {
     slot.done(0);
-    json(res, 400, { error: "That recording was empty.", reason: "format" });
+    json(res, 400, { error: TOO_SHORT, reason: "too_short" });
+    return true;
+  }
+  if (bytes.byteLength < MIN_CLIP_BYTES) {
+    slot.done(0);
+    json(res, 400, { error: TOO_SHORT, reason: "too_short" });
     return true;
   }
 
@@ -556,10 +574,30 @@ export async function handleTranscribeRoute(
           ? estimateBilledSeconds(bytes.byteLength)
           : Math.max(BILLED_SECONDS_FLOOR, Math.ceil(transcript.duration))),
     );
+    // Clean-up runs AFTER the slot is released: it is a different upstream,
+    // and holding a clip slot through it would let a slow model starve the
+    // next press. It can only ever hand the raw text back.
+    if (url.searchParams.get("cleanup") === "1" && deps.cleanup && transcript.text.trim()) {
+      const id = (value: string | null) => (value && /^[\w-]{1,128}$/.test(value) ? value : undefined);
+      let result = { text: transcript.text, cleaned: false };
+      try {
+        result = await deps.cleanup(transcript.text, { botId: id(url.searchParams.get("botId")), groupId: id(url.searchParams.get("groupId")) });
+      } catch {
+        // the raw transcript stands
+      }
+      json(res, 200, { ...transcript, text: result.text, raw: transcript.text, cleaned: result.cleaned });
+      return true;
+    }
     json(res, 200, transcript);
     return true;
   } catch (error) {
+    const log = deps.log ?? ((line: string) => console.warn(line));
     if (error instanceof TranscriptionUnavailable) {
+      // The upstream's own words go to the log with what was sent (never the
+      // audio), so a format refusal can be traced without being shown.
+      log(
+        `[voice-transcribe] refused reason=${error.reason} provider=${error.provider ?? "unknown"} status=${error.status ?? "none"} mime=${container} bytes=${bytes.byteLength} detail=${JSON.stringify(error.detail ?? error.message)}`,
+      );
       // Which refusals actually cost anything. `key`, `unavailable`, `auth`
       // and `premium` are answered before a single second is transcribed;
       // `format` and `too_large` are the payload being rejected. The two that
@@ -580,6 +618,7 @@ export async function handleTranscribeRoute(
       });
       return true;
     }
+    log(`[voice-transcribe] failed unexpectedly mime=${container} bytes=${bytes.byteLength} detail=${JSON.stringify(error instanceof Error ? error.message : String(error))}`);
     // Nobody planned for this one, so assume it reached the meter.
     slot.done(estimateBilledSeconds(bytes.byteLength));
     json(res, 502, { error: error instanceof Error ? error.message : String(error), reason: "upstream" });

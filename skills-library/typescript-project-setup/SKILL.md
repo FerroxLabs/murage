@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about TypeScript type patterns (use `typescript-type-patterns`), runtime validation (use `typescript-runtime-safety`), or Node.js setup (use `nodejs-project-setup`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "typescript best-practices template"
   category: "software-engineering"

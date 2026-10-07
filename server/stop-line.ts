@@ -29,7 +29,7 @@
 // folder, the recipients the bot has written to, how links resolve) is passed
 // in, so it is table-tested without touching a disk.
 import { posix } from "node:path";
-import { commandWithoutDateTimes, EXACT_COMMAND_MAX_CHARS, normalizeCommand } from "../shared/exact-command.ts";
+import { EXACT_COMMAND_MAX_CHARS, normalizeCommand } from "../shared/exact-command.ts";
 
 export type StopKind = "delete" | "pay" | "message";
 
@@ -116,7 +116,7 @@ const READ_VERBS = new Set(["list", "get", "retrieve", "search", "read", "fetch"
 const WIN_ABS = /^[A-Za-z]:(?:[\\/]|$)/;
 const WIN_CANON = /^\/(?:[A-Z]:|UNC)(?:\/|$)/;
 
-function canonPath(path: string): string {
+export function canonPath(path: string): string {
   if (WIN_ABS.test(path)) return `/${path[0]!.toUpperCase()}:${path.slice(2).replace(/\\/g, "/")}`;
   if (/^\\\\[^\\]/.test(path)) return `/UNC/${path.slice(2).replace(/\\/g, "/")}`;
   return path;
@@ -124,7 +124,7 @@ function canonPath(path: string): string {
 
 /** The machine's own spelling of a canonical path, for a resolver that
  * touches the disk. POSIX paths are returned unchanged. */
-function nativePath(path: string): string {
+export function nativePath(path: string): string {
   if (/^\/[A-Z]:(\/|$)/.test(path)) return `${path.slice(1, 3)}\\${path.slice(4).replace(/\//g, "\\")}`;
   if (/^\/UNC\//.test(path)) return `\\\\${path.slice(5).replace(/\//g, "\\")}`;
   return path;
@@ -1240,8 +1240,8 @@ function unplacedPlace(line: string | undefined, cwd: string | undefined): strin
   return `${UNPLACED}${JSON.stringify([cwd ?? "", command])}`;
 }
 const UNPLACED = "unplaced:";
-/** Two unplaced-delete places are the same command in the same folder,
- * apart from its dates and times (shared/exact-command.ts). */
+/** An unplaced-delete grant requires the same folder and normalized command
+ * bytes, including every date, time, quoted value and line break. */
 function sameUnplaced(granted: string, place: string): boolean {
   const read = (value: string): [string, string] | undefined => {
     try {
@@ -1250,7 +1250,7 @@ function sameUnplaced(granted: string, place: string): boolean {
     } catch { return undefined; }
   };
   const a = read(granted), b = read(place);
-  return Boolean(a && b && a[0] === b[0] && (a[1] === b[1] || commandWithoutDateTimes(a[1]) === commandWithoutDateTimes(b[1])));
+  return Boolean(a && b && a[0] === b[0] && a[1] === b[1]);
 }
 
 function deleteHit(found: Collected, place: StopLinePlace, line?: string): StopHit | null {

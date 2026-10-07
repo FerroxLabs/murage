@@ -1,6 +1,8 @@
 // Restricted tool surface derived from agent-browser v0.36.0 cli/src/mcp.rs.
 // The harness owns session/namespace, restore policy and launch configuration.
 // No model-provided argument may override those or choose filesystem paths.
+import { murageToolOnThisServer } from "./murage-tool-surface.ts";
+
 type Json = Record<string, unknown>;
 type Field = { type: "string" | "boolean" | "integer" | "array"; enum?: string[]; minimum?: number; maximum?: number; items?: { type: "string" }; minItems?: number };
 type Policy = { properties: Record<string, Field>; required: string[] };
@@ -37,10 +39,23 @@ allow(["tab_close"], { tab: string });
 // Upstream emits image content for small PNG/JPEG captures. Destination is
 // its harness-controlled default; neither path nor screenshotDir is exposed.
 allow(["screenshot"], { selector: string, fullPage: boolean, annotate: boolean, format: { type: "string", enum: ["png", "jpeg"] }, quality: { type: "integer", minimum: 0, maximum: 100 } });
-/** Every tool the unified browser may list, by name. shared/murage-tool-names.ts
- * MURAGE_MCP_TOOLS.browser keeps them all, so text naming any of them is
- * spelled the way the turn's engine calls it. */
+/** Every tool the unified browser may list, by name. */
 export const AGENT_BROWSER_TOOLS: readonly string[] = Object.freeze(Object.keys(policies));
+/** What the headless engine's model may list and call: the engine's core profile as pinned at be5df4c3e,
+ * identical on every OS and independent of the engine's own `--tools`. Anything else is refused. */
+export const HEADLESS_MODEL_TOOLS: readonly string[] = Object.freeze([
+  "open", "read", "snapshot", "click", "fill", "type", "press", "check", "uncheck", "select", "scroll", "wait_ms",
+  "wait_for_selector", "wait_for_text", "wait_for_load", "screenshot", "get_text", "get_url", "get_title", "close",
+  "back", "forward", "reload", "tab_new", "tab_list", "tab_switch", "tab_close",
+].map((name) => `agent_browser_${name}`));
+const SIBLING_TOOL = new RegExp(`(?<![A-Za-z0-9_"])(${[...AGENT_BROWSER_TOOLS].sort((a, b) => b.length - a.length).join("|")})(?![A-Za-z0-9_"])`, "g");
+/** The engine's own description (pinned, never a page's) names its sibling
+ * tools bare, which an engine that reaches MCP only through use_tool cannot
+ * call. The list cannot know the caller's engine or its mount alias, so each
+ * is named on this server, as the harness's own results name them. */
+function describeSiblings(description: string): string {
+  return description.replace(SIBLING_TOOL, (name) => murageToolOnThisServer(name));
+}
 
 function object(value: unknown): value is Json {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -68,10 +83,14 @@ export function validateHeadlessBrowserCall(name: unknown, args: unknown): { nam
   const policy = policies[name];
   const input = args === undefined ? {} : args;
   if (!object(input)) denied("Browser arguments must be an object");
-  if (Object.keys(input).some((key) => !Object.hasOwn(policy.properties, key))) denied("Browser argument is not permitted");
-  if (policy.required.some((key) => !Object.hasOwn(input, key))) denied("Required browser argument is missing");
+  // The plain, bounded names of the arguments help a model correct itself; page text never reaches here.
+  const label = (key: string) => `\`${key.replace(/[^A-Za-z0-9_]/g, "").slice(0, 40)}\``;
+  const bad = Object.keys(input).find((key) => !Object.hasOwn(policy.properties, key));
+  if (bad !== undefined) denied(`Browser argument is not permitted: ${label(bad)}. This tool takes: ${Object.keys(policy.properties).map(label).join(", ") || "no arguments"}.`);
+  const missing = policy.required.find((key) => !Object.hasOwn(input, key));
+  if (missing !== undefined) denied(`Required browser argument is missing: ${label(missing)}.`);
   for (const [key, value] of Object.entries(input)) {
-    if (!valid(policy.properties[key], value)) denied("Browser argument has an invalid value");
+    if (!valid(policy.properties[key], value)) denied(`Browser argument has an invalid value: ${label(key)}.`);
   }
   if (["agent_browser_open", "agent_browser_read", "agent_browser_tab_new"].includes(name) && input.url !== undefined) {
     let url: URL;
@@ -93,7 +112,7 @@ export function listHeadlessBrowserTools(upstreamTools: unknown): Json[] {
     const policy = policies[tool.name];
     return [{ name: tool.name,
       ...(typeof tool.title === "string" ? { title: tool.title } : {}),
-      ...(typeof tool.description === "string" ? { description: tool.description } : {}),
+      ...(typeof tool.description === "string" ? { description: describeSiblings(tool.description) } : {}),
       inputSchema: { type: "object", properties: structuredClone(policy.properties), required: [...policy.required], additionalProperties: false },
     }];
   });

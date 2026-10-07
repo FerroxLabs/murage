@@ -4,7 +4,7 @@ description: |
   Comprehensive business plan creation using Business Model Canvas, lean startup methodology, financial projections, competitive analysis, and go-to-market strategy frameworks. Use when the user asks about business planner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning template"
   category: "business-strategy"

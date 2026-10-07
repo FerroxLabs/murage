@@ -1,7 +1,9 @@
 ---
 name: learn-from-losses
 description: Post-trade review — pull losing trades from the strategy tester, screenshot each entry in context, and cluster common failure patterns. Use when the user asks "why am I losing?", "review my losses", or "what's wrong with my strategy?".
-license: MIT
+license: Apache-2.0
+metadata:
+  author: Ferrox Labs
 ---
 
 # Learn From Losses

@@ -11,9 +11,10 @@ import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { cn } from "@/lib/cn";
+import { cleanupEnabled, setCleanupEnabled } from "@/lib/dictation-cleanup";
 import { Switch } from "./SettingsPrimitives";
 import { VoicePicker } from "./VoicePicker";
-import { isVoicePreview, previewMessageId, rowPreview, type PickerVoice } from "./voice-picker-model";
+import { isVoicePreview, previewMessageId, markAssigned, rowPreview, type PickerVoice } from "./voice-picker-model";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
 import { systemVoiceOffer } from "../../shared/system-voices";
 
@@ -29,6 +30,7 @@ export function VoiceSettings({
   const { state, dispatch } = useStore();
   const tts = state.config?.tts;
 
+  const [cleanUp, setCleanUp] = useState(() => cleanupEnabled());
   const [key, setKey] = useState("");
   const [saving, setSaving] = useState(false);
   const switching = false;
@@ -129,7 +131,10 @@ export function VoiceSettings({
 
   if (!tts) return null;
 
-  const selectedVoice = bot.voice ?? "";
+  // The voice the app assigned is a Flux-list voice: where this bot speaks
+  // another way, it is not shown as chosen.
+  const assigned = bot.voiceAssigned && provider === "flux" ? bot.voice : undefined;
+  const selectedVoice = bot.voiceAssigned && provider !== "flux" ? "" : (bot.voice ?? "");
   // Kept at the top of the list: the workspace's voice, and a saved voice the
   // list no longer has.
   const pinned: PickerVoice[] = [
@@ -243,7 +248,7 @@ export function VoiceSettings({
             {!selectedVoice && !tts.voice && !loadingVoices && <span className="text-[12px]">Pick a voice</span>}
           </div>
           <VoicePicker
-            voices={voices}
+            voices={markAssigned(voices, assigned)}
             pinned={pinned}
             value={selectedVoice}
             onChange={(voice) => onPatch({ voice })}
@@ -269,6 +274,23 @@ export function VoiceSettings({
           checked={Boolean(bot.speakReplies)}
           aria-label="Read this bot's replies aloud"
           onClick={() => onPatch({ speakReplies: !bot.speakReplies })}
+        />
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/40 pt-4">
+        <div>
+          <div className="text-[13px] font-medium text-ink">Clean up dictation</div>
+          <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+            Clean up dictation on this device: removes ums, fixes punctuation and corrections. Undo anytime.
+          </div>
+        </div>
+        <Switch
+          checked={cleanUp}
+          aria-label="Clean up dictation"
+          onClick={() => {
+            setCleanupEnabled(!cleanUp);
+            setCleanUp(!cleanUp);
+          }}
         />
       </div>
 

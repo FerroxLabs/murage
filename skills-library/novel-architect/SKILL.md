@@ -4,7 +4,7 @@ description: |
   End-to-end novel planning and execution from concept through final revision, covering outlining methods, pacing, subplot weaving, chapter structure, genre-specific targets, and a complete revision roadmap. Use when the user asks about novel architect or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing planning"
   category: "writing"

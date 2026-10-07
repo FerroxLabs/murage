@@ -21,7 +21,7 @@ trigger_phrases: >-
   I want to build a data pipeline I need to set up ETL How do I build a data
   warehouse I want to create analytics dashboards
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: step-by-step planning
   category: software-project

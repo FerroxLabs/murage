@@ -4,7 +4,7 @@ description: |
   Complete guide to managing corporate events covering team building activities, product launches, holiday parties, awards ceremonies, hybrid event execution, vendor management, executive stakeholder expectations, and post-event ROI measurement. Use when the user asks about corporate event manager or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "event-planning planning strategy"
   category: "travel-experiences"

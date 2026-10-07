@@ -1,0 +1,36 @@
+---
+title: Browser extension preview
+description: Connect an existing browser to Murage with explicit permissions and visible control.
+---
+
+The browser extension is an unpublished development preview. The Chrome and Edge store listings are not available yet. The current candidate has been exercised in isolated Chromium fixtures and fresh Windows Chrome, Edge and Brave profiles through the native helper. It is not a production release.
+
+## Connect your browser
+
+Ask a bot to use your browser. It can offer a setup card in the conversation with **Set up** and **Not now**. Your original request stays in that conversation. After connecting, choose **Check connection and continue**; reconnection by itself never repeats the task.
+
+You can also choose **Use my browser** in a bot's Browser panel. This is optional. Your ordinary Murage browser remains available when you decline.
+
+Development setup requires the unpacked extension and a registered local helper from the same build. The helper runs on the browser's computer. A laptop browser connected to a different headless or cloud Murage host is not provided by this preview.
+
+The panel distinguishes a running helper from a connected browser profile. Choose the intended profile when more than one is connected. Do not use your personal browser profile for development qualification.
+
+## Control a task
+
+Bots use explicitly assigned tabs. A named group shows the bot's work area. Sharing a tab gives access to that tab; moving a tab into a group is not consent.
+
+Use **Pause** or **Stop** in the extension. Stop remains in effect after reconnection. Use the extension's owner controls to resume or share a tab. Unexpected typing or clicks in a controlled page pause the task. Use the explicit Pause control before private input; automatic detection cannot distinguish every input that coincides with automation.
+
+Site access and action approval are separate. Allowing a site does not approve purchases, messages or deletions. A page requesting an action is not your permission. Password, payment-detail and other protected pages are handed to you. Relevant page text and images can reach the model provider configured in Murage; the local helper does not make all model processing local.
+
+## Other agents
+
+**Settings > Computer & browser > Browser access for other agents** is off by default. Enable it and pair a named client with a connected profile. Murage creates a dedicated conversation and a private pairing file. Copy the displayed MCP configuration into your client. It contains a path to the pairing file rather than Murage's master credential.
+
+Murage must remain running. Revoking a client or disabling external access invalidates its authority. Purchases and other changes still require Murage approval.
+
+## Preview limits
+
+Windows native helper and branded-browser checks have passed in isolated profiles. The paired companion approval flow has passed in the actual app at phone width, including Allow, Deny and revoked-session rejection. This is not physical-device qualification. macOS Chrome, Edge and Brave also passed isolated native checks using a temporary internal launcher fixture. On macOS, Brave and Chrome share the native helper registration; removing it affects both browser choices. Isolated browser and native-backend process restart checks pass, including Stop persistence and no replay of an uncertain action. A physical macOS sleep/wake check also passed with Brave, including preserved Stop, stale-reference refusal and no action replay. Windows sleep/wake, full installed-app lifecycle and update recovery remain unqualified. The request-tracking defect is repaired and the existing browser-tool compatibility checks pass. The isolated extension reload recovery checks pass. This is not a production-ready release.
+
+The older Chrome remote-debugging route remains an explicit separate choice. A stopped or denied extension task never silently falls back to it.

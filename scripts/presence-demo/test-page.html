@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Presence test page</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #f4f1ec; color: #222; }
+  header { position: sticky; top: 0; background: #fff; border-bottom: 1px solid #ddd; padding: 14px 28px; font-weight: 600; }
+  main { max-width: 760px; margin: 28px auto; padding: 0 28px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; }
+  label { display: block; font-size: 13px; margin-bottom: 4px; color: #555; }
+  input { width: 100%; padding: 9px 11px; font: inherit; border: 1px solid #bbb; border-radius: 6px; }
+  button { font: inherit; padding: 9px 16px; border-radius: 6px; border: 0; background: #2f6fed; color: #fff; cursor: pointer; }
+  #cover { position: fixed; top: 10px; right: 10px; z-index: 2147483647; background: #7a1fa2; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>Acme Booking</header>
+<div id="cover">Page element at the highest z-index</div>
+<main>
+  <div class="card">
+    <h2>Book a table</h2>
+    <label for="name">Your name</label>
+    <input id="name" autocomplete="off">
+    <p><button id="go" type="button">Check availability</button> <span id="count">0 clicks</span></p>
+  </div>
+  <div class="card"><p>Scroll marker: this page is taller than the viewport so scrolling can be checked.</p></div>
+  <div style="height: 900px"></div>
+</main>
+<script>
+  let clicks = 0;
+  document.getElementById('go').addEventListener('click', () => { clicks += 1; document.getElementById('count').textContent = clicks + ' clicks'; });
+</script>
+</body>
+</html>

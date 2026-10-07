@@ -1,8 +1,9 @@
 ---
 name: spark-long-form-narrative
 description: "The user has a module map or chapter list and the question is now *how does this read.* Load whenever you hear \"what's the throughline,\" \"how should chapters flow,\" \"this feels disconnected,\" or \"I have the pieces but it's not a book yet.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "spark"
 ---

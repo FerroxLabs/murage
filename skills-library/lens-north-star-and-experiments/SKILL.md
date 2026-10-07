@@ -1,8 +1,9 @@
 ---
 name: lens-north-star-and-experiments
-description: "As of: 2026-05-16"
+description: "Choose the one metric your team steers by and break it into inputs you can move. Then set up A/B tests with a hypothesis, sample size and stopping rule."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "lens"
 ---
@@ -32,19 +33,19 @@ If NSM + inputs are already locked in `TEAM_MEMORY.md` under `## Analyst`, skip 
 
 **1. Test the candidate against three criteria.** A north-star metric (NSM) must: (a) represent customer-perceived value, not company activity; (b) correlate with long-term revenue, not short-term signups; (c) move when the team does the right work, not when seasonality shifts. Revenue itself usually fails (a). Signups fail (b). Vanity counts fail (c). Reject any candidate that fails one.
 
-**2. Decompose into input metrics.** The NSM sits on top of a small set of inputs whose product or sum approximates it. Example: NSM = (active users) × (actions per active user) × (value per action). Each input is a metric a team can move. If you cannot decompose, the NSM is too abstract — pick a closer one.
+**2. Decompose into input metrics.** The NSM sits on top of a small set of inputs whose product or sum approximates it. Example: NSM = (active users) × (actions per active user) × (value per action). Each input is a metric a team can move. If you cannot decompose, the NSM is too abstract, pick a closer one.
 
-**3. Stamp NSM + inputs to TEAM_MEMORY.** Channels, Smith, Forge, and Copy all need the same north star and the same input tree, or they pull in different directions.
+**3. Stamp NSM + inputs to TEAM_MEMORY.** Channels, Smith, whoever owns pricing and margin, and Copy all need the same north star and the same input tree, or they pull in different directions.
 
 ### Experiments (steps 4-8)
 
-**4. Write the hypothesis in three parts.** *"If we change X, then Y will move by at least Z, because [mechanism]."* X is a specific change. Y is a single primary metric. Z is the minimum detectable effect — the smallest move that would justify shipping. The mechanism is the *why*. No mechanism, no test.
+**4. Write the hypothesis in three parts.** *"If we change X, then Y will move by at least Z, because [mechanism]."* X is a specific change. Y is a single primary metric. Z is the minimum detectable effect, the smallest move that would justify shipping. The mechanism is the *why*. No mechanism, no test.
 
-**5. Compute sample size before launch.** From baseline Y and MDE Z, compute required sample per arm (two-proportion or two-mean; 80% power, α = 0.05). State sample and time-to-accrue at current traffic. If that exceeds the decision window, the test is underpowered — propose a larger MDE, sharper change, or smaller scope before launching.
+**5. Compute sample size before launch.** From baseline Y and MDE Z, compute required sample per arm (two-proportion or two-mean; 80% power, α = 0.05). State sample and time-to-accrue at current traffic. If that exceeds the decision window, the test is underpowered, propose a larger MDE, sharper change, or smaller scope before launching.
 
 **6. Set the stopping rule in advance.** Name (a) the sample size at which you check, (b) the threshold at which you call a winner, (c) the maximum runtime past which you stop regardless. No peeking before the planned check; sequential testing inflates false positives without an explicit sequential-design correction.
 
-**7. Pre-register guardrails.** At least two metrics you do *not* want to harm even if the primary moves — latency, downstream conversion, revenue per session, support-ticket rate. A primary win with a guardrail loss is a trade-off requiring explicit decision, not an auto-ship.
+**7. Pre-register guardrails.** At least two metrics you do *not* want to harm even if the primary moves, latency, downstream conversion, revenue per session, support-ticket rate. A primary win with a guardrail loss is a trade-off requiring explicit decision, not an auto-ship.
 
 **8. Report with intervals, not point estimates.** Report lift, confidence interval, primary p-value or Bayesian probability, guardrail movements, and segment cut (mobile vs. desktop, new vs. returning). A 3% lift with a CI spanning −2% to +8% is not a winner; say so plainly.
 
@@ -52,7 +53,7 @@ If NSM + inputs are already locked in `TEAM_MEMORY.md` under `## Analyst`, skip 
 
 - **One primary metric per test.** Multiple primaries inflate false-positive rates and turn experiments into fishing expeditions.
 - **No early stopping without a sequential design.** Peeking and stopping at the first significant moment is how false winners ship.
-- **Underpowered tests do not ship as conclusions.** They can run as directional learnings — the report must say so.
+- **Underpowered tests do not ship as conclusions.** They can run as directional learnings, the report must say so.
 - **Guardrails are non-negotiable.** A primary win with a guardrail loss returns for trade-off, not auto-ship.
 - **Segment analysis is post-hoc unless pre-registered.** Finding the segment where the test "worked" is pattern-matching, not analysis.
 
@@ -72,4 +73,4 @@ If NSM + inputs are already locked in `TEAM_MEMORY.md` under `## Analyst`, skip 
 > *Run the new page for two weeks and see if conversions go up.*
 
 **After** (hypothesis + sample + stop rule + guardrails):
-> *Hypothesis: moving the annual toggle above the fold lifts annual-share by ≥4 pp (22% → ≥26%), because earlier anchor exposure shifts default selection. Primary: annual-share. MDE: 4 pp. Sample/arm at α=0.05, 80% power: ~2,900 paid conversions; at 180/week that is 16 weeks — underpowered. Tighten scope to direct + organic, accept MDE 6 pp, target 8 weeks. Guardrails: paid-conversion rate, day-14 refund rate. Stop rule: check week 4 only if sample reached. Stamping to TEAM_MEMORY.*
+> *Hypothesis: moving the annual toggle above the fold lifts annual-share by ≥4 pp (22% → ≥26%), because earlier anchor exposure shifts default selection. Primary: annual-share. MDE: 4 pp. Sample/arm at α=0.05, 80% power: ~2,900 paid conversions; at 180/week that is 16 weeks, underpowered. Tighten scope to direct + organic, accept MDE 6 pp, target 8 weeks. Guardrails: paid-conversion rate, day-14 refund rate. Stop rule: check week 4 only if sample reached. Stamping to TEAM_MEMORY.*

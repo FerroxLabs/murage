@@ -6,7 +6,7 @@ description: |
   Do NOT use for student learning objectives (use `learning-objectives`), for career change planning (use career-development skills), or for certification-specific preparation (use `certification-prep`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching study-skills step-by-step"
   category: "education"

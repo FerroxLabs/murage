@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
-import { MEMORY_SCHEMA_V1, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
+import { MEMORY_SCHEMA_V1, MEMORY_SCHEMA_VERSION, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
 import { captureMessage } from "./capture.ts";
 import { applyMemoryTombstones, pauseRestoredMemory } from "./restore.ts";
@@ -26,12 +26,12 @@ it.each(["off", "paused", "capture", "active"])("migrates v1 %s without altering
   const db = legacy(mode), meta = db.prepare("SELECT * FROM memory_meta").get();
   const records = db.prepare("SELECT * FROM memory_records").all(), scopes = db.prepare("SELECT * FROM memory_scopes").all(), deleted = db.prepare("SELECT * FROM memory_tombstones").all();
   migrateMemorySchema(db, "active");
-  expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...meta, schema_version: 2 });
+  expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...meta, schema_version: MEMORY_SCHEMA_VERSION });
   expect(db.prepare("SELECT * FROM memory_records").all()).toEqual(records);
   expect(db.prepare("SELECT * FROM memory_scopes").all()).toEqual(scopes);
   expect(db.prepare("SELECT * FROM memory_tombstones").all()).toEqual(deleted);
   expect(db.prepare("SELECT partition,claim_status,observed_at FROM memory_record_details").get()).toEqual({ partition: "semantic", claim_status: "provisional", observed_at: null });
-  expect(readMemoryLearning(db)).toMatchObject({ automaticFacts: true, automaticProcedures: true, reviewMode: true, dailyCostUsd: null });
+  expect(readMemoryLearning(db)).toMatchObject({ automaticFacts: true, automaticProcedures: true, reviewMode: true, version: 2 });
   const after = db.prepare("SELECT * FROM memory_meta").get(); migrateMemorySchema(db);
   expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual(after); expect(validateMemorySchema(db).has("memory_learning_config")).toBe(true);
 });
@@ -39,7 +39,7 @@ it("rolls back a migration failure after the new schema has been created", () =>
   const db = legacy("off"), before = db.prepare("SELECT * FROM sqlite_schema ORDER BY name").all();
   const exec = db.exec.bind(db);
   const spy = vi.spyOn(db, "exec").mockImplementation(sql => {
-    if (sql.includes("DROP TABLE memory_meta_v1")) throw new Error("injected migration failure");
+    if (sql.includes("DROP TABLE memory_meta_previous")) throw new Error("injected migration failure");
     return exec(sql);
   });
   expect(() => migrateMemorySchema(db)).toThrow("injected migration failure"); spy.mockRestore();
@@ -68,7 +68,7 @@ it("rejects unknown schema and malformed learning config without migration", () 
 });
 it("owner learning policy updates are versioned and cannot silently widen limits", () => {
   const db = legacy(); migrateMemorySchema(db);
-  expect(updateMemoryLearning(db, { automaticFacts: false, reviewMode: true, dailyCostUsd: 1 }, 0)).toMatchObject({ revision: 1, automaticFacts: false, reviewMode: true });
+  expect(updateMemoryLearning(db, { automaticFacts: false, reviewMode: true, dailyOutputTokens: 100 }, 0)).toMatchObject({ revision: 1, automaticFacts: false, reviewMode: true });
   expect(() => updateMemoryLearning(db, { automaticFacts: true }, 0)).toThrow("REVISION_CONFLICT");
   expect(() => updateMemoryLearning(db, { callsPerMinute: -1 }, 1)).toThrow();
   expect(() => updateMemoryLearning(db, { recipient: "unrelated" }, 1)).toThrow();

@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of pandas power user or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science statistics budgeting step-by-step advanced python performing-arts sales"
   category: "data-analysis"

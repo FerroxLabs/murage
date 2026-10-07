@@ -4,7 +4,7 @@ description: |
   Comprehensive video editing guidance covering editing principles, pacing, rhythm, continuity editing, advanced cut types (J-cuts, L-cuts, match cuts), montage theory, color correction vs grading, sound design in post-production, and software-specific workflows for Premiere Pro, DaVinci Resolve, and Final Cut Pro. Use when the user asks about video editor guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "video-production guide"
   category: "design-creative"

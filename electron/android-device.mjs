@@ -69,11 +69,18 @@ export function resolveAdbBinary({
  * and is closed only after it is proven to be nothing but digits, so nothing
  * from the environment is ever evaluated. A platform with neither directory
  * leaves the glob unexpanded, the digits test rejects it, and the exec still
- * happens: no descriptor is closed, and nothing breaks. */
+ * happens: no descriptor is closed, and nothing breaks.
+ *
+ * Only bash (and zsh) can name a descriptor above 9. In dash, Debian and
+ * Ubuntu's /bin/sh, `exec 12>&-` means "run the program 12", and that failed
+ * exec ended the shell before adb ever started. So the launcher runs under
+ * bash wherever there is one (adbServerLaunch), and a shell that cannot name
+ * those descriptors leaves them open rather than never starting adb. */
 export const CLOSE_INHERITED_DESCRIPTORS = [
   'for entry in "/proc/$$/fd"/* /dev/fd/*; do',
   '  fd=${entry##*/}',
   "  case \"$fd\" in ''|*[!0-9]*) continue ;; esac",
+  '  if [ "$fd" -gt 9 ] && [ -z "${BASH_VERSION:-}${ZSH_VERSION:-}" ]; then continue; fi',
   '  if [ "$fd" -gt 2 ]; then eval "exec $fd>&-" 2>/dev/null; fi',
   "done",
   'exec "$@"',
@@ -87,9 +94,10 @@ export const CLOSE_INHERITED_DESCRIPTORS = [
  * port bound after the app was ended. That is why the daemon's ownership is
  * recorded (createAndroidDeviceController ownershipFile) and a leftover one
  * is stopped at the next start (reclaimOrphan), as well as on every quit. */
-export function adbServerLaunch(binary, { platform = process.platform } = {}) {
+export function adbServerLaunch(binary, { platform = process.platform, exists = fs.existsSync } = {}) {
   if (platform === "win32") return { command: binary, args: ["start-server"] };
-  return { command: "/bin/sh", args: ["-c", CLOSE_INHERITED_DESCRIPTORS, "murage-adb-start", binary, "start-server"] };
+  const shell = ["/bin/bash", "/usr/bin/bash"].find((file) => exists(file)) ?? "/bin/sh";
+  return { command: shell, args: ["-c", CLOSE_INHERITED_DESCRIPTORS, "murage-adb-start", binary, "start-server"] };
 }
 
 export function adbServerPort(env = process.env) {

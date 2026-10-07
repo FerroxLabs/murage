@@ -6,7 +6,7 @@ description: |
   Do NOT use for sentiment classification (use sentiment-analysis-guide), qualitative coding of interviews (use qualitative-coding), survey question design (use survey-design), or competitive intelligence gathering (use competitive-intelligence).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research analysis data-science"
   category: "data-analysis"

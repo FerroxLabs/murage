@@ -1,12 +1,16 @@
 {
   "id": "beacon-podcast",
   "name": "podcast",
-  "version": "1.0.0",
-  "description": "**When to use.** When the brief includes hosting a podcast, guesting on podcasts, or sponsoring podcasts as a See or Think channel.",
+  "version": "1.1.0",
+  "description": "Decide how a podcast fits your marketing: host your own show, guest on other shows or sponsor them. Get a format and measures for each.",
   "defaultEnabled": false,
   "triggerTerms": [
-    "beacon",
-    "podcast"
+    "podcast",
+    "start a podcast",
+    "podcast guest",
+    "podcast sponsorship",
+    "podcast growth",
+    "video podcast"
   ],
   "requiredCapabilities": []
 }

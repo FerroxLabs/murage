@@ -5,7 +5,7 @@ description: |
   Do NOT use for rejection letters (use rejection-letter), job descriptions (use job-description), or employment contracts which require legal review.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "template email planning checklist strategy"
   category: "business-strategy"

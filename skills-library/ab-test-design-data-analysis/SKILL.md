@@ -6,7 +6,7 @@ description: |
   Do NOT use for interpreting completed test results (use hypothesis-testing), analyzing existing data without experimentation (use correlation-analysis), or survey design (use survey-design in the research cluster).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "statistics analysis research"
   category: "data-analysis"

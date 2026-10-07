@@ -29,18 +29,24 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, symli
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { userInfo } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
-import { openSidebar } from "./fixtures.ts";
+import { openSidebar, SEND_KEY } from "./fixtures.ts";
 import { fakeLlamaCompletion, fakeLlamaToolStream } from "./fake-llama-completion";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { laneDataDir } from "./lane-data-dir";
+import { seedWhatsNewSeen } from "../../scripts/control-murage.ts";
+import { openSidebarPlace } from "./sidebar-nav";
 
 // ── Inputs ───────────────────────────────────────────────────────────────
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const DATA_DIR = laneDataDir("the smoke test never uses ~/.murage");
+// Its own folder inside the lane's, as composer-size-limit keeps: the lane
+// folder itself is the shared rig harness's live data dir, and wiping it
+// while that harness holds its lease is refused (and would take the rig's
+// workspace with it).
+const DATA_DIR = resolve(laneDataDir("the smoke test never uses ~/.murage"), "user-smoke-0152-r2-data");
 const HARNESS_PORT = Number(process.env.MURAGE_E2E_PORT || 9990);
 const UI_PORT = Number(process.env.MURAGE_E2E_UI_PORT || 9992);
 const EVIDENCE = process.env.MURAGE_SMOKE_EVIDENCE_DIR || join(DATA_DIR, "evidence");
@@ -131,6 +137,7 @@ function writeConfig() {
   // No FluxRouter key at start: feature 10 proves the connected-apps lock a
   // keyless install shows, and feature 15 adds the key from that lock.
   const config: Record<string, unknown> = { instances };
+  seedWhatsNewSeen(DATA_DIR);
   writeFileSync(join(DATA_DIR, "config.json"), JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
 }
 
@@ -226,35 +233,27 @@ async function openApp(page: Page, { width = 1440, height = 900, skin = "light" 
 async function selectBot(page: Page, who: Bot | string) {
   const name = typeof who === "string" ? who : who.name;
   const sidebar = await openSidebar(page);
-  await sidebar.getByRole("button", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).first().click();
+  // A person clicks the name: it sits over the row's select button (so it can
+  // be double-clicked to rename), and a single click reaches the row's own
+  // handler, which selects the bot.
+  await sidebar.getByRole("button", { name: `Rename ${name}`, exact: true }).first().click();
   await expect(composer(page, name)).toBeVisible();
   await settleIntake(page, name);
   return sidebar;
 }
-/** Every new bot opens with its two-question setup quiz, and the composer's
- *  first messages answer it (feature 1 walks it deliberately). A fixture bot
- *  that still has the quiz open is taken through it the same way a person
- *  would — "general it is" — so the turns that follow reach the engine. */
-async function settleIntake(page: Page, name: string) {
+/** A new bot opens with its setup question. Since 749fe559 a first message
+ *  runs as an ordinary turn and a weak match posts no follow-up card, so the
+ *  question is not answered first; waiting for it keeps the page settled. */
+async function settleIntake(page: Page, _name: string) {
   const log = transcript(page);
   await expect(log.getByText(/What do you actually want me for\?|I'm .* Untrained|precisely nothing so far|Fine, general it is|Right, I'm/).first()).toBeVisible();
-  if (await log.getByText("Fine, general it is.").count() || await log.getByText(/^Right, I'm /).count()) return;
-  if (!(await log.getByText("What do you actually want me for?").count())) return;
-  if (!(await log.getByText("Give me one real thing you'd rather hand over.").count())) {
-    await say(page, name, "just chat with me");
-    await expect(log.getByText("Give me one real thing you'd rather hand over.")).toBeVisible();
-  }
-  await say(page, name, "nothing specific, general chat");
-  await expect(log.getByText("I don't think you need a specialist for this.")).toBeVisible();
-  await page.getByRole("button", { name: "That's fine", exact: true }).click();
-  await expect(log.getByText("Fine, general it is.")).toBeVisible();
 }
 const composer = (page: Page, name: string) => page.getByRole("textbox", { name: `Message ${name}`, exact: true });
 async function say(page: Page, name: string, text: string) {
   const box = composer(page, name);
   await box.click();
   await box.fill(text);
-  await box.press("Enter");
+  await box.press(SEND_KEY);
   await retryIfRevoked(page, name);
 }
 /** The harness incident the candidate record carries as open (§4.1): a turn
@@ -342,13 +341,8 @@ const sourceBox = (page: Page) => page.getByRole("textbox", { name: "Markdown so
 const lightbox = (page: Page) => page.getByTestId("image-lightbox");
 async function openConnectedApps(page: Page) {
   const sidebar = await openSidebar(page);
-  const entry = sidebar.getByRole("button", { name: /Connected apps/ }).first();
-  // The Tools group folds on shorter windows; a person opens it first.
-  if (await entry.isVisible()) await entry.click();
-  else {
-    await sidebar.getByRole("button", { name: "Tools", exact: true }).click();
-    await page.getByRole("menu", { name: "Tools" }).getByRole("menuitem", { name: "Connected apps", exact: true }).click();
-  }
+  // The strip under "Needs you" (0.1.62), or the Tools menu before it.
+  await openSidebarPlace(sidebar, "apps");
   const panel = page.getByRole("dialog", { name: "Connected apps" });
   await expect(panel).toBeVisible();
   return panel;
@@ -436,6 +430,8 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
   const before = ((await api("/api/bots?messages=0")).bots as Bot[]).length;
   await sidebar.getByRole("button", { name: "New or share", exact: true }).click();
   await page.getByRole("button", { name: "New Bot", exact: true }).click();
+  // New Bot opens the chooser (2274a095); Start blank makes the plain bot.
+  await page.getByRole("button", { name: "Start blank →", exact: true }).click();
   await expect.poll(async () => ((await api("/api/bots?messages=0")).bots as Bot[]).length).toBe(before + 1);
   const created = ((await api("/api/bots?messages=0")).bots as Array<Bot & { createdAt: number }>).sort((a, b) => b.createdAt - a.createdAt)[0]!;
   const bot: Bot = { id: created.id, threadId: created.threadId, name: created.name };
@@ -490,6 +486,9 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
 
   // A chat image opens the lightbox.
   await page.locator('input[type="file"]').setInputFiles([{ name: "sweep.png", mimeType: "image/png", buffer: png(64, 48, [30, 140, 220]) }]);
+  // Send waits for the image to finish uploading (composer-send-gate); a
+  // person sees the chip land first, and so does this.
+  await expect(page.getByRole("button", { name: "Preview sweep.png", exact: true })).toBeVisible({ timeout: 30_000 });
   await say(page, bot.name, "A picture for the sweep.");
   await expect.poll(() => busy(bot), { timeout: 30_000 }).toBe(false);
   const attached = page.locator("main").getByRole("button", { name: /^Preview attached image / }).last();
@@ -530,8 +529,9 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
   const box = await stop.boundingBox();
   expect(box && box.x >= 0 && box.x + box.width <= 390).toBe(true);
   // Visible is not enough: nothing may sit on top of it.
-  const onTop = await stop.evaluate((el) => { const r = el.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return Boolean(hit && (hit === el || el.contains(hit))); });
-  expect(onTop, "Stop is covered at 390px").toBe(true);
+  // Polled: going from 1024 to 390 slides the phone drawer out over 200 ms,
+  // and a check in that window measures the animation, not the layout.
+  await expect.poll(() => stop.evaluate((el) => { const r = el.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return Boolean(hit && (hit === el || el.contains(hit))); }), { message: "Stop is covered at 390px", timeout: 5_000 }).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await shot(page, "07g-sweep-narrow-header-stop");
   await header.getByRole("button", { name: "Stop this turn" }).click();
@@ -560,9 +560,12 @@ test("06 QCARD1: single + multi-select card: padded groups, gapped rounded rows,
       const groups = [...section.querySelectorAll('[role="radiogroup"],[role="group"]')] as HTMLElement[];
       const g = groups.map((el) => { const cs = getComputedStyle(el); return { padding: [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map(px), radius: px(cs.borderTopLeftRadius), border: px(cs.borderTopWidth) }; });
       const betweenGroups = groups.length > 1 ? Math.round(groups[1]!.getBoundingClientRect().top - groups[0]!.getBoundingClientRect().bottom) : -1;
-      const rows = [...section.querySelectorAll('[role="radio"],[role="checkbox"]')] as HTMLElement[];
-      const r = rows.map((el) => { const cs = getComputedStyle(el); return { label: el.innerText.split("\n")[0], checked: el.getAttribute("aria-checked") === "true", radius: px(cs.borderTopLeftRadius), padding: [cs.paddingTop, cs.paddingLeft].map(px), bg: cs.backgroundColor, border: cs.borderTopColor }; });
-      const first = rows[0]!.getBoundingClientRect(), second = rows[1]!.getBoundingClientRect();
+      // A row is the rounded box. For an option that is the radio/checkbox
+      // itself; for "Other" (since 8f8f4e94) the radio is the small indicator
+      // button INSIDE the row, and the row is the <label> around it.
+      const rows = ([...section.querySelectorAll('[role="radio"],[role="checkbox"]')] as HTMLElement[]).map((el) => ({ el, box: (el.closest("label") ?? el) as HTMLElement }));
+      const r = rows.map(({ el, box }) => { const cs = getComputedStyle(box); return { label: box.innerText.split("\n")[0], other: box !== el, checked: el.getAttribute("aria-checked") === "true", radius: px(cs.borderTopLeftRadius), padding: [cs.paddingTop, cs.paddingLeft].map(px), bg: cs.backgroundColor, border: cs.borderTopColor }; });
+      const first = rows[0]!.box.getBoundingClientRect(), second = rows[1]!.box.getBoundingClientRect();
       const accent = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim();
       return { groups: g, betweenGroups, rowGap: Math.round(second.top - first.bottom), rows: r, accent, card: section.getBoundingClientRect().toJSON() };
     });
@@ -570,7 +573,10 @@ test("06 QCARD1: single + multi-select card: padded groups, gapped rounded rows,
     for (const group of metrics.groups) { expect(group.padding).toEqual([16, 16, 16, 16]); expect(group.radius).toBeGreaterThanOrEqual(10); }
     expect(metrics.betweenGroups).toBeGreaterThanOrEqual(12);
     expect(metrics.rowGap).toBeGreaterThanOrEqual(8);
-    for (const row of metrics.rows) { expect(row.radius).toBe(10); expect(row.padding[0]).toBeGreaterThanOrEqual(12); }
+    // QCARD1 (d364b463) pads option rows py-3 and the Other row py-2, since
+    // it holds the composer-style pill; every row is rounded 10.
+    expect(metrics.rows.filter((row) => row.other).length).toBeGreaterThan(0);
+    for (const row of metrics.rows) { expect(row.radius).toBe(10); expect(row.padding[0]).toBeGreaterThanOrEqual(row.other ? 8 : 12); }
     const picked = metrics.rows.filter((row) => row.checked), plain = metrics.rows.filter((row) => !row.checked);
     expect(picked.map((row) => row.label)).toEqual(["Detailed", "Intro", "Outro"]);
     // Accent-tinted, not a solid gray block: a translucent tint (alpha < 0.35) whose
@@ -796,7 +802,11 @@ test("04 RED2C: a turn whose own memory capture rolls the thread checkpoint is n
 
 test("02 LFU2: Settings → Engines shows the pinned Fuigo; a Fuigo bot completes a real FluxRouter turn and answers a real question card", async ({ page }) => {
   test.setTimeout(600_000);
+  // Without the staged bundle there is no pinned Fuigo for Engines to show,
+  // so nothing here can be proved; a CI shard would only wait out 120 s. It
+  // was never reached there while 06 failed before it in this serial file.
   if (!FUIGO_DIR) pending("MURAGE_SMOKE_FUIGO_DIR naming the staged bundle");
+  test.skip(!FUIGO_DIR, "live proof: needs MURAGE_SMOKE_FUIGO_DIR naming the staged Fuigo bundle");
   const haveKey = Boolean(FLUX_KEY_FILE && existsSync(FLUX_KEY_FILE));
   if (!haveKey) pending("MURAGE_SMOKE_FLUX_KEY_FILE naming a FluxRouter key");
   await openApp(page);

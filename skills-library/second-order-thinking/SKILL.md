@@ -6,7 +6,7 @@ description: |
   Do NOT use for imagining failure scenarios (use premortem-analysis), comparing options with scoring (use weighted-decision-matrix), or business strategic impact analysis (use business strategy skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decision-making analysis planning"
   category: "productivity"

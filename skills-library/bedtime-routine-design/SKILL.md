@@ -6,7 +6,7 @@ description: |
   Do NOT use for diagnosing sleep disorders, treating insomnia in children, or replacing guidance from a pediatric sleep specialist.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "parenting sleep template"
   category: "family-relationships"

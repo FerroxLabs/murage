@@ -4,7 +4,7 @@ description: |
   Advanced video editing mastery covering Premiere Pro and DaVinci Resolve workflows, professional cutting techniques, color grading pipelines, audio post-production, multi-camera editing, proxy workflows, export optimization, and project management for professional and creator-level editors. Use when the user asks about video editing master or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "video-production design"
   category: "design-creative"

@@ -4,7 +4,7 @@ description: |
   Guide to beekeeping including hive types, seasonal management, inspection routines, honey harvest, disease and pest management, bee biology, equipment, regulations, and startup costs. Use when the user asks about beekeeping guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide step-by-step sustainability"
   category: "hobbies-crafts"

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { UI_LANGUAGE_KEY, bootLanguage, localeVersion, rememberLanguage, resolveLocale, setLocale, subscribeLocale, t } from "./i18n";
 import { en, loadLocalePack, localeChoices, localeCodes, localeLoaders } from "@/locales";
 import { allLocalePacks } from "@/locales/testing";
+import { allowedSentence } from "../../server/voice/voice-host";
 
 afterEach(() => setLocale("en"));
 
@@ -60,6 +61,18 @@ describe("t", () => {
       for (const [key, value] of Object.entries(pack)) {
         expect(Object.hasOwn(en, key)).toBe(true);
         expect((value ?? "").trim().length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("every pack carries the four call acknowledgement phrases, short and promise-free", async () => {
+    const keys = ["calls.ack.look", "calls.ack.oneSec", "calls.ack.onIt", "calls.ack.checking"];
+    for (const [code, pack] of Object.entries(await allLocalePacks())) {
+      for (const key of keys) {
+        const value = (pack as Record<string, string | undefined>)[key] ?? "";
+        expect(value.length, `${code} ${key}`).toBeGreaterThan(0);
+        expect(value.length, `${code} ${key}`).toBeLessThan(30);
+        expect(allowedSentence(value), `${code} ${key}`).toBe(true);
       }
     }
   });

@@ -6,7 +6,7 @@ description: |
   Do NOT use for single-paper summaries, annotated bibliographies, or research paper structure (use research-paper-structure for full papers).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "academic-writing writing research"
   category: "writing"

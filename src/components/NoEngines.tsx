@@ -12,6 +12,7 @@ import { EngineSetup, installCommandFor } from "@/components/EngineSetup";
 import { ProviderMark } from "@/components/ProviderIcons";
 import { splitEngineRail } from "@/lib/engine-rail";
 import { t } from "@/lib/i18n";
+import { PhoneBotListBar } from "./OpenBotListButton";
 
 export function NoEngines() {
   const { state, refreshInstances } = useStore();
@@ -46,6 +47,9 @@ export function NoEngines() {
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-app">
+      {/* No header row here, so phones get one that carries the drawer
+          button and nothing else (OpenBotListButton.tsx). */}
+      <PhoneBotListBar />
       <div className="mx-auto w-full max-w-[560px] px-6 py-12">
         <h1 className="text-[20px] font-semibold text-ink">{t("noEngines.title")}</h1>
         <p className="mt-1.5 text-[13.5px] leading-relaxed text-ink-secondary">

@@ -48,6 +48,7 @@ import {
 } from "../shared/workspace-files.ts";
 import { hiddenRoute, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
 import { sha256Hex, workspaceRevisionOf } from "./workspace-revision.ts";
+import { readRoutineRuns } from "./routine-runs-journal.ts";
 
 const warn = (message: string) => console.warn(`[workspace-files] ${message}`);
 
@@ -139,8 +140,11 @@ function cloudRunRecorded(dataDir: string, scope: WorkspaceScopeRef): boolean {
   try {
     const path = join(dataDir, "routines.json"), stat = lstatSync(path);
     if (!stat.isFile() || stat.size > ROUTINES_FILE_MAX_BYTES) return false;
-    const runs = (JSON.parse(readFileSync(path, "utf8")) as { runs?: unknown } | null)?.runs;
-    return Array.isArray(runs) && runs.some(run => {
+    // Since 0.1.62 the run ledger is routine-runs/*.jsonl; an older file still
+    // carries `runs` inline, so both are read.
+    const inline = (JSON.parse(readFileSync(path, "utf8")) as { runs?: unknown } | null)?.runs;
+    const runs = [...(Array.isArray(inline) ? inline : []), ...readRoutineRuns(dataDir)];
+    return runs.length > 0 && runs.some(run => {
       if (!run || typeof run !== "object") return false;
       const { runOn, botId, threadId } = run as Record<string, unknown>;
       return runOn === "cloud" && botId === scope.botId && threadId === scope.threadId;

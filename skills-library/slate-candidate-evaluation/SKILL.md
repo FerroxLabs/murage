@@ -1,8 +1,9 @@
 ---
 name: slate-candidate-evaluation
 description: "User has a signed-off outcome doc from `role-design.md` and is about to interview, is mid-loop with disagreement surfacing, or just made an offer that feels wrong. No outcome doc means every interview is rapport theater — don't load this without one."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "slate"
 ---

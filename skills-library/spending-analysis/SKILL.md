@@ -6,7 +6,7 @@ description: |
   Do NOT use for setting up expense tracking (use expense-tracking-setup), creating a budget (use budget-planning), or auditing subscriptions only (use subscription-audit).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "budgeting personal-finance expenses analysis savings"
   category: "personal-finance"

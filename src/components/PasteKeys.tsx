@@ -34,6 +34,7 @@ import { Check, Loader2, TriangleAlert, X } from "lucide-react";
 
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { FLUX_KEY_FIELD_SELECTOR, focusSettingsField } from "./ConnectedAppsLock";
 import {
   extractKeys,
   maskKey,
@@ -148,7 +149,7 @@ export function PasteKeysBody({
         autoComplete="off"
         autoCorrect="off"
         autoCapitalize="off"
-        placeholder={"OPENAI_API_KEY=…\nCOMPOSIO_API_KEY=…"}
+        placeholder={"OPENAI_API_KEY=…\nFLUX_API_KEY=…"}
         aria-label="Paste keys to look through"
         className="w-full resize-y rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
       />
@@ -543,6 +544,9 @@ export function PasteKeys() {
           }
           controller.dismiss(id);
           dispatch({ type: "toggleAppSettings", open: true, section: "models" });
+          // This box sits on Models itself since 0.1.62: take the cursor up to
+          // the Flux Router card rather than leave it where it was.
+          focusSettingsField(FLUX_KEY_FIELD_SELECTOR);
         } else void controller.accept(id);
       }}
       onDismiss={(id) => { setNavigationError(""); controller.dismiss(id); }}

@@ -12,7 +12,10 @@ export const notificationPreferencesSchema = z.object({
 }).strict();
 export type NotificationPreferences = z.infer<typeof notificationPreferencesSchema>;
 export function resolveNotificationPreferences(value?: unknown): NotificationPreferences {
-  return notificationPreferencesSchema.parse(value === undefined ? {} : value);
+  // A config that says `"notifications": null` (never set, or cleared) means the
+  // defaults. Parsing null threw, and every caller swallows notification
+  // errors, so a host with null silently sent no notification or push at all.
+  return notificationPreferencesSchema.parse(value === undefined || value === null ? {} : value);
 }
 export interface PreferenceNotification {
   kind: "approval" | "question" | "takeover" | "done" | "routine-failed" | "turn-failed" | "backup-waiting";

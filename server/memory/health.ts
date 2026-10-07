@@ -38,7 +38,7 @@ export function memoryHealth(extractorInstanceId:string|null){
     AND EXISTS(SELECT 1 FROM memory_jobs j WHERE j.source_id=s.id AND j.source_revision=s.revision AND j.stage='capture' AND j.status='complete')`).get()!;
   const supplied=db.prepare("SELECT count(*) n,coalesce(sum(json_array_length(record_versions)),0) refs,max(created_at) at FROM memory_disclosures WHERE state='delivered' AND json_array_length(record_versions)>0").get()!;
   const state: "not-configured"|"disabled"|"configured"|"budget-limited" = !learning.automaticFacts&&!learning.automaticProcedures ? "disabled"
-    : !extractorInstanceId ? "not-configured" : learning.dailyCostUsd!==null||learning.inputLimit===0||learning.outputLimit===0||learning.callsPerMinute===0 ? "budget-limited" : "configured";
+    : !extractorInstanceId ? "not-configured" : learning.dailyInputTokens===0||learning.dailyOutputTokens===0||learning.callsPerMinute===0 ? "budget-limited" : "configured";
   return {
     captured:{sources:Number(captured.n),lastAt:captured.at===null?null:Number(captured.at)},
     processed:{sources:Number(processed.n),lastAt:observed?.processedAt??null},
@@ -46,7 +46,7 @@ export function memoryHealth(extractorInstanceId:string|null){
     supplied:{turns:Number(supplied.n),references:Number(supplied.refs),lastAt:supplied.at===null?null:Number(supplied.at)},
     synthesis:{state,reason:state==="not-configured"?"Choose an extraction connection for distilled learning; capture and recall remain available."
       :state==="disabled"?"Automatic learning is disabled."
-        :state==="budget-limited"?learning.dailyCostUsd!==null?"The selected cost ceiling needs a trusted pricing adapter before synthesis can run.":"A configured token or call limit prevents synthesis."
+        :state==="budget-limited"?"A configured token or call limit prevents synthesis."
           :"A synthesis connection is configured; this does not by itself prove a completed extraction."},
   };
 }

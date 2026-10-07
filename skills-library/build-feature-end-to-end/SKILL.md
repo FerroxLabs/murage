@@ -14,7 +14,7 @@ type: workflow
 skills: feature-spec git-branching-strategy tdd-workflow code-review-patterns deployment-strategies
 trigger_phrases: build a feature end to end implement a new feature full feature development lifecycle
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: architecture testing devops planning step-by-step
   category: software-project

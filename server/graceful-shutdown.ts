@@ -32,3 +32,13 @@ export function createGracefulShutdown({
     });
   };
 }
+
+/** The desktop's "close by yourself" request (electron/server-child-lifecycle.mjs
+ * GRACEFUL_CLOSE_MESSAGE), answered like SIGTERM. Windows has no signal the
+ * harness can catch: without this, quitting Murage there hard-terminates the
+ * harness and a waiting run never says Murage closed (G12). */
+export const APP_CLOSE_REQUEST_TYPE = "murage:close";
+
+export function isAppCloseRequest(message: unknown): boolean {
+  return typeof message === "object" && message !== null && (message as { type?: unknown }).type === APP_CLOSE_REQUEST_TYPE;
+}

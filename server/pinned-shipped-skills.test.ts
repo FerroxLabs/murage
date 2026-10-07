@@ -16,17 +16,27 @@ import { createProcedurePin, preparePinnedProcedures, readProcedureBundle } from
 import { loadBundledSkills, loadUserSkills, mergeSkills, shippedSkillCheck, type BundledSkill } from "./skill-library.ts";
 import { skillLayers } from "./bot-shapes.ts";
 import { workspaceDir } from "./workspace.ts";
-import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { IMAGE_LIBRARY_TOOLS } from "../shared/image-library-audience.ts";
-import { MURAGE_MCP_TOOLS, phoneMountName, toolCallStyleFor } from "../shared/murage-tool-names.ts";
+import { CLAUDE_TOOL_SURFACE, CODEX_TOOL_SURFACE, FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, PI_TOOL_SURFACE, renderMurageTools, type McpToolSurface, type MurageToolMounts } from "./murage-tool-surface.ts";
+import { CODEX_PHONE_MOUNT } from "./drivers/codex.ts";
 
 const SHIPPED = join(import.meta.dirname, "..", "skills");
 const bundled = loadBundledSkills(SHIPPED);
 const murageSkill = shippedSkillCheck(bundled);
-/** Every engine kind a turn can run on. */
-const ENGINE_KINDS = BUILT_IN_DRIVERS.map(driver => driver.driverKind);
-const ALL_NAMES = [...new Set(Object.values(MURAGE_MCP_TOOLS).flat() as string[])];
-const bare = new RegExp(`(?<![A-Za-z0-9_"])(${ALL_NAMES.join("|")})(?![A-Za-z0-9_"])`);
+/** Every way an engine's driver renders Murage's tool names in a turn
+ *  (murage-tool-surface.ts; each driver renders with one of these). */
+const ENGINES: ReadonlyArray<readonly [name: string, surface: McpToolSurface, mounts: MurageToolMounts]> = [
+  ["claude", CLAUDE_TOOL_SURFACE, { agents: "agents", phone: "phone" }],
+  ["codex", CODEX_TOOL_SURFACE, { agents: "agents", phone: CODEX_PHONE_MOUNT }],
+  ["fuigo", FUIGO_TOOL_SURFACE, { agents: "agents", phone: "phone" }],
+  ["pi", PI_TOOL_SURFACE, { agents: "agents", phone: "phone" }],
+  ["antigravity", NEUTRAL_TOOL_SURFACE, { agents: "agents", phone: "phone" }],
+];
+const engine = (name: string) => ENGINES.find(item => item[0] === name)!;
+/** The agents tools a shipped skill may name (bot-shapes.ts SKILL_TOOL_NAMES). */
+const SKILL_TOOLS = ["generate_image", "get_prompt_block", "list_image_models", "list_prompt_blocks", "list_reference_packs",
+  "resolve_image_reference", "save_prompt_block", "save_reference_pack", "skill_manage", "skills_list"];
+const bare = new RegExp(`(?<![A-Za-z0-9_"])(${SKILL_TOOLS.join("|")})(?![A-Za-z0-9_"])`);
 
 const owned: string[] = [];
 beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); });
@@ -42,8 +52,13 @@ function pinned(catalogue: BundledSkill[], botId = bot(), threadId = `task-${ran
   return preparePinnedProcedures(botId, threadId, JSON.parse(JSON.stringify(pin)), false).catalogue;
 }
 const byId = (skills: readonly BundledSkill[], id: string) => skills.find(skill => skill.manifest.id === id)!;
-const layer = (skill: BundledSkill, kind: string, ownerAudience?: boolean) =>
-  skillLayers([skill], { toolCallStyle: toolCallStyleFor(kind), murageSkill, phoneServer: phoneMountName(kind), ownerAudience })[0]!.text;
+/** The skill's layer as a turn on this engine reads it: marked by skillLayers,
+ *  rendered by the engine's driver. */
+const layer = (skill: BundledSkill, name: string, ownerAudience?: boolean) => {
+  const [, surface, mounts] = engine(name);
+  return renderMurageTools(skillLayers([skill], { murageSkill, agentsMounted: true, phoneMounted: true, ownerAudience })[0]!.text, surface, mounts);
+};
+const ENGINE_NAMES = ENGINES.map(item => item[0]);
 
 describe("a task's pinned copy of a shipped skill", () => {
   it("lives in the task's folder, keeps its shipped mark in the pin, and is still Murage's", () => {
@@ -61,7 +76,7 @@ describe("a task's pinned copy of a shipped skill", () => {
 
   it("on a contact turn, leaves the saved library out on every engine, and the owner's copy keeps it", () => {
     const copy = byId(pinned(bundled), "image-generation"), shipped = byId(bundled, "image-generation");
-    for (const kind of ENGINE_KINDS) {
+    for (const kind of ENGINE_NAMES) {
       const contact = layer(copy, kind, false), owner = layer(copy, kind, true);
       // word for word what the shipped folder's skill gives the same turn
       expect(contact, kind).toBe(layer(shipped, kind, false));
@@ -74,12 +89,12 @@ describe("a task's pinned copy of a shipped skill", () => {
     }
   });
 
-  it.each(ENGINE_KINDS)("%s: every shipped skill names Murage's tools the way this engine calls them", kind => {
+  it.each(ENGINE_NAMES)("%s: every shipped skill names Murage's tools the way this engine calls them", kind => {
     const copies = pinned(bundled);
     for (const shipped of bundled) {
       const copy = byId(copies, shipped.manifest.id), text = layer(copy, kind, true);
       expect(text, shipped.manifest.id).toBe(layer(shipped, kind, true));
-      if (toolCallStyleFor(kind) === "use-tool") {
+      if (engine(kind)[1].kind === "search-then-call") {
         // nothing left that use_tool would call bare and fail "Tool not found"
         expect(text.replace(/use_tool with tool_name "[^"]+"/g, "").replace(/\n---[\s\S]*?\n---/, ""), shipped.manifest.id).not.toMatch(bare);
       } else {
@@ -87,8 +102,10 @@ describe("a task's pinned copy of a shipped skill", () => {
       }
     }
     const image = layer(byId(copies, "image-generation"), kind, true);
-    expect(image).toContain(toolCallStyleFor(kind) === "use-tool" ? 'use_tool with tool_name "agents__generate_image"' : "`generate_image`");
-    expect(layer(byId(copies, "phone-harness"), kind, true)).toContain(`Use the \`${phoneMountName(kind)}\` tools`);
+    const [, surface, mounts] = engine(kind);
+    expect(image).toContain(surface.kind === "search-then-call" ? 'use_tool with tool_name "agents__generate_image"'
+      : surface.kind === "direct" ? surface.qualify("agents", "generate_image") : 'the tool "generate_image" on MCP server "agents"');
+    expect(layer(byId(copies, "phone-harness"), kind, true)).toContain(`Use the \`${mounts.phone}\` tools`);
   });
 
   it("pinned before the mark was recorded (an earlier version), is known by its id and its exact text", () => {
@@ -96,11 +113,11 @@ describe("a task's pinned copy of a shipped skill", () => {
     const copies = pinned(unmarked);
     for (const copy of copies) { expect(copy.shipped).toBeUndefined(); expect(murageSkill(copy), copy.manifest.id).toBe(true); }
     const image = byId(copies, "image-generation");
-    expect(layer(image, "fuigoAgent", false)).toBe(layer(byId(bundled, "image-generation"), "fuigoAgent", false));
+    expect(layer(image, "fuigo", false)).toBe(layer(byId(bundled, "image-generation"), "fuigo", false));
     // an earlier Windows build pinned the guide as it read it, with CRLF
     const crlf = { ...image, instructions: image.instructions.replace(/\n/g, "\r\n") };
     expect(murageSkill(crlf)).toBe(true);
-    const contact = layer(crlf, "fuigoAgent", false);
+    const contact = layer(crlf, "fuigo", false);
     for (const tool of IMAGE_LIBRARY_TOOLS) expect(contact).not.toContain(tool);
     expect(contact).toContain('use_tool with tool_name "agents__generate_image"');
   });
@@ -134,7 +151,7 @@ describe("an owner's own skill under a shipped skill's id", () => {
     expect(copy.shipped).toBeUndefined();
     expect(murageSkill(copy)).toBe(false);
     const plain = skillLayers([copy])[0]!.text;
-    expect(layer(copy, "fuigoAgent", false)).toBe(plain);
+    expect(layer(copy, "fuigo", false)).toBe(plain);
     expect(layer(copy, "claude", false)).toBe(plain);
     expect(plain).toContain("save_prompt_block for the brand lock");
     expect(plain).toContain("Save the lock once with");
@@ -142,6 +159,6 @@ describe("an owner's own skill under a shipped skill's id", () => {
   it("identical to the shipped text, it is Murage's text and read as such", () => {
     const copy = byId(pinned(ownSkill(text => text)), "image-generation");
     expect(murageSkill(copy)).toBe(true);
-    expect(layer(copy, "fuigoAgent", false)).toBe(layer(byId(bundled, "image-generation"), "fuigoAgent", false));
+    expect(layer(copy, "fuigo", false)).toBe(layer(byId(bundled, "image-generation"), "fuigo", false));
   });
 });

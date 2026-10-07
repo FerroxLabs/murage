@@ -12,7 +12,7 @@ description: |
   (requires incident response process).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis planning strategy checklist"
   category: "business-strategy"

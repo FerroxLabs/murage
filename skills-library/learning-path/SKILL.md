@@ -6,7 +6,7 @@ description: |
   Do NOT use for academic study plans (use `study-plan`), for skill gap identification (use `skill-gap-analysis`), or for certification exam prep (use `certification-prep`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching study-skills step-by-step"
   category: "education"

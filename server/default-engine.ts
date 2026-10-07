@@ -59,6 +59,10 @@ export function pickDefaultEngine(described: readonly EngineReading[]): EngineCh
   const signInRank = (d: (typeof usable)[number]) => {
     // A snapshot that never answers the question (an engine that is not there
     // at all) keeps the benefit of the doubt, same as `undefined` below.
+    // Fuigo's "authenticated" means a METERED Murage/Flux key or login, not a
+    // purchase the person already made, so it never earns the signed-in rank 0
+    // (a tie with a signed-in Claude/Codex went to Fuigo via the preference below).
+    if (d.driverKind === "fuigoAgent") return 1;
     const signedIn = "authenticated" in d.snapshot ? d.snapshot.authenticated : undefined;
     return signedIn === true ? 0 : signedIn === undefined ? 1 : 2;
   };
@@ -107,4 +111,45 @@ export function pickDefaultEngine(described: readonly EngineReading[]): EngineCh
     preferred.find((d) => d.driverKind === "claudeAgent") ??
     preferred[0];
   return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
+}
+
+// The last engine choice, remembered between launches. Probing every engine
+// costs about two seconds, and it only matters when a bot is created, so a
+// start with bots already in place reads this and refreshes it in the
+// background instead of holding the port closed for the probe.
+import { mkdirSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { writeFileAtomic } from "./atomic.ts";
+
+export function readRememberedEngine(file: string): EngineChoice | null {
+  try {
+    const value = JSON.parse(readFileSync(file, "utf8")) as Partial<EngineChoice>;
+    return typeof value.instanceId === "string" && typeof value.model === "string" ? { instanceId: value.instanceId, model: value.model } : null;
+  } catch { return null; }
+}
+
+export function rememberEngine(file: string, choice: EngineChoice): void {
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileAtomic(file, JSON.stringify({ instanceId: choice.instanceId, model: choice.model }), { mode: 0o600 });
+  } catch { /* a missing memory only means the next start probes first */ }
+}
+
+/** The choice to start with. With bots present and a remembered choice, that
+ * choice at once and `refreshed` resolves once the probe has run; otherwise
+ * the probe is awaited (a first run, or nothing remembered). */
+export async function bootEngineChoice(opts: {
+  hasBots: boolean; file: string; probe: () => Promise<EngineChoice>; adopt: (choice: EngineChoice) => void;
+  /** Whether the remembered choice still names an engine and model that exist
+   * and can be used now (registered, enabled, listed, with a non-empty catalog).
+   * A choice that fails this is not adopted, and the probe is awaited as on a
+   * first run. Omitted means every remembered choice counts. */
+  usable?: (choice: EngineChoice) => boolean;
+}): Promise<{ refreshed: Promise<void> }> {
+  const run = async () => { const choice = await opts.probe(); opts.adopt(choice); rememberEngine(opts.file, choice); };
+  const saved = opts.hasBots ? readRememberedEngine(opts.file) : null;
+  const remembered = saved && (opts.usable?.(saved) ?? true) ? saved : null;
+  if (!remembered) { await run(); return { refreshed: Promise.resolve() }; }
+  opts.adopt(remembered);
+  return { refreshed: run().catch(() => {}) };
 }

@@ -279,6 +279,11 @@ body,
 
 html[data-keyboard="open"] #root {
   height: var(--vvh, 100%);
+  /* Follow the visual viewport when iOS has panned it (--vvt, see
+     trackVisualViewport). Relative, not a transform, so `fixed` descendants
+     keep resolving against the layout viewport. */
+  position: relative;
+  top: var(--vvt, 0px);
 }
 
 body {
@@ -337,6 +342,55 @@ body {
    height becomes `calc(<factor>*var(--vvh,100dvh))`. Overlays with no focusable
    field (drag targets, confirm prompts, image lightboxes, click-away backdrops)
    keep `inset-0`: no keyboard can be up while they are. */
+
+/* Safe-area convention. The iOS app draws its WebView under the status bar
+   and the home indicator (viewport-fit=cover), so the page owns both insets.
+   env() is 0px on the desktop, in a browser tab and in the Android shell,
+   whose WebView already starts below its own status bar, so every rule here
+   is a no-op there by construction.
+   --inset-bottom drops to 0px while the keyboard is up: the home indicator is
+   behind the keyboard then, and #root has already shrunk to the visual
+   viewport (the same rule as .dock-safe-bottom below).
+   --vvh-inset is the visual viewport less both insets: the height a centred
+   modal may use without its top edge going under the Dynamic Island. */
+:root {
+  --inset-top: env(safe-area-inset-top, 0px);
+  --inset-bottom: env(safe-area-inset-bottom, 0px);
+  --vvh-inset: calc(var(--vvh, 100dvh) - var(--inset-top) - var(--inset-bottom));
+}
+:root[data-keyboard="open"] {
+  --inset-bottom: 0px;
+}
+
+/* A modal backdrop (`fixed inset-0`, or `fixed inset-x-0 top-0
+   h-[var(--vvh,100dvh)]`) that centres a dialog. The backdrop itself moves
+   inside the safe area, and --vvh is redefined for it and everything in it,
+   so its own height and every `calc(var(--vvh,100dvh)-2rem)` cap inside it
+   shrink by the insets with no per-dialog arithmetic. Unlayered, so it
+   outranks the utilities' top/bottom. The two strips it no longer covers are
+   painted with its own ground and still count as the backdrop for a
+   click-to-dismiss (a click on a pseudo-element targets its element). */
+.overlay-inset {
+  --vvh: var(--vvh-inset);
+  top: calc(var(--inset-top) + var(--vvt, 0px));
+  bottom: var(--inset-bottom);
+}
+.overlay-inset::before,
+.overlay-inset::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: inherit;
+}
+.overlay-inset::before {
+  bottom: 100%;
+  height: var(--inset-top);
+}
+.overlay-inset::after {
+  top: 100%;
+  height: var(--inset-bottom);
+}
 
 /* The composer dock is the bottom edge of the app, so it owes the home
    indicator its inset — except when the keyboard is up, because the indicator
@@ -404,7 +458,8 @@ body {
   outline: none;
 }
 
-select.procedure-history-audience:focus-visible {
+select.procedure-history-audience:focus-visible,
+:is(input, textarea, select).browser-extension-control:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
@@ -535,6 +590,12 @@ select.procedure-history-audience:focus-visible {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  /* The label is a flex item with line-height 1, so its box stops at the
+     baseline's font size and the clipped sheen cut off descenders ("g" read
+     as "q" on Windows, 0.1.60 final 3). The padding gives the text room;
+     the negative margin keeps the row exactly where it was. */
+  padding-block: 0.2em;
+  margin-block: -0.2em;
 }
 
 /* The phone's message action sheet. It rises from the bottom edge because
@@ -1162,6 +1223,11 @@ button:disabled.bg-danger {
 }
 .whats-new h2[tabindex="-1"]:focus-visible,
 .announce h2[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+/* Settings takes focus itself as it opens so Tab starts inside it; after
+   Mod+, that counts as keyboard focus, and the whole sheet wore the ring. */
+.settings-dialog:focus-visible {
   outline: none;
 }
 .whats-new-display {

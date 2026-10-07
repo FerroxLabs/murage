@@ -35,7 +35,8 @@ test("owner enable and explicit interrupted-job retry remain truthful and access
   await controls.getByRole("button",{name:"Enable tested recall improvements"}).click();const authorizedResponse=await authorization;expect(authorizedResponse.ok()).toBe(true);expect(authorizedResponse.request().postDataJSON()).toEqual({action:"evolution-authorize"});
   await expect(controls.getByText("Authorized for shipped synthetic examples",{exact:true})).toBeVisible();
   await expect.poll(async()=>(await api("/api/memory/status")).evolution.job.status,{timeout:20000}).toBe("waiting");
-  const initial=await api("/api/memory/status");expect(initial.configuration.extractorInstanceId).toBeNull();expect(initial.evolution.job.started).toBe(false);
+  // Null remains the stored preference; connection resolution is reported separately.
+  const initial=await api("/api/memory/status");expect(initial.learning.settings.version).toBe(2);expect(initial.configuration.extractorInstanceId).toBeNull();expect(initial.evolution.job.started).toBe(false);
   // Seed only an interrupted receipt in this fixture's private database. No
   // model/worker is configured; retry proves the actual owner action route.
   const db=new DatabaseSync(join(fixture.info.dataDir,"messages.db"));
@@ -45,7 +46,7 @@ test("owner enable and explicit interrupted-job retry remain truthful and access
     job.snapshot={requestId:job.id,scopeId:job.scopeId,target:{kind:"memory-policy",ownerId:"workspace-owner",artifactId:"memory-policy",threadId:"memory-policy",scopeId:job.scopeId,baseRevision:initial.evolution.policy.revision,bundleId:hash(initial.evolution.policy)},policyRevision:initial.policyRevision,deletionEpoch:initial.deletionEpoch,learningRevision:initial.learning.revision,evidence:[],evidenceDigest:hash([]),outcomeBasis:"source-reported"};
     db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify(job),job.id);
   }finally{db.close();}
-  await controls.getByRole("button",{name:"Refresh recall status"}).click();await expect(controls.getByRole("button",{name:"Retry interrupted check"})).toBeVisible();await expect(controls.getByText("Cost unavailable.",{exact:false})).toBeVisible();
+  await controls.getByRole("button",{name:"Refresh recall status"}).click();await expect(controls.getByRole("button",{name:"Retry interrupted check"})).toBeVisible();/* G2 removes monetary status; interrupted-check behavior remains visible. */ await expect(controls.getByText("Cost unavailable.",{exact:false})).toHaveCount(0);
   const retry=page.waitForResponse(response=>response.url().endsWith("/api/memory/action")&&response.request().postDataJSON()?.action==="evolution-retry");
   await controls.getByRole("button",{name:"Retry interrupted check"}).click();expect((await retry).ok()).toBe(true);
   await expect(controls.getByText("Retry requested for this check.",{exact:true})).toBeVisible();expect((await api("/api/memory/status")).evolution.job.id).toBe(initial.evolution.job.id);

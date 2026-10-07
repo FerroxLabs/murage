@@ -216,17 +216,16 @@ describe("card one: hello", () => {
     expect(render("hello", "welcome")).toContain("disabled=\"\"");
   });
 
-  // THE DEFECT: Continue used to need only the email.
-  //
-  // So it lit up with the name box empty, and the profile that reached
-  // /api/config and then the signup carried an address and nobody's name. The
-  // approved flow is explicit that BOTH have to validate, and the way past an
-  // unfinished form is the Skip button beside it, not a half answer.
-  it("needs both a name and an email before Continue does anything", () => {
+  // THE DEFECT: Continue used to need only the email. Then it needed both,
+  // and O16 (0.1.61): the email is optional, as Skip already proved it was.
+  // A name is still required, so the Chief never has an address and nobody
+  // to call; an email, when typed, still has to be a real one.
+  it("needs a name, and an email only if one is typed, before Continue does anything", () => {
     expect(helloAnswerReady("Sean", "sean@example.com")).toBe(true);
     expect(helloAnswerReady("", "sean@example.com")).toBe(false);
     expect(helloAnswerReady("   ", "sean@example.com")).toBe(false);
-    expect(helloAnswerReady("Sean", "")).toBe(false);
+    expect(helloAnswerReady("Sean", "")).toBe(true);
+    expect(helloAnswerReady("Sean", "   ")).toBe(true);
     expect(helloAnswerReady("Sean", "sean@example")).toBe(false);
     expect(helloAnswerReady("Sean", "not an address")).toBe(false);
     // Whitespace around a real pair is a paste, not a refusal.

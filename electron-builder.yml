@@ -33,6 +33,7 @@ afterPack: ./scripts/after-pack.mjs
 # ELECTRON_RUN_AS_NODE (the agentcal-hq pattern).
 files:
   - electron/**
+  - scripts/browser-extension-host-registration.mjs
   # Every shared/*.mjs the main process imports must be named here: this list
   # is explicit, not a glob, so adding an import without adding a line here
   # packages an app that dies on launch with ERR_MODULE_NOT_FOUND. That shipped
@@ -47,6 +48,9 @@ files:
   - shared/backup-capture-failure.mjs
   - shared/closed-volume-sentences.mjs
   - shared/backup-folder-refusals.mjs
+  - shared/mcp-secret-url.mjs
+  - shared/remote-mcp-url.mjs
+  - shared/guarded-http.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
@@ -87,6 +91,28 @@ extraResources:
   # licence and copyright notice travel with the distribution, so they do.
   - from: third_party/models-dev
     to: licenses/models-dev
+  # Silero VAD (MIT, public/vad/silero_vad.onnx), the Instrument Serif font
+  # (SIL OFL 1.1, bundled in the renderer) and the six vendored team packages
+  # from openmausbot-teams (MIT, library/packages): each license requires its
+  # text to travel with the distribution.
+  - from: third_party/silero-vad
+    to: licenses/silero-vad
+  - from: third_party/instrument-serif
+    to: licenses/instrument-serif
+  - from: third_party/openmausbot-teams
+    to: licenses/openmausbot-teams
+  # WhatsApp channel: Baileys (MIT), its libsignal dependency (GPL-3.0, full
+  # text must travel), and the MIT Hermes Agent / OpenClaw code it adapts.
+  - from: dist-server/licenses/whatsapp
+    to: licenses/whatsapp-runtime
+  - from: third_party/baileys
+    to: licenses/baileys
+  - from: third_party/libsignal-node
+    to: licenses/libsignal-node
+  - from: third_party/hermes-agent
+    to: licenses/hermes-agent
+  - from: third_party/openclaw
+    to: licenses/openclaw
   # cloudflared is distributed under Apache-2.0 as a separate executable;
   # ship a named copy of that text so its terms remain unambiguous.
   - from: LICENSES/Apache-2.0.txt
@@ -107,8 +133,15 @@ extraResources:
     to: licenses/fuigo
   - from: dist
     to: ui
+  # Includes memory/pip-job-supervisor.ps1 outside ASAR for Windows reflection.
   - from: dist-server
     to: server
+  # Source-built optional browser helpers; preparation does not register a host.
+  - from: dist-native/browser-extension
+    to: browser-extension
+    filter:
+      - "**/*"
+      - "!development-public-key.json"
   # A FileMatcher skips its root node_modules directory; copy this staged
   # runtime as its own resource root so nested dependencies remain intact.
   - from: dist-server/node_modules

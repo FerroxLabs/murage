@@ -27,5 +27,15 @@ it("rewrites the name inside a longer line and leaves other text alone", () => {
 it("is applied where engine events become messages, so cards, activity, Inbox and tray all read it", async () => {
   const { readFileSync } = await import("node:fs");
   const index = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
-  expect(index).toMatch(/const pushMessage = \(raw[^)]*\) => \{[\s\S]{0,300}plainConnectedAppMessage\(raw\)/);
+  const start = index.indexOf("  const pushMessage =");
+  const push = index.slice(start, index.indexOf("\n  if (coordinatorVisibleText)", start));
+  // Tool-action stamping now happens inside the normalization call. Every
+  // append still consumes the normalized message, including non-tool rows.
+  expect(push).toMatch(/const m = plainConnectedAppMessage\(\{ \.\.\.raw, [^\n]+\}\);/);
+  // A row is stored from the normalized message, appended or written ahead
+  // of a hosted tool row (insertMessageBefore), never from the raw one.
+  expect(push).toContain('const stored = { ...(group && m.role === "bot" ? { ...m, from: speaker } : m),');
+  expect(push).toContain("store.insertMessageBefore(event.threadId, before, stored)");
+  expect(push).toContain("store.appendMessage(event.threadId, stored)");
+  expect(push).not.toMatch(/(appendMessage|insertMessageBefore)\([^;]*\.\.\.raw/);
 });

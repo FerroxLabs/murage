@@ -19,7 +19,7 @@ trigger_phrases: >-
   make money while I sleep build income-generating assets diversify my income
   create multiple income streams
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: investing entrepreneurship personal-finance automation step-by-step planning
   category: business-operations

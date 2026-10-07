@@ -10,8 +10,11 @@
 // audience is the owner: a conversation that belongs to a linked channel
 // person (Slack, Discord or Telegram) gets neither, matching the structured
 // memory rule that bot and team scopes are owner-audience only.
+import { type Partition, isHomePartition } from "./execution-audience.ts";
+import { liveTeamLabel } from "./team-identities.ts";
 import { aboutMePrompt } from "./about-me.ts";
 import { notebookSourceIds } from "./memory/import.ts";
+import { ownerOnly } from "./owner-audience.ts";
 import { sectionContextSystemPrompt } from "./section-context.ts";
 import { loadMemory, memorySystemPrompt } from "./workspace.ts";
 
@@ -31,15 +34,20 @@ type StandingBot = { id: string; section?: string; teamBrief?: boolean; aboutMe?
 type StandingOptions = { ownerAudience: boolean; fileTools: boolean; unattended?: boolean;
   /** A webhook turn: its payload came from outside and its reply may go
    *  back out, so the owner's private profile stays home. */
+  partition?: Partition;
   webhook?: boolean };
 
 /** The two blocks apart, for the labelled prompt (bot-shapes.ts). */
+// Each block is a registered owner-audience surface (owner-audience.ts).
 export function standingContextParts(bot: StandingBot, opts: StandingOptions): { aboutMe: string; teamBrief: string; memory: string } {
-  if (!opts.ownerAudience) return { aboutMe: "", teamBrief: "", memory: "" };
+  const owner = opts.ownerAudience;
+  const partition = opts.partition ?? { kind: "home" };
+  // A team partition's brief is its live team's; an unknown or retired team has none, never General's (L3).
+  const section = isHomePartition(partition) ? bot.section : partition.kind === "team" ? liveTeamLabel(partition.teamId) : undefined;
   return {
-    aboutMe: bot.aboutMe === false || opts.webhook ? "" : aboutMePrompt(),
-    teamBrief: bot.teamBrief === false ? "" : sectionContextSystemPrompt(bot.section),
-    memory: memorySystemPrompt(bot.id, { fileTools: opts.fileTools && !opts.unattended }),
+    aboutMe: ownerOnly("about-me", owner, () => bot.aboutMe === false || opts.webhook ? "" : aboutMePrompt()),
+    teamBrief: ownerOnly("team-brief", owner, () => bot.teamBrief === false || section == null ? "" : sectionContextSystemPrompt(section)),
+    memory: ownerOnly("memory-md", owner, () => memorySystemPrompt(bot.id, { fileTools: opts.fileTools && !opts.unattended }, partition) + (partition.kind !== "isolated" && opts.partition ? generalNotes(bot.id) : "")),
   };
 }
 
@@ -52,10 +60,18 @@ export function standingContextPrompt(bot: StandingBot, opts: StandingOptions): 
  * Murage's memory imports MEMORY.md and team briefs as searchable chunks;
  * recall skips chunks resting only on these so a fact is not sent twice.
  * A notebook over its load budget is only partly in the prompt, so its
- * chunks stay recallable. Empty when the standing context is withheld. */
-export function standingContextSourceIds(bot: StandingBot, ownerAudience: boolean): string[] {
+ * chunks stay recallable. Empty when the thread's audience is not the owner.
+ * Callers pass the thread's own audience, not the turn's: a turn that is
+ * withheld the standing context because nobody proved its words (origin)
+ * must not recall these sources instead (0.1.61 audit). */
+export function standingContextSourceIds(bot: StandingBot, ownerAudience: boolean, partition?: Partition): string[] {
   if (!ownerAudience) return [];
-  const { notebook, brief } = notebookSourceIds(bot.id, bot.section);
+  const { notebook, brief, general } = notebookSourceIds(bot.id, bot.section, partition);
   // A brief switched off for this bot is not in its prompt: recall may bring it.
-  return [...(notebook && !loadMemory(bot.id)?.truncated ? [notebook] : []), ...(brief && bot.teamBrief !== false ? [brief] : [])];
+  return [...(partition && general && !loadMemory(bot.id,{kind:"general"})?.truncated ? [general] : []), ...(notebook && !loadMemory(bot.id, partition)?.truncated ? [notebook] : []), ...(brief && bot.teamBrief !== false ? [brief] : [])];
+}
+
+function generalNotes(botId: string): string {
+  const general = loadMemory(botId, { kind: "general" });
+  return general ? `\nNotes that apply to every team:\n${Buffer.from(general.text).subarray(0, 16000).toString("utf8").replace(/\uFFFD+$/, "")}` : "";
 }

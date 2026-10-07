@@ -6,7 +6,7 @@ description: |
   Do NOT use for treating internet addiction disorder, gaming addiction, or compulsive social media use that requires clinical intervention.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "mental-wellness self-care digital-wellness habits"
   category: "health-wellness"

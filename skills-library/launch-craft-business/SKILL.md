@@ -20,7 +20,7 @@ trigger_phrases: >-
   launch an Etsy shop turn my hobby into a business handmade business guide
   craft business from home
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: sewing entrepreneurship branding step-by-step planning
   category: creative-project

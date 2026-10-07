@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -43,7 +44,7 @@ describe("normalized routine event provenance", () => {
     const input = { webhookId: "hook", webhookName: "Hook", prompt: "Untrusted event", botId: "bot", runOn: "ember" as const, deliveryId: "delivery", receivedAt: 900 };
     const run = f.manager.enqueueWebhook(input);
     expect(run.event).toMatchObject({ source: "webhook", receivedAt: 900, origin: { kind: "external-webhook", webhookId: "hook" }, budgetId: run.id });
-    const disk = JSON.parse(readFileSync(f.options.file, "utf8"));
+    const disk = readRoutinesWithRuns(f.options.file);
     disk.runs[0].event = createRoutineEvent({ runId: run.id, definitionId: "hook", receivedAt: 1000, source: "manual" });
     writeFileSync(f.options.file, JSON.stringify(disk));
     const restarted = new RoutineManager(f.options);

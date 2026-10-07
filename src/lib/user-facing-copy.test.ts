@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Nothing a person reads in Murage should say what a developer would say.
  *
@@ -19,7 +20,7 @@ import { join } from "node:path";
  * is shown verbatim on the setup and error cards.
  */
 
-const ROOT = new URL("../..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 const FORBIDDEN: Array<{ name: string; pattern: RegExp }> = [
   {

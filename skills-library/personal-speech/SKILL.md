@@ -6,7 +6,7 @@ description: |
   Do NOT use for professional presentations (use business skills), political speeches (different conventions), or persuasive arguments (use academic-argument).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "writing creative-writing personal-communication"
   category: "writing"

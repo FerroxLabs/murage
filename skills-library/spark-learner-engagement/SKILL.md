@@ -1,8 +1,9 @@
 ---
 name: spark-learner-engagement
 description: "The curriculum is mapped, the arc is set. The question now is whether the learner will finish. Load whenever you hear \"completion rates are bad,\" \"people start and stop,\" \"the cohort drops off after week two,\" or \"I shipped it and nobody finished.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "spark"
 ---

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { alreadyHave, templatesOfKind, templateTopics, type TemplateEntry } from "./NewFromTemplateDialog";
+import { alreadyHave, templateImportUrl, templatesOfKind, templateTopics, type TemplateEntry } from "./NewFromTemplateDialog";
 
 const entry = (over: Partial<TemplateEntry>): TemplateEntry => ({ slug: "x", name: "X", summary: "", category: "Sell", members: 1, skills: [], ...over });
 
@@ -36,5 +36,49 @@ describe("best matches", () => {
   it("shows summaries without markdown", async () => {
     const { plainSummary } = await import("./NewFromTemplateDialog");
     expect(plainSummary("You are **Explainer**. You teach.")).toBe("You are Explainer. You teach.");
+  });
+});
+
+describe("the import guard go-ahead", () => {
+  it("counts only for the template whose warning the owner read", () => {
+    const a = { team: { name: "A" } }, b = { team: { name: "B" } };
+    expect(templateImportUrl(b, b, true)).toBe("/api/teams/import?mode=add&acknowledgeWarnings=1");
+    // A slower preview of another template replaced the one that was reviewed.
+    expect(templateImportUrl(a, b, true)).toBe("/api/teams/import?mode=add");
+    expect(templateImportUrl(b, undefined, true)).toBe("/api/teams/import?mode=add");
+    expect(templateImportUrl(b, b, false)).toBe("/api/teams/import?mode=add");
+  });
+});
+
+describe("the phone layout of the New Bot / New Team panel", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./NewFromTemplateDialog.tsx", import.meta.url), "utf8");
+  it("is portalled to the body so the translated phone drawer is not its containing block", () => {
+    expect(source).toMatch(/return createPortal\(\s*<div className="overlay-inset fixed/);
+    expect(source).toMatch(/document\.body,\s*\);\s*\}\s*$/);
+  });
+  it("becomes a full-width, full-height sheet below md, inside the safe area and the visual viewport", () => {
+    expect(source).toContain("max-md:h-[var(--vvh,100dvh)]");
+    expect(source).toContain("max-md:w-full");
+    expect(source).toContain("max-md:rounded-none");
+    expect(source).toContain("overlay-inset");
+  });
+  it("keeps a thumb-sized close control on the phone", () => {
+    expect(source).toMatch(/aria-label="Close"[^\n]*max-md:size-11/);
+  });
+  it("shares the portal fix with the New Team and New Channel panels opened from the same + menu", () => {
+    for (const file of ["./NewTeamDialog.tsx", "./Sidebar.tsx"]) {
+      expect(readFileSync(new URL(file, import.meta.url), "utf8")).toMatch(/return createPortal\(\s*<div\s+className="overlay-inset fixed inset-x-0 top-0 z-40/);
+    }
+  });
+});
+
+describe("the shell follows a panned visual viewport", async () => {
+  const { readFileSync } = await import("node:fs");
+  it("publishes --vvt and pins #root and overlays to it while the keyboard is open", () => {
+    expect(readFileSync(new URL("../lib/visual-viewport.ts", import.meta.url), "utf8")).toContain('setProperty("--vvt"');
+    const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    expect(css).toMatch(/html\[data-keyboard="open"\] #root \{[^}]*top: var\(--vvt, 0px\)/);
+    expect(css).toMatch(/\.overlay-inset \{[^}]*var\(--vvt, 0px\)/);
   });
 });

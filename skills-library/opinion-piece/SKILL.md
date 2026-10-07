@@ -9,7 +9,7 @@ description: |
   arguments with citations (use `academic-argument`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "blog-post writing guide"
   category: "writing"

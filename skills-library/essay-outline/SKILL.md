@@ -6,7 +6,7 @@ description: |
   Do NOT use for writing the full essay (use writing category skills), for research paper structure (use writing `research-paper-structure`), or for creative writing outlines (use writing category skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "academic-writing study-skills research step-by-step"
   category: "education"

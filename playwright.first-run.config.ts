@@ -11,10 +11,18 @@
 // So this config keeps everything that makes the rig SAFE — the scratch data
 // dir, prepare-scratch wiping it before the harness binds, the rig's own
 // ports — and drops only the seeding. That is the whole difference.
+import { join } from "node:path";
+
 import { defineConfig, devices } from "@playwright/test";
 
 import { evidenceDir } from "./src/e2e/evidence";
 import { APP_URL, HARNESS_PORT, HARNESS_URL, SCRATCH_DATA_DIR, UI_PORT } from "./src/e2e/rig";
+
+// The harness gets a folder of its own inside the scratch root, as the setup
+// configs do: prepare-scratch wipes whatever MURAGE_DATA_DIR names, and the
+// root also holds the seeded run's evidence (human-results) that CI uploads
+// after this runs.
+const DATA_DIR = join(SCRATCH_DATA_DIR, "first-run-data");
 
 const reuseExistingServer = process.env.MURAGE_E2E_REUSE_SERVER === "1" && !process.env.CI;
 
@@ -53,7 +61,7 @@ export default defineConfig({
       command: "node src/e2e/prepare-scratch.mjs && node src/e2e/start-server.mjs harness",
       url: `${HARNESS_URL}/api/health`,
       env: {
-        MURAGE_DATA_DIR: SCRATCH_DATA_DIR,
+        MURAGE_DATA_DIR: DATA_DIR,
         MURAGE_PORT: String(HARNESS_PORT),
         MURAGE_WEBHOOK_PORT: String(HARNESS_PORT + 1),
       },
@@ -66,7 +74,7 @@ export default defineConfig({
       command: "node src/e2e/start-server.mjs ui",
       url: APP_URL,
       env: {
-        MURAGE_DATA_DIR: SCRATCH_DATA_DIR,
+        MURAGE_DATA_DIR: DATA_DIR,
         MURAGE_UI_PORT: String(UI_PORT),
         MURAGE_PORT: String(HARNESS_PORT),
       },

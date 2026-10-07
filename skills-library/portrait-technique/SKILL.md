@@ -11,7 +11,7 @@ description: |
   (use composition-guide), or photo editing (use photo-editing-workflow).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "photography guide checklist"
   category: "design-creative"

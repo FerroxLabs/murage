@@ -3,7 +3,7 @@ name: support
 description: "Entry point for customer support work: reads what the request actually is — one reply, a pattern across tickets, an escalation, a refund, a queue review — and either routes to the specialist skill or runs the procedure inline. Covers reply drafting, knowledge-base articles, FAQ generation, escalation briefs, refund and credit scripts, SLA and queue review, NPS and CSAT analysis, and the support health report. Use when a support task arrives without a shape yet. Do NOT use when the shape is already known — go straight to mend-ticket-triage for prioritising a queue, mend-churn-prevention for a save play on an at-risk account, or mend-onboarding-flow for the first-thirty-days path — and do NOT use it to write policy (use sop-creation) or to redesign the process itself (use process-mapping). Support templates can create binding commitments: check refund and SLA language against actual policy and applicable consumer law before it is sent."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "orchestrator customer-support tickets escalation smb"
   category: "support"

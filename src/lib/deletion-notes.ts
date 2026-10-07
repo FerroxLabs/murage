@@ -9,10 +9,15 @@ export interface DeletionLeftover { what: string; where: string }
 
 export const BACKUPS_LINE = "Earlier backups still contain it until they expire.";
 
-/** Lines a Delete confirmation adds under its own description. */
-export function deletionConsequenceLines(savedFiles: number | null | undefined): string[] {
+const counted = (n: number, one: string, many: string) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+
+/** Lines a Delete confirmation adds under its own description: the messages
+ * and saved files that go, counted, then the backups line. */
+export function deletionConsequenceLines(savedFiles: number | null | undefined, messages?: number | null): string[] {
   const lines: string[] = [];
-  if (savedFiles && savedFiles > 0) lines.push(`This also deletes ${savedFiles} saved ${savedFiles === 1 ? "file" : "files"}.`);
+  const files = savedFiles && savedFiles > 0 ? counted(savedFiles, "saved file", "saved files") : "";
+  if (messages && messages > 0) lines.push(`That is ${counted(messages, "message", "messages")}${files ? ` and ${files}` : ""}.`);
+  else if (files) lines.push(`This also deletes ${files}.`);
   lines.push(BACKUPS_LINE);
   return lines;
 }

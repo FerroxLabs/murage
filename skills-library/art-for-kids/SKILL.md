@@ -4,7 +4,7 @@ description: |
   Comprehensive guide to nurturing creativity in children through age-appropriate art projects and techniques, material recommendations by age, understanding process art versus product art, building creative confidence, displaying children's artwork, teaching art concepts (color, line, shape, texture), and exploring famous artists for inspiration. Use when the user asks about art for kids or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching parenting guide design"
   category: "education"

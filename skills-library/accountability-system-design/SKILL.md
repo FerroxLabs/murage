@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical supervision structures, addiction recovery sponsorship, or group therapy facilitation.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "goal-setting habits self-care planning"
   category: "health-wellness"

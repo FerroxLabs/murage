@@ -36,7 +36,7 @@ export interface RoomTranscript {
 /** A room past this many messages, or past the receipt limit a thread is
  * read whole under, checks only the lines a member prompt can show (the
  * newest window, the pin, each quoted line): bounded work, and a line it
- * did not check is never shown (0.1.61 room privacy fix, replay limit). */
+ * did not check is never shown (0.1.61, replay limit). */
 const WHOLE_ROOM_MESSAGES = 10000;
 
 export function roomTranscriptForTurn(threadId: string, messages: readonly Message[], ownerAudience: boolean, access: MemoryAccess, pinnedMessageId?: string): RoomTranscript {
@@ -61,9 +61,13 @@ function forgottenReplies(threadId: string, messages: readonly Message[], withhe
  * with memory, and what the owner forgot since must not come back because
  * memory stopped: the content rule still applies, as a withheld line for the
  * owner's turn and as a dropped line for anyone else. A room that never used
- * memory is read as it is. */
+ * memory (no receipt, no copy, no reply with output roots) is read as it is. */
 export function roomTranscriptWithoutMemory(threadId: string, messages: readonly Message[], ownerAudience: boolean, pinnedMessageId?: string, unprovenInOwnerRoom = false): { messages: Message[]; withheld: Set<string>; forgotten: Set<string>; checked: Set<string> } | undefined {
-  if (!database().prepare("SELECT 1 FROM memory_disclosures WHERE thread_id=? LIMIT 1").get(threadId) && !messages.some(m => m.copyOf)) return undefined;
+  // A thread with no receipt of its own may still hold replies built on
+  // memory from elsewhere (v6 output roots, e.g. cross-thread working
+  // context): those are checked too (Astra r4 #3).
+  if (!database().prepare("SELECT 1 FROM memory_disclosures WHERE thread_id=? LIMIT 1").get(threadId) && !messages.some(m => m.copyOf)
+    && !database().prepare("SELECT 1 FROM memory_output_roots WHERE thread_id=? LIMIT 1").get(threadId)) return undefined;
   const bounded = messages.length > WHOLE_ROOM_MESSAGES || largeReceiptThread(threadId);
   const candidates = bounded ? promptCandidates(messages, pinnedMessageId, GROUP_CONTEXT_MESSAGES) : [...messages];
   const withheld = replayExclusions(threadId, candidates, null, { failClosed: true });

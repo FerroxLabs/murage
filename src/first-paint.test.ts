@@ -9,9 +9,11 @@
 // build, so this reads the graph the way a bundler does: esbuild's metafile,
 // which records for every import whether it is static or dynamic. No build
 // output is written or needed.
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { build, type Metafile, type Plugin } from "esbuild";
+import { build, transform, type Metafile, type Plugin } from "esbuild";
+import { readFileSync } from "node:fs";
+import { brotliCompressSync, constants } from "node:zlib";
 import { beforeAll, describe, expect, it } from "vitest";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -24,9 +26,8 @@ const graphOnly: Plugin = {
     // `@/…` is the app (tsconfig paths); every other bare specifier is a
     // package, recorded by name and not walked. (esbuild filters are Go
     // regular expressions, which have no lookahead, hence the check inside.)
-    // The entry point is walked too: on Windows its absolute path starts with
-    // a drive letter, not "/".
-    build.onResolve({ filter: /^[^./]/ }, (args) => (args.kind === "entry-point" || args.path.startsWith("@/") ? undefined : { path: args.path, external: true }));
+    // A Windows entry path starts with a drive letter, not "." or "/".
+    build.onResolve({ filter: /^[^./]/ }, (args) => (args.path.startsWith("@/") || args.kind === "entry-point" || isAbsolute(args.path) ? undefined : { path: args.path, external: true }));
   },
 };
 
@@ -84,6 +85,18 @@ describe("the first paint", () => {
     expect(reached).toContain("src/components/CallControls.tsx");
   });
 
+  it("leaves Settings, its search words, the shortcut list and the You menu's list to the first time they open (0.1.62)", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/components/SettingsModal.tsx", "src/lib/settings-search.ts", "src/components/KeyboardShortcutsDialog.tsx", "src/lib/keyboard-shortcuts.ts", "src/components/SidebarYouMenuPanel.tsx"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    // the sidebar's new places and menu are the first paint, and small
+    for (const file of ["src/components/SidebarPlaces.tsx", "src/components/SidebarYouMenu.tsx", "src/lib/settings-sections.ts", "src/lib/mod-shortcut.ts"]) {
+      expect(reached, file).toContain(file);
+    }
+  });
+
   it("loads the speech detector with the microphone, not with the call screen", () => {
     const silero = importsOf("src/lib/call-mic.ts").filter((edge) => edge.path === "src/lib/silero-vad.ts");
     expect(silero.map((edge) => edge.kind)).toEqual(["dynamic-import"]);
@@ -95,6 +108,39 @@ describe("the first paint", () => {
       expect(reached, file).not.toContain(file);
       expect(graph.inputs[file], file).toBeDefined();
     }
+  });
+
+  it("leaves plan sign-in (ChatGPT, Grok) to the Models page", () => {
+    const reached = staticallyReached(graph);
+    expect(reached).not.toContain("src/components/SubscriptionSignIn.tsx");
+    expect(importsOf("src/components/ModelsSettings.tsx").filter((edge) => edge.path === "src/components/SubscriptionSignIn.tsx").map((edge) => edge.kind)).toEqual(["dynamic-import"]);
+  });
+
+  it("defers occasional workspaces and panels until they are opened", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["RoutinesPage", "RoutineCalendarPage", "TeamMapPage", "PluginsPanel", "SkillRecorderPage", "LocalVmWorkspace", "BrowserWorkspace"]) {
+      const path = `src/components/${file}.tsx`;
+      expect(reached, path).not.toContain(path);
+      expect(graph.inputs[path], path).toBeDefined();
+    }
+    expect(reached).toContain("src/lib/connected-apps-preload.ts");
+  });
+
+  it("keeps the strip shell in first paint and its details and project views lazy", () => {
+    const reached = staticallyReached(graph);
+    expect(reached).toContain("src/components/ProjectStrip.tsx");
+    for (const name of ["ProjectStripDetails", "ProjectBoard", "ProjectGoalView", "ProjectActivity", "ProjectSinceYouLeft", "ProjectFilesView", "ProjectMemoryView"]) {
+      const path = `src/components/${name}.tsx`;
+      expect(reached).not.toContain(path);
+      expect(graph.inputs[path]).toBeDefined();
+    }
+  });
+
+  it("keeps the compact strip module under its 1.5 KiB allowance", async () => {
+    const source = readFileSync(join(root, "src/components/ProjectStrip.tsx"), "utf8");
+    const { code } = await transform(source, { loader: "tsx", jsx: "automatic", minify: true, target: "es2022" });
+    const bytes = brotliCompressSync(code, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).length;
+    expect(bytes).toBeLessThanOrEqual(1.5 * 1024);
   });
 
   it("leaves both Markdown editors and Tiptap to the first edit", () => {

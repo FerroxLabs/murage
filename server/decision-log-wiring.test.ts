@@ -22,12 +22,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { DecisionRow } from "./decision-log.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
-import { loopbackFetch } from "./testing/conversation-proof.ts";
-
-/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
- * credential (the server below is started with it), without the desktop proof. */
-const TEST_COMPANION_TOKEN = "c".repeat(64);
-const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -55,7 +49,7 @@ const desktopApi = (method: string, path: string, body?: unknown) => request(met
 async function waitForDecision(pred: (r: DecisionRow) => boolean, ms = 30_000): Promise<DecisionRow | null> {
   const deadline = Date.now() + ms;
   for (;;) {
-    const { body } = await api("GET", "/api/decisions");
+    const { body } = await desktopApi("GET", "/api/decisions");
     const rows: DecisionRow[] = body.decisions ?? [];
     const row = rows.filter(pred).at(-1);
     if (row) return row;
@@ -160,7 +154,6 @@ posixOnly("authorization decisions are logged", () => {
         HOME: home,
         USERPROFILE: home,
         MURAGE_PORT: String(port),
-        MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
       },
@@ -363,7 +356,7 @@ posixOnly("authorization decisions are logged", () => {
       expect((await desktopApi("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "deny" })).status).toBe(200);
       expect(await waitForDecision((r) => r.decision === "user-denied" && r.requestId === requestId)).not.toBeNull();
 
-      const rows = (await api("GET", "/api/decisions")).body.decisions as DecisionRow[];
+      const rows = (await desktopApi("GET", "/api/decisions")).body.decisions as DecisionRow[];
       const machine = rows.filter(
         (r) => r.botId === bot.id && (r.decision === "auto-approved" || r.decision.startsWith("review-")),
       );
@@ -373,12 +366,12 @@ posixOnly("authorization decisions are logged", () => {
   );
 
   it("GET /api/decisions pages newest-last and validates limit", async () => {
-    const all = (await api("GET", "/api/decisions")).body.decisions as DecisionRow[];
+    const all = (await desktopApi("GET", "/api/decisions")).body.decisions as DecisionRow[];
     expect(all.length).toBeGreaterThanOrEqual(2);
-    const one = (await api("GET", "/api/decisions?limit=1")).body.decisions as DecisionRow[];
+    const one = (await desktopApi("GET", "/api/decisions?limit=1")).body.decisions as DecisionRow[];
     expect(one).toHaveLength(1);
     expect(one[0]).toEqual(all.at(-1));
-    expect((await api("GET", "/api/decisions?limit=0")).status).toBe(400);
-    expect((await api("GET", "/api/decisions?limit=nope")).status).toBe(400);
+    expect((await desktopApi("GET", "/api/decisions?limit=0")).status).toBe(400);
+    expect((await desktopApi("GET", "/api/decisions?limit=nope")).status).toBe(400);
   });
 });

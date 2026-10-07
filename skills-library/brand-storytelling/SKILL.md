@@ -4,7 +4,7 @@ description: |
   Brand storytelling strategy advisor covering narrative marketing frameworks, origin story development, brand voice architecture, values-driven messaging, emotional resonance techniques, content formats for storytelling, audience connection through narrative, and building a cohesive brand story that differentiates and drives loyalty across every customer touchpoint. Use when the user asks about brand storytelling or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "branding marketing content-marketing writing"
   category: "marketing-sales"

@@ -1,6 +1,16 @@
+import type { HeldContinuation } from "./external-context-delivery.ts";
+import { renderMurageTools, NEUTRAL_TOOL_SURFACE } from "./murage-tool-surface.ts";
+import { assignMissingVoices, pickDefaultVoice } from "./bot-voice.ts";
+import { captureBotDeletion } from "./memory/capture.ts";
+import { markPartitions, setExecutionStore, partitionRoots } from "./execution-audience.ts";
+import { teamLabel, TEAM_JOURNAL, teamChangeOpen, assertSectionUnlocked, assertHomeMove, workThreadTitle } from "./team-identities.ts";
+import type { MessageEngine } from "../shared/engine-switch.ts";
+import type { MessageActorKind } from "../shared/message-actor.ts";
+import { isErrorActivity } from "../shared/message-visibility.ts";
 import type { RoutineRunMarkerTrigger } from "../shared/routine-run-marker.ts";
 import type { ProcedurePin } from "./procedure-bundles.ts";
 import { threadHumanPrincipal, isWorkspaceOwner } from "./human-principals.ts";
+import { observeOwnerMessage, recordWeakSignal } from "./memory/outcomes.ts";
 // Bot + thread persistence. bots.json holds bot records (including the
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
@@ -14,14 +24,17 @@ import { parseRuntimeErrorDiagnostic, type RuntimeErrorDiagnostic } from "../sha
 import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { tightenOwnerOnlyFile, writeFileAtomic } from "./atomic.ts";
+import { cancelCoalesced, flushCoalesced, scheduleCoalesced, tightenOwnerOnlyFile, writeFileAtomic } from "./atomic.ts";
 import { readPersistedRecords } from "./persisted-state.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
 import * as mdb from "./message-db.ts";
 import { grandfatheredHostComputerConsent, isHostComputerConsent, type HostComputerConsent } from "./host-computer-consent.ts";
 import { persistMemoryRoster, reconcileMemoryRoster } from "./memory/policy.ts";
-import { transaction } from "./database.ts";
+import { parseContinuityOptions, type ContinuityOptions } from "./memory/pip-types.ts";
+import { setMemoryCaptureRoster } from "./memory/capture-scope.ts";
+import { database, transaction } from "./database.ts";
+import { deleteProjectRows } from "./project-tables.ts";
 import { recordMemorySettlement, type MemoryTurnOutcome } from "./memory/settlement.ts";
 import { workspaceDir } from "./workspace.ts";
 import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./contracts.ts";
@@ -40,7 +53,10 @@ import type { IntakeCardData } from "../shared/intake-turn.ts";
 import type { SetupCardData } from "../shared/setup-card.ts";
 import type { InstalledPackageMetadata } from "../shared/installed-package.ts";
 import { openingLine } from "../shared/bot-openers.ts";
+import { readPublishedSites } from "../shared/published-sites.ts";
 import { withoutQuestionGrants } from "./auto-approve.ts";
+import { imageApprovalOf, imageAskAfterOf } from "../shared/image-approval-setting.ts";
+import { settledTurnHelpers, type TurnHelper } from "../shared/turn-helpers.ts";
 
 export type EmberColor =
   | "green"
@@ -62,6 +78,11 @@ export type EmberColor =
 export type EmberExpression = string;
 
 export interface OptionCardData {
+  /** Optional owner-approved browser connection with one explicit continuation. */
+  browserSetup?: import("../shared/browser-setup-card.ts").BrowserSetupCardData;
+  /** A publish approval card (server/publish): never auto-approved, in any access mode. */
+  kind?: "publish";
+  publish?: import("../shared/publish-card.ts").PublishCardData;
   title: string;
   subtitle: string;
   options: string[];
@@ -74,6 +95,17 @@ export interface OptionCardData {
   tool?: string;
   /** why this stopped despite auto mode (destructive-looking command) */
   held?: string;
+  /** Permission cards whose `subtitle` carries the full tool input or the
+   * model's labelled reason: the engine's one-line summary of the action,
+   * which audit, risk rating and push text read instead. */
+  summary?: string;
+  /** The tool input on this card was cut to fit; the card offers no
+   * "always allow" and the owner must read the full card. */
+  toolInputTruncated?: boolean;
+  /** What a push notification for this card may say (no typed text or field values). */
+  pushBody?: string;
+  /** Murage for Chrome (D1): the step is one Murage asks about every time, in every mode. */
+  browserCardKind?: "delete" | "newRecipient";
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
   /** "Always allow this exact command here": command text, folder and
@@ -89,6 +121,9 @@ export interface OptionCardData {
   routineId?: string;
   /** Local actions never share remembered grants with cloud/tool approvals. */
   approvalScope?: "local-computer";
+  /** Advisory only, for the page: the engine path rated this permission card low when it raised it. A browser
+   * pairing shows Allow only on these. The harness never reads it back (SEC-006, Decision 1). */
+  lowRisk?: boolean;
   /** 0.1.52 ASK2: a provider question's structured questions, persisted
    * with the card in messages.db so it survives a reload and a restart. */
   questions?: import("../shared/questions.ts").QuestionSpec[];
@@ -148,6 +183,38 @@ export interface ConnectorCardData {
   /** Cards created by one agent request resume together after all connect. */
   resumeKey: string;
   error?: string;
+  /** Why a failed card failed: the sign-in ran out, was refused, or ended
+   * some other way. `error` carries the plain sentence for it. */
+  failure?: "timed-out" | "denied" | "failed";
+  /** When the sign-in began, so an old link reads as expired. */
+  authorizedAt?: number;
+  dismissed?: boolean;
+  resumed?: boolean;
+}
+
+/** A link server whose sign-in ended while a bot was working (MCP-LINK 3.12).
+ * Names and a host only: never a token. */
+export interface McpSignInCardData {
+  /** The saved server's name. */
+  name: string;
+  host: string;
+  /** The bot the card was posted for, by its name. */
+  bot: string;
+  /** And by its id: the card is settled from the saved conversation after a restart. */
+  botId?: string;
+  reason: "sign-in-ended" | "needs-more-access";
+  /** The origin of the server the card was posted for; a card never settles for another origin. */
+  origin?: string;
+  /** What a needs-more-access card asked for; the next sign-in adds it. */
+  scope?: string;
+  status: "required" | "signed-in";
+  /** One card per server per turn; the resume waits on this key. */
+  resumeKey: string;
+  title: string;
+  body: string;
+  /** Where a phone or the browser door sends the owner instead of a button. */
+  phone: string;
+  error?: string;
   dismissed?: boolean;
   resumed?: boolean;
 }
@@ -177,11 +244,26 @@ export function isOwnerOrigin(origin: MessageOrigin | undefined): boolean {
 }
 
 export interface Message {
+  /** Set by insertMessageBefore: the row this message was saved in front of.
+   * Storage (and so paging) order puts it after that row; a client holding
+   * a page whose older rows are not loaded reads this to place it ahead of
+   * the rows it precedes (src/lib/room-transcript.ts). */
+  insertedBefore?: string;
+  inboundKind?: "action" | "question";
+  /** The phantom-action check of a turn's closing reply (server/reply-action-guard.ts).
+   * Server-written only, on the terminal row. */
+  actionCheck?: import("../shared/reply-action-claims.ts").ActionCheck;
+  /** A fabricated next speaker was cut from this reply before publication. */
+  removedSpeaker?: string;
+  /** On the removal row only: what was cut, kept for the owner. Room
+   * transcripts read text rows and memory reads a row's text, never this. */
+  removedText?: string;
+  automation?: { kind: "schedule"|"manual"|"webhook"|"channel"|"delegation"|"card"|"ask"|"message"|"room"; channel?: "telegram"|"slack"|"discord"|"whatsapp"; connectionId?: string; webhookId?: string; routineId?: string };
   id: string;
   /** Verified durable deliverable identities; raw paths never become download links. */
   artifactIds?: string[];
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run";
+  kind: "text" | "options" | "activity" | "screen" | "connector" | "mcpSignIn" | "secret" | "routine.run" | "goal.run";
   text?: string;
   /** Durable provider output stored by the harness. Paths always point into
    * Murage's private attachment directory; renderers receive only the
@@ -189,6 +271,7 @@ export interface Message {
   attachments?: Array<{ kind: "image"; path: string; mime: string }>;
   card?: OptionCardData;
   connector?: ConnectorCardData;
+  mcpSignIn?: McpSignInCardData;
   secret?: SecretRequestCardData;
   /** One idempotently updated status card in the conversation that created a
    * routine. The actual provider turn remains in its isolated task. */
@@ -203,11 +286,18 @@ export interface Message {
    * something — the UI offers setup instead of a retry that cannot work. */
   /** `summary` is a short read of what the call was for — the only thing that
    * tells two chips apart on engines that route every tool through a wrapper. */
-  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number };
+  tool?: { name: string; action?: ReturnType<typeof import("./reply-action-guard.ts").toolAction>; ok?: boolean; /** An engine notice shown in the conversation; never an action or a tool outcome. */ notice?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number;
+    /** An image made without an approval card (server/image-approval.ts): what was asked for and the whole prompt, shown folded like the card's. */
+    imageRecord?: { summary: string; prompt: string } };
   /** user messages sent INTO a running turn (capabilities.queueing): the
    * model saw it mid-turn, so the transcript marks it — a reader should
    * know the reply above it may already account for this line */
   steered?: boolean;
+  /** a steered message the engine had not confirmed when Murage recorded it
+   * (steer() said "uncertain"); cleared by its late echo (`steer.confirmed`) */
+  steerUnconfirmed?: boolean;
+  /** the id the server sent the steer under; the engine's late echo names it */
+  steerId?: string;
   /** user messages: images named in this message that a turn left out
    * (per-turn count or bytes, shared/turn-image-note.ts). A later replay of
    * the message leaves them out too, so the bot is never handed their paths. */
@@ -219,6 +309,16 @@ export interface Message {
   /** The last assistant text item from a settled provider turn. Earlier text
    * with the same turnId is progress narration, not another final answer. */
   turnTerminal?: boolean;
+  /** The engine, model and route that wrote this bot row, and the hash of the
+   * capability profile the turn ran under (server/engine-profile.ts). Server
+   * written on every row a provider turn produces; stored in the row's JSON,
+   * so no schema change. Absent on older rows and on rows no provider turn
+   * wrote (user, Murage, copies): readers treat absence as unlabelled. */
+  engine?: MessageEngine;
+  /** On a turn's closing message: its helpers (sub agents), summarised
+   * (label, status, duration, tool count; never tool content). Owner threads
+   * only. Source of the folded "Worked for" rows after a reload. */
+  turnHelpers?: TurnHelper[];
   /** screen messages: a frame of the bot's computer (base64 image) */
   png?: string;
   mime?: string;
@@ -233,6 +333,9 @@ export interface Message {
   sendId?: string;
   /** Per-send channel behavior. Absent is legacy quick chat. */
   channelMode?: "chat" | "goal";
+  /** Room owner messages: the one member this send is pinned to (a room-call
+   *  hand-down). Server-written; recovery and retries honour it. */
+  responderBotId?: string;
   /** group threads: which member said this (sender attribution). */
   from?: { botId: string; name: string; color: string };
   /** emoji reactions; by = "user" or a member botId. */
@@ -271,18 +374,46 @@ export interface Message {
    * waits, the line offers Stop for this queued handoff (server/delegations.ts).
    * Server-written only, and removed once the handoff leaves the queue. */
   delegationWait?: { id: string };
+  /** Message envelope v2 (SPEC-P 10), server-written only. Who is speaking:
+   * presentation and prompt labelling only, never an authorisation input. */
+  actorKind?: MessageActorKind;
+  /** The room request this message became or was produced by (lineage for
+   * Retry, Reassign and the scorecard). */
+  requestId?: string;
+  /** Bot ids this line is addressed to (asks, results, assignments). */
+  to?: string[];
+  /** The card this line belongs to. */
+  workItemId?: string;
+  /** A line from Murage itself (no `from`): what it offers. */
+  murage?: MessageMurage;
+}
+
+export type { MessageActorKind };
+export interface MessageMurage {
+  digestDay?: string;
+  desk?: { botId: string; threadId: string };
+  kind: "failure" | "status" | "queue" | "budget" | "restore" | "milestone" | "result" | "progress" | "cap";
+  /** The one row per task that says how many items wait for a tool-capable engine. */
+  held?: { count: number; items?: Array<{ id: string; text: string; rowId?: string; error?: string; botId?: string; state?: HeldContinuation["state"] }> };
+  retry?: { requestId: string };
+  reassign?: { workItemId: string };
 }
 
 export type GroupDefaultResponder =
   | { kind: "member"; botId: string }
   | { kind: "everyone" }
-  | { kind: "mentions" };
+  | { kind: "mentions" }
+  /** The decision model picks the responder for a message nobody was addressed in; `fallbackBotId` (else the first member) answers whenever it cannot. */
+  | { kind: "auto"; fallbackBotId?: string };
 
 /** One independent conversation inside a user-created channel. Channel
  * membership and instructions stay on GroupRecord; transcript-bound state
  * lives here so switching tasks never moves a pin or working directory into
  * another provider context. */
 export interface GroupTaskRecord {
+  heldContinuations?: HeldContinuation[];
+  heldQueueRowId?: string;
+  unreadCount?: number;
   procedurePins?: Record<string, ProcedurePin>;
   threadId: ThreadId;
   title: string;
@@ -298,6 +429,10 @@ export interface GroupTaskRecord {
  * The bulletin is the room's shared instructions — every member's turn gets
  * it as part of its system prompt. */
 export interface GroupRecord {
+  heldContinuations?: HeldContinuation[];
+  heldQueueRowId?: string;
+  dmAudience?: { kind: "team"; teamId: string } | { kind: "project"; groupId: string } | { kind: "room"; groupId: string } | { kind: "isolated" };
+  partitionedFor?: Record<string, { kind: "team"; teamId: string } | { kind: "room" } | { kind: "isolated" }>;
   procedurePins?: Record<string, ProcedurePin>;
   id: string;
   /** The active task's thread. Direct-message channels remain single-threaded. */
@@ -354,6 +489,11 @@ export interface GroupRecord {
    * each clash. This block owns none of them, and in particular does not
    * touch `cwd`: making a channel a project does not give it a folder. */
   channelProject?: ChannelProject;
+  /** SPEC-P 3.12 [AMB-8]: whether a teammate's @mention in a bot reply
+   * summons that teammate (the old one-hop chain). `true` only on channels
+   * from before the turn engine (set once at boot); `false` on every room
+   * created since, where hand-offs go through the ask tool. */
+  mentionChain?: boolean;
 }
 
 /** One task = one conversation with its own context.
@@ -365,6 +505,7 @@ export interface GroupRecord {
  * session. Sharing resume cursors between tasks would resume the other
  * task's session and quietly undo the whole thing. */
 export interface TaskRecord {
+  sharedWork?: { teamId: string; createdAt: number; closedAt?: number; closedReason?: "revoked" | "team-deleted" | "restored"; finishing?: { requestId?: string; generation?: string; rootRequestId?: string }; quarantined?: true };
   procedurePin?: ProcedurePin;
   /** Host admission only; paths are always derived from current IDs. */
   localOutputs?: true;
@@ -375,6 +516,10 @@ export interface TaskRecord {
   createdAt: number;
   /** provider-native continuation per instance, for THIS task only */
   resumeCursors: Record<string, unknown>;
+  /** SPEC-P 13.1 (lane E1): the audience fingerprint each cursor was made
+   * under (owner-audience.ts). A turn for another audience never resumes it.
+   * Absent for a cursor from before, which reads as the owner's. */
+  resumeAudiences?: Record<string, string>;
   /** Independent direct-thread settings; copied from the bot on creation. */
   modelSelection?: ModelSelection;
   autoApprove?: boolean;
@@ -411,6 +556,11 @@ export interface TaskRecord {
    * delegated teammate's reply — that no dispatch has carried to the engine
    * yet. Delivery accounting: see server/external-context-delivery.ts. */
   externalUpdates?: string[];
+  /** answered approval cards whose continuation could not start because the
+   * route had no tools; carried on the first dispatch that has them. */
+  heldContinuations?: HeldContinuation[];
+  /** the one thread row that says how many items are held (patched in place) */
+  heldQueueRowId?: string;
   /** what this task has spent: banked once per turn from turn.completed */
   usage?: TaskUsage;
   /** the folder this task's turns run in, pinned on its first turn from
@@ -419,6 +569,13 @@ export interface TaskRecord {
    * a folder that moved under a live session would break resume. `null`
    * = pinned to the default (home); absent = not pinned yet. */
   cwd?: string | null;
+  /** Marks a project desk thread: one per bot and project (SPEC-P 3.12).
+   * Close and End project set `archivedAt` (hidden from the task list),
+   * Reopen and "Make this a project" clear it; the task is NEVER removed,
+   * because removing a task is a roster change that revokes every memory
+   * disclosure in the install. Lane E2a creates and writes these; lane R
+   * owns the archive stamp. */
+  channelProjectDesk?: { groupId: string; archivedAt?: number };
 }
 
 export type TaskResourceWaitKind = "working-folder" | "computer" | "browser" | "shared" | "thread-slot";
@@ -457,8 +614,15 @@ function sanitizeMessageDiagnostic<T extends Omit<Message, "id" | "at">>(message
   return { ...message, tool };
 }
 
+/** A removal row keeps what the guard cut from a bot's reply: bot-authored,
+ * so it is redacted and bounded wherever it is written. */
+function boundRemovedText<T extends Partial<Message>>(message: T): T {
+  return typeof message.removedText === "string" ? { ...message, removedText: redactSecretsInText(message.removedText).slice(0, 4096) } : message;
+}
+
 function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number }>(message: T): T {
-  message = sanitizeMessageDiagnostic(message);
+  message = boundRemovedText(sanitizeMessageDiagnostic(message));
+  if (typeof message.text === "string") message = { ...message, text: renderMurageTools(message.text, NEUTRAL_TOOL_SURFACE, { agents: "agents", memory: "murage-memory", phone: "phone", browser: "browser" }) };
   if (message.role !== "bot") return message;
   const out = { ...message };
   if (typeof out.text === "string") out.text = redactSecretsInText(out.text);
@@ -494,6 +658,10 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
     if (typeof card.subtitle === "string") card.subtitle = redactSecretsInText(card.subtitle);
     if (typeof card.summary === "string") card.summary = redactSecretsInText(card.summary);
     if (typeof card.held === "string") card.held = redactSecretsInText(card.held);
+    // The push text is built from the raw summary by whoever writes the card
+    // and goes to the lock screen, APNs/FCM and desktop notifications.
+    const pushCard = card as { pushBody?: unknown };
+    if (typeof pushCard.pushBody === "string") pushCard.pushBody = redactSecretsInText(pushCard.pushBody);
     // Routine definitions are executable bot-authored text stored behind the
     // visible summary. Scrub the durable payload too so nesting it on a card
     // cannot bypass the transcript's secret-redaction boundary.
@@ -566,6 +734,12 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
       error: out.connector.error ? redactSecretsInText(out.connector.error) : undefined,
     };
   }
+  if (out.mcpSignIn) {
+    out.mcpSignIn = {
+      ...out.mcpSignIn,
+      error: out.mcpSignIn.error ? redactSecretsInText(out.mcpSignIn.error) : undefined,
+    };
+  }
   if (out.secret) {
     out.secret = {
       ...out.secret,
@@ -590,7 +764,7 @@ export const ACTIVITY_BUSY: ReadonlySet<BotActivity> = new Set(["working", "wait
 
 export type StoreChange =
   | { type: "message"; threadId: string; message: Message }
-  | { type: "message.patch"; threadId: string; message: Message }
+  | { type: "message.patch"; threadId: string; message: Message; /** patchMessage only: the message as it was. */ before?: Message }
   | { type: "thread"; threadId: string; activeLeafId: string }
   | { type: "thread.deleted"; threadId: string }
   | { type: "bot"; botId: string }
@@ -629,6 +803,8 @@ function firstLineTitle(text: string): string {
 }
 
 export interface BotRecord {
+  sharedWith?: { mode: "none" | "list" | "all"; teams: Array<{ id: string; name: string }> };
+  partitionedAt?: number;
   id: string;
   /** the ACTIVE task's thread — everything that runs a turn reads this */
   threadId: ThreadId;
@@ -683,7 +859,8 @@ export interface BotRecord {
   autoApprove?: boolean;
   /** Full access, the level above Auto: no approval card at all for turns
    * the owner starts (webhook turns are judged as Auto, a routine run at its
-   * routine's level, and image spend still asks). Counts only while autoApprove is on. Set only
+   * routine's level, and images are made without a card only in the owner's own turns:
+   * server/image-approval.ts). Counts only while autoApprove is on. Set only
    * from the desktop app. */
   fullAccess?: boolean;
   /** When the owner confirmed this bot's one-time Full access warning, on
@@ -703,9 +880,22 @@ export interface BotRecord {
    * proposals, a folder's own instructions). Desktop-set; missing or
    * anything but `true` is off. */
   fullAccessSetupRequests?: boolean;
+  /** The "Images" setting: whether an image render asks first. Absent means
+   * follow the permission level (Full access and No limits make images with
+   * no card); `ask` always asks; `allow` never asks, for the owner's own
+   * turns (server/image-approval.ts). Spend authority, so desktop-set only,
+   * and a restore resets it. */
+  imageApproval?: "ask" | "allow";
+  /** "Ask again after N images in one turn": the card comes back for the image
+   * that would pass N. Absent means the default of 50. Only ever stricter. */
+  imageAskAfter?: number;
   /** Optional model review of otherwise undecided, attended approval cards.
    * Unknown persisted values are treated as off by the review boundary. */
   autoReview?: "off" | "shadow" | "enforce";
+  /** Bot learning settings (bot-learning.ts). Absent means the defaults:
+   * learning from the owner on, ask-first off, prospect learning off. Changed
+   * only through /api/bots/:id/learning, never through PATCH /api/bots/:id. */
+  learning?: import("./bot-learning.ts").BotLearning;
   /** Tools this bot may always use without asking, even outside auto mode
    * (set by "Always allow" on an approval card). */
   alwaysAllow?: string[];
@@ -719,6 +909,9 @@ export interface BotRecord {
   /** The voice service this bot speaks with (its `voice` is one of that
    *  service's voices). Unset: the workspace's voice service. */
   voiceProvider?: "flux" | "xai" | "elevenlabs" | "system";
+  /** true while `voice` is the default the app gave this bot (server/bot-voice.ts)
+   *  rather than the owner's pick. Dropped on any edit of the voice. */
+  voiceAssigned?: boolean;
   /** true after an edit/branch-switch rewound the visible conversation:
    * provider sessions still hold the abandoned branch, so the next turn
    * must start fresh (drop cursors) and replay the surviving path. */
@@ -757,6 +950,12 @@ export interface BotRecord {
    * delegate_bot). Off by default: a chief-of-staff-style bot is most
    * useful when it can coordinate without nagging. */
   approvePeerComms?: boolean;
+  /** "Who this bot can message" (SPEC-P 3.12, contract 4.3). Absent or
+   * `team` = its own team plus its lead (`canReach`); `list` also allows the
+   * named bots. It only ever widens `canReach`. An owner-only reach field:
+   * set on the desktop, reset by a restore, never carried by a template,
+   * package or import. */
+  messageAllow?: { mode: "team" | "all" | "list"; botIds?: string[]; /** Picks added by another bot's two-way control; only that control removes them. */ grantedBy?: string[] };
   /** Whether this bot may use the workspace's connected apps (Composio).
    * Unset/true = allowed (the user configured the key deliberately);
    * false = this bot never receives the connection. Imported team members
@@ -773,8 +972,20 @@ export interface BotRecord {
   /** Whether the owner's About me reaches this bot's owner turns. Absent
    * means on; switched off in "What shapes <bot>" (about-me.ts). */
   aboutMe?: false;
+  /** Continuity (PIP P1): the owner switched "Keep a continuous self" on for
+   * this bot. Opposite polarity to teamBrief/aboutMe: absent means OFF and
+   * only an exact `true` is stored; read it with `=== true`. The words live in
+   * the installation memory, not here (server/memory/identity.ts). */
+  continuity?: true;
+  /** Continuity P2 settings (reflection, inner view, shadow). Meaningful only while `continuity` is true;
+   * a hand-edited or orphaned value is dropped at load (parseContinuityOptions). */
+  continuityOptions?: ContinuityOptions;
+  continuityGeneration?: number;
   /** Owner-reviewed connected-account/tool limits; absent preserves legacy behavior. */
   connectedAppAccess?: ConnectedAppAccess;
+  /** Sites this bot put online (server/publish): the bot may update or take
+   * down only these. Absent means none. */
+  publishedSites?: import("../shared/published-sites.ts").PublishedSite[];
   /** Monotonic identity fence; returning to an old role never revives requests. */
   accessRoleEpoch?: number;
   /** Whether this bot gets the app's built-in browser (the Browser tab of
@@ -785,8 +996,21 @@ export interface BotRecord {
   browserProfile?: string;
   /** Owner opt-in: this bot's browser attaches to the owner's own running
    * Chrome (signed in as them) instead of an isolated profile. Absent = off.
-   * At most one bot holds it; server/index.ts enforces that on every change. */
+   * At most one bot holds the legacy inspect route; extension bindings are isolated. */
   useMyChrome?: true;
+  /** Explicit extension selection. Absent preserves the legacy inspect route. */
+  browserTransport?: "extension";
+  /** Opaque extension profile identity, never a browser profile filesystem path. */
+  browserExtensionProfileId?: string;
+  /** How often this bot's browser actions ask the owner (Murage for Chrome, spec 2.2). Absent = "task".
+   * "full" is set only by the owner, from the desktop app, with the bot's name typed (PATCH
+   * /api/bots/:id/browser-extension/mode); a restore resets it to absent. */
+  browserApproval?: "step" | "task" | "full";
+  /** Who double-checks a browser action before it runs: Flux (absent) or this bot's own engine. */
+  browserActionCheck?: "flux" | "bot";
+  /** Which browser the owner connected Murage for Chrome in for this bot, so
+   * the next connection check does not ask again. Only with the extension. */
+  browserExtensionBrowser?: "chrome" | "edge" | "brave";
   /** Public, package-authored playbooks installed for this bot. They carry
    * process guidance only—never executable code, credentials, or grants. */
   playbooks?: InstalledPlaybook[];
@@ -828,67 +1052,9 @@ const COLORS: EmberColor[] = [
   "coral",
 ];
 
-/** Sections are persisted as display labels, so exact trimmed labels are
- * their identity. Missing/blank means the unsectioned (General) team. */
-export const sectionKey = (section?: string | null): string => section?.trim() || "";
-
-/** The four fields the roster predicate reads. Structural rather than
- * `BotRecord` so the Chief's prompt builder (chief-of-staff.ts) can share
- * one predicate without pulling the whole store type into it. */
-export interface ReachableBot {
-  section?: string | null;
-  chiefOfStaff?: boolean;
-  chiefScope?: "workspace";
-  individual?: boolean;
-}
-
-/** The one Chief above the team leaders, if the workspace has elected one. */
-export const isWorkspaceChief = (bot: ReachableBot): boolean =>
-  bot.chiefOfStaff === true && bot.chiefScope === "workspace";
-
-/** A bot that works alone under the Chief, with no team leader above it.
- * The `chiefOfStaff` half of the test is not redundant with the store's
- * invariant: this predicate also runs over structural records that never
- * passed through the store (wire bots in the prompt builder, hand-written
- * payloads), and the two roles must never both apply to one bot. The role
- * that carries a team wins, the same way it does at load. */
-export const isIndividualAssistant = (bot: ReachableBot): boolean =>
-  bot.individual === true && bot.chiefOfStaff !== true;
-
-/** Who a bot may see, name, ask, delegate to, and schedule work for.
- *
- * The org chart as a predicate. Two branches hang off the one workspace
- * Chief — Chief ⇄ team leaders (each of whom owns their own members), and
- * Chief ⇄ individual assistants (each alone in its own group, with no
- * leader in between). Same-section contact is unchanged.
- *
- * NO LONGER a strict superset of the section rule, and the comment that
- * said so is now wrong. It held while the only extra edges were Chief ⇄
- * team lead: both ends of those were already `chiefOfStaff`, so no bot
- * gained a peer it could not already coordinate with. The individual-
- * assistant edge is a genuinely new CLASS of edge — an ordinary non-leading
- * bot becomes reachable across section boundaries. It stays narrow: exactly
- * one peer (the workspace Chief), only in both directions of that one pair,
- * and only while the bot carries the explicit `individual` flag a human set.
- *
- * What is still true, and is what the tests pin: with no workspace Chief
- * elected, every clause below the first is unreachable, so the predicate is
- * exactly `sectionKey(a) === sectionKey(b)`. Electing nobody changes
- * nothing; marking somebody individual while nobody is Chief changes
- * nothing either.
- *
- * Deliberately NOT a visibility filter. `hidden` and self-contact are left
- * to each call site, because four of the gates that call this never had a
- * hidden check and two report a different error for self — folding either
- * in here would quietly change what an ordinary bot may do. */
-export function canReach(from: ReachableBot, to: ReachableBot): boolean {
-  if (sectionKey(from.section) === sectionKey(to.section)) return true;
-  if (isWorkspaceChief(from) && to.chiefOfStaff === true) return true;
-  if (from.chiefOfStaff === true && isWorkspaceChief(to)) return true;
-  if (isWorkspaceChief(from) && isIndividualAssistant(to)) return true;
-  if (isIndividualAssistant(from) && isWorkspaceChief(to)) return true;
-  return false;
-}
+import { sectionKey, isWorkspaceChief, isIndividualAssistant, canReach, type ReachableBot } from "../shared/reach.ts";
+export { sectionKey, isWorkspaceChief, isIndividualAssistant, canReach };
+export type { ReachableBot };
 
 /** Resolve @mentions in a message against a bot roster: `@` must start a
  * mention (after whitespace, an opening bracket or a Markdown marker), the
@@ -914,6 +1080,10 @@ export function normalizeGroupDefaultResponder(
     const candidate = value as { kind?: unknown; botId?: unknown };
     if (candidate.kind === "everyone") return { kind: "everyone" };
     if (candidate.kind === "mentions") return { kind: "mentions" };
+    if (candidate.kind === "auto") {
+      const fallback = (candidate as { fallbackBotId?: unknown }).fallbackBotId;
+      return typeof fallback === "string" && memberIds.includes(fallback) ? { kind: "auto", fallbackBotId: fallback } : { kind: "auto" };
+    }
     if (
       candidate.kind === "member" &&
       typeof candidate.botId === "string" &&
@@ -936,7 +1106,79 @@ export function normalizeGroupDefaultResponder(
  * is a reference, not an address. Names match whole words, case-insensitively,
  * longest first; a multi-word name's first word also works as a short name
  * when no other member shares it. Hidden members are never addressed. */
-export function addressedMembers<T extends { name: string; hidden?: boolean }>(text: string, members: T[]): T[] {
+export function addressedMembers<T extends { name: string; hidden?: boolean }>(text: string, members: T[], onMatch?: (member: T, at: number) => void): T[] {
+  // A message can carry a part for each bot: "Moss: check the sensor" on one
+  // line and "Sable, write it up" in a later sentence. Each part uses the
+  // same vocative rule; "Sable wrote it" stays a reference.
+  const found: T[] = [];
+  // Pasted code and quoted lines are content, not parts addressed to anyone.
+  const lines: Array<{ text: string; at: number }> = [];
+  let offset = 0;
+  let fence: string | null = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const at = offset + raw.indexOf(line);
+    offset += raw.length + 1;
+    const marker = /^(`{3,}|~{3,})/.exec(line)?.[1];
+    if (fence) { if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null; continue; }
+    if (marker) { fence = marker; continue; }
+    if (line && !line.startsWith(">")) lines.push({text: line, at});
+  }
+  for (const line of lines) {
+    let offset = 0;
+    for (const sentence of line.text.split(/(?<=[.!?])\s+/)) {
+      const at = line.text.indexOf(sentence, offset);
+      offset = at + sentence.length;
+      for (const member of addressedInPart(sentence, members, { trailing: true })) {
+        if (!found.includes(member)) {
+          found.push(member);
+          const lower = sentence.toLowerCase(), name = member.name.toLowerCase();
+          const nameAt = lower.indexOf(name);
+          onMatch?.(member, line.at + at + (nameAt >= 0 ? nameAt : lower.indexOf(name.split(" ")[0])));
+        }
+      }
+    }
+  }
+  return found;
+}
+
+/** A short noun phrase ("my co-founder", "the designer"), not a clause with
+ * a verb ("the build is failing"). */
+function appositionNounPhrase(phrase: string): boolean {
+  return phrase.trim().split(" ").length <= 5
+    && !/\b(?:is|are|was|were|be|been|being|am|has|have|had|do|does|did|isn't|aren't|wasn't|weren't|hasn't|haven't|don't|doesn't|didn't|will|would|can|could|should|shall|may|might|must|won't|can't|failing|failed|broken|broke|keeps?|needs?|seems?|looks?)\b/.test(phrase);
+}
+
+/** Whether what follows an apposition reads as a statement about the named
+ * member ("wrote it", "is out today", "runs the review") rather than a
+ * request of them ("fix it", "can you check it?"). A question is a request
+ * ("the build, is it green?"; "Juno, who ran the deploy, did the migration
+ * finish?") unless its subject is the member as he or she, or as they after
+ * a relative clause ("Juno, who wrote it, is she around?"), and so is an
+ * auxiliary before a pronoun even without the mark ("the deploy, did it
+ * work", "is it sorted"), except before a reflexive ("did it all himself")
+ * or, after has/have/had, a finished state ("has this covered"). A word
+ * ending in -ed or -s reads as a verb about the member only when it is not
+ * an imperative of that shape ("embed it", "focus on the flaky one", "shred
+ * them"). */
+function statementAboutMember(after: string, relative = false): boolean {
+  if (/^(?:can|could|would|will|won't)\s+you\b|^(?:please|pls)\b/.test(after)) return false;
+  const member = relative ? /^(?:[\p{L}'’]+\s+)?(?:he|she|him|her|they)\b/u : /^(?:[\p{L}'’]+\s+)?(?:he|she|him|her)\b/u;
+  if (/\?\s*$/.test(after) && !member.test(after)) return false;
+  const pronoun = relative ? "it|this|that|these|those|you|we|i" : "it|they|this|that|these|those|you|we|i";
+  if (new RegExp(`^(?:is|was|are|were|has|have|had|do|does|did|will|would|can|could|should|isn't|wasn't|aren't|weren't|hasn't|haven't|doesn't|don't|didn't|won't|can't)\\s+(?:${pronoun})\\b`).test(after)
+    && !/^\S+\s+\S+\s+(?:all\s+)?(?:by\s+)?(?:himself|herself|themselves|themself)\b/.test(after)
+    && !/^(?:has|have|had)\s+\S+\s+(?:covered|handled|sorted)\b/.test(after)) return false;
+  const word = /^[\p{L}'’-]+/u.exec(after)?.[0] ?? "";
+  return /^(?:is|was|are|were|has|had|will|would|can|could|should|shall|may|might|must|does|did|isn't|wasn't|aren't|weren't|hasn't|hadn't|doesn't|didn't|won't|can't|couldn't|wouldn't|shouldn't|also|already|just|never|always|still|often|once|really|and|wrote|made|built|said|told|found|took|gave|ran|sent|left|went|came|got|knew|thought|saw|began|kept|brought|bought|drew|led|met|paid|sold|spent|won|lost|chose|forgot|held)$/.test(word)
+    || (/[^e]ed$/.test(word) && !IMPERATIVE_ED.test(word))
+    || (/^[\p{L}'’-]{2,}[^s'’]s$/u.test(word) && !/(?:us|is)$/.test(word));
+}
+
+/** Imperatives that end in -ed, not past tenses ("embed it", "shred them"). */
+const IMPERATIVE_ED = /^(?:embed|imbed|shed|shred|wed|bed|sled)$/;
+
+function addressedInPart<T extends { name: string; hidden?: boolean }>(text: string, members: T[], options: { trailing: boolean }): T[] {
   const available = members.filter((member) => !member.hidden && member.name.trim());
   const spoken = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
   const firstWord = (member: T) => spoken(member.name).split(" ")[0];
@@ -964,12 +1206,20 @@ export function addressedMembers<T extends { name: string; hidden?: boolean }>(t
     const joiner = /^\s*(?:,|and\b|&)\s*/.exec(lower.slice(at));
     if (joiner && nameAt(at + joiner[0].length)) { at += joiner[0].length; continue; }
     const rest = lower.slice(at);
+    // An apposition or relative clause describes the name ("Pax, my
+    // co-founder, wrote it"; "Juno, who wrote it, is out today") when a
+    // statement about the member follows. A determiner clause is an
+    // apposition only as a short noun phrase: "Pax, the build is failing,
+    // fix it" and "Pax, the release notes, check them" are requests.
+    const clause = /^\s*,\s*(the|a|an|my|our|his|her|their|who|whom|whose|which)\s+([^,]+),\s*([\s\S]*)$/.exec(rest);
+    const relative = Boolean(clause && /^(?:who|whom|whose|which)$/.test(clause[1]));
+    if (clause && (relative || appositionNounPhrase(clause[2])) && statementAboutMember(clause[3], relative)) return [];
     const vocative = /^\s*(?:[,:;!?]|—|–|\s-\s|\.?\s*$)/.test(rest)
       || /^\s+(?:can you|could you|would you|will you|please|pls)\b/.test(rest)
       || (Boolean(greeting) && /^(?:\s|$)/.test(rest));
     return vocative ? found : [];
   }
-  if (found.length) return [];
+  if (found.length || !options.trailing) return [];
   // Trailing vocative: "…, Moss?" at the very end of the message.
   const trailing = /,\s*([^,]+?)\s*[.!?]*$/.exec(lower);
   if (trailing) {
@@ -991,19 +1241,30 @@ export function roomResponders<T extends { id: string; name: string; hidden?: bo
   members: T[],
   defaultResponder: GroupDefaultResponder,
   replyToBotId?: string,
-  options: { byName?: boolean } = {},
+  options: { byName?: boolean; leadFirstBotId?: string } = {},
 ): T[] {
   const available = members.filter((member) => !member.hidden);
-  if (mentionsEveryone(text)) return available;
-  const mentioned = mentionedBots(text, available);
-  if (mentioned.length) return mentioned;
-  const addressed = options.byName ? addressedMembers(text, available) : [];
-  if (addressed.length) return addressed;
+  const ordered = (list: T[]) => options.leadFirstBotId
+    ? [...list.filter(m => m.id === options.leadFirstBotId), ...list.filter(m => m.id !== options.leadFirstBotId)] : list;
+  if (mentionsEveryone(text)) return ordered(available);
+  const positions = new Map<T, number>();
+  const remember = (member: T, at: number) => positions.set(member, Math.min(positions.get(member) ?? Infinity, at));
+  const mentioned = mentionedPeers(text, available, remember);
+  const addressed = options.byName ? addressedMembers(text, available, remember) : [];
+  if (mentioned.length || addressed.length) {
+    return ordered([...new Set([...mentioned, ...addressed])].sort((a, b) => positions.get(a)! - positions.get(b)!));
+  }
   const repliedTo = replyToBotId ? available.find((member) => member.id === replyToBotId) : undefined;
   if (repliedTo) return [repliedTo];
   if (defaultResponder.kind === "everyone") return available;
   if (defaultResponder.kind === "member") {
     const lead = available.find((member) => member.id === defaultResponder.botId);
+    return lead ? [lead] : [];
+  }
+  if (defaultResponder.kind === "auto") {
+    // Synchronous fallback = what a lead-mode room does today. The decision
+    // model may override it afterwards (index.ts startGroupTurn).
+    const lead = available.find((member) => member.id === defaultResponder.fallbackBotId) ?? available[0];
     return lead ? [lead] : [];
   }
   return [];
@@ -1051,7 +1312,17 @@ export class Store {
   private accessRoles = new Map<string, string>();
   private legacyActivities = new Map<string, BotActivity>();
 
-  constructor(defaultSelection: () => ModelSelection) {
+  /** Workspace new-bot defaults (config newBots), applied by createBot. */
+  private completeNewBotSelection: (selection: ModelSelection) => ModelSelection;
+
+  private memoryReady = true;
+  finishSharingBoot(): void { this.memoryReady = true; reconcileMemoryRoster(this); }
+
+  constructor(defaultSelection: () => ModelSelection, completeNewBotSelection: (selection: ModelSelection) => ModelSelection = (selection) => selection, deferMemoryReconcile = false) {
+    // A load reads the files: any deferred write from an earlier instance lands first.
+    flushCoalesced();
+    this.memoryReady = !deferMemoryReconcile;
+    this.completeNewBotSelection = completeNewBotSelection;
     this.defaultSelection = defaultSelection;
     mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
     // The registries carry souls, project paths and per-bot settings: owner
@@ -1084,12 +1355,37 @@ export class Store {
           botsMigrated = true;
         }
       }
-      // Only an exact true, and only for one bot, survives a hand edit.
-      if (b.useMyChrome !== undefined && (b.useMyChrome !== true || userChromeSeen)) {
+      // Malformed extension state must never become a legacy inspect opt-in.
+      if (b.browserTransport !== undefined && b.browserTransport !== "extension") {
+        delete b.browserTransport;
         delete b.useMyChrome;
         botsMigrated = true;
       }
-      if (b.useMyChrome) userChromeSeen = true;
+      if (b.browserExtensionBrowser !== undefined && (b.browserTransport !== "extension" || !["chrome", "edge", "brave"].includes(b.browserExtensionBrowser))) {
+        delete b.browserExtensionBrowser;
+        botsMigrated = true;
+      }
+      if (b.browserExtensionProfileId !== undefined && (b.browserTransport !== "extension" || typeof b.browserExtensionProfileId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(b.browserExtensionProfileId))) {
+        delete b.browserExtensionProfileId;
+        delete b.useMyChrome;
+        botsMigrated = true;
+      }
+      // Only legacy inspect shares one browser-wide connection. Extension bots
+      // retain separate explicit tab grants across restart.
+      if (b.useMyChrome !== undefined && (b.useMyChrome !== true || (b.browserTransport !== "extension" && userChromeSeen))) {
+        delete b.useMyChrome;
+        botsMigrated = true;
+      }
+      if (b.useMyChrome && b.browserTransport !== "extension") userChromeSeen = true;
+      // "task" is the default and is stored as absent; anything unknown is dropped, never read as "full".
+      if (b.browserApproval !== undefined && b.browserApproval !== "step" && b.browserApproval !== "full") {
+        delete b.browserApproval;
+        botsMigrated = true;
+      }
+      if (b.browserActionCheck !== undefined && b.browserActionCheck !== "flux" && b.browserActionCheck !== "bot") {
+        delete b.browserActionCheck;
+        botsMigrated = true;
+      }
       if (b.cloudBackend !== undefined && b.cloudBackend !== "box" && b.cloudBackend !== "vps") {
         delete b.cloudBackend;
         botsMigrated = true;
@@ -1097,6 +1393,25 @@ export class Store {
       if (b.autoStartVps !== undefined && b.autoStartVps !== true && b.autoStartVps !== false) {
         delete b.autoStartVps;
         botsMigrated = true;
+      }
+      // The Images setting keeps only an exact non-default value, and its
+      // guard only a whole number from 1 to 50; anything else reads as the
+      // default (follow the permission level, no limit).
+      if (b.imageApproval !== undefined && imageApprovalOf(b.imageApproval) === undefined) {
+        delete b.imageApproval;
+        botsMigrated = true;
+      }
+      if (b.imageAskAfter !== undefined && imageAskAfterOf(b.imageAskAfter) === undefined) {
+        delete b.imageAskAfter;
+        botsMigrated = true;
+      }
+      // Keep the well-formed site records only.
+      if (b.publishedSites !== undefined) {
+        const sites = readPublishedSites(b.publishedSites);
+        if (JSON.stringify(sites) !== JSON.stringify(b.publishedSites)) {
+          if (sites.length === 0) delete b.publishedSites; else b.publishedSites = sites;
+          botsMigrated = true;
+        }
       }
       // Only an exact false is stored; anything else reads as on.
       if (b.teamBrief !== undefined && b.teamBrief !== false) {
@@ -1106,6 +1421,22 @@ export class Store {
       if (b.aboutMe !== undefined && b.aboutMe !== false) {
         delete b.aboutMe;
         botsMigrated = true;
+      }
+      // Continuity is off unless exactly true; a hand-edited value never turns it on.
+      if (b.continuity !== undefined && b.continuity !== true) {
+        delete b.continuity;
+        botsMigrated = true;
+      }
+      // Its options are kept only when Continuity is on and the stored value still validates.
+      if (b.continuityOptions !== undefined) {
+        const parsed = b.continuity === true ? parseContinuityOptions(b.continuityOptions) : undefined;
+        if (!parsed || !parsed.ok) {
+          delete b.continuityOptions;
+          botsMigrated = true;
+        } else if (JSON.stringify(parsed.value) !== JSON.stringify(b.continuityOptions)) {
+          if (parsed.value) b.continuityOptions = parsed.value; else delete b.continuityOptions;
+          botsMigrated = true;
+        }
       }
       // One shape for "no voice note": absent. A blank or whitespace-only
       // persona would otherwise put an empty `Personality:` line in front of
@@ -1205,6 +1536,8 @@ export class Store {
         botsMigrated = true;
       }
     }
+    // Every bot has a voice: one with none is given a default, once.
+    if (assignMissingVoices(this.bots)) botsMigrated = true;
     for (const g of this.groups) {
       g.busyBotId = null;
       delete g.turnStartedAt;
@@ -1241,6 +1574,11 @@ export class Store {
       g.pinnedCwd = active.pinnedCwd;
       g.pinnedMessageId = active.pinnedMessageId;
     }
+    for (const group of this.groups) for (const holder of [group, ...(group.tasks ?? [])]) {
+      for (const item of holder.heldContinuations ?? []) if (!item.botId || !item.dispatcher || !item.principal) {
+        item.state = "recovery"; item.error = "Authorize this saved continuation before it can run."; groupsMigrated = true;
+      } else if (item.error && !item.state) { item.state = "authority"; groupsMigrated = true; }
+    }
     if (groupsMigrated) this.saveGroups();
     // bots saved before tasks existed have one endless thread; adopt it as
     // their first task so nothing is lost and nothing special-cases it
@@ -1255,6 +1593,9 @@ export class Store {
       ];
       if (!b.tasks.some(task=>task.threadId===b.threadId)) b.tasks.unshift({threadId:b.threadId,title:this.firstUserLine(b.threadId)??UNTITLED_TASK,createdAt:b.createdAt,resumeCursors:b.resumeCursors??{}});
       for (const task of b.tasks) {
+        for (const item of task.heldContinuations ?? []) if (!item.botId || !item.dispatcher || !item.principal) {
+          item.botId = b.id; item.state = "recovery"; item.error = "Authorize this saved continuation before it can run."; botsMigrated = true;
+        } else if (item.error && !item.state) { item.state = "authority"; botsMigrated = true; }
         if (task.modelSelection === undefined) { task.modelSelection=structuredClone(b.modelSelection); botsMigrated=true; }
         if (task.autoApprove === undefined) { task.autoApprove=b.autoApprove===true; botsMigrated=true; }
         if (task.alwaysAllow === undefined) { task.alwaysAllow=structuredClone(b.alwaysAllow??[]); botsMigrated=true; }
@@ -1301,10 +1642,27 @@ export class Store {
       for (const b of unevaluated) b.hostComputerConsent = grandfatheredHostComputerConsent(b, evidence);
       this.saveBots();
     }
-    reconcileMemoryRoster(this);
+    if (this.memoryReady && !teamChangeOpen()) reconcileMemoryRoster(this);
+    // Capture reads the live roster: a room's threads and project desk
+    // threads capture into the room's memory (memory/capture-scope.ts).
+    setMemoryCaptureRoster(() => this);
+    setExecutionStore(this);
+    if (!teamChangeOpen() && markPartitions(this)) this.saveGroups();
   }
 
-  private saveBots(bots: BotRecord[] = this.bots) {
+  /** Persist bots.json. Immediate by default: the write is durable when this
+   * returns and a failure throws, which the security, owner, consent, delivery
+   * and delete call sites rely on. `defer` is only for cosmetic, high-rate state
+   * (unread badges, which task is open): the write is coalesced to once per
+   * 250 ms, always carries the newest in-memory state, and is flushed on exit,
+   * SIGTERM and before any backup. A hard crash may lose about 250 ms of it. */
+  private saveBots(bots: BotRecord[] = this.bots, options: { defer?: boolean } = {}) {
+    if (options.defer && bots === this.bots) { scheduleCoalesced(BOTS_FILE, () => this.saveBotsNow()); return; }
+    this.saveBotsNow(bots);
+    if (bots === this.bots) cancelCoalesced(BOTS_FILE);
+  }
+
+  private saveBotsNow(bots: BotRecord[] = this.bots) {
     // Role/config changes permanently revoke scoped grants. Write the revoked
     // candidate before publishing it so changing a role back cannot resurrect access.
     const normalized = bots.map(bot => {
@@ -1313,7 +1671,11 @@ export class Store {
       const next = prior !== undefined && prior !== identity ? { ...bot, accessRoleEpoch: (bot.accessRoleEpoch ?? 0) + 1 } : bot;
       return next.connectedAppAccess === undefined ? next : { ...next, connectedAppAccess: botAccessPolicy(next) };
     });
-    persistMemoryRoster({ bots: normalized, groups: this.groups }, () => writeFileAtomic(BOTS_FILE, persistedBotsJson(normalized), { mode: 0o600 }));
+    const write = () => writeFileAtomic(BOTS_FILE, persistedBotsJson(normalized), { mode: 0o600 });
+    if (!this.memoryReady || teamChangeOpen()) write(); else persistMemoryRoster({ bots: normalized, groups: this.groups }, write);
+    // The channels save against the roster being written, not the live one it replaces:
+    // a stale label there would give a moved team's old name a fresh memory scope.
+    if (!teamChangeOpen() && markPartitions({ bots: normalized, groups: this.groups })) this.saveGroupsNow(normalized);
     for (const next of normalized) {
       this.accessRoles.set(next.id, accessRoleBinding({ ...next, accessRoleEpoch: 0 }));
       const supplied = bots.find(bot => bot.id === next.id);
@@ -1334,13 +1696,13 @@ export class Store {
     for (const bot of bots) {
       if (ids.has(bot.id) || threads.has(bot.threadId) || bot.chiefOfStaff || bot.chiefScope || bot.autoApprove
         || bot.alwaysAllow?.length || Object.keys(bot.resumeCursors).length || bot.tasks?.some(task => task.threadId !== bot.threadId || Object.keys(task.resumeCursors).length)
-        || bot.composio !== false || bot.browser !== false || bot.computer !== "off") throw new Error("Unsafe package bot addition");
+        || bot.composio !== false || bot.browser !== false || bot.computer !== "off") throw new Error("A package bot must be new and start with no access");
       ids.add(bot.id); threads.add(bot.threadId);
     }
     const groupIds = new Set(this.groups.map(group => group.id));
     const newBotIds = new Set(bots.map(bot => bot.id));
     for (const group of groups) {
-      if (groupIds.has(group.id) || threads.has(group.threadId) || group.memberIds.some(id => !newBotIds.has(id))) throw new Error("Unsafe package group addition");
+      if (groupIds.has(group.id) || threads.has(group.threadId) || group.memberIds.some(id => !newBotIds.has(id))) throw new Error("A package team must be new and hold only its own new bots");
       groupIds.add(group.id); threads.add(group.threadId);
     }
     const nextBots = [...this.bots, ...bots];
@@ -1352,15 +1714,26 @@ export class Store {
       ]),
       publish: () => {
         this.bots = nextBots; this.groups = nextGroups;
-        reconcileMemoryRoster(this);
+        if (this.memoryReady && !teamChangeOpen()) reconcileMemoryRoster(this);
         for (const bot of bots) this.emit({ type: "bot", botId: bot.id });
         for (const group of groups) this.emit({ type: "group", groupId: group.id });
       },
     };
   }
 
-  private saveGroups() {
-    persistMemoryRoster(this, () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, turnStartedAt: _turnStartedAt, ...g }) => g), null, 2), { mode: 0o600 }));
+  markPartitions(): void { if (!teamChangeOpen() && markPartitions(this)) this.saveGroups(); }
+
+  /** Persist groups.json; same contract as saveBots (immediate unless `defer`). */
+  private saveGroups(bots: BotRecord[] = this.bots, options: { defer?: boolean } = {}) {
+    if (options.defer && bots === this.bots) { scheduleCoalesced(GROUPS_FILE, () => this.saveGroupsNow()); return; }
+    this.saveGroupsNow(bots);
+    if (bots === this.bots) cancelCoalesced(GROUPS_FILE);
+  }
+
+  private saveGroupsNow(bots: BotRecord[] = this.bots) {
+    if (!teamChangeOpen()) markPartitions({ bots, groups: this.groups });
+    const write = () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, turnStartedAt: _turnStartedAt, ...g }) => g), null, 2), { mode: 0o600 });
+    if (!this.memoryReady || teamChangeOpen()) write(); else persistMemoryRoster({ bots, groups: this.groups }, write);
   }
 
   // ── groups ────────────────────────────────────────────────────────────
@@ -1372,6 +1745,15 @@ export class Store {
   }
 
   private emit(change: StoreChange) {
+    if (change.type === "message" && change.message.kind !== "screen" && (change.message.kind !== "activity" || isErrorActivity(change.message) || ("actorKind" in change.message && change.message.actorKind === "murage"))) {
+      const group = this.groupByThread(change.threadId);
+      const task = group?.threadId !== change.threadId && group?.tasks?.find(task => task.threadId === change.threadId);
+      if (group && task) {
+        task.unreadCount = (task.unreadCount ?? 0) + 1;
+        this.saveGroups(this.bots, { defer: true });
+        this.emit({ type: "group", groupId: group.id });
+      }
+    }
     for (const listener of [...this.listeners]) {
       try {
         listener(change);
@@ -1445,7 +1827,9 @@ export class Store {
       defaultResponder?: GroupDefaultResponder;
       completed?: boolean;
     },
+    dmAudience?: GroupRecord["dmAudience"],
   ): GroupRecord {
+    assertSectionUnlocked();
     const threadId = newId();
     const createdAt = Date.now();
     const group: GroupRecord = {
@@ -1460,8 +1844,11 @@ export class Store {
       unread: false,
       createdAt,
       dm: dm || undefined,
+      ...(dmAudience ? { dmAudience } : {}),
       busyBotId: null,
       section,
+      // hand-offs in rooms made by this release go through the ask tool
+      ...(dm ? {} : { mentionChain: false }),
     };
     if (!dm) {
       group.tasks = [{ threadId, title: UNTITLED_TASK, createdAt }];
@@ -1474,6 +1861,32 @@ export class Store {
     return group;
   }
 
+  /** Materialise the already committed desktop project creation record. */
+  materializeProjectGroup(group: GroupRecord): GroupRecord {
+    const existing = this.group(group.id);
+    if (existing) return existing;
+    this.groups.unshift(group);
+    try { this.saveGroups(); }
+    catch (error) { this.groups = this.groups.filter(entry => entry !== group); throw error; }
+    this.emit({ type: "group", groupId: group.id });
+    return group;
+  }
+
+  /** SPEC-P 4 [AMB-8]: a channel from before the turn engine keeps the
+   * one-hop @mention chain it always had. Every non-pair, non-project room
+   * with no `mentionChain` field is from before (rooms made since carry
+   * `false`), so it gets `true` once. Idempotent; a restore keeps the field. */
+  markPreUpgradeMentionChains(): number {
+    let marked = 0;
+    for (const group of this.groups) {
+      if (group.dm || group.channelProject || group.mentionChain !== undefined) continue;
+      group.mentionChain = true;
+      marked += 1;
+    }
+    if (marked) this.saveGroups();
+    return marked;
+  }
+
   /** The bot⇄bot channel for a pair, if it exists (order-insensitive). */
   dmGroup(a: string, b: string): GroupRecord | undefined {
     return this.groups.find(
@@ -1482,6 +1895,7 @@ export class Store {
   }
 
   patchGroup(id: string, patch: Partial<Pick<GroupRecord, "name" | "memberIds" | "defaultResponder" | "bulletin" | "unread" | "busyBotId" | "cwd" | "pinnedMessageId" | "section" | "setupCompletedAt" | "setupSkippedAt" | "hidden" | "channelProject">>): GroupRecord | null {
+    if (Object.hasOwn(patch, "section") || Object.hasOwn(patch, "memberIds")) assertSectionUnlocked();
     const group = this.group(id);
     if (!group) return null;
     const previousBusyBotId = group.busyBotId;
@@ -1523,11 +1937,34 @@ export class Store {
     if (!group) return false;
     this.groups = this.groups.filter((g) => g.id !== id);
     this.saveGroups();
+    // Cross-store order (SPEC-P section 2): the JSON save above first, the
+    // messages.db rows second, one transaction. A crash between them leaves
+    // orphan rows the boot reconciler (reconcileProjectRecords) deletes.
+    // Lane E1 will route the open-request cancellation through
+    // completeRequest once it owns dispatch.
+    transaction((db) => deleteProjectRows(db, id, Date.now()));
     for (const threadId of new Set([group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)])) {
       this.deleteThreadRecord(threadId);
     }
     this.emit({ type: "group.deleted", groupId: id });
     return true;
+  }
+
+  /** Set or clear the archive stamp on every desk task of a project
+   * (SPEC-P 3.12): Close and End project set it, Reopen and "Make this a
+   * project" clear it. The task record itself is never removed. */
+  setChannelProjectDeskArchived(groupId: string, archivedAt?: number): void {
+    let touched = false;
+    for (const bot of this.bots) {
+      for (const task of bot.tasks ?? []) {
+        if (task.channelProjectDesk?.groupId !== groupId || task.channelProjectDesk.archivedAt === archivedAt) continue;
+        if (archivedAt === undefined) delete task.channelProjectDesk.archivedAt;
+        else task.channelProjectDesk = { ...task.channelProjectDesk, archivedAt };
+        touched = true;
+        this.emit({ type: "bot", botId: bot.id });
+      }
+    }
+    if (touched) this.saveBots();
   }
 
   /** A process restart cannot preserve an in-flight room orchestrator. Close
@@ -1646,9 +2083,10 @@ export class Store {
     const task = group?.tasks?.find((candidate) => candidate.threadId === threadId);
     if (!group || group.dm || !task) return null;
     group.threadId = task.threadId;
+    task.unreadCount = 0;
     group.pinnedCwd = task.pinnedCwd;
     group.pinnedMessageId = task.pinnedMessageId;
-    this.saveGroups();
+    this.saveGroups(this.bots, { defer: true });
     this.emit({ type: "group", groupId });
     return group;
   }
@@ -1808,6 +2246,13 @@ export class Store {
     return mdb.newestMessageAt(threadId) ?? undefined;
   }
 
+  /** Messages a thread holds, for a Delete confirmation. A loaded thread
+   * answers from memory; any other counts through the thread index. */
+  messageCount(threadId: string): number {
+    const loaded = this.threads.get(threadId);
+    return loaded ? loaded.messages.length : mdb.threadRowCount(threadId);
+  }
+
   activeLeaf(threadId: string): string | null {
     return this.thread(threadId).activeLeafId;
   }
@@ -1828,10 +2273,11 @@ export class Store {
   /** Mark the last assistant text on the active branch as this turn's final
    * visible answer. If a provider ends after commentary without emitting a
    * separate answer, that commentary remains visible as the safe fallback. */
-  markTerminalAssistantMessage(threadId: string, turnId: string, outcome: MemoryTurnOutcome = "completed"): Message | null {
+  markTerminalAssistantMessage(threadId: string, turnId: string, outcome: MemoryTurnOutcome = "completed", helpers?: unknown): Message | null {
     const t = this.thread(threadId);
     const message = [...this.activePath(threadId)].reverse().find(m => m.role === "bot" && m.kind === "text" && m.turnId === turnId);
-    const next = message ? { ...message, turnTerminal: true } : null;
+    const kept = settledTurnHelpers(helpers);
+    const next = message ? { ...message, turnTerminal: true, ...(kept.length ? { turnHelpers: kept } : {}) } : null;
     transaction(() => {
       if (next) mdb.updateMessage(threadId,next);
       recordMemorySettlement(threadId,turnId,outcome);
@@ -1856,11 +2302,18 @@ export class Store {
     this.messageRewrite = rewrite;
   }
 
-  appendMessage(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }): Message {
+  /** Close output is deduped against durable rows, not a possibly stale cache. */
+  appendProjectCloseMessage(threadId: string, key: string, text: string): void {
+    const id = `project-${createHash('sha256').update(JSON.stringify([threadId,key])).digest('hex')}`;
+    if (database().prepare('SELECT 1 FROM messages WHERE thread_id=? AND id=?').get(threadId,id)) return;
+    this.appendMessage(threadId,{role:'bot',kind:'text',actorKind:'murage',murage:{kind:'status'},text,sendId:key},id);
+  }
+
+  appendMessage(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string): Message {
     const t = this.thread(threadId);
     const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
     if (message === null) return { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(input) };
-    const full: Message = { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
+    const full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
     mdb.appendMessage(threadId, full);
     t.messages.push(full);
     t.activeLeafId = full.id;
@@ -1875,8 +2328,21 @@ export class Store {
     // the transcript is just the greeting plus what they said. Cards with a
     // requestId are permission/question prompts and stay until answered, and
     // intake cards own their own lifecycle (see dismissOnboardingCard).
-    if (full.role === "user" && full.kind === "text") this.dismissOnboardingCard(threadId);
+    if (full.role === "user" && full.kind === "text") {
+      this.dismissOnboardingCard(threadId);
+      this.observeOwnerSignals(threadId, full, t.messages.slice(-41, -1));
+    }
     return full;
+  }
+
+  /** Bot learning (B1): a re-ask, or the owner's edit of a bot draft, noticed
+   * from the owner's own new message. Never allowed to fail the append. */
+  private observeOwnerSignals(threadId: string, message: Message, before: Message[]): void {
+    try {
+      const bot = this.botByThread(threadId);
+      if (!bot || !isWorkspaceOwner(threadHumanPrincipal(threadId))) return;
+      observeOwnerMessage(database(), bot, threadId, message, before);
+    } catch { /* a signal is optional; the message is already saved */ }
   }
 
   /** Insert a message into the active chain directly after `anchorId` — the
@@ -1892,18 +2358,75 @@ export class Store {
     if (!anchorExists || t.activeLeafId === anchorId) return this.appendMessage(threadId, message);
     const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
     const children = t.messages.filter((m) => m.parentId === anchorId);
-    mdb.appendMessage(threadId, full);
-    t.messages.push(full);
+    // A splice, not an append: the leaf stays where it is, in memory and on
+    // disk. mdb.appendMessage would move the stored leaf to this message,
+    // which reads as a branch change (memory retires the follow-up and revokes
+    // every receipt of the thread), and the next ordinary append, parented on
+    // the real leaf, would read as a second one: a warm engine was dropped
+    // with reason=memory-changed after every settle-time screenshot that
+    // landed behind a follow-up (continuation-churn.test.ts).
+    // One transaction for the insert, the screen-frame pruning and the
+    // reparenting, so a crash or a failure part-way leaves neither a stranded
+    // screenshot nor half-reparented siblings. Memory and every emit wait for
+    // the commit; if anything throws the cache is untouched and nothing is
+    // published. The work is computed on copies and applied afterwards.
+    const prunedCopies: Message[] = [];
     if (full.kind === "screen") {
-      for (const pruned of this.pruneScreenFrames(t)) {
-        mdb.updateMessage(threadId, pruned);
-        this.emit({ type: "message.patch", threadId, message: pruned });
-      }
+      const screens = [...t.messages, full].filter((m) => m.kind === "screen" && m.png);
+      for (const m of screens.slice(0, Math.max(0, screens.length - 4))) prunedCopies.push({ ...m, png: undefined });
+    }
+    const reparented = children.map((child) => sanitizeMessageDiagnostic({ ...child, parentId: full.id }));
+    transaction(() => {
+      mdb.insertMessage(threadId, full);
+      for (const pruned of prunedCopies) mdb.updateMessage(threadId, pruned);
+      for (const next of reparented) mdb.updateMessage(threadId, next);
+    });
+    t.messages.push(full);
+    for (const pruned of prunedCopies) {
+      const idx = t.messages.findIndex((m) => m.id === pruned.id);
+      if (idx === -1) continue;
+      t.messages[idx].png = undefined;
+      this.emit({ type: "message.patch", threadId, message: t.messages[idx] });
     }
     this.emit({ type: "message", threadId, message: full });
     // announced after the insert so no client ever sees two siblings
     // claiming the same parent
-    for (const child of children) this.patchMessage(threadId, child.id, { parentId: full.id });
+    for (const next of reparented) {
+      const idx = t.messages.findIndex((m) => m.id === next.id);
+      if (idx === -1) continue;
+      const before = t.messages[idx];
+      t.messages[idx] = next;
+      this.emit({ type: "message.patch", threadId, message: next, before });
+    }
+    return full;
+  }
+
+  /** Insert a message into the chain directly before `beforeId`: it takes
+   * that message's parent, and only that message is re-parented onto it
+   * (its siblings on other branches stay where they are). Text a Fuigo
+   * hosted tool row interrupted is saved this way, after the row it was
+   * written before: the transcript reads text → row → following text. The
+   * leaf never moves, in memory or on disk. A missing target is a plain
+   * append. */
+  insertMessageBefore(threadId: string, beforeId: string, input: Omit<Message, "id" | "at">): Message {
+    const t = this.thread(threadId);
+    const target = t.messages.find((m) => m.id === beforeId);
+    if (!target) return this.appendMessage(threadId, input);
+    const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
+    if (message === null) return { id: newId(), at: Date.now(), parentId: target.parentId, ...redactBotAuthored(input) };
+    // No backfill for unmarked rows: insertion before a row first ships with
+    // this marker, so no saved database holds an unmarked inserted row.
+    const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: target.parentId, insertedBefore: target.id };
+    const moved = sanitizeMessageDiagnostic({ ...target, parentId: full.id });
+    transaction(() => {
+      mdb.insertMessage(threadId, full);
+      mdb.updateMessage(threadId, moved);
+    });
+    t.messages.push(full);
+    const idx = t.messages.findIndex((m) => m.id === target.id);
+    if (idx !== -1) t.messages[idx] = moved;
+    this.emit({ type: "message", threadId, message: full });
+    this.emit({ type: "message.patch", threadId, message: moved, before: target });
     return full;
   }
 
@@ -2006,13 +2529,14 @@ export class Store {
     const t = this.thread(threadId);
     const idx = t.messages.findIndex((m) => m.id === messageId);
     if (idx === -1) return null;
-    const next = sanitizeMessageDiagnostic({ ...t.messages[idx], ...patch, card: patch.card ?? t.messages[idx].card });
+    const next = sanitizeMessageDiagnostic({ ...t.messages[idx], ...boundRemovedText(patch), card: patch.card ?? t.messages[idx].card });
     // SQLite is the durable source of truth. Persist before changing memory so
     // a failed write cannot make this process believe a card was answered
     // while a restart would still show it as pending.
     mdb.updateMessage(threadId, next);
+    const before = t.messages[idx];
     t.messages[idx] = next;
-    this.emit({ type: "message.patch", threadId, message: next });
+    this.emit({ type: "message.patch", threadId, message: next, before });
     return next;
   }
 
@@ -2032,6 +2556,9 @@ export class Store {
       /** false = no greeting/onboarding seed. Imported bots must not open
        * with a first-person greeting the user never asked for. */
       seedMessages?: boolean;
+      /** A bot made by a caller that proved nothing (route-policy.ts): no
+       *  computer, browser or connected apps until the owner turns them on. */
+      noAccess?: boolean;
     } = {},
   ): BotRecord {
     // Control characters never reach a name (imports included; Kimi audit #1).
@@ -2048,13 +2575,16 @@ export class Store {
       ...(profile.mascotExpression ? { mascotExpression: profile.mascotExpression } : {}),
       ...(profile.mascotBody ? { mascotBody: profile.mascotBody } : {}),
       unread: false,
-      modelSelection: profile.modelSelection ?? this.defaultSelection(),
+      modelSelection: this.completeNewBotSelection(profile.modelSelection ?? this.defaultSelection()),
       resumeCursors: {},
       createdAt: Date.now(),
       // a new bot has done nothing yet: Auto asks before it first uses this computer
       hostComputerConsent: "ask",
     };
     if (section) bot.section = section;
+    bot.voice = pickDefaultVoice(this.bots);
+    bot.voiceAssigned = true;
+    if (opts.noAccess) { bot.computer = "off"; bot.browser = false; bot.composio = false; }
     bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {},modelSelection:structuredClone(bot.modelSelection),autoApprove:false,alwaysAllow:[],unread:false }];
     this.bots.unshift(bot);
     this.saveBots();
@@ -2086,6 +2616,22 @@ export class Store {
    * retried. Everything after the commit is cleanup of data nothing can
    * reach any more and is best-effort — a failure there is logged, never
    * thrown, so a half-finished cleanup can never resurrect a half-bot. */
+  /** A deleted bot leaves every other bot's Can talk to picks. */
+  pruneMessageAllow(deletedId: string): void {
+    let changed = false;
+    for (const other of this.bots) {
+      const allow = other.messageAllow;
+      if (!allow || allow.mode !== "list") continue;
+      if (!(allow.botIds ?? []).includes(deletedId) && !(allow.grantedBy ?? []).includes(deletedId)) continue;
+      const botIds = (allow.botIds ?? []).filter((x) => x !== deletedId);
+      const grantedBy = (allow.grantedBy ?? []).filter((x) => x !== deletedId);
+      other.messageAllow = botIds.length ? { mode: "list", botIds, ...(grantedBy.length ? { grantedBy } : {}) } : undefined;
+      if (!other.messageAllow) delete other.messageAllow;
+      changed = true;
+    }
+    if (changed) { try { this.saveBots(this.bots); } catch (error) { console.error("store: could not prune Can talk to picks", error); } }
+  }
+
   deleteBot(id: string): boolean {
     const bot = this.bot(id);
     if (!bot) return false;
@@ -2103,6 +2649,8 @@ export class Store {
       throw error;
     }
     this.bots = nextBots;
+    this.pruneMessageAllow(id);
+    transaction(db => captureBotDeletion(db, id));
     if (seated.length) {
       try {
         this.saveGroups();
@@ -2124,6 +2672,7 @@ export class Store {
     // transcripts: deleting a bot deletes what it knew
     try {
       rmSync(workspaceDir(id), { recursive: true, force: true });
+      for (const suffix of ["general", "teams", "projects", "rooms"]) rmSync(workspaceDir(id) + "." + suffix, { recursive: true, force: true });
     } catch {}
     // Approval state deliberately lives outside the bot-writable workspace.
     // It still belongs to the bot, so deleting the bot must remove staged
@@ -2146,11 +2695,24 @@ export class Store {
   patchBot(id: string, patch: Partial<BotRecord>, options: {preserveTaskSettings?:boolean} = {}): BotRecord | null {
     const bot = this.bot(id);
     if (!bot) return null;
+    if (Object.hasOwn(patch, "section")) { assertSectionUnlocked(); assertHomeMove(bot, patch.section); }
     if (!options.preserveTaskSettings && patch.modelSelection && patch.modelSelection.connectionId !== bot.modelSelection.connectionId) {
       const tasks = patch.tasks ?? bot.tasks;
       patch = { ...patch, ...(tasks?.length===1 ? {resumeCursors:{},tasks:tasks.map(task=>({...task,resumeCursors:{},modelSelection:structuredClone(patch.modelSelection!)}))} : {}) };
     }
+    const partitionedAt = bot.partitionedAt ?? patch.partitionedAt ?? (patch.sharedWith && patch.sharedWith.mode !== "none" ? Date.now() : undefined);
+    const formerName = bot.name;
+    const continuityChanged = (bot.continuity === true || patch.continuity === true) && ["continuity", "continuityOptions", "modelSelection"].some(key => Object.hasOwn(patch, key) && JSON.stringify(bot[key as keyof BotRecord]) !== JSON.stringify(patch[key as keyof BotRecord]));
+    const continuityGeneration = bot.continuityGeneration ?? 0;
     Object.assign(bot, patch);
+    if (continuityChanged) bot.continuityGeneration = continuityGeneration + 1;
+    // an owner's edit of the voice makes it theirs
+    if ((Object.hasOwn(patch, "voice") || Object.hasOwn(patch, "voiceProvider"))) delete bot.voiceAssigned;
+    if (bot.name !== formerName) for (const task of bot.tasks ?? []) {
+      const team = task.sharedWork ? teamLabel(task.sharedWork.teamId) : null;
+      if (team && task.title === workThreadTitle(formerName, team)) task.title = workThreadTitle(bot.name, team);
+    }
+    if (partitionedAt !== undefined) bot.partitionedAt = partitionedAt;
     if(bot.tasks?.length===1){
       const task=bot.tasks[0];
       for(const key of ["modelSelection","autoApprove","fullAccess","noLimits","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key)&&(!options.preserveTaskSettings||!["modelSelection","autoApprove","fullAccess","noLimits","alwaysAllow"].includes(key)))Object.assign(task,{[key]:structuredClone(patch[key])});
@@ -2174,6 +2736,8 @@ export class Store {
     const targets = ids.map((id) => this.bot(id));
     if (targets.some((bot) => !bot || bot.hidden)) return { ok: false, reason: "unavailable" };
 
+    assertSectionUnlocked();
+    for (const bot of targets) if (bot) assertHomeMove(bot, section);
     const targetSection = sectionKey(section);
     const selected = targets as BotRecord[];
     const destinationChiefIds = new Set([
@@ -2217,7 +2781,12 @@ export class Store {
   applyTeamChange(
     botPatches: ReadonlyMap<string, Partial<BotRecord>>,
     groupPatches: ReadonlyMap<string, Partial<GroupRecord>>,
+    journal?: typeof TEAM_JOURNAL,
   ): void {
+    if (journal !== TEAM_JOURNAL) {
+      assertSectionUnlocked();
+      for (const [id, patch] of botPatches) if (Object.hasOwn(patch, "section")) { const bot = this.bot(id); if (bot) assertHomeMove(bot, patch.section); }
+    }
     const merge = <T extends object>(record: T, patch: Partial<T>): T => {
       const next = { ...record, ...patch };
       for (const [key, value] of Object.entries(patch)) if (value === undefined) delete (next as Record<string, unknown>)[key];
@@ -2418,12 +2987,16 @@ export class Store {
     return { ok: true, bot };
   }
 
-  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string) {
+  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string) {
     const bot = this.bot(botId);
     if (!bot) return;
     // the cursor belongs to the task that produced it, not to the bot
     const task = threadId ? this.taskByThread(botId, threadId) : this.activeTask(botId);
-    if (task) task.resumeCursors[instanceId] = cursor;
+    if (task) {
+      task.resumeCursors[instanceId] = cursor;
+      // and to the audience it was made for (SPEC-P 13.1)
+      if (audience !== undefined) task.resumeAudiences = { ...task.resumeAudiences, [instanceId]: audience };
+    }
     // The legacy mirror follows the task visible in chat, never a detached
     // routine task working in the background.
     if (!threadId || bot.threadId === threadId) bot.resumeCursors[instanceId] = cursor;
@@ -2462,6 +3035,51 @@ export class Store {
     if (remaining.length) task.externalUpdates = remaining;
     else delete task.externalUpdates;
     this.saveBots();
+  }
+
+  continuationHolder(botId: string, threadId: string): TaskRecord | GroupTaskRecord | GroupRecord | undefined {
+    const group = this.groupByThread(threadId);
+    return this.taskByThread(botId, threadId) ?? (group?.dm ? group : group ? this.groupTaskByThread(group.id, threadId) : undefined);
+  }
+
+  /** Stable identity deduplicates retries. Entries remain visible until accepted. */
+  holdTaskContinuation(botId: string, threadId: string, text: string, context: Omit<HeldContinuation, "id" | "text" | "at"> & { id?: string } = {}): number {
+    const task = this.continuationHolder(botId, threadId);
+    if (!task) throw new Error("The conversation for this card is unavailable.");
+    const id = context.id ?? createHash("sha256").update(JSON.stringify([botId,threadId,context.cardId ?? text,context.runId])).digest("hex");
+    const existing = task.heldContinuations?.find(item => item.id === id);
+    if (existing) { Object.assign(existing, context, { id, botId, text }); this.saveBots(); this.saveGroups(); return task.heldContinuations!.length; }
+    // No silent overflow: the durable queue retains every accepted request.
+    task.heldContinuations = [...(task.heldContinuations ?? []), { ...context, id, botId, text, at: Date.now() }];
+    this.saveBots(); this.saveGroups();
+    const card = context.cardId ? this.messagesFor(threadId).find(row => row.id === context.cardId) : undefined;
+    if (card?.card) this.patchMessage(threadId, card.id, { card: { ...card.card, held: "Waiting for an engine with tools." } });
+    return task.heldContinuations.length;
+  }
+
+  consumeTaskHeldContinuations(botId: string, threadId: string, ids: readonly string[]) {
+    const task = this.continuationHolder(botId, threadId);
+    if (!task?.heldContinuations?.length || ids.length === 0) return;
+    const carried = new Set(ids);
+    const delivered = task.heldContinuations.filter(item => carried.has(item.id));
+    task.heldContinuations = task.heldContinuations.filter(item => !carried.has(item.id));
+    for (const item of delivered) {
+      const card = item.cardId ? this.messagesFor(threadId).find(row => row.id === item.cardId) : undefined;
+      if (card?.card) this.patchMessage(threadId, card.id, { card: { ...card.card, held: undefined } });
+    }
+    this.saveBots(); this.saveGroups();
+  }
+
+  heldItemCount(botId: string, threadId: string): number {
+    const task = this.taskByThread(botId, threadId);
+    return (task?.externalUpdates?.length ?? 0) + (this.continuationHolder(botId, threadId)?.heldContinuations?.length ?? 0);
+  }
+
+  setTaskHeldQueueRow(botId: string, threadId: string, rowId: string | undefined) {
+    const task = this.continuationHolder(botId, threadId);
+    if (!task || task.heldQueueRowId === rowId) return;
+    task.heldQueueRowId = rowId;
+    this.saveBots(); this.saveGroups();
   }
 
   setTaskAutomationEvent(botId: string, threadId: string, eventId?: string): void {
@@ -2646,6 +3264,14 @@ export class Store {
     return holder.procedurePins[botId]!;
   }
 
+  releaseGroupProcedures(groupId:string, threadId:string, botId:string):void {
+    const group=this.group(groupId),holder=group?.dm&&group.threadId===threadId?group:this.groupTaskByThread(groupId,threadId);
+    if(!holder?.procedurePins?.[botId])return;
+    const prior=holder.procedurePins;
+    holder.procedurePins={...prior};delete holder.procedurePins[botId];
+    try{this.saveGroups();}catch(error){holder.procedurePins=prior;throw error;}
+  }
+
   patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd">>&{pinned?:boolean}):TaskRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
     const {pinned,...rest}=patch;
@@ -2669,23 +3295,37 @@ export class Store {
     // independent threads are for.
     const adopts=Boolean(patch.modelSelection)&&(!bot.modelSelection?.instanceId||!bot.modelSelection?.model);
     const adopted=adopts?{modelSelection:structuredClone(patch.modelSelection!)}:{};
+    // Bot learning (B1): an edit or branch switch rewound the conversation, a weak negative.
+    if(patch.rewound===true&&task.rewound!==true){try{recordWeakSignal(database(),{botId:bot.id,threadId,action:"rewind",targetMessageId:this.thread(threadId).activeLeafId},bot);}catch{/* optional */}}
     const tasks=bot.tasks!.map(candidate=>candidate===task?next:candidate);
     const mirrors=bot.threadId===threadId?{resumeCursors:{...next.resumeCursors},rewound:next.rewound,pinnedMessageId:next.pinnedMessageId}:{};
     const candidate={...bot,...mirrors,...adopted,tasks,unread:tasks.some(task=>task.unread)};
+    // Only cosmetic keys may be deferred. Approval, access and model keys are
+    // security or routing state and keep their immediate, throwing write, and
+    // so does `rewound`: lost on a crash, the next turn would resume a provider
+    // session that still holds the abandoned branch.
+    const cosmetic=Object.keys(patch).every(key=>["unread","pinnedMessageId","pinned","title"].includes(key))&&!adopts;
+    if(cosmetic){
+      Object.assign(task,next);if(!next.pinned)delete task.pinned;Object.assign(bot,mirrors,{unread:candidate.unread});
+      this.saveBots(this.bots,{defer:true});
+    }else{
     this.saveBots(this.bots.map(current=>current===bot?candidate:current));
     Object.assign(task,next);if(!next.pinned)delete task.pinned;Object.assign(bot,mirrors,adopted,{unread:candidate.unread});
+    }
     this.emit({type:"bot",botId});return task;
   }
 
   /** A fresh context on the same bot: new thread, new session, same
    * persona/tools/computer. Active creation retains the visible model;
    * detached routine tasks use the owner's defaults. */
-  createTask(botId: string, title?: string, activate = true): TaskRecord | null {
+  createTask(botId: string, title?: string, activate = true, channelProjectDesk?: TaskRecord["channelProjectDesk"], preparedThreadId?: string, sharedWork?: TaskRecord["sharedWork"]): TaskRecord | null {
     const bot = this.bot(botId);
     if (!bot) return null;
     const task: TaskRecord = {
-      threadId: newId(),
+      threadId: preparedThreadId ?? newId(),
       title: title?.trim().slice(0,80) || UNTITLED_TASK,
+      ...(channelProjectDesk ? { channelProjectDesk } : {}),
+      ...(sharedWork ? { sharedWork, cwd: partitionRoots(bot, { kind: "team", teamId: sharedWork.teamId })[0] } : {}),
       createdAt: Date.now(),
       resumeCursors: {},
       modelSelection:structuredClone((activate ? this.activeTask(botId)?.modelSelection : undefined) ?? bot.modelSelection),autoApprove:bot.autoApprove===true,fullAccess:bot.autoApprove===true&&bot.fullAccess===true,noLimits:bot.autoApprove===true&&bot.fullAccess===true&&bot.noLimits===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
@@ -2700,6 +3340,32 @@ export class Store {
     return task;
   }
 
+  /** The work thread, or null for an unknown bot or while a team change is finishing. */
+  createSharedWorkTask(botId: string, teamId: string): TaskRecord | null {
+    const task = this.openSharedWork(botId, teamId);
+    return task && "refused" in task ? null : task;
+  }
+
+  /** The work thread for a team, created on first use. Read only on team
+   * identities: while any team change is finishing it answers a plain line
+   * instead of starting one (C5). */
+  openSharedWork(botId: string, teamId: string): TaskRecord | { refused: string } | null {
+    const bot = this.bot(botId); if (!bot) return null;
+    const existing = bot.tasks?.find(task => task.sharedWork?.teamId === teamId && !task.sharedWork.quarantined);
+    if (existing) return existing;
+    const team = /^[\w-]+$/.test(teamId) ? database().prepare("SELECT label FROM team_identities WHERE team_id=? AND retired_at IS NULL").get(teamId) : undefined;
+    if (!team) throw new Error("Unknown team");
+    if (teamChangeOpen()) return { refused: `${bot.name} can take work for ${String(team.label)} once the team change finishes. Try again in a moment.` };
+    const root = partitionRoots(bot, { kind: "team", teamId })[0];
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    return this.createTask(botId, workThreadTitle(bot.name, teamLabel(teamId)!), false, undefined, undefined, { teamId, createdAt: Date.now() });
+  }
+
+  ensureProjectDesk(botId: string, groupId: string, projectName: string, preparedThreadId?: string): TaskRecord | null {
+    const existing = this.bot(botId)?.tasks?.find(task => task.channelProjectDesk?.groupId === groupId);
+    return existing ?? this.createTask(botId, `${projectName.slice(0, 75)} work`, false, { groupId }, preparedThreadId);
+  }
+
   switchTask(botId: string, threadId: string): BotRecord | null {
     const bot = this.bot(botId);
     const task = bot?.tasks?.find((t) => t.threadId === threadId);
@@ -2707,7 +3373,7 @@ export class Store {
     bot.threadId = task.threadId;
     bot.resumeCursors = { ...task.resumeCursors };
     bot.rewound=task.rewound;bot.pinnedMessageId=task.pinnedMessageId;
-    this.saveBots();
+    this.saveBots(this.bots, { defer: true });
     this.emit({ type: "bot", botId });
     return bot;
   }

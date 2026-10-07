@@ -1,12 +1,35 @@
+import { ProjectLifecycleBanner } from "./ProjectLifecycleBanner";
+import { Suspense } from "react";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { LazyFallback } from "./LazyFallback";
+import { useDesktopSurface } from "@/lib/use-surface";
+import { projectClient, refreshProject } from "@/lib/use-project";
+const CloseProject = retryableLazy(() => import("./CloseProjectDialog"));
+const EndProject = retryableLazy(() => import("./EndProjectDialog"));
 // A room: several bots + you in one shared thread. The sidebar and call view
 // carry the personality; avatars inside the room stay still so a busy group
 // does not become a wall of competing motion. Plain messages go to the room's
 // default responder; @mentions override that routing.
+import { isErrorActivity } from "../../shared/message-visibility";
+import { MurageMessageRow } from "./MurageMessageRow";
+import { messageActor, sameThreadReply, channelReadOnlyReason } from "@/lib/project-presentation";
+import { ProjectStrip } from "./ProjectStrip";
+import { ProjectTabs } from "./ProjectTabs";
+import { ProjectViewBody } from "./ProjectViewBody";
+import { projectSurfaceEnabled, projectWriteReason } from "@/lib/project-client";
+import { ProjectSinceYouLeftLazy } from "./ProjectSinceYouLeftLazy";
+import { useProject } from "@/lib/use-project";
 import { DeletionNoteBanner } from "./DeletionNoteBanner";
 import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
+import { ImageRecordRow, isImageRecordLine } from "./ImageRecordRow";
 import { DelegationWaitRow } from "./DelegationWaitRow";
+import { roomTranscript } from "@/lib/room-transcript";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArrowDown, Check, ChevronDown, Folder, FolderOpen, Info, Loader2, MessageSquareReply, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Target, Trash2, X } from "lucide-react";
+import { Archive, ArrowDown, Check, ChevronDown, Folder, FolderOpen, Info, Loader2, MessageSquareReply, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square, Target, Trash2, Volume2, X } from "lucide-react";
+import { SpeakButton } from "./SpeakButton";
+import { speaker } from "@/lib/tts";
+import { useSpeech } from "@/lib/tts/useSpeech";
+import { canReadAloud, isReading, readAloudLabel, toggleReadAloud } from "@/lib/read-aloud";
 import {
   api,
   useStore,
@@ -20,6 +43,10 @@ import {
 } from "@/state/store";
 import { BotAvatar } from "./Avatar";
 import { roomAuthor } from "@/lib/room-author";
+import { startsBotTurn } from "@/lib/room-speakers";
+import { RoomCommChip, RoomSpeakerLabel } from "./RoomSpeakerLabel";
+import { MessageOutcome, OutcomeRailButtons, OutcomesProvider, ProposedOutcomeCard, outcomeSheetActions, useOutcomes } from "./OutcomeMark";
+import { useRoomOutcomes } from "@/lib/outcomes";
 import { TurnPresence } from "./TurnPresence";
 import { useReplyPop } from "./use-reply-pop";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
@@ -33,24 +60,32 @@ import { ChatFindBar } from "./ChatFindBar";
 import { GroupTaskPicker } from "./TaskPicker";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
+import { McpSignInCard } from "./McpSignInCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
+import { channelWaitingRun, waitingRunMessage } from "@/lib/channel-waiting-run";
 import { GoalRunCard } from "./GoalRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
-import { GroupCallButton, GroupCallOverlay } from "./CallControls";
+import { GroupCallButton, CallBarStrip } from "./CallControls";
+import { registerCallSlot } from "@/lib/call-slot";
 
 import { ApprovalCard } from "./ApprovalCard";
+import { PublishCard } from "./PublishCard";
 import { QuestionCard } from "./QuestionCard";
 import { isQuestionCard } from "../../shared/questions";
 import { ManageMembersPanel } from "./ManageMembersPanel";
 import { ChannelDetailsPanel, channelNoun, type ChannelDetailsSection } from "./ChannelDetailsPanel";
 import { ProjectHome } from "./ProjectHome";
 import { ConfirmDelete } from "./ConfirmDelete";
-import { CHANNEL_PROJECT_GOAL_MAX, CHANNEL_PROJECT_STATUS_LABELS } from "../../shared/project";
+import { CHANNEL_PROJECT_GOAL_MAX } from "../../shared/project";
+import { channelProjectStatusLabel } from "@/lib/channel-surface";
 import { groupActivityRuns } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
+import { HelpersLine, HelpersSummary } from "./HelpersLine";
+import { pickSubtasks } from "@/lib/subtasks";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
+import { OpenBotListButton } from "./OpenBotListButton";
 import { t } from "@/lib/i18n";
 import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
 import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
@@ -60,6 +95,9 @@ import { FolderTrustRow } from "./FolderTrustRow";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
 import { ImagesNotSentRow } from "./ImagesNotSentRow";
 import { browserUnavailableReason } from "../../shared/browser-unavailable";
+import { imagesLeftOutCount } from "../../shared/images-left-out";
+import { plainEngineError } from "../../shared/plain-engine-error";
+import { ImagesLeftOutRow } from "./ImagesLeftOutRow";
 import { imagesNotSent } from "../../shared/turn-image-note";
 import { FolderTrustNote } from "./FolderTrustNote";
 import { useFocusMessage } from "@/lib/focus-message";
@@ -90,11 +128,15 @@ import {
   trimFollowedTail,
   windowAfterPrepend,
 } from "@/lib/transcript-window";
-import { captureRowAnchor, observeSeenRows, restoreRowAnchor, type ScrollAnchor } from "@/lib/transcript-rows";
+import { captureRowAnchor, captureViewportAnchor, observeSeenRows, restoreRowAnchor, type ScrollAnchor } from "@/lib/transcript-rows";
+import { useRoomChips } from "@/lib/learned-chips";
+import { ChipsProvider, MessageChip } from "./LearnedChip";
 import { useReplyDraft } from "@/lib/drafts";
-import { modShortcut } from "@/lib/keyboard-shortcuts";
+import { modShortcut } from "@/lib/mod-shortcut";
+import { useProjectVisit } from "@/lib/use-project-visit";
 import { useMessageById } from "@/lib/held-message";
 import { needsNewestPage } from "@/lib/scrollback";
+import { loadProjectTab, projectViewTab, saveProjectTab, type ProjectTab } from "@/lib/project-tab";
 
 function dayLabel(at: number): string {
   const d = new Date(at);
@@ -108,9 +150,19 @@ function dayLabel(at: number): string {
 
 /** One finished tool step in a room. Same pill the 1:1 chat uses, minus the
  * status glyph — a room reads as a conversation, not a build log. */
-function RoomToolChip({ message }: { message: Message }) {
+function RoomToolChip({ message, botName }: { message: Message; botName?: string }) {
   const tool = message.tool;
   if (!tool) return null;
+  // A raw provider response reads as one plain sentence naming the bot
+  // (G11); the provider's own words stay on hover.
+  const plain = botName && tool.name.startsWith("error:") ? plainEngineError(tool.name.slice(6).trim(), botName, { details: false }) : undefined;
+  if (plain) return (
+    <div className="flex justify-start">
+      <div data-testid="tool-chip" title={tool.name.slice(6).trim()} className={cn(CHIP, "text-danger")}>
+        <span data-testid="tool-chip-name" className="min-w-0 [overflow-wrap:anywhere]">{plain}</span>
+      </div>
+    </div>
+  );
   return (
     <div className="flex justify-start">
       {/* Same shape, and the same trap, as ChatView's ActivityChip: a nowrap
@@ -123,23 +175,6 @@ function RoomToolChip({ message }: { message: Message }) {
       >
         <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name}</span>
       </div>
-    </div>
-  );
-}
-
-/** 16px ember + name, shown once per sender cluster. */
-function ClusterLabel({ bot, name, color }: { bot?: Bot; name: string; color: string }) {
-  return (
-    <div className="mt-1 flex items-center gap-1.5 pl-0.5">
-      <BotAvatar
-        bot={bot ?? ({ color } as Bot)}
-        state={normalizeState(bot?.mascotExpression) ?? "happy"}
-        size={16}
-        motion="none"
-        motionKey={0}
-        animated={false}
-      />
-      <span className="text-[11px] font-medium text-ink-secondary">{name}</span>
     </div>
   );
 }
@@ -184,7 +219,9 @@ const Transcript = memo(function Transcript({
   onReply: (message: Message) => void;
 }) {
   const { state, dispatch } = useStore();
+  const speech = useSpeech();
   const showToolCalls = showToolCallsEnabled(state.config);
+  const project = useProject(group.id, !!group.channelProject && projectSurfaceEnabled(state.config));
   // Below `md` the hover rail is `display: none` and each bubble becomes its
   // own trigger. One matchMedia subscription for the whole channel, and one
   // open sheet at a time — the sheet is modal, so a second would be a bug.
@@ -193,14 +230,50 @@ const Transcript = memo(function Transcript({
   // Members first, then any bot: a delegated teammate's reply or a removed
   // member's message keeps its own avatar instead of the default mascot.
   const memberOf = (id?: string) => roomAuthor(id, members, state.bots);
+  // The outcome mark, same as a direct chat (OutcomeMark.tsx). A room's reply
+  // is its member's own, so the mark is that member's; a delegated teammate
+  // who is not a member has no mark here.
+  const outcomes = useOutcomes();
+  const markOwner = (m: Message) => (m.from?.botId && members.some((member) => member.id === m.from!.botId) ? memberOf(m.from.botId) : undefined);
   // Several bots working at once turn a room into a wall of chips; fold the
   // finished ones the same way a 1:1 chat does.
-  const items = useMemo(() => groupActivityRuns(messages), [messages]);
+  const helperRuns = useStreaming().helpers.runs[group.threadId];
+  const items = useMemo(() => groupActivityRuns(messages, helperRuns), [messages, helperRuns]);
+  // What each bot turn answers, read over the whole room so a target above
+  // the mounted window still resolves.
+  const replyTargets = useMemo(() => new Map(transcript.flatMap((message) => { const target = sameThreadReply(message, transcript); return target ? [[message.id, target] as const] : []; })), [transcript]);
+  // The chip only says something new: a reply to the row right above it
+  // reads as a reply already (evidence Q-e1).
+  const shownReplyTo = (id: string, above: Message | undefined) => {
+    const target = replyTargets.get(id);
+    if (!target || target.id === above?.id) return undefined;
+    return target;
+  };
+  const jumpTo = (target: Message) => dispatch({ type: "focusMessage", threadId: group.threadId, messageId: target.id });
   const focus = state.focusMessage;
   const focusedId = focus && !focus.consumed && focus.threadId === group.threadId ? focus.messageId : null;
+  // Read aloud, on a member's written reply, in that member's own voice. Hidden
+  // with no voice endpoint, the same check the call button makes.
+  const speaks = (m: Message) => {
+    const member = m.from?.botId ? memberOf(m.from.botId) : undefined;
+    return member && state.config?.tts?.configured && canReadAloud(m) && !isErrorActivity(m) ? member : undefined;
+  };
   const roomActions = (m: Message): MessageAction[] => {
     const pinned = group.pinnedMessageId === m.id;
+    const reader = speaks(m);
+    const reading = isReading(speech, m.id);
+    const ready = Boolean(reader?.voice || state.config?.tts?.voice);
     return [
+      ...(reader && m.text
+        ? [{
+            id: "speak",
+            label: readAloudLabel({ playing: reading, ready }),
+            icon: reading ? <Square size={18} className="fill-current" /> : <Volume2 size={18} />,
+            disabled: !ready && !reading,
+            onSelect: () => toggleReadAloud(speaker, { text: m.text ?? "", botId: reader.id, messageId: m.id, voiceId: reader.voice }),
+          }]
+        : []),
+      ...(markOwner(m) ? outcomeSheetActions(outcomes, markOwner(m)!, m, markOwner(m)!.id) : []),
       { id: "reply", label: "Reply", icon: <MessageSquareReply size={18} />, onSelect: () => onReply(m) },
       {
         id: "pin",
@@ -223,21 +296,35 @@ const Transcript = memo(function Transcript({
     <>
       {items.map((item) => {
         const prev = shownPrev;
+        if (item.kind === "helpers") {
+          return (
+            <div key={item.id} data-row={item.id} className="transcript-row flex flex-col gap-3">
+              <HelpersSummary label={item.label} helpers={item.helpers} />
+            </div>
+          );
+        }
         const first = item.kind === "run" ? item.messages[0] : item.message;
         const newDay = !prev || new Date(prev.at).toDateString() !== new Date(first.at).toDateString();
         if (item.kind === "run") {
           if (!showToolCalls) return null;
-          const cluster = !prev || prev.role !== first.role || prev.from?.botId !== first.from?.botId || newDay;
+          const turnOpens = startsBotTurn(prev, first) || newDay;
+          const runReplyTo = turnOpens ? shownReplyTo(first.id, prev) : undefined;
           shownPrev = item.messages.at(-1);
           return (
             <div key={item.id} data-row={item.id} className="transcript-row flex flex-col gap-3">
               {newDay && (
-                <div className="py-3 text-center text-[13px] text-ink-secondary">
+                <div data-day-separator="" className="py-3 text-center text-[13px] text-ink-secondary">
                   {dayLabel(first.at)} {formatTime(first.at)}
                 </div>
               )}
-              {first.from && cluster && (
-                <ClusterLabel bot={memberOf(first.from.botId)} name={first.from.name} color={first.from.color} />
+              {first.from && turnOpens && (
+                <RoomSpeakerLabel
+                  bot={memberOf(first.from.botId)}
+                  name={first.from.name}
+                  color={first.from.color}
+                  replyTo={runReplyTo}
+                  onJump={runReplyTo ? () => jumpTo(runReplyTo) : undefined}
+                />
               )}
               <ActivityRun messages={item.messages} forceOpen={item.messages.some((step) => step.id === focusedId)}>
                 {item.messages.map((step) => (
@@ -251,13 +338,14 @@ const Transcript = memo(function Transcript({
         }
         const m = item.message;
         if (m.id === emergingId) return null;
-        const user = m.role === "user";
-        const attachments = user && m.text ? splitTranscriptAttachments(m.text) : null;
-        const newCluster = !prev || prev.role !== m.role || prev.from?.botId !== m.from?.botId || newDay;
+        const actor = messageActor(m, group.humanPrincipalKind ?? (group.readOnlyReason ? "person" : "owner"));
+        const user = actor === "owner" || actor === "person";
+        const attachments = user && m.text ? splitTranscriptAttachments(m.text, { hidePasteWrappers: true }) : null;
+        const newTurn = startsBotTurn(prev, m) || newDay;
         // An error always names the bot it belongs to, even mid-cluster: in a
         // room several bots can fail in a row, and "error: ..." alone does not
         // say whose turn stopped.
-        const errorRow = m.kind === "activity" && Boolean(m.tool) && (m.tool!.ok === false || m.tool!.name.startsWith("error:"));
+        const errorRow = isErrorActivity(m);
         const routineOwner = m.kind === "routine.run" ? memberOf(m.from?.botId) : undefined;
         const routineExecutionThreadId = m.routineRun?.executionThreadId;
         const routineTarget = routineOwner && hasRoutineExecutionTask(routineOwner.tasks, routineExecutionThreadId)
@@ -269,10 +357,16 @@ const Transcript = memo(function Transcript({
           // `tool` distinguishes a permission from a QUESTION — a question
           // only accepts an "answer", so routing it here would offer an
           // Allow the broker rejects
-          m.kind === "secret" && m.secret && m.from?.botId ? (
+          actor === "murage" || errorRow ? (
+            <MurageMessageRow message={m} group={group} members={members} disabledReason={group.channelProject ? projectWriteReason(project) : state.config?.features?.roomsQueue === true ? null : "Request controls are not available yet"} />
+          ) : m.kind === "secret" && m.secret && m.from?.botId ? (
             <SecretRequestCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.kind === "connector" && m.connector && m.from?.botId ? (
             <ConnectorCard botId={m.from.botId} threadId={group.threadId} message={m} />
+          ) : m.kind === "mcpSignIn" && m.mcpSignIn && m.from?.botId ? (
+            <McpSignInCard botId={m.from.botId} threadId={group.threadId} message={m} />
+          ) : m.kind === "options" && m.card?.kind === "publish" ? (
+            <div className="flex justify-start"><PublishCard threadId={group.threadId} message={m} /></div>
           ) : m.kind === "options" && isQuestionCard(m.card) ? (
             // a member's question: same card as a 1:1 chat, answered by
             // the room's thread; a late answer goes out as a room message
@@ -299,6 +393,8 @@ const Transcript = memo(function Transcript({
           ) : m.kind === "activity" && m.tool ? (
             isApprovedStepsLine(m) ? (
               <ApprovedStepsRow message={m} />
+            ) : isImageRecordLine(m) ? (
+              <ImageRecordRow message={m} />
             ) : m.delegationWait ? (
               <DelegationWaitRow text={m.tool.name} onStop={() => dispatch({ type: "stopDelegation", delegationId: m.delegationWait!.id })} />
             ) : hostStoppedReason(m.tool.name) ? (
@@ -311,10 +407,21 @@ const Transcript = memo(function Transcript({
               <FolderTrustRow kind={folderTrustNotice(m.tool.name)!.kind} sources={folderTrustNotice(m.tool.name)!.sources} />
             ) : browserUnavailableReason(m.tool.name) ? (
               <BrowserUnavailableRow reason={browserUnavailableReason(m.tool.name)!} />
+            ) : m.comm ? (
+              // Same as a direct chat: the bot⇄bot chip is navigation, not
+              // work, so it stays with tool calls off and opens the pair room.
+              <RoomCommChip
+                label={m.tool.name}
+                comm={m.comm}
+                bots={state.bots}
+                onOpen={() => dispatch({ type: "select", id: m.comm!.groupId })}
+              />
+            ) : imagesLeftOutCount(m.tool.name) ? (
+              <ImagesLeftOutRow botName={memberOf(m.from?.botId)?.name ?? m.from?.name ?? "This bot"} count={imagesLeftOutCount(m.tool.name)!} />
             ) : imagesNotSent(m.tool.name) ? (
               <ImagesNotSentRow counts={imagesNotSent(m.tool.name)!} />
             ) : m.tool.ok === false || m.tool.name.startsWith("error:") || showToolCalls ? (
-              <RoomToolChip message={m} />
+              <RoomToolChip message={m} botName={memberOf(m.from?.botId)?.name ?? m.from?.name} />
             ) : null
           ) : m.kind === "text" && (m.text || m.attachments?.length) ? (
             <div className={cn("group flex w-full flex-col", user ? "items-end" : "items-start")}>
@@ -422,6 +529,10 @@ const Transcript = memo(function Transcript({
                 <div className="max-md:hidden md:contents">
                 {!user && (
                   <>
+                    {m.text && speaks(m) && (
+                      <SpeakButton text={m.text} botId={m.from?.botId} messageId={m.id} voiceId={speaks(m)?.voice} />
+                    )}
+                    {markOwner(m) && <OutcomeRailButtons bot={markOwner(m)!} botId={markOwner(m)!.id} messageId={m.id} message={m} />}
                     <button
                       type="button"
                       onClick={() => onReply(m)}
@@ -439,6 +550,8 @@ const Transcript = memo(function Transcript({
                   {formatTime(m.at)}
                 </span>
               </div>
+              {!user && markOwner(m) && <MessageOutcome messageId={m.id} />}
+              {!user && markOwner(m) && <MessageChip messageId={m.id} botName={markOwner(m)!.name} />}
               {/* The hover rail's two controls, as words, in the thumb zone.
                   Same pair and same order as the rail above — a channel row
                   offers Reply and Pin, so the sheet offers exactly those. */}
@@ -452,16 +565,25 @@ const Transcript = memo(function Transcript({
           ) : null;
         if (!row) return null;
         shownPrev = m;
+        const replyTo = actor === "bot" && m.from && newTurn ? shownReplyTo(m.id, prev) : undefined;
         return (
           <div key={m.id} data-row={m.id} className="transcript-row flex flex-col gap-3" data-mid={m.id}>
             {newDay && (
-              <div className="py-3 text-center text-[13px] text-ink-secondary">
+              <div data-day-separator="" className="py-3 text-center text-[13px] text-ink-secondary">
                 {dayLabel(m.at)} {formatTime(m.at)}
               </div>
             )}
-            {!user && m.from && (newCluster || errorRow) && (
-              <ClusterLabel bot={memberOf(m.from.botId)} name={m.from.name} color={m.from.color} />
+            {actor === "bot" && !errorRow && m.from && newTurn && (
+              <RoomSpeakerLabel
+                bot={memberOf(m.from.botId)}
+                name={m.from.name}
+                color={m.from.color}
+                replyTo={replyTo}
+                onJump={replyTo ? () => jumpTo(replyTo) : undefined}
+              />
             )}
+            {actor === "routine" && <span className="text-[12px] text-ink-secondary">Routine</span>}
+            {actor === "person" && <span className="text-[12px] text-ink-secondary">Person</span>}
             {row}
           </div>
         );
@@ -660,7 +782,7 @@ type RoomSetupFields = {
 type RoomResponderMode = "lead" | "everyone" | "mentions";
 
 function setupResponderMode(responder: GroupDefaultResponder): RoomResponderMode {
-  return responder.kind === "member" ? "lead" : responder.kind;
+  return responder.kind === "member" || responder.kind === "auto" ? "lead" : responder.kind;
 }
 
 function roomNeedsSetup(group: Group): boolean {
@@ -1005,6 +1127,8 @@ function ChannelHeaderMenu({
   group,
   onDetails,
   onMakeProject,
+  onCloseProject,
+  onEndProject,
   onRename,
   onArchive,
   onDelete,
@@ -1013,6 +1137,8 @@ function ChannelHeaderMenu({
   group: Group;
   onDetails: () => void;
   onMakeProject: () => void;
+  onCloseProject?: () => void;
+  onEndProject?: () => void;
   onRename: () => void;
   onArchive: () => void;
   onDelete: () => void;
@@ -1051,6 +1177,8 @@ function ChannelHeaderMenu({
         <Info size={16} className="text-ink-secondary" />
         Channel details
       </button>
+      {onCloseProject && <button type="button" role="menuitem" onClick={act(onCloseProject)} className={row}>Close project</button>}
+      {onEndProject && <button type="button" role="menuitem" onClick={act(onEndProject)} className={row}>End project</button>}
       {!group.channelProject && (
         <button type="button" role="menuitem" onClick={act(onMakeProject)} className={row}>
           <Target size={16} className="text-ink-secondary" />
@@ -1085,7 +1213,7 @@ function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => 
   };
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3"
+      className="overlay-inset fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <form
@@ -1131,18 +1259,19 @@ function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => 
 /** Making a channel a project asks for ONE thing, because everything else
  * already exists: the chat, the bots, the instructions and the folder all
  * stay exactly as they are. The only thing a channel never had is a goal. */
-function MakeProjectDialog({ group, onClose }: { group: Group; onClose: () => void }) {
+function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: () => void; onMade: () => void }) {
   const { dispatch } = useStore();
   const [goal, setGoal] = useState("");
   const save = () => {
     const trimmed = goal.trim();
     if (!trimmed) return;
     dispatch({ type: "patchGroup", groupId: group.id, patch: { channelProject: { goal: trimmed } } });
+    onMade();
     onClose();
   };
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3"
+      className="overlay-inset fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <form
@@ -1197,11 +1326,24 @@ function MakeProjectDialog({ group, onClose }: { group: Group; onClose: () => vo
 
 export function GroupView({ group }: { group: Group }) {
   const { state, dispatch } = useStore();
+  // Conversation order from parent links, not arrival order: hosted-tool
+  // text saved in front of its row arrives after it (room-transcript.ts).
+  // Everything below (window, focus, follow, replies) reads this order.
+  const roomMessages = useMemo(() => roomTranscript(group.messages), [group.messages]);
   const stream = useStreaming();
+  const roomHelpers = group.busyBotId
+    ? pickSubtasks(stream.helpers.live[group.threadId], group.tasks?.find((task) => task.threadId === group.threadId)?.subtasks)
+    : [];
   const streaming = stream.streaming[group.threadId];
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad();
+  // Where an active call's full-screen view portals to (src/lib/call-slot.ts).
+  const callSlotRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    registerCallSlot(callSlotRef.current);
+    return () => registerCallSlot(null);
+  }, []);
   const [follow, setFollow] = useState(true);
   const followRef = useRef(true);
   const previousScrollTop = useRef(0);
@@ -1215,17 +1357,29 @@ export function GroupView({ group }: { group: Group }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [makeProjectOpen, setMakeProjectOpen] = useState(false);
+  const desktop = useDesktopSurface();
+  const [lifecycleDialog, setLifecycleDialog] = useState<"close"|"end"|null>(null);
+  const [lifecycleError, setLifecycleError] = useState("");
+  const [reopening, setReopening] = useState(false);
+  const [reopenedNotice, setReopenedNotice] = useState<{pausedRoutines:string[];resumeHint:string}|null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // A project keeps its chat. The tab only decides which of the two the
-  // person is looking at; nothing about the channel changes with it.
-  const [projectTab, setProjectTab] = useState<"overview" | "chat">("overview");
+  // person is looking at; nothing about the channel changes with it. A
+  // project opens on its chat, or on whichever tab the owner last left it
+  // on (src/lib/project-tab.ts); this view remounts per channel, so the
+  // choice is read back rather than held here.
+  const [projectTab, setProjectTab] = useState<ProjectTab>(() => loadProjectTab(group.id));
+  const chooseProjectTab = useCallback((tab: ProjectTab) => {
+    setProjectTab(tab);
+    saveProjectTab(group.id, tab);
+  }, [group.id]);
   const detailsTriggerRef = useRef<HTMLButtonElement>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const closeDetails = useCallback(() => setDetailsSection(null), []);
   const { replyTo, selectReply, clearReply, consumeReply, restoreReply } = useReplyDraft(
     group.threadId,
     `group:${group.id}:${group.threadId}`,
-    group.messages,
+    roomMessages,
   );
   const membersTriggerRef = useRef<HTMLButtonElement>(null);
   const closeMembers = useCallback(() => setMembersOpen(false), []);
@@ -1238,8 +1392,11 @@ export function GroupView({ group }: { group: Group }) {
     setMenuOpen(false);
     setRenameOpen(false);
     setMakeProjectOpen(false);
+    setLifecycleDialog(null);
+    setLifecycleError("");
+    setReopenedNotice(null);
     setConfirmDelete(false);
-    setProjectTab("overview");
+    setProjectTab(loadProjectTab(group.id));
   }, [group.id]);
   useEffect(() => {
     const onFind = (event: KeyboardEvent) => {
@@ -1257,26 +1414,51 @@ export function GroupView({ group }: { group: Group }) {
     [group.memberIds, state.bots],
   );
   const speaker = members.find((b) => b.id === group.busyBotId);
+  const outcomes = useRoomOutcomes(group.memberIds, group.threadId, Boolean(group.busyBotId));
+  // A memory chip can arrive under an older reply while the reader is looking
+  // elsewhere: hold the row they are on so the view does not move (as ChatView).
+  const chipAnchor = useRef<ScrollAnchor | null>(null);
+  const chips = useRoomChips(group.memberIds, group.threadId, Boolean(group.busyBotId), {
+    before: () => {
+      const el = scrollRef.current;
+      chipAnchor.current = el && !followRef.current ? captureViewportAnchor(el, transcriptKey) : null;
+    },
+  });
+  const proposalBot = members.find((member) => member.id === outcomes.proposal?.botId);
   const setupPending = roomNeedsSetup(group);
   // An ordinary channel is always its chat. A project has an overview in
   // front of the same chat, and everything that belongs to the transcript —
   // the instructions strip, the folder card, the pinned message, the
   // composer — belongs to the chat, not to the overview.
-  const showChat = !group.channelProject || projectTab === "chat";
+  const shownProjectTab = projectViewTab({ remembered: projectTab, setupPending });
+  const projectSurface = projectSurfaceEnabled(state.config) && !group.dm;
+  const project = useProject(group.id, projectSurface && !!group.channelProject);
+  const activeTab = projectSurface ? ((!group.channelProject && ["board", "overview", "activity"].includes(shownProjectTab)) || (shownProjectTab === "board" && (state.config?.features?.projectsBoard === false || project?.settings.parts.board === false)) ? "chat" : shownProjectTab) : group.channelProject && shownProjectTab === "overview" ? "overview" : "chat";
+  const showChat = activeTab === "chat";
+  const visitCounts = useProjectVisit(group.id, projectSurface && !!group.channelProject);
   // The pinned message may be older than the held page (upstream #1527).
-  const pinnedMessage = useMessageById(group.threadId, group.pinnedMessageId || undefined, group.messages);
+  const pinnedMessage = useMessageById(group.threadId, group.pinnedMessageId || undefined, roomMessages);
 
   // Mascot stays while a member works; the finished reply pops in above it.
-  const lastGroupMessage = group.messages.at(-1);
+  const lastGroupMessage = roomMessages.at(-1);
   const toolInFlight = lastGroupMessage?.kind === "activity" && lastGroupMessage.tool?.ok === undefined;
   const activityLabel = liveActivityLabel(lastGroupMessage);
   const waiting = Boolean(
-    speaker && showWorkingDots(true, group.messages.at(-1), speaker.id),
+    speaker && showWorkingDots(true, roomMessages.at(-1), speaker.id),
   );
   const popping = useReplyPop(`${group.id}:${group.threadId}`, lastGroupMessage, waiting);
-  const presenceVisible = waiting || popping !== null;
-  const poppingMessage = popping ? group.messages.find((message) => message.id === popping.id) : undefined;
-  const presenceSpeaker = speaker ?? members.find((member) => member.id === popping?.botId) ?? members[0];
+  // A team-goal routine waiting on the person: its card, not "Thinking".
+  const waitingRun = channelWaitingRun(state.routineRuns, group);
+  const presenceVisible = (waiting && !(waitingRun && waitingRun.botId === speaker?.id)) || popping !== null;
+  const poppingMessage = popping ? roomMessages.find((message) => message.id === popping.id) : undefined;
+  // Unknown speaker: the neutral mascot below, never the first member's.
+  const presenceSpeaker = speaker ?? members.find((member) => member.id === popping?.botId);
+  // Name the live row only after its bot: the members[0] fallback is a
+  // mascot, not a claim about who is speaking. A popped answer is named
+  // after its own author, even once the next member has started working.
+  const presenceName = popping
+    ? poppingMessage?.from?.name ?? members.find((member) => member.id === popping.botId)?.name
+    : speaker?.name;
 
   // Windowed transcript, mirroring ChatView: only a tail of the room mounts;
   // the anchored boundary re-tails on a render-phase reset when the room (or
@@ -1284,7 +1466,7 @@ export function GroupView({ group }: { group: Group }) {
   const transcriptKey = `${group.id}:${group.threadId}`;
   // `firstId`: see ChatView — the boundary moves with the rows when a page of
   // older messages lands in front of them (upstream #1527).
-  const firstMessageId = group.messages[0]?.id;
+  const firstMessageId = roomMessages[0]?.id;
   // Row anchor captured before a reader-initiated expand or page (see
   // showEarlier/loadOlder below). Declared here because a pending capture is
   // also how the window tells the page the reader asked for from the pages a
@@ -1297,17 +1479,17 @@ export function GroupView({ group }: { group: Group }) {
     firstId?: string;
   }>(() => ({
     key: transcriptKey,
-    start: tailWindowStart(group.messages.length),
+    start: tailWindowStart(roomMessages.length),
     end: null,
     firstId: firstMessageId,
   }));
   if (transcriptWindow.key !== transcriptKey) {
-    setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(group.messages.length), end: null, firstId: firstMessageId });
+    setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(roomMessages.length), end: null, firstId: firstMessageId });
   } else if (transcriptWindow.firstId !== firstMessageId) {
-    const shift = transcriptWindow.firstId ? group.messages.findIndex((message) => message.id === transcriptWindow.firstId) : -1;
+    const shift = transcriptWindow.firstId ? roomMessages.findIndex((message) => message.id === transcriptWindow.firstId) : -1;
     const reveal = preExpandAnchor.current?.key === transcriptKey;
     const moved = windowAfterPrepend(transcriptWindow, shift, reveal);
-    setTranscriptWindow({ ...(reveal ? capRevealedWindow(moved, group.messages.length) : moved), firstId: firstMessageId });
+    setTranscriptWindow({ ...(reveal ? capRevealedWindow(moved, roomMessages.length) : moved), firstId: firstMessageId });
   }
   const {
     visible: windowedMessages,
@@ -1315,8 +1497,8 @@ export function GroupView({ group }: { group: Group }) {
     laterCount,
     startIndex,
   } = useMemo(
-    () => resolveTranscriptWindow(group.messages, transcriptWindow.start, TRANSCRIPT_WINDOW_SIZE, transcriptWindow.end),
-    [group.messages, transcriptWindow.start, transcriptWindow.end],
+    () => resolveTranscriptWindow(roomMessages, transcriptWindow.start, TRANSCRIPT_WINDOW_SIZE, transcriptWindow.end),
+    [roomMessages, transcriptWindow.start, transcriptWindow.end],
   );
 
   const setBottomFollow = useCallback((next: boolean) => {
@@ -1326,30 +1508,35 @@ export function GroupView({ group }: { group: Group }) {
 
   useEffect(() => setBottomFollow(true), [group.id, setBottomFollow]);
   // Observed only while the Chat tab's transcript is mounted: a project room
-  // opens on Overview, and a key that did not change on the switch to Chat
+  // can open on Overview, and a key that did not change on the switch to Chat
   // left the new transcript unobserved, so a Thinking row or a streaming
   // reply grew in under the composer.
   useBottomFollowResize(scrollRef, transcriptRef, followRef, setupPending || !showChat ? null : transcriptKey);
 
   const appliedFocus = useRef<number | null>(null);
+  const revealedFocus = useRef<number | null>(null);
   useEffect(() => {
     const focus = state.focusMessage;
     if (!focus || focus.consumed || focus.threadId !== group.threadId || appliedFocus.current === focus.nonce) return;
-    const targetIndex = group.messages.findIndex((message) => message.id === focus.messageId);
+    if (revealedFocus.current !== focus.nonce) {
+      revealedFocus.current = focus.nonce;
+      chooseProjectTab("chat");
+    }
+    const targetIndex = roomMessages.findIndex((message) => message.id === focus.messageId);
     if (targetIndex < 0) return;
     appliedFocus.current = focus.nonce;
-    const range = focusWindowRange(group.messages.length, targetIndex);
+    const range = focusWindowRange(roomMessages.length, targetIndex);
     setBottomFollow(false);
-    setTranscriptWindow({ key: transcriptKey, ...asLiveTail(range, group.messages.length) });
-  }, [group.messages, group.threadId, setBottomFollow, state.focusMessage, transcriptKey]);
-  useFocusMessage(group.threadId, group.messages.length > 0);
+    setTranscriptWindow({ key: transcriptKey, ...asLiveTail(range, roomMessages.length) });
+  }, [roomMessages, group.threadId, setBottomFollow, state.focusMessage, transcriptKey, chooseProjectTab]);
+  useFocusMessage(group.threadId, roomMessages.length > 0);
   // A followed live tail stays within MAX_MOUNTED_ROWS (transcript-window.ts).
   useEffect(() => {
     setTranscriptWindow((w) => {
-      const next = trimFollowedTail(w, group.messages.length, followRef.current);
+      const next = trimFollowedTail(w, roomMessages.length, followRef.current);
       return next === w ? w : { ...w, ...next };
     });
-  }, [group.messages.length, transcriptKey]);
+  }, [roomMessages.length, transcriptKey]);
   // Rows the reader has seen may skip layout off screen (styles.css).
   useEffect(() => {
     if (!transcriptRef.current || !scrollRef.current) return;
@@ -1368,7 +1555,7 @@ export function GroupView({ group }: { group: Group }) {
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [group.id, group.messages.length, streaming, group.busyBotId, group.working, composerDock.pad, showChat]);
+  }, [group.id, roomMessages.length, streaming, group.busyBotId, group.working, composerDock.pad, showChat]);
 
   // Rows move in and out around the reader; a surviving row is kept where it
   // was (transcript-rows.ts, and see ChatView). The capture belongs to the
@@ -1394,7 +1581,7 @@ export function GroupView({ group }: { group: Group }) {
     // expanding means reading scrollback — never let a mid-expand stream
     // event pin the viewport back to the bottom
     setBottomFollow(false);
-    setTranscriptWindow((w) => ({ ...w, ...expandEarlier({ start: startIndex, end: w.end }, group.messages.length) }));
+    setTranscriptWindow((w) => ({ ...w, ...expandEarlier({ start: startIndex, end: w.end }, roomMessages.length) }));
   };
   useLayoutEffect(restoreAnchor, [transcriptWindow.start, transcriptWindow.end, transcriptKey]);
 
@@ -1407,6 +1594,14 @@ export function GroupView({ group }: { group: Group }) {
     dispatch({ type: "loadOlderMessages", threadId: group.threadId });
   };
   useLayoutEffect(restoreAnchor, [firstMessageId, transcriptKey]);
+  // The chip that was just attached grows one row: put the reader's row back where it was.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const held = chipAnchor.current;
+    chipAnchor.current = null;
+    if (!el || !held || held.key !== transcriptKey || !restoreRowAnchor(el, held)) return;
+    previousScrollTop.current = el.scrollTop;
+  }, [chips.byReply]);
   // A phone's slim boot page is topped up by the store, not by a click here
   // (scrollback needsNewestPage). Capture for it too, so its newest page
   // mounts and the viewport holds still exactly as for "Load earlier".
@@ -1426,7 +1621,7 @@ export function GroupView({ group }: { group: Group }) {
   const showLater = () => {
     captureAnchor("last");
     setBottomFollow(false);
-    setTranscriptWindow((w) => ({ ...w, ...expandLater({ start: w.start, end: w.end }, group.messages.length) }));
+    setTranscriptWindow((w) => ({ ...w, ...expandLater({ start: w.start, end: w.end }, roomMessages.length) }));
   };
 
   // The end of a window that stops short of the newest row is not the end of
@@ -1463,8 +1658,14 @@ export function GroupView({ group }: { group: Group }) {
   ));
 
   return (
+    <OutcomesProvider value={outcomes}>
+    <ChipsProvider value={chips}>
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
-      <GroupCallOverlay group={group} members={members} />
+      {/* Call mode is mounted once at Shell level (App.tsx), keyed to the
+          group on the call rather than the selected view. Its full-screen
+          view portals into this slot (src/lib/call-slot.ts), so it covers
+          this column only, never the sidebar or side panels. */}
+      <div ref={callSlotRef} className="pointer-events-none absolute inset-0" />
       {membersOpen && !group.dm && (
         <ManageMembersPanel group={group} onClose={closeMembers} triggerRef={membersTriggerRef} />
       )}
@@ -1477,7 +1678,11 @@ export function GroupView({ group }: { group: Group }) {
         />
       )}
       {renameOpen && <RenameChannelDialog group={group} onClose={() => setRenameOpen(false)} />}
-      {makeProjectOpen && !group.dm && <MakeProjectDialog group={group} onClose={() => setMakeProjectOpen(false)} />}
+      {makeProjectOpen && !group.dm && (
+        <MakeProjectDialog group={group} onClose={() => setMakeProjectOpen(false)} onMade={() => chooseProjectTab("overview")} />
+      )}
+      {desktop === true && lifecycleDialog === "close" && <LazyBoundary onRetry={CloseProject.retry}><Suspense fallback={<LazyFallback />}><CloseProject.Component returnFocusRef={menuTriggerRef} groupId={group.id} goalState={project?.goal?.state} onClose={() => setLifecycleDialog(null)} /></Suspense></LazyBoundary>}
+      {desktop === true && lifecycleDialog === "end" && <LazyBoundary onRetry={EndProject.retry}><Suspense fallback={<LazyFallback />}><EndProject.Component returnFocusRef={menuTriggerRef} groupId={group.id} onClose={() => setLifecycleDialog(null)} /></Suspense></LazyBoundary>}
       {confirmDelete && (
         <ConfirmDelete
           name={group.name}
@@ -1495,14 +1700,17 @@ export function GroupView({ group }: { group: Group }) {
       <div
         className={cn(
           "flex flex-wrap items-center justify-between gap-2 px-5 py-3",
-          // Room for the drawer button, which overlays this corner below md.
-          "pl-11 md:pl-5",
+          // Below md the drawer button is the title row's first item, so the
+          // row starts nearer the edge; the desktop keeps its px-5.
+          "pl-3 md:pl-5",
           // Same status-bar inset as ChatView's header; calc() so the desktop
           // keeps py-3 when the inset is 0px.
           "pt-[calc(0.75rem+env(safe-area-inset-top))]",
         )}
       >
         <div className="flex min-w-0 basis-full items-center gap-2 md:basis-auto md:flex-1 md:min-w-[12rem]">
+          {/* Phones only, on the title's own row (OpenBotListButton.tsx). */}
+          <OpenBotListButton />
           <span className="truncate text-[15px] font-semibold text-ink">{group.name}</span>
           {!setupPending && !group.dm && <div className="min-w-0 max-w-[45%] shrink-0"><GroupTaskPicker group={group} /></div>}
         </div>
@@ -1582,6 +1790,8 @@ export function GroupView({ group }: { group: Group }) {
                     }}
                     onDetails={() => setDetailsSection("about")}
                     onMakeProject={() => setMakeProjectOpen(true)}
+                    onCloseProject={desktop === true && project?.lifecycle === "open" && !project.closing ? () => setLifecycleDialog("close") : undefined}
+                    onEndProject={desktop === true && project?.lifecycle === "open" && !project.closing ? () => setLifecycleDialog("end") : undefined}
                     onRename={() => setRenameOpen(true)}
                     onArchive={() => {
                       // Filed away, and the screen moves on with it: leaving
@@ -1599,32 +1809,43 @@ export function GroupView({ group }: { group: Group }) {
           )}
         </div>
       </div>
+      {/* A call running elsewhere: a strip in the layout, not a floating
+          bar over the composer (callbar-review.md I5). */}
+      <CallBarStrip ownId={group.id} ownThreadId={group.threadId} />
 
       {/* A project's two faces. The chat is the channel's own transcript,
           unchanged; the overview is the only thing a plain channel lacks. */}
-      {group.channelProject && !setupPending && (
+      {!projectSurface && group.channelProject && !setupPending && (
         <div role="tablist" aria-label={`${group.name} views`} className="flex gap-1 px-5 pb-1">
           {(["overview", "chat"] as const).map((tab) => (
             <button
               key={tab}
               type="button"
               role="tab"
-              aria-selected={projectTab === tab}
-              onClick={() => setProjectTab(tab)}
+              aria-selected={shownProjectTab === tab}
+              onClick={() => chooseProjectTab(tab)}
               className={cn(
                 "rounded-lg px-3 py-1.5 text-[13px]",
-                projectTab === tab ? "bg-accent/15 font-medium text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink",
+                shownProjectTab === tab ? "bg-accent/15 font-medium text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink",
               )}
             >
               {tab === "overview" ? "Overview" : "Chat"}
             </button>
           ))}
           <span className="ml-auto self-center text-[12.5px] text-ink-secondary">
-            {CHANNEL_PROJECT_STATUS_LABELS[group.channelProject.status]}
+            {channelProjectStatusLabel(group.channelProject.status)}
           </span>
         </div>
       )}
 
+      {projectSurface && !setupPending && <>
+        {group.channelProject && <ProjectStrip project={project} title={group.channelProject.goal} groupId={group.id} onBoard={() => chooseProjectTab("board")} />}
+        {group.channelProject && visitCounts && (visitCounts.messages > 0 || visitCounts.cards > 0 || visitCounts.decisions > 0) && <ProjectSinceYouLeftLazy counts={visitCounts} onBoard={() => chooseProjectTab("board")} boardEnabled={state.config?.features?.projectsBoard !== false && project?.settings.parts.board !== false} />}
+        <ProjectTabs isProject={!!group.channelProject} board={state.config?.features?.projectsBoard !== false && project?.settings.parts.board !== false} value={activeTab} onChange={chooseProjectTab} settingsOpen={menuOpen} onSettings={(trigger) => { menuTriggerRef.current = trigger; setMenuOpen((open) => !open); }} />
+      </>}
+
+      <ProjectLifecycleBanner closing={project?.closing === true} closed={project?.lifecycle === "closed"} leadName={state.bots.find(bot=>bot.id===project?.settings.leadBotId)?.name} reopening={reopening} reopened={reopenedNotice} onReopen={desktop === true ? async () => { setReopening(true); const result=await projectClient.reopen(group.id); if(result.ok) { setReopenedNotice({pausedRoutines:result.data.pausedRoutines,resumeHint:result.data.resumeHint}); await refreshProject(group.id); } else setLifecycleError(result.reason); setReopening(false); } : undefined} />
+      {lifecycleError && <p role="alert" className="p-3 text-sm text-ink">{lifecycleError}</p>}
       {findOpen && <ChatFindBar threadId={group.threadId} onClose={() => setFindOpen(false)} />}
       {/* A channel never showed an error: a refused delete or rename in the
           conversation picker just did nothing. Same banner as a bot chat. */}
@@ -1708,16 +1929,18 @@ export function GroupView({ group }: { group: Group }) {
         );
       })()}
 
-      {!showChat && group.channelProject && (
+      {!projectSurface && !showChat && group.channelProject && (
         <div className="relative min-h-0 flex-1">
           <ProjectHome
             group={group}
             members={members}
-            onOpenChat={() => setProjectTab("chat")}
+            onOpenChat={() => chooseProjectTab("chat")}
             onOpenDetails={() => setDetailsSection("about")}
           />
         </div>
       )}
+
+      {projectSurface && !showChat && <ProjectViewBody tab={activeTab} group={group} members={members} project={project} />}
 
       {showChat && <div className="relative min-h-0 flex-1">
       <div
@@ -1764,7 +1987,7 @@ export function GroupView({ group }: { group: Group }) {
           aria-live="polite"
           aria-label={`Channel ${group.name}`}
         >
-          {group.messages.length === 0 && (
+          {roomMessages.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
               <div className="flex -space-x-2">
                 {members.slice(0, 3).map((b) => (
@@ -1810,7 +2033,7 @@ export function GroupView({ group }: { group: Group }) {
             group={group}
             members={members}
             messages={windowedMessages}
-            transcript={group.messages}
+            transcript={roomMessages}
             emergingId={popping?.id}
             onReply={selectReply}
           />
@@ -1824,6 +2047,17 @@ export function GroupView({ group }: { group: Group }) {
               </button>
             </div>
           )}
+          {waitingRun && (
+            <div className="flex justify-start" data-testid="channel-waiting-run">
+              <RoutineRunCard
+                message={waitingRunMessage(waitingRun)}
+                onOpen={waitingRun.executionThreadId ?? waitingRun.threadId
+                  ? () => openNotificationTarget(dispatch, { botId: waitingRun.botId, threadId: (waitingRun.executionThreadId ?? waitingRun.threadId)! }, state)
+                  : undefined}
+              />
+            </div>
+          )}
+          {!group.busyBotId && proposalBot && <ProposedOutcomeCard bot={proposalBot} />}
           {(speaker || presenceVisible) && (
             <TurnPresence
               avatar={
@@ -1840,6 +2074,7 @@ export function GroupView({ group }: { group: Group }) {
               label={activityLabel}
               answering={popping !== null}
               since={speaker ? group.turnStartedAt ?? null : null}
+              name={presenceName}
             >
               {popping ? (
                 <div className="w-fit max-w-[min(42rem,78%)] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
@@ -1856,6 +2091,7 @@ export function GroupView({ group }: { group: Group }) {
               ) : null}
             </TurnPresence>
           )}
+          <HelpersLine helpers={roomHelpers} />
         </div>
         )}
       </div>
@@ -1864,7 +2100,7 @@ export function GroupView({ group }: { group: Group }) {
         <button
           onClick={() => {
             setBottomFollow(true);
-            setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(group.messages.length), end: null });
+            setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(roomMessages.length), end: null });
             requestAnimationFrame(() => {
               scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
             });
@@ -1878,7 +2114,7 @@ export function GroupView({ group }: { group: Group }) {
       )}
 
       <div ref={composerDock.ref} className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2]">
-      <Composer
+      {channelReadOnlyReason(group) ? <div role="status" className="border-t border-hairline bg-app px-4 py-3 text-[13px] text-ink-secondary">{channelReadOnlyReason(group)}</div> : <Composer
         key={group.threadId}
         group={group}
         members={members}
@@ -1887,9 +2123,11 @@ export function GroupView({ group }: { group: Group }) {
         onClearReply={clearReply}
         onConsumeReply={consumeReply}
         onRestoreReply={restoreReply}
-      />
+      />}
       </div>
       </div>}
     </main>
+    </ChipsProvider>
+    </OutcomesProvider>
   );
 }

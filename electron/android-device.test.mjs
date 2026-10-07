@@ -174,31 +174,53 @@ describe("Android USB device bridge", () => {
 
   it("runs the daemon behind a launcher that closes inherited descriptors", async () => {
     expect(adbServerLaunch("C:/adb.exe", { platform: "win32" })).toEqual({ command: "C:/adb.exe", args: ["start-server"] });
-    const posix = adbServerLaunch("/trusted/adb", { platform: "linux" });
-    expect(posix.command).toBe("/bin/sh");
+    const posix = adbServerLaunch("/trusted/adb", { platform: "linux", exists: (file) => file === "/bin/bash" });
+    expect(posix.command).toBe("/bin/bash");
+    expect(adbServerLaunch("/trusted/adb", { platform: "linux", exists: () => false }).command).toBe("/bin/sh");
     expect(posix.args[1]).toBe(CLOSE_INHERITED_DESCRIPTORS);
     expect(adbServerPort({})).toBe(5037);
     expect(adbServerPort({ ANDROID_ADB_SERVER_PORT: "5038" })).toBe(5038);
     expect(adbServerPort({ ANDROID_ADB_SERVER_PORT: "not a port" })).toBe(5037);
   });
 
-  it.skipIf(process.platform === "win32")("really closes an inherited descriptor before the daemon starts", async () => {
-    // fd 3 is handed to the child deliberately, standing in for the caches,
-    // leveldb log and listening debug socket the daemon used to keep.
+  // fd 12 is handed to the child deliberately, standing in for the caches,
+  // leveldb log and listening debug socket the daemon used to keep; Electron's
+  // are numbered well above 9. The checker runs in a subshell, so a closed
+  // descriptor cannot end it (`:` is a special builtin in dash).
+  const INHERITED_FD = 12;
+  const checker = `if ( : <&${INHERITED_FD} ) 2>/dev/null; then echo INHERITED; else echo CLOSED; fi`;
+  // A spawn that fails outright may never emit close: settle on its error too,
+  // so the test reports it instead of hanging to the runner's timeout.
+  const withDescriptor = (command, args) => new Promise((resolve, reject) => {
     const fd = openSync(fileURLToPath(import.meta.url), "r");
-    const checker = 'if : <&3 2>/dev/null; then echo INHERITED; else echo CLOSED; fi';
-    const answer = (args) => new Promise((resolve) => {
-      const child = spawn("/bin/sh", args, { stdio: ["ignore", "pipe", "ignore", fd] });
-      let output = "";
-      child.stdout.on("data", (chunk) => { output += chunk; });
-      child.once("close", () => resolve(output.trim()));
-    });
-    try {
-      // Without the launcher the descriptor survives the exec: the bug.
-      expect(await answer(["-c", 'exec "$@"', "control", "/bin/sh", "-c", checker])).toBe("INHERITED");
-      // With it, nothing above stderr reaches the program.
-      expect(await answer(["-c", CLOSE_INHERITED_DESCRIPTORS, "guarded", "/bin/sh", "-c", checker])).toBe("CLOSED");
-    } finally { closeSync(fd); }
+    let settled = false;
+    const settle = (finish) => { if (settled) return; settled = true; closeSync(fd); finish(); };
+    const stdio = ["ignore", "pipe", "ignore", ...Array(INHERITED_FD - 3).fill("ignore"), fd];
+    const child = spawn(command, args, { stdio });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    child.once("error", (error) => settle(() => reject(error)));
+    child.once("close", (code) => settle(() => resolve({ output: output.trim(), code })));
+  });
+  const bash = ["/bin/bash", "/usr/bin/bash"].find((file) => existsSync(file));
+
+  it.skipIf(process.platform === "win32" || !bash)("really closes an inherited descriptor numbered above 9 before the daemon starts", async () => {
+    // Without the launcher the descriptor survives the exec: the bug.
+    expect((await withDescriptor("/bin/sh", ["-c", 'exec "$@"', "control", bash, "-c", checker])).output).toBe("INHERITED");
+    // With it, as the app starts adb, nothing above stderr reaches the program.
+    const { command, args } = adbServerLaunch(bash, { platform: process.platform });
+    const launched = await withDescriptor(command, [...args.slice(0, -1), "-c", checker]);
+    expect(launched).toEqual({ output: "CLOSED", code: 0 });
+  });
+
+  // Debian and Ubuntu's /bin/sh is dash, which cannot name a descriptor above
+  // 9: `exec 12>&-` is "exec: 12: not found", and a failed exec ends the shell
+  // before adb ever starts (0.1.60 CI triage). Under dash the launcher must
+  // still start the program.
+  const dash = ["/usr/bin/dash", "/bin/dash"].find((file) => existsSync(file));
+  it.skipIf(process.platform === "win32" || !dash)("under dash, an inherited descriptor above 9 never stops the daemon from starting", async () => {
+    const started = await withDescriptor(dash, ["-c", CLOSE_INHERITED_DESCRIPTORS, "murage-adb-start", "/bin/echo", "STARTED"]);
+    expect(started).toEqual({ output: "STARTED", code: 0 });
   });
 
   it("rejects network devices and shell metacharacters", async () => {

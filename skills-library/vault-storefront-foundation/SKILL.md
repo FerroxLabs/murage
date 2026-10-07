@@ -1,8 +1,9 @@
 ---
 name: vault-storefront-foundation
 description: "As of: 2026-05-16"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "vault"
 ---

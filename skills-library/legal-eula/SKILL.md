@@ -3,7 +3,7 @@ name: legal-eula
 description: "Draft an end-user licence agreement — licence grant and scope, restrictions, ownership, warranty disclaimer and liability limits, plus the Apple App Store and Google Play addenda those stores require. Use when the user ships installable software, a mobile app, a plugin or a desktop tool. Do NOT use for a hosted service's terms of service and acceptable-use rules (use sentry-contracts-and-terms) or for how personal data is processed (use legal-gdpr). Template only — have an attorney licensed in the user's jurisdiction review before publication."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "eula licence app-store legal smb"
   category: "legal"

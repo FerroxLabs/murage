@@ -6,7 +6,7 @@ description: |
   Do NOT use for a multi-month credit improvement plan (use credit-score-improvement), debt payoff strategies, or loan shopping.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance debt-management analysis"
   category: "personal-finance"

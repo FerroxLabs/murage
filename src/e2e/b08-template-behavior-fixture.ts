@@ -483,7 +483,8 @@ export function readCredential(descriptor: B08EngineDescriptor, ctx: { repoRoot:
   let stat;
   try { stat = lstatSync(file); } catch { return { ok: false, refusal: "credential.file does not exist" }; }
   if (!stat.isFile()) return { ok: false, refusal: "credential.file must be a regular file (not a link or directory)" };
-  if ((stat.mode & 0o077) !== 0) return { ok: false, refusal: "credential.file must be readable only by its owner (mode 0600)" };
+  // Windows has no mode bits (the file keeps its folder's ACL), as in scripts/channel-live-inputs.ts.
+  if (process.platform !== "win32" && (stat.mode & 0o077) !== 0) return { ok: false, refusal: "credential.file must be readable only by its owner (mode 0600)" };
   if (stat.size === 0 || stat.size > 16_384) return { ok: false, refusal: "credential.file must hold one non-empty credential (at most 16 KiB)" };
   const value = readFileSync(file, "utf8").trim();
   if (!value || /[\r\n]/.test(value)) return { ok: false, refusal: "credential.file must hold exactly one line" };

@@ -6,7 +6,7 @@ description: |
   Do NOT use for metric hierarchy and goal trees (use metric-framework), dashboard layout design (use bi-dashboard-spec), or personal goal setting (use smart-goal-builder in productivity).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis data-visualization template"
   category: "data-analysis"

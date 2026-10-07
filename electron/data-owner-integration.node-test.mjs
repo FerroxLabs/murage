@@ -5,12 +5,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { BACKUP_MODE_ARGUMENT } from "./backup-mode.mjs";
-import { awaitOwnedWork } from "./server-child-lifecycle.mjs";
+import { awaitOwnedWork, SERVER_CHILD_STOP_TIMEOUT_MS } from "./server-child-lifecycle.mjs";
 import { dataDirLeasePaths } from "./data-dir-lease.mjs";
 import { deriveManagedComposioCredentials, MANAGED_COMPOSIO_UPDATE_OPTIONS } from "./managed-composio.mjs";
 import { createSecureCredentialState } from "./secure-credential-state.mjs";
 import { trackedCredentialUpdate } from "./secure-credentials.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
+import { launchSecretVia, sendLaunchSecretParent } from "./launch-secret.mjs";
 
 const rawSource = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
 // Test-only negative controls execute the actual main function with exactly
@@ -50,7 +51,7 @@ function bootstrapWiring({ menu = [], selectionActive = false } = {}) {
   const inert = () => { throw new Error("backup branch must stay inert in an ordinary launch"); };
   return {
     createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive,
-    closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
+    createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, firstStartOfVersion: () => false, FIRST_AFTER_UPDATE_NOTE: "", noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
     BACKUP_MODE_ARGUMENT, desktopStartup: Promise.resolve(), ensureDesktopUpdater: inert, resumeBackedUpInstall: inert, showDesktopRecovery: inert, finishClosedBackup: inert, cleanupDesktopForExit: inert,
   };
 }
@@ -191,14 +192,15 @@ function serverLauncher({ proc, poll, track, environment = {}, portAvailable = a
   const owner = { utilityServerLeaseEnvironment:()=>({MURAGE_INTERNAL_DATA_DIR_LEASE:"private-fixture-capability"}) };
   const scope = {
     path, process:{env:environment,resourcesPath:"/fixture/resources"},restoredConnections:null,restoredHarnessEnvironment:env=>env,
-    app:{isPackaged:true,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/resources/app.asar"}, companionToken:"private-companion",
+    app:{isPackaged:true,getVersion:()=>"1.0.0",getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/resources/app.asar"}, companionToken:"private-companion",
     modelProviderCommitToken:"private-model-provider-commit",
+    mcpCommitToken:"private-mcp-commit",
     secureCredentials:{},credentialStoreUnavailable:false,desktopSurfaceSecret:"",browserHost:null,
-    managedComposioChildEnvironment:(_url,_keys,env)=>env, composioBrokerUrl:()=>null, fluxComposioBrokerUrlValue:()=>"", composioLegacyUntilValue:()=>"",
-    harnessResourceEnvironment:()=>({}),packagedGepaManifestEnvironment:()=>({MURAGE_GEPA_MANIFEST_SHA256:""}),workspaceCredentialEnv:()=>({}),slog:()=>{},
+    launchSecretVia,sendLaunchSecretParent,managedComposioChildEnvironment:(_url,_keys,env)=>env, composioBrokerUrl:()=>null, fluxComposioBrokerUrlValue:()=>"", composioLegacyUntilValue:()=>"",
+    watchMemoryUpgrade:()=>({stop(){}}),showMemoryUpgradeProgress:()=>{},closeMemoryUpgradeWindow:()=>{},clearMemoryUpgradeStatus:()=>{},memoryUpgradeBlockedSentence:()=>"",readMemoryUpgradeStatus:()=>null,harnessResourceEnvironment:()=>({}),packagedGepaManifestEnvironment:()=>({MURAGE_GEPA_MANIFEST_SHA256:""}),workspaceCredentialEnv:()=>({}),slog:()=>{},
     utilityProcess:{fork:(_entry,_args,options)=>{proc.environment=options.env;return proc;}},
     receiveDesktopSurfaceSecret:()=>false,receiveBrowserControlHold:()=>false,receiveBrowserLifecycleCleanup:()=>false,syncBrowserConnection:()=>{},
-    pollServerIdentity:poll,SERVER_BOOT_TIMEOUT_MS:25,portAvailable,
+    pollServerIdentity:poll,SERVER_BOOT_TIMEOUT_MS:25,portAvailable,compileCacheEnvironment:()=>({}),desktopMark:()=>{},
     desktopDataOwner:owner,desktopDataDir:"/canonical/installation",assertDesktopStartupActive:()=>{},desktopShutdownStarted:false,
     trackOwnedServerChild:(child)=>({exit:new Promise(()=>{}),...track(child)}),
   };
@@ -207,11 +209,12 @@ function serverLauncher({ proc, poll, track, environment = {}, portAvailable = a
 
 test("actual utility launch overrides ambient root/delegation only in the owned child", async () => {
   const proc = new EventEmitter();
-  proc.pid=123;proc.kill=()=>{};
+  proc.pid=123;proc.kill=()=>{};proc.postMessage=()=>{};
   const ambient={MURAGE_DATA_DIR:"relative-alias",MURAGE_INTERNAL_DATA_DIR_LEASE:"ambient-forged",MURAGE_GEPA_MANIFEST_SHA256:"ambient-forged-gepa-pin"};
   const launch=serverLauncher({proc,environment:ambient,poll:async()=>({outcome:"ready"}),track:()=>({exited:false,stop:async()=>{}})});
   await launch(8799);
   assert.equal(proc.environment.MURAGE_DATA_DIR,"/canonical/installation");
+  assert.equal(proc.environment.MURAGE_APP_VERSION,"1.0.0");
   assert.equal(proc.environment.MURAGE_INTERNAL_DATA_DIR_LEASE,"private-fixture-capability");
   assert.equal(proc.environment.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN,"private-model-provider-commit");
   assert.equal(proc.environment.MURAGE_GEPA_MANIFEST_SHA256,"");
@@ -229,7 +232,7 @@ test("a port another program holds is skipped as a foreign owner without forking
   assert.equal(proc.environment, undefined);
 });
 test("failed boot cannot return for port fallback before exact child exit", async () => {
-  const proc=new EventEmitter();proc.pid=123;
+  const proc=new EventEmitter();proc.pid=123;proc.postMessage=()=>{};
   const gate=deferred();let killed=false;
   proc.kill=()=>{killed=true;};
   const launch=serverLauncher({proc,poll:async()=>({outcome:"foreign-owner"}),track:()=>({exited:false,stop:async()=>{proc.kill();await gate.promise;}})});
@@ -244,7 +247,7 @@ test("failed boot cannot return for port fallback before exact child exit", asyn
 });
 
 test("actual canonical root resolver rejects empty override without acquiring or writing",()=>{
-  const text=between("function acquireDesktopDataOwner() {","function trackOwnedServerChild(proc)");
+  const text=between("function acquireDesktopDataOwner() {","function trackOwnedServerChild(");
   let claims=0;
   const run=new Function("process","path","app","dataDirLeasePaths","acquireDataDirLease",`
     let desktopDataDir=null,desktopDataOwner=null;
@@ -256,7 +259,7 @@ test("actual canonical root resolver rejects empty override without acquiring or
   assert.equal(claims,0);
 });
 
-function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController(),androidStop=async()=>{}}={}) {
+function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController(),androidStop=async()=>{},deadlineMs=25}={}) {
   const text=source.slice(source.indexOf("function cleanupDesktopForExit() {"));
   const messages=[];let quit=0,backgroundQuits=0,androidStops=0;let trigger;
   const scope={
@@ -267,7 +270,12 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     syncCompanionKeepAwake:()=>{},nativeActions:{appleSpeech:false},stopSpeech:()=>{},stopRecorder:()=>{},browserSurface:null,
     stopDesktopCompanion:async()=>{},browserHost:null,browserLifecycleCleanups:new Map(cleanups.map((work,index)=>[index,work])),stopCua:cua,cuaReady:Promise.resolve(),
     slog:()=>{},dialog:{showErrorBox:(_title,body)=>messages.push(body)},
-    awaitOwnedWork:(promise,label,timeout)=>awaitOwnedWork(promise,label,Math.min(timeout??25,25)),
+    // 25 ms for tests that wait out a deadline; tests that wait on barriers
+    // pass a deadline a slow runner cannot reach first (windows-latest, 29 ms).
+    awaitOwnedWork:(promise,label,timeout)=>awaitOwnedWork(promise,label,Math.min(timeout??deadlineMs,deadlineMs)),
+    // The owned-harness stage passes the full graceful-stop deadline (c6080d5f);
+    // the fixture caps every deadline above anyway.
+    SERVER_CHILD_STOP_TIMEOUT_MS,
     desktopStartup:startup,
     managedComposioShutdown,
     // Backup work added to cleanupDesktopForExit: polling stops, resource and
@@ -275,11 +283,13 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     // are drained before the lease is released. None are private barriers of
     // these tests except backupOperations, which is exercised below.
     stopAutomaticRemoteBackups:()=>{},backupScheduleHost:null,closedBackupRequested:false,
-    notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},
-    desktopBackupTool:{invalidate(){},settled:()=>Promise.resolve()},desktopResticTool:null,remoteBackupAttestation:{abort(){}},
+    notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},modelSignIn:{dispose(){}},mcpServers:{dispose(){}},
+    desktopBackupTool:{invalidate(){},settled:()=>Promise.resolve()},backupToolCheck:Promise.resolve(),desktopResticTool:null,remoteBackupAttestation:{abort(){}},
     // The bundled adb daemon is not an owned child: it forks itself off the
     // first adb command and stays, so quitting has to stop it by name.
     androidDevice:{stop:()=>{androidStops++;return androidStop();}},
+    // The phone's desk-presence reporting (mobile merge) is stopped on exit too.
+    stopDeskPresence:()=>{},
   };
   const state=new Function(...Object.keys(scope),"stop","writes","backupOperations","release",`
     let desktopShutdownStarted=false,cuaCleanedUp=false,desktopCleanup=null,desktopCleanupStage="owned harness";
@@ -292,7 +302,7 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
 
 test("actual before-quit waits for child exit AND pending credentials before releasing",async()=>{
   const child=deferred(),write=deferred();let released=0;
-  const f=shutdownFixture({stop:()=>child.promise,writes:[write.promise],release:()=>{released++;return true;}});
+  const f=shutdownFixture({stop:()=>child.promise,writes:[write.promise],release:()=>{released++;return true;},deadlineMs:5000});
   f.trigger();assert.equal(f.backgroundQuits(),1,"before-quit begins the background lifecycle quit before waiting");
   await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);
   child.resolve();await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);
@@ -459,7 +469,7 @@ test("actual startup rejection is handled visibly without echoing arbitrary priv
 
 test("updater cleanup awaits the actual owned barriers without quitting early", async () => {
   const child=deferred(),write=deferred();let released=0;
-  const f=shutdownFixture({stop:()=>child.promise,writes:[write.promise],release:()=>{released++;return true;}});
+  const f=shutdownFixture({stop:()=>child.promise,writes:[write.promise],release:()=>{released++;return true;},deadlineMs:5000});
   const cleanup=f.state.cleanupWithoutQuit();
   assert.equal(f.state.cleanupWithoutQuit(),cleanup);
   await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);assert.equal(f.quit(),0);

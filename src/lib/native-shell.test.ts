@@ -5,12 +5,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   callNative,
+  type CallAudioEvent,
   hasNativeUserAgent,
   inNativeShell,
   nativeAvailable,
   nativeHas,
   nativeHello,
   onNativeEvent,
+  parseCallAudioEvent,
   parseNativeHello,
   parseNotificationOpened,
   resetNativeShellForTest,
@@ -23,17 +25,23 @@ afterEach(() => {
 });
 
 function fakeBridge(hello: unknown, extra: Record<string, unknown> = {}) {
-  const listeners = new Map<string, Set<(detail?: unknown) => void>>();
+  const listeners = new Map<string, Set<(detail?: unknown) => unknown>>();
   const bridge = {
     hello: vi.fn(async () => hello),
-    on: vi.fn((name: string, listener: (detail?: unknown) => void) => {
+    on: vi.fn((name: string, listener: (detail?: unknown) => unknown) => {
       const set = listeners.get(name) ?? new Set();
       set.add(listener);
       listeners.set(name, set);
       return () => set.delete(listener);
     }),
-    emit(name: string, detail?: unknown) {
-      for (const listener of listeners.get(name) ?? []) listener(detail);
+    // Mirrors the native shells' deliver() (ChannelScript.java / .swift): an
+    // event only counts as handled when a listener answers exactly `true`.
+    emit(name: string, detail?: unknown): boolean {
+      let handled = false;
+      for (const listener of listeners.get(name) ?? []) {
+        if (listener(detail) === true) handled = true;
+      }
+      return handled;
     },
     ...extra,
   };
@@ -117,6 +125,12 @@ describe("feature detection", () => {
     expect(await nativeHello()).toBeNull();
     expect(await nativeAvailable("openExternal")).toBe(false);
   });
+
+  it("keeps the two methods Plan 2 added", async () => {
+    fakeBridge({ version: 1, methods: ["setRoute", "showLauncher"] }, { setRoute: vi.fn(), showLauncher: vi.fn() });
+    expect(await nativeHello()).toEqual({ version: 1, methods: ["setRoute", "showLauncher"] });
+    expect(nativeHas("setRoute")).toBe(true);
+  });
 });
 
 describe("events", () => {
@@ -140,10 +154,224 @@ describe("events", () => {
     expect(() => onNativeEvent("resume", vi.fn())()).not.toThrow();
   });
 
+  // Decision 10: native lets the page claim Back only if a listener returns true. The
+  // page's onNativeEvent never does, whatever its own listener returns (Plan 4 decides).
+  it("never tells native it handled backButton, even when the listener returns true", () => {
+    const bridge = fakeBridge({ version: 1, methods: [] });
+    const listener = vi.fn(() => true);
+    onNativeEvent("backButton", listener as unknown as () => void);
+    const handler = bridge.on.mock.calls[0][1];
+    expect(handler()).toBeUndefined();
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  // The native shells reload onto the thread route whenever the wrapper does
+  // not answer exactly `true` (ChannelScript.java / .swift `deliver()`), so
+  // these confirm every case that must NOT claim handled.
+  it("tells native it handled a well-formed notificationOpened", () => {
+    const bridge = fakeBridge({ version: 1, methods: [] });
+    const opened = vi.fn();
+    onNativeEvent("notificationOpened", opened);
+    expect(bridge.emit("notificationOpened", { threadId: "t1", messageId: "m1" })).toBe(true);
+    expect(opened).toHaveBeenCalledWith({ threadId: "t1", messageId: "m1" });
+  });
+
+  // moss-approval-bug.md: a tap on another bot's approval push used to hang
+  // up Moss's call. The native shells (ChannelScript.java / .swift) reload
+  // the page onto the notification's route in-app (no `window.location`
+  // assignment from here) ONLY when this wrapper fails to answer `true`.
+  // This drives useDeepLinks.ts's ACTUAL listener (openDeepLink, the real
+  // production code, not a stand-in) so the test can actually fail if that
+  // path is ever changed to throw, or to reach into call state, while a
+  // call is active. What it proves is narrower than "the call survives":
+  // it proves only that this path never causes a reload and never touches
+  // `@/lib/call` — neither did before this fix, since the real fix is
+  // where `Call` is mounted (App.tsx's Shell), which this layer cannot see
+  // at all. See src/e2e/call-host.human.spec.ts for the render-level proof
+  // that the call keeps running while another thread is selected.
+  it("a push tap for another bot's thread, through the real deep-link path: no throw, no reload, and the call is untouched", async () => {
+    const { openDeepLink } = await import("./deep-link");
+    const { currentCall, endCall, startCall } = await import("./call");
+    vi.stubGlobal("window", { muragebox: { speechStop: vi.fn(async () => {}) } });
+    const bridge = fakeBridge({ version: 1, methods: [] });
+    startCall("moss");
+    const state = {
+      bots: [
+        { id: "moss", threadId: "moss-thread" },
+        { id: "sable", threadId: "sable-thread" },
+      ],
+      groups: [],
+    };
+    const dispatched: unknown[] = [];
+    // useDeepLinks.ts's real listener body: push the notification straight
+    // into openDeepLink. If that function were ever changed to check or
+    // touch call state (or simply to throw on this shape), this listener
+    // would throw and the assertion on `handled` below would catch it.
+    const listener = (opened: { threadId: string; messageId?: string }) => {
+      openDeepLink(opened, state, (action) => dispatched.push(action));
+    };
+    onNativeEvent("notificationOpened", listener);
+    expect(bridge.emit("notificationOpened", { threadId: "sable-thread" })).toBe(true);
+    expect(dispatched).toContainEqual({ type: "select", id: "sable" });
+    // The call itself is untouched — openDeepLink has no path to it.
+    expect(currentCall()).toBe("moss");
+    endCall("moss");
+  });
+
+  it("does not claim a malformed notificationOpened", () => {
+    const bridge = fakeBridge({ version: 1, methods: [] });
+    const opened = vi.fn();
+    onNativeEvent("notificationOpened", opened);
+    expect(bridge.emit("notificationOpened", { threadId: "" })).toBe(false);
+    expect(opened).not.toHaveBeenCalled();
+  });
+
+  it("does not claim notificationOpened once unsubscribed", () => {
+    const bridge = fakeBridge({ version: 1, methods: [] });
+    const opened = vi.fn();
+    const stop = onNativeEvent("notificationOpened", opened);
+    stop();
+    expect(bridge.emit("notificationOpened", { threadId: "t1" })).toBe(false);
+    expect(opened).not.toHaveBeenCalled();
+  });
+
+  it("does not claim notificationOpened when the listener throws", () => {
+    const bridge = fakeBridge({ version: 1, methods: [] });
+    const opened = vi.fn(() => {
+      throw new Error("boom");
+    });
+    onNativeEvent("notificationOpened", opened);
+    expect(bridge.emit("notificationOpened", { threadId: "t1" })).toBe(false);
+    expect(opened).toHaveBeenCalledOnce();
+  });
+
+  it("never claims resume, even though the listener ran fine", () => {
+    const bridge = fakeBridge({ version: 1, methods: [] });
+    const listener = vi.fn();
+    onNativeEvent("resume", listener as unknown as () => void);
+    expect(bridge.emit("resume")).toBe(false);
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
   it("keeps optional ids optional", () => {
     expect(parseNotificationOpened({ threadId: "t1" })).toEqual({ threadId: "t1" });
     expect(parseNotificationOpened({ threadId: "t1", messageId: 7 })).toEqual({ threadId: "t1" });
     expect(parseNativeHello({ version: 1, methods: ["ready", "ready"] })).toEqual({ version: 1, methods: ["ready"] });
+  });
+});
+
+describe("call audio events (spec §4.1)", () => {
+  it("parses each shape and drops anything unknown, missing or oversize", () => {
+    expect(parseCallAudioEvent({ type: "mic", session: "s1", pcm: "AAAA" })).toEqual({ type: "mic", session: "s1", pcm: "AAAA" });
+    expect(parseCallAudioEvent({ type: "mic", session: "s1", pcm: "A".repeat(8_193) })).toBeNull();
+    expect(parseCallAudioEvent({ type: "mic", session: "s1", pcm: 7 })).toBeNull();
+    expect(parseCallAudioEvent({ type: "mic", session: "s1" })).toBeNull();
+    expect(parseCallAudioEvent({ type: "mic", session: "", pcm: "AA" })).toBeNull();
+    expect(parseCallAudioEvent({ type: "mic", session: "x".repeat(513), pcm: "AA" })).toBeNull();
+
+    expect(parseCallAudioEvent({ type: "clip", session: "s1", clip: "c1", state: "playing" })).toEqual({
+      type: "clip",
+      session: "s1",
+      clip: "c1",
+      state: "playing",
+    });
+    expect(parseCallAudioEvent({ type: "clip", session: "s1", clip: "c1", state: "unknown" })).toBeNull();
+    expect(parseCallAudioEvent({ type: "clip", session: "s1", clip: "x".repeat(513), state: "ended" })).toBeNull();
+    expect(parseCallAudioEvent({ type: "clip", session: "s1", clip: "c1" })).toBeNull();
+
+    // reason (spec §4.1 rev 3) only means anything alongside state "cut".
+    expect(parseCallAudioEvent({ type: "clip", session: "s1", clip: "c1", state: "cut", reason: "hold" })).toEqual({
+      type: "clip",
+      session: "s1",
+      clip: "c1",
+      state: "cut",
+      reason: "hold",
+    });
+    expect(parseCallAudioEvent({ type: "clip", session: "s1", clip: "c1", state: "cut", reason: "stop" })).toEqual({
+      type: "clip",
+      session: "s1",
+      clip: "c1",
+      state: "cut",
+      reason: "stop",
+    });
+    expect(parseCallAudioEvent({ type: "clip", session: "s1", clip: "c1", state: "cut", reason: "next" })).toEqual({
+      type: "clip",
+      session: "s1",
+      clip: "c1",
+      state: "cut",
+      reason: "next",
+    });
+    // an unrecognised reason is dropped on its own, not the whole event.
+    expect(parseCallAudioEvent({ type: "clip", session: "s1", clip: "c1", state: "cut", reason: "explode" })).toEqual({
+      type: "clip",
+      session: "s1",
+      clip: "c1",
+      state: "cut",
+    });
+    expect(parseCallAudioEvent({ type: "clip", session: "s1", clip: "c1", state: "cut" })).toEqual({
+      type: "clip",
+      session: "s1",
+      clip: "c1",
+      state: "cut",
+    });
+    // a reason on any other state is ignored, not surfaced.
+    expect(parseCallAudioEvent({ type: "clip", session: "s1", clip: "c1", state: "playing", reason: "hold" })).toEqual({
+      type: "clip",
+      session: "s1",
+      clip: "c1",
+      state: "playing",
+    });
+
+    expect(parseCallAudioEvent({ type: "hold", session: "s1", reason: "interrupted" })).toEqual({ type: "hold", session: "s1", reason: "interrupted" });
+    expect(parseCallAudioEvent({ type: "hold", session: "s1", reason: "napping" })).toBeNull();
+
+    expect(parseCallAudioEvent({ type: "resume", session: "s1" })).toEqual({ type: "resume", session: "s1" });
+    expect(parseCallAudioEvent({ type: "resume" })).toBeNull();
+
+    expect(parseCallAudioEvent({ type: "lost", session: "s1", reason: "engine could not restart" })).toEqual({
+      type: "lost",
+      session: "s1",
+      reason: "engine could not restart",
+    });
+    expect(parseCallAudioEvent({ type: "lost", session: "s1", reason: 7 })).toBeNull();
+    expect(parseCallAudioEvent({ type: "lost", session: "s1", reason: "" })).toBeNull();
+
+    expect(parseCallAudioEvent({ type: "route", session: "s1", output: "bluetooth" })).toEqual({ type: "route", session: "s1", output: "bluetooth" });
+    expect(parseCallAudioEvent({ type: "route", session: "s1", output: "usb" })).toBeNull();
+
+    expect(parseCallAudioEvent({ type: "explode", session: "s1" })).toBeNull();
+    expect(parseCallAudioEvent(null)).toBeNull();
+    expect(parseCallAudioEvent("mic")).toBeNull();
+    expect(parseCallAudioEvent(["mic"])).toBeNull();
+  });
+
+  it("tells native it handled a well-formed callAudio event, so the mic watchdog (spec §4.2.7) sees it as live", () => {
+    const bridge = fakeBridge({ version: 1, methods: [] });
+    const events: CallAudioEvent[] = [];
+    const stop = onNativeEvent("callAudio", (event) => events.push(event));
+    expect(bridge.emit("callAudio", { type: "mic", session: "s1", pcm: "AAAA" })).toBe(true);
+    expect(events).toEqual([{ type: "mic", session: "s1", pcm: "AAAA" }]);
+    stop();
+    expect(bridge.emit("callAudio", { type: "resume", session: "s1" })).toBe(false);
+    expect(events).toHaveLength(1);
+  });
+
+  it("does not claim a malformed callAudio event", () => {
+    const bridge = fakeBridge({ version: 1, methods: [] });
+    const event = vi.fn();
+    onNativeEvent("callAudio", event);
+    expect(bridge.emit("callAudio", { type: "explode", session: "s1" })).toBe(false);
+    expect(event).not.toHaveBeenCalled();
+  });
+
+  it("does not claim handled when the listener throws", () => {
+    const bridge = fakeBridge({ version: 1, methods: [] });
+    const listener = vi.fn(() => {
+      throw new Error("boom");
+    });
+    onNativeEvent("callAudio", listener);
+    expect(bridge.emit("callAudio", { type: "resume", session: "s1" })).toBe(false);
+    expect(listener).toHaveBeenCalledOnce();
   });
 });
 

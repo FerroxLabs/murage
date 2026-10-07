@@ -1,11 +1,11 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.61 room privacy fix cross-audit (Astra round 1): the ways a withheld reply, a
+// 0.1.61 cross-audit (Astra round 1): the ways a withheld reply, a
 // copy of it or a member's private memory still reached a bot after the
 // first T2 commits, each reproduced here and closed.
 import { mkdirSync, rmSync } from "node:fs";
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
@@ -14,6 +14,7 @@ import { setMemoryMode } from "./memory/repository.ts";
 import { captureSource } from "./memory/capture.ts";
 import { claimMemoryJob, publishMemoryWork } from "./memory/jobs.ts";
 import { captureWork } from "./memory/chunks.ts";
+import * as learnable from "./memory/learnable.ts";
 import { consolidateMemorySource } from "./memory/consolidate.ts";
 import { ownerMemoryTicket, saveMemoryCandidate } from "./memory/authority.ts";
 import { forgetMemory } from "./memory/forget.ts";
@@ -22,7 +23,7 @@ import { _loadPending, findDelegationReceipt, recordDelegationReceipt, summarize
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { roomTranscriptWithoutMemory } from "./room-transcript.ts";
-import { copyOriginWithheld, messageMadeWithMemory, OUTPUT_LIST_BYTES, recordRestsOnWithheldMessage, replayExclusions } from "./memory/replay-lineage.ts";
+import { copyOriginWithheld, messageMadeWithMemory, recordRestsOnWithheldMessage, replayExclusions } from "./memory/replay-lineage.ts";
 import { insertMessage } from "./message-db.ts";
 import type { Message } from "./store.ts";
 
@@ -128,7 +129,7 @@ it("finding 6: a delegation result read back later follows its original", () => 
   expect(copyOriginWithheld(copy.copyOf!)).toBe(true);
 });
 
-it("finding 7: a withheld reply is not sent to the extractor", async () => {
+it.each([false, true])("finding 7: a withheld reply is not sent to the extractor (isolate withheld guard: %s)", async (isolateWithheldGuard) => {
   setMemoryMode("capture");
   const record = daxMemory();
   disclose("b-room", "closing-chat", [{ id: record, version: version(record) }], ["m-dax"]);
@@ -136,11 +137,19 @@ it("finding 7: a withheld reply is not sent to the extractor", async () => {
   let job = "";
   for (let work = claimMemoryJob("t2"); work; work = claimMemoryJob("t2")) { publishMemoryWork(work, "t2", captureWork(work)); if (work.sourceId === "message:closing-chat:m-dax") job = work.id; }
   forget(record);
-  let called = 0;
-  const extractor = { extractMemory: async () => { called++; return { candidates: [] }; } } as never;
-  const result = await consolidateMemorySource(job, extractor, new AbortController().signal);
-  expect(result).toMatchObject({ status: "deferred", reason: "reply-withheld" });
-  expect(called).toBe(0);
+  const extractor = vi.fn(async () => "[]");
+  // D1 rejects generated replies before the withheld guard. Owner messages
+  // are never withheld, so exercise that downstream guard independently by
+  // stubbing only learnability; capture, forgotten lineage and withholding stay real.
+  expect(learnable.isLearnableSource(database(), "message:closing-chat:m-dax", 1)).toEqual({ learnable: false, reason: "not-owner-speaker" });
+  const gate = isolateWithheldGuard ? vi.spyOn(learnable, "isLearnableSource").mockReturnValue({ learnable: true }) : undefined;
+  try {
+    const result = await consolidateMemorySource(job, extractor, new AbortController().signal);
+    expect(result).toMatchObject({ status: "deferred", reason: isolateWithheldGuard ? "reply-withheld" : "not-owner-speaker" });
+    expect(extractor).not.toHaveBeenCalled();
+  } finally {
+    gate?.mockRestore();
+  }
 });
 
 it("finding 8: a copy whose lineage runs past the hop or width budget is withheld, not accepted", () => {
@@ -161,27 +170,19 @@ it("finding 8: a copy whose lineage runs past the hop or width budget is withhel
   expect([...replayExclusions("closing-chat", [narrow], null, { failClosed: true })]).toEqual([]);
 });
 
-it("finding 9: a thread whose receipts are too heavy to read whole falls back to per-line checks and keeps the owner's words", () => {
+it("finding 9: a thread whose receipts are too heavy to read whole is checked through the output index and keeps the owner's words", () => {
   const a = access("dax", "closing-chat");
   // continuation-style receipts: each lists every later output of its session
   const ids = Array.from({ length: 142 }, (_, i) => `m-${i}`);
   const insert = database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,'d','s','[]','[]',?,?,?,0,'delivered',?)");
   for (let i = 0; i < 142; i++) insert.run(`c-${i}`, "closing-chat", JSON.stringify(ids.slice(i)), a.policyRevision, a.deletionEpoch, i);
   const messages = [{ id: "owner-1", role: "user" }, ...ids.map(id => ({ id, role: "bot" })), { id: "owner-2", role: "user" }];
-  // 0.1.62 review: session-linked lists are bounded by their bytes, not counted
-  // as lineage nodes, so a long session is read whole and nothing valid is withheld
-  expect([...replayExclusions("closing-chat", messages, null)]).toEqual([]);
-  // lists past the byte budget still fall back to per-line checks, fail closed
-  const padded = Array.from({ length: 100 }, (_, i) => `p-${i}-${"x".repeat(2600)}`);
-  const heavy = database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,'d','t','[]','[]',?,?,?,0,'delivered',?)");
-  for (let i = 0; i < Math.ceil(OUTPUT_LIST_BYTES / JSON.stringify(padded).length) + 1; i++) heavy.run(`h-${i}`, "closing-chat", JSON.stringify(padded), a.policyRevision, a.deletionEpoch, 1000 + i);
-  const lines = [{ id: "owner-1", role: "user" }, ...padded.slice(0, 10).map(id => ({ id, role: "bot" })), { id: "owner-2", role: "user" }];
-  expect(() => replayExclusions("closing-chat", lines, null)).toThrow("MEMORY_REPLAY_LIMIT");
-  const withheld = replayExclusions("closing-chat", lines, null, { failClosed: true });
+  // 0.1.61.1 memreplay: output lists are no longer read into the budget, so
+  // this session is judged whole (its receipts cite nothing) without failing
+  expect(replayExclusions("closing-chat", messages, null).size).toBe(0);
+  const withheld = replayExclusions("closing-chat", messages, null, { failClosed: true });
   expect(withheld.has("owner-1")).toBe(false);
   expect(withheld.has("owner-2")).toBe(false);
-  // the per-line lookup does not read the lists, so valid lines are still verified
-  expect(withheld.has(padded[0])).toBe(false);
 });
 
 // Kimi K3 round 1
@@ -202,7 +203,9 @@ it("Kimi M4: one oversized receipt no longer fails a room turn", () => {
   const huge = JSON.stringify(Array.from({ length: 12000 }, (_, i) => `bulk-output-${i}-padding-padding`));
   database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('huge','closing-chat','d',NULL,'[]','[]',?,?,?,0,'delivered',1)").run(huge, a.policyRevision, a.deletionEpoch);
   const lines = [{ id: "owner-1", role: "user" }, ...Array.from({ length: 10 }, (_, i) => ({ id: `r-${i}`, role: "bot" })), { id: "owner-2", role: "user" }];
-  expect(() => replayExclusions("closing-chat", lines, null)).toThrow("MEMORY_REPLAY_LIMIT");
+  // its output list is never read (0.1.61.1 memreplay): no error, and the
+  // lines it does not list are not withheld for it
+  expect(replayExclusions("closing-chat", lines, null).size).toBe(0);
   const withheld = replayExclusions("closing-chat", lines, null, { failClosed: true });
   expect(withheld.has("owner-1") || withheld.has("owner-2")).toBe(false);
 });
@@ -307,27 +310,37 @@ it("R2-1/9/10: a turn that is not the owner's gets no standing material, no owed
   expect(messageMadeWithMemory("dax-direct", "m-answer")).toBe(true);
   expect(messageMadeWithMemory("dax-direct", "m-plain")).toBe(false);
   const source = indexSource();
-  expect(source).toContain("const standing = standingContextParts(bot, { ownerAudience: humanIsOwner && !memoryNotOwner,");
+  // next: the owner's standing material follows the full owner-audience predicate
+  expect(source).toContain("const standing = standingContextParts(bot, { partition: bot.partitionedAt === undefined ? undefined : threadPartition(bot, threadId), ownerAudience: surfacesForOwner,");
+  expect(source).toContain("const memoryNotOwner = humanIsOwner && (!surfacesForOwner || opts?.notOwnerAudience === true);");
   expect(source).toContain("if (message?.copyOf && (memoryNotOwner || capturedMessageWithheld(threadId, id))) return { id, text: withheldRoomLine(message) };");
-  expect(source).toContain("replyForPrompt(threadId, opts?.replyTo, memoryNotOwner),");
+  expect(source).toContain("replyForPrompt(threadId, opts?.replyTo && promptRows([opts.replyTo], turnRouteHasTools, task.externalUpdates)[0], memoryNotOwner),");
   // recall leaves the notebook and brief out by the thread's audience, never
   // the turn's: a turn not shown them cannot recall them (next's authz rule)
-  expect(source.split("standingContextSourceIds(bot,").length - 1).toBe(2);
-  expect(source).toContain("excludeSourceIds:standingContextSourceIds(bot,humanIsOwner),");
-  expect(source).toContain("excludeSourceIds:standingContextSourceIds(bot,isWorkspaceOwner(threadHumanPrincipal(threadId))),");
+  // three: the direct turn, the room turn, and the direct turn's early (overlapped) bundle,
+  // which uses the same thread-audience exclusion as its dispatch bundle
+  expect(source.split("standingContextSourceIds(bot,").length - 1).toBe(3);
+  expect(source).toContain("excludeSourceIds: standingContextSourceIds(bot, humanIsOwner, bot.partitionedAt === undefined ? undefined : threadPartition(bot, threadId)),");
+  expect(source).toContain("excludeSourceIds:standingContextSourceIds(bot,humanIsOwner,bot.partitionedAt === undefined ? undefined : threadPartition(bot,threadId)),");
+  expect(source).toContain("excludeSourceIds:standingContextSourceIds(bot,turnAudienceIsOwner(threadId),bot.partitionedAt === undefined ? undefined : threadPartition(bot,threadId)),");
   expect(source).toContain("const withheld = (internalClaim.notOwnerAudience === true && receipt.notOwnerAudience !== true) || (receipt.copyOf && copyOriginWithheld(receipt.copyOf))");
 });
 
 // Astra round 3
 
-it("R3-12: a direct chat keeps its whole-thread receipt cap however few lines it replays", () => {
+// 0.1.61.1 memreplay replaces R3-12's whole-thread cap: it failed every turn
+// of a long direct chat. The lines replayed are judged by every receipt that
+// lists them, so the cap guarded nothing the check does not.
+it("R3-12: a direct chat past 2048 receipts judges the lines it replays by their own receipts", () => {
   const a = access("dax", "dax-direct");
   database().prepare(`WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<2049)
     INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     SELECT 'other-'||value,'dax-direct','driver','[]','[]',json_array('other-output-'||value),?,?,0,'delivered',value FROM n`).run(a.policyRevision, a.deletionEpoch);
-  expect(() => filterMemoryReplay("dax-direct", [{ id: "m-ask", role: "user" }, { id: "m-answer", role: "bot" }], a)).toThrow("MEMORY_REPLAY_LIMIT");
-  // a room's check fails closed instead
+  expect(filterMemoryReplay("dax-direct", [{ id: "m-ask", role: "user" }, { id: "m-answer", role: "bot" }], a).map(m => m.id)).toEqual(["m-ask", "m-answer"]);
   expect([...replayExclusions("dax-direct", [{ id: "m-answer", role: "bot" }], null, { failClosed: true })]).toEqual([]);
+  // one revoked receipt that lists the reply still withholds it
+  database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('answer-receipt','dax-direct','driver','[]','[]','[\"m-answer\"]',?,?,0,'revoked',1)").run(a.policyRevision, a.deletionEpoch);
+  expect(filterMemoryReplay("dax-direct", [{ id: "m-ask", role: "user" }, { id: "m-answer", role: "bot" }], a).map(m => m.id)).toEqual(["m-ask"]);
 });
 
 it("R3-9: a legacy delegation result with no recorded origin is not handed back", () => {

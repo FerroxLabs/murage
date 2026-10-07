@@ -20,7 +20,7 @@ trigger_phrases: >-
   get photography clients build my photography website photography portfolio
   tips go pro as a photographer photography niche selection
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: photography editing entrepreneurship step-by-step planning
   category: creative-project

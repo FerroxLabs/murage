@@ -4,7 +4,7 @@ description: |
   Virtual economy design for games covering currency systems, sinks and faucets balancing, monetization ethics, inflation control, player trading, loot tables, premium currency design, and the mathematical models that keep game economies healthy across months and years of live operation. Use when the user asks about game economy designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design design analysis"
   category: "game-development"

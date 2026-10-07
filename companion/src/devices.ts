@@ -9,10 +9,11 @@
 // token is generated once, handed to the phone at pairing, and never stored
 // — devices.json keeps only its SHA-256. A stolen devices.json is not a
 // stolen fleet.
-import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { createHash, createHmac, createPublicKey, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { appendFileSync, chmodSync, readFileSync, lstatSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import { pinnedStatementKeys, verifyApprovalStatement, type ApprovalAttestation } from "./relay-statement.ts";
 import { loadSessionSecret } from "./session-secret.ts";
 import { DATA_DIR, ensureDataDir, writeFileAtomic } from "./state.ts";
 
@@ -62,6 +63,46 @@ export interface BrowserSession {
   pending?: PendingSuccessor;
 }
 
+/** Spec §3.5 "Two scoped tokens per device". Digests only, inside the device
+ * record, so revoking the device and killing its tokens are one write. */
+export interface PushCredentials {
+  bindingId: string;
+  detailHash: string;
+  respondHash: string;
+  issuedAt: number;
+  expiresAt: number;
+}
+
+/** SEC-006: the phone's approval key, set only inside a pairing redeem that
+ *  also carries an install id and a relay statement for that install and key
+ *  (decision 8). Public, so not a secret; still kept off
+ *  PublicDevice because the control page has no use for it. */
+export interface ApprovalKey { point: string; addedAt: number; attestation: ApprovalAttestation }
+
+/** An uncompressed P-256 point (65 bytes, 0x04 prefix, on the curve) as 87
+ *  base64url characters, or undefined for anything else. */
+export function cleanApprovalKey(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !/^[A-Za-z0-9_-]{87}$/.test(raw)) return undefined;
+  const bytes = Buffer.from(raw, "base64url");
+  if (bytes.length !== 65 || bytes[0] !== 4) return undefined;
+  try {
+    createPublicKey({ key: { kty: "EC", crv: "P-256", x: bytes.subarray(1, 33).toString("base64url"), y: bytes.subarray(33).toString("base64url") }, format: "jwk" });
+    return bytes.toString("base64url"); // the canonical spelling, so the hash and the stored string agree
+  } catch {
+    return undefined;
+  }
+}
+
+function storedAttestation(raw: unknown): ApprovalAttestation | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const a = raw as Partial<ApprovalAttestation>;
+  if (typeof a.kid !== "string" || !/^[A-Za-z0-9._-]{1,32}$/.test(a.kid)) return undefined;
+  if (a.platform !== "ios" && a.platform !== "android") return undefined;
+  if (a.environment !== "development" && a.environment !== "production") return undefined;
+  if (typeof a.issuedAt !== "number" || !Number.isFinite(a.issuedAt)) return undefined;
+  return { kid: a.kid, platform: a.platform, environment: a.environment, issuedAt: a.issuedAt };
+}
+
 /** One paired phone, as it is written to disk. */
 export interface DeviceRecord {
   id: string;
@@ -73,6 +114,12 @@ export interface DeviceRecord {
   /** Full interactive access to a bot's cloud desktop. Deliberately off on
    * every new and migrated device until the computer owner enables it. */
   cloudDesktopAccess: boolean;
+  /** May make and revoke script access (MCP / control CLI grants) from this
+   * device's browser sessions. Off on every new and migrated device until the
+   * computer owner turns it on: on the desktop that owner has no need of it,
+   * and on a headless box it is `murage devices script-access <id>`. A phone
+   * paired by anyone with a pairing code is not thereby the owner (S1b R2). */
+  scriptAccess: boolean;
   /** The app install that paired this record, when it said. Pairing again
    * with the same id replaces this record instead of taking a new slot. Not a
    * secret: it proves nothing, and pairing still needs the pairing code. */
@@ -86,6 +133,18 @@ export interface DeviceRecord {
    * that has never opened one, which is what every record predating the
    * browser door looks like. */
   sessions?: BrowserSession[];
+  /** The device's current detail/respond push tokens, hashes only. Absent on
+   * a device that never registered for push, or whose registration expired
+   * and has not been renewed. */
+  push?: PushCredentials;
+  /** The phone's approval public key. Written only by `redeem`, only when the
+   * pairing carried an install id; no later request can add or replace it.
+   * Absent on every record that predates it: such a device keeps working but
+   * cannot approve a high-risk action from the phone until it pairs again. */
+  approvalKey?: ApprovalKey;
+  /** Paired with the fixed demo code on a marked demo host. Bookkeeping for
+   * the demo device cap only: it grants nothing and changes no permission. */
+  demo?: true;
 }
 
 /** What the UI is allowed to see: a device without its secrets.
@@ -95,8 +154,9 @@ export interface DeviceRecord {
  * devices.json and an offline guess at a cookie value, and the control page
  * has no use for them. Same rule as `tokenHash`, for the same reason. The
  * install id and the generation are bookkeeping the page has no use for
- * either. */
-export type PublicDevice = Omit<DeviceRecord, "tokenHash" | "sessions" | "installId" | "sessionGeneration">;
+ * either. Same for `push`: a scope hash is not a credential either, but the
+ * page has nothing to show for it. */
+export type PublicDevice = Omit<DeviceRecord, "tokenHash" | "sessions" | "installId" | "sessionGeneration" | "push" | "approvalKey">;
 
 /** A pairing window: two short-lived credentials, deliberately single-use.
  *
@@ -133,12 +193,18 @@ export interface PairingWindow {
 export type RedeemFailure =
   /** There is no window and none of the remembered spent ones matches. */
   | "no-pairing"
-  /** This exact credential existed and ran out of time, or was superseded. */
+  /** This exact credential existed and ran out of time. */
   | "expired"
   /** This exact credential already signed a device in. */
   | "used"
   /** This exact credential was destroyed by wrong guesses. */
   | "burned"
+  /** This exact credential was still live when a newer window replaced it —
+   * a fresh mint, a refresh, or "show a new code" on the computer. Distinct
+   * from `expired`: it did not run out of time, it was superseded, and the
+   * person is holding a code the computer has already moved past rather than
+   * one that merely aged out. */
+  | "replaced"
   /** A live window exists and this is not it. */
   | "wrong"
   /** The guess budget on the live window just ran out. */
@@ -149,7 +215,11 @@ export type RedeemFailure =
   | "save-failed"
   /** Right credential, and the paired-device list on disk could not be read,
    * so writing a new one would replace a fleet nobody can see. */
-  | "unavailable";
+  | "unavailable"
+  /** Demo host only: this client has used up its demo attempts for now. */
+  | "rate-limited"
+  /** Demo host only: the demo device cap is reached. */
+  | "demo-cap";
 
 /** A window that is gone, remembered only so that presenting it again gets an
  * honest answer instead of "no pairing is in progress".
@@ -166,7 +236,7 @@ export type RedeemFailure =
 interface SpentWindow {
   codeHash: string;
   tokenHash: string;
-  reason: Extract<RedeemFailure, "expired" | "used" | "burned">;
+  reason: Extract<RedeemFailure, "expired" | "used" | "burned" | "replaced">;
   forgetAt: number;
 }
 
@@ -179,10 +249,20 @@ interface SpentWindow {
  * request id retain the original exactly-once behaviour. */
 interface PairingReplay {
   requestId: string;
+  /** The device the first redemption made; revoking or signing it out ends the replay. */
+  deviceId: string;
   credentialHash: string;
+  /** The cleaned install id of the first request, or null. A replay is the
+   * same request only from the same install. */
+  installId: string | null;
   expiresAt: number;
   result: { device: PublicDevice; token: string };
 }
+
+/** How long after the first redemption the same request may be repeated and
+ * get the first result back. The browser door keeps the session it opened for
+ * exactly as long, so a replay and the session it returns share one deadline. */
+export const PAIRING_REPLAY_MS = 5 * 60_000;
 
 const DEVICES_FILE = join(DATA_DIR, "devices.json");
 export /** How long a pairing window stays open.
@@ -316,6 +396,28 @@ export const SESSION_RENEWAL_DUE_MS = 24 * 60 * 60 * 1000;
  * replaced carries on, and the next renewal derives a fresh one. */
 export const PENDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** How long a push token lives. The web UI reissues on every open (Plan 3b
+ * W1), so this only bounds a phone that has not been opened in a month. */
+export const PUSH_TOKEN_TTL_MS = 30 * 24 * 3600_000;
+
+/** A push binding id, and the two scoped token shapes, duplicated from
+ * `shared/mobile-push.ts`'s `UUID` and `TOKEN_PATTERNS.detail`/`.respond`
+ * rather than imported.
+ *
+ * `companion/src` is its own build root (`tsconfig.companion.build.json` sets
+ * `rootDir: "companion/src"`, and the packaged sidecar ships only what that
+ * build produces), so nothing under here may import from outside it — an
+ * import from `shared/` compiles under `tsconfig.server.json` (no `rootDir`
+ * limit there) but breaks `pnpm build:companion` with TS6059. Kept identical
+ * on purpose: `companion/test/devices-push.test.ts` asserts these agree with
+ * `shared/mobile-push.ts` byte-for-byte, since that file is what the relay
+ * and the harness actually validate against. */
+export const PUSH_BINDING = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const PUSH_TOKEN = {
+  detail: /^murage_pd_[A-Za-z0-9_-]{43}$/,
+  respond: /^murage_pr_[A-Za-z0-9_-]{43}$/,
+} as const;
+
 /** How often an unreadable paired-device list is read again on its own.
  *
  * A transient read failure — a locked file, too many open descriptors, a home
@@ -392,7 +494,7 @@ export function cleanInstallId(raw: unknown): string | undefined {
 /** A device as the page may see it. One place, so a new private field cannot
  * leak through one of the three call sites that used to strip by hand. */
 function publicDevice(device: DeviceRecord): PublicDevice {
-  const { tokenHash, sessions, installId, sessionGeneration, ...rest } = device;
+  const { tokenHash, sessions, installId, sessionGeneration, push, approvalKey, ...rest } = device;
   return rest;
 }
 
@@ -475,6 +577,34 @@ function storedPending(raw: unknown, now: number): PendingSuccessor | undefined 
   return undefined;
 }
 
+/** A stored push registration, or nothing when any part of it is not
+ * believable. An unknown shape here (a field missing, a hash the wrong
+ * length, a binding id that doesn't parse) must be dropped rather than
+ * crash the load: it decorates a working device, it isn't one. */
+function storedPush(raw: unknown): PushCredentials | undefined {
+  const p = raw as Partial<PushCredentials> | null | undefined;
+  if (
+    p &&
+    typeof p.bindingId === "string" &&
+    PUSH_BINDING.test(p.bindingId) &&
+    typeof p.detailHash === "string" &&
+    HEX_DIGEST.test(p.detailHash) &&
+    typeof p.respondHash === "string" &&
+    HEX_DIGEST.test(p.respondHash) &&
+    Number.isSafeInteger(p.issuedAt) &&
+    Number.isSafeInteger(p.expiresAt)
+  ) {
+    return {
+      bindingId: p.bindingId,
+      detailHash: p.detailHash,
+      respondHash: p.respondHash,
+      issuedAt: p.issuedAt as number,
+      expiresAt: p.expiresAt as number,
+    };
+  }
+  return undefined;
+}
+
 /** Complete a stored record, whatever shape the file had. `lastSeenAt` falls
  * back to `createdAt` rather than to the clock: a device we have never heard
  * from since pairing was last seen when it paired. */
@@ -487,10 +617,19 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
     createdAt,
     lastSeenAt: timestamp(record.lastSeenAt, createdAt),
     cloudDesktopAccess: record.cloudDesktopAccess === true,
+    scriptAccess: record.scriptAccess === true,
     sessionGeneration: storedGeneration(record.sessionGeneration),
   };
   const installId = cleanInstallId(record.installId);
   if (installId) device.installId = installId;
+  if (record.demo === true) device.demo = true;
+  // Not re-verified: keys rotate and statements expire, and the file is owner
+  // authority. A key with no install id or no well-formed attestation is dropped.
+  const approvalKey = installId ? cleanApprovalKey((record.approvalKey as ApprovalKey | undefined)?.point) : undefined;
+  const attestation = storedAttestation((record.approvalKey as Partial<ApprovalKey> | undefined)?.attestation);
+  if (approvalKey && attestation) device.approvalKey = { point: approvalKey, addedAt: timestamp(record.approvalKey?.addedAt, createdAt), attestation };
+  const push = storedPush(record.push);
+  if (push) device.push = push;
   const sessions = Array.isArray(record.sessions) ? record.sessions : [];
   // A hand-edited or partly restored file can hold a successor from a later
   // generation than the device says. Never derive at or below one that
@@ -547,12 +686,110 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
 export const PAIRING_SAVE_FAILED =
   "This computer could not save the pairing, so this device is not signed in. Check that the computer has free disk space, then try again.";
 
+/** Demo pairing: a fixed, reusable code for app-store reviewers.
+ *
+ * Honoured only on an installation the operator deliberately marked as a demo
+ * host: MURAGE_DEMO_HOST=1 AND a `demo-host` marker file in the data
+ * directory (owner-only). MURAGE_DEMO_PAIRING_CODE alone, or with the flag but
+ * no marker, does nothing at all. */
+export const DEMO_HOST_MARKER = "demo-host";
+export const DEMO_PAIRING_LOG = "demo-pairings.log";
+export const MAX_DEMO_DEVICES = 3;
+export const DEMO_IP_ATTEMPTS = 5;
+export const DEMO_IP_WINDOW_MS = 10 * 60_000;
+/** Global budget of FAILED demo attempts across every address, so rotating
+ * source addresses cannot multiply the per-IP allowance. Persisted, so a
+ * restart does not reset it. */
+export const DEMO_BUDGET_FILE = "demo-budget.json";
+export const DEMO_HOUR_FAILURES = 20;
+export const DEMO_DAY_FAILURES = 60;
+const HOUR_MS = 60 * 60_000;
+const DAY_MS = 24 * HOUR_MS;
+
+/** Null when the code is acceptable, otherwise why not. Exactly six digits,
+ * and nothing guessable: one repeated digit, a straight run up or down, or a
+ * repeated pair/triple (121212, 123123). */
+export function demoCodeProblem(code: string): string | null {
+  if (!/^[0-9]{6}$/.test(code)) return "must be exactly 6 digits";
+  if (/^(\d)\1{5}$/.test(code)) return "is all the same digit";
+  const diffs = [...code].slice(1).map((c, i) => Number(c) - Number(code[i]));
+  if (diffs.every((d) => d === 1 || d === -9) || diffs.every((d) => d === -1 || d === 9)) return "is a straight run of digits";
+  if (/^(\d\d)\1\1$/.test(code) || /^(\d\d\d)\1$/.test(code)) return "is a repeating pattern";
+  return null;
+}
+
+/** The demo code in force, or null when demo mode is off. Throws when the
+ * host is marked as a demo host but the code is unusable, so a bad code stops
+ * the companion starting rather than silently weakening pairing. */
+function loadDemoCode(): string | null {
+  if (process.env.MURAGE_DEMO_HOST !== "1") return null;
+  // Demo mode is never available on Windows: file modes and ownership cannot
+  // be verified there, so the marker would prove nothing.
+  if (process.platform === "win32") return null;
+  const marker = join(DATA_DIR, DEMO_HOST_MARKER);
+  try {
+    // lstat, so a symlink is refused rather than followed to some other file.
+    const st = lstatSync(marker);
+    if (st.isSymbolicLink() || !st.isFile()) return null;
+    if ((st.mode & 0o777) !== 0o600) return null;
+    if (typeof process.getuid === "function" && st.uid !== process.getuid()) return null;
+  } catch {
+    return null;
+  }
+  const code = process.env.MURAGE_DEMO_PAIRING_CODE;
+  if (code === undefined || code === "") return null;
+  const problem = demoCodeProblem(code);
+  if (problem) throw new Error(`demo pairing refused: MURAGE_DEMO_PAIRING_CODE ${problem}`);
+  return code;
+}
+
+const DEMO_BUDGET_MAX_BYTES = 64 * 1024;
+const DEMO_FUTURE_SKEW_MS = 60_000;
+
+/** The budget file. A missing file is the only empty case; anything
+ * unreadable, malformed or oversized is `broken`, which the registry treats as
+ * exhausted. Timestamps in the future or older than the day are dropped, so a
+ * file of future or ancient times cannot lock demo out indefinitely.
+ *
+ * Out of scope: a writer running as the same user. That user already owns the
+ * companion data directory (devices, tokens and this file), so a valid
+ * `{"failures":[]}` written by them resets the budget, and nothing here can
+ * stop it. The file defends against damage and mistakes, not that user. */
+function loadDemoFailures(): { failures: number[]; broken: string | null } {
+  const file = join(DATA_DIR, DEMO_BUDGET_FILE);
+  try {
+    const st = statSync(file);
+    if (!st.isFile() || st.size > DEMO_BUDGET_MAX_BYTES) return { failures: [], broken: "is not a regular file or is too large" };
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { failures?: unknown };
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.failures)) return { failures: [], broken: "is not in the expected shape" };
+    const now = Date.now();
+    const failures = parsed.failures.filter(
+      (t): t is number => typeof t === "number" && Number.isFinite(t) && now - t < DAY_MS && t - now <= DEMO_FUTURE_SKEW_MS,
+    );
+    return { failures, broken: null };
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === "ENOENT") return { failures: [], broken: null };
+    return { failures: [], broken: "could not be read or parsed" };
+  }
+}
+
 export class DeviceRegistry {
+  private readonly demoCode: string | null;
+  private demoAttempts = new Map<string, number[]>();
+  /** Timestamps of failed demo attempts within the last day, all addresses. */
+  private demoFailures: number[] = [];
+  /** Why the budget file cannot be trusted, or null. While set, demo
+   * redemption is refused (normal pairing is not). */
+  private demoBudgetBroken: string | null = null;
+  private demoBudgetUnsaved = false;
   private devices: DeviceRecord[] = [];
   private window: PairingWindow | null = null;
   private spent: SpentWindow[] = [];
   private replay: PairingReplay | null = null;
   private replayExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Results already handed back once as a replay, so the browser door can
+   * tell a repeat from a first redemption without a flag in the result. */
+  private replayed = new WeakSet<object>();
   private lastSeenWrites = new Map<string, number>();
   /** A process-local name for each session RECORD.
    *
@@ -564,6 +801,10 @@ export class DeviceRegistry {
    * to disk. A restart drops every stream anyway. */
   private sessionIds = new WeakMap<BrowserSession, string>();
   private sessionEndListeners = new Set<(ended: { deviceId: string; sessionId: string }) => void>();
+  /** Told once a device record is gone for good, whatever the reason
+   * (`deviceRemoved`). The push revocation queue listens, so it can drop the
+   * relay binding along with everything else that died with the record. */
+  private deviceRemovedListeners = new Set<(deviceId: string) => void>();
   /** Why the file on disk could not be used, or null when it could. */
   private unavailable: string | null = null;
   private lastLoadAttempt = 0;
@@ -571,8 +812,134 @@ export class DeviceRegistry {
    * registry that never renews anything never needs the file. */
   private secret: Buffer | null = null;
 
-  constructor() {
+  private readonly statementKeys: Record<string, string>;
+  private readonly clock: () => number;
+
+  constructor(o: { statementKeys?: Record<string, string>; now?: () => number } = {}) {
+    this.statementKeys = o.statementKeys ?? pinnedStatementKeys();
+    this.clock = o.now ?? Date.now;
+    this.demoCode = loadDemoCode();
+    if (this.demoCode !== null) this.reloadDemoBudget();
     this.load();
+  }
+
+  /** Ids of demo devices removed at startup, announced once listeners exist. */
+  private purgedDemoIds: string[] = [];
+  private purgeAnnounced = false;
+
+  /** Off means off: with demo mode not active, no device flagged demo stays
+   * paired. Runs at construction, after the fleet is loaded. */
+  private purgeDemoDevices(): void {
+    if (this.unavailable) return;
+    const demo = this.devices.filter((d) => d.demo === true);
+    if (demo.length === 0) return;
+    this.devices = this.devices.filter((d) => d.demo !== true);
+    const ids = demo.map((d) => d.id);
+    if (this.purgeAnnounced) for (const id of ids) this.deviceRemoved(id);
+    else this.purgedDemoIds.push(...ids);
+    try {
+      this.persist();
+    } catch (e) {
+      console.warn(`companion: could not save the removal of demo devices: ${(e as Error).message}`);
+    }
+    console.info(`companion: demo mode is off; removed ${demo.length} demo device${demo.length === 1 ? "" : "s"}`);
+  }
+
+  /** Tell removal listeners (the push revocation queue) about the demo
+   * devices purged at startup. Call once after they are registered. */
+  announceStartupPurge(): void {
+    this.purgeAnnounced = true;
+    const ids = this.purgedDemoIds;
+    this.purgedDemoIds = [];
+    for (const id of ids) this.deviceRemoved(id);
+  }
+
+  /** A label carrying the demo code (even split by spaces or dashes) would
+   * publish it through the device list, so it is replaced before it is stored. */
+  private demoSafeName(name: string): string {
+    if (this.demoCode === null) return name;
+    return name.replace(/\D/g, "").includes(this.demoCode) ? "Demo device" : name;
+  }
+
+  private reloadDemoBudget(): void {
+    const loaded = loadDemoFailures();
+    if (loaded.broken && !this.demoBudgetBroken) {
+      console.warn(`companion: demo attempt budget file ${loaded.broken}; demo redemption is refused until it is valid`);
+    }
+    this.demoBudgetBroken = loaded.broken;
+    if (!loaded.broken) this.demoFailures = loaded.failures;
+  }
+
+  private saveDemoBudget(): boolean {
+    try {
+      ensureDataDir();
+      writeFileAtomic(join(DATA_DIR, DEMO_BUDGET_FILE), JSON.stringify({ failures: this.demoFailures }));
+      this.demoBudgetUnsaved = false;
+      return true;
+    } catch (e) {
+      if (!this.demoBudgetUnsaved) console.warn(`companion: could not save the demo attempt budget: ${(e as Error).message}`);
+      this.demoBudgetUnsaved = true;
+      return false;
+    }
+  }
+
+  /** True while the global failed-attempt budget has room. Fails closed when
+   * the budget state is untrusted or could not be saved. */
+  private demoBudgetOpen(): boolean {
+    if (this.demoBudgetBroken) this.reloadDemoBudget();
+    if (this.demoBudgetBroken) return false;
+    if (this.demoBudgetUnsaved && !this.saveDemoBudget()) return false;
+    const now = Date.now();
+    this.demoFailures = this.demoFailures.filter((t) => now - t < DAY_MS);
+    const hour = this.demoFailures.filter((t) => now - t < HOUR_MS).length;
+    return hour < DEMO_HOUR_FAILURES && this.demoFailures.length < DEMO_DAY_FAILURES;
+  }
+
+  private recordDemoFailure(): void {
+    this.demoFailures.push(Date.now());
+    this.saveDemoBudget();
+    if (!this.demoBudgetOpen()) {
+      console.warn("companion: demo pairing budget exhausted; demo redemption is refused until the window passes");
+    }
+  }
+
+  /** Per-IP budget for demo attempts. True when this attempt is allowed. */
+  private demoAttemptAllowed(ip: string): boolean {
+    const now = Date.now();
+    for (const [key, times] of this.demoAttempts) {
+      const live = times.filter((t) => now - t < DEMO_IP_WINDOW_MS);
+      if (live.length) this.demoAttempts.set(key, live);
+      else this.demoAttempts.delete(key);
+    }
+    const times = this.demoAttempts.get(ip) ?? [];
+    if (times.length >= DEMO_IP_ATTEMPTS) return false;
+    times.push(now);
+    this.demoAttempts.set(ip, times);
+    return true;
+  }
+
+  /** One line per demo redemption: time, device label, hashed IP. Never the code. */
+  private logDemoRedemption(label: string, ip: string): void {
+    const code = this.demoCode ?? "";
+    const safeLabel = code ? label.split(code).join("[redacted]") : label;
+    const entry = {
+      at: new Date().toISOString(),
+      device: safeLabel,
+      ip: createHash("sha256").update(`murage-demo-ip:${ip}`).digest("hex").slice(0, 16),
+    };
+    console.info(`companion: demo pairing redeemed ${JSON.stringify(entry)}`);
+    try {
+      ensureDataDir();
+      const file = join(DATA_DIR, DEMO_PAIRING_LOG);
+      appendFileSync(file, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
+      try {
+        chmodSync(file, 0o600);
+      } catch {
+        /* best effort */
+      }
+    } catch (e) {
+      console.warn(`companion: could not write the demo pairing log: ${(e as Error).message}`);
+    }
   }
 
   /** Load the paired fleet, normalising as it goes.
@@ -600,6 +967,7 @@ export class DeviceRegistry {
       if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
         this.devices = [];
         this.unavailable = null;
+        if (this.demoCode === null) this.purgeDemoDevices();
         return true;
       }
       const code = (error as NodeJS.ErrnoException)?.code;
@@ -625,6 +993,7 @@ export class DeviceRegistry {
       )
       .map(normalizeDevice);
     this.unavailable = null;
+    if (this.demoCode === null) this.purgeDemoDevices();
     return true;
   }
 
@@ -740,12 +1109,21 @@ export class DeviceRegistry {
    * `PAIRING_TTL_MS`, and the entropy has to hold for all of it. */
   openPairing(): PairingWindow {
     this.clearReplay();
-    // The replaced window is gone, and somebody may be holding it: a person
-    // who pressed Refresh on the desktop while a second person was typing.
-    // "That code has expired" is true of it and is the useful thing to say.
-    this.spend("expired");
+    // The old window is gone, and somebody may be holding it: a person who
+    // pressed Refresh on the desktop while a second person was typing. If it
+    // had already run out of time on its own, "expired" is still the honest
+    // word for it. But one that was still live when this call replaced it did
+    // not expire — it was superseded — and "expired" reads as a lie to
+    // someone who was, a moment ago, correctly looking at a valid code.
+    // "Replaced" is what actually happened, and matches `redeem`'s recall of
+    // it (below) rather than the ordinary expiry path.
+    if (this.window) this.spend(this.window.expiresAt <= Date.now() ? "expired" : "replaced");
+    // Never the fixed demo code: a normal window holding it would let that
+    // redemption skip the demo classification, cap and audit log.
+    let windowCode = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    while (this.demoCode !== null && windowCode === this.demoCode) windowCode = String(randomInt(0, 1_000_000)).padStart(6, "0");
     this.window = {
-      code: String(randomInt(0, 1_000_000)).padStart(6, "0"),
+      code: windowCode,
       token: `murage_pair_${randomBytes(32).toString("base64url")}`,
       expiresAt: Date.now() + PAIRING_TTL_MS,
       attemptsLeft: MAX_PAIRING_ATTEMPTS,
@@ -767,6 +1145,15 @@ export class DeviceRegistry {
    * The timer matters even if nobody ever calls `redeem` again: an expired
    * recovery window must not leave a raw bearer sitting in a long-lived
    * desktop process. */
+  /** True for a result `redeem` returned as a replay of an earlier request. */
+  wasReplay(result: object): boolean {
+    return this.replayed.has(result);
+  }
+
+  private clearReplayFor(deviceId: string) {
+    if (this.replay?.deviceId === deviceId) this.clearReplay();
+  }
+
   private clearReplay() {
     this.replay = null;
     if (this.replayExpiryTimer) clearTimeout(this.replayExpiryTimer);
@@ -784,12 +1171,23 @@ export class DeviceRegistry {
    * paired record replaces that record: same install, reinstalled, is the
    * same phone. Its sessions end with it. Nothing else about the old record
    * carries over, cloud desktop access included; the owner grants that to a
-   * record, not to an install id anyone could claim. */
+   * record, not to an install id anyone could claim.
+   *
+   * `approvalKey` is kept only together with an install id AND a relay
+   * statement (`approvalStatement`) that names that install and that exact key
+   * and is signed by a pinned relay key (decision 8, SEC-006 P23). Without
+   * one the device is still the app, with no key, so it approves low-rated
+   * cards only. It is accepted only here: it lands on the new record or
+   * nowhere. A replayed request returns the
+   * stored result and never reads it. */
   redeem(
     credential: string,
     name: unknown,
     pairRequestId?: unknown,
     installId?: unknown,
+    approvalKey?: unknown,
+    approvalStatement?: unknown,
+    clientIp?: string,
   ): { device: PublicDevice; token: string } | { error: string; reason: RedeemFailure; devices?: Array<{ name: string; lastSeenAt: number }> } {
     const presented = String(credential ?? "");
     const requestId =
@@ -806,13 +1204,42 @@ export class DeviceRegistry {
       requestId &&
       this.replay &&
       sameCredential(this.replay.requestId, requestId) &&
-      sameDigest(this.replay.credentialHash, sha256(presented))
+      sameDigest(this.replay.credentialHash, sha256(presented)) &&
+      this.replay.installId === (cleanInstallId(installId) ?? null)
     ) {
+      this.replayed.add(this.replay.result);
       return this.replay.result;
     }
 
     const window = this.pairing();
-    if (!window) {
+    // Demo host: the fixed code is checked first, but never in place of a live
+    // window's own credentials (a normal pairing is untouched). Every other
+    // attempt here spends the per-IP budget; the live window's wrong-guess
+    // lockout below still applies unchanged.
+    let demoPairing = false;
+    if (this.demoCode !== null) {
+      const live = window !== null && (sameCredential(window.code, presented) || sameCredential(window.token, presented));
+      if (!live) {
+        if (!this.demoAttemptAllowed(clientIp ?? "unknown")) {
+          return {
+            error: "Too many pairing attempts from this device. Try again in a few minutes.",
+            reason: "rate-limited",
+          };
+        }
+        // Global budget: once spent, the demo code is simply not honoured
+        // (normal pairing below is untouched) until the window passes.
+        if (this.demoBudgetOpen()) {
+          demoPairing = sameCredential(this.demoCode, presented);
+          if (!demoPairing) this.recordDemoFailure();
+        }
+        // Budget refused (spent, unsaved or invalid): the demo code is NOT
+        // special here. It falls through below and is handled exactly like
+        // any wrong guess, with the same response and accounting (it counts
+        // against a live normal window). Any distinct answer would be an
+        // oracle that lets rotating clients learn the code.
+      }
+    }
+    if (!window && !demoPairing) {
       // Not "no pairing is in progress" for everything, because that sentence
       // is only true of a credential we have never seen. A person retyping a
       // code that expired, or that another device already spent, is holding
@@ -823,6 +1250,12 @@ export class DeviceRegistry {
         return {
           error: "That code has already signed a device in. Open Phone settings on your computer for a new one.",
           reason: "used",
+        };
+      }
+      if (spent?.reason === "replaced") {
+        return {
+          error: "That code was replaced by a newer one on your computer. Scan the code it shows now.",
+          reason: "replaced",
         };
       }
       if (spent?.reason === "burned") {
@@ -843,7 +1276,34 @@ export class DeviceRegistry {
       };
     }
     this.recover();
-    if (!sameCredential(window.code, presented) && !sameCredential(window.token, presented)) {
+    if (!demoPairing && window && !sameCredential(window.code, presented) && !sameCredential(window.token, presented)) {
+      // Not every mismatch is a guess. A code that used to be valid — spent
+      // by an earlier redemption, or superseded when this window replaced
+      // it — is a credential we know the honest fate of, and the person
+      // presenting it typed or scanned something real rather than tried
+      // their luck. Matching it costs nothing: it is an exact hash match
+      // against at most `MAX_SPENT_WINDOWS` remembered digests, so a random
+      // guess landing on one by chance is not a realistic path to bypassing
+      // the attempt budget below — the credentials carry their own entropy,
+      // and this is equality against a specific one of them, not a search.
+      // Only these two reasons get the pass: `expired` and `burned` still
+      // count as ordinary wrong guesses here, because that live window is a
+      // different code than the one now current, ageing or burning tells a
+      // guesser nothing new, and the antiguessing budget on THIS window is
+      // exactly what still has to hold.
+      const spent = this.recallSpent(presented);
+      if (spent?.reason === "used") {
+        return {
+          error: "That code has already signed a device in. Open Phone settings on your computer for a new one.",
+          reason: "used",
+        };
+      }
+      if (spent?.reason === "replaced") {
+        return {
+          error: "That code was replaced by a newer one on your computer. Scan the code it shows now.",
+          reason: "replaced",
+        };
+      }
       window.attemptsLeft -= 1;
       // A burned window is the whole point: without this, six digits is a
       // few seconds of guessing. It stays burned rather than merely paused,
@@ -874,6 +1334,15 @@ export class DeviceRegistry {
     }
     const install = cleanInstallId(installId);
     const replaced = install ? this.devices.find((d) => d.installId === install) : undefined;
+    if (demoPairing) {
+      const demoCount = this.devices.filter((d) => d.demo === true && d !== replaced).length;
+      if (demoCount >= MAX_DEMO_DEVICES) {
+        return {
+          error: "This demo computer already has the most demo devices it allows. Remove one on the computer, then try again.",
+          reason: "demo-cap",
+        };
+      }
+    }
     // A reinstall frees its own slot, so a full fleet still takes it back.
     if (this.devices.length - (replaced ? 1 : 0) >= MAX_DEVICES) {
       // Names and when each was last seen, least recent first: enough for the
@@ -887,19 +1356,24 @@ export class DeviceRegistry {
     }
     // Consume the window without clearing a possible replay. `closePairing`
     // is the explicit cancel operation and intentionally clears both.
-    this.spend("used");
+    if (!demoPairing) this.spend("used");
 
     const token = `murage_${randomBytes(32).toString("base64url")}`;
     const device: DeviceRecord = {
       id: randomUUID(),
-      name: cleanDeviceName(name),
+      name: this.demoSafeName(cleanDeviceName(name)),
       tokenHash: sha256(token),
       createdAt: Date.now(),
       lastSeenAt: Date.now(),
       cloudDesktopAccess: false,
+      scriptAccess: false,
       sessionGeneration: 0,
     };
     if (install) device.installId = install;
+    if (demoPairing) device.demo = true;
+    const key = install ? cleanApprovalKey(approvalKey) : undefined;
+    const attestation = install && key ? verifyApprovalStatement(approvalStatement, { installId: install, point: key }, { keys: this.statementKeys, now: this.clock() }) : null;
+    if (key && attestation) device.approvalKey = { point: key, addedAt: device.createdAt, attestation };
     const previous = this.devices;
     this.devices = [...previous.filter((d) => d !== replaced), device];
     // Unlike the lastSeenAt write below, this one must not be swallowed. A
@@ -922,19 +1396,26 @@ export class DeviceRegistry {
       // Only browser sessions can be live here. A record the browser door
       // paired never let its bearer token out of the sidecar (`browser.ts`
       // discards it), so no device-port stream can be holding it.
+      this.clearReplayFor(replaced.id);
       this.sessionsEnded(replaced.id, replaced.sessions ?? []);
+      this.deviceRemoved(replaced.id);
     }
     const result = { device: publicDevice(device), token };
+    if (demoPairing) this.logDemoRedemption(device.name, clientIp ?? "unknown");
     if (requestId) {
+      if (this.replayExpiryTimer) clearTimeout(this.replayExpiryTimer);
+      const expiresAt = Math.min(window?.expiresAt ?? Infinity, Date.now() + PAIRING_REPLAY_MS);
       this.replay = {
         requestId,
+        deviceId: device.id,
         credentialHash: sha256(presented),
-        expiresAt: window.expiresAt,
+        installId: install ?? null,
+        expiresAt,
         result,
       };
       this.replayExpiryTimer = setTimeout(
         () => this.clearReplay(),
-        Math.max(0, window.expiresAt - Date.now()),
+        Math.max(0, expiresAt - Date.now()),
       );
       // The recovery window lasts as long as the pairing window does
       // (`PAIRING_TTL_MS`), and none of that is a reason for a deliberately
@@ -1315,6 +1796,7 @@ export class DeviceRegistry {
         device.sessions = previous;
         throw error;
       }
+      this.clearReplayFor(device.id);
       this.sessionsEnded(device.id, ended);
       return true;
     }
@@ -1342,13 +1824,15 @@ export class DeviceRegistry {
       if (lastSeenWrite !== undefined) this.lastSeenWrites.set(id, lastSeenWrite);
       throw error;
     }
+    this.clearReplayFor(id);
     this.sessionsEnded(id, removed.sessions ?? []);
+    this.deviceRemoved(id);
     return true;
   }
 
   /** "Sign out this phone", asked by the phone. Revokes the DEVICE the
-   * presented session belongs to — every session on it, its bearer and (once
-   * push lands) its push binding — because a phone that signs out and leaves
+   * presented session belongs to — every session on it, its bearer and its
+   * push binding — because a phone that signs out and leaves
    * its record behind is a record that still counts toward the cap and still
    * shows as paired on the computer.
    *
@@ -1363,6 +1847,109 @@ export class DeviceRegistry {
     const resolved = this.resolveSession(value);
     if (!resolved) return null;
     return this.revoke(resolved.device.id) ? resolved.device.id : null;
+  }
+
+  /** Be told when a device record is gone for good: revoked from the
+   * computer, signed out from the phone, or replaced by a re-pair of the
+   * same install. The push revocation queue listens, so the harness drops
+   * the relay binding along with the rest of the record (spec §3.5). Returns
+   * the unsubscribe. */
+  onDeviceRemoved(listener: (deviceId: string) => void): () => void {
+    this.deviceRemovedListeners.add(listener);
+    return () => {
+      this.deviceRemovedListeners.delete(listener);
+    };
+  }
+
+  private deviceRemoved(deviceId: string): void {
+    for (const listener of this.deviceRemovedListeners) {
+      try {
+        listener(deviceId);
+      } catch {
+        /* one listener throwing must not keep a revoke from finishing */
+      }
+    }
+  }
+
+  /** Mint this device's detail and respond tokens, replacing any it already
+   * had — a fresh pair kills the old one outright, same as re-pairing an
+   * install replaces its device record. Digests only ever reach disk.
+   *
+   * Null for an unknown device or a binding id that doesn't parse. Throws,
+   * having changed nothing, when the write fails: the caller must not hand
+   * out tokens the file never learned about. */
+  issuePushTokens(
+    deviceId: string,
+    bindingId: string,
+    now = Date.now(),
+  ): { detail: string; respond: string; expiresAt: number } | null {
+    this.recover();
+    const device = this.devices.find((d) => d.id === deviceId);
+    if (!device || !PUSH_BINDING.test(bindingId)) return null;
+    const detail = `murage_pd_${randomBytes(32).toString("base64url")}`;
+    const respond = `murage_pr_${randomBytes(32).toString("base64url")}`;
+    const previous = device.push;
+    const expiresAt = now + PUSH_TOKEN_TTL_MS;
+    device.push = { bindingId, detailHash: sha256(detail), respondHash: sha256(respond), issuedAt: now, expiresAt };
+    try {
+      this.persist();
+    } catch (error) {
+      if (previous) device.push = previous;
+      else delete device.push;
+      throw error;
+    }
+    return { detail, respond, expiresAt };
+  }
+
+  /** The binding a device's push tokens were issued for, or null when it has
+   * none. */
+  pushBinding(deviceId: string): string | null {
+    this.recover();
+    return this.devices.find((d) => d.id === deviceId)?.push?.bindingId ?? null;
+  }
+
+  /** What the doors tell the harness about a device answering a card. */
+  approvalIdentity(deviceId: string): { id: string; cls: "app" | "browser"; key?: string } | null {
+    this.recover();
+    const device = this.devices.find((d) => d.id === deviceId);
+    if (!device) return null;
+    return { id: device.id, cls: device.installId ? "app" : "browser", ...(device.approvalKey ? { key: device.approvalKey.point } : {}) };
+  }
+
+  /** Resolve a push token to the device and binding it authenticates, scoped
+   * to `scope` — a detail token never satisfies a respond check and back.
+   * Null for a malformed token, an unknown one, or one past its
+   * `PUSH_TOKEN_TTL_MS`. */
+  authenticatePush(
+    token: string | undefined,
+    scope: "detail" | "respond",
+    now = Date.now(),
+  ): { deviceId: string; bindingId: string } | null {
+    if (!token || !PUSH_TOKEN[scope].test(token)) return null;
+    this.recover();
+    const hash = sha256(token);
+    const device = this.devices.find(
+      (d) => d.push && sameDigest(scope === "detail" ? d.push.detailHash : d.push.respondHash, hash),
+    );
+    if (!device?.push || device.push.expiresAt <= now) return null;
+    return { deviceId: device.id, bindingId: device.push.bindingId };
+  }
+
+  /** Allow or stop this device's browser sessions making script access
+   * grants (S1b R2). Per device, like cloud desktop access. */
+  setScriptAccess(id: string, allowed: boolean): boolean {
+    this.recover();
+    const device = this.devices.find((candidate) => candidate.id === id);
+    if (!device) return false;
+    const previous = device.scriptAccess;
+    device.scriptAccess = allowed;
+    try {
+      this.persist();
+    } catch (error) {
+      device.scriptAccess = previous;
+      throw error;
+    }
+    return true;
   }
 
   /** Grant or remove the one capability that crosses from companion actions

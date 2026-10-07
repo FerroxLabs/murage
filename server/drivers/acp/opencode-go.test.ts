@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,9 +11,11 @@ import {
   classifyOpenCodeError,
   canListOpenCodeModels,
   createOpenCodeDriver,
+  murageOwnsWorkingFolder,
   normalizeLegacyOpenCodeModel,
   parseOpenCodeModelsOutput,
 } from "./opencode-go.ts";
+import { DATA_DIR } from "../../config.ts";
 import type { ModelCatalog } from "../../contracts.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
@@ -267,6 +270,68 @@ describe("OpenCode catalog", () => {
     expect(classifyOpenCodeError({ code: -32000 })).toBe("invalid_credentials");
   });
 
+  // A bot in Auto can write opencode.json or .opencode/ into a folder Murage
+  // owns, and OpenCode would read it as permission config on a later turn.
+  it("switches off OpenCode project config only in Murage's own working folders", () => {
+    const workspaces = join(DATA_DIR, "workspaces");
+    expect(murageOwnsWorkingFolder(join(workspaces, "bot-7", "threads", "thread-1"))).toBe(true);
+    expect(murageOwnsWorkingFolder(join(workspaces, "bot-7"))).toBe(true);
+    expect(murageOwnsWorkingFolder(workspaces)).toBe(false);
+    expect(murageOwnsWorkingFolder(join(tmpdir(), "project"))).toBe(false);
+    expect(murageOwnsWorkingFolder(`${workspaces}-elsewhere`)).toBe(false);
+    expect(murageOwnsWorkingFolder(join(workspaces, "bot-7", "..", "..", "elsewhere"))).toBe(false);
+  });
+
+  // Opus gate 0.1.62-A: a name that merely starts with two dots is a folder
+  // inside, not the parent; and a folder that resolves into a Murage-owned
+  // one through a link is the owned folder OpenCode actually reads.
+  it("treats a '..'-prefixed child and a link into an owned folder as owned", async () => {
+    const workspaces = join(DATA_DIR, "workspaces");
+    expect(murageOwnsWorkingFolder(join(workspaces, "..bot-8"))).toBe(true);
+    const owned = join(workspaces, "bot-gate-a", "threads", "thread-link");
+    mkdirSync(owned, { recursive: true });
+    const scratch = mkdtempSync(join(tmpdir(), "murage-opencode-link-"));
+    try {
+      const link = join(scratch, "picked-folder");
+      symlinkSync(owned, link, "dir");
+      expect(murageOwnsWorkingFolder(link)).toBe(true);
+      expect(murageOwnsWorkingFolder(join(link, "sub"))).toBe(true);
+      expect(murageOwnsWorkingFolder(scratch)).toBe(false);
+    } finally {
+      rmSync(join(scratch, "picked-folder"), { force: true });
+      await removeTempDir(scratch);
+    }
+  });
+
+  it.each([
+    ["an owned conversation folder", () => join(DATA_DIR, "workspaces", "bot-7", "threads", "thread-1"), "1"],
+    ["a project folder", () => join(tmpdir(), "murage-opencode-project"), undefined],
+  ])("sets OPENCODE_DISABLE_PROJECT_CONFIG for a turn in %s as needed", async (_label, folder, expected) => {
+    const scratch = mkdtempSync(join(tmpdir(), "murage-opencode-projcfg-"));
+    try {
+      const dump = join(scratch, "env.json");
+      const driver = createOpenCodeDriver(async () => catalog("opencode-go/minimax-m3"));
+      const instance = await driver.create({
+        instanceId: "opencode-projcfg",
+        displayName: "OpenCode",
+        environment: { OPENCODE_API_KEY: "secret-value", FAKE_ACP_DUMP: dump, FAKE_ACP_MODELS: "opencode-go/minimax-m3" },
+        enabled: true,
+        config: { cli: FAKE_CLI, fullAuto: true },
+      });
+      const recorder = recordEvents(instance.adapter);
+      const cwd = folder();
+      mkdirSync(cwd, { recursive: true });
+      await instance.adapter.sendTurn({ threadId: "t-projcfg", text: "go", model: "opencode-go/minimax-m3", cwd });
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: true });
+      const child = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string> };
+      expect(child.env.OPENCODE_DISABLE_PROJECT_CONFIG).toBe(expected);
+      await instance.dispose();
+    } finally {
+      await removeTempDir(scratch);
+    }
+  });
+
   it("keeps the OpenCode key in the child environment only", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "murage-opencode-go-"));
     try {
@@ -286,7 +351,7 @@ describe("OpenCode catalog", () => {
       });
       await instance.snapshot();
       const child = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string> };
-      expect(child.env.OPENCODE_API_KEY).toBe("secret-value");
+      expect(child.env.OPENCODE_API_KEY).toBe(fixtureCredentialFingerprint("secret-value"));
       expect(child.env.OPENAI_API_KEY).toBeUndefined();
       expect(child.env.ANTHROPIC_API_KEY).toBeUndefined();
       await instance.dispose();

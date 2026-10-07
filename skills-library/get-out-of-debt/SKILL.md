@@ -18,7 +18,7 @@ trigger_phrases: >-
   I want to get out of debt help me pay off my debt how to become debt-free
   eliminate my credit card debt pay off student loans debt payoff plan
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: debt-management budgeting personal-finance step-by-step planning
   category: business-operations

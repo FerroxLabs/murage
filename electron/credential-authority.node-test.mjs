@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { secretWriteRefusal } from "./secret-storage-policy.mjs";
 const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
 const handler = source.slice(source.indexOf('ipcMain.handle("credential:set"'), source.indexOf("async function broadcastDesktopCapabilities"));
 // The real resolver, not a stand-in. Every gate calls it now, so a test that
@@ -23,13 +24,14 @@ function fixture(proof, code = handler, { packaged = true, handshake } = {}) {
     const authorized = options.headers["x-murage-surface"] === "desktop" && options.headers["x-murage-surface-secret"] === "fixture-proof";
     return { ok: authorized, status: authorized ? 200 : 404, json: async () => authorized ? { saved: true } : { error: "no such route" } };
   };
-  new Function("ipcMain", "fetch", "desktopSurfaceSecret", "packaged", "resolver", `
+  new Function("ipcMain", "fetch", "desktopSurfaceSecret", "packaged", "resolver", "secretWriteRefusal", `
     const app={isPackaged:packaged},safeStorage={isAsyncEncryptionAvailable:async()=>true},SERVER_PORT=1;
+    const assertSecretStorageWritable=async()=>{const r=await secretWriteRefusal({safeStorage,platform:"darwin"});if(r)throw new Error(r);};
     eval(resolver);
     const CREDENTIAL_PATCH={telegramBotToken:value=>({telegram:{botToken:value}})};
     const updateSecureCredentialDocument=async(derive,apply)=>{derive({});return apply();};
     ${code}
-  `)(ipcMain, fetch, proof, packaged, resolver);
+  `)(ipcMain, fetch, proof, packaged, resolver, secretWriteRefusal);
   return {
     save: () => invoke({}, "telegramBotToken", "fake-test-token"),
     calls: () => calls,

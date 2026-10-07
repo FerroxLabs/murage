@@ -6,7 +6,7 @@ description: |
   Do NOT use for history lesson plan creation (use `lesson-plan-design`), for writing history essays (use writing category skills), or for non-history subjects.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "tutoring teaching step-by-step research"
   category: "education"

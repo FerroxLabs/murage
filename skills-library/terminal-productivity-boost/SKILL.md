@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of terminal productivity boost or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "quickstart best-practices python api-design resume-writing"
   category: "software-engineering"

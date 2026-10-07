@@ -11,7 +11,7 @@ description: |
   or podcast interview preparation (use podcast-interview-guide).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "presentation template planning"
   category: "design-creative"

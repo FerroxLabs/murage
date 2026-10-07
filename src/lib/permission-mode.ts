@@ -60,6 +60,7 @@ export function modePatch(mode: PermissionMode): { autoApprove?: boolean; fullAc
  * setting gives, so the owner is told this instead. */
 export const FULL_ACCESS_DESKTOP_ONLY = "Full access can only be turned on in the Murage desktop app.";
 export const NO_LIMITS_DESKTOP_ONLY = "No limits can only be turned on in the Murage desktop app.";
+export const IMAGE_SETTING_DESKTOP_ONLY = "The Images setting can only be changed in the Murage desktop app.";
 export const FULL_ACCESS_OPTIONS_DESKTOP_ONLY = "Full access options can only be changed in the Murage desktop app.";
 
 /** The plain-words reason for a refused save that asked for Full access (or
@@ -71,6 +72,7 @@ export function fullAccessRefusalMessage(patch: object, error: unknown): string 
   const fields = patch as { fullAccess?: unknown; noLimits?: unknown };
   if (fields.noLimits === true) return NO_LIMITS_DESKTOP_ONLY;
   if (fields.fullAccess === true) return FULL_ACCESS_DESKTOP_ONLY;
+  if (Object.hasOwn(patch, "imageApproval") || Object.hasOwn(patch, "imageAskAfter")) return IMAGE_SETTING_DESKTOP_ONLY;
   if (Object.hasOwn(patch, "fullAccessChannelMessages") || Object.hasOwn(patch, "fullAccessSetupRequests")) return FULL_ACCESS_OPTIONS_DESKTOP_ONLY;
   return null;
 }

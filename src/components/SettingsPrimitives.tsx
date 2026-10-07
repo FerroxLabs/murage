@@ -15,6 +15,8 @@ export function Switch({
       aria-checked={checked}
       className={cn(
         "relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-40",
+        // A 44px-tall hit area around the 24px track, for a finger.
+        "before:absolute before:-inset-y-2.5 before:inset-x-0 before:content-['']",
         checked ? "bg-accent" : "bg-control",
         className,
       )}

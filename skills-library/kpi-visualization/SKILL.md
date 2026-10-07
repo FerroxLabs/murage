@@ -6,7 +6,7 @@ description: |
   Do NOT use for defining which KPIs to track (use kpi-definition), designing full dashboard layouts (use dashboard-design), or choosing chart types for non-KPI data (use chart-type-selector).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-visualization analysis template"
   category: "data-analysis"

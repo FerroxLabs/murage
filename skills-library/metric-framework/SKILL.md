@@ -6,7 +6,7 @@ description: |
   Do NOT use for defining individual KPIs with formulas and owners (use kpi-definition), dashboard layout design (use bi-dashboard-spec), or personal OKRs (use okr-builder in productivity).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis data-science planning"
   category: "data-analysis"

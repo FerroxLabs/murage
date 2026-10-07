@@ -8,6 +8,13 @@ import { initializeMessageTables } from "../message-tables.ts";
 import { initializeImageOperations } from "../image-operations-schema.ts";
 import { migrateMemorySchema } from "../memory/schema.ts";
 import { backupAgePinForTarget } from "../../shared/backup-age-pin.ts";
+/** Hosts where the product runs a raw pinned age (macOS, Linux). Windows only
+ * runs age.exe beside its signed helper (resolveWindowsBackupRuntime), so the
+ * raw-age suites skip there; its path is covered by the Windows transport
+ * suites. A target with no pinned age has no raw age in the product either,
+ * so it skips too. A pinned host without MURAGE_BACKUP_TEST_AGE_DIR still
+ * fails loudly. */
+export const rawAgeHost = backupAgePinForTarget(process.platform, process.arch) !== null;
 export function testAgeKeys(){
   const directory=process.env.MURAGE_BACKUP_TEST_AGE_DIR;
   if(!directory)throw Error("MURAGE_BACKUP_TEST_AGE_DIR must name the verified fixture tool directory");

@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of astrophotographer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design photography budgeting guide advanced quick-reference cloud testing"
   category: "design-creative"

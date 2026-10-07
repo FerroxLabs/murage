@@ -1,7 +1,9 @@
 ---
 name: strategy-report
 description: Generate a comprehensive strategy performance report — metrics, trade analysis, equity curve, and recommendations. Use after backtesting a Pine Script strategy.
-license: MIT
+license: Apache-2.0
+metadata:
+  author: Ferrox Labs
 ---
 
 # Strategy Performance Report

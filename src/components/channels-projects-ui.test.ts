@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import en from "@/locales/en.json";
 
 // From the lib module, not from the components: a component in this app
 // reads `window` at import time, and the suite runs in node.
@@ -108,6 +109,8 @@ describe("making a channel a project", () => {
     expect(panel).toContain("bulletin: goal.trim(), channelProject: { goal: goal.trim() }");
     // a project with no goal is not a project, so the button stays off
     expect(panel).toContain("!project || Boolean(goal.trim())");
+    // and it never files itself under a team the person typed
+    expect(panel).toContain("projectSection(section, teams)");
   });
 });
 
@@ -164,15 +167,23 @@ describe("the details panel", () => {
 
 describe("a project's home", () => {
   it("states the goal and the status, and nothing else is the headline", () => {
-    expect(PROJECT_HOME).toContain("What this is for");
-    expect(PROJECT_HOME).toContain("How it is going");
-    expect(PROJECT_HOME).toContain("CHANNEL_PROJECT_STATUS_LABELS[project.status]");
+    // The headings come from the en catalogue, so the page can be translated.
+    expect(PROJECT_HOME).toContain('t("projects.home.goalHeading")');
+    expect(PROJECT_HOME).toContain('t("projects.home.statusHeading")');
+    expect(en["projects.home.goalHeading"]).toBe("What this is for");
+    expect(en["projects.home.statusHeading"]).toBe("How it is going");
+    // The word and its note are read through the catalogue; the English table in shared/ stays the server's.
+    expect(PROJECT_HOME).toContain("channelProjectStatusLabel(project.status)");
+    expect(PROJECT_HOME).toContain("channelProjectStatusNote(project.status)");
   });
 
   it("has a plain line under every status word, so the word is never the only clue", () => {
     for (const status of CHANNEL_PROJECT_STATUSES) {
       expect(PROJECT_STATUS_NOTES[status].length).toBeGreaterThan(0);
       expect(CHANNEL_PROJECT_STATUS_LABELS[status].length).toBeGreaterThan(0);
+      // The catalogue keeps the same English words, so English screens read exactly as before.
+      expect(en[`projects.status.${status}` as const]).toBe(CHANNEL_PROJECT_STATUS_LABELS[status]);
+      expect(en[`projects.statusNote.${status}` as const]).toBe(PROJECT_STATUS_NOTES[status]);
     }
   });
 
@@ -185,7 +196,7 @@ describe("a project's home", () => {
 
   it("is a second view of the same channel, not a second chat", () => {
     expect(GROUP_VIEW).toContain('tab === "overview" ? "Overview" : "Chat"');
-    expect(GROUP_VIEW).toContain('projectTab === "chat"');
+    expect(GROUP_VIEW).toContain('activeTab === "chat"');
     expect(GROUP_VIEW).toContain("<ProjectHome");
   });
 });
@@ -262,7 +273,7 @@ describe("three nouns on the surface", () => {
       SIDEBAR.indexOf("export function sidebarBotVisible("),
     );
     expect(menu).toContain("A chat with some bots.");
-    expect(menu).toContain("A piece of work with its own goal, files and chat.");
+    expect(menu).toContain("A place for work, files and chat. A goal is optional.");
   });
 
   it("files unfiled projects under their own heading, leaving filed ones with their team", () => {

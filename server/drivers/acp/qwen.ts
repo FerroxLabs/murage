@@ -212,7 +212,10 @@ const support: AcpSupport = {
   // what still says the pick was local, so it is the gate, not `turn.model`.
   spawnArgs: (_config, turn, ctx) => [
     "--acp",
-    ...(fluxRouted(turn.model) || localRouted(ctx?.requestedModel) ? ["--auth-type", "openai"] : []),
+    // A model-connection turn (a pasted key or a ChatGPT/Grok plan sign-in)
+    // needs it for the same reason: the route's OPENAI_* env must win over a
+    // saved Qwen OAuth selectedType, or the turn goes to Qwen's cloud.
+    ...(fluxRouted(turn.model) || localRouted(ctx?.requestedModel) || turn.providerRoute ? ["--auth-type", "openai"] : []),
     ...(turn.model ? ["-m", turn.model] : []),
   ],
   /**

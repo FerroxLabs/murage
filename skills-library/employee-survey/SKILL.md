@@ -5,7 +5,7 @@ description: |
   Do NOT use for customer surveys (use a research skill), interview evaluation (use interview-guide), or performance reviews (use performance-review).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "template planning research analysis strategy"
   category: "business-strategy"

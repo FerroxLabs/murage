@@ -18,7 +18,7 @@ trigger_phrases: >-
   digital declutter clean up my online presence organize my digital files secure
   my online accounts
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: security decluttering automation step-by-step planning
   category: life-event

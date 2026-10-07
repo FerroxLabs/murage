@@ -1,8 +1,9 @@
 ---
 name: forge-offer-construction
 description: "The user has a product or service and a price, and now needs the *offer* — the full thing the buyer says yes to. Load this when the user asks for an offer page, a proposal, a pitch deck pricing slide, or anything that sounds like \"how do I present this so they buy.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "forge"
 ---

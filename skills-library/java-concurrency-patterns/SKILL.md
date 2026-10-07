@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Java modern idioms (use `java-modern-idioms`), Java performance (use `java-performance`), Java Spring (use `java-spring-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "java backend optimization"
   category: "software-engineering"

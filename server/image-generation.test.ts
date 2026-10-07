@@ -353,11 +353,17 @@ it("review: an OpenRouter prompt over the budget is refused after the free catal
 // buffered render has ten minutes). Node's fetch would cut it at 300 s on its
 // own transport clock and call it a failed fetch; the render goes through the
 // clockless provider dispatcher and keeps only its own ceiling and Stop.
-it("sends the render through the provider dispatcher with no transport clock", async () => {
- const { providerDispatcher } = await import("./provider-dispatcher.ts");
+it("sends the render through the image dispatcher: no transport clock, a connection of its own", async () => {
+ const { imageDispatcher, providerDispatcher } = await import("./provider-dispatcher.ts");
  const f = fixture(); await f.service.generate(f.request, f.hooks);
  const render = f.fetcher.mock.calls.find(([, init]) => init?.method === "POST")!;
- expect((render[1] as RequestInit & { dispatcher?: unknown }).dispatcher).toBe(providerDispatcher());
+ const sent = (render[1] as RequestInit & { dispatcher?: Record<symbol, unknown> }).dispatcher!;
+ // A per-request view (it watches whether the request started) over the one image Agent.
+ const agent = imageDispatcher() as unknown as Record<symbol, unknown>;
+ const options = Object.getOwnPropertySymbols(agent).find(key => key.description === "options")!;
+ expect(sent[options]).toBe(agent[options]);
+ expect(agent[options]).toMatchObject({ headersTimeout: 0, bodyTimeout: 0, pipelining: 0 });
+ expect(sent).not.toBe(providerDispatcher());
 });
 // The owner's own refusal reaches the bot in the reservation's words.
 it("passes the reservation's refusal through as the tool's words", async () => {

@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -128,10 +129,13 @@ it("fences an in-flight result on pause and abandons restart reservations withou
   f.read.mockImplementationOnce(async () => { await new Promise<void>(resolve => { release = resolve; }); return { fingerprint: "b".repeat(64) }; });
   release = undefined; f.advance(); const oldManager = f.manager, pending = oldManager.tick(); await vi.waitFor(() => expect(release).toBeTypeOf("function"));
   const stranded = readFileSync(join(f.root, "routines.json"));
+  const runsDir = join(f.root, "events", "routine-runs"), strandedRuns = new Map(readdirSync(runsDir).map(name => [name, readFileSync(join(runsDir, name))] as const));
   oldManager.stop(); release!(); await pending;
   // A real restart cannot leave an old process writing the same state file.
   // Restore the exact durable in-flight snapshot only after that writer ends.
-  writeFileSync(join(f.root, "routines.json"), stranded); f.restart();
+  writeFileSync(join(f.root, "routines.json"), stranded);
+  for (const [name, bytes] of strandedRuns) writeFileSync(join(runsDir, name), bytes);
+  f.restart();
   expect(f.manager.listRoutines()[0].watch?.state.checks.map(check => check.outcome)).toEqual(["abandoned", "abandoned"]);
   expect(f.manager.listRoutines()[0].watch?.state.checkpoint).toBeUndefined(); expect(f.startTurn).not.toHaveBeenCalled();
 });
@@ -160,7 +164,7 @@ it("lists only bounded safe sources and refuses missing working folders or absol
 
 it("keeps malformed saved watch runs out of ordinary provider dispatch", async () => {
   const f = fixture(), p = await f.propose(); f.confirm(p.requestId);
-  const file = join(f.root, "routines.json"), disk = JSON.parse(readFileSync(file, "utf8"));
+  const file = join(f.root, "routines.json"), disk = readRoutinesWithRuns(file);
   const routine = f.manager.listRoutines()[0];
   disk.runs = [{ id: "corrupt-run", routineId: routine.id, routineName: routine.name, botId: "worker", target: "bot", runOn: "ember", scheduledFor: routine.createdAt, createdAt: routine.createdAt, manual: true, status: "queued" }];
   writeFileSync(file, JSON.stringify(disk));

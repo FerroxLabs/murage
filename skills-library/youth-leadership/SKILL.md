@@ -4,7 +4,7 @@ description: |
   Comprehensive guide for developing leadership skills in teens and young adults, covering student government participation, community service project planning, public speaking skills for teens, resume building, college application enhancement, teamwork development, mentorship opportunities, entrepreneurial leadership, and volunteer management. Use when the user asks about youth leadership or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching parenting guide"
   category: "education"

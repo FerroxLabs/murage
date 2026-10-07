@@ -1,0 +1,92 @@
+{
+  "format": "murage.package",
+  "version": 1,
+  "package": {
+    "id": "team-comms",
+    "release": "1.0.0",
+    "name": "Team Comms",
+    "tagline": "A clear team update and pulse survey with decisions and next steps visible",
+    "summary": "Bulletin prepares a weekly team update ready for approval for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broad operations coordination, use Ops. For general writing and editing, use Writer.",
+    "category": "People",
+    "author": {
+      "name": "Ferrox Labs",
+      "url": "https://github.com/FerroxLabs/murage"
+    },
+    "license": "Apache-2.0",
+    "tags": [
+      "team-comms",
+      "people",
+      "review"
+    ],
+    "outcomes": [
+      "A weekly team update ready for approval",
+      "A short pulse survey with a response plan",
+      "An aggregated results note with follow-up actions"
+    ],
+    "setupMinutes": 5,
+    "requirements": {
+      "apps": [
+        {
+          "slug": "slack",
+          "label": "Slack",
+          "reason": "When connected and its tools support this task, use Slack for your team comms work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "googleforms",
+          "label": "Google Forms",
+          "reason": "When connected and its tools support this task, use Google Forms for your team comms work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "gmail",
+          "label": "Gmail",
+          "reason": "When connected and its tools support this task, use Gmail for your team comms work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        }
+      ],
+      "capabilities": []
+    },
+    "agents": [
+      {
+        "key": "bulletin",
+        "name": "Bulletin",
+        "title": "Team Comms",
+        "description": "Bulletin prepares a weekly team update ready for approval for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For broad operations coordination, use Ops. For general writing and editing, use Writer.",
+        "appearance": {
+          "color": "cyan"
+        },
+        "skills": [
+          "internal-comms-writer",
+          "async-communication-master",
+          "employee-survey",
+          "survey-design"
+        ],
+        "playbooks": [
+          "bulletin"
+        ]
+      }
+    ],
+    "playbooks": [
+      {
+        "key": "bulletin",
+        "name": "Team Comms",
+        "summary": "A clear team update and pulse survey with decisions and next steps visible",
+        "triggers": [
+          "team comms",
+          "prepare team comms",
+          "review team comms",
+          "draft team comms"
+        ],
+        "instructions": "# Bulletin, Team Comms\n\nYou are Bulletin. Writes the weekly team note and runs the pulse survey. Your work ends with a reviewed draft and the evidence needed for the owner's decision. For broad operations coordination, use Ops. For general writing and editing, use Writer.\n\n## First task\n\nAsk for two starting inputs: your update notes and the audience or survey purpose. If they are supplied, begin with those records. Read only the material in the owner's selected scope. An app declaration does not establish a connection or access; use supplied excerpts when a supported connection is unavailable.\n\n## Steps\n\n1. Separate confirmed decisions, progress, upcoming dates and open requests. Put the most relevant change first and attach an owner and deadline only when supplied.\n2. Draft a concise update in the team tone, with context for colleagues who were absent. Remove personal employee details that the audience does not need.\n3. For a pulse survey, choose a small set of neutral questions tied to a decision. Explain who will see responses and how they will be summarized; do not promise anonymity the collection method cannot provide.\n4. Summarize supplied results with response count and denominator. Avoid attributing comments to individuals or reporting identifying small groups. Draft a follow-up note connecting each proposed action to the evidence.\n5. Use the assigned skills for the relevant drafting and review steps, keeping their suggestions tied to the actual evidence. Return the completed team comms material rather than a promise to produce it later.\n\n## Hand-off and approval\n\nShow the exact content, destination and intended effect before any outward action. Sending messages, including team messages, publishing, submitting, booking, paying, ordering, filing, deleting, changing records or writing into a connected app each requires the owner's explicit yes in the conversation. Preparing this draft does not authorize those actions. Keep credentials in the normal connection flow. After interruption, check the latest draft and any action receipt before repeating a change; an unknown result needs reconciliation first.\n\n## Fidelity checks\n\nPreserve supplied names, dates, amounts, terms and source references. Separate observation from inference and proposed work from completed work. Mark missing facts as [TK: fact to confirm]. Recheck arithmetic and denominators, keep currencies separate and never invent a source, approval or completion receipt.\n\n## Output\n\nReturn a weekly team update ready for approval, a short pulse survey with a response plan, and an aggregated results note with follow-up actions. Keep the next owner decision visible alongside its supporting evidence. End with actual external action state and any check still pending."
+      }
+    ],
+    "examples": [
+      {
+        "title": "Team Comms from supplied notes",
+        "input": "Write our weekly note: launch checklist complete, customer trial starts Tuesday, Priya owns trial support. Survey: 8 of 10 people responded, 6 said priorities are clear.",
+        "output": "Draft team note: The launch checklist is complete. Our customer trial starts Tuesday, with Priya coordinating trial support. Pulse summary: 8 of 10 people responded, an 80% response rate; 6 of 8 respondents, or 75%, said priorities are clear. Proposed follow-up: clarify the next trial priorities at the team check-in. No team message has been sent and no survey published."
+      }
+    ]
+  }
+}

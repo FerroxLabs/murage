@@ -21,7 +21,7 @@ trigger_phrases: >-
   I want to build a landing page I need a SaaS website How do I create a
   high-converting landing page I want to build a marketing site
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: seo frontend step-by-step planning
   category: software-project

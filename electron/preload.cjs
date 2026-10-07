@@ -190,6 +190,7 @@ contextBridge.exposeInMainWorld("muragebox", {
     start: () => ipcRenderer.invoke("companion:start"),
     stop: () => ipcRenderer.invoke("companion:stop"),
     keepAwake: (enabled) => ipcRenderer.invoke("companion:keep-awake", enabled),
+    lanPairing: (enabled) => ipcRenderer.invoke("companion:lan-pairing", enabled),
     refreshTailscale: () => ipcRenderer.invoke("companion:refresh-tailscale"),
     // One switch: `tailscale serve` in front of the browser door, and the door
     // bound to loopback where serve connects. The renderer asks for a state,
@@ -353,6 +354,9 @@ contextBridge.exposeInMainWorld("muragebox", {
       return () => ipcRenderer.removeListener("browser:user-interaction", handler);
     },
   } : undefined,
+  /** A yes-or-no question anchored to the Murage window; true only when the
+   * person picks the action button (confirmLabel, else OK). */
+  confirm: (message, confirmLabel) => ipcRenderer.invoke("dialog:confirm", message, confirmLabel),
   /** Native folder picker for a bot's working folder; null when cancelled. */
   pickFolder: (current) => ipcRenderer.invoke("desktop:pick-folder", current),
   /** Writes the redacted diagnostics report to a user-chosen file; resolves
@@ -375,9 +379,31 @@ contextBridge.exposeInMainWorld("muragebox", {
   /** Store a provider credential with OS-backed encryption. */
   mutateProviderConnection: (input) => ipcRenderer.invoke("model-provider:mutate", input),
   mutateFluxConnection: (input) => ipcRenderer.invoke("flux-connection:mutate", input),
+  /** Plan sign-in (ChatGPT, Grok). Results and status never carry a token. */
+  modelSignIn: {
+    status: () => ipcRenderer.invoke("model-signin:status"),
+    start: (provider) => ipcRenderer.invoke("model-signin:start", provider),
+    startDevice: (provider) => ipcRenderer.invoke("model-signin:start-device", provider),
+    cancel: (provider) => ipcRenderer.invoke("model-signin:cancel", provider),
+    submitCode: (provider, code) => ipcRenderer.invoke("model-signin:submit-code", provider, code),
+    signOut: (provider) => ipcRenderer.invoke("model-signin:sign-out", provider),
+  },
+  /** The owner's own MCP servers (MCP-LINK T11): keys, links, env values and
+   * sign-in go to the main process, which keeps them encrypted. Nothing here
+   * ever returns a value. */
+  mcpServers: {
+    mode: () => ipcRenderer.invoke("mcp-servers:mode"),
+    saveSecrets: (name, input) => ipcRenderer.invoke("mcp-servers:save-secrets", name, input),
+    signIn: (name) => ipcRenderer.invoke("mcp-servers:sign-in", name),
+    cancelSignIn: (name) => ipcRenderer.invoke("mcp-servers:cancel-sign-in", name),
+    signOut: (name) => ipcRenderer.invoke("mcp-servers:sign-out", name),
+    remove: (name) => ipcRenderer.invoke("mcp-servers:remove", name),
+  },
   /** Move this install's connected apps onto the FluxRouter account (the
    * consent button in Connected apps). Resolves the secret-free claim state. */
   claimLegacyComposio: () => ipcRenderer.invoke("composio:claim-legacy"),
+  /** Reconnect connected apps on this computer after another one took over. */
+  reconnectConnectedApps: () => ipcRenderer.invoke("composio:reconnect"),
   setCredential: (name, value) => ipcRenderer.invoke("credential:set", name, value),
 
   /** In-app auto-update. State object:

@@ -6,7 +6,7 @@ description: |
   Do NOT use for reviewing a specific employment contract (use employment-contract-reader), filing EEOC complaints, employer-side HR guidance, or legal advice on specific workplace disputes.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy contracts guide research"
   category: "legal-civic"

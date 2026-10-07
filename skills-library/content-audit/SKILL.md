@@ -9,7 +9,7 @@ description: |
   `content-brief`), or analyzing audience personas (use `audience-analysis`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "content-marketing analysis planning"
   category: "writing"

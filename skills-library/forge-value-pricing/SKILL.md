@@ -1,8 +1,9 @@
 ---
 name: forge-value-pricing
 description: "The user is about to pick a number — a subscription tier, a service rate, a product price, a course fee — and the price has not yet been pressure-tested. Load this whenever you hear \"what should we charge,\" \"is this too expensive,\" \"should we drop the price,\" or \"let's just match the competitor.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "forge"
 ---

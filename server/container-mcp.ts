@@ -4,6 +4,7 @@
 // the VPS entry point.
 import { cuaExecArgs } from "./container-computer.ts";
 import { runMcpBridge } from "./mcp-bridge.ts";
+import { turnSecret, turnSecretWired } from "./turn-credential.ts";
 
 const [runtime, container, socket] = process.argv.slice(2);
 if (!runtime || !["docker", "podman", "container"].includes(runtime)) {
@@ -18,7 +19,7 @@ if (!container || !/^[a-zA-Z0-9_.-]+$/.test(container) || !socket?.startsWith("/
 // The who-is-driving pair rides in env, not argv — argv is world-readable
 // through `ps`, and the token guards a loopback endpoint.
 const controlUrl = process.env.MURAGE_CONTROL_URL ?? "";
-const controlToken = process.env.MURAGE_CONTROL_TOKEN ?? "";
+const controlToken = () => turnSecret("MURAGE_CONTROL_TOKEN");
 
 runMcpBridge({
   command: runtime,
@@ -26,5 +27,5 @@ runMcpBridge({
   label: "Cua Driver",
   // No liveness watchdog: the runtime CLI talks to a local daemon and fails
   // fast on its own — there is no silent WAN peer to wedge on.
-  ...(controlUrl && controlToken ? { gate: { url: controlUrl, token: controlToken } } : {}),
+  ...(controlUrl && turnSecretWired("MURAGE_CONTROL_TOKEN") ? { gate: { url: controlUrl, token: controlToken } } : {}),
 });

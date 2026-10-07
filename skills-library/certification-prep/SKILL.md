@@ -6,7 +6,7 @@ description: |
   Do NOT use for academic exam preparation (use `exam-prep-plan`), for general skill building (use `learning-path`), or for language proficiency exams (use `language-level-assessment`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "study-skills step-by-step guide"
   category: "education"

@@ -1,3 +1,6 @@
+import { type Partition, partitionScopeKey, isHomePartition } from "../execution-audience.ts";
+import { teamMemoryKey } from "../team-identities.ts";
+import { notebookRoot } from "../workspace.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, openSync, closeSync, fstatSync, readFileSync, lstatSync, realpathSync, readdirSync, existsSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
@@ -8,11 +11,14 @@ import { ensureScope, type MemoryRoster } from "./policy.ts";
 import { chunksFor } from "./chunks.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { isMemoryTopicName, MEMORY_SEED } from "../workspace.ts";
+import { scopeRow } from "./scope-id.ts";
+import { revokeAllDisclosures } from "./revocation.ts";
 
-export type ImportSelection = {kind:"bot";botId:string;topic?:string}|{kind:"section";section:string};
+export type ImportSelection = {kind:"bot";botId:string;topic?:string}|{kind:"section";section:string}|{kind:"partition";botId:string;partition:Partition;topic?:string};
 interface ImportItem {selection:ImportSelection;path:string;hash:string;bytes:number;text:string;scopeId:string;scopeLabel:string;alreadyImported:boolean}
 interface Preview {previewId:string;items:ImportItem[];expiresAt:number;policyRevision:number}
 const previews=new Map<string,Preview>();
+let checkedDatabase:ReturnType<typeof database>|undefined;
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
 
 /** The configured profile root is trusted; every selected descendant must be a
@@ -33,11 +39,14 @@ function readSelected(parts:string[],maximum=262144):string {
 }
 function selectionItem(selection:ImportSelection,roster:MemoryRoster):ImportItem {
   let text:string,path:string,scopeId:string,scopeLabel:string;
-  if(selection.kind==="bot"){
+  if(selection.kind==="bot" || selection.kind==="partition"){
     if(!/^[\w-]+$/.test(selection.botId)||!roster.bots.some(bot=>bot.id===selection.botId))throw new Error("MEMORY_IMPORT_BOT_UNKNOWN");
     if(selection.topic!==undefined&&!isMemoryTopicName(selection.topic))throw new Error("MEMORY_IMPORT_TOPIC_DENIED");
-    const parts=["workspaces",selection.botId,...selection.topic?["memory",selection.topic]:["MEMORY.md"]];
-    text=readSelected(parts);path=join(DATA_DIR,...parts);scopeId=ensureScope("bot",selection.botId);scopeLabel=`Private notebook: ${selection.botId}`;
+    const partition = selection.kind === "partition" ? selection.partition : { kind: "home" as const };
+    // Owner-opted notebook sync (`unverified-import`) is lane D's documented exception to the learning guard; the partition key keeps it inside this notebook's own partition.
+    const key = partitionScopeKey(selection.botId, partition); if (!key) throw new Error("MEMORY_IMPORT_PARTITION_DENIED");
+    const parts=[...relative(DATA_DIR, notebookRoot(selection.botId, partition)).split(sep),...selection.topic?["memory",selection.topic]:[partition.kind === "general" ? "GENERAL.md" : "MEMORY.md"]];
+    text=readSelected(parts);path=join(DATA_DIR,...parts);scopeId=ensureScope("bot",key);scopeLabel=`Private notebook: ${selection.botId}`;
   } else {
     const section=selection.section.trim();
     if(section.length>60||section&&!roster.bots.some(bot=>(bot.section?.trim()||"")===section)&&!roster.groups.some(group=>(group.section?.trim()||"")===section))throw new Error("MEMORY_IMPORT_SECTION_UNKNOWN");
@@ -58,12 +67,15 @@ function selectionItem(selection:ImportSelection,roster:MemoryRoster):ImportItem
  * bot's MEMORY.md and its section's team brief. Recall skips records that
  * rest only on these, so one fact is not sent twice. Read-only: an absent
  * scope means nothing was imported from it. */
-export function notebookSourceIds(botId:string,section?:string|null):{notebook?:string;brief?:string} {
-  const db=database(),team=section?.trim()||"";
-  const scope=(kind:string,owner:string)=>db.prepare("SELECT id FROM memory_scopes WHERE kind=? AND owner_key=?").get(kind,owner)?.id;
-  const bot=scope("bot",botId),brief=scope("team",team);
+export function notebookSourceIds(botId:string,section?:string|null,partition:Partition = {kind:"home"}):{notebook?:string;brief?:string;general?:string} {
+  if(partition.kind === "isolated") return {};
+  const db=database(),team=isHomePartition(partition) ? section?.trim()||"" : partition.kind === "team" ? teamMemoryKey(partition.teamId) : null;
+  const scope=(kind:string,owner:string)=>scopeRow(db, kind,owner)?.id;
+  const bot=scope("bot",partitionScopeKey(botId,partition)!),brief=team === null ? undefined : scope("team",team);
+  const general=partition.kind !== "general" ? scope("bot",botId+"#general") : undefined;
   return {
-    ...bot?{notebook:`legacy:${hash(JSON.stringify([String(bot),join(DATA_DIR,"workspaces",botId,"MEMORY.md")]))}`}:{},
+    ...general?{general:`legacy:${hash(JSON.stringify([String(general),join(notebookRoot(botId,{kind:"general"}),"GENERAL.md")]))}`}:{},
+    ...bot?{notebook:`legacy:${hash(JSON.stringify([String(bot),join(notebookRoot(botId,partition),partition.kind === "general" ? "GENERAL.md" : "MEMORY.md")]))}`}:{},
     ...brief?{brief:`legacy:${hash(JSON.stringify([String(brief),`${join(DATA_DIR,"section-contexts.json")}#${team}`]))}`}:{},
   };
 }
@@ -99,8 +111,15 @@ function commitImportItems(items:ImportItem[], track=false){
       const prior=db.prepare("SELECT revision,content_hash,state FROM memory_sources WHERE id=?").get(id);
       if(prior && prior.state!=="active")throw new Error("MEMORY_IMPORT_SOURCE_RETIRED");
       if(prior && prior.content_hash!==item.hash && db.prepare("SELECT 1 FROM memory_records r WHERE r.id IN (SELECT record_id FROM memory_evidence WHERE source_id=?) AND (r.owner_pinned=1 OR r.state IN ('archived','deleted') OR r.assertion!='unverified-import') LIMIT 1").get(id))throw new Error("MEMORY_IMPORT_REVIEW_CONFLICT");
-      if(track)db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','notebook-link',0,'granted',?) ON CONFLICT(id) DO UPDATE SET state='granted',intent=excluded.intent")
-        .run(`notebook-link:${id}`,item.scopeId,JSON.stringify({selection:item.selection,hash:item.hash,status:"current",checkedAt:Date.now()}));
+      if(track){
+        // Written only when the link is new or something about it changed: a rescan of
+        // an unchanged notebook leaves the database as it found it.
+        const linked=db.prepare("SELECT state,intent FROM memory_scope_bindings WHERE id=?").get(`notebook-link:${id}`);
+        let unchanged=false;
+        if(linked?.state==="granted"){try{const saved=JSON.parse(String(linked.intent));unchanged=saved.hash===item.hash&&saved.status==="current"&&!saved.error&&JSON.stringify(saved.selection)===JSON.stringify(item.selection);}catch{/* rewritten below */}}
+        if(!unchanged)db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','notebook-link',0,'granted',?) ON CONFLICT(id) DO UPDATE SET state='granted',intent=excluded.intent")
+          .run(`notebook-link:${id}`,item.scopeId,JSON.stringify({selection:item.selection,hash:item.hash,status:"current",checkedAt:Date.now()}));
+      }
       if(prior?.content_hash===item.hash){skipped++;continue;}
       const revision=prior?Number(prior.revision)+1:1;
       db.prepare("UPDATE memory_records SET state='superseded' WHERE id IN (SELECT record_id FROM memory_evidence WHERE source_id=?) AND state!='deleted'").run(id);
@@ -114,41 +133,99 @@ function commitImportItems(items:ImportItem[], track=false){
       }
       imported++;
     }
-    if(imported){db.exec("UPDATE memory_meta SET data_revision=data_revision+1");db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();}
+    if(imported){db.exec("UPDATE memory_meta SET data_revision=data_revision+1");revokeAllDisclosures(db,"import");}
     return {imported,skipped,recordIds,originals:"preserved" as const};
   });
 }
 
-/** Owner-selected links are polled in small batches; no whole-profile file watcher. */
+/** What the poller last saw of one link: the intent text it read (a changed
+ * intent means someone else wrote the row, so everything is read afresh), when
+ * it last looked, and the file's size and modified time then. In memory: a
+ * restart reads every file once. */
+const linkSeen=new Map<string,{intent:string;at:number;sig:string|undefined;fullAt:number}>();
+/** A file that has not changed on disk is still read again this often, so a change
+ * the size and time did not show, or a forgotten original, is not missed for long. */
+const LINK_FULL_RECHECK_MS=60_000;
+const LINK_POLL_MS=10_000;
+/** Size and modified time of the file a selection reads, without reading it; undefined when
+ * that cannot be told cheaply (the full read then decides, and refuses what it must). */
+function selectionStat(selection:ImportSelection):string|undefined {
+  try{
+    let path:string;
+    if(selection.kind==="section")path=join(DATA_DIR,"section-contexts.json");
+    else{
+      if(!/^[\w-]+$/.test(selection.botId))return undefined;
+      const partition=selection.kind==="partition"?selection.partition:{kind:"home" as const};
+      const root=notebookRoot(selection.botId,partition);
+      path=join(root,...selection.topic?["memory",selection.topic]:[partition.kind==="general"?"GENERAL.md":"MEMORY.md"]);
+    }
+    const stat=lstatSync(path);
+    return stat.isFile()?`${stat.mtimeMs}:${stat.size}`:undefined;
+  }catch{return undefined;}
+}
+
+/** Owner-selected links are polled in small batches; no whole-profile file watcher.
+ * A link whose file has the size and modified time it had at the last look costs one
+ * stat and no database write; the row is written only when its status, hash or
+ * error changes. Nothing is written for a pass that found nothing new, so the
+ * replay verdict cache (which a write flushes) survives it. */
 export function syncTrackedMemoryImports(roster:MemoryRoster){
   const db=database();
   const mode=db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode;
-  if(mode!=="active"&&mode!=="capture")return;
-  const links=db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='notebook-link' AND state='granted' ORDER BY COALESCE(json_extract(intent,'$.checkedAt'),0) LIMIT 4").all();
-  for(const row of links){
-    let link: {selection:ImportSelection;hash:string;status:string;checkedAt:number;error?:string};
-    try{link=JSON.parse(String(row.intent));}catch{continue;}
-    if(Date.now()-link.checkedAt<10000)continue;
+  if(mode!=="active"&&mode!=="capture")return 0;
+  if(checkedDatabase!==db){linkSeen.clear();checkedDatabase=db;}
+  const rows=db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='notebook-link' AND state='granted'").all();
+  type Link={selection:ImportSelection;hash:string;status:string;checkedAt:number;error?:string};
+  const due:Array<{id:string;intent:string;link:Link;last:number;fresh:boolean}>=[];
+  const now=Date.now();
+  let changed=0;
+  for(const row of rows){
+    const id=String(row.id),intent=String(row.intent),seen=linkSeen.get(id),fresh=seen?.intent===intent;
+    let link:Link;
+    try{link=JSON.parse(intent);}catch{continue;}
+    // First sight in this process or on this database (a restart, a reopened file) checks at once (int3 P5).
+    const last=fresh?seen!.at:seen?link.checkedAt:0;
+    if(now-last>=LINK_POLL_MS)due.push({id,intent,link,last,fresh});
+  }
+  for(const id of linkSeen.keys())if(!rows.some(row=>String(row.id)===id))linkSeen.delete(id);
+  due.sort((a,b)=>a.last-b.last);
+  for(const {id,intent,link:previous,fresh} of due.slice(0,4)){
+    const seen=linkSeen.get(id),signature=selectionStat(previous.selection);
+    if(fresh&&signature!==undefined&&signature===seen!.sig&&previous.status==="current"&&Date.now()-seen!.fullAt<LINK_FULL_RECHECK_MS){seen!.at=Date.now();continue;}
+    let link:Link;
     try{
-      const item=selectionItem(link.selection,roster);
+      const item=selectionItem(previous.selection,roster);
       commitImportItems([item]);
-      link={selection:link.selection,hash:item.hash,status:"current",checkedAt:Date.now()};
+      link={selection:previous.selection,hash:item.hash,status:"current",checkedAt:Date.now()};
     }catch(error){
       const code=error instanceof Error?error.message:"MEMORY_IMPORT_SYNC_FAILED";
-      link={...link,status:"needs-review",checkedAt:Date.now(),error:code.startsWith("MEMORY_IMPORT_")?code:"MEMORY_IMPORT_FILE_UNREADABLE"};
+      link={...previous,status:"needs-review",checkedAt:Date.now(),error:code.startsWith("MEMORY_IMPORT_")?code:"MEMORY_IMPORT_FILE_UNREADABLE"};
     }
-    db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=? AND state='granted'").run(JSON.stringify(link),row.id);
+    let stored=intent;
+    if(link.hash!==previous.hash||link.status!==previous.status||link.error!==previous.error){
+      stored=JSON.stringify(link);
+      db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=? AND state='granted'").run(stored,id);
+      changed++;
+    }
+    linkSeen.set(id,{intent:stored,at:Date.now(),sig:signature,fullAt:Date.now()});
   }
+  return changed;
 }
 
 export function memoryNotebookLinks(){
-  return database().prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='notebook-link' AND state='granted'").all()
-    .map(row=>({id:String(row.id),...JSON.parse(String(row.intent))}));
+  const db=database();
+  if(checkedDatabase!==db){linkSeen.clear();checkedDatabase=db;}
+  return db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='notebook-link' AND state='granted'").all().map(row=>{
+    // The poller's last look, while the row is the one it looked at (a durable edit starts a fresh check).
+    const id=String(row.id),link=JSON.parse(String(row.intent)),seen=linkSeen.get(id),check=seen?.intent===String(row.intent)?seen:undefined;
+    return {id,...link,...check?{checkedAt:check.at}:{}};
+  });
 }
 
 export function stopTrackingMemoryNotebook(ticket:object,id:string){
   requireMemoryOwner(ticket);
   database().prepare("UPDATE memory_scope_bindings SET state='revoked' WHERE id=? AND subject_type='system' AND subject_id='notebook-link'").run(id);
+  linkSeen.delete(id);
   return {stopped:true};
 }
 
@@ -156,10 +233,35 @@ export function stopTrackingMemoryNotebook(ticket:object,id:string){
  * rescan names, but source hashes and receipts make publication idempotent.
  * Only Murage-owned private notebooks qualify; shared briefs stay reviewed.
  */
+/** What a walk would look at, without reading any file: the bot ids and, for each, the size and
+ * modified time of its MEMORY.md and of every topic file. Equal to the signature stored when the
+ * last walk finished means that walk has nothing new to do. */
+function notebookWalkSignature(bots:string[]):string{
+  const parts:string[]=[];
+  const stat=(path:string)=>{try{const info=lstatSync(path);return info.isFile()?`${info.mtimeMs}:${info.size}`:info.isSymbolicLink()?"link":"other";}catch{return "-";}};
+  for(const id of bots){
+    const base=join(DATA_DIR,"workspaces",id);
+    parts.push(id,stat(join(base,"MEMORY.md")));
+    try{
+      const topics=join(base,"memory");
+      if(lstatSync(topics).isSymbolicLink())parts.push("topics-link");
+      else for(const topic of readdirSync(topics).sort())if(isMemoryTopicName(topic))parts.push(topic,stat(join(topics,topic)));
+    }catch{parts.push("no-topics");}
+  }
+  return hash(JSON.stringify(parts));
+}
+const MIGRATION_DONE_ID="notebook-migration-done";
 export function migrateDetectedMemoryNotebooks(roster:MemoryRoster,cursor?:string){
   const db=database();
   if(db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode!=="active")return {imported:0,skipped:0,needsReview:0,paused:true};
   const bots=roster.bots.filter(bot=>/^[\w-]+$/.test(bot.id)).map(bot=>bot.id).sort();
+  // A finished walk is remembered with what it saw. A launch that finds the same bots and the same
+  // files has nothing to import and reads and writes nothing; a new bot or notebook walks again.
+  if(!cursor){
+    const signature=notebookWalkSignature(bots);
+    const done=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(MIGRATION_DONE_ID);
+    try{if(done&&JSON.parse(String(done.intent)).signature===signature)return {imported:0,skipped:0,needsReview:0,paused:false};}catch{/* walk again */}
+  }
   let after={bot:"",file:""};
   if(cursor){
     try{const parsed=JSON.parse(Buffer.from(cursor,"base64url").toString());if(typeof parsed.bot!=="string"||typeof parsed.file!=="string")throw new Error();after=parsed;}
@@ -194,6 +296,11 @@ export function migrateDetectedMemoryNotebooks(roster:MemoryRoster,cursor?:strin
     }
   }
   const next=pending.length>4?{bot:botId,file:key(pending[3])}:bots.find(id=>id>botId)?{bot:bots.find(id=>id>botId)!,file:""}:undefined;
+  if(!next){
+    const scope=db.prepare("SELECT id FROM memory_scopes LIMIT 1").get()?.id;
+    if(scope)db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','notebook-migration',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
+      .run(MIGRATION_DONE_ID,scope,JSON.stringify({signature:notebookWalkSignature(bots)}));
+  }
   return {imported,skipped,needsReview,paused:false,...next?{nextCursor:Buffer.from(JSON.stringify(next)).toString("base64url")}:{}};
 }
 
@@ -210,6 +317,16 @@ export function availableMemoryNotebooks(ticket:object,roster:MemoryRoster){
         for(const name of readdirSync(topics).slice(0,100))if(isMemoryTopicName(name))selections.push({kind:"bot",botId:bot.id,topic:name});
       }
     }catch{issues.push({label:bot.id,error:"Topic directory could not be read."});}
+    for(const suffix of ["teams","projects","rooms","general"] as const){
+      const base=join(DATA_DIR,"workspaces",`${bot.id}.${suffix}`);
+      if(!existsSync(base)||lstatSync(base).isSymbolicLink())continue;
+      const keys=suffix==="general"?[""]:readdirSync(base).filter(key=>/^[\w-]+$/.test(key)).slice(0,100);
+      for(const key of keys){
+        const partition:Partition=suffix==="general"?{kind:"general"}:suffix==="teams"?{kind:"team",teamId:key}:suffix==="projects"?{kind:"project",groupId:key}:{kind:"room",groupId:key};
+        const root=notebookRoot(bot.id,partition);
+        if(existsSync(join(root,suffix==="general"?"GENERAL.md":"MEMORY.md")))selections.push({kind:"partition",botId:bot.id,partition});
+      }
+    }
     if(selections.length>=1000)break;
   }
   const sections=[...new Set([...roster.bots,...roster.groups].map(item=>item.section?.trim()||""))];

@@ -6,7 +6,7 @@ description: |
   Do NOT use for daily cycling commute route planning (use cycling-route-planner for recreational routes), fleet management or commercial transportation, urban planning or public transit advocacy, or auto purchase decisions based on non-environmental criteria.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sustainability planning analysis checklist"
   category: "sustainability"

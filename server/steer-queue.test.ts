@@ -25,12 +25,6 @@ import {
   type SteerStore,
 } from "./steer-queue.ts";
 import type { BotRecord, Message } from "./store.ts";
-import { loopbackFetch } from "./testing/conversation-proof.ts";
-
-/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
- * credential (the server below is started with it), without the desktop proof. */
-const TEST_COMPANION_TOKEN = "c".repeat(64);
-const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -363,7 +357,6 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
-      MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
     // Without SystemRoot, winsock fails to initialize in the child.

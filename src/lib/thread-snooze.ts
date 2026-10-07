@@ -102,8 +102,10 @@ export function pickedTimeToEpoch(value: string, timeZone?: string): number | nu
 export const SNOOZE_MAX_MS = THREAD_SNOOZE_MAX_MS;
 
 /** "Snoozed until 4:30 PM", "... tomorrow, 9:00 AM", "... Mon 9:00 AM",
- *  "... Oct 14, 9:00 AM". Calendar days are the owner's. */
-export function formatSnoozedUntil(until: number, now: number, clock: SnoozeClock = {}): string {
+ *  "... Oct 14, 9:00 AM". Calendar days are the owner's. A snooze waiting
+ *  for news says so; its time is only the latest it can last. */
+export function formatSnoozedUntil(until: number, now: number, clock: SnoozeClock = {}, untilActivity = false): string {
+  if (untilActivity) return "Snoozed until new activity";
   const time = new Intl.DateTimeFormat(clock.locale, { timeZone: clock.timeZone, hour: "numeric", minute: "2-digit" }).format(until);
   const days = daysBetween(now, until, clock.timeZone);
   if (days <= 0) return `Snoozed until ${time}`;
@@ -158,7 +160,12 @@ export function questionBadgeLabel(count: number): string {
   return count === 1 ? "1 question for you" : `${count} questions for you`;
 }
 
-type AttentionSource = { snoozes: ReadonlyMap<string, number>; questions: Readonly<Record<string, number>> };
+/** When a row's open conversation wakes, and whether it waits for news. */
+function snoozeOfRow(threadId: string, attention: AttentionSource): { snoozedUntil?: number; snoozedUntilActivity?: true } {
+  return { snoozedUntil: attention.snoozes.get(threadId), ...(attention.untilActivity?.has(threadId) ? { snoozedUntilActivity: true as const } : {}) };
+}
+
+type AttentionSource = { snoozes: ReadonlyMap<string, number>; questions: Readonly<Record<string, number>>; untilActivity?: ReadonlySet<string> };
 type RowTask = QuietTask & { activity?: string };
 
 /** Everything a bot's sidebar row needs from snoozes and questions: the bot
@@ -166,21 +173,21 @@ type RowTask = QuietTask & { activity?: string };
  *  of its conversations, and when its open conversation wakes, if snoozed. */
 export function sidebarBotAttention<B extends { threadId: string; unread?: boolean; activity?: string; tasks?: RowTask[] }>(
   bot: B, attention: AttentionSource, now: number,
-): { bot: B; questions: number; snoozedUntil?: number } {
+): { bot: B; questions: number; snoozedUntil?: number; snoozedUntilActivity?: true } {
   const waiting = (threadId: string) => {
     const task = bot.tasks?.find(entry => entry.threadId === threadId);
     return (task ? task.activity : bot.activity) === "waiting-on-you";
   };
   const isQuiet = (threadId: string) => threadIsQuiet(threadId, { ...attention, now, waiting: waiting(threadId) });
   const questions = questionsIn([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)], attention.questions);
-  return { bot: quietBot(bot, isQuiet), questions, ...(isQuiet(bot.threadId) ? { snoozedUntil: attention.snoozes.get(bot.threadId) } : {}) };
+  return { bot: quietBot(bot, isQuiet), questions, ...(isQuiet(bot.threadId) ? snoozeOfRow(bot.threadId, attention) : {}) };
 }
 
 /** The same for a channel. */
 export function sidebarGroupAttention<G extends { threadId: string; unread?: boolean; tasks?: Array<{ threadId: string }> }>(
   group: G, attention: AttentionSource, now: number,
-): { group: G; questions: number; snoozedUntil?: number } {
+): { group: G; questions: number; snoozedUntil?: number; snoozedUntilActivity?: true } {
   const isQuiet = (threadId: string) => threadIsQuiet(threadId, { ...attention, now });
   const questions = questionsIn([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)], attention.questions);
-  return { group: quietGroup(group, isQuiet), questions, ...(isQuiet(group.threadId) ? { snoozedUntil: attention.snoozes.get(group.threadId) } : {}) };
+  return { group: quietGroup(group, isQuiet), questions, ...(isQuiet(group.threadId) ? snoozeOfRow(group.threadId, attention) : {}) };
 }

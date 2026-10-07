@@ -4,7 +4,7 @@ description: |
   Comprehensive vocal coaching covering breath support, placement, resonance, vocal warm-up exercises, range extension, performance preparation, microphone technique, overcoming stage fright, vocal health and hygiene, and genre-specific techniques for pop, rock, R&B, classical, and musical theater. Use when the user asks about singing coach or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching design"
   category: "design-creative"

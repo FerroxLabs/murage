@@ -4,7 +4,7 @@ description: |
   Comprehensive animation guidance covering the 12 principles of animation, 2D and 3D production pipelines, tools (Blender, After Effects, Procreate, Toon Boom), frame rates, rigging, motion graphics vs character animation, and building an animation practice from concept to final render. Use when the user asks about animation creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "video-production design"
   category: "design-creative"

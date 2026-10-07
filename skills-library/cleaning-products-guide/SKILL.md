@@ -11,7 +11,7 @@ description: |
   clothing (use laundry-system), or industrial or commercial cleaning.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "cleaning guide cooking"
   category: "home-household"

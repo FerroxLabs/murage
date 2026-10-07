@@ -9,12 +9,29 @@ export function effectiveDefaultResponder(
 ): GroupDefaultResponder {
   const value = group.defaultResponder;
   if (value?.kind === "everyone" || value?.kind === "mentions") return value;
+  if (value?.kind === "auto") return value;
   if (value?.kind === "member" && members.some((member) => member.id === value.botId)) return value;
   return members[0] ? { kind: "member", botId: members[0].id } : { kind: "mentions" };
 }
 
+/** Who answers when an `auto` room cannot decide: the saved fallback if it is
+ * still a member, else the first member. Same rule as server roomResponders. */
+export function autoFallbackBot<T extends { id: string; hidden?: boolean }>(
+  value: { fallbackBotId?: string },
+  members: T[],
+): T | undefined {
+  const available = members.filter((member) => !member.hidden);
+  return available.find((member) => member.id === value.fallbackBotId) ?? available[0];
+}
+
+/** The decision model is on and set to route rooms. */
+export function deciderRoutesRooms(config: { decider?: { enabled: boolean; jobs?: { roomRouting?: boolean } } } | null | undefined): boolean {
+  return config?.decider?.enabled === true && config.decider.jobs?.roomRouting === true;
+}
+
 export function defaultResponderName(group: Group, members: Bot[]): string | null {
   const value = effectiveDefaultResponder(group, members);
+  if (value.kind === "auto") return autoFallbackBot(value, members)?.name ?? null;
   if (value.kind !== "member") return null;
   return members.find((member) => member.id === value.botId)?.name ?? null;
 }
@@ -24,6 +41,7 @@ export function groupResponseHint(group: Group, members: Bot[]): string {
   const value = effectiveDefaultResponder(group, members);
   if (value.kind === "everyone") return "Everyone responds unless you @mention specific bots.";
   if (value.kind === "mentions") return "Mention a bot with @ to bring them in.";
+  if (value.kind === "auto") return "Murage picks who answers; @mention someone to choose them instead.";
   const name = defaultResponderName(group, members) ?? "The lead bot";
   return `${name} responds by default; @mention someone else to choose them instead.`;
 }
@@ -33,6 +51,7 @@ export function groupComposerHint(group: Group, members: Bot[]): string {
   const value = effectiveDefaultResponder(group, members);
   if (value.kind === "everyone") return "everyone responds";
   if (value.kind === "mentions") return "@ to bring a bot in";
+  if (value.kind === "auto") return "Murage picks who answers";
   return `${defaultResponderName(group, members) ?? "Lead"} responds`;
 }
 
@@ -56,6 +75,11 @@ export function roomRespondersForComposer<T extends { id: string; name: string; 
   if (fallback.kind === "everyone") return available;
   if (fallback.kind === "member") {
     const lead = available.find((member) => member.id === fallback.botId);
+    return lead ? [lead] : [];
+  }
+  if (fallback.kind === "auto") {
+    // The preview shows the fallback; the decision model may pick another.
+    const lead = autoFallbackBot(fallback, available);
     return lead ? [lead] : [];
   }
   return [];

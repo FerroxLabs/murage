@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, expect, it, vi } from "vitest";
+import { acquireProjectWriteRoots } from "./project-run-events.ts";
 import { ProjectTurnLeases, PROJECT_TURN_TOMBSTONE_LIMIT } from "./project-turn-leases.ts";
 
 const roots: string[] = [];
@@ -231,4 +232,38 @@ it("marking a stop on an unknown or already released generation is a no-op", () 
   leases.acquire("thread", "generation", cwd);
   leases.abandon("generation");
   expect(leases.markStopRequested("generation")).toBe(false);
+});
+
+it("a late writer holds its additional root through Stop until its terminal event", () => {
+  const f = fixture(), late = fixture().cwd;
+  f.leases.acquire("desk", "generation", f.cwd);
+  f.leases.markDispatched("generation"); f.leases.bind("desk", "generation", "turn");
+  f.leases.acquireAdditional("desk", "generation", late);
+  f.leases.markStopRequested("generation"); f.leases.abandon("generation");
+  expect(f.leases.folders.conflicts(late, "restore")).toHaveLength(1);
+  f.leases.complete("desk", "turn");
+  expect(f.leases.folders.conflicts(late, "restore")).toHaveLength(0);
+});
+
+it.each(["claim", "lease"])("rolls back every additional owner on repeated later-root %s contention", refusal => {
+  const f = fixture(), first = fixture().cwd, blocked = fixture().cwd;
+  f.leases.acquire("thread", "run", f.cwd); f.leases.markDispatched("run"); f.leases.bind("thread", "run", "turn");
+  if (refusal === "lease") f.leases.folders.acquireRestore("blocker", blocked);
+  const held = new Set<string>();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const releases = acquireProjectWriteRoots([first, blocked], root => {
+      if (root === blocked && refusal === "claim") return null;
+      held.add(root); return () => { held.delete(root); };
+    }, root => f.leases.acquireAdditional("thread", "run", root).release);
+    expect(releases).toBeNull();
+    expect(held.size).toBe(0);
+    expect(f.leases.folders.conflicts(first, "restore")).toHaveLength(0);
+    expect((f.leases as any).owners.get("run").additionalOwnerIds).toHaveLength(0);
+  }
+  f.leases.folders.release("blocker");
+  f.leases.acquireAdditional("thread", "run", first);
+  f.leases.markStopRequested("run");
+  expect(f.leases.folders.conflicts(first, "restore")).toHaveLength(1);
+  f.leases.complete("thread", "turn");
+  expect(f.leases.folders.conflicts(first, "restore")).toHaveLength(0);
 });

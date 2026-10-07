@@ -3,7 +3,7 @@ name: legal-dmca
 description: "Draft a DMCA takedown notice or counter-notice against the six §512(c)(3) elements, and walk designated-agent registration at dmca.copyright.gov plus the repeat-infringer policy a platform needs to keep safe harbor. Use when someone is hosting the user's copyrighted work, when the user has received a takedown they believe is wrong, or when the user runs a platform that hosts user content. Do NOT use for a general IP or breach demand letter (use legal-cease-and-desist) or for the product's own licence terms (use legal-eula). Templates only — a knowingly false notice or counter-notice carries §512(f) liability, so have an attorney review anything contested."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "dmca copyright safe-harbor legal smb"
   category: "legal"

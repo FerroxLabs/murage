@@ -73,6 +73,35 @@ describe("BoxAgentDriver turns (fake API)", () => {
     restoreFetch = undefined;
   });
 
+  it("two turns report no tokens so the ledger records work time only",async()=>{
+    restoreFetch=installFakeBox([{events:[{id:"reply",type:"response",text:"done"}],status:{promptRun:{status:"finished",result:"done"}}}]);
+    await create();
+    for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({threadId:"usage-two",text:"hi",integrations:{computer}});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
+    const completed=recorder.events.filter(e=>e.type==="turn.completed");expect(completed).toHaveLength(2);
+    for(const event of completed)expect(event).not.toHaveProperty("usage");
+  });
+
+  it("fences the prompt write: a refused turn posts nothing to the box", async () => {
+    restoreFetch = installFakeBox([{ events: [], status: { promptRun: { status: "finished", result: "never" } } }]);
+    const fake = globalThis.fetch;
+    const posts: string[] = [];
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      if (String(init?.method ?? "GET").toUpperCase() === "POST") posts.push(String(input));
+      return fake(input, init);
+    }) as typeof fetch;
+    await create();
+    const refusal = new Error("retired before submit");
+    await expect(instance.adapter.sendTurn({
+      threadId: "t-box-fenced",
+      text: "stale",
+      integrations: { computer },
+      beforeSubmit: () => { throw refusal; },
+    })).rejects.toBe(refusal);
+    expect(posts).toEqual([]);
+    expect(recorder.events).toEqual([]);
+    expect(instance.adapter.hasSession("t-box-fenced")).toBe(false);
+  });
+
   it("flushes prefix-grown text before a tool, then the tail at settle", async () => {
     restoreFetch = installFakeBox([
       {

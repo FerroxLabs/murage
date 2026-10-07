@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { TASK_ALLOWANCE_TTL_MS, TaskAllowances, chatAllowance, githubRepoFromGitConfig, githubRepoOf, knownRecipients, recipientForms, rememberRecipients } from "./stop-line-state.ts";
-import { classifyStopLine } from "./stop-line.ts";
+import { classifyStopLine, stopLineKey } from "./stop-line.ts";
+import { autoVerdict } from "./auto-approve.ts";
 
 describe("task allowances", () => {
   const outside = { kind: "delete" as const, place: "/Users/ada/Projects/other/build", what: "x" };
@@ -29,6 +30,23 @@ describe("task allowances", () => {
     allowances.grant("bot", "t1", "stop:delete:/Users/ada/Projects/other");
     allowances.clearThread("t1");
     expect(allowances.covering("bot", "t1", outside)).toBeUndefined();
+  });
+
+  it("keeps dates and quoted command bytes exact through task and routine grants", () => {
+    const place = { home: "/Users/ada", cwd: "/Users/ada/work", roots: ["/Users/ada/work"], knownRecipients: new Set<string>() };
+    const first = classifyStopLine("Bash", { command: 'rm -rf "$ARCHIVE/2026-09-01 09:30"' }, "", place)!;
+    const key = stopLineKey(first)!;
+    const allowances = new TaskAllowances();
+    allowances.grant("bot", "t", key);
+    expect(allowances.covering("bot", "t", first)).toBe(key);
+    expect(autoVerdict({}, "Bash", "archive", { automated: true, routineLevel: true, routineAllow: [key], stopLine: first }).source).toBe("routine-allow");
+    for (const command of ['rm -rf "$ARCHIVE/2026-09-02 09:30"', 'rm -rf "$ARCHIVE/2026-09-01 09:31"', 'rm -rf "$ARCHIVE/2026-09-01  09:30"', 'rm -rf "$archive/2026-09-01 09:30"']) {
+      const hit = classifyStopLine("Bash", { command }, "", place)!;
+      expect(allowances.covering("bot", "t", hit)).toBeUndefined();
+      expect(autoVerdict({}, "Bash", "archive", { automated: true, routineLevel: true, routineAllow: [key], stopLine: hit })).toMatchObject({ approve: null, source: "stop-line" });
+      expect(autoVerdict({ alwaysAllow: [key] }, "Bash", "archive", { stopLine: hit })).toMatchObject({ approve: null, source: "stop-line" });
+      expect(autoVerdict({}, "Bash", "archive", { stopAllowedForTask: key, stopLine: hit })).toMatchObject({ approve: null, source: "stop-line" });
+    }
   });
 });
 
@@ -60,6 +78,50 @@ describe("chat allowances", () => {
       ok: true, key: "stop:delete:/Users/ada/Projects/site", note: "You allowed deleting anything in ~/Projects/site for the rest of this task.",
     });
     expect(chatAllowance({ kind: "delete", place: "/Users/ada/Projects/site/" }, said, home)).toMatchObject({ ok: true, key: "stop:delete:/Users/ada/Projects/site" });
+  });
+
+  // On Windows the stop line keys folders as /C:/Users/…, any letter case;
+  // an allowance from chat never matched before, because it wanted "/" first
+  // and refused every Windows home with 400 (0.1.61 Windows VM).
+  it("records a Windows folder the owner named, in the stop line's own form", () => {
+    const winHome = "C:\\Users\\Ada";
+    const said = "you can delete anything in ~/Projects/site today";
+    expect(chatAllowance({ kind: "delete", place: "~/Projects/site" }, said, winHome)).toEqual({
+      ok: true, key: "stop:delete:/C:/Users/Ada/Projects/site", note: "You allowed deleting anything in ~/Projects/site for the rest of this task.",
+    });
+    expect(chatAllowance({ kind: "delete", place: "~\\Projects\\site" }, said, winHome)).toMatchObject({ ok: true, key: "stop:delete:/C:/Users/Ada/Projects/site" });
+    expect(chatAllowance({ kind: "delete", place: "c:\\users\\ada\\Projects\\site" }, "delete what is in C:\\Users\\Ada\\Projects\\site", winHome))
+      .toMatchObject({ ok: true, key: "stop:delete:/C:/users/ada/Projects/site", note: "You allowed deleting anything in ~/Projects/site for the rest of this task." });
+    expect(chatAllowance({ kind: "delete", place: "~" }, "delete anything in ~", winHome).ok).toBe(false);
+    expect(chatAllowance({ kind: "delete", place: "~/Documents" }, said, winHome).ok).toBe(false);
+  });
+
+  // A folder is named only as a whole path. Naming a folder inside it never
+  // names its parent, and a folder that holds the home (C:\Users, /Users) is as
+  // broad as the home itself: its grant would cover every other account.
+  it("never grants a parent of the named folder, or anything that holds the home", () => {
+    const winHome = "C:\\Users\\Ada";
+    const winSaid = "you can delete anything in C:\\Users\\Ada\\Documents\\scratch";
+    expect(chatAllowance({ kind: "delete", place: "C:\\Users" }, winSaid, winHome).ok).toBe(false);
+    expect(chatAllowance({ kind: "delete", place: "C:\\Users\\Ada\\Documents" }, winSaid, winHome).ok).toBe(false);
+    expect(chatAllowance({ kind: "delete", place: "C:\\" }, "delete anything in C:\\", winHome).ok).toBe(false);
+    expect(chatAllowance({ kind: "delete", place: "C:\\Users" }, "delete anything in C:\\Users", winHome).ok).toBe(false);
+    expect(chatAllowance({ kind: "delete", place: "C:\\Users\\Ada\\Documents\\scratch" }, winSaid, winHome)).toMatchObject({ ok: true, key: "stop:delete:/C:/Users/Ada/Documents/scratch" });
+    const said = "clear out /Users/ada/Projects/site/build please";
+    expect(chatAllowance({ kind: "delete", place: "/Users" }, said, home).ok).toBe(false);
+    expect(chatAllowance({ kind: "delete", place: "/Users/ada/Projects" }, said, home).ok).toBe(false);
+    expect(chatAllowance({ kind: "delete", place: "~/Projects/site" }, said, home).ok).toBe(false);
+    expect(chatAllowance({ kind: "delete", place: "/Users" }, "delete anything in /Users", home).ok).toBe(false);
+    expect(chatAllowance({ kind: "delete", place: "/Users/ada/Projects/site/build" }, said, home)).toMatchObject({ ok: true, key: "stop:delete:/Users/ada/Projects/site/build" });
+    // Ending a sentence, quoted or with a trailing slash still names it.
+    expect(chatAllowance({ kind: "delete", place: "~/Projects/site" }, "Delete what is in \"~/Projects/site/\".", home).ok).toBe(true);
+    expect(chatAllowance({ kind: "delete", place: "/tmp/scratch" }, "you can empty /private/tmp/scratch", home).ok).toBe(false);
+  });
+
+  // A backslash is an ordinary filename character on macOS and Linux: the
+  // folder the owner named is the one granted, never a / spelling of it.
+  it("keeps a backslash in a POSIX folder name as written", () => {
+    expect(chatAllowance({ kind: "delete", place: "~/a\\b" }, "delete ~/a\\b", home)).toMatchObject({ ok: true, key: "stop:delete:/Users/ada/a\\b" });
   });
 
   it("refuses a place the owner never said", () => {

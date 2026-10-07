@@ -1,8 +1,9 @@
 ---
 name: patch-process-design
 description: "The user says \"we need to document this,\" \"I'm tired of explaining this,\" \"the new hire keeps getting it wrong,\" \"Maria's out and everything stopped,\" or \"we need an SOP.\" Load for SOPs, playbooks, training material. If they want a 30-page ops manual, push back: build the one-page version of the bro"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "patch"
 ---

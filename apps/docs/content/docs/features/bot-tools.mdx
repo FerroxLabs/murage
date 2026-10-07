@@ -1,0 +1,53 @@
+---
+title: What bots can do for themselves
+description: The tools every bot has inside Murage, in plain words, such as murage_help, list_bots, ask_bot, delegate_bot, routines, skills, images, voice notes and project tools.
+icon: Wrench
+---
+
+## How bots use tools
+
+Bots use these tools on their own while they work. You do not call them. Ask a bot what it can do, and it looks it up with murage_help, which answers from these docs only, on your computer, with no model call. Murage's tools sit beside the bot's own engine tools, and your approval level decides which ones ask first.
+
+## Finding out about Murage
+
+murage_help answers questions about Murage itself from the shipped documentation. web_search is a backup for searching the web when the engine has no search of its own. tool_result_read reads the rest of a very long tool result.
+
+## Working with other bots
+
+list_bots shows the bots a bot can reach. ask_bot asks one a quick question. delegate_bot hands one a task. check_delegation checks on a handed over task, and wait_delegation waits for one when you ask a bot to wait. See Bots working together.
+
+## Managing bots
+
+get_bot reads a bot's profile and role. update_bot changes the name, role, instructions or model of a bot under it. create_bot adds a new specialist to a team, and the Chief of Staff can start a new team. get_permission_status shows what a bot is waiting on you for. request_bot_access asks you to give a bot access to connected apps. Nothing is granted until you approve it.
+
+## Allowing and asking
+
+allow_for_task records something you just told a bot it may do for the rest of the task, such as delete in a folder you named, message a person you named, or pay a payee you named. request_browser_connection asks if the bot may use your signed-in browser. request_credential asks you for a login or key it needs.
+
+## Routines
+
+list_routines lists a bot's routines. propose_routine suggests a new routine for you to confirm. propose_routine_action suggests changing, pausing, resuming, running now or deleting one. A routine never starts until you confirm it.
+
+## Skills
+
+skills_list lists the skills a bot has. skill_manage creates or updates a skill that the bot learned, where skill authoring is on. Skills a bot makes are checked before use.
+
+## Files, images and voice
+
+register_artifact saves a finished report or file into Files. generate_image makes or edits pictures, after an approval card unless the bot may make images without asking. list_image_models shows the image models and their limits. resolve_image_reference prepares reference pictures. send_voice_note sends you a spoken answer.
+
+## Saved image parts
+
+save_prompt_block saves a reusable part of an image prompt, and list_prompt_blocks and get_prompt_block read them. save_reference_pack saves a set of reference pictures, and list_reference_packs lists them. They are your saved library.
+
+## Project tools
+
+In a project the lead has project_assign, project_accept, project_card_manage, project_review_assign, project_criteria, project_done, project_blocked, project_brief_update and project_summary_update. Members have project_card_update, project_review_result, project_read_messages, project_bring_in and project_suggest. Chief of Staff drafts a project with project_propose. See Projects.
+
+## Publishing sites
+
+publish_site puts a site a bot built online on a hosting account you connected, after you approve it. take_down_site takes one of those sites down again. The Published sites list in a bot's settings shows them, and Publishing sites in Settings connects Netlify and other hosts.
+
+## Marking results
+
+propose_outcome lets a bot suggest that a piece of work worked or did not work. You confirm or change it, and confirmed results feed what the bot learns. See Memory and learning.

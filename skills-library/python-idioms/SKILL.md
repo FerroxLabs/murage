@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about project setup (use `python-project-setup`), testing (use `python-testing-patterns`), async programming (use `python-async-patterns`), or type system features (use `python-type-system`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "python best-practices clean-code"
   category: "software-engineering"

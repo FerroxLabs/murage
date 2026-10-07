@@ -1,6 +1,6 @@
 // Connected apps, locked.
 //
-// Until a FluxRouter key or a Composio key of the person's own exists there
+// Until a FluxRouter key exists there
 // is nothing the connected-apps panel can do, and until this it said so with
 // a warning line above an empty catalog. Now the panel is the offer: a
 // dimmed showcase of apps people recognise, and one sentence over it that
@@ -23,7 +23,7 @@ import { cn } from "@/lib/cn";
 /** The facts the lock reads, as GET /api/config reports them. Presence only:
  * no key ever reaches the renderer. */
 export interface ConnectedAppsLockConfig {
-  composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable"; migration?: { state?: string } };
+  composio: { configured: boolean; mode?: "managed" | "unavailable"; migration?: { state?: string }; broker?: "flux" | "legacy" | null; ownKeyRetired?: boolean };
   flux?: { configured: boolean };
 }
 
@@ -36,8 +36,8 @@ export type ConnectedAppsLockState = "unknown" | "locked" | "unlocked";
  *              nothing and paints a loading line until it has.
  *   unlocked — a FluxRouter key exists (even while its broker is not ready:
  *              the panel's own "not reachable" line owns that case), or a
- *              broker already holds the person's apps (their own Composio
- *              key, or the Murage Worker until its cut-off), or the panel is
+ *              broker already holds the person's apps (the Murage Worker
+ *              until its cut-off), or the panel is
  *              showing a remembered inventory because the credential store
  *              could not be read — that list stays visible, as it always did.
  *   locked   — no key of either kind. Nothing is fetched. */
@@ -90,18 +90,9 @@ export const SHOWCASE_APPS: ReadonlyArray<{ label: string; hue: string }> = [
  * the company behind the catalog is not something they bought. */
 export const APPS_CLAIM = "500+ apps, including Gmail, Slack, Notion and GitHub";
 
-/** The visible label of the connected-apps key field.
- *
- * The Settings deep-link finds that field by this label, so the words and the
- * selector below must always be the same words. Building one from the other
- * is the whole point: rewriting the label used to leave the link hunting for
- * a field that no longer answered to that name, in silence. */
-export const APPS_KEY_FIELD_LABEL = "Connected apps key";
-
-/** Where the two keys are typed, so the lock's buttons can land the cursor
- * in the field rather than at the top of a settings page. */
+/** Where the key is typed, so the lock's button can land the cursor in the
+ * field rather than at the top of a settings page. */
 export const FLUX_KEY_FIELD_SELECTOR = 'input[name="flux-router-key"]:not([disabled])';
-export const COMPOSIO_KEY_FIELD_SELECTOR = `input[aria-label="${APPS_KEY_FIELD_LABEL}"]:not([disabled])`;
 
 /** Put the cursor in a settings field once it exists and is enabled.
  *
@@ -143,11 +134,29 @@ export function focusSettingsField(
   return stop;
 }
 
-/** One headline, one line, one button. The secondary way in is a link, not
- * a second button, so the eye lands on the one thing to do. `retired`: this
+/** Someone who once saved a key of their own: it is kept, unused. Until they
+ * connect through Flux Router the page says so in one quiet line. Pure, so
+ * the rule is testable without a renderer. */
+export function showOwnKeyRetiredLine(config: ConnectedAppsLockConfig | null | undefined, options: { anyConnected?: boolean } = {}): boolean {
+  // Gone only once an app is actually connected through Flux Router, not as
+  // soon as the broker answers: a person with no Flux connections still needs it.
+  return config?.composio?.ownKeyRetired === true && options.anyConnected !== true;
+}
+
+/** The one quiet line. Not a modal, not a banner: a sentence that goes away
+ * the moment their apps run through Flux Router. */
+export function OwnKeyRetiredLine() {
+  return (
+    <p data-own-key-retired="" className="mx-6 mb-1 mt-2 text-[12px] text-ink-secondary sm:mx-8">
+      {t("connectedApps.ownKeyRetired")}
+    </p>
+  );
+}
+
+/** One headline, one line, one button. `retired`: this
  * install's apps were on Murage's original service, which has ended, so the
  * headline says that instead of offering apps as if for the first time. */
-export function ConnectedAppsLock({ onAddFluxKey, onOwnKey, retired = false }: { onAddFluxKey: () => void; onOwnKey: () => void; retired?: boolean }) {
+export function ConnectedAppsLock({ onAddFluxKey, retired = false }: { onAddFluxKey: () => void; retired?: boolean }) {
   return (
     <div data-connected-apps-lock="" className="relative min-h-0 flex-1 overflow-hidden px-6 pb-7 pt-5 sm:px-8">
       {/* The showcase. Hidden from assistive tech and from the tab order, and
@@ -203,15 +212,6 @@ export function ConnectedAppsLock({ onAddFluxKey, onOwnKey, retired = false }: {
           >
             {t("connectedApps.lock.button")}
           </button>
-          <div className="mt-4">
-            <button
-              type="button"
-              onClick={onOwnKey}
-              className="rounded-sm text-[12.5px] text-ink-secondary underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-            >
-              {t("connectedApps.lock.ownKey")}
-            </button>
-          </div>
         </section>
       </div>
     </div>

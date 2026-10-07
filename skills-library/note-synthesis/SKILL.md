@@ -6,7 +6,7 @@ description: |
   Do NOT use for single-source note taking (use `cornell-notes`), for concept mapping of one topic (use `concept-mapping`), or for academic literature review (use `literature-search`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "note-taking study-skills research step-by-step"
   category: "education"

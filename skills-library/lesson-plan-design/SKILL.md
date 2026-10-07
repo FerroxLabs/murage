@@ -6,7 +6,7 @@ description: |
   Do NOT use for full curriculum or unit planning (use `curriculum-mapping`), assessment-only design (use `assessment-design`), or student study plans (use `study-plan`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "lesson-plan teaching curriculum step-by-step"
   category: "education"

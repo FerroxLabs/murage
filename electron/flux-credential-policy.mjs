@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { assertProviderKey, keyIssuer, parseProviderBank } from "./provider-connections.mjs";
+import { NOT_A_FLUX_KEY, assertProviderKey, isFluxKeyShape, keyIssuer, parseProviderBank } from "./provider-connections.mjs";
 
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
 /** A saved key picked as the Flux key must not name another provider. */
-const assertFluxIssuer = key => { const issuer = keyIssuer(key); if (issuer && issuer !== "flux") fail("This key appears to belong to a different provider. Choose its provider before saving."); };
+const assertFluxIssuer = key => { const issuer = keyIssuer(key); if (issuer && issuer !== "flux") fail("This key appears to belong to a different provider. Choose its provider before saving."); if (!isFluxKeyShape(key)) fail(NOT_A_FLUX_KEY); };
+/** A stored value that is not an sk-flux- key is not a Flux credential: it is not a choice, does not count as saved and does not block connect. */
+const usable = value => isFluxKeyShape(value) ? value : "";
 const validId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value);
 /** Private snapshot only. Aliases contain no credentials and are never user input. */
 function snapshot(state) {
@@ -26,10 +28,11 @@ export function fluxCredentialRevision(state) {
 }
 export function fluxCredentialStatus(state) {
   const saved = snapshot(state);
-  const rows = saved.bank.filter(row => row.preset === "flux");
-  const choices = [ ...(saved.workspaceKey ? [{ id: "legacy-flux", label: "Existing workspace key", enabled: true }] : []), ...(saved.fileWorkspaceKey && saved.fileWorkspaceKey !== saved.workspaceKey ? [{ id: "legacy-flux-file", label: "Existing configuration key", enabled: true }] : []), ...(saved.ambientWorkspaceKey && saved.ambientWorkspaceKey !== saved.workspaceKey && saved.ambientWorkspaceKey !== saved.fileWorkspaceKey ? [{ id: "legacy-flux-environment", label: "Existing environment key", enabled: true }] : []), ...rows.map(({ id, label, enabled }) => ({ id, label, enabled })) ];
-  const keys = new Set([saved.workspaceKey, saved.fileWorkspaceKey, saved.ambientWorkspaceKey, ...rows.map(row => row.key.trim())].filter(Boolean));
-  return { configured: Boolean(saved.workspaceKey), revision: fluxCredentialRevision(state), conflict: keys.size > 1, choices };
+  const rows = saved.bank.filter(row => row.preset === "flux" && usable(row.key.trim()));
+  const workspaceKey = usable(saved.workspaceKey), fileKey = usable(saved.fileWorkspaceKey), ambientKey = usable(saved.ambientWorkspaceKey);
+  const choices = [ ...(workspaceKey ? [{ id: "legacy-flux", label: "Existing workspace key", enabled: true }] : []), ...(fileKey && fileKey !== workspaceKey ? [{ id: "legacy-flux-file", label: "Existing configuration key", enabled: true }] : []), ...(ambientKey && ambientKey !== workspaceKey && ambientKey !== fileKey ? [{ id: "legacy-flux-environment", label: "Existing environment key", enabled: true }] : []), ...rows.map(({ id, label, enabled }) => ({ id, label, enabled })) ];
+  const keys = new Set([workspaceKey, fileKey, ambientKey, ...rows.map(row => row.key.trim())].filter(Boolean));
+  return { configured: Boolean(workspaceKey), revision: fluxCredentialRevision(state), conflict: keys.size > 1, choices };
 }
 /** Caller must fence active work, then atomically persist all three returned fields. */
 export function planFluxCredentialChange(state, input) {
@@ -39,7 +42,8 @@ export function planFluxCredentialChange(state, input) {
   if (!["connect", "replace", "select", "disconnect", "consolidate"].includes(input.action)) fail("Choose a Flux connection action.");
   if (input.action !== "select" && input.connectionId !== undefined || !["connect", "replace"].includes(input.action) && input.key !== undefined) fail("Invalid Flux connection change.");
   const rows = saved.bank.filter(row => row.preset === "flux");
-  let workspaceKey = saved.workspaceKey;
+  const usableRows = rows.filter(row => usable(row.key.trim()));
+  let workspaceKey = usable(saved.workspaceKey);
   if (input.action === "disconnect") workspaceKey = "";
   else if (input.action === "select") {
     const selected = input.connectionId === "legacy-flux" ? saved.workspaceKey : input.connectionId === "legacy-flux-file" ? saved.fileWorkspaceKey : input.connectionId === "legacy-flux-environment" ? saved.ambientWorkspaceKey : rows.find(row => row.id === input.connectionId)?.key;
@@ -51,10 +55,11 @@ export function planFluxCredentialChange(state, input) {
     if (input.action === "connect" && status.choices.length) fail("Flux is already saved. Replace or select its key.", 409);
     if (input.action === "replace" && !status.choices.length) fail("Connect Flux before replacing its key.", 409);
     if (input.action === "consolidate") {
-      if (!workspaceKey && (saved.fileWorkspaceKey || saved.ambientWorkspaceKey)) fail("Select a saved Flux key before enabling it.", 409);
-      if (!workspaceKey && rows.length && !rows.some(row => row.enabled)) fail("Select a saved Flux key before enabling it.", 409);
-      workspaceKey ||= rows.find(row => row.enabled)?.key.trim() ?? "";
-      assertFluxIssuer(workspaceKey);
+      if (!workspaceKey && (usable(saved.fileWorkspaceKey) || usable(saved.ambientWorkspaceKey))) fail("Select a saved Flux key before enabling it.", 409);
+      if (!workspaceKey && usableRows.length && !usableRows.some(row => row.enabled)) fail("Select a saved Flux key before enabling it.", 409);
+      if (!workspaceKey && rows.length && !usableRows.length) assertFluxIssuer(rows[0].key.trim());
+      workspaceKey ||= usableRows.find(row => row.enabled)?.key.trim() ?? "";
+      if (workspaceKey) assertFluxIssuer(workspaceKey);
     } else {
       assertProviderKey("flux", input.key);
       workspaceKey = input.key.trim();

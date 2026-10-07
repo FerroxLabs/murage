@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about JavaScript idioms (use `javascript-idioms`), Node.js error handling (use `nodejs-error-handling`), Node.js performance (use `nodejs-performance`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "javascript backend optimization"
   category: "software-engineering"

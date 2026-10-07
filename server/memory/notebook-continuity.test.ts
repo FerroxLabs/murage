@@ -99,7 +99,8 @@ it("migrates four detected private files at a time and resumes without duplicate
   closeDatabase();
   const second=migrateDetectedMemoryNotebooks(roster,first.nextCursor);
   expect(second).toMatchObject({imported:3});expect(second.nextCursor).toBeUndefined();
-  expect(migrateDetectedMemoryNotebooks(roster)).toMatchObject({imported:0,skipped:4});
+  // A finished walk is remembered: the next launch over the same files imports nothing and skips nothing it did not look at.
+  expect(migrateDetectedMemoryNotebooks(roster)).toMatchObject({imported:0,skipped:0});
   expect(database().prepare("SELECT count(*) AS n FROM memory_source_versions").get()?.n).toBe(7);
   expect(database().prepare("SELECT count(DISTINCT scope_id) AS n FROM memory_records").get()?.n).toBe(1);
   expect(database().prepare("SELECT DISTINCT assertion,owner_pinned FROM memory_records").all()).toEqual([{assertion:"unverified-import",owner_pinned:0}]);

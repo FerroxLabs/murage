@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Rust ownership (use `rust-ownership-patterns`), Rust project setup (use `rust-project-setup`), Rust testing (use `rust-testing-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "rust best-practices debugging"
   category: "software-engineering"

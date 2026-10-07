@@ -4,7 +4,7 @@ description: |
   Comprehensive book marketing strategy covering launch planning, ARC reader management, social media marketing on BookTok and Bookstagram, Amazon advertising, newsletter building, book tours, review acquisition, and backlist marketing. Use when the user asks about book marketing or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing marketing content-marketing"
   category: "writing"

@@ -1,8 +1,9 @@
 ---
 name: smith-architecture-decisions
 description: "Use this skill when a build requires a technical call that will be expensive to reverse later. Storage choice. Sync vs. async. Library swap. Monolith vs. service split. Schema shape for a domain object the rest of the system will lean on. Auth boundary. The test: if you'd be embarrassed to discover"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "smith"
 ---

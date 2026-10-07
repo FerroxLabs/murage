@@ -36,4 +36,25 @@ describe("authenticated browser owner HTTP relay", () => {
       expect(inputs).toBe(1);
     } finally { await controller.close(); await new Promise<void>(done => server.close(() => done())); rmSync(directory, { recursive: true, force: true }); }
   });
+
+  // Fix round 2: server/index.ts's own door-level 401 ("!desktop && !paired",
+  // ~11386, code "desktop_only") and this one are both status 401 but mean
+  // completely different things — an authenticated desktop session mid-poll
+  // whose bot's browser profile changed, was disabled, or was removed is not
+  // a device-auth problem. Pinned separately so a client can never conflate
+  // them, and so a wording or code change here fails this test directly.
+  it("marks the 'authority went inactive' 401 with its own code, distinct from the door's device-auth 401", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "murage-browser-inactive-"));
+    const native: NativeBrowser = { protected: async () => false, request: async () => ({}), command: async () => ({}), connect: async () => "test-stream", input: () => {}, resetStream: () => {}, close: async () => {} };
+    const controller = new UnifiedBrowserController({ stateFile: join(directory, "control.json"), createNative: () => native });
+    controller.register("inactive-profile", { command: "fixture", args: [], env: {} });
+    try {
+      const authority = { owner: "desktop-owner", profileKey: "inactive-profile", active: () => false };
+      await expect(browserOwnerRequest(controller, authority, "GET")).rejects.toMatchObject({
+        message: "Browser owner authentication required",
+        status: 401,
+        code: "browser_inactive",
+      });
+    } finally { await controller.close(); rmSync(directory, { recursive: true, force: true }); }
+  });
 });

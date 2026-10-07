@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of data storyteller or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science statistics checklist python testing analysis investing marketing"
   category: "data-analysis"

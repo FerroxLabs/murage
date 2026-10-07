@@ -342,7 +342,9 @@ describe("the process cache", () => {
 
     // Stub a platform whose lookup cannot succeed here (`reg` is not on this
     // box), and the answer must NOT be pinned: a cache that remembered the
-    // degraded list would protect less for the rest of the session.
+    // degraded list would protect less for the rest of the session. On a
+    // Windows host `reg` answers, so the failure cannot be staged this way.
+    if (process.platform === "win32") return;
     clearProtectedFolderCache();
     const real = process.platform;
     Object.defineProperty(process, "platform", { value: "win32", configurable: true });
@@ -361,7 +363,8 @@ describe("refusalReason, end to end through a real lookup", () => {
   // The Linux branch reads a real file, so this exercises discovery, symlink
   // resolution and the refusal message together — the Windows branch is
   // covered above against output captured from a real Windows box.
-  it("refuses a localized XDG folder that the English list would have allowed", async () => {
+  // XDG folders are Linux's; a Windows host cannot stand in for one.
+  it.skipIf(process.platform === "win32")("refuses a localized XDG folder that the English list would have allowed", async () => {
     const realPlatform = process.platform;
     const realHome = process.env.HOME;
     const realConfig = process.env.XDG_CONFIG_HOME;

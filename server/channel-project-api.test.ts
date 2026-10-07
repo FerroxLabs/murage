@@ -28,7 +28,7 @@ afterAll(async () => {
 
 const newBot = async (name: string) => (await api("POST", "/api/bots", { name })).body.bot;
 
-it("creates a channel that is a project from the start, and moves it through its statuses", async () => {
+it("creates a channel that is a project from the start, and reserves lifecycle changes for Close and Reopen", async () => {
   const bot = await newBot("Catalogue lead");
   const created = await api("POST", "/api/groups", {
     name: "Winter catalogue",
@@ -46,23 +46,14 @@ it("creates a channel that is a project from the start, and moves it through its
   const startedAt = created.body.group.channelProject.startedAt;
   expect(startedAt).toBeGreaterThan(0);
 
-  // A status change keeps the goal and the date the work began.
-  const paused = await api("PATCH", `/api/groups/${id}`, { channelProject: { status: "paused" } });
-  expect(paused.status).toBe(200);
-  expect(paused.body.group.channelProject).toMatchObject({
-    goal: "Get the winter range into the shops by October.",
-    status: "paused",
-    startedAt,
-  });
-
-  // Finishing stamps a finished date.
-  const done = await api("PATCH", `/api/groups/${id}`, { channelProject: { status: "done" } });
-  expect(done.body.group.channelProject.completedAt).toBeGreaterThan(0);
-
-  // Refusals, with the same discipline the other fields get.
-  expect(await api("PATCH", `/api/groups/${id}`, { channelProject: { status: "shipped" } })).toMatchObject({ status: 400 });
-  expect(await api("PATCH", `/api/groups/${id}`, { channelProject: { goal: "" } })).toMatchObject({ status: 400 });
-  expect(await api("PATCH", `/api/groups/${id}`, { channelProject: { goal: "x".repeat(2001) } })).toMatchObject({ status: 400 });
+  for (const status of ["paused", "done", "active", "shipped"]) {
+    expect(await api("PATCH", `/api/groups/${id}`, { channelProject: { status } })).toMatchObject({ status: 409, body: { error: "not_allowed", reason: "Use the brief and goal controls to update this project. Use Close or Reopen to change its status." } });
+  }
+  for (const goal of ["Ship the winter range.", "", "x".repeat(2001)]) {
+    expect(await api("PATCH", `/api/groups/${id}`, { channelProject: { goal } })).toMatchObject({ status: 409, body: { error: "not_allowed", reason: "Use the brief and goal controls to update this project. Use Close or Reopen to change its status." } });
+  }
+  const retained = (await api("GET", "/api/bots")).body.groups.find((group: any) => group.id === id);
+  expect(retained.channelProject).toMatchObject({ goal: created.body.group.channelProject.goal, status: "active", startedAt });
   expect(await api("POST", "/api/groups", { name: "No goal", memberIds: [bot.id], channelProject: {} })).toMatchObject({ status: 400 });
 
   // Clearing it leaves the channel, its chat, its bots and its instructions
@@ -116,3 +107,26 @@ it("leaves a channel that is neither archived nor a project completely unchanged
   expect(hydrated).not.toHaveProperty("channelProject");
   expect(hydrated).not.toHaveProperty("hidden");
 }, 60000);
+
+it("serves project records and preserves brief history through End and Make project", async () => {
+  const bot = await newBot("Project records");
+  const created = await api("POST", "/api/groups", { name: "Records", memberIds: [bot.id], channelProject: { goal: "Ship" } });
+  const id = created.body.group.id;
+  expect(await api("GET", `/api/groups/${id}/project`)).toMatchObject({ status: 200, body: { lifecycle: "open", settings: { parallelCards: 3 } } });
+  expect(await api("PATCH", `/api/groups/${id}`, { bulletin: "Revised rules" })).toMatchObject({ status: 200 });
+  expect(await api("GET", `/api/groups/${id}/project`)).toMatchObject({ body: { brief: { rules: "Revised rules", version: 2 } } });
+  expect(await api("PATCH", `/api/groups/${id}`, { channelProject: null })).toMatchObject({ body: { group: { bulletin: "Revised rules" } } });
+  expect(await api("GET", `/api/groups/${id}/project`)).toMatchObject({ body: { lifecycle: "ended" } });
+  expect(await api("POST", `/api/groups/${id}/project/goals`, { title: "No" })).toMatchObject({ status: 409 });
+  expect(await api("PATCH", `/api/groups/${id}`, { channelProject: { goal: "Again" } })).toMatchObject({ status: 200 });
+  expect(await api("GET", `/api/groups/${id}/project`)).toMatchObject({ body: { lifecycle: "open", brief: { rules: "Revised rules", version: 3 } } });
+}, 60000);
+
+it("refuses authority fields on the conversation-class creation route", async () => {
+  const bot = await newBot("Defaults only");
+  for (const body of [{ messageAllow: { mode: "all" } }, { parallelCards: 5 }, { channelProject: { goal: "Work", workRoots: ["/tmp"] } }, { setup: { bulletin: "", defaultResponder: { kind: "everyone" }, runState: "running" } }]) {
+    const response = await fetch(`${fixture.info.url}/api/groups`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ memberIds: [bot.id], ...body }) });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Set this up in the Murage app on your computer." });
+  }
+});

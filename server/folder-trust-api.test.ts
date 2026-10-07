@@ -73,10 +73,13 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
     join(homeDir, ".murage", "config.json"),
     JSON.stringify({
       engineDiscovery: "explicit",
+      // FAKE_ACP_MCP_READY: announce `_fuigo/mcp_initialized` as real Fuigo
+      // does; without it every first prompt waits the full 15 s MCP-ready
+      // hold (core.ts MCP_READY_WAIT_MS) and the 20 s tests time out.
       instances: {
-        fuigo: { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dumpFile }, config: { cli: FAKE_ACP, fullAuto: false } },
-        "fuigo-late": { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dumpFile, FAKE_ACP_TRUST_PROMPT_FIRST: "1" }, config: { cli: FAKE_ACP, fullAuto: false } },
-        "fuigo-other-home": { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_DUMP: dumpFile, FUIGO_HOME: join(homeDir, "other-fuigo-home") }, config: { cli: FAKE_ACP, fullAuto: false } },
+        fuigo: { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_MCP_READY: "1", FAKE_ACP_DUMP: dumpFile }, config: { cli: FAKE_ACP, fullAuto: false } },
+        "fuigo-late": { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_MCP_READY: "1", FAKE_ACP_DUMP: dumpFile, FAKE_ACP_TRUST_PROMPT_FIRST: "1" }, config: { cli: FAKE_ACP, fullAuto: false } },
+        "fuigo-other-home": { driver: "fuigoAgent", environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_MCP_READY: "1", FAKE_ACP_DUMP: dumpFile, FUIGO_HOME: join(homeDir, "other-fuigo-home") }, config: { cli: FAKE_ACP, fullAuto: false } },
         // FUIGOTRUST4 (2): the Cloud VM runner a `runOn=cloud` turn borrows
         // (no token: its snapshot is "unavailable" without any network)
         computer: { driver: "boxAgent" },

@@ -4,7 +4,7 @@ description: |
   Deep character design system covering character bibles, arc construction using want versus need, voice differentiation, backstory engineering, relationship mapping, ensemble cast management, and character-driven plotting. Use when the user asks about character architect or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing"
   category: "writing"

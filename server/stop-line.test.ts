@@ -22,6 +22,20 @@ type Row = [label: string, tool: string, input: unknown, expected: "pass" | "del
 
 const shell = (command: string): [string, unknown] => ["Bash", { command }];
 
+// Gap 6: an unplaced-delete grant must distinguish dates in the command.
+it("does not reuse a stop-line command grant for a different date", () => {
+  const hit = (date: string) => classifyStopLine(...shell(`rm -rf "$ARCHIVE/${date}"`), "", place())!;
+  const first = hit("2026-09-01");
+  const next = hit("2026-09-02");
+  expect(first).toMatchObject({ kind: "delete", place: expect.stringMatching(/^unplaced:/) });
+  expect(next).toMatchObject({ kind: "delete", place: expect.stringMatching(/^unplaced:/) });
+  const grant = stopLineKey(first)!;
+  expect(grant).toMatch(/^stop:delete:unplaced:/);
+  expect(stopLineKeyCovers(grant, first)).toBe(true);
+  expect(stopLineKey(next)).not.toBe(grant);
+  expect(stopLineKeyCovers(grant, next)).toBe(false);
+});
+
 const rows: Row[] = [
   // ── deleting inside the folder it works in goes ahead ──
   ["rm -rf build/ inside cwd", ...shell("rm -rf build/"), "pass"],

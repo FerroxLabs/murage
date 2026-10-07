@@ -2,7 +2,7 @@
   "id": "verdict-flag-and-fix",
   "name": "flag-and-fix",
   "version": "1.0.0",
-  "description": "**Mode skill.** Default-enabled on the Verdict specialist.",
+  "description": "Read a draft line by line and flag the weak spots. It catches filler, vague claims, hooks that never pay off, drag and a missing call to action, then hands back a fix list.",
   "defaultEnabled": false,
   "triggerTerms": [
     "verdict",

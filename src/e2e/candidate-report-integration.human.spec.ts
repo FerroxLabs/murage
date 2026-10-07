@@ -8,7 +8,7 @@ import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Artifact } from "../../shared/artifacts.ts";
-import { openSidebar } from "./fixtures.ts";
+import { openSidebar, SEND_KEY } from "./fixtures.ts";
 
 interface VerificationServer {
   info: { url: string; pid: number; dataDir: string; logPath: string };
@@ -74,7 +74,7 @@ test("selected report survives Inbox historical navigation, download and same-pr
   expect((await state()).tasks.find((task: any) => task.threadId === first).modelSelection).toMatchObject({ instanceId: "verification", model: modelId });
   const sent = page.waitForResponse(response => response.url().endsWith(`/api/bots/${botId}/messages`) && response.request().method() === "POST");
   const composer = page.getByRole("textbox", { name: "Message Joined proof bot", exact: true });
-  await composer.fill("__fixture_hold_authority__ joined report"); await composer.press("Enter");
+  await composer.fill("__fixture_hold_authority__ joined report"); await composer.press(SEND_KEY);
   const response = await sent; expect(response.status()).toBe(202); expect(response.request().postDataJSON().threadId).toBe(first);
   let mount: { command: string; args: string[]; env: Record<string, string> } | undefined;
   await expect.poll(() => { try { mount = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).mcpConfig.mcpServers.agents; return Boolean(mount?.env.MURAGE_COMMS_TOKEN); } catch { return false; } }, { timeout: 15000 }).toBe(true);
@@ -100,19 +100,26 @@ test("selected report survives Inbox historical navigation, download and same-pr
   const sibling = (await state()).tasks.find((task: any) => task.threadId === second).modelSelection;
   const logs = [fixture.info.logPath], pids = [fixture.info.pid];
   for (const phase of ["before", "after"]) {
-    if (phase === "after") { await fixture.restart(); logs.push(fixture.info.logPath); pids.push(fixture.info.pid); expect(pids[1]).not.toBe(pids[0]); await proof(); await page.reload({ waitUntil: "domcontentloaded" }); await (await openSidebar(page)).getByRole("button", { name: /^Joined proof bot/ }).first().click(); }
+    if (phase === "after") { await fixture.restart(); logs.push(fixture.info.logPath); pids.push(fixture.info.pid); expect(pids[1]).not.toBe(pids[0]); await proof(); await page.reload({ waitUntil: "domcontentloaded" }); const row = (await openSidebar(page)).getByRole("button", { name: /^Joined proof bot/ }).first(); await row.focus(); await page.keyboard.press("Enter"); }
     await choose(page, "Sibling B", second);
     const results = await api("/api/inbox?view=results");
     expect(results.items.filter((item: any) => item.link.artifactId === artifact.id)).toHaveLength(1);
     const sidebar = await openSidebar(page); await sidebar.locator("[data-sidebar-needs-you]").click();
     await page.getByRole("button", { name: "Results", exact: true }).click(); await page.getByRole("button", { name: "Open file", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Files", exact: true }); await expect(dialog).toBeVisible();
-    const card = dialog.locator(`[data-artifact-id="${artifact.id}"]`); await expect(card).toHaveCount(1);
-    const download = page.waitForEvent("download"); await card.getByRole("button", { name: "Download", exact: true }).click();
+    const dialog = page.getByRole("region", { name: "Workspace pane", exact: true }); await expect(dialog).toBeVisible();
+    // Opened from the Inbox, the saved copy is shown in the pane's preview
+    // first (40d9027d); closing the preview shows its card in the list.
+    const preview = dialog.getByRole("region", { name: "File preview", exact: true });
+    const download = page.waitForEvent("download"); await preview.getByRole("button", { name: "Download saved copy", exact: true }).click();
     expect(hash(readFileSync((await (await download).path())!))).toBe(artifact.sha256);
+    await preview.getByRole("button", { name: "Close preview", exact: true }).click();
+    const card = dialog.locator(`[data-artifact-id="${artifact.id}"]`); await expect(card).toHaveCount(1);
     await card.getByRole("button", { name: "Source conversation", exact: true }).click();
-    await expect(dialog).toHaveCount(0); await expect.poll(async () => (await state()).threadId).toBe(first);
-    await expect(page.locator(`[data-mid="${messageId}"]`)).toBeVisible(); await expect(page.locator(`[data-artifact-id="${artifact.id}"]`)).toHaveCount(1);
+    await expect.poll(async () => (await state()).threadId).toBe(first);
+    await expect(page.locator(`[data-mid="${messageId}"]`)).toBeVisible();
+    // Once in the conversation; the workspace pane stays open beside it on a
+    // desktop and lists the same saved copy, which is not a second one.
+    await expect(page.locator(`[data-artifact-id="${artifact.id}"]:not([aria-label="Workspace pane"] *)`)).toHaveCount(1);
     expect((await state()).tasks.find((task: any) => task.threadId === second).modelSelection).toEqual(sibling);
     expect((await api(`/api/threads/${second}/messages?limit=10`)).messages).toEqual([]);
     expect((await api(`/api/artifacts/${artifact.id}`)).artifact).toMatchObject({ threadId: first, sha256: artifact.sha256, sourceConversationAvailable: true });

@@ -24,6 +24,7 @@ export function acceptedSendMatch(
   text: string,
   replyToId?: string,
   channelMode?: "chat" | "goal",
+  responderBotId?: string,
 ): AcceptedSendMatch {
   const message = messages.find((candidate) => candidate.sendId === sendId);
   if (!message) return { kind: "none" };
@@ -32,7 +33,8 @@ export function acceptedSendMatch(
     message.kind !== "text" ||
     message.text !== text ||
     message.replyToId !== replyToId ||
-    (message.channelMode ?? "chat") !== (channelMode ?? "chat")
+    (message.channelMode ?? "chat") !== (channelMode ?? "chat") ||
+    (message.responderBotId ?? null) !== (responderBotId ?? null)
   ) {
     return { kind: "conflict" };
   }
@@ -69,6 +71,6 @@ export class SendSequencer {
   }
 }
 
-export function sendFingerprint(text: string, replyToId?: string, channelMode?: "chat" | "goal"): string {
-  return JSON.stringify([text, replyToId ?? null, channelMode ?? null]);
+export function sendFingerprint(text: string, replyToId?: string, channelMode?: "chat" | "goal", responderBotId?: string): string {
+  return JSON.stringify([text, replyToId ?? null, channelMode ?? null, responderBotId ?? null]);
 }

@@ -4,7 +4,7 @@ description: |
   Community-led growth strategy advisor covering community platform selection, engagement frameworks, ambassador programs, community flywheel mechanics, moderation, content strategy, metrics, monetization, and building self-sustaining communities on Discord, forums, Slack, and social platforms that drive acquisition, retention, and advocacy for products and brands. Use when the user asks about community led growth or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing strategy seo"
   category: "marketing-sales"

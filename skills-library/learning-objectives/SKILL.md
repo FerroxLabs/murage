@@ -6,7 +6,7 @@ description: |
   Do NOT use for educator-facing objectives (use `educator-objectives`), for full study plans (use `study-plan`), or for professional skill gap analysis (use `skill-gap-analysis`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "study-skills step-by-step guide beginner-friendly"
   category: "education"

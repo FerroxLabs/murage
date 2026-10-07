@@ -137,7 +137,7 @@ export function AnnouncementCard({ item, imageUrl, onAct, onDismiss, headingRef 
   const title = (className: string) => (
     <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 outline-none", className)}>{item.title}</h2>
   );
-  const shell = "announce-in relative max-h-[calc(100dvh-32px)] overflow-y-auto overflow-x-hidden rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]";
+  const shell = "announce-in relative max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] overflow-y-auto overflow-x-hidden rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]";
 
   if (layout === "hero") {
     return (
@@ -317,7 +317,8 @@ type Dispatch = ReturnType<typeof useStore>["dispatch"];
 export function runAnnouncementAction(target: AnnouncementActionTarget, dispatch: Dispatch): void {
   if (target === "check-for-updates") {
     void window.muragebox?.updater?.check();
-    dispatch({ type: "toggleAppSettings", open: true, section: "general" });
+    // Updates moved from General to Help & updates in 0.1.62.
+    dispatch({ type: "toggleAppSettings", open: true, section: "about" });
     return;
   }
   dispatch({ type: "toggleAppSettings", open: true, section: ANNOUNCEMENT_ACTION_SECTIONS[target] });

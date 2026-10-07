@@ -48,7 +48,9 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
  * and nothing to call the person it is writing to.
  */
 export function helloAnswerReady(name: string, email: string): boolean {
-  return name.trim().length > 0 && EMAIL.test(email.trim());
+  // O16 (0.1.61): the email is optional on Continue, as Skip already proved
+  // it was. A typed one still has to be a real address.
+  return name.trim().length > 0 && (!email.trim() || EMAIL.test(email.trim()));
 }
 
 /** What the hello step talks to. The live versions are below; a test hands
@@ -93,6 +95,16 @@ export async function saveHelloAnswer(
   deps: HelloAnswerDeps = LIVE,
 ): Promise<{ profile: { name: string; email: string }; greeting: string }> {
   const profile = { name: typed.name.trim(), email: typed.email.trim().toLowerCase() };
+  if (!profile.email) {
+    // A name and no email (O16): the name is saved and confirmed, the step is
+    // answered with it, and nothing goes to the list. Any address saved
+    // earlier is left alone rather than blanked.
+    const saved = await deps.api("/api/config", { method: "PUT", body: JSON.stringify({ profile: { name: profile.name } }) });
+    if (saved?.profile?.name !== profile.name) throw new Error(copy.failure);
+    try { deps.markGate("skipped"); } catch { /* a blocked store is not a failed save */ }
+    await deps.answer("hello", profile.name);
+    return { profile, greeting: greetingLine(profile.name) };
+  }
   const result = await deps.api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
   // The same confirmation Onboarding makes: a PUT that answered is not a PUT
   // that saved.
@@ -247,6 +259,9 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
       {/* Detection is already running while they type, and saying so is the
           difference between a wait and a pause. One line, and quiet. */}
       {!done && <FirstRunLine quiet>{copy.detecting}</FirstRunLine>}
+
+      {/* How learning works, once, where the owner is already reading. */}
+      <FirstRunLine quiet>{copy.learnLine}</FirstRunLine>
     </FirstRunBubble>
   );
 }

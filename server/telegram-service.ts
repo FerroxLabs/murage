@@ -10,7 +10,7 @@ import type { TelegramApprovalActions } from "./telegram-approvals.ts";
 /** Owns polling lifetime, not credentials or execution authority. */
 interface TelegramServiceOptions {
   dataDir: string;
-  onVerifiedSender?: (connectionId:string,senderId:string)=>void;
+  onVerifiedSender?: (connectionId:string,senderId:string,display?:{name?:string;username?:string})=>void;
   enqueue: (connectionId: string, targetBotId: string, input: { deliveryId: string; prompt: string; senderId: string }) => { id: string };
   runResult: (id: string) => { status: string; output?: string; error?: string } | null;
   voiceNotes?: (runId: string) => import("./telegram-channel.ts").ChannelVoiceNote[];
@@ -74,7 +74,7 @@ export class TelegramService {
       botIdentityId: connection.botIdentityId, targetBotId: connection.targetBotId, transport,
       isCurrentTarget: () => this.options.isCurrentTarget?.(connection.targetBotId) !== false,
       approvals: this.options.approvals?.(connection.targetBotId),
-      onVerifiedSender:senderId=>this.options.onVerifiedSender?.(connection.botIdentityId,senderId),
+      onVerifiedSender:(senderId,display)=>this.options.onVerifiedSender?.(connection.botIdentityId,senderId,display),
       enqueue: input => this.options.enqueue(connection.botIdentityId, connection.targetBotId, input), runResult: this.options.runResult, voiceNotes: this.options.voiceNotes });
   }
   status() {

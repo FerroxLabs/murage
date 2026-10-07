@@ -15,6 +15,7 @@ import * as mdb from "./message-db.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
 import { canReach, isIndividualAssistant, isWorkspaceChief, Store, type BotRecord, type Message } from "./store.ts";
 import { TURN_INTERRUPTED_NOTE } from "./turn-outcome.ts";
+import { roomTranscript } from "../src/lib/room-transcript.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
@@ -160,6 +161,34 @@ describe("Store", () => {
     expect(new Store(selection).messagesFor(bot.threadId).find((message) => message.id === final.id)?.turnTerminal).toBe(true);
   });
 
+  it("keeps a settled turn's helper summary with its closing message across a restart, without tool content", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "Looking.", turnId: "t-h" });
+    const final = store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "Done.", turnId: "t-h" });
+    const live = [
+      { id: "a", label: "Read   the\nlogs", status: "done", startedAt: 1_000, endedAt: 4_500, toolCount: 3, tool: { name: "Bash", input: "cat /secret" }, output: "SECRET-OUTPUT" },
+      { id: "b", label: "Check tests", status: "failed", startedAt: 1_000, endedAt: 2_000, toolCount: 0 },
+      { id: "c", label: "", status: "running", startedAt: 1_000, toolCount: 2 },
+    ];
+    store.markTerminalAssistantMessage(bot.threadId, "t-h", "completed", live);
+    const reopened = new Store(selection).messagesFor(bot.threadId).find((message) => message.id === final.id);
+    expect(reopened?.turnHelpers).toEqual([
+      { label: "Read the logs", status: "done", durationMs: 3_500, toolCount: 3 },
+      { label: "Check tests", status: "failed", durationMs: 1_000, toolCount: 0 },
+      { label: "Helper", status: "failed", durationMs: expect.any(Number), toolCount: 2 },
+    ]);
+    expect(JSON.stringify(reopened)).not.toMatch(/SECRET|cat \/secret|Bash/);
+  });
+
+  it("stores no helper summary when the turn had none", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    const final = store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "Hi.", turnId: "t-n" });
+    store.markTerminalAssistantMessage(bot.threadId, "t-n", "completed", []);
+    expect(store.messagesFor(bot.threadId).find((message) => message.id === final.id)).not.toHaveProperty("turnHelpers");
+  });
+
   it("createBot with seedMessages:false starts with an empty transcript", () => {
     const store = new Store(selection);
     const bot = store.createBot({ name: "Imported" }, { seedMessages: false });
@@ -215,6 +244,8 @@ describe("Store", () => {
     expect(artifact.parentId).toBe(turnEnd.id);
     // the re-parented child was announced so live clients converge
     expect(patches).toContain(followUp.id);
+    // the stored leaf did not move either: a restart still ends on the follow-up
+    expect(new Store(selection).activePath(bot.threadId).map((m) => m.id).slice(-3)).toEqual([turnEnd.id, artifact.id, followUp.id]);
   });
 
   it("insertMessageAfter is a plain append when the anchor is still the leaf, or unknown", () => {
@@ -226,6 +257,99 @@ describe("Store", () => {
 
     const orphan = store.insertMessageAfter(bot.threadId, "no-such-message", { role: "bot", kind: "text", text: "x" });
     expect(store.activePath(bot.threadId).at(-1)?.id).toBe(orphan.id);
+  });
+
+  it("insertMessageBefore puts a message ahead of one row only: siblings on other branches and the leaf stay put", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const ask = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "find it" });
+    const oldReply = store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "an earlier answer" });
+    // a regenerate: a second branch under the same ask
+    const row = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: "web_search" }, parentId: ask.id });
+    const after = store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "Here is what I found." });
+    const patches: string[] = [];
+    store.onChange((change) => { if (change.type === "message.patch") patches.push(change.message.id); });
+    const text = store.insertMessageBefore(bot.threadId, row.id, { role: "bot", kind: "text", text: "Let me search." });
+    const order = (s: Store) => s.activePath(bot.threadId).slice(-4).map((m) => m.id);
+    expect(order(store)).toEqual([ask.id, text.id, row.id, after.id]);
+    expect(store.activeLeaf(bot.threadId)).toBe(after.id);
+    expect(store.messagesFor(bot.threadId).find((m) => m.id === oldReply.id)?.parentId).toBe(ask.id);
+    expect(patches).toEqual([row.id]);
+    // a reload reads the same order and the same leaf
+    expect(order(new Store(selection))).toEqual([ask.id, text.id, row.id, after.id]);
+  });
+
+  it("a room shows inserted hosted-tool text where export reads it, live and after a reload", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const room = store.createGroup("Research", [bot.id]);
+    const ask = store.appendMessage(room.threadId, { role: "user", kind: "text", text: "find it" });
+    const row = store.appendMessage(room.threadId, { role: "bot", kind: "activity", tool: { name: "web_search" } });
+    const after = store.appendMessage(room.threadId, { role: "bot", kind: "text", text: "Here is what I found." });
+    const lead = store.insertMessageBefore(room.threadId, row.id, { role: "bot", kind: "text", text: "Let me search." });
+    const exportOrder = (s: Store) => s.activePath(room.threadId).map((m) => m.id).slice(-4);
+    const roomOrder = (messages: Message[]) => roomTranscript(messages).map((m) => m.id).slice(-4);
+    expect(exportOrder(store)).toEqual([ask.id, lead.id, row.id, after.id]);
+    // live: the held transcript, as the client folds the frames
+    expect(roomOrder(store.messagesFor(room.threadId))).toEqual(exportOrder(store));
+    // reload: a cold store's newest page, as /api/groups hydrates a room
+    const reloaded = new Store(selection);
+    expect(roomOrder(reloaded.messagePage(room.threadId, 100)!.messages)).toEqual(exportOrder(reloaded));
+    expect(roomOrder(reloaded.messagesFor(room.threadId))).toEqual([ask.id, lead.id, row.id, after.id]);
+  });
+
+  it("a room page cut off from an inserted row's anchor still reads in export order", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const room = store.createGroup("Research", [bot.id]);
+    store.appendMessage(room.threadId, { role: "user", kind: "text", text: "find it" });
+    // one response: lead-in L, then 101 hosted rows, no trailing text
+    const rows = Array.from({ length: 101 }, () => store.appendMessage(room.threadId, { role: "bot", kind: "activity", tool: { name: "web_search" } }));
+    const lead = store.insertMessageBefore(room.threadId, rows[0]!.id, { role: "bot", kind: "text", text: "Let me search." });
+    expect(lead.insertedBefore).toBe(rows[0]!.id);
+    const pageOrder = (s: Store) => {
+      const page = s.messagePage(room.threadId, 100)!.messages;
+      const held = new Set(page.map((m) => m.id));
+      return {
+        room: roomTranscript(page).map((m) => m.id),
+        exported: s.activePath(room.threadId).filter((m) => held.has(m.id)).map((m) => m.id),
+      };
+    };
+    // storage order is [ask, T1 … T101, L]: the newest page is [T3 … T101, L]
+    const cold = pageOrder(new Store(selection));
+    expect(cold.room[0]).toBe(lead.id);
+    expect(cold.room).toEqual(cold.exported);
+    const warm = pageOrder(store);
+    expect(warm.room).toEqual(warm.exported);
+  });
+
+  it("insertMessageAfter is atomic: a failure between insert and reparent leaves the DB, the thread and the emits untouched", async () => {
+    const { database } = await import("./database.ts");
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const turnEnd = store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "done with the task" });
+    const followUp = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "next question" });
+    const internal = store as unknown as { thread(id: string): { messages: unknown[]; activeLeafId?: string | null } };
+    const snapshot = () => ({
+      rows: database().prepare("SELECT id, json FROM messages WHERE thread_id=? ORDER BY id").all(bot.threadId),
+      leaf: database().prepare("SELECT active_leaf_id FROM thread_state WHERE thread_id=?").get(bot.threadId),
+      memory: JSON.stringify(internal.thread(bot.threadId).messages),
+      leafId: internal.thread(bot.threadId).activeLeafId,
+    });
+    const before = snapshot();
+    const emitted: string[] = [];
+    store.onChange((change) => emitted.push(change.type));
+    // the reparent of the follow-up is the failing step, after the insert succeeded
+    database().exec(`CREATE TRIGGER fail_reparent BEFORE UPDATE ON messages WHEN NEW.id='${followUp.id}' BEGIN SELECT RAISE(ABORT, 'injected reparent failure'); END`);
+    expect(() => store.insertMessageAfter(bot.threadId, turnEnd.id, { role: "bot", kind: "screen", png: "abc" })).toThrow(/injected reparent failure/);
+    expect(snapshot()).toEqual(before);
+    expect(emitted).toEqual([]);
+    expect(database().isTransaction).toBe(false);
+    // and with the fault removed the same call commits and publishes
+    database().exec("DROP TRIGGER fail_reparent");
+    const artifact = store.insertMessageAfter(bot.threadId, turnEnd.id, { role: "bot", kind: "screen", png: "abc" });
+    expect(store.activePath(bot.threadId).map((m) => m.id).slice(-3)).toEqual([turnEnd.id, artifact.id, followUp.id]);
+    expect(emitted).toContain("message");
   });
 
   it("persists the per-bot composio gate", () => {
@@ -1286,6 +1410,29 @@ describe("Store redacts bot-authored secrets on write", () => {
     expect(new Store(selection).messagesFor(bot.threadId).find(item => item.id === message.id)?.tool?.errorDetails).toBe(message.tool?.errorDetails);
     const long = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", tool: { name: "error: failure", errorDetails: "x".repeat(9000) } });
     expect(long.tool?.errorDetails?.length).toBe(4096);
+  });
+
+  it("redacts a permission card's pushBody so a secret in a command never reaches the lock screen", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const key = `sk-ant-api03-${"abcdefghijklmnopqrstuvwxyz0123456789"}`;
+    const msg = store.appendMessage(bot.threadId, { role: "bot", kind: "options", card: { title: "Approval needed", subtitle: "x", summary: `curl -H "Authorization: Bearer ${key}" https://x.test`, pushBody: `curl -H "x-api-key: ${key}" https://x.test`, options: ["Allow", "Deny"] } as any });
+    const card = msg.card as { pushBody?: string };
+    expect(card.pushBody).toBeTruthy();
+    expect(card.pushBody).not.toContain(key);
+  });
+
+  it("redacts and bounds a removal row's removed text on append and on a later merge", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const key = `sk-ant-api03-${"abcdefghijklmnopqrstuvwxyz0123456789"}`;
+    const row = store.appendMessage(bot.threadId, { role: "bot", kind: "activity", removedSpeaker: "User", removedText: `User: here is my key ${key}`, tool: { name: "Removed a line written as User.", ok: false } });
+    expect(row.removedText).toContain("User: here is my key");
+    expect(row.removedText).not.toContain(key);
+    const merged = store.patchMessage(bot.threadId, row.id, { removedText: `${row.removedText}\n\nUser: again ${key}\n${"x".repeat(9000)}` });
+    expect(merged?.removedText).not.toContain(key);
+    expect(merged?.removedText?.length).toBe(4096);
+    expect(new Store(selection).messagesFor(bot.threadId).find(item => item.id === row.id)?.removedText).toBe(merged?.removedText);
   });
 
   it("masks a key that a tool argument carried into the chip's stored summary", () => {

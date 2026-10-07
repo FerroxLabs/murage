@@ -1,12 +1,9 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { fixtureFetch, fixtureSse } from "./testing/conversation-proof.ts";
+import { openSse } from "./testing/sse.ts";
 
 let fixture: VerificationServer, headers: Record<string,string>;
-/** Conversation routes answer only to a proven caller; a bare call here is the paired phone's credential, without the desktop proof. */
-const fetch = fixtureFetch(() => fixture);
-const openSse = fixtureSse(() => fixture);
 type BotResponse = { bot: { id: string; threadId: string } };
 async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   const res=await fetch(fixture.info.url+path,{method,headers:{...headers,"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body)});
@@ -20,7 +17,7 @@ beforeAll(async()=>{
     "const fs=await import('node:fs');const path=await import('node:path');const {registerHooks}=await import('node:module');",
     "registerHooks({load(url,ctx,next){if(!url.endsWith('/fake-late-terminal-driver.ts'))return next(url,ctx);let source=fs.readFileSync(new URL(url),'utf8');",
     "const old='emit({ type: \"item.completed\", itemType: \"assistant_text\", text: \"Hello from late\", threadId: turn.threadId, turnId });';if(!source.includes(old))throw Error('fixture anchor changed');",
-    "source=source.replace(old,'emit({ type: \"request.opened\", requestType: \"permission\", tool: \"Read\", summary: \"Read fixture notes\", requestId: turnId + \"-approval\", threadId: turn.threadId, turnId }); return;');return{format:'module-typescript',shortCircuit:true,source};}});",
+    "source=source.replaceAll(old,'emit({ type: \"request.opened\", requestType: \"permission\", tool: \"Read\", summary: \"Read fixture notes\", requestId: turnId + \"-approval\", threadId: turn.threadId, turnId }); return;');return{format:'module-typescript',shortCircuit:true,source};}});",
     "const {BUILT_IN_DRIVERS}=await import("+JSON.stringify(new URL("./drivers/builtIn.ts",import.meta.url).href)+");",
     "const {makeLateTerminalDriver}=await import("+JSON.stringify(new URL("./testing/fake-late-terminal-driver.ts",import.meta.url).href)+");BUILT_IN_DRIVERS.push(makeLateTerminalDriver());",
     "const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));cfg.instances.alert={driver:'fakeLateTerminal'};fs.writeFileSync(file,JSON.stringify(cfg));",

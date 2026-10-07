@@ -17,7 +17,7 @@ trigger_phrases: >-
   I want to adopt a pet help me adopt a dog adopting a cat getting a pet for the
   first time rescue pet adoption guide should I get a pet
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: pet-care habits family-events step-by-step planning
   category: life-event

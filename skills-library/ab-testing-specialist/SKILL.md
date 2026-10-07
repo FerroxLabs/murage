@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of ab testing specialist or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science statistics checklist template quick-reference python testing analysis"
   category: "data-analysis"

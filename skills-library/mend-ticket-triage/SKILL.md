@@ -1,8 +1,9 @@
 ---
 name: mend-ticket-triage
 description: "You're staring at an inbox or single message and someone asks \"how should we handle this,\" \"what's the priority,\" or \"draft a reply.\" Load when the question is classifying, prioritizing, and routing a ticket — not the onboarding path (`onboarding-flow.md`), not the 30-day-quiet customer (`churn-prev"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "mend"
 ---

@@ -6,7 +6,7 @@ description: |
   Do NOT use for full brand identity (use brand-identity-brief), color palette creation (use color-palette-design), or icon set design (use icon-design-guide).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "branding design template"
   category: "design-creative"

@@ -30,8 +30,10 @@ function SkillRow({ skill, onOpen, browsing }: { skill: SkillSummary; onOpen(ref
           <div className="truncate text-[13px] font-medium text-ink">{skill.name}</div>
           <div className="truncate text-[11.5px] text-ink-secondary">{skill.description}</div>
         </div>
-        <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">
-          <VerdictBadge verdict={skill.verdict} builtIn={skill.kind !== "collection"} />
+        {/* Which bots use a skill is said on a phone too (it is also part of
+            the row's accessible name); only the check badge gives way. */}
+        <div className="flex shrink-0 flex-col items-end gap-0.5">
+          <span className="hidden sm:block"><VerdictBadge verdict={skill.verdict} builtIn={skill.kind !== "collection"} /></span>
           {!(browsing && !skill.usedBy.some((use) => use.enabled)) && <span className="text-[11px] text-ink-secondary">{usedByLine(skill)}</span>}
         </div>
         <ChevronRight size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />

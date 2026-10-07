@@ -56,7 +56,9 @@ export function trayQuickAnswer(card: Card | undefined, context: { stopHit?: boo
   if (isQuestionCard(card) || card.folderTrust || card.routineRequest || card.skillRequest || card.intake || card.setup) return false;
   if (context.stopHit || card.taskAllowKey || (card.allowKey && isStopLineKey(card.allowKey))) return false;
   if (card.approvalScope) return false;
-  const summary = card.subtitle ?? "";
+  // the owner cannot see all of a cut tool input here, so no one-tap Allow
+  if (card.toolInputTruncated) return false;
+  const summary = card.summary ?? card.subtitle ?? "";
   if (!summary.trim() || summary.length > TRAY_QUICK_SUMMARY_MAX) return false;
   const text = `${card.tool}\n${summary}`;
   if (looksSensitive(text) || looksDestructive(text)) return false;
@@ -86,7 +88,7 @@ export function traySummary(deps: TraySummaryDeps): TraySummary {
     const quick = trayQuickAnswer(card, { stopHit: card?.requestId ? deps.stopHit(item.link.threadId, card.requestId) : false });
     return {
       id: item.id, ...(botId ? { botId } : {}), botName,
-      summary: oneLine(card?.subtitle || item.summary || item.title),
+      summary: oneLine(card?.summary || card?.subtitle || item.summary || item.title),
       threadId: item.link.threadId, messageId: item.link.messageId,
       ...(card?.requestId ? { requestId: card.requestId } : {}), quick,
     };

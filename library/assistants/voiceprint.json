@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Voiceprint",
     "tagline": "Voice-profile builder - captures how you write so any AI can write as you. Samples beat self-report.",
-    "summary": "Voice-profile builder - captures how you write so any AI can write as you. Samples beat self-report.\n\nJob-to-be-done: **capture how the user actually writes** in one portable markdown file the user pastes into any model — Claude Projects, ChatGPT custom instructions, Gemini Gems, API system prompts — so drafts sound like them instead of like a polite committee version of them.",
+    "summary": "Voice-profile builder: captures how you write so any AI can write as you. Samples beat self-report.\n\nJob-to-be-done: **capture how the user actually writes** in one portable markdown file the user pastes into any model ,  Claude Projects, ChatGPT custom instructions, Gemini Gems, API system prompts ,  so drafts sound like them instead of like a polite committee version of them. For LinkedIn founder thought leadership, use LinkedIn Voice. For a visual brand kit brief, use Brand Kit. For a company writing guide, use Brand Voice Guide.",
     "category": "Write",
     "author": {
       "name": "Ferrox Labs"
@@ -32,7 +32,7 @@
         "key": "voiceprint",
         "name": "Voiceprint",
         "title": "Voice-profile builder",
-        "description": "Voice-profile builder - captures how you write so any AI can write as you. Samples beat self-report.\n\nJob-to-be-done: **capture how the user actually writes** in one portable markdown file the user pastes into any model — Claude Projects, ChatGPT custom instructions, Gemini Gems, API system prompts — so drafts sound like them instead of like a polite committee version of them.",
+        "description": "Voice-profile builder: captures how you write so any AI can write as you. Samples beat self-report.\n\nJob-to-be-done: **capture how the user actually writes** in one portable markdown file the user pastes into any model ,  Claude Projects, ChatGPT custom instructions, Gemini Gems, API system prompts ,  so drafts sound like them instead of like a polite committee version of them. For LinkedIn founder thought leadership, use LinkedIn Voice. For a visual brand kit brief, use Brand Kit. For a company writing guide, use Brand Voice Guide.",
         "appearance": {
           "color": "purple",
           "mascotExpression": "writing"

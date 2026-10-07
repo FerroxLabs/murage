@@ -1,15 +1,16 @@
 // The maintained OpenCode CLI through its ACP stdio interface. OpenCode is
 // the harness; Zen, Go, OpenRouter, and user-configured/local providers are
 // models discovered from that harness rather than separate Murage drivers.
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
 import { readNativeJsonConfig } from "../native-config-file.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 import { writeFileAtomic } from "../../atomic.ts";
+import { DATA_DIR } from "../../config.ts";
 import { execCli } from "../../procs.ts";
 import { fluxModelId } from "../../flux-routing.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
@@ -349,6 +350,35 @@ export function normalizeLegacyOpenCodeModel(
     : "opencode/x-preview-f-free";
 }
 
+/** Whether a turn works inside a folder Murage owns: a bot's own workspace or
+ * one of its conversation folders (all under DATA_DIR/workspaces). Everything
+ * in them was written by a bot, so none of it may become OpenCode
+ * configuration. The workspaces root itself is not an owned working folder.
+ * Adapted from OpenMausBot #2053 (658763e9), `openMausOwnsWorkingFolder`. */
+export function murageOwnsWorkingFolder(cwd: string): boolean {
+  // Both as written and with links resolved, on either side: OpenCode reads
+  // config from the folder it really runs in, so a picked folder that links
+  // into a workspace is owned too. Owned on any match (fails closed).
+  // A folder not created yet resolves through its nearest existing parent.
+  const real = (path: string): string | null => {
+    for (let at = path, rest = ""; ; ) {
+      try { return join(realpathSync.native(at), rest); } catch { /* not there yet */ }
+      const up = dirname(at);
+      if (up === at) return null;
+      rest = join(basename(at), rest);
+      at = up;
+    }
+  };
+  const root = resolve(DATA_DIR, "workspaces");
+  const folder = resolve(cwd);
+  const roots = [root, real(root)].filter((path): path is string => path !== null);
+  const folders = [folder, real(folder)].filter((path): path is string => path !== null);
+  return roots.some((base) => folders.some((path) => {
+    const rest = relative(base, path);
+    return rest !== "" && rest !== ".." && !rest.startsWith(`..${sep}`) && !isAbsolute(rest);
+  }));
+}
+
 const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   driverKind: "opencodeGo",
   // Keep the historical driver kind so existing bots and instance config do
@@ -394,6 +424,13 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
     return ensureOpenCodeInjectModel(normalizeLegacyOpenCodeModel(model, env), env);
   },
   transformEnv: stripForeignProviderKeys,
+  // OpenCode reads opencode.json and .opencode/ from the working folder and
+  // every folder above it. In a Murage-owned folder a bot could write one in
+  // Auto and grant itself permissions on later turns, so project config is
+  // switched off there. A person's own project folder keeps its config.
+  applyTurnEnv: (env, { cwd }) => {
+    if (cwd && murageOwnsWorkingFolder(cwd)) env.OPENCODE_DISABLE_PROJECT_CONFIG = "1";
+  },
   pickAuthMethod: () => null,
   authFailure: "continue",
   // A connected Flux provider IS a usable login, and it does not live in

@@ -9,7 +9,7 @@ description: |
   `project-proposal`), or technical documentation (use a technical writing skill).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "writing technical-writing template"
   category: "writing"

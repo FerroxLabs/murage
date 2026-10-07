@@ -215,12 +215,17 @@ it("ignores unrelated workspace disclosures when filtering a bounded replay",asy
   expect(filterMemoryReplay("private",[{id:"user"},{id:"answer"}],f.access)).toEqual([{id:"user"},{id:"answer"}]);
 });
 
-it("blocks replay beyond its explicit receipt limit instead of bypassing lineage",()=>{
+// 0.1.61.1 memreplay: past the old whole-thread cap the line is still judged
+// by every receipt that lists it, never let through. 2,049 sound receipts and
+// one revoked, the oldest (read last): the line is withheld (review L2).
+it("withholds a line when the one revoked receipt among thousands that list it is the oldest, instead of bypassing lineage",()=>{
   const f=fixture();
-  database().exec(`WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<2049)
+  database().prepare(`WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<2049)
     INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
-    SELECT 'old-'||value,'private','driver','[]','[]','["answer"]',0,0,0,'revoked',1 FROM n`);
-  expect(()=>filterMemoryReplay("private",[{id:"user"},{id:"answer"}],f.access)).toThrow("MEMORY_REPLAY_LIMIT");
+    SELECT 'sound-'||value,'private','driver','[]','[]','["answer"]',?,?,0,'delivered',value+1 FROM n`).run(f.access.policyRevision,f.access.deletionEpoch);
+  expect(filterMemoryReplay("private",[{id:"user"},{id:"answer"}],f.access)).toEqual([{id:"user"},{id:"answer"}]);
+  database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('oldest','private','driver','[]','[]','[\"answer\"]',?,?,0,'revoked',1)").run(f.access.policyRevision,f.access.deletionEpoch);
+  expect(filterMemoryReplay("private",[{id:"user"},{id:"answer"}],f.access)).toEqual([{id:"user"}]);
 });
 
 // 0.1.61 final check D2 (Mac, Harbor Room on a 200k model): pinning the room's

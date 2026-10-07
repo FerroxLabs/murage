@@ -6,7 +6,7 @@ description: |
   Do NOT use for local development setup, staging-only deployments, or infrastructure provisioning without application deployment.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "devops ci-cd cloud database step-by-step planning"
   category: "software-development"

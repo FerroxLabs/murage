@@ -11,7 +11,7 @@ description: |
   or for single-channel email sequences only (use email-campaign directly).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing branding content-marketing strategy step-by-step"
   category: "business-operations"

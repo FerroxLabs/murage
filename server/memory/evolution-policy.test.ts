@@ -59,7 +59,8 @@ it("frozen classification messages sent to the extractor equal the reserved inpu
   const source="The parcel arrived.",before=readMemoryLearning(database());
   const result=await extractCandidates(source,async(_text,_maximum,_signal,dispatch)=>{captured=dispatch;publishMemoryEvolutionPolicy(p.snapshot,p.receipt,p.admission);return "[]";},new AbortController().signal,frozen);
   expect(result.status).toBe("complete");expect(captured?.policyRevision).toBe(frozen.revision);expect(captured?.messages).toEqual(memoryExtractionMessages(source,frozen));expect(JSON.stringify(captured?.messages)).not.toContain("Classify completed observations");
-  const budget=database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()!;expect(JSON.parse(String(budget.intent)).input).toBe(Buffer.byteLength(JSON.stringify(captured?.messages)));
+  // V2 reserves estimated tokens for the exact frozen messages, not bytes.
+  const budget=database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()!;expect(JSON.parse(String(budget.intent)).input).toBe(Math.ceil(Buffer.byteLength(JSON.stringify(captured?.messages))/3.5));
   expect(readMemoryLearning(database())).toEqual(before);expect(memoryExtractionMessages(source,readMemoryEvolutionPolicy())[0]!.content).toContain("Classify completed observations");
   expect(memoryExtractionMessages(source)[0]!.content).not.toContain("Classify completed observations");
 });
@@ -80,7 +81,7 @@ it("objective held-out recall distinguishes the ratio and affects actual search-
 
 it("a resumed consolidation source retains the original classification policy across slices",async()=>{
   const text="a".repeat(20000);
-  captureSource(database(),{id:"long-source",threadId:"policy-thread",kind:"text",speaker:"owner",outcome:"recorded",text});
+  captureSource(database(),{id:"long-source",threadId:"policy-thread",origin:{kind:"attended"},kind:"text",speaker:"owner",outcome:"recorded",text});
   const work=claimMemoryJob("fixture")!;publishMemoryWork(work,"fixture",captureWork(work));
   const p=proposal(fields(0.7,"New classification guidance")),seen:string[]=[];
   const first=await consolidateMemorySource(work.id,async(_text,_limit,_signal,dispatch)=>{seen.push(dispatch!.policyRevision);publishMemoryEvolutionPolicy(p.snapshot,p.receipt,p.admission);return "[]";},new AbortController().signal);

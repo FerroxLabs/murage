@@ -10,6 +10,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  linkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,6 +19,8 @@ import { basename, join } from "node:path";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { DATA_DIR } from "./config.ts";
 import {
+  INDEX_MAX_BYTES,
+  INDEX_MAX_SKILLS,
   SKILL_LIBRARY_ROOT,
   applyStagedSkillWrite,
   checkLibrarySkill,
@@ -67,6 +70,70 @@ beforeEach(() => {
 
 afterEach(async () => {
   await removeTempDir(scratch);
+});
+
+describe("skills prompt index budget (upstream #2060)", () => {
+  function enableSkills(descriptions: Record<string, string>) {
+    for (const [name, description] of Object.entries(descriptions)) {
+      expect(installSkill(bot, "src", [{ path: "SKILL.md", content: SKILL(name, description) }])).not.toHaveProperty("error");
+      setSkillEnabled(bot, name, true);
+    }
+  }
+  const indexed = (prompt: string) => prompt.match(/^- [a-z0-9-]+:/gm) ?? [];
+  const omittedCount = (prompt: string) => Number(/(\d+) enabled skills? omitted/.exec(prompt)?.[1] ?? 0);
+
+  it("keeps an under-budget index whole, with no omission notice and no warning", () => {
+    enableSkills({ alpha: "Short." });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const prompt = skillsSystemPrompt(bot);
+      expect(prompt).toContain("- alpha: Short. Read ");
+      expect(prompt).not.toContain("omitted");
+      expect(warn).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+  });
+
+  it("names every skill the index leaves out, so 21 or more skills never drop silently", () => {
+    const names = Array.from({ length: 24 }, (_, i) => `house-skill-${String(i).padStart(2, "0")}`);
+    enableSkills(Object.fromEntries(names.map((name) => [name, "Does one house task the way the team does it, step by step."])));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const prompt = skillsSystemPrompt(bot);
+      expect(Buffer.byteLength(prompt, "utf8")).toBeLessThanOrEqual(INDEX_MAX_BYTES);
+      const kept = indexed(prompt).length;
+      // every enabled skill is either in the index or counted in the notice
+      expect(kept).toBeGreaterThan(0);
+      expect(kept + omittedCount(prompt)).toBe(24);
+      expect(omittedCount(prompt)).toBeGreaterThan(0);
+      expect(prompt).toContain("skills_list");
+      expect(prompt).toContain("Bot Settings > Skills");
+      expect(prompt).not.toContain("\u2014");
+      expect(listSkills(bot).filter((skill) => skill.enabled)).toHaveLength(24);
+      // the omitted names are logged once per skill set, not every turn
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(names[names.length - 1]!));
+      skillsSystemPrompt(bot);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally { warn.mockRestore(); }
+  });
+
+  it("reports the entry cap as the reason when the count, not the bytes, is the limit", () => {
+    enableSkills(Object.fromEntries(Array.from({ length: INDEX_MAX_SKILLS + 2 }, (_, i) => [`s${String(i).padStart(2, "0")}`, "x"])));
+    const prompt = skillsSystemPrompt(bot);
+    expect(Buffer.byteLength(prompt, "utf8")).toBeLessThanOrEqual(INDEX_MAX_BYTES);
+    const kept = indexed(prompt).length;
+    expect(kept + omittedCount(prompt)).toBe(INDEX_MAX_SKILLS + 2);
+    expect(prompt).toContain(kept === INDEX_MAX_SKILLS ? `${INDEX_MAX_SKILLS}-skill cap` : `${INDEX_MAX_BYTES}-byte cap`);
+  });
+
+  it("keeps the whole block, framing and notice included, inside the byte budget", () => {
+    const long = (word: string) => `${word} `.repeat(Math.floor(1000 / (word.length + 1))).trim();
+    enableSkills({ bravo: long("review"), charlie: long("format"), delta: long("deploy"), echo: long("triage"), foxtrot: long("report") });
+    const prompt = skillsSystemPrompt(bot);
+    expect(Buffer.byteLength(prompt, "utf8")).toBeLessThanOrEqual(INDEX_MAX_BYTES);
+    expect(indexed(prompt).length + omittedCount(prompt)).toBe(5);
+    expect(omittedCount(prompt)).toBeGreaterThan(0);
+  });
 });
 
 describe("parseSkillMd", () => {
@@ -127,7 +194,7 @@ describe("parseSkillMd", () => {
 
   it("keeps a nested mapping's keys out of the top level", () => {
     const fields = parseFrontmatterScalars(
-      "name: nested\nlicense: Apache-2.0\nmetadata:\n  author: foundry-skills\n  version: \"1.0.0\"\n  tags: \"analysis research\"\n",
+      "name: nested\nlicense: Apache-2.0\nmetadata:\n  author: Ferrox Labs\n  version: \"1.0.0\"\n  tags: \"analysis research\"\n",
     );
     expect(Object.keys(fields).sort()).toEqual(["license", "metadata", "name"]);
     expect(fields.author).toBeUndefined();
@@ -1097,6 +1164,46 @@ describe("installSkillFromLibrary", () => {
       const path = join(workspaceDir(bot), dir, "chart-analysis");
       expect(existsSync(path), `${dir} link should exist`).toBe(true);
       expect(lstatSync(path).isSymbolicLink()).toBe(true);
+    }
+  });
+
+  it("copies the skill's assets/ folder, so an installed skill has its templates", () => {
+    const directory = writeLibrarySkill(library, "site-kit");
+    mkdirSync(join(directory, "assets", "templates", "quiz"), { recursive: true });
+    writeFileSync(join(directory, "assets", "templates", "quiz", "index.html"), "<title>Quiz</title>");
+    writeFileSync(join(directory, "assets", "templates", "quiz", "thank-you.html"), "<title>Thanks</title>");
+    const installed = installSkillFromLibrary(bot, "site-kit", library);
+    expect(installed).toMatchObject({ name: "site-kit", skippedFiles: [], warnings: [] });
+    const target = join(workspaceDir(bot), "skills", "site-kit");
+    expect(readFileSync(join(target, "assets", "templates", "quiz", "index.html"), "utf8")).toBe("<title>Quiz</title>");
+    expect(readFileSync(join(target, "assets", "templates", "quiz", "thank-you.html"), "utf8")).toBe("<title>Thanks</title>");
+  });
+
+  it("leaves out an assets entry that is a link or has an odd name, and says so", () => {
+    const directory = writeLibrarySkill(library, "odd-kit");
+    mkdirSync(join(directory, "assets"), { recursive: true });
+    writeFileSync(join(directory, "assets", "ok.html"), "fine");
+    writeFileSync(join(directory, "outside.txt"), "outside");
+    symlinkSync(join(directory, "outside.txt"), join(directory, "assets", "link.html"));
+    const result = installSkillFromLibrary(bot, "odd-kit", library);
+    expect("error" in result).toBe(true);
+    expect(existsSync(join(workspaceDir(bot), "skills", "odd-kit"))).toBe(false);
+  });
+
+  it("leaves out a file that is linked to another file, such as a private file", () => {
+    const directory = writeLibrarySkill(library, "hard-kit");
+    mkdirSync(join(directory, "assets"), { recursive: true });
+    writeFileSync(join(library, "private.txt"), "private");
+    linkSync(join(library, "private.txt"), join(directory, "assets", "t.html"));
+    expect("error" in installSkillFromLibrary(bot, "hard-kit", library)).toBe(true);
+  });
+
+  it("the shipped website-publisher installs with its four templates", () => {
+    const shipped = join(process.cwd(), "skills-library");
+    const result = installSkillFromLibrary(bot, "website-publisher", shipped);
+    expect(result).toMatchObject({ name: "website-publisher", skippedFiles: [] });
+    for (const name of ["quiz", "survey", "lead-capture", "landing-page"]) {
+      expect(existsSync(join(workspaceDir(bot), "skills", "website-publisher", "assets", "templates", name, "index.html"))).toBe(true);
     }
   });
 

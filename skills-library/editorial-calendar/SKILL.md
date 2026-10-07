@@ -8,7 +8,7 @@ description: |
   (use `content-audit`), or writing actual content pieces (use `blog-post-writing`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "content-marketing writing planning"
   category: "writing"

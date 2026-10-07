@@ -89,7 +89,7 @@ export class DiscordGatewayTransport implements DiscordTransport {
     sdk.on("messageCreate", message => {
       if (!active()) return;
       receive({ ...this.identity, id: message.id, dmId: message.channelId, channelType: message.channel?.type,
-        authorId: message.author?.id, authorBot: message.author?.bot, guildId: message.guildId ?? null,
+        authorId: message.author?.id, authorBot: message.author?.bot, authorName: message.author?.globalName ?? message.member?.displayName, authorUsername: message.author?.username, guildId: message.guildId ?? null,
         webhookId: message.webhookId ?? null, type: message.type, content: message.content, occurredAt: message.createdTimestamp,
         attachments: message.attachments?.size, components: message.components?.length,
         forwarded: message.reference?.type === 1 || (message.messageSnapshots?.size ?? 0) > 0 });

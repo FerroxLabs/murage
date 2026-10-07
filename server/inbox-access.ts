@@ -47,8 +47,8 @@ export function inboxDoor(
 }
 
 /** The two Inbox routes, and only those, that a proven companion may reach
- *  past the desktop-authority gate (`desktop-policy.ts` lists `/api/inbox` as
- *  a whole prefix). Everything else under the prefix stays desktop-only. */
+ *  (route-policy.ts classes them `companion`; anything else under the prefix
+ *  has no entry and so stays desktop-only). */
 export function companionInboxRoute(method: string, path: string): boolean {
   return (method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state");
 }

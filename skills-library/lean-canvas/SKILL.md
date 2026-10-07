@@ -5,7 +5,7 @@ description: |
   Do NOT use for a traditional business plan (use business-plan), idea validation experiments (use idea-validation), or MVP scoping (use mvp-definition).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning template analysis"
   category: "business-strategy"

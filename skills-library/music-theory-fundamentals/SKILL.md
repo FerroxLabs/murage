@@ -11,7 +11,7 @@ description: |
   songwriting-framework), or advanced harmony and voice leading.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "beginner-friendly guide step-by-step teaching"
   category: "hobbies-crafts"

@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of portrait photographer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design photography budgeting guide advanced quick-reference testing performing-arts"
   category: "design-creative"

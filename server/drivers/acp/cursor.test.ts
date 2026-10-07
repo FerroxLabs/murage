@@ -1,4 +1,5 @@
 import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -224,7 +225,7 @@ describe("CursorAgentDriver", () => {
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       expect(seen.argv).toEqual(["--force", "--model", "gpt-5.3-codex", "acp"]);
-      expect(seen.env.CURSOR_API_KEY).toBe("cursor-should-keep");
+      expect(seen.env.CURSOR_API_KEY).toBe(fixtureCredentialFingerprint("cursor-should-keep"));
       expect(seen.env.XAI_API_KEY).toBeUndefined();
 
       const applied = JSON.parse(readFileSync(`${dump}.config.json`, "utf8"));

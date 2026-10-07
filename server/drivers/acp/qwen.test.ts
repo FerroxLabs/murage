@@ -13,6 +13,7 @@
 //     between the driver and the spawn (core.ts:204-212), and `applyTurnEnv`
 //     (core.ts:323) is the only hook that lands after it.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,7 +74,7 @@ describe("qwen Flux routing — the spawn env", () => {
   it("points the child at Flux with all three OPENAI_* vars", async () => {
     const { env } = await spawnFor("flux-auto");
     expect(env.OPENAI_BASE_URL).toBe("https://api.fluxrouter.ai/v1");
-    expect(env.OPENAI_API_KEY).toBe(FLUX_KEY);
+    expect(env.OPENAI_API_KEY).toBe(fixtureCredentialFingerprint(FLUX_KEY));
     // Not cosmetic: qwen only infers its OpenAI auth type when API_KEY, MODEL
     // and BASE_URL are ALL set (qwen-code 0.15.6 getAuthTypeFromEnv). Dropping
     // OPENAI_MODEL fails the turn with "No auth type is selected".
@@ -86,7 +87,7 @@ describe("qwen Flux routing — the spawn env", () => {
     // child env (core.ts:204-205) and qwen deliberately does not allowlist it
     // in `credentialEnv`. The child sees the value only as OPENAI_API_KEY.
     expect(env.FLUX_API_KEY).toBeUndefined();
-    expect(Object.keys(env).filter((k) => env[k] === FLUX_KEY)).toEqual(["OPENAI_API_KEY"]);
+    expect(Object.keys(env).filter((k) => env[k] === fixtureCredentialFingerprint(FLUX_KEY))).toEqual(["OPENAI_API_KEY"]);
   });
 
   it("selects the openai auth type on argv, ahead of the model", async () => {
@@ -142,7 +143,7 @@ describe("qwen Flux routing — the gate", () => {
     const { argv, env } = await spawnFor("omlx::GLM-5.2-fp8");
     expect(argv).toEqual(["--acp", "--auth-type", "openai", "-m", "GLM-5.2-fp8"]);
     expect(env.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
-    expect(env.OPENAI_API_KEY).toBe("omlx"); // the host's own placeholder key, from LOCAL_HOSTS
+    expect(env.OPENAI_API_KEY).toBe(fixtureCredentialFingerprint("omlx")); // the host's own placeholder key, from LOCAL_HOSTS
     expect(env.OPENAI_MODEL).toBe("GLM-5.2-fp8");
     expect(Object.values(env)).not.toContain(FLUX_KEY);
     // the local-host path is the one that DOES write settings.json — proving
@@ -199,7 +200,7 @@ describe("qwen Flux routing — the gate", () => {
     const { env } = await spawnFor("omlx::GLM-5.2-fp8");
     expect(env.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
     expect(env.OPENAI_MODEL).toBe("GLM-5.2-fp8");
-    expect(env.OPENAI_API_KEY).toBe("omlx"); // the host's own placeholder key, from LOCAL_HOSTS
+    expect(env.OPENAI_API_KEY).toBe(fixtureCredentialFingerprint("omlx")); // the host's own placeholder key, from LOCAL_HOSTS
   });
 });
 

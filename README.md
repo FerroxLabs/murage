@@ -146,7 +146,7 @@ Desktop-only administration stays on the desktop. The PWA does not turn a phone 
 
 Message your Chief of Staff from a **paired private Telegram chat**. Messages join the Chief's current Murage conversation, so the desktop and Telegram views stay connected to the same work.
 
-For supported ordinary tool requests, the paired owner can use one-time **Allow once / Deny** buttons. Richer proposal reviews stay in Murage; typing “approve” in a message does not grant permission.
+For supported ordinary tool requests, the paired owner gets **Approve once** and **Deny** buttons. For stop-line actions such as deleting outside a folder, paying or messaging someone new, there is also **Allow for this task**, which covers the same kind of action in the same place until the task ends. Richer proposal reviews stay in Murage; typing “approve” in a message does not grant permission.
 
 Set it up in **Settings → Channels → Telegram** using your own bot token and a pairing code. Keep Murage running and pair again after restarting. Revoke the connection from Settings when you no longer want it active.
 
@@ -194,9 +194,13 @@ Murage also includes a local MCP server for other clients to list the team, send
 | Memory scale | Verified for ordinary interactive use. Sustained high-throughput ingestion and continuous-search saturation tuning remain deferred. |
 | Cross-device memory | No automatic memory synchronization between separate installations or profiles. |
 
+## Source code
+
+Murage is free software under the [GNU Affero General Public License v3.0 or later](LICENSE). The complete source is public at [github.com/FerroxLabs/murage](https://github.com/FerroxLabs/murage). Under section 13 of the AGPL, anyone who uses a modified Murage over a network is entitled to the source of the version they are using, and the app links to this repository from Settings, About, in the desktop app and in the browser door alike. Bundled third-party components keep their own licenses; see [NOTICE](NOTICE).
+
 ## Build from source
 
-The [application source repository](https://github.com/FerroxLabs/murage) is currently private. Developers with access need Node.js 24+ and pnpm 10.33.0.
+Building needs Node.js 24+ and pnpm 10.33.0.
 
 ```sh
 git clone https://github.com/FerroxLabs/murage.git
@@ -206,7 +210,7 @@ pnpm install --frozen-lockfile
 
 Run `pnpm dev:server` and `pnpm dev` in separate terminals, then `pnpm dev:desktop` for the Electron shell. Use `pnpm typecheck` and `pnpm test` for validation. Native installer commands are `pnpm package:mac`, `pnpm package:win` and `pnpm package:linux`; packaging is separate from publication.
 
-Further guides: [custom engines](docs/custom-engines.md), [custom MCP servers](docs/custom-mcp-servers.md), [Murage MCP server](docs/mcp-server.md), [connected apps](docs/composio.md), [Ubuntu](docs/linux-desktop.md), [recovery](docs/verification/installation-recovery.md), and [releasing](docs/releasing.md).
+Further guides: [custom engines](docs/custom-engines.md), [custom MCP servers](docs/custom-mcp-servers.md), [Murage MCP server](docs/mcp-server.md), [connected apps](docs/connected-apps.md), [Ubuntu](docs/linux-desktop.md), [recovery](docs/verification/installation-recovery.md), and [releasing](docs/releasing.md).
 
 ## About Ferrox Labs
 

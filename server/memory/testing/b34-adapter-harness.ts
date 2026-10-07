@@ -579,7 +579,7 @@ export function readQ14LeaseSnapshot(db: DatabaseSync, now = Date.now()): Q14Lea
   }
   try {
     const row = db.prepare("SELECT revision,settings FROM memory_learning_config WHERE id=1").get();
-    const revision = count(row?.revision), outputLimit = count(parse(row?.settings)?.outputLimit);
+    const revision = count(row?.revision), outputLimit = count(parse(row?.settings)?.dailyOutputTokens ?? parse(row?.settings)?.outputLimit);
     if (revision !== null && outputLimit !== null) snapshot.learning = { revision, outputLimit };
   } catch { snapshot.learning = null; }
   for (const row of rows("procedure-evaluation-session")) {

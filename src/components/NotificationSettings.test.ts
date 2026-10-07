@@ -14,7 +14,8 @@ const source = readFileSync(fileURLToPath(new URL("./NotificationSettings.tsx", 
 describe("notification sounds switch", () => {
   it("is one switch in the notifications card that applies to this computer at once", () => {
     expect(source).toContain("useNotificationSounds()");
-    expect(source).toContain("setNotificationSounds(event.target.checked)");
+    expect(source).toContain("onClick={() => setNotificationSounds(!sounds)}");
+    expect(source).toContain('aria-labelledby="notification-sounds"');
     // not part of the saved server preferences: it never marks the form dirty
     expect(source).not.toMatch(/edit\(\{[^}]*sound/i);
   });

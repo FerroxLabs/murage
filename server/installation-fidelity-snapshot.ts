@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants, closeSync, createReadStream, fstatSync, lstatSync, openSync, readdirSync, type Stats } from "node:fs";
+import { constants, closeSync, createReadStream, fstatSync, lstatSync, openSync, readdirSync, readFileSync, writeFileSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { backupSelectionSchema, type BackupSelection, type BackupCoverage } from "../shared/installation-backup.ts";
 import { portableArchivePath, type ArchiveLimits } from "./installation-archive.ts";
@@ -76,7 +76,20 @@ export async function inventoryFidelity(installation:OfflineInstallation,stage:{
   for(const file of selectedFiles){
     if(options.signal?.aborted)fail("SNAPSHOT_CANCELLED");
     const path=file.path.replaceAll("\\","/");if(!portableArchivePath(path))fail("UNSAFE_ARCHIVE_PATH");
-    const source=path==="messages.db"?join(stage.directory,"state",file.path):path==="memory-index.db"?join(stage.directory,"memory-index.db"):join(root,file.path);
+    let source=path==="messages.db"?join(stage.directory,"state",file.path):path==="memory-index.db"?join(stage.directory,"memory-index.db"):join(root,file.path);
+    if(path==="config.json"){
+      // The retired own connected-apps key is never copied into a backup. The
+      // source file itself is left untouched; only this raw copy omits it.
+      const copy=join(stage.directory,"raw-config.json");
+      try{
+        const parsed=JSON.parse(readFileSync(source,"utf8"));
+        if(parsed&&typeof parsed==="object"&&parsed.composio&&typeof parsed.composio==="object"&&"apiKey"in parsed.composio){
+          parsed.composio.apiKey="";
+          writeFileSync(copy,JSON.stringify(parsed,null,2),{mode:0o600});
+          source=copy;
+        }
+      }catch{/* unreadable or not JSON: keep the raw bytes as before */}
+    }
     const before=lstatSync(source);
     if(!before.isFile()||before.isSymbolicLink()||before.nlink!==1)fail("UNSAFE_SNAPSHOT_ENTRY",path);
     bytes+=before.size;if(bytes>(options.maxBytes??MAX_BACKUP_BYTES))fail("SNAPSHOT_LIMIT_EXCEEDED",path);

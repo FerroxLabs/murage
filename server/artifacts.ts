@@ -1,3 +1,5 @@
+import { executionStore } from "./execution-audience.ts";
+import { partitionFileRefusal } from "./partition-files.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, parse, resolve } from "node:path";
@@ -33,7 +35,7 @@ const hash = (value: Uint8Array) => createHash("sha256").update(value).digest("h
 const same = (a: Stats, b: Stats) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
 const fingerprint = (stat: Stats) => JSON.stringify([stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs]);
 const clean = (value: string, max: number) => redactSecretsInText(value).replace(/[\u0000-\u001f]/g, " ").trim().slice(0, max);
-function directory(path: string) { const stat = lstatSync(path); if (!stat.isDirectory() || stat.isSymbolicLink()) fail(409, "The file location is unsafe or changed."); return stat; }
+function directory(path: string) { const stat = lstatSync(path); if (!stat.isDirectory() || stat.isSymbolicLink()) fail(409, "The file location is not a plain folder or it changed."); return stat; }
 function rootPath(path: string) {
   if (typeof path !== "string" || !isAbsolute(path)) fail(403, "An authorized workspace is required.");
   directory(path); const root = realpathSync.native(path);
@@ -70,7 +72,7 @@ function sourceFile(root: string, relative: string) {
   for (const [index, part] of parts.entries()) {
     path = join(path, part); const stat = lstatSync(path);
     if (stat.isSymbolicLink()) fail(409, "Linked files are not supported.");
-    if (index < parts.length - 1) { if (!stat.isDirectory()) fail(409, "The file location is unsafe or changed."); }
+    if (index < parts.length - 1) { if (!stat.isDirectory()) fail(409, "The file location is not a plain folder or it changed."); }
     else if (!stat.isFile() || stat.nlink !== 1) fail(409, "Only ordinary files are supported.");
     observed.push([path, stat]);
   }
@@ -183,6 +185,9 @@ export function registerArtifact(db: DatabaseSync, storageRoot: string, input: A
   if (provenance.publicationId !== undefined && (typeof provenance.publicationId !== "string" || !/^[a-f0-9-]{36}$/.test(provenance.publicationId))) fail(400, "Invalid file publication.");
   if (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.length > 200)) fail(400, "Use a short file title.");
   try {
+    const bot = executionStore()?.bot(input.botId);
+    const denied = bot ? partitionFileRefusal(bot, input.threadId, [input.relativePath], scope.workspaceRoot) : null;
+    if (denied) fail(403, denied);
     const root = rootPath(scope.workspaceRoot), source = sourceFile(root, input.relativePath);
     const bytes = readVerified(source.path, ARTIFACT_MAX_BYTES, source.stat);
     if (source.observed.some(([path, stat]) => !same(stat, lstatSync(path)))) fail(409, "The file location changed during verification.");

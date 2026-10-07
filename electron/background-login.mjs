@@ -62,7 +62,9 @@ export function createBackgroundLogin({platform,app,installed,primaryProfile,pro
       return {supported:true,openAtLogin:namedWindowsLoginEnabled(value,windowsName,executable,args),wasOpenedAtLogin:value?.wasOpenedAtLogin===true,requiresApproval:false};
     }
     const value=app.getLoginItemSettings();
-    return {supported:true,openAtLogin:value.openAtLogin===true&&value.executableWillLaunchAtLogin!==false,wasOpenedAtLogin:value.wasOpenedAtLogin===true,requiresApproval:value.status==="requires-approval"};
+    // Electron 43 always emits executableWillLaunchAtLogin, false off Windows
+    // (login_item_settings_converter.cc), so macOS trusts SMAppService status alone.
+    return {supported:true,openAtLogin:value.openAtLogin===true,wasOpenedAtLogin:value.wasOpenedAtLogin===true,requiresApproval:value.status==="requires-approval"};
   };
   return {read,
     async write(enabled){

@@ -4,7 +4,7 @@ description: |
   Professional corporate video production guidance covering training videos, promotional content, testimonials, and product demos. Includes client brief templates, script approval workflows, achieving professional quality on budget, brand compliance, stakeholder management, and delivery specifications. Use when the user asks about corporate video or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "video-production business-writing"
   category: "design-creative"

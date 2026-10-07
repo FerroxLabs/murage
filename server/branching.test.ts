@@ -15,12 +15,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { loopbackFetch } from "./testing/conversation-proof.ts";
-
-/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
- * credential (the server below is started with it), without the desktop proof. */
-const TEST_COMPANION_TOKEN = "c".repeat(64);
-const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -116,7 +110,6 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
-      MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
       MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
@@ -369,12 +362,13 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       await waitFor(async () => !(await getBot(created.id)).busy && (await replies()) >= 1, "the first reply");
       const first = launched();
 
-      // An ordinary follow-up resumes the same session and asks for no
-      // reset. (Its process is replaced anyway today: the agents MCP token
-      // rotates per turn, which changes the spawn contract.)
+      // An ordinary follow-up asks for no reset and continues the same warm
+      // process: turn credentials live in a per-process file and no longer
+      // rotate per turn, so the spawn contract is unchanged.
       expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "follow-up" })).status).toBe(202);
       await waitFor(async () => !(await getBot(created.id)).busy && (await replies()) >= 2, "the follow-up reply");
-      expect(launched().argv).toContain("--resume");
+      const followUp = launched();
+      expect(followUp.pid).toBe(first.pid);
 
       const bot = await getBot(created.id);
       const original: Msg = bot.messages.find((m: Msg) => m.role === "user" && m.text === "abandoned question");
@@ -389,8 +383,10 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       // the reset crossed the harness/driver boundary: the idle process was
       // closed because the context was rebuilt, not by chance
       const closes = readFileSync(join(home, ".murage", "native", `${bot.threadId}.ndjson`), "utf8").split("\n").filter(Boolean)
-        .map((line) => JSON.parse(line)).filter((e) => e.source === "claude.session").map((e) => e.msg?.close);
-      expect(closes).toEqual(["spawn contract changed", "context reset"]);
+        .map((line) => JSON.parse(line)).filter((e) => e.source === "claude.session").map((e) => e.msg?.close).filter((c) => c !== undefined);
+      // the edit recycled the warm process that held the abandoned branch, and
+      // only because the context was reset
+      expect(closes).toEqual(["context reset"]);
       } finally {
         await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "active" });
       }

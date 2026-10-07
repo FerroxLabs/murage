@@ -4,7 +4,7 @@ description: |
   Interactive storytelling for games covering branching narratives, dialogue trees, environmental storytelling, lore design, character writing for games, quest design, player agency, world-building for interactive media, and narrative integration with game mechanics. Use when the user asks about game narrative writer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design creative-writing writing"
   category: "game-development"

@@ -18,7 +18,7 @@ trigger_phrases: >-
   too much stuff in my house I want a minimalist home how to declutter room by
   room
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: decluttering home-maintenance cleaning habits step-by-step planning
   category: life-event

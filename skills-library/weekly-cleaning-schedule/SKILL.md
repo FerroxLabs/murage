@@ -10,7 +10,7 @@ description: |
   move-in/move-out cleaning (use move-cleaning), or commercial cleaning schedules.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "cleaning checklist time-management"
   category: "home-household"

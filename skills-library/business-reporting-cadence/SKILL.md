@@ -6,7 +6,7 @@ description: |
   Do NOT use for dashboard design (use bi-dashboard-spec), individual KPI definition (use kpi-definition), or data storytelling for a one-time presentation (use data-storytelling).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "report template planning"
   category: "data-analysis"

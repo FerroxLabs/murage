@@ -2,7 +2,7 @@
 // well-known install dir — or an nvm bin dir — must be findable even
 // when the process itself started with a bare GUI PATH.
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -190,6 +190,36 @@ describe("install-location scan seam", () => {
         join(home, "bin"),
       ]),
     );
+  });
+
+  // Upstream #1824: a CLI installed with mise lives behind its shims, which
+  // only an activated shell puts on PATH.
+  posixIt("scans mise's shims, where mise keeps its data", () => {
+    restrictInstallScanDirsForTests(null);
+    vi.stubEnv("MISE_DATA_DIR", "");
+    vi.stubEnv("XDG_DATA_HOME", "");
+    expect(installScanDirsForTests()).toContain(join(homedir(), ".local", "share", "mise", "shims"));
+    vi.stubEnv("XDG_DATA_HOME", "/xdg/data");
+    expect(installScanDirsForTests()).toContain(join("/xdg/data", "mise", "shims"));
+    vi.stubEnv("MISE_DATA_DIR", "/opt/mise");
+    const dirs = installScanDirsForTests();
+    expect(dirs).toContain(join("/opt/mise", "shims"));
+    expect(dirs).not.toContain(join("/xdg/data", "mise", "shims"));
+    // a relative setting is not a place; the default stands
+    vi.stubEnv("MISE_DATA_DIR", "relative/mise");
+    vi.stubEnv("XDG_DATA_HOME", "relative/xdg");
+    expect(installScanDirsForTests()).toContain(join(homedir(), ".local", "share", "mise", "shims"));
+    expect(installScanDirsForTests().filter((dir) => dir.includes("relative"))).toEqual([]);
+  });
+
+  posixIt("finds a CLI behind mise's shims from a bare GUI PATH", () => {
+    const shims = join(homedir(), ".local", "share", "mise", "shims");
+    mkdirSync(shims, { recursive: true });
+    vi.stubEnv("MISE_DATA_DIR", "");
+    vi.stubEnv("XDG_DATA_HOME", "");
+    vi.stubEnv("PATH", "/usr/bin:/bin");
+    restrictInstallScanDirsForTests(null);
+    expect(augmentedPath().split(delimiter)).toContain(shims);
   });
 
   it.skipIf(process.platform !== "win32")("scans the Windows install locations when unrestricted", () => {
@@ -593,21 +623,71 @@ describe("resolveFuigoCli", () => {
     expect(resolveFuigoCli()).toEqual({ command: own, source: "path" });
   });
 
-  it("prefers an inherited PATH install over a known-directory install and the bundle", () => {
-    bundle();
-    process.env.MURAGE_FUIGO_DIR = bundleDirectory;
+  it("prefers an inherited PATH install over a known-directory install without a bundle", () => {
     const executable = process.platform === "win32" ? "fuigo.exe" : "fuigo";
     const pathDirectory = join(bundleDirectory, "user-path-bin");
     const knownDirectory = join(homedir(), ".fuigo", "bin");
     for (const directory of [pathDirectory, knownDirectory]) {
       mkdirSync(directory, { recursive: true });
       const binary = join(directory, executable);
-      writeFileSync(binary, "fixture engine\n");
+      writeFileSync(binary, "#!/bin/sh\necho fuigo 1.0.22\n");
       chmodSync(binary, 0o755);
     }
     vi.stubEnv("PATH", pathDirectory);
     resetPathCacheForTests();
     expect(resolveFuigoCli()).toEqual({ command: join(pathDirectory, executable), source: "path" });
+  });
+
+  posixIt.each([
+    ["1.0.22", "path", undefined],
+    ["1.0.21", "path", undefined],
+    ["1.0.9", "bundled", "path-older-than-bundled"],
+    ["unknown", "bundled", "path-version-unreadable"],
+  ])("compares PATH version %s with the bundle", (version, source, reason) => {
+    const binary = bundle();
+    writeFileSync(binary, "#!/bin/sh\necho fuigo 1.0.21\n");
+    const own = pathBinary(version);
+    process.env.MURAGE_FUIGO_DIR = bundleDirectory;
+    expect(resolveFuigoCli()).toEqual({ command: source === "path" ? own : binary, source, ...(reason ? { reason } : {}) });
+  });
+
+  function pathBinary(version: string): string {
+    const directory = join(bundleDirectory, "path-bin");
+    mkdirSync(directory, { recursive: true });
+    const binary = join(directory, "fuigo");
+    writeFileSync(binary, `#!/bin/sh\necho probe >> "$0.calls"\necho fuigo ${version}\n`);
+    chmodSync(binary, 0o755);
+    vi.stubEnv("PATH", directory);
+    resetPathCacheForTests();
+    return binary;
+  }
+
+  posixIt.each(["absent", "missing", "not-executable"])("keeps PATH with a %s bundle", (state) => {
+    const own = pathBinary("unknown");
+    if (state !== "absent") process.env.MURAGE_FUIGO_DIR = bundleDirectory;
+    if (state === "not-executable") bundle(0o644);
+    expect(resolveFuigoCli()).toEqual({ command: own, source: "path" });
+    expect(realExistsSync(`${own}.calls`)).toBe(false);
+  });
+
+  posixIt("caches both probes and invalidates changed binary metadata", () => {
+    const binary = bundle();
+    writeFileSync(binary, '#!/bin/sh\necho probe >> "$0.calls"\necho fuigo 1.0.21\n');
+    const own = pathBinary("1.0.22");
+    process.env.MURAGE_FUIGO_DIR = bundleDirectory;
+    resolveFuigoCli();
+    resolveFuigoCli();
+    expect(readFileSync(`${own}.calls`, "utf8")).toBe("probe\n");
+    expect(readFileSync(`${binary}.calls`, "utf8")).toBe("probe\n");
+    const modified = new Date(Date.now() + 2000);
+    utimesSync(own, modified, modified);
+    resolveFuigoCli();
+    expect(readFileSync(`${own}.calls`, "utf8")).toBe("probe\nprobe\n");
+    expect(readFileSync(`${binary}.calls`, "utf8")).toBe("probe\n");
+    writeFileSync(own, readFileSync(own, "utf8") + "# changed size\n");
+    utimesSync(own, modified, modified);
+    resolveFuigoCli();
+    expect(readFileSync(`${own}.calls`, "utf8")).toBe("probe\nprobe\nprobe\n");
   });
 
   it("names the missing declaration rather than silently reporting no engine", () => {

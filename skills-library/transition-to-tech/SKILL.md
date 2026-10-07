@@ -20,7 +20,7 @@ trigger_phrases: >-
   non-technical to tech career become a software developer get into tech without
   a degree career change to technology
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: career study-skills interview-prep step-by-step planning
   category: career

@@ -12,7 +12,7 @@ description: |
   management specifically (use digital-estate-planner for comprehensive digital inventory).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "estate-planning legal-literacy checklist template"
   category: "legal-civic"

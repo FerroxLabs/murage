@@ -12,12 +12,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { Files, downloadSavedArtifact, type FilesBot } from "./Files";
+import { Files, downloadSavedArtifact, openedArtifactScope, type FilesBot } from "./Files";
 import { resetNativeShellForTest } from "@/lib/native-shell";
 import type { Artifact } from "../../shared/artifacts";
 
 const auth = vi.hoisted(() => ({ ensure: vi.fn(), headers: vi.fn(() => ({ "x-murage-surface-secret": "synthetic-proof" })) }));
-vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopSurfaceHeaders: auth.headers }));
+vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopSurfaceHeaders: auth.headers, desktopResourceUrl: (url: unknown) => url }));
 
 const source = readFileSync(fileURLToPath(new URL("./Files.tsx", import.meta.url)), "utf8");
 const bots: FilesBot[] = [
@@ -95,7 +95,7 @@ describe("wiring the browser proof depends on", () => {
 });
 
 // R6 (D4 fix round 1): the artifact download route is desktop-authority-only
-// (server/desktop-policy.ts DESKTOP_AUTHORITY_ROUTES) and answers 404 for
+// (server/route-policy.ts, class desktop) and answers 404 for
 // anything that cannot prove the desktop surface — a phone cannot, so
 // downloadSavedArtifact must never ask native to fetch the route itself.
 describe("downloadSavedArtifact stays on the desktop-proof fetch", () => {
@@ -127,3 +127,43 @@ describe("downloadSavedArtifact stays on the desktop-proof fetch", () => {
     );
   });
 });
+
+// A saved file opened by id (the Inbox's "Open file") belongs to its own bot
+// and conversation, not to whichever one was on screen. Closing its preview
+// showed a list scoped to the visible conversation, so the file just opened
+// was not in it and its "Source conversation" could not be reached
+// (0.1.61 CI, candidate-report-integration).
+describe("a saved file opened by id", () => {
+  const known = [{ id: "report-bot" }, { id: "joined" }];
+  it("browses its own bot and conversation once it loads", () => {
+    const artifact = { botId: "report-bot", threadId: "report-a" } as Artifact;
+    expect(openedArtifactScope(artifact, { botId: "joined", threadId: "sibling-b" }, { bots: known, active: true })).toEqual({ botId: "report-bot", threadId: "report-a" });
+    expect(openedArtifactScope(artifact, { botId: "report-bot", threadId: "report-a" }, { bots: known, active: true })).toBeNull();
+  });
+  // The preview answers after the person has already gone back to Saved
+  // versions or picked another bot: their choice stands.
+  it("leaves the pickers alone once the person has moved on", () => {
+    const artifact = { botId: "report-bot", threadId: "report-a" } as Artifact;
+    expect(openedArtifactScope(artifact, { botId: "joined", threadId: "sibling-b" }, { bots: known, active: false })).toBeNull();
+  });
+  // Saved files outlive their bot. A picker cannot show a bot that is gone,
+  // so the saved list widens to every bot instead, where the file is.
+  it("widens to every bot when the file's bot is gone", () => {
+    const artifact = { botId: "deleted-bot", threadId: "old" } as Artifact;
+    expect(openedArtifactScope(artifact, { botId: "joined", threadId: "sibling-b" }, { bots: known, active: true })).toEqual({ everyBot: true });
+  });
+  // A file opened by id at boot can answer before the bots have loaded; an
+  // empty list does not mean its bot is gone (Kimi, audit of b1f1a611).
+  it("does not call the bot gone before any bots are known", () => {
+    const artifact = { botId: "report-bot", threadId: "report-a" } as Artifact;
+    expect(openedArtifactScope(artifact, { botId: "", threadId: "" }, { bots: [], active: true })).toEqual({ botId: "report-bot", threadId: "report-a" });
+  });
+  it("wires the decision to the person's own moves", () => {
+    // Backing out of the opened file and touching either picker end the flow.
+    expect(source.match(/rescopeOpened\.current = false/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
+    // "All saved files" is the person choosing a scope too.
+    expect(source).toMatch(/onClick=\{\(\) => \{ rescopeOpened\.current = false; setSavedEveryBot\(true\)/);
+    expect(source).toContain("active: rescopeOpened.current");
+  });
+});
+

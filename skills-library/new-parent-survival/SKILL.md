@@ -4,7 +4,7 @@ description: |
   First-year parenting guide covering sleep strategies, feeding options (breast/formula/combo), developmental milestones, partner relationship maintenance, self-care, returning to work, and pediatrician visit preparation for new parents. Use when the user asks about new parent survival or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events parenting planning checklist"
   category: "family-relationships"

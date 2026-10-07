@@ -33,6 +33,8 @@ export const B34_EXTRACTOR_LEDGER = "b34-extractor-calls.jsonl";
 /** Opening words of the product's own system instructions (server/memory/extract.ts:19 and :14). */
 export const B34_EXTRACTION_PREFIX = "Extract only potentially durable factual assertions";
 export const B34_GROUNDING_PREFIX = "Independently judge whether the claim is entailed";
+/** The first words of the bot-learning feedback classifier prompt (memory/feedback.ts CLASSIFIER_SYSTEM). The real product asks it of every owner message that looks like feedback. */
+export const B34_FEEDBACK_PREFIX = "You decide whether an owner's chat message is feedback";
 const ROUTE = "/b34/v1";
 const MAX_REQUEST_BYTES = 262_144;
 /** Ordinary extraction and grounding output cap (extract.ts:27). */
@@ -114,7 +116,7 @@ export function b34ScriptedGrounding(input: unknown): { supported: boolean; rule
 
 export interface B34LedgerEntry {
   at: number; pid: number;
-  family: "install" | "models" | "extract" | "ground" | "refused";
+  family: "install" | "models" | "extract" | "ground" | "feedback" | "refused";
   rules: string[];
   sourceSha256?: string; supported?: boolean; previousClaim?: boolean;
   inputBytes?: number; maxTokens?: number; reason?: string;
@@ -228,6 +230,11 @@ async function handle(request: IncomingMessage, response: ServerResponse, record
     const verdict = b34ScriptedGrounding(input);
     record({ family: "ground", rules: verdict.rule ? [verdict.rule] : [], supported: verdict.supported, previousClaim: verdict.previousClaim, ...sizes });
     return completion(response, JSON.stringify({ supported: verdict.supported }));
+  }
+  if (system.startsWith(B34_FEEDBACK_PREFIX)) {
+    // Scripted: this fixture never grades chat feedback, so the model says "not feedback" and detection falls back to its first stage.
+    record({ family: "feedback", rules: [], ...sizes });
+    return completion(response, JSON.stringify({ isFeedback: false, target: "other", polarity: "-", strength: 1, correction: null, confidence: 1 }));
   }
   return refuse(400, "prompt-family");
 }

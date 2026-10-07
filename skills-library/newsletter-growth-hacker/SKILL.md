@@ -4,7 +4,7 @@ description: |
   Email list building and newsletter growth strategies covering acquisition channels, referral programs, deliverability optimization, monetization models, retention tactics, segmentation, and scaling frameworks with concrete benchmarks and growth formulas. Use when the user asks about newsletter growth hacker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "newsletter marketing seo content-marketing"
   category: "marketing-sales"

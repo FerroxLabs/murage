@@ -6,7 +6,7 @@ description: |
   Do NOT use for wireframing from scratch (use wireframe-specification), responsive breakpoint design (use responsive-layout-design), or typography-specific issues (use typography-system).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design template planning"
   category: "design-creative"

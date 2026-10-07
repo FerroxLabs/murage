@@ -18,6 +18,11 @@ vi.mock("node:module", () => ({ createRequire: () => () => ({ autoUpdater: updat
 vi.mock("./package-install-command.mjs", async (original) => ({
   ...await original(), linuxPackageType: () => null,
 }));
+// These tests exercise window/state ownership on every host. The Linux
+// publisher verifier has its own dependency-free cryptographic fixtures.
+vi.mock("./update-signature.mjs", () => ({
+  createLinuxUpdateVerifier: () => async () => ({ recheck: async () => {} }),
+}));
 
 const emit = (event, payload) => {
   for (const [name, listener] of updater.on.mock.calls) if (name === event) listener(payload);
@@ -147,10 +152,16 @@ it("the actual main createWindow and activate wiring retargets the process updat
     startBrowserSurface: vi.fn(), installWindowStatePersistence: vi.fn(), applyUnreadBadge: vi.fn(),
     app: { isPackaged: true }, serverReady: true, SERVER_PORT: 18888, desktopShutdownStarted: false, desktopRecoveryMode: false,
     backgroundLifecycle: null, loginLaunch: false, background: null,
+    // createWindow now closes the startup splash (4931ea16d); the fixture has none to close.
+    closeStartupSplash: vi.fn(), startupSplash: null, desktopMark: vi.fn(), noteVersionStarted: vi.fn(),
     shell: { openExternal: vi.fn(), openPath: vi.fn() }, LOG_DIR: "/unused-log-dir", pathToFileURL: (value) => new URL(`file://${value}`),
     createMainWindowOpenHandler: () => vi.fn(), createMainNavigationGuard: () => ({ willNavigate: vi.fn(), willRedirect: vi.fn() }),
     trustedRendererOrigin: () => "http://127.0.0.1:18888", rendererOriginArguments: () => [], deliverPackageInstall: vi.fn(),
     console: { warn: vi.fn(), error: vi.fn(), log: vi.fn() },
+    createRendererRecovery: () => ({ onGone: async () => "ignored" }), splashPage: () => "data:,", RECONNECTING_LINE: "Reconnecting",
+    // Module state the lane's startup reveal (pendingRevealWindows, 15 s fallback) reads.
+    pendingSwap: null, replacingMainWindow: false, pendingRevealWindows: new WeakSet(), maximizeOnShow: new WeakSet(), WINDOW_REVEAL_FALLBACK_MS: 15000, setTimeout: () => ({ unref() {} }),
+    serverLifecycleState: { state: "running" }, startupSplash: null, closeStartupSplash: vi.fn(), slog: vi.fn(), showDesktopRecovery: vi.fn(), desktopMark: vi.fn(),
   });
   vm.runInContext(windowFactory.getText(file), context);
   vm.runInContext(updaterFactory.getText(file), context);

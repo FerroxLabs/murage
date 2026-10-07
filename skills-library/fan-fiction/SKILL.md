@@ -6,7 +6,7 @@ description: |
   Do NOT use for original fiction (use short-story-writing), parody or satire of existing works (use satire-writing), or character creation from scratch (use character-development).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing guide"
   category: "writing"

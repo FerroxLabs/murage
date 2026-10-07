@@ -66,9 +66,20 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // announcements.json the announcements seen or dismissed; house-rules.md and
   // house-rules.json the House Rules text and switch; about-me.md what the
   // owner wrote in Settings > About me (about-me.ts).
+  // The key the standalone MCP server presents (mcp-access.ts); made again at
+  // startup if missing, so it is never backed up or restored.
+  // Hashes and scopes of the script-access grants the owner made (mcp-grants.ts).
+  "mcp-grants.json": excluded("Script access grants, switched on again by the owner after a restore; not restored"),
+  "mcp-access.token": excluded("Local tool access key, created again at startup; not restored"),
   "setup.json": ownerFile(), "queued-messages.json": ownerFile(), "whats-new.json": ownerFile(),
   "announcements.json": ownerFile(), "house-rules.md": ownerFile(), "house-rules.json": ownerFile(),
   "about-me.md": ownerFile(),
+  // The random per-install id sent in the connected-apps token mint label
+  // (electron/install-id.mjs). Random, never derived from hardware or a name;
+  // kept across a backup and restore so the installation stays one identity.
+  "install-id.json": { backup: "owner-file", why: "Random per-install id for the connected-apps token label; kept by a backup and restore so the installation stays one identity" },
+  // The sidebar's section order, the same on every device (sidebar-order.ts).
+  "sidebar-order.json": ownerFile(),
   // The approval decision log (decision-log.ts) and its one rotated file.
   // It is the owner's own record of what each bot was allowed or denied,
   // with command lines already passed through redactSecrets. It is no more
@@ -82,6 +93,10 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // Folders of owner work. skill-collection holds the skills the owner
   // imported or wrote in Settings > Skills (skill-collection.ts).
   "attachments": ownerFolder(), "artifact-files": ownerFolder(), "workspaces": ownerFolder(),
+  // events/ also holds events/routine-runs/, the routine run history moved out
+  // of routines.json in 0.1.62 (routine-runs-journal.ts). It sits inside an
+  // owner folder every shipped release knows, so 0.1.61 still backs up after a
+  // downgrade; restore suspends any run that was still pending.
   "skills": ownerFolder(), "skill-state": ownerFolder(), "checkpoints": ownerFolder(), "events": ownerFolder(),
   "skill-collection": ownerFolder(),
   // Reference-pack images, each stored once under its own sha256
@@ -100,13 +115,32 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "startup-background.json": { backup: "retained", why: "Startup preferences retained encrypted only; automatic startup is not restored" },
 
   // Runtime and derived state.
+  "pip-tmp": excluded("Temporary reflection prompts, engine homes and logs; not restored. Durable continuity and reflection state is preserved in messages.db"),
   "messages.pre-memory-v2.db": excluded("Pre-upgrade copy of messages.db kept for manual 0.1.x rollback only; the live messages.db is the backed-up authority"),
-  "native": excluded(RUNTIME), "pending-deletions.json": excluded(RUNTIME), "memory-index": excluded(RUNTIME),
+  "messages.pre-memory-v4.db": excluded("Pre-upgrade memory v3 copy for manual reinstall; messages.db remains authoritative"),
+  "messages.pre-memory-v3.db": excluded("Pre-upgrade copy of messages.db (memory v2) kept for a manual 0.1.60 reinstall only; the live messages.db is the backed-up authority"),
+  "memory-upgrade-status.json": excluded("Start-up note written while the memory upgrade runs (progress, or why it could not run); removed when the upgrade finishes"),
+  "native": excluded(RUNTIME), "decider-log": excluded("Decision-model call log (no message text); regenerates and expires after 180 days"), "pending-deletions.json": excluded(RUNTIME), "memory-index": excluded(RUNTIME),
   "models": excluded(RUNTIME), "logs": excluded(RUNTIME), "tmp": excluded(RUNTIME), "browser-profiles": excluded(RUNTIME),
   "browser-engine": excluded(RUNTIME),
   // Handoff budgets that expire after 24 hours (coordination-budget.ts) and
   // who holds each native browser session (browser-control.ts).
   "coordination-roots.json": excluded(RUNTIME), "browser-control.json": excluded(RUNTIME),
+  // Routine ceilings of queued shared requests (shared-work.ts). A restore
+  // expires every queued request, so there is nothing for these to cap.
+  "shared-routine-authority.json": excluded("Routine ceilings for queued shared requests; a restore expires those requests, so not restored"),
+  // The last complete connected-apps catalog (app-catalog.ts): public app
+  // names, blurbs and logo links, served at first paint and fetched again
+  // when stale. Holds no account and no credential (plan 4.3).
+  "connected-apps-catalog.json": excluded(RUNTIME),
+  // The last few Claude CLI running-cost states per session
+  // (drivers/claude.ts, upstream #1891), so the first turn after a --resume
+  // is booked at its own cost. Losing it only books that turn whole.
+  "claude-cost-history.json": excluded(RUNTIME),
+  // The last known connected-accounts list (connected-inventory.ts): slugs,
+  // account ids, aliases and statuses for one credential. Refetched on the
+  // restored computer, and never shown to another account.
+  "connected-apps-inventory.json": excluded(RUNTIME),
   "skill-index.db": excluded(DERIVED_SKILLS), "skill-index.db-wal": excluded(DERIVED_SKILLS),
   "skill-index.db-shm": excluded(DERIVED_SKILLS), "skill-index.db-journal": excluded(DERIVED_SKILLS),
   // Downloads Murage fetches again on demand: model catalogs, managed engine
@@ -116,6 +150,8 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "provider-catalogs": excluded(DOWNLOADED), "managed-engines": excluded(DOWNLOADED), "team-library": excluded(DOWNLOADED),
   "memory-model": excluded(DOWNLOADED), "tools": excluded(DOWNLOADED), "announcements-cache": excluded(DOWNLOADED),
   "engine-commands.json": excluded(DOWNLOADED),
+  // The engine the last start chose (default-engine.ts): a start-up speed cache that the probe rewrites on every start, so a restore has nothing to bring back.
+  "default-engine.json": excluded(RUNTIME),
 
   // Trust Murage asks for again on a restored computer: the host identity,
   // folders the owner trusted, and the stop line's remembered recipients
@@ -131,6 +167,22 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "credentials.bin": excluded(CREDENTIAL), "companion": excluded(CREDENTIAL), "connection-profiles": excluded(CREDENTIAL),
   "providers": excluded(CREDENTIAL), "flux-hermes-home": excluded(CREDENTIAL), "flux-composio-broker-token.json": excluded(CREDENTIAL),
   "local-models": excluded(CREDENTIAL), "browser-engine-key": excluded(CREDENTIAL), "telegram": excluded(CREDENTIAL),
+  // WhatsApp linked-device session (channels/whatsapp/bridge.ts): the encrypted auth records, the inbound and outbound
+  // journals and the media cache. The records are useless without the key in the desktop credential store, which
+  // does not travel either, so a restored installation relinks (channels/ stays retained: it holds no secret).
+  "whatsapp": excluded(CREDENTIAL),
+  // Murage for Chrome (browser-extension-integration.ts, index.ts): paired
+  // external clients, their generated pairing files and the extension's
+  // shared tabs and site choices. Each belongs to this computer's browser, so
+  // a restored installation re-pairs and re-shares (BROWSER_EXTENSION_FILES).
+  // What a bot learned from prospects and customers (bot-learning.ts
+  // learningLocalPath): stays on this computer, so no backup, restore, bot
+  // package or export carries it. A restored installation starts it empty.
+  "learning-local": excluded("What a bot learned from prospects and customers stays on this computer; not backed up or restored"),
+  "browser-extension": excluded(CREDENTIAL),
+  // Murage for Chrome's runtime folder (browser-extension-paths.ts): the broker socket, its token
+  // file and the launcher config the browser's helper reads. Made again on every start.
+  "bx-run": excluded(CREDENTIAL),
 
   // Written by a restore into the installation it made. Restore refuses these
   // names inside an archive (installation-restore-preparation.ts
@@ -149,6 +201,18 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   ".package-import-transaction": { backup: "refused", why: "Bot import not yet recovered", code: "BACKUP_UNCLASSIFIED_COMPONENT" },
 });
 
+/** What Murage writes inside DATA_DIR/browser-extension, all left out of a
+ * backup with the folder. data-dir-inventory.test.ts fails on a new name. */
+export const BROWSER_EXTENSION_FILES: Readonly<Record<string, string>> = Object.freeze({
+  "clients.json": "Paired external clients and their credential hashes; clients pair again after a restore",
+  "client-configs": "Private pairing files handed to external clients; made again when a client pairs",
+  "state.json": "Shared tabs, site choices and Stop state for the connected browser; shared again after a restore",
+  "approvals.json": "Cards a bot is still waiting on (answerable for 24 hours, restart included): which step, which browser connection, never what it would type; closed after a restore",
+  "sites.json": "The approved sites list for each bot and browser profile (Allow, Ask, Never); chosen again on this computer after a restore",
+  "activity": "What each bot did in the browser, one log per connection (action, site, level, decision, never typed text); kept 30 days on this computer only",
+  "native-host": "The helper launcher and receipt registered with this computer's browsers; registered again with Connect",
+});
+
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 /** Names with a variable part. `example` is a real instance, checked by the test. */
 export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirEntry; example: string }> = Object.freeze([
@@ -159,6 +223,11 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   // (procs.ts brokerSocketPath).
   { pattern: /^(?:\.memory-evolution-|\.package-import-)[A-Za-z0-9]{6}$/, entry: excluded(LEFTOVER), example: ".memory-evolution-a1B2c3" },
   { pattern: /^perm-[\w-]+\.sock$/, entry: excluded(LEFTOVER), example: "perm-a1b2c3.sock" },
+  // A pre-upgrade copy still being written (memory/schema.ts renames it to its
+  // final name only when whole; a killed start leaves this behind and the next
+  // start deletes it), and the status note's own temp file.
+  { pattern: /^messages\.pre-memory-v[234]\.db\.partial(?:-journal|-wal|-shm)?$/, entry: excluded(LEFTOVER), example: "messages.pre-memory-v3.db.partial-journal" },
+  { pattern: /^memory-upgrade-status\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "memory-upgrade-status.json.4242.tmp" },
   // A skill index build stopped before its rename (skill-search.ts).
   { pattern: /^skill-index\.db\.\d+\.[a-z0-9]{1,8}\.tmp(?:-journal|-wal|-shm)?$/, entry: excluded(DERIVED_SKILLS), example: "skill-index.db.1268.ffjn5f.tmp" },
   // writeFileAtomic (atomic.ts) writes `<name>.<pid>.<uuid>.tmp` beside the
@@ -176,6 +245,10 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   { pattern: /^memory-index\.db\.corrupt-\d+$/, entry: excluded("Damaged memory search index set aside and rebuilt from messages.db; not restored"), example: "memory-index.db.corrupt-1790000000000" },
   // An unreadable handoff-budget file set aside at startup (coordination-budget.ts).
   { pattern: /^coordination-roots\.json\.invalid-\d+$/, entry: excluded("Unreadable handoff-budget file set aside; not restored"), example: "coordination-roots.json.invalid-1790000000000" },
+  // A consistent copy of messages.db taken before the boot-time project-row
+  // prune (project-migration.ts). Kept for a manual rollback only; the live
+  // messages.db is the backed-up authority.
+  { pattern: /^project-rows-before-prune-\w+\.db$/, entry: excluded("Copy of messages.db taken before the start-up project-row prune; kept for manual rollback only, not restored"), example: "project-rows-before-prune-1790000000000.db" },
 ]);
 
 /** What a backup does with this top-level data-folder name; undefined when unknown. */

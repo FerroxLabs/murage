@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEV_SECRET_PATH,
   LIVE_EVENTS_STALE_MS,
+  desktopResourceUrl,
   desktopSurfaceHeaders,
   desktopSurfaceSecret,
   desktopSurfaceSecretNeedsRetry,
@@ -654,5 +655,24 @@ describe("the phone app coming back to the front", () => {
     fixture.setOnline(false);
     resume!();
     expect(fixture.sources).toHaveLength(1);
+  });
+});
+
+describe("desktopResourceUrl", () => {
+  afterEach(() => setDesktopSurfaceSecretForTest(""));
+
+  it("puts the surface mark and secret in the query of a local /api url", () => {
+    setDesktopSurfaceSecretForTest("s3cret");
+    expect(desktopResourceUrl("/api/attachments/a.png")).toBe("/api/attachments/a.png?surface=desktop&surfaceSecret=s3cret");
+    expect(desktopResourceUrl("/api/attachments/a.png?w=480")).toBe("/api/attachments/a.png?w=480&surface=desktop&surfaceSecret=s3cret");
+  });
+
+  it("leaves other urls and a renderer with no secret (a phone) alone", () => {
+    setDesktopSurfaceSecretForTest("s3cret");
+    expect(desktopResourceUrl("https://example.com/a.png")).toBe("https://example.com/a.png");
+    expect(desktopResourceUrl("data:image/png;base64,AAAA")).toBe("data:image/png;base64,AAAA");
+    expect(desktopResourceUrl(undefined)).toBeUndefined();
+    setDesktopSurfaceSecretForTest("");
+    expect(desktopResourceUrl("/api/attachments/a.png")).toBe("/api/attachments/a.png");
   });
 });

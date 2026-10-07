@@ -1,7 +1,9 @@
 ---
 name: multi-symbol-scan
 description: Scan multiple symbols for setups, patterns, or strategy performance. Use when comparing across instruments or screening for opportunities.
-license: MIT
+license: Apache-2.0
+metadata:
+  author: Ferrox Labs
 ---
 
 # Multi-Symbol Scanner

@@ -1,13 +1,12 @@
 ---
 name: sales-contacts
 description: "Map the buying committee at a target company from public sources only, classify each person by buying role (economic buyer, champion, technical evaluator, end user, blocker, coach), find a genuine personalisation anchor per contact with no invented mutual connections, and propose a multi-threading sequence. Use when a deal is single-threaded and needs more of the account involved. Do NOT use for scoring whether the opportunity is real (use sales-qualify), for the full account workup (use sales-prospect) or for handling pushback once conversations start (use sales-objection-handling)."
-license: MIT
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sales contacts buying-committee multi-threading smb"
   category: "sales"
-  attribution: "Wayland Business Suite (Original)"
 ---
 
 > **Templates and analytical tools only - not legal, marketing-compliance, or data-protection advice.** Contact mapping touches LinkedIn ToS §8.2 (no scraping), GDPR Art. 14 (indirect-collection notice for EU/UK persons), CCPA/CPRA (CA persons), and CAN-SPAM / CASL / UWG §7 / ePrivacy on any downstream outreach. Never fabricate mutual connections, impersonate referrals, or claim shared experience that is not factually verifiable.

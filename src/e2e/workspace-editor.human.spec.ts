@@ -176,7 +176,9 @@ async function openApp(page: Page, { width = 1440 } = {}) {
 }
 async function selectBot(page: Page, who: Bot) {
   const sidebar = await openSidebar(page);
-  await sidebar.getByRole("button", { name: new RegExp(`^${who.name}`) }).first().click();
+  // The row's name is its own hit target (sidebar hit areas): a person clicks
+  // the name, which selects the row.
+  await sidebar.getByText(who.name, { exact: true }).first().click();
   return sidebar;
 }
 const pane = (page: Page) => page.getByTestId("workspace-pane");
@@ -405,17 +407,16 @@ test("after a restart the cards, the saved versions and the working file's curre
   await expect(retained).not.toContainText("Reviewed by the owner");
   await expect(first.getByRole("button", { name: "Preview", exact: true })).toHaveCount(0);
   await first.screenshot({ path: testInfo.outputPath("after-restart-card-retained.png") });
+  // With a bot selected the folder chip opens Files in the workspace pane
+  // beside the chat (Sidebar.tsx murage:open-files), not a separate dialog.
   await page.locator('[data-header-labelled="folder"]').click();
-  const files = page.getByRole("dialog", { name: "Files", exact: true });
-  await expect(files).toBeVisible();
+  await expect(pane(page)).toBeVisible();
+  await expect(pane(page).getByRole("tab", { name: "Files", exact: true })).toHaveAttribute("aria-selected", "true");
 
   // Reopening the working file from Files shows the current revision, and a
   // further edit saves against it without a conflict.
-  const workspaceHalf = files.locator('[data-testid="files-workspace"]');
-  await workspaceHalf.getByRole("button", { name: "Open folder outputs", exact: true }).click();
-  await workspaceHalf.locator(`[data-workspace-path="${RELATIVE_PATH}"]`).getByRole("button", { name: "Edit weekly-report.md beside the chat" }).click();
-  await expect(files).toBeHidden();
-  await expect(pane(page)).toBeVisible();
+  await pane(page).getByRole("button", { name: "Open folder outputs", exact: true }).click();
+  await pane(page).locator(`[data-workspace-path="${RELATIVE_PATH}"]`).getByRole("button", { name: "Edit weekly-report.md", exact: true }).click();
   await expect(page.getByTestId("workspace-document")).toHaveAttribute("data-mode", "edit");
   await page.getByRole("button", { name: "Source", exact: true }).click();
   await expect(sourceBox(page)).toHaveValue(MINE_2);

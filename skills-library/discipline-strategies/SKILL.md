@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical behavioral assessment, diagnosing behavioral disorders, or replacing guidance from a child psychologist.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "parenting planning guide"
   category: "family-relationships"

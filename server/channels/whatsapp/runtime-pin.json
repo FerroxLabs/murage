@@ -1,0 +1,32 @@
+{
+  "contract": "murage-whatsapp-runtime-pin/1.0",
+  "note": "Integrity values are the pnpm-lock.yaml resolution hashes. Bump deliberately: baileys must stay at or past 7.0.0-rc12 (CVE-2026-48063). The bridge bundle is pinned by build record: scripts/stage-whatsapp-runtime.mjs writes its sha256 into dist-server/whatsapp-runtime-manifest.json and runtime-pin.test.ts recomputes it from the staged file.",
+  "packages": {
+    "baileys": {
+      "version": "7.0.0-rc14",
+      "integrity": "sha512-pewtrljhWx5JTUBvvkXZz1fL3JPiwzjBsnhx/DWf2LWBx1cZNH7J/sF22xDehba5mySWUQU4a1Pwt7lWARUxaA=="
+    },
+    "jimp": {
+      "version": "1.6.1",
+      "integrity": "sha512-hNQh6rZtWfSVWSNVmvq87N5BPJsNH7k7I7qyrXf9DOma9xATQk3fsyHazCQe51nCjdkoWdTmh0vD7bjVSLoxxw=="
+    },
+    "libsignal": {
+      "version": "6.0.0",
+      "integrity": "sha512-d/5V3YFtDljbFMufz4ncyUYGYhJl+vzAe+c2EFFBQ6bz1h8Q3IOMEGXYMzlibU60I+e8GagMMpji18iez3P1hA=="
+    },
+    "whatsapp-rust-bridge": {
+      "version": "0.5.4",
+      "integrity": "sha512-yYO1qSs0Fe7tGtnxOFHomocUD6IZtoAgmA4oDFyGIRZ67D3QZk3w7swA6XXFXNQngiyrg2k7tul6IrM3eUFh7A=="
+    }
+  },
+  "bridge": {
+    "entry": "server/channels/whatsapp/bridge.ts",
+    "output": "channels/whatsapp/bridge.js",
+    "format": "esm",
+    "external": [
+      "baileys",
+      "jimp"
+    ],
+    "maxBytes": 1500000
+  }
+}

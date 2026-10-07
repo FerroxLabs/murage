@@ -9,7 +9,7 @@ of Linux desktop on your own server instead of this machine, see [byo-vps.md](by
 - The native Electron window and embedded Murage server on GNOME Xorg and GNOME Wayland.
 - Local Claude, Codex, Grok, Gemini, and other configured agent CLIs.
 - Chat, streaming turns, approvals, bot-to-bot communication, and local data storage.
-- Composio connected apps and Box cloud computers.
+- Connected apps and Box cloud computers.
 - External documentation and OAuth links in the default browser.
 - An explicit, view-only local screen preview on GNOME Xorg and GNOME Wayland. The Wayland path uses the
   native portal chooser and keeps the selected PipeWire stream open until the user stops sharing.
@@ -34,10 +34,21 @@ Choose one Ubuntu 24.04 x86_64 package from the latest release:
 
 - [Debian package (`Murage-amd64.deb`)](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage-amd64.deb): recommended; APT installs its desktop dependencies.
 - [Portable AppImage (`Murage.AppImage`)](https://github.com/FerroxLabs/murage-releases/releases/latest/download/Murage.AppImage): does not install system files.
-- [SHA-256 checksums](https://github.com/FerroxLabs/murage-releases/releases/latest/download/SHA256SUMS-ubuntu-x64.txt)
+- [SHA-256 checksums](https://github.com/FerroxLabs/murage-releases/releases/latest/download/SHA256SUMS-ubuntu-x64.txt), with a detached GPG signature (`SHA256SUMS-ubuntu-x64.txt.asc`) once the release key is set up: `gpg --verify SHA256SUMS-ubuntu-x64.txt.asc SHA256SUMS-ubuntu-x64.txt`.
 
 Versioned packages and previous releases remain available on the
 [releases page](https://github.com/FerroxLabs/murage-releases/releases).
+
+## Saving keys needs a keyring
+
+Murage keeps the keys you type into it (model providers, voice, chat apps) in
+your system keyring. On Linux, when no keyring is unlocked, the desktop toolkit
+falls back to "basic text", which only hides a key and does not protect it.
+Murage will not save a key that way. It tells you so and leaves the feature that
+needs the key off. To fix it, install and unlock a keyring such as
+`gnome-keyring` or KWallet (it normally unlocks when you sign in), restart
+Murage and enter the key again. If you want keys kept as plain text on this
+computer anyway, start Murage with `MURAGE_ALLOW_PLAINTEXT_SECRETS=1`.
 
 ## Build packages
 
@@ -213,7 +224,7 @@ The verifier checks `.deb` metadata, desktop identity, the exact dormant Cua res
 SquashFS/DEB directory modes, runtime path policy, and matching binary hashes across all artifacts. The local smoke
 launches the unpacked app and AppImage without `--no-sandbox`; CI first reproduces a `0.1.7` in-place DEB upgrade and
 then runs the same smoke against `/opt/Murage/murage`. These lanes prove the embedded server and UI are
-usable while an optional Composio broker stalls, verify that an old local-control opt-in is cleared, and assert that
+usable while an optional connected-apps broker stalls, verify that an old local-control opt-in is cleared, and assert that
 no Cua executable starts on Xorg or simulated Wayland. Low-level runtime tests retain the future private-daemon
 contract without activating it in a packaged app. Only a real-seat acceptance matrix can authorize re-enablement.
 

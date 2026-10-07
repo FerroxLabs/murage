@@ -6,7 +6,7 @@ description: |
   Do NOT use for simple task capture only (use task-capture-system), daily planning (use daily-planning), or team project management (use business project-management skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management planning automation"
   category: "productivity"

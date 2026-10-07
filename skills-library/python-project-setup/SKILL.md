@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Python language features or syntax (use `python-idioms`), Python testing setup (use `python-testing-patterns`), Python async programming (use `python-async-patterns`), or Python data modeling with Pydantic (use `python-data-modeling`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "python best-practices template"
   category: "software-engineering"

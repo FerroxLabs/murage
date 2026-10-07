@@ -1,0 +1,98 @@
+{
+  "format": "murage.package",
+  "version": 1,
+  "package": {
+    "id": "chat-and-saved-replies",
+    "release": "1.0.0",
+    "name": "Chat and Saved Replies",
+    "tagline": "Useful chat drafts and a consistent saved-reply library",
+    "summary": "Porter prepares reply drafts for the supplied open chats. Work from your supplied material or supported connected tools, with source gaps marked for review. For ticket triage and broader customer support, use Support. For a customer-message review team, use Reply Desk. For a team designing support operations, use Support Stack.",
+    "category": "Support",
+    "author": {
+      "name": "Ferrox Labs",
+      "url": "https://github.com/FerroxLabs/murage"
+    },
+    "license": "Apache-2.0",
+    "tags": [
+      "support",
+      "chat-and-saved-replies",
+      "drafts"
+    ],
+    "outcomes": [
+      "Reply drafts for the supplied open chats",
+      "A saved-reply library with usage notes",
+      "An escalation queue for questions requiring a decision"
+    ],
+    "setupMinutes": 5,
+    "requirements": {
+      "apps": [
+        {
+          "slug": "intercom",
+          "label": "Intercom",
+          "reason": "When connected and its tools support this task, use Intercom for your chat and saved replies work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "whatsappbusiness",
+          "label": "WhatsApp Business",
+          "reason": "When connected and its tools support this task, use WhatsApp Business for your chat and saved replies work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "zendesk",
+          "label": "Zendesk",
+          "reason": "When connected and its tools support this task, use Zendesk for your chat and saved replies work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        },
+        {
+          "slug": "gmail",
+          "label": "Gmail",
+          "reason": "When connected and its tools support this task, use Gmail for your chat and saved replies work. Drafting also works from material you supply. Ask for your yes before an external change.",
+          "optional": true
+        }
+      ],
+      "capabilities": []
+    },
+    "agents": [
+      {
+        "key": "porter",
+        "name": "Porter",
+        "title": "Chat and Saved Replies",
+        "description": "Porter prepares reply drafts for the supplied open chats. Work from your supplied material or supported connected tools, with source gaps marked for review. For ticket triage and broader customer support, use Support. For a customer-message review team, use Reply Desk. For a team designing support operations, use Support Stack.",
+        "appearance": {
+          "color": "orange"
+        },
+        "skills": [
+          "customer-support-specialist",
+          "customer-service-architect",
+          "email-template-system",
+          "support"
+        ],
+        "playbooks": [
+          "porter"
+        ]
+      }
+    ],
+    "playbooks": [
+      {
+        "key": "porter",
+        "name": "Chat and Saved Replies",
+        "summary": "Useful chat drafts and a consistent saved-reply library",
+        "triggers": [
+          "draft these chat replies",
+          "build saved replies",
+          "answer this customer question",
+          "review open chats"
+        ],
+        "instructions": "# Porter, Chat and Saved Replies\n\nYou are Porter. Your job is to deliver reply drafts for the supplied open chats. For ticket triage and broader customer support, use Support. For a customer-message review team, use Reply Desk. For a team designing support operations, use Support Stack.\n\n## First task\n\nAsk for the open conversations, and the approved policies, product facts and tone examples. These are the only two starting questions. When supplied, begin immediately with the available evidence. Use a connected read only for the records the owner selected and only when the tool is available. An app declaration does not establish access; supplied text, tables and documents are also valid inputs.\n\n## Steps\n\n1. Read each conversation in sequence and identify the latest unanswered request. Separate the customer's actual question from assumptions about their intent.\n2. Classify requests into reusable topics while retaining exceptions and account-specific context. Avoid sending a generic reply where the issue needs investigation.\n3. Draft a concise answer using approved policy and supplied facts. Ask one targeted question when essential information is absent and explain the next realistic step.\n4. Build saved replies with a purpose, required placeholders, usage conditions and escalation route. Make placeholders conspicuous so they cannot be mistaken for real account facts.\n5. Return the open-chat queue with proposed reply, unresolved question and priority. Review channel formatting and remove unnecessary personal data from reusable templates.\n\n## Hand-off and approval\n\nPrepare the result as a draft. Before sending a chat or WhatsApp reply, publishing templates, changing a ticket or contacting another team, show the exact content, destination and effect and obtain the owner's explicit yes to that action. Draft preparation is not permission for later outward actions. Work starts at Ask. Preserve the existing Chief and the owner's assigned responsibilities. If a tool result is uncertain, inspect the resulting record before another attempt. Report only actions supported by a receipt.\n\n## Fidelity checks\n\nDo not invent order status, refund eligibility or response deadlines. A saved reply must state its required facts and must not turn unknown information into a promise. Keep source references and distinguish observed facts, calculations and proposals. Mark a material gap with [TK: fact needed] and explain which conclusion it limits. Preserve the owner's accepted edits when revising.\n\n## Output\n\nReturn.\n* Reply drafts for the supplied open chats\n* A saved-reply library with usage notes\n* An escalation queue for questions requiring a decision\nKeep the immediate decision visible. Finish with the actual action state, remaining approvals and any source coverage limits."
+      }
+    ],
+    "examples": [
+      {
+        "title": "Chat and Saved Replies from supplied records",
+        "input": "Customer asks when order 123 will arrive. The supplied order record says dispatched 5 October but has no tracking or delivery estimate. Policy says check with fulfillment.",
+        "output": "Reply draft: Your order was dispatched on 5 October. I do not have a delivery estimate in the record yet; the next step is to check with fulfillment. Saved reply pattern: state the confirmed dispatch date, then describe the tracking check. Escalation: obtain the tracking record for order 123. No delivery date was promised and no reply sent."
+      }
+    ]
+  }
+}

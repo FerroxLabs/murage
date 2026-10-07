@@ -19,6 +19,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   INSECURE_NOTE,
+  MIN_CLIP_BYTES,
+  MIN_HOLD_MS,
+  TOO_SHORT_NOTE,
+  isAppleWebKit,
   browserPushToTalkFacts,
   deliverClip,
   CLIP_TIMEOUT_MS,
@@ -144,12 +148,88 @@ describe("the container, which no phone gets to guess about", () => {
     expect(chromiumAndWebkit("audio/ogg;codecs=opus")).toBe(false);
   });
 
+  it("records audio/mp4 (AAC) on Apple WebKit, even though it can also make webm", () => {
+    // The iPhone case: both are offered, and the native AAC recording is the
+    // one the speech service reads reliably.
+    const webkit = (type: string) => type === "audio/webm;codecs=opus" || type === "audio/webm" || type === "audio/mp4";
+    expect(pickMimeType(webkit, { appleWebKit: true })).toBe("audio/mp4");
+    expect(pickMimeType(webkit)).toBe("audio/webm;codecs=opus");
+    // and when Apple WebKit offers no mp4 it still records what it can
+    expect(pickMimeType((type) => type === "audio/webm", { appleWebKit: true })).toBe("audio/webm");
+  });
+
+  it("recognises iPhone, iPad and desktop Safari but not Chromium or Electron", () => {
+    expect(isAppleWebKit("Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148")).toBe(true);
+    expect(isAppleWebKit("Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/130 Mobile/15E148")).toBe(true);
+    expect(isAppleWebKit("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15")).toBe(true);
+    expect(isAppleWebKit("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0 Safari/537.36")).toBe(false);
+    expect(isAppleWebKit("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Murage/1.0 Chrome/143.0 Electron/38 Safari/537.36")).toBe(false);
+    expect(isAppleWebKit("Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0 Mobile Safari/537.36")).toBe(false);
+  });
+
   it("falls back to mp4 for a WebKit older than its webm recorder", () => {
     expect(pickMimeType((type) => type === "audio/mp4")).toBe("audio/mp4");
   });
 
   it("returns null rather than inventing a container the browser cannot make", () => {
     expect(pickMimeType(() => false)).toBeNull();
+  });
+});
+
+describe("a recording too short to hear", () => {
+  const send = (clipBytes: number, heldMs?: number) => {
+    const transcribe = vi.fn(async () => ({ text: "ship it" }));
+    const onNote = vi.fn();
+    const onTranscript = vi.fn();
+    const setPhase = vi.fn();
+    return deliverClip(new Blob([new Uint8Array(clipBytes)], { type: "audio/mp4" }), {
+      transcribe, onTranscript, onNote, mounted: () => true, setPhase, heldMs,
+    }).then(() => ({ transcribe, onNote, onTranscript, setPhase }));
+  };
+
+  it("never uploads a header-only clip, and says what to do", async () => {
+    const r = await send(300, 2_000);
+    expect(r.transcribe).not.toHaveBeenCalled();
+    expect(r.onNote).toHaveBeenCalledWith(TOO_SHORT_NOTE);
+    expect(r.onTranscript).not.toHaveBeenCalled();
+    expect(r.setPhase).toHaveBeenCalledWith("idle");
+  });
+
+  it("never uploads a tap, however many bytes the recorder produced", async () => {
+    const r = await send(MIN_CLIP_BYTES * 4, MIN_HOLD_MS - 1);
+    expect(r.transcribe).not.toHaveBeenCalled();
+    expect(r.onNote).toHaveBeenCalledWith(TOO_SHORT_NOTE);
+  });
+
+  it("says the same sentence for an empty recording", async () => {
+    const r = await send(0, 2_000);
+    expect(r.transcribe).not.toHaveBeenCalled();
+    expect(r.onNote).toHaveBeenCalledWith(TOO_SHORT_NOTE);
+  });
+
+  it("uploads a held clip of real size (positive control)", async () => {
+    const r = await send(MIN_CLIP_BYTES, MIN_HOLD_MS);
+    expect(r.transcribe).toHaveBeenCalledTimes(1);
+    expect(r.onTranscript).toHaveBeenCalledWith("ship it");
+  });
+
+  it("has no em dash, and none of the banned words, in its sentence", () => {
+    expect(TOO_SHORT_NOTE).toBe("That was too short to hear. Hold the button and try again.");
+    expect(TOO_SHORT_NOTE).not.toMatch(/\u2014|\bsaf(e|ety)/i);
+  });
+});
+
+describe("a format refusal a person can act on", () => {
+  it("maps the format and too_short reasons to plain sentences, never the upstream words", () => {
+    const raw = "unsupported or unrecognized audio format";
+    const format = noteForReason("format", raw);
+    expect(format).not.toContain("unrecognized");
+    expect(format).toBe("That recording couldn’t be read. Hold the button a little longer and try again.");
+    expect(noteForReason("too_short", "x")).toBe(TOO_SHORT_NOTE);
+  });
+
+  it("even a message with no reason is not shown when it is an audio format complaint", () => {
+    expect(noteForReason(undefined, "unsupported or unrecognized audio format")).not.toContain("unrecognized");
   });
 });
 
@@ -241,7 +321,7 @@ describe("the idle control", () => {
 });
 
 describe("a recorded clip is never silently discarded", () => {
-  const clip = () => new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
+  const clip = () => new Blob([new Uint8Array(MIN_CLIP_BYTES)], { type: "audio/webm" });
 
   it("delivers the transcript even when the button unmounted mid-transcription", async () => {
     // THE H3 SHAPE. The person holds the button, releases, and while the clip
@@ -382,5 +462,31 @@ describe("where the composer mounts this", () => {
     // run. It must append, and it must not eat the draft.
     expect(mount).toContain("text.trimEnd()");
     expect(mount).not.toContain("text.trim() ?");
+  });
+});
+
+describe("dictation clean-up on the batch path", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const clip = () => new Blob([new Uint8Array(MIN_CLIP_BYTES)], { type: "audio/webm" });
+
+  it("asks for clean-up, with the target, only when told to", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      urls.push(url);
+      return new Response(JSON.stringify({ text: "Clean.", raw: "um clean", cleaned: true }), { status: 200 });
+    });
+    expect(await postClip(clip(), 1000, undefined, { botId: "bot_1", groupId: "g 1" })).toEqual({ text: "Clean.", raw: "um clean" });
+    expect(urls[0]).toBe("/api/voice/transcribe?cleanup=1&botId=bot_1&groupId=g%201");
+    await postClip(clip(), 1000);
+    expect(urls[1]).toBe("/api/voice/transcribe");
+  });
+
+  it("hands the spoken words to the composer for undo only when clean-up changed them", async () => {
+    const seen: Array<[string, string | undefined]> = [];
+    const base = { onTranscript: (text: string, raw?: string) => void seen.push([text, raw]), mounted: () => true, setPhase: () => {} };
+    await deliverClip(clip(), { ...base, transcribe: async () => ({ text: "Clean.", raw: "um clean" }) });
+    await deliverClip(clip(), { ...base, transcribe: async () => ({ text: "Same." }) });
+    expect(seen).toEqual([["Clean.", "um clean"], ["Same.", undefined]]);
   });
 });

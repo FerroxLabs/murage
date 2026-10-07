@@ -1,0 +1,1 @@
+npx -y mcp-remote https://cloud.comfy.org/mcp

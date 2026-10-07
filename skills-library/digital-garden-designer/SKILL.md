@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of digital garden designer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management journaling template guide javascript typescript analysis performing-arts"
   category: "productivity"

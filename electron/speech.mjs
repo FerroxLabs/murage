@@ -23,6 +23,7 @@ import {
   speechHelperBinary,
   speechHelperBundle,
 } from "./build-speech-helper.mjs";
+import { sessionTraceLine, writeCallTrace } from "./call-trace.mjs";
 import { createHelperExit, stopOwnedHelper } from "./helper-stop.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -40,6 +41,19 @@ const BIN = app.isPackaged
 // The one owned recognizer session. It stays set while a requested stop is
 // pending and is cleared only when the helper's exit is observed (B5).
 let child = null;
+const ruleWords = (t) => t.toLowerCase().split(/\s+/).map((w) => w.replace(/[.,?!]+$/, "")).filter(Boolean);
+
+/** THE shared segment rule (also speech-helper.swift `restates` and
+ *  call-turns.ts `restates`): `text` restates `kept` when it is the same
+ *  words, or those words followed by more. Whole words, ignoring case and
+ *  trailing punctuation. */
+export function restates(kept, text) {
+  const k = ruleWords(kept);
+  if (!k.length) return false;
+  const t = ruleWords(text);
+  return t.length >= k.length && k.every((w, i) => w === t[i]);
+}
+
 export function speechActive() { return child !== null; }
 // Bumped by every Start and every explicit Stop, so a Start that had to wait
 // for an earlier helper cannot launch after a newer Start or Stop.
@@ -55,6 +69,22 @@ function ensureBuilt() {
 
 function sendEnd(win, info) {
   if (!win.isDestroyed()) win.webContents.send("speech:end", info);
+}
+
+const ENDPOINT_LONG_DEFAULT_MS = 2_800;
+
+/** The helper's endpoint flags. The base window clamps to 250-5000 ms; the
+ *  long one (used when the last word sounds unfinished, decided inside the
+ *  helper) to 250-8000 ms and never below the base. No `endpointMs` means
+ *  composer dictation, which keeps listening until stopped. */
+export function speechArgs(options) {
+  const requested = Number(options?.endpointMs);
+  if (!(Number.isFinite(requested) && requested > 0)) return [];
+  const endpointMs = Math.min(5_000, Math.max(250, Math.round(requested)));
+  const longRequested = Number(options?.endpointLongMs);
+  const wanted = Number.isFinite(longRequested) && longRequested > 0 ? Math.round(longRequested) : ENDPOINT_LONG_DEFAULT_MS;
+  const endpointLongMs = Math.max(endpointMs, Math.min(8_000, Math.max(250, wanted)));
+  return ["--endpoint-ms", String(endpointMs), "--endpoint-long-ms", String(endpointLongMs)];
 }
 
 /**
@@ -79,11 +109,7 @@ export async function startSpeech(win, options = {}) {
     sendEnd(win, { code: 2, reason: "unsupported-platform" });
     return;
   }
-  const requested = Number(options?.endpointMs);
-  const endpointMs = Number.isFinite(requested) && requested > 0
-    ? Math.min(5_000, Math.max(250, Math.round(requested)))
-    : 0;
-  const args = endpointMs ? ["--endpoint-ms", String(endpointMs)] : [];
+  const args = speechArgs(options);
   // Call mode feeds the helper the renderer's echo-cancelled microphone
   // instead of letting it open the mic (see speech-helper.swift, --pcm-file).
   const fed = options?.fed === true;
@@ -179,6 +205,15 @@ export function launchSpeechSession(win, args = [], { fed = false } = {}) {
   let offset = 0;
   let reportedError = null;
   let completed = false;
+  // The last non-empty transcript of this session. Apple can reset the
+  // transcript to "" after a pause, or end with an empty final or an error;
+  // words already shown must still reach the call as the final.
+  let lastText = "";
+  // Words before an Apple recognizer reset, and the segment since it.
+  let committed = "";
+  let segment = "";
+  let recoveredFinal = false;
+  const stats = { partials: 0, emptyPartials: 0, lastPartialChars: 0, finalChars: null, longEndpoint: false };
 
   const drain = () => {
     let content;
@@ -196,7 +231,37 @@ export function launchSpeechSession(win, args = [], { fed = false } = {}) {
       buf = buf.slice(nl + 1);
       if (!line) continue;
       try {
-        const parsed = JSON.parse(line);
+        let parsed = JSON.parse(line);
+        if (typeof parsed.text === "string") {
+          const raw = parsed.text.trim();
+          if (raw) {
+            // Apple can reset its transcript to "" and start over mid-sentence:
+            // the words before the reset stay in front of the new ones. A
+            // helper that merges its own segments already starts with them.
+            const merged = committed && !restates(committed, parsed.text) ? `${committed} ${parsed.text}` : parsed.text;
+            if (merged !== parsed.text) parsed = { ...parsed, text: merged };
+            segment = raw;
+          }
+          if (parsed.partial === false) {
+            if (!raw && lastText) {
+              parsed = { ...parsed, text: lastText, recovered: true };
+              recoveredFinal = true;
+            }
+            stats.finalChars = parsed.text.length;
+            if (parsed.longEndpoint === true) stats.longEndpoint = true;
+          } else if (!raw) {
+            stats.partials += 1;
+            stats.emptyPartials += 1;
+            if (segment) {
+              committed = lastText;
+              segment = "";
+            }
+          } else {
+            stats.partials += 1;
+            stats.lastPartialChars = parsed.text.length;
+          }
+          if (raw) lastText = parsed.text;
+        }
         if (typeof parsed.error === "string") reportedError = parsed.error;
         if (parsed.partial === false && typeof parsed.text === "string") completed = true;
         // A stopping or replaced helper can flush one last chunk. Never leak
@@ -218,16 +283,39 @@ export function launchSpeechSession(win, args = [], { fed = false } = {}) {
     unwatchFile(outputPath, drain);
     rmSync(sessionDir, { recursive: true, force: true });
   };
-  proc.on("close", (code) => {
+  proc.on("close", (exitCode) => {
+    let code = exitCode;
     drain();
     cleanup();
     speechSession.exit.markExited();
+    // A stopped session still leaves its summary (counts only), so a turn
+    // lost to a hush or a mute shows in call-trace.log.
+    if (speechSession.stopRequested) {
+      writeCallTrace(sessionTraceLine({ ...stats, recovered: recoveredFinal, code, reason: "stopped" }));
+    }
     if (child !== speechSession) return;
     child = null;
     // A requested stop is intentional. Suppressing its close event is
     // essential in call mode: TTS muting must not look like the natural end
     // of a spoken turn.
     if (speechSession.stopRequested) return;
+    // The session ended (error, crash) with words shown and no final:
+    // deliver them as the final rather than losing the turn.
+    if (!completed && lastText && !win.isDestroyed()) {
+      win.webContents.send("speech:transcript", {
+        partial: false,
+        text: lastText,
+        recovered: true,
+        ...(stats.longEndpoint ? { longEndpoint: true } : {}),
+      });
+      recoveredFinal = true;
+      completed = true;
+      stats.finalChars = lastText.length;
+      code = 0;
+      reportedError = null;
+    }
+    const traceReason = reportedError ?? (completed && code === 0 ? "completed" : "helper-exited");
+    writeCallTrace(sessionTraceLine({ ...stats, recovered: recoveredFinal, code, reason: traceReason }));
     if (reportedError) {
       sendEnd(win, { code: 1, reason: reportedError });
     } else if (completed && code === 0) {

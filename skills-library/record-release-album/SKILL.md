@@ -19,7 +19,7 @@ trigger_phrases: >-
   distribute music make an album from scratch release music on Spotify
   independent album release
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: performing-arts step-by-step planning
   category: creative-project

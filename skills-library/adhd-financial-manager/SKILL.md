@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of adhd financial manager or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness mental-wellness budgeting breathing habits stress-management checklist step-by-step"
   category: "health-wellness"

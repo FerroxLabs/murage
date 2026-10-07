@@ -18,6 +18,7 @@ import {
 } from "./package-install-command.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
+import { createLinuxUpdateVerifier } from "./update-signature.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -86,6 +87,7 @@ function setState(patch) {
     delete state.message;
   }
   if (patch.status && patch.status !== "error" && patch.message === undefined) delete state.message;
+  if (patch.status && patch.action === undefined) delete state.action;
   try {
     win?.webContents?.send("update:state", publicState());
   } catch {
@@ -157,6 +159,7 @@ export function startUpdater({ beforeInstall = null, scheduleChecks = true } = {
     nativeUpdater: autoUpdater.autoInstallOnAppQuit ? autoUpdater.nativeUpdater : null,
     handOffInstall: handOff ? handOffDownloadedPackage(packageType) : null,
     beforeInstall,
+    ...(process.platform === "linux" ? { verifyDownload: createLinuxUpdateVerifier({ currentVersion: runningVersion(), packageType: packageType ?? "AppImage" }) } : {}),
   });
 
   // first check ~15s after launch (let the app settle), then hourly — both

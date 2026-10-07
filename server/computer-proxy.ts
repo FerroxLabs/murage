@@ -38,16 +38,6 @@ import {
 } from "./computer-observation.ts";
 import { boxExecOptionsFromEnv, cleanupBoxJob, runBoxExec, type BoxExecDeps } from "./box-exec.ts";
 import { CONTROL_REFUSAL, createControlClient } from "./control-client.ts";
-import { TOOL_CALL_STYLE_ENV, TOOL_SERVER_NAME_ENV, murageToolText, parseToolCallStyle } from "../shared/murage-tool-names.ts";
-
-// This server's own sentences name its tools the way the turn's engine calls
-// them: the driver that mounted it says how (unset is the bare name).
-const toolStyle = () => parseToolCallStyle(process.env[TOOL_CALL_STYLE_ENV]);
-const toolMount = () => ({ computer: process.env[TOOL_SERVER_NAME_ENV] || "computer" });
-/** Only for text written here. `screenshot` counts as the tool only in a
- * sentence that uses the word for nothing else. */
-export const computerText = (text: string, screenshotIsTool = true) =>
-  murageToolText(text, toolStyle(), ["computer"], toolMount(), screenshotIsTool ? { computer: ["screenshot"] } : {});
 import {
   ensureRemoteCuaCommand,
   REMOTE_CUA_EXECUTABLE,
@@ -56,6 +46,9 @@ import {
   REMOTE_CUA_VERSION,
   semanticBrowserCommand,
 } from "./remote-computer.ts";
+import { BOX_LAZY_WAKE_BUDGET_MS } from "./computer-wake.ts";
+import { murageToolOnThisServer } from "./murage-tool-surface.ts";
+import { turnSecret, turnSecretWired } from "./turn-credential.ts";
 
 const BOX_API = process.env.MURAGEBOX_BOX_API ?? "https://ascii.dev/api/box/v1";
 const boxId = process.env.MURAGEBOX_BOX_ID ?? "";
@@ -82,10 +75,10 @@ const DEFAULT_TURN_SILENCE_MS = 20 * 60_000;
 const ACTIVITY_EVERY_MS = 15_000;
 const activity = (() => {
   const controlUrl = process.env.MURAGE_CONTROL_URL ?? "";
-  const controlToken = process.env.MURAGE_CONTROL_TOKEN ?? "";
+  const controlToken = () => turnSecret("MURAGE_CONTROL_TOKEN");
   let url = "";
   try {
-    if (controlUrl && controlToken) {
+    if (controlUrl && turnSecretWired("MURAGE_CONTROL_TOKEN")) {
       const parsed = new URL(controlUrl);
       parsed.pathname = "/api/internal/computer-activity";
       url = parsed.toString();
@@ -104,7 +97,7 @@ const activity = (() => {
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { authorization: `Bearer ${controlToken}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${controlToken()}`, "content-type": "application/json" },
         body: "{}",
         signal: AbortSignal.timeout(2_000),
       });
@@ -192,11 +185,12 @@ interface RunOut {
  * which can happen mid-conversation — after that every command comes back
  * 409 machine_not_running. Wake it and carry on rather than handing the
  * agent a cryptic failure it can only guess at. */
+const WAKE_BUDGET_MS = Math.max(Number(process.env.MURAGEBOX_WAKE_BUDGET_MS) || BOX_LAZY_WAKE_BUDGET_MS, 100);
 async function resumeBox(signal?: AbortSignal): Promise<boolean> {
   const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
   const bounded = () => (signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000));
   await fetch(`${BOX_API}/boxes/${boxId}/resume`, { method: "POST", headers: auth, signal: bounded() }).catch(() => null);
-  const deadline = Date.now() + 90_000;
+  const deadline = Date.now() + WAKE_BUDGET_MS;
   while (Date.now() < deadline && !signal?.aborted) {
     await new Promise((r) => setTimeout(r, 2000));
     const res = await fetch(`${BOX_API}/boxes/${boxId}`, { headers: auth, signal: bounded() }).catch(() => null);
@@ -513,7 +507,7 @@ function observed(
   isError = false,
 ) {
   if (!frame) {
-    return text(id, `${note}\n${computerText("(couldn't capture the screen: call screenshot to retry)")}`, isError);
+    return text(id, `${note}\n(couldn't capture the screen: call ${murageToolOnThisServer("screenshot")} to retry)`, isError);
   }
   const observation = observations.observeFrame(frame.hash ?? (crop ? null : frame.data), crop);
   if (!observation.changed) {
@@ -521,7 +515,7 @@ function observed(
     // well have landed, and re-clicking a button that already submitted
     // is the expensive kind of wrong
     const guidance = followsAction
-      ? computerText(" Don't repeat the action: it may already have succeeded. If you expected a change, call screenshot again after it has had time to render.")
+      ? ` Don't repeat the action: it may already have succeeded. If you expected a change, call ${murageToolOnThisServer("screenshot")} again after it has had time to render.`
       : " No new image is attached.";
     return text(id, `${note}\n(the screen is identical to the frame you already have.${guidance})`, isError);
   }
@@ -880,7 +874,7 @@ async function semanticActAndObserve(
   args: any,
 ): Promise<void> {
   if (!semanticBrowserUrl || !semanticBrowserRefs.has(ref)) {
-    return text(id, computerText("that browser ref is stale or unknown: take a new browser_snapshot"), true);
+    return text(id, `that browser ref is stale or unknown: take a new ${murageToolOnThisServer("browser_snapshot")}`, true);
   }
   const observe = wantsFrame(args);
   const semantic = semanticBrowserCommand(action, {
@@ -907,7 +901,7 @@ async function semanticActAndObserve(
     ? action === "fill"
       ? `filled ${ref} with ${value?.length ?? 0} chars (trusted Chrome DevTools input)`
       : `clicked ${ref} (trusted Chrome DevTools input)`
-    : `${action} ${ref} failed: ${out.stderr.slice(0, 200) || computerText("the page changed; take a new browser_snapshot")}`;
+    : `${action} ${ref} failed: ${out.stderr.slice(0, 200) || `the page changed; take a new ${murageToolOnThisServer("browser_snapshot")}`}`;
   if (!observe) return text(id, note, !acted);
   return observed(id, note, await frameFrom(out));
 }
@@ -918,8 +912,7 @@ const OPEN_WHILE_DRIVEN = new Set(["computer_request_help", "computer_status", "
 
 async function call(id: unknown, name: string, args: any, signal: AbortSignal = new AbortController().signal) {
   if (!OPEN_WHILE_DRIVEN.has(name) && (await control.state(true)).held) {
-    // "take a fresh screenshot" here is the act, not the tool.
-    return text(id, computerText(CONTROL_REFUSAL, false), true);
+    return text(id, CONTROL_REFUSAL, true);
   }
   if (name === "computer_request_help") {
     if (!control.configured) {
@@ -984,7 +977,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
       id,
       targets.length
         ? `Structured browser state:\n${targets.map((target) => `- ${target.title || "Untitled"}: ${target.url}`).join("\n")}`
-        : computerText("Structured browser state unavailable. Use screenshot only if visual state is necessary."),
+        : `Structured browser state unavailable. Use ${murageToolOnThisServer("screenshot")} only if visual state is necessary.`,
     );
   }
   if (name === "browser_snapshot") {
@@ -992,7 +985,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     if (!out.ok) {
       semanticBrowserUrl = null;
       semanticBrowserRefs.clear();
-      return text(id, computerText("Semantic browser state is unavailable. Open Chrome with open_url, or use screenshot."), true);
+      return text(id, `Semantic browser state is unavailable. Open Chrome with ${murageToolOnThisServer("open_url")}, or use ${murageToolOnThisServer("screenshot")}.`, true);
     }
     try {
       const snapshot = JSON.parse(out.stdout) as SemanticBrowserSnapshot;
@@ -1012,7 +1005,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     } catch {
       semanticBrowserUrl = null;
       semanticBrowserRefs.clear();
-      return text(id, computerText("Chrome returned an invalid semantic snapshot; use screenshot."), true);
+      return text(id, `Chrome returned an invalid semantic snapshot; use ${murageToolOnThisServer("screenshot")}.`, true);
     }
   }
   if (name === "browser_click") {
@@ -1028,14 +1021,14 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     const publicUrl = safeBrowserUrl(url);
     if (!normalizeBrowserUrl(url) || !publicUrl) {
       observations.noteVerification(false);
-      return text(id, computerText("wait_for_navigation needs a valid http(s) URL"), true);
+      return text(id, `${murageToolOnThisServer("wait_for_navigation")} needs a valid http(s) URL`, true);
     }
     const result = await waitForNavigation(url);
     return text(
       id,
       result.ok
         ? `navigation verified: ${publicUrl}`
-        : `navigation not verified after 3 checks. Current structured state: ${result.targets.map((target) => target.url).join(", ") || "unavailable"}. ${computerText("Use screenshot only if needed.")}`,
+        : `navigation not verified after 3 checks. Current structured state: ${result.targets.map((target) => target.url).join(", ") || "unavailable"}. Use ${murageToolOnThisServer("screenshot")} only if needed.`,
       !result.ok,
     );
   }
@@ -1188,7 +1181,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     const elapsed = marker[2];
     const note = met
       ? `condition met: ${label} (~${elapsed}s)`
-      : `timed out after ${timeout}s waiting for ${label}: ${computerText("inspect with computer_exec (logs, process list) before waiting again.")}`;
+      : `timed out after ${timeout}s waiting for ${label}: inspect with ${murageToolOnThisServer("computer_exec")} (logs, process list) before waiting again.`;
     return text(id, note, !met);
   }
   if (name === "open_url") {
@@ -1234,9 +1227,7 @@ async function handle(msg: any) {
       },
     });
   }
-  // Only each tool's own description: the input schemas name batch actions
-  // (type_text, press_key) that are values there, not tools to call.
-  if (msg.method === "tools/list") return send({ jsonrpc: "2.0", id: msg.id, result: { tools: TOOLS.map(tool => ({ ...tool, description: computerText(tool.description, false) })) } });
+  if (msg.method === "tools/list") return send({ jsonrpc: "2.0", id: msg.id, result: { tools: TOOLS } });
   if (msg.method === "tools/call") {
     if (closing) return text(msg.id, "the computer tools are closing: this call was not run", true);
     const withdrawn = new AbortController();

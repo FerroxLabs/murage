@@ -3,7 +3,7 @@ name: finance-pl
 description: "Build a profit and loss statement from revenue and expense inputs, with period-over-period comparison, margin analysis, basis-of-accounting handling (cash / accrual / modified cash) and ASC 606 deferred-revenue treatment for subscription revenue. Use when the question is whether a period made money and where the margin went. Do NOT use for what the business owns and owes at a point in time (use finance-balance-sheet), for whether cash actually moved (use finance-cashflow), or for forward-looking burn and time-to-zero (use coin-runway-and-burn). Statements and analysis only — have a CPA review anything filed or handed to a lender."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "pl accounting finance smb"
   category: "finance"

@@ -4,7 +4,7 @@ description: |
   Complete brand identity design guidance covering brand discovery workshops, moodboard creation, logo suite development, typography systems, color palettes, imagery and photography direction, brand guidelines documentation, deliverables checklists, and the strategic process of translating brand values into a cohesive visual system. Use when the user asks about brand identity designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design branding guide"
   category: "creative-arts"

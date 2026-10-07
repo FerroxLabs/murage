@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about basic TypeScript setup (use `typescript-project-setup`), runtime validation (use `typescript-runtime-safety`), JavaScript idioms (use `javascript-idioms`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "typescript best-practices clean-code"
   category: "software-engineering"

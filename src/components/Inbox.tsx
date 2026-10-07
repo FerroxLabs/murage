@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { api } from "@/state/store";
 import type { OptionCardData } from "@/state/store";
@@ -8,7 +8,10 @@ import { useSetupView } from "./FirstRunChrome";
 import { inboxTabCounts, signedOutEngineRows } from "@/lib/signed-out-engines";
 import { usePageVisible } from "@/lib/page-visible";
 import { backupWaitingSentence } from "../../shared/backup-waiting";
+import { t } from "@/lib/i18n";
+import { InboxLearningSuggestions } from "./InboxLearningSuggestions";
 
+const ProjectRows=lazy(()=>import("./ProjectInboxRows"));
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 // The selected view is a filled chip, not a grey one with a slightly
 // different edge: on the control tone the old `border-accent bg-accent/10`
@@ -210,7 +213,7 @@ function InboxSection({ label, aside, children }: { label: string; aside?: React
   </section>;
 }
 
-export function Inbox({ onOpen, onClose, onOpenBackups, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; refreshKey?: number; initialView?: InboxView }) {
+export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -286,7 +289,8 @@ export function Inbox({ onOpen, onClose, onOpenBackups, refreshKey = 0, initialV
   // own "Not now" in the chat, one card or every one on this page.
   const dismiss = (items: InboxItem[]) => act(items.map(item => item.id), async () => {
     for (const item of items) {
-      await api(`/api/bots/${encodeURIComponent(item.botId!)}/connector-cards/${encodeURIComponent(item.link.messageId)}/dismiss`, {
+      const cards = item.dismissVia === "mcp-sign-in" ? "mcp-sign-in-cards" : "connector-cards";
+      await api(`/api/bots/${encodeURIComponent(item.botId!)}/${cards}/${encodeURIComponent(item.link.messageId)}/dismiss`, {
         method: "POST", body: JSON.stringify({ threadId: item.link.threadId }),
       });
     }
@@ -310,7 +314,9 @@ export function Inbox({ onOpen, onClose, onOpenBackups, refreshKey = 0, initialV
     try { await navigator.clipboard.writeText(command); setCopied(engineId); window.setTimeout(() => setCopied(current => (current === engineId ? null : current)), 2000); }
     catch { setActionError("Copying did not work. Select the command and copy it yourself."); }
   };
-  const list = inboxCardItems(view, result?.items ?? []).filter(item => !gone.has(item.id));
+  const projectRows=result?.projects??[];
+  const groupedMessages=new Set(projectRows.flatMap(row=>row.approvals.map(item=>item.messageId)));
+  const list = inboxCardItems(view, result?.items ?? []).filter(item => !gone.has(item.id) && !groupedMessages.has(item.link.messageId));
   const routineRows = result?.routines ?? [];
   const restoreRows = result?.restore ?? [];
   // A LIVE READING, NOT A MESSAGE. See src/lib/signed-out-engines.ts: the
@@ -332,7 +338,9 @@ export function Inbox({ onOpen, onClose, onOpenBackups, refreshKey = 0, initialV
   // shown with the decisions and the things to read. Backups stay paused
   // until it is cleared, so the server counts it in `decisions`.
   const backupFailed = view === "decisions" || view === "to-read" || view === "all" ? result?.backupFailed ?? null : null;
-  const ownRows = [...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : [])];
+  // Lessons a bot suggested, waiting for the owner's yes: the only learning the Inbox shows.
+  const suggestionRows = view === "decisions" || view === "all" ? result?.learningSuggestions ?? [] : [];
+  const ownRows = [...projectRows,...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : []), ...suggestionRows];
   const dismissible = list.filter(item => item.dismissible);
   const clearable = list.filter(item => item.clearable);
   // The live card for each waiting request on this page, keyed by message id.
@@ -360,7 +368,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, refreshKey = 0, initialV
   }, [waitingKey]);
   const owed = INBOX_OWED_VIEWS.includes(view);
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
-  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (view === "routines" ? routineRows.length : 0) > 0;
+  const sections = signedOut.length + restoreRows.length + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + suggestionRows.length + (view === "routines" ? routineRows.length : 0) > 0;
   return <section aria-labelledby="inbox-title" aria-busy={loading} className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
     <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2">
@@ -409,6 +417,11 @@ export function Inbox({ onOpen, onClose, onOpenBackups, refreshKey = 0, initialV
           <p className="mt-1 text-ink-secondary">{backupFailed.sentence}</p>
           {onOpenBackups && <div className="mt-3 flex flex-wrap gap-2"><button className={button} onClick={onOpenBackups}>Open Backups</button></div>}
         </div>
+      </InboxSection>
+    )}
+    {suggestionRows.length > 0 && (
+      <InboxSection label={t("inboxLearning.section")}>
+        <InboxLearningSuggestions rows={suggestionRows} onSettled={() => setRevision(current => current + 1)} onOpenLearning={onOpenLearning} />
       </InboxSection>
     )}
     {backupWaiting && (
@@ -500,6 +513,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, refreshKey = 0, initialV
         </ul>
       </InboxSection>
     )}
+    {projectRows.length>0&&<Suspense fallback={<p>Loading project decisions</p>}><ProjectRows onOpen={onOpen} rows={projectRows} onSettled={()=>setRevision(value=>value+1)}/></Suspense>}
     {list.length > 0 && (
       <InboxSection
         label={sections ? "From your bots" : "Items"}

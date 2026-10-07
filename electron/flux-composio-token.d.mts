@@ -5,12 +5,14 @@ export interface FluxComposioTokenFields {
   fluxComposioBrokerTokenKeyFingerprint?: string;
   fluxComposioAccountKind?: "personal" | "shared";
   fluxComposioTokenError?: string;
+  fluxComposioTokenRefusedKeyFingerprint?: string;
 }
 export const FLUX_BROKER_TOKEN: RegExp;
 export const FLUX_COMPOSIO_TOKEN_FIELDS: readonly (keyof FluxComposioTokenFields)[];
 export const FLUX_BROKER_TOKEN_REMINT_WINDOW_MS: number;
 export function sha256Hex(value: string): string;
 export function fluxKeyFingerprint(fluxKey: string): string;
+export function brokerTokenFingerprint(token: string): string;
 export function clearFluxComposioBrokerToken<T extends FluxComposioTokenFields>(credentials: T): T;
 export function revokeFluxComposioBrokerToken(options: {
   fluxBrokerUrl: string;
@@ -27,6 +29,9 @@ export function ensureFluxComposioBrokerToken<T extends FluxComposioTokenFields>
   timeoutSignal?: (milliseconds: number) => AbortSignal;
   now?: number;
   force?: boolean;
+  rejectedTokenFingerprint?: string;
   onRateLimited?: () => void;
+  onTransientFailure?: () => void;
+  revokeSink?: Array<{ fluxBrokerUrl: string; previous: string; minted: string }>;
   label?: string;
 }): Promise<T>;

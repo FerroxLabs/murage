@@ -12,11 +12,15 @@ Use separate tasks when you want fresh context without duplicating the bot. Mess
 
 ## Rooms
 
-Rooms bring several bots into one conversation. Each participant keeps its own agent process and provider state. Room timeouts prevent a participant from blocking the whole group indefinitely.
+Rooms (channels) bring several bots into one conversation. Make one from **+ → New Channel**, name it, and pick its bots. Each participant keeps its own agent process and provider state, so bots in a room can run different engines and sound different. Room timeouts prevent a participant from blocking the whole group indefinitely.
+
+In a room's details, **Instructions** are followed by every bot in it, **Who answers** decides where a plain message goes, and **Folder** is where every bot in it runs file and shell tools. Who answers is Lead (one named bot), Everyone responds, or Only when mentioned. Naming a bot with @ always beats this setting.
+
+A room can have its own team heading in the sidebar, or none. Bots in a room can talk to each other, within the reach rules in Bots working together.
 
 ## Delegation
 
-Bots can hand work to other bots. Delegated runs carry explicit status back into the parent conversation, including completion, failure, and cancellation.
+Bots can hand work to other bots, or ask them a quick question. Delegated runs carry explicit status back into the parent conversation, including completion, failure, and cancellation. Who can contact whom depends on teams and roles. See Bots working together.
 
 ## Rewind and branches
 
@@ -43,8 +47,8 @@ A conversation with a question waiting for you shows a badge with the count, for
 Open the team's options (the … on the team heading in the sidebar, "Team options") to Rename team, Manage members and lead, or Delete team. The same settings open from Manage (team) team on the About tab of a team channel's details.
 
 - **Rename**: type the new name and press Save name. Its bots, channels, instructions and team memory keep working under the new name.
-- **Members**: tick the bots on the team and press Save members. Bots on a team can ask and hand work to each other. Bots you remove stay, without a team.
-- **Team lead**: pick one in the Team lead menu, or No lead. The lead coordinates the team and is the one the Chief of Staff hands work to. You can also right-click a bot and choose Make Team leader.
+- **Members**: tick the bots on the team and press Save members. Bots on a team can ask and hand work to each other, but not to bots on other teams unless you change Can talk to, use a project, or share the bot. Bots you remove stay, without a team.
+- **Team lead**: pick one in the Team lead menu, or No lead. The lead coordinates the team and is the one the Chief of Staff hands work to. A bot's role (Chief of Staff, team lead, team member or individual assistant) is also set in **Bot settings → Overview → Role**. You can also right-click a bot and choose Make Team leader.
 
 ## Delete a team
 

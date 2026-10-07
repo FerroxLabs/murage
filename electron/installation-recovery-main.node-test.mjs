@@ -112,18 +112,20 @@ test("startup selects before leasing and excludes selected roots from legacy mig
   assert.ok(source.includes('enabled: process.env.MURAGE_DATA_DIR === undefined && !desktopSelectionActive'));
 });
 test("separate supervisor publishes only after worker completion and releases only its new lease", async () => {
-  const child = deferred(), events = [], plan = { dataDirectory: "/new/data" }, result = { ok: true, operation: "restore" };
-  const owner = { release: () => events.push("release-new") };
+  const child = deferred(), events = [], plan = { dataDirectory: "/new/data", originalRoot: "/foreign/original" }, result = { ok: true, operation: "restore" };
+  const owner = { release: () => events.push("release-new"), utilityServerLeaseEnvironment: () => {} };
   const scope = { canRestoreSeparateInstallation: () => true, allocateSeparateInstallation: value => { assert.equal(value, plan); return value; },
     acquireDataDirLease: value => { assert.equal(value, "/new/data"); return owner; },
     runDesktopRecovery: async (operation, parameters, authority) => { assert.equal(operation, "restore"); assert.equal(authority.owner, owner); await child.promise; return result; },
-    publishInstallationSelection: (allocated, completed) => { assert.equal(allocated, plan); assert.equal(completed, result); events.push("publish"); }, desktopShutdownStarted: false, desktopDataDir: "/foreign/original" };
-  const body = between("async function runSeparateDesktopRecovery(", "async function runDesktopRecovery(");
+    publishInstallationSelection: (allocated, completed) => { assert.equal(allocated, plan); assert.equal(completed, result); events.push("publish"); }, desktopShutdownStarted: false, desktopDataDir: "/foreign/original",
+    loadMemoryRestore: async () => ({ mergeOriginalMemoryDeletions: (from, to) => { assert.equal(from, "/foreign/original"); assert.equal(to, "/new/data"); events.push("merge"); } }) };
+  const body = between("async function runSeparateDesktopRecovery(", "async function runEncryptedSeparateDesktopRecovery(")
+    .replace(/await import\(pathToFileURL\(path\.join\(process\.resourcesPath,\s*"server",\s*"memory",\s*"restore\.js"\)\)\.href\)/, "await loadMemoryRestore()");
   const run = new Function(...Object.keys(scope), "let retainedSeparateDirectory=null;" + body + ";return runSeparateDesktopRecovery;")(...Object.values(scope));
   const pending = run({ archive: "/chosen/backup.zip", sha256: "a".repeat(64) }, plan);
   await pause(); assert.deepEqual(events, []);
   child.resolve(); assert.equal((await pending).retainedOriginal, "/foreign/original");
-  assert.deepEqual(events, ["publish", "release-new"]);
+  assert.deepEqual(events, ["merge", "publish", "release-new"]);
 });
 test("normal mode and incomplete writer cleanup cannot fork a recovery worker", async () => {
   const normal = fixture({ mode: false });
@@ -135,9 +137,13 @@ test("normal mode and incomplete writer cleanup cannot fork a recovery worker", 
 test("actual failed-server branch returns before background account work", async () => {
   const body = between('  if (app.isPackaged && !serverReady) {', '  if (serverReady && companionEnabledAtRest())');
   const events = [];
-  const run = new Function("app", "serverReady", "serverStartConflictOnly", "showDesktopRecovery", "events", body + ';events.push("background");');
-  run({ isPackaged: true }, false, false, reason => events.push(reason), events);
+  const run = new Function("app", "serverReady", "serverStartConflictOnly", "memoryUpgradeBlocked", "showDesktopRecovery", "events", body + ';events.push("background");');
+  run({ isPackaged: true }, false, false, null, reason => events.push(reason), events);
   assert.deepEqual(events, ["STARTUP_FAILED"]);
+  // an upgrade that could not run gets its own recovery reason, not the generic one
+  const blocked = [];
+  new Function("app", "serverReady", "serverStartConflictOnly", "memoryUpgradeBlocked", "showDesktopRecovery", "events", body + ';events.push("background");')({ isPackaged: true }, false, false, { state: "blocked" }, reason => blocked.push(reason), blocked);
+  assert.deepEqual(blocked, ["MEMORY_UPGRADE_BLOCKED"]);
 });
 test("actual packaged early startup rejection opens recovery without exposing private error text", async () => {
   const body = between("void desktopStartup.catch((error) => {", 'app.on("window-all-closed"');

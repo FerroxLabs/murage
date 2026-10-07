@@ -6,7 +6,7 @@ description: |
   Do NOT use for sorting tasks by urgency/importance (use eisenhower-matrix), scheduling tasks into time blocks (use time-blocking), or business strategic prioritization (use business strategy skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decision-making planning analysis"
   category: "productivity"

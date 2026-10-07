@@ -3,12 +3,12 @@
 // a finish frame followed by clean EOF. In-band errors, unreadable frames,
 // truncation and empty replies fail the turn, and any output that did arrive
 // is kept ahead of the failed terminal instead of being dropped.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents } from "../testing/events.ts";
-import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { appendBounded, createOpenAIChatRuntime, MAX_RESPONSE_BYTES, MAX_SSE_LINE_BYTES } from "./openai-chat.ts";
 
 const SECRET = "sk-openai-chat-test-secret";
 const encoder = new TextEncoder();
@@ -17,6 +17,23 @@ const frame = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
 const contentFrame = (content: string, finishReason?: string) =>
   frame({ choices: [{ delta: { content }, ...(finishReason ? { finish_reason: finishReason } : {}) }] });
 const DONE = "data: [DONE]\n\n";
+const TOO_LARGE = "The model server sent a reply too large to read, so Murage kept what arrived before it.";
+
+/** Count only bytes requested by the reader, without stream prefetch. */
+const measuredBody = (chunks: Uint8Array[], status = 200) => {
+  let index = 0;
+  const observed = { pulled: 0, cancelled: false };
+  const response = new Response(new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = chunks[index++];
+      if (!chunk) return controller.close();
+      observed.pulled += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+    cancel() { observed.cancelled = true; },
+  }, { highWaterMark: 0 }), { status });
+  return { response, observed };
+};
 
 type Responder = (signal: AbortSignal | undefined) => Response;
 
@@ -61,7 +78,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     previousFetch = globalThis.fetch;
     responders = [];
     calls = 0;
-    // SAFETY: the stub returns real Response objects, the only part of
+    // The stub returns real Response objects, the only part of
     // fetch's contract this runtime consumes.
     globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
       calls++;
@@ -76,7 +93,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     for (const instance of instances.splice(0)) await instance.dispose();
   });
 
-  const create = (overrides: { retryScale?: number; reasoning?: boolean } = {}) => {
+  const create = (overrides: { retryScale?: number; reasoning?: boolean; timeoutMs?: number | undefined } = {}) => {
     const instance = createOpenAIChatRuntime({
       input: { instanceId: "chat-test", displayName: "Chat test", environment: {}, enabled: true, config: {} },
       driverKind: "openai-chat-test",
@@ -88,6 +105,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
       missingKeyError: "missing key",
       unavailableReason: "no key",
       timeoutMs: 10_000,
+      includeUsageInCompleted: true,
       nativeLog: {
         source: "test.chat.completions",
         outgoing: (_turn, messages, model) => ({ model, messages }),
@@ -112,6 +130,105 @@ describe("createOpenAIChatRuntime stream contract", () => {
     recorder.stop();
     return { completed, events: recorder.events, instance };
   };
+
+  it("bounds a long unterminated line and keeps the earlier reply", async () => {
+    const first = encoder.encode(contentFrame("partial answer"));
+    const chunk = encoder.encode("x".repeat(1024 * 1024));
+    const { response, observed } = measuredBody([first, ...Array<Uint8Array>(16).fill(chunk)]);
+    const { completed, events } = await runTurn("t-line-cap", [() => response]);
+
+    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(replies(events)).toEqual(["partial answer"]);
+    expect(errors(events)).toEqual([TOO_LARGE]);
+    expect(errorDetails(events)[0]).toContain("stream line exceeded");
+    expect(observed.cancelled).toBe(true);
+    expect(observed.pulled - first.byteLength).toBeLessThanOrEqual(MAX_SSE_LINE_BYTES + chunk.byteLength);
+    expect(calls).toBe(1);
+  });
+
+  it("keeps the diagnostic prefix within its byte cap for one large chunk", async () => {
+    const chunk = "x".repeat(1024 * 1024);
+    expect(appendBounded("", chunk, 64_000)).toHaveLength(64_000);
+    expect(appendBounded("prefix", chunk, 64_000)).toHaveLength(64_000);
+    expect(Buffer.byteLength(appendBounded("a", "🙂".repeat(64_000), 64_000))).toBeLessThanOrEqual(64_000);
+
+    // A whole completion whose content extends beyond the diagnostic prefix.
+    const whole = JSON.stringify({ choices: [{ message: { content: "x".repeat(64_000) }, finish_reason: "stop" }] });
+    const { completed, events } = await runTurn("t-diagnostic-cap", [() => sse([whole.padEnd(1024 * 1024, " ")])]);
+    expect(completed).toMatchObject({ ok: false, stopReason: "invalid_body" });
+    expect(replies(events)).toEqual([]);
+    expect(errors(events)).toEqual(["That address answered, but not with a model reply. Check that it points at your model server."]);
+  });
+
+  it("stops an HTTP error body at the diagnostic cap and retains its provider error", async () => {
+    const chunk = encoder.encode("x".repeat(16 * 1024));
+    const { response, observed } = measuredBody(Array<Uint8Array>(64).fill(chunk), 400);
+    const { completed, events } = await runTurn("t-http-body-cap", [() => response]);
+    expect(completed).toMatchObject({ ok: false, stopReason: "error" });
+    expect(errors(events)).toEqual(["The model server would not accept this request."]);
+    expect(errorDetails(events)[0]).toContain("TestProvider HTTP 400");
+    expect(observed.cancelled).toBe(true);
+    expect(observed.pulled).toBeLessThanOrEqual(64_000 + chunk.byteLength);
+  });
+
+  it("bounds the total bytes of short valid stream lines and keeps the reply", async () => {
+    const first = encoder.encode(contentFrame("partial answer"));
+    const chunk = encoder.encode(frame({ choices: [], padding: "x".repeat(1000) }).repeat(16));
+    const count = Math.ceil(MAX_RESPONSE_BYTES / chunk.byteLength) + 4;
+    const { response, observed } = measuredBody([first, ...Array<Uint8Array>(count).fill(chunk), encoder.encode(DONE)]);
+    const { completed, events } = await runTurn("t-response-cap", [() => response]);
+    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(replies(events)).toEqual(["partial answer"]);
+    expect(errors(events)).toEqual([TOO_LARGE]);
+    expect(errorDetails(events)[0]).toContain("response exceeded");
+    expect(observed.cancelled).toBe(true);
+    expect(observed.pulled).toBeGreaterThan(MAX_RESPONSE_BYTES);
+    expect(observed.pulled).toBeLessThanOrEqual(MAX_RESPONSE_BYTES + chunk.byteLength);
+  });
+
+  it("bounds a non-streamed success body before parsing it", async () => {
+    const chunk = encoder.encode(" ".repeat(1024 * 1024));
+    const whole = encoder.encode(JSON.stringify({ choices: [{ message: { content: "answer" } }] }));
+    const { response, observed } = measuredBody([...Array<Uint8Array>(33).fill(chunk), whole]);
+    responders = [() => response];
+    await expect(create().generateText!("hello")).rejects.toThrow(TOO_LARGE);
+    expect(observed.cancelled).toBe(true);
+    expect(observed.pulled).toBeLessThanOrEqual(MAX_RESPONSE_BYTES + chunk.byteLength);
+  });
+
+  it("accepts a large chunk made of short lines", async () => {
+    const chunk = frame({ choices: [], padding: "x".repeat(1000) }).repeat(1100);
+    expect(encoder.encode(chunk).byteLength).toBeGreaterThan(MAX_SSE_LINE_BYTES);
+    const { completed, events } = await runTurn("t-many-short-lines", [() => sse([chunk + contentFrame("answer", "stop") + DONE])]);
+    expect(completed).toMatchObject({ ok: true });
+    expect(replies(events)).toEqual(["answer"]);
+  });
+
+  it("counts multibyte line content by bytes", async () => {
+    const first = encoder.encode(contentFrame("partial answer"));
+    const chunk = encoder.encode("🙂".repeat(MAX_SSE_LINE_BYTES / 4));
+    const { response, observed } = measuredBody([first, chunk, encoder.encode("🙂"), encoder.encode(DONE)]);
+    const { completed, events } = await runTurn("t-line-byte-cap", [() => response]);
+    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(errors(events)).toEqual([TOO_LARGE]);
+    expect(replies(events)).toEqual(["partial answer"]);
+    expect(observed.cancelled).toBe(true);
+    expect(observed.pulled).toBe(first.byteLength + MAX_SSE_LINE_BYTES + 4);
+  });
+
+  it("banks two per-turn totals and the provider reported cost once each", async () => {
+    responders = [0.1, 0.2].map(cost => () => sse([contentFrame("ok", "stop"), frame({ choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, cost_usd: cost } }), DONE]));
+    const instance = create(); const recorder = recordEvents(instance.adapter);
+    for (let n = 0; n < 2; n++) {
+      const sent = await instance.adapter.sendTurn({ threadId: "bank", text: "go" });
+      await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
+    }
+    expect(recorder.events.filter(e => e.type === "turn.completed")).toMatchObject([
+      { usage: { input: 10, output: 5 }, charge: 0.1, cost: null },
+      { usage: { input: 10, output: 5 }, charge: 0.2, cost: null },
+    ]);
+    recorder.stop();
+  });
 
   it("completes a stream with a finish frame, usage and [DONE]", async () => {
     const { completed, events } = await runTurn("t-finish-done", [() => sse([
@@ -198,6 +315,43 @@ describe("createOpenAIChatRuntime stream contract", () => {
       expect.objectContaining({ attempt: 1, reason: "overloaded" }),
     ]);
     expect(calls).toBe(2);
+  });
+
+  it("fences every send: a retry refused after the backoff is never resent and the turn stops retrying", async () => {
+    responders = [
+      () => sse([frame({ error: { message: "The server is overloaded" } })]),
+      () => sse([contentFrame("stale resend", "stop"), DONE]),
+    ];
+    const instance = create({ retryScale: 0.001 });
+    const recorder = recordEvents(instance.adapter);
+    let checks = 0;
+    await instance.adapter.sendTurn({
+      threadId: "t-fenced-retry",
+      text: "question",
+      // the first send passes; the turn is retired during the backoff
+      beforeSubmit: () => { if (++checks > 1) throw new Error("retired during backoff"); },
+    });
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+    expect(checks).toBe(2);
+    expect(calls).toBe(1);
+    expect(responders).toHaveLength(1);
+    expect(completed).toMatchObject({ ok: false, stopReason: "submission_refused" });
+    expect(recorder.events.filter((event) => event.type === "turn.retrying")).toHaveLength(1);
+    expect(replies(recorder.events)).toEqual([]);
+    expect(instance.adapter.hasSession("t-fenced-retry")).toBe(false);
+  });
+
+  it("fences the first send: a refused turn makes no request", async () => {
+    responders = [() => sse([contentFrame("never", "stop"), DONE])];
+    const instance = create();
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-fenced-first", text: "question", beforeSubmit: () => { throw new Error("refused"); } });
+    const completed = await recorder.until((event) => event.type === "turn.completed");
+    recorder.stop();
+    expect(calls).toBe(0);
+    expect(completed).toMatchObject({ ok: false, stopReason: "submission_refused" });
+    expect(recorder.events.some((event) => event.type === "runtime.error")).toBe(false);
   });
 
   it("never replays after reasoning streamed, even without assistant text", async () => {
@@ -376,7 +530,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(errors(recorder.events)).toEqual([]);
     // F6: what had already streamed is kept. The person watched those words
     // appear; pressing Stop must not erase them, and the provider-drop path
-    // has always kept its partial (F11) — Stop was the odd one out.
+    // has always kept its partial (F11). Stop was the odd one out.
     expect(replies(recorder.events)).toEqual(["working on it"]);
   });
 
@@ -491,12 +645,12 @@ describe("createOpenAIChatRuntime stream contract", () => {
   });
 
   // ---------------------------------------------------------------------
-  // F3 vs F11 — the unreachable-endpoint wrapper must not eat a dropped
+  // F3 vs F11: the unreachable-endpoint wrapper must not eat a dropped
   // stream. `isEndpointUnreachable` matches ECONNRESET / UND_ERR_SOCKET /
   // EPIPE / ETIMEDOUT, which are exactly the codes a connection carries when
   // it dies HALFWAY THROUGH a reply. Applied after bytes have already
   // arrived, it threw away every streamed word and told the person the
-  // server "could not be reached" — while its answer was on their screen.
+  // server "could not be reached" while its answer was on their screen.
   // The old regression test missed this only because its fixture threw an
   // error with no `code` at all, which no real transport does.
   // ---------------------------------------------------------------------
@@ -521,7 +675,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(replies(events)).toEqual(["streamed "]);
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
     expect(errors(events)).toEqual(["The connection to the model server dropped before the answer finished."]);
-    // The endpoint plainly answered — it streamed. Never claim otherwise.
+    // The endpoint plainly answered and streamed. Never claim otherwise.
     expect(errors(events).join(" ")).not.toMatch(/could not reach|nothing answered/i);
     expect(errorDetails(events)).toEqual(["TestProvider stream failed: terminated"]);
     expect(calls).toBe(1);
@@ -760,6 +914,112 @@ describe("createOpenAIChatRuntime stream contract", () => {
       expect(errors(events)).toEqual([]);
       expect(plans(events)).toEqual([[{ content: "a", status: "pending" }]]);
       expect(replies(events)).toEqual([]);
+    });
+  });
+
+  describe("bounded network input (S5)", () => {
+    type Hop = { url: string; redirect: string | undefined; auth: string | null };
+    const hops: Hop[] = [];
+    const record = (input: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      hops.push({ url: String(input), redirect: init?.redirect, auth: headers.get("authorization") });
+    };
+    const redirectTo = (location: string, status = 307) => new Response(null, { status, headers: { location } });
+    const okJson = () =>
+      new Response(JSON.stringify({ choices: [{ message: { content: "hi" }, finish_reason: "stop" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    beforeEach(() => {
+      hops.length = 0;
+    });
+
+    it("asks fetch not to follow redirects on its own", async () => {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        record(input, init);
+        return okJson();
+      }) as typeof fetch;
+      await create().generateText!("hello");
+      expect(hops[0]?.redirect).toBe("manual");
+    });
+
+    it("refuses a redirect to plain http on a public address", async () => {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        record(input, init);
+        if (hops.length === 1) return redirectTo("http://203.0.113.9/v1/chat/completions");
+        throw new Error("the redirected address must never be requested");
+      }) as typeof fetch;
+      await expect(create().generateText!("hello")).rejects.toThrow(/https/i);
+      expect(hops).toHaveLength(1);
+    });
+
+    it("refuses a redirect to a non-http scheme", async () => {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        record(input, init);
+        return redirectTo("file:///etc/passwd");
+      }) as typeof fetch;
+      await expect(create().generateText!("hello")).rejects.toThrow();
+      expect(hops).toHaveLength(1);
+    });
+
+    it("drops the Authorization header on a redirect to another origin", async () => {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        record(input, init);
+        return hops.length === 1 ? redirectTo("https://other.invalid/v1/chat/completions") : okJson();
+      }) as typeof fetch;
+      await create().generateText!("hello");
+      expect(hops).toHaveLength(2);
+      expect(hops[0]?.auth).toBe(`Bearer ${SECRET}`);
+      expect(hops[1]?.url).toBe("https://other.invalid/v1/chat/completions");
+      expect(hops[1]?.auth).toBeNull();
+    });
+
+    it("keeps Authorization on a same-origin redirect", async () => {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        record(input, init);
+        return hops.length === 1 ? redirectTo("/v2/chat/completions") : okJson();
+      }) as typeof fetch;
+      await create().generateText!("hello");
+      expect(hops[1]?.url).toBe("https://chat.invalid/v2/chat/completions");
+      expect(hops[1]?.auth).toBe(`Bearer ${SECRET}`);
+    });
+
+    it("stops after three redirects", async () => {
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        record(input, init);
+        return redirectTo(`https://chat.invalid/hop${hops.length}`);
+      }) as typeof fetch;
+      await expect(create().generateText!("hello")).rejects.toThrow(/redirect/i);
+      expect(hops).toHaveLength(4);
+    });
+
+    it("ends a non-streamed helper call that sends a brace and then goes silent", async () => {
+      vi.useFakeTimers();
+      try {
+        globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(encoder.encode("{"));
+              init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true });
+            },
+          });
+          return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+        }) as typeof fetch;
+        const result = create({ timeoutMs: undefined }).generateText!("hello").then(
+          () => null,
+          (value: unknown) => value as Error,
+        );
+        await vi.advanceTimersByTimeAsync(300_000);
+        const error = await result;
+        expect(error).toBeInstanceOf(Error);
+        expect(error?.name).not.toBe("AbortError");
+        expect(error?.message).toBe(
+          "The model server did not answer in time. If a large model is still loading, try again in a moment.",
+        );
+        expect(error?.message).not.toMatch(/\u2014|safe/i);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

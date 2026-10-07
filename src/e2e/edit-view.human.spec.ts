@@ -5,7 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
-import { openSidebar } from "./fixtures.ts";
+import { openSidebar, SEND_KEY } from "./fixtures.ts";
 
 let fixture: VerificationServer, vite: ViteDevServer, origin: string;
 let headers: Record<string, string> = {}, botId: string, threadId: string;
@@ -45,19 +45,26 @@ test("Edit then Enter shows the edited message and new answer without switching 
   await expect(picker).toContainText(TASK);
   const composer = page.getByRole("textbox", { name: `Message ${BOT}`, exact: true });
   await composer.fill("P1 original question");
-  await composer.press("Enter");
+  await composer.press(SEND_KEY);
   const idle = async () => (await api("GET", "/api/bots?messages=0")).bots.find((b: any) => b.id === botId).tasks.find((task: any) => task.threadId === threadId).busy;
   await expect(page.getByText("hello from fake claude", { exact: true }).first()).toBeVisible();
   await expect.poll(idle).toBe(false);
   const before = (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages;
   const original = before.find((message: any) => message.text === "P1 original question");
   const oldReplyIds = new Set(before.filter((message: any) => message.role === "bot").map((message: any) => message.id));
-  await page.getByRole("button", { name: "Edit message", exact: true }).click();
+  // A phone has no hover row: a tap on the bubble opens its Message actions
+  // sheet (telegram-message.human.spec.ts does the same).
+  if (info.project.name === "mobile") {
+    await page.getByText("P1 original question", { exact: true }).first().tap();
+    await page.getByRole("dialog", { name: "Message actions" }).getByRole("button", { name: "Edit message", exact: true }).click();
+  } else {
+    await page.getByRole("button", { name: "Edit message", exact: true }).click();
+  }
   const editBox = page.locator("textarea:not([aria-label])");
   await expect(editBox).toHaveValue("P1 original question");
   await editBox.fill("P1 edited question");
   const submitted = page.waitForResponse((response) => response.url().endsWith(`/messages/${original.id}/edit`));
-  await editBox.press("Enter");
+  await editBox.press(SEND_KEY);
   expect((await submitted).status()).toBe(202);
   await expect.poll(idle).toBe(false);
   const after = (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).messages;

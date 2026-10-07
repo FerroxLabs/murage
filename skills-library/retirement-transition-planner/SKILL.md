@@ -4,7 +4,7 @@ description: |
   Comprehensive retirement transition guide covering pre-retirement preparation, identity and purpose beyond work, daily structure design, healthcare navigation, social network planning, financial drawdown strategy, phased retirement options, and building a fulfilling post-career life. Use when the user asks about retirement transition planner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events retirement-planning planning"
   category: "family-relationships"

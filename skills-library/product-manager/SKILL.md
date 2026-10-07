@@ -9,7 +9,7 @@ description: >
   (use finance-analyst), or marketing campaign design (use marketing-strategist).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy planning analysis report best-practices"
   category: "business"

@@ -85,6 +85,8 @@ describe("integration coverage", () => {
     const text = capabilitiesPrimer({
       engine: "Test", toolAccess: "none", imageInput: "unknown",
       mounted: {}, memory: "off", imageProvider: false, folder: "none", peers: 0, canAskOwner: true,
+      // the custom-server clause is said only for an engine that cannot mount them (MCP-LINK T14)
+      customMcpEngine: false,
     });
     for (const [key, fact] of Object.entries(INTEGRATION_FACTS)) {
       if (!fact.absent) continue;

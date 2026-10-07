@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createGracefulShutdown } from "./graceful-shutdown.ts";
+import { GRACEFUL_CLOSE_MESSAGE } from "../electron/server-child-lifecycle.mjs";
+import { createGracefulShutdown, isAppCloseRequest } from "./graceful-shutdown.ts";
 
 describe("createGracefulShutdown", () => {
   it("waits for capability and provider cleanup and only starts once", async () => {
@@ -47,6 +48,13 @@ describe("createGracefulShutdown", () => {
       expect(exit).toHaveBeenCalledWith(0);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("answers exactly the close request the desktop sends (G12)", () => {
+    expect(isAppCloseRequest(GRACEFUL_CLOSE_MESSAGE)).toBe(true);
+    for (const other of [undefined, null, "murage:close", {}, { type: "murage:closed" }, { type: "murage:desktop-secret" }]) {
+      expect(isAppCloseRequest(other)).toBe(false);
     }
   });
 });

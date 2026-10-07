@@ -4,7 +4,7 @@ description: |
   Plan and execute food festivals with vendor management, permits and licensing, event logistics, marketing strategy, food safety compliance, and crowd management Use when the user asks about food festival organizer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "event-planning planning cooking"
   category: "travel-experiences"

@@ -4,7 +4,7 @@ description: |
   Complete podcast production from concept development through recording, editing, distribution, and monetization including equipment recommendations, growth strategies, and sponsor acquisition workflows. Use when the user asks about podcast producer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "podcast marketing content-marketing"
   category: "marketing-sales"

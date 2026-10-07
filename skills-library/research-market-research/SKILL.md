@@ -1,8 +1,9 @@
 ---
 name: research-market-research
 description: "The user wants to size or shape a market — not a specific buyer, but the terrain. Load on \"what's the TAM,\" \"is this market big enough,\" \"is the industry growing,\" \"what's the regulatory landscape,\" or \"should we enter this category.\" Macro work — different scale from buyer-interview craft."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "research"
 ---

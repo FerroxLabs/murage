@@ -20,7 +20,7 @@ trigger_phrases: >-
   guide how to move into leadership preparing for a management role IC to
   manager transition should I become a manager
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: career strategy step-by-step planning
   category: career

@@ -4,7 +4,7 @@ description: |
   Expert copywriting using AIDA formula, PAS framework, headline formulas, landing page copy structure, email copy, product descriptions, CTA optimization, voice and tone consistency, A/B testing, and storytelling in marketing. Use when the user asks about copywriter or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing-copy marketing writing"
   category: "marketing-sales"

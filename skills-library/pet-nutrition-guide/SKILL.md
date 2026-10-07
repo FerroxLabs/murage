@@ -6,7 +6,7 @@ description: |
   Do NOT use for prescription diets, managing food allergies, treating obesity or underweight pets medically, or exotic pet nutrition. Dietary changes for health conditions require veterinary guidance.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "pet-care nutrition strategy"
   category: "home-household"

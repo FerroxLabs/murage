@@ -82,7 +82,7 @@ export function TeamExportDialog({ onClose, onExported, initialBotIds = [] }: { 
   const teams = [...new Set(visibleBots.map(bot => bot.team || "General"))];
   const roleLabel = (role: Options["bots"][number]["role"]) => role === "chief" ? "Chief of Staff" : role === "leader" ? "Team leader" : role === "individual" ? "Individual bot" : "Team member";
   return <dialog ref={dialog} onCancel={event => { event.preventDefault(); if (!busy) onClose(); }} aria-labelledby="team-export-title"
-    className="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[680px] overflow-y-auto rounded-xl border border-hairline/50 bg-panel p-5 text-ink backdrop:bg-black/60">
+    className="m-auto max-h-[calc(100dvh-2rem-2*max(var(--inset-top),var(--inset-bottom)))] w-[calc(100%-2rem)] max-w-[680px] overflow-y-auto rounded-xl border border-hairline/50 bg-panel p-5 text-ink backdrop:bg-black/60">
     <h2 id="team-export-title" className="text-[18px] font-semibold">Export bots and teams</h2>
     <p className="mt-1 text-[12px] text-ink-secondary">{selection.botIds.length} bots selected. Choose the instructions and assets to share.</p>
     <fieldset className="mt-3 flex flex-wrap gap-4 text-[13px]"><legend className="mb-1 text-[12px] font-medium text-ink-secondary">File format</legend>

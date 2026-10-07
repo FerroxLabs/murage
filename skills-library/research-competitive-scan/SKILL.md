@@ -1,8 +1,9 @@
 ---
 name: research-competitive-scan
 description: "The team faces a positioning, pricing, or messaging decision and someone asks \"who are we competing against?\" Or the user lists three obvious competitors and you suspect those aren't the ones beating them. Or Copy is about to ship a \"the only X that does Y\" hero."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "research"
 ---

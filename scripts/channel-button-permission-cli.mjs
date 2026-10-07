@@ -12,10 +12,14 @@ if (argv[0] === "auth") { console.log(JSON.stringify({ loggedIn: true, authMetho
 if (!process.env.MURAGE_DATA_DIR || !process.env.MURAGE_CHANNEL_BUTTON_FIXTURE) throw new Error("Isolated button fixture environment required");
 const receiptFile = join(process.env.MURAGE_DATA_DIR, "channel-button-decisions.jsonl");
 const out = value => process.stdout.write(JSON.stringify(value) + "\n");
+// A warm session keeps this process across turns, and the driver removes the
+// launch MCP config once it has spawned us, like a real CLI that mounts its
+// servers once: read it on the first turn and keep it for the rest.
+let mountedConfig;
 async function permission() {
   const match = /^mcp__(.+?)__(.+)$/.exec(arg("--permission-prompt-tool") ?? "");
   if (!match || !argv.includes("--mcp-config")) throw new Error("Actual permission host is required");
-  const config = JSON.parse(readFileSync(arg("--mcp-config"), "utf8"));
+  const config = mountedConfig ??= JSON.parse(readFileSync(arg("--mcp-config"), "utf8"));
   const host = config.mcpServers?.[match[1]];
   if (!host) throw new Error("Missing mounted host");
   const id = `channel-button-${process.pid}-${Date.now()}`;

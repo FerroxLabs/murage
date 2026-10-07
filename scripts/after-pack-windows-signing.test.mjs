@@ -75,6 +75,7 @@ function fixture() {
   fs.mkdirSync(native, { recursive: true });
   fs.mkdirSync(path.join(server, "memory"), { recursive: true });
   fs.writeFileSync(path.join(server, "memory/worker.js"), "// fixture worker");
+  fs.writeFileSync(path.join(server, "bot-package-guard-worker.js"), "// fixture worker");
   fs.writeFileSync(path.join(server, "memory-model-manifest.json"), JSON.stringify({ runtimeVersion: "4.2.0" }));
   fs.writeFileSync(path.join(runtime, "package.json"), JSON.stringify({ name: "onnxruntime-node", version: "1.24.3" }));
   fs.writeFileSync(path.join(server, "memory-runtime-manifest.json"), JSON.stringify({

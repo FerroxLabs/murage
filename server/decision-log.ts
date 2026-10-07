@@ -55,6 +55,9 @@ export type DecisionSource =
   | AutoVerdictSource
   | "question"
   | "auto-fallback"
+  /** An image made with no card because of the bot's Images setting
+   * (server/image-approval.ts); by level it is "full-access" or "no-limits". */
+  | "image-setting"
   | "routine"
   | "skill"
   | "user"
@@ -141,6 +144,17 @@ async function drain(dataDir: string, queue: WriteQueue): Promise<void> {
   }
 }
 
+/** Watchers of the decision site. A watcher sees every row as it is appended
+ * (before redaction and queueing) and can never change or delay it: it runs
+ * inside try/catch, and an audit log must not fail because a watcher did.
+ * Bot learning uses one to record the owner's own answers (source "user"). */
+type DecisionWatcher = (dataDir: string, row: Omit<DecisionRow, "at">) => void;
+const decisionWatchers = new Set<DecisionWatcher>();
+export function onDecisionAppended(watcher: DecisionWatcher): () => void {
+  decisionWatchers.add(watcher);
+  return () => { decisionWatchers.delete(watcher); };
+}
+
 /** Append one decision row. Fire-and-forget, mirroring the event bus tee:
  * the fold that calls this is delivering approvals and cards, and a full
  * disk must not turn into denied tools. */
@@ -149,6 +163,7 @@ export function appendDecision(
   row: Omit<DecisionRow, "at">,
   opts?: { maxBytes?: number },
 ): void {
+  for (const watcher of decisionWatchers) { try { watcher(dataDir, row); } catch { /* a watcher never affects the log */ } }
   let queue = writeQueues.get(dataDir);
   if (!queue) {
     queue = { items: [], bytes: 0, omitted: 0, markerBytes: 0, maxBytes: opts?.maxBytes ?? MAX_BYTES };

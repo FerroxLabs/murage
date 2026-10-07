@@ -47,7 +47,9 @@ for (const width of [390, 820, 1440]) test(`file choice and confirmation handoff
   await page.getByRole("button", { name: "Review in chat" }).click();
   await expect.poll(() => proposals.length).toBe(1);
   expect(proposals[0]).toMatchObject({ relativePath: "reports/status.txt", everyMinutes: 15, maxChecks: 100 });
-  expect(await page.evaluate(() => (window as unknown as { actions: unknown[] }).actions)).toEqual([
+  // The proposal is counted when it reaches the route; the handoff dispatches
+  // only once its answer is back, so wait for that rather than race it.
+  await expect.poll(() => page.evaluate(() => (window as unknown as { actions?: unknown[] }).actions)).toEqual([
     { type: "select", id: "chief", threadId: "chief-thread" }, { type: "focusMessage", threadId: "chief-thread", messageId: "confirmation-message" },
   ]);
   expect(errors).toEqual([]);

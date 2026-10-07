@@ -6,7 +6,7 @@ description: |
   Do NOT use for sentiment analysis of brand mentions (use sentiment-analysis-guide), internal product metric frameworks (use metric-framework or kpi-definition), or general market sizing research (use research-synthesis for source synthesis).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research analysis planning"
   category: "data-analysis"

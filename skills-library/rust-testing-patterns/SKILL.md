@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Rust project setup (use `rust-project-setup`), Rust error handling (use `rust-error-handling`), general testing concepts (use `unit-testing-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "rust testing tdd"
   category: "software-engineering"

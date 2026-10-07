@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The page whats-new.human.spec.ts drives: the real WhatsNewHost, the real
-// useWhatsNew against the real harness routes, and the real Tools menu, in a
+// useWhatsNew against the real harness routes, and the real You menu, in a
 // plain app frame painted with the app's own tokens so both skins show what
 // surrounds the cards. `@/state/store` is aliased by the spec to a store that
 // records what it is asked to do.
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Megaphone } from "lucide-react";
-import { SidebarMoreMenu } from "@/components/SidebarMoreMenu";
+import { SidebarYouMenu } from "@/components/SidebarYouMenu";
 import { WhatsNewHost } from "@/components/WhatsNewHost";
 import { useWhatsNew } from "@/lib/whats-new";
 import "@/styles.css";
@@ -37,9 +37,9 @@ function Frame() {
         <div className="mb-3 h-9 rounded-xl bg-raised/60" />
         <Row width="w-32" /><Row width="w-24" /><Row width="w-40" /><Row width="w-28" />
         <div className="mt-auto">
-          <SidebarMoreMenu items={[
-            { key: "keyboard-shortcuts", label: "Keyboard shortcuts", icon: <Megaphone size={18} />, onSelect: () => {} },
+          <SidebarYouMenu name="Ada" initials="A" items={[
             ...(whatsNew.available ? [{ key: "whats-new", label: "What's new", icon: <Megaphone size={18} />, onSelect: whatsNew.reopen }] : []),
+            { key: "keyboard-shortcuts", label: "Keyboard shortcuts", icon: <Megaphone size={18} />, onSelect: () => {} },
           ]} />
         </div>
       </aside>

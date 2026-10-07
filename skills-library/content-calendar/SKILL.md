@@ -4,7 +4,7 @@ description: |
   Content calendar creation and editorial planning including content pillar strategy, editorial templates, content type mix, publishing cadence, social media scheduling, content repurposing, seasonal planning, content briefs, and performance tracking. Use when the user asks about content calendar or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "content-marketing marketing planning"
   category: "marketing-sales"

@@ -14,6 +14,6 @@ it("keeps a long command whole on the card", () => {
 
 it("bounds a runaway command and says it was cut", () => {
   const out = approvalSummary("x".repeat(APPROVAL_SUMMARY_MAX + 50));
-  expect(out.length).toBe(APPROVAL_SUMMARY_MAX + 1);
-  expect(out.endsWith("…")).toBe(true);
+  expect(out.startsWith("x".repeat(APPROVAL_SUMMARY_MAX))).toBe(true);
+  expect(out.endsWith("…[truncated, 50 characters more]")).toBe(true);
 });

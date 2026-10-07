@@ -32,8 +32,11 @@ const pathSchema = z.string().transform((value, context) => {
 const entrySchema = z.object({ path: pathSchema, bytes: z.number().int().min(0).max(MAX_BOT_PACKAGE_EXPANDED_BYTES), sha256: z.string().regex(/^[a-f0-9]{64}$/u) }).strict();
 const skillSchema = z.object({ key, name: text(100), license: text(200), dependencies: z.array(key).max(200), files: z.array(pathSchema).min(1).max(MAX_BOT_PACKAGE_ENTRIES) }).strict();
 const instructionSchema = z.object({ agent: key, path: pathSchema }).strict();
+/** Ed25519 signature over the package digest (package-signature.ts). It marks a
+ * package Official only when it verifies against a key shipped in the app. */
+const signatureSchema = z.object({ alg: z.literal("ed25519"), keyId: z.string().min(1).max(64), value: z.string().min(1).max(200) }).strict();
 const envelopeSchema = z.object({
-  format: z.literal(BOT_PACKAGE_BUNDLE_FORMAT), version: z.literal(BOT_PACKAGE_BUNDLE_VERSION), definition: z.unknown(),
+  format: z.literal(BOT_PACKAGE_BUNDLE_FORMAT), version: z.literal(BOT_PACKAGE_BUNDLE_VERSION), definition: z.unknown(), signature: signatureSchema.optional(),
   skills: z.array(skillSchema).max(200), instructions: z.array(instructionSchema).max(200), entries: z.array(entrySchema).max(MAX_BOT_PACKAGE_ENTRIES),
 }).strict();
 export type BotPackageEntry = z.infer<typeof entrySchema>;

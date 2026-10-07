@@ -12,9 +12,21 @@
 // truth (the JSON file is left behind as a one-time backup).
 import { bumpForMessage, bumpMessagesVersion } from "./inbox-version.ts";
 import { chmodSync, readFileSync, renameSync } from "node:fs";
+import type { StatementSync } from "node:sqlite";
 
 import { database as db, closeDatabase, transaction } from "./database.ts";
 import type { Message } from "./store.ts";
+import { attachmentReferencesIn, messageJsonReferences } from "./attachment-access.ts";
+import {
+  MIN_INDEXED_QUERY_CODEPOINTS,
+  dropThreadSearchRows,
+  mergeMessageSearchIndex,
+  disableMessageSearchIndex,
+  messageSearchIndexReady,
+  searchableText,
+  trigramQuery,
+  syncMessageSearchRow,
+} from "./message-search-index.ts";
 import { captureMessage, captureBranchChange, captureThreadDeletion } from "./memory/capture.ts";
 
 const rowToMessage = (row: { json: string }): Message => JSON.parse(row.json) as Message;
@@ -71,6 +83,12 @@ function sliceEndingBefore(threadId: string, limit: number, beforeRowid?: number
   const hasMore = rows.length > limit;
   const kept = rows.slice(0, limit).reverse().map(rowToMessage);
   return { messages: kept, previous: hasMore && kept.length ? rowToMessage(rows[limit]) : null, hasMore, empty: rows.length === 0 };
+}
+
+/** How many rows a thread holds, read through the thread index. */
+export function threadRowCount(threadId: string): number {
+  const row = db().prepare("SELECT COUNT(*) AS n FROM messages WHERE thread_id = ?").get(threadId) as { n: number } | undefined;
+  return row?.n ?? 0;
 }
 
 export function threadHasRows(threadId: string): boolean {
@@ -180,7 +198,7 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
   db().exec("BEGIN");
   try {
     for (const message of messages) {
-      insert.run(threadId, message.id, message.at, message.role, message.kind, message.text ?? null, JSON.stringify(message));
+      replaceRow(insert, threadId, message);
     }
     writeActiveLeaf(threadId, activeLeafId);
     db().exec("COMMIT");
@@ -189,6 +207,8 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
     db().exec("ROLLBACK");
     throw error;
   }
+  // Imported rows reach the store without insertMessage: they adopt pictures too.
+  for (const message of messages) observeAdoption(message);
   // left beside the DB as a one-time backup, renamed so the import never
   // runs twice against a thread whose rows were later deleted
   try {
@@ -200,16 +220,58 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
   return { messages, activeLeafId };
 }
 
+/** INSERT OR REPLACE one row and keep its search-index entry in step: a
+ * replace deletes the old row (new rowid), so the old rowid's entry goes too. */
+function replaceRow(insert: StatementSync, threadId: string, message: Message): void {
+  const prior = db().prepare("SELECT rowid AS position FROM messages WHERE thread_id = ? AND id = ?").get(threadId, message.id) as
+    | { position: number }
+    | undefined;
+  const result = insert.run(threadId, message.id, message.at, message.role, message.kind, message.text ?? null, JSON.stringify(message));
+  if (prior) syncMessageSearchRow(db(), prior.position, null);
+  const text = searchableText(message);
+  if (text !== null) syncMessageSearchRow(db(), Number(result.lastInsertRowid), text);
+}
+
 function writeMessage(threadId: string, message: Message): void {
-  db()
-    .prepare("INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(threadId, message.id, message.at, message.role, message.kind, message.text ?? null, JSON.stringify(message));
+  replaceRow(
+    db().prepare("INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, ?, ?, ?, ?)"),
+    threadId,
+    message,
+  );
   captureMessage(db(), threadId, message);
   bumpForMessage(message);
 }
 
+/** The post-commit watch on owner messages (memory/feedback.ts, installed by
+ * index.ts). It runs AFTER the message transaction commits, because detection is
+ * async and may call the learning connection. It never throws into the write path. */
+let feedbackObserver: ((threadId: string, message: Message) => void) | null = null;
+export function setFeedbackObserver(observer: ((threadId: string, message: Message) => void) | null): void { feedbackObserver = observer; }
+/** A bot reply was stored or grew: lets a "Remembered" chip that was waiting for it attach. Must be cheap; it runs for streamed updates. */
+let botReplyObserver: ((threadId: string, message: Message) => void) | null = null;
+export function setBotReplyObserver(observer: ((threadId: string, message: Message) => void) | null): void { botReplyObserver = observer; }
+/** A committed message names stored attachments: lets an unsent remote upload's grant be consumed at adoption. */
+let attachmentAdoptionObserver: ((paths: string[]) => void) | null = null;
+export function setAttachmentAdoptionObserver(observer: ((paths: string[]) => void) | null): void { attachmentAdoptionObserver = observer; }
+/** Tell the adoption observer which stored pictures a committed message names, by the one
+ * reference definition visibility uses (attachment-access.ts attachmentReferencesIn). */
+function observeAdoption(message: Message): void {
+  if (!attachmentAdoptionObserver) return;
+  try {
+    const names = attachmentReferencesIn(JSON.stringify(message));
+    if (names.length) attachmentAdoptionObserver(names);
+  } catch { /* optional signal */ }
+}
+function observeCommitted(threadId: string, message: Message): void {
+  observeAdoption(message);
+  if (botReplyObserver && message.role === "bot" && message.kind === "text" && message.text?.trim()) { try { botReplyObserver(threadId, message); } catch { /* optional signal */ } }
+  if (!feedbackObserver || message.role !== "user" || message.kind !== "text") return;
+  try { feedbackObserver(threadId, message); } catch { /* optional signal */ }
+}
+
 export function insertMessage(threadId: string, message: Message): void {
   transaction(() => writeMessage(threadId, message));
+  observeCommitted(threadId, message);
 }
 
 /** Persist a new message and the branch head as one crash-safe mutation. */
@@ -220,15 +282,27 @@ export function appendMessage(threadId: string, message: Message): void {
     writeActiveLeaf(threadId, message.id);
     if ((message.parentId ?? null) !== (previous ?? null)) captureBranchChange(db(), threadId, message.id);
   });
+  observeCommitted(threadId, message);
 }
 
 export function updateMessage(threadId: string, message: Message): void {
   transaction(database => {
+    const prior = database.prepare(
+      "SELECT rowid AS position, kind, text, CASE kind WHEN 'activity' THEN json_extract(json, '$.tool.name') END AS tool_name FROM messages WHERE thread_id=? AND id=?",
+    ).get(threadId, message.id) as { position: number; kind: string; text: string | null; tool_name: string | null } | undefined;
     database.prepare("UPDATE messages SET at=?, role=?, kind=?, text=?, json=? WHERE thread_id=? AND id=?")
       .run(message.at,message.role,message.kind,message.text??null,JSON.stringify(message),threadId,message.id);
+    // Streaming patches rewrite a message many times with the same text: only
+    // re-index when what the index holds for this row would change.
+    if (prior) {
+      const before = searchableText({ kind: prior.kind, text: prior.text, tool: { name: prior.tool_name } });
+      const after = searchableText(message);
+      if (before !== after) syncMessageSearchRow(database, prior.position, after);
+    }
     captureMessage(database,threadId,message);
     bumpForMessage(message);
   });
+  observeCommitted(threadId, message);
 }
 
 /** Goal cards are new SQLite-backed messages, so crash recovery can locate
@@ -335,8 +409,10 @@ export function setActiveLeaf(threadId: string, leafId: string | null): void {
 export function deleteThread(threadId: string): void {
   transaction(database => {
     captureThreadDeletion(database,threadId);
+    const indexed = dropThreadSearchRows(database, threadId); // before the rows it is keyed by go
     database.prepare("DELETE FROM messages WHERE thread_id=?").run(threadId);
     database.prepare("DELETE FROM thread_state WHERE thread_id=?").run(threadId);
+    if (indexed) mergeMessageSearchIndex(database);
     bumpMessagesVersion();
   });
 }
@@ -357,8 +433,16 @@ export interface SearchHit {
 }
 
 /** Case-insensitive substring search over text messages, newest first.
- * A LIKE scan, deliberately: local transcripts are megabytes at most, a
- * scan is milliseconds, and it needs no FTS extension to exist.
+ * Queries of three or more characters ask the trigram index
+ * (message-search-index.ts) for candidate rows, then check each with the same
+ * LIKE the search has always used, so the index can narrow a search but never
+ * add a hit. Shorter queries (1-2 characters, which includes most CJK words),
+ * and any handle whose index is not known complete, scan with LIKE. Either
+ * way the result is the rows the scan would return.
+ *
+ * LIKE is ASCII-case-insensitive on both sides, so the old `lower(text)` is
+ * redundant (it was ASCII-only too) and is gone. Only the final page of rows
+ * is read through json_extract.
  *
  * @param threads the only threads that may be searched — one id, or a set.
  *   Absent means no restriction. An **empty array means nothing is visible
@@ -376,6 +460,20 @@ export interface SearchHit {
  *   Scoping happens **inside** the SQL so `LIMIT` counts rows the caller can
  *   actually see. A post-filter applied to the rows this returns would cut a
  *   full page down to a short one, and can return zero while matches exist. */
+/** Newest rows read first by searchMessages(), before any index. */
+const RECENT_WINDOW = 400;
+
+interface SearchRow {
+  thread_id: string;
+  id: string;
+  at: number;
+  role: string;
+  kind: string;
+  text: string | null;
+  tool_name: string | null;
+  from_name: string | null;
+}
+
 export function searchMessages(
   query: string,
   limit = 40,
@@ -390,25 +488,44 @@ export function searchMessages(
   // text messages by their text; activity chips by the tool name — "which
   // bot ran that migration" is a tool-name question. The chip's name lives
   // in the row's json; a JSON1 extract keeps this one query.
-  const scope = threadIds ? "thread_id IN (SELECT value FROM json_each(?)) AND " : "";
-  const statement = db().prepare(
+  const scope = threadIds ? "m.thread_id IN (SELECT value FROM json_each(?)) AND " : "";
+  const verify =
+    "((m.kind = 'text' AND m.text IS NOT NULL AND m.text LIKE ? ESCAPE '\\') " +
+    "OR (m.kind = 'activity' AND json_extract(m.json, '$.tool.name') LIKE ? ESCAPE '\\'))";
+  const handle = db();
+  const scopeParams = threadIds ? [JSON.stringify([...threadIds])] : [];
+  const detail =
     "SELECT thread_id, id, at, role, kind, text, json_extract(json, '$.tool.name') AS tool_name, json_extract(json, '$.from.name') AS from_name FROM messages " +
-      `WHERE ${scope}((kind = 'text' AND text IS NOT NULL AND lower(text) LIKE ? ESCAPE '\\') ` +
-      "   OR (kind = 'activity' AND tool_name IS NOT NULL AND lower(tool_name) LIKE ? ESCAPE '\\')) " +
-      "ORDER BY at DESC LIMIT ?",
+    "WHERE rowid IN (%PAGE%) ORDER BY at DESC, rowid DESC";
+  const fetch = (page: string, params: Array<string | number>) =>
+    handle.prepare(detail.replace("%PAGE%", page)).all(...params) as unknown as SearchRow[];
+  // CROSS JOIN pins the join order: candidates first, then one rowid probe each.
+  // Left to itself the planner walks the kind index and reads every text row.
+  const probe = "CROSS JOIN messages m ON m.rowid = c.rowid";
+  const order = "ORDER BY m.at DESC, m.rowid DESC LIMIT ?";
+  // 1. The newest rows first. When a common word fills a page from them, the
+  //    page is the answer (the order is total, so nothing older can outrank
+  //    it) and no index or scan is needed. messages_at serves the ordering.
+  const recent = Math.max(RECENT_WINDOW, limit * 8);
+  const window = fetch(
+    `SELECT m.rowid FROM (SELECT m.rowid AS rowid FROM messages m ${scope ? "WHERE " + scope.slice(0, -5) : ""} ORDER BY m.at DESC, m.rowid DESC LIMIT ?) c ${probe} WHERE ${verify} ${order}`,
+    [...scopeParams, recent, pattern, pattern, limit],
   );
-  const rows = (threadIds
-    ? statement.all(JSON.stringify([...threadIds]), pattern, pattern, limit)
-    : statement.all(pattern, pattern, limit)) as Array<{
-    thread_id: string;
-    id: string;
-    at: number;
-    role: string;
-    kind: string;
-    text: string | null;
-    tool_name: string | null;
-    from_name: string | null;
-  }>;
+  let rows: SearchRow[];
+  if (window.length >= limit) rows = window;
+  else if ([...needle].length >= MIN_INDEXED_QUERY_CODEPOINTS && messageSearchIndexReady(handle)) {
+    // 2. Rare words: the trigram index names the candidates (code points, not UTF-16 units).
+    try {
+      rows = fetch(
+        `SELECT m.rowid FROM (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?) c ${probe} WHERE ${scope}${verify} ${order}`,
+        [trigramQuery(needle), ...scopeParams, pattern, pattern, limit],
+      );
+    } catch (error) { disableMessageSearchIndex(handle, error); rows = scanAll(); }
+  } else rows = scanAll();
+  function scanAll(): SearchRow[] {
+    // 3. Short queries, or no usable index: the scan this search always had.
+    return fetch(`SELECT m.rowid FROM messages m WHERE ${scope}${verify} ${order}`, [...scopeParams, pattern, pattern, limit]);
+  }
   return rows.map((row) => {
     const haystack = row.kind === "activity" ? (row.tool_name ?? "") : (row.text ?? "");
     const hitAt = Math.max(0, haystack.toLowerCase().indexOf(needle));
@@ -438,4 +555,18 @@ export function searchMessages(
 /** Test/shutdown hook — closes the handle so a wiped DATA_DIR starts clean. */
 export function closeMessageDb(): void {
   closeDatabase();
+}
+
+/** Every thread whose messages mention this stored attachment name (a bare
+ * generated filename such as `<uuid>.png`). A bare name carries no LIKE
+ * wildcards, and anything else matches nothing. Used to decide whether a
+ * paired phone may be shown an image (attachment-access.ts). */
+export function threadsReferencingAttachment(name: string): string[] {
+  if (!/^[A-Za-z0-9-]+\.(png|jpg|jpeg|gif|webp)$/.test(name)) return [];
+  // LIKE narrows the rows; the shared reference definition decides (a name that only
+  // appears inside a longer filename-shaped token is not a reference, for adoption or here).
+  const rows = db().prepare("SELECT thread_id, json FROM messages WHERE json LIKE ?").iterate(`%${name}%`) as Iterable<{ thread_id: string; json: string }>;
+  const threads = new Set<string>();
+  for (const row of rows) if (!threads.has(row.thread_id) && messageJsonReferences(row.json, name)) threads.add(row.thread_id);
+  return [...threads];
 }

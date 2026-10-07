@@ -11,11 +11,8 @@ import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { fixtureFetch } from "./testing/conversation-proof.ts";
 
 let fixture: VerificationServer;
-/** Conversation routes answer only to a proven caller; a bare call here is the paired phone's credential, without the desktop proof. */
-const fetch = fixtureFetch(() => fixture);
 let model: string;
 let headers: Record<string, string> = {};
 
@@ -293,9 +290,6 @@ it("marks a question left open by a previous run as expired, never silently drop
   expect(card.card.expired).toBeFalsy();
 
   await fixture.restart();
-  // each launch has its own desktop secret
-  const refreshed = await api("GET", "/api/desktop-secret");
-  headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": refreshed.body.secret };
 
   const swept = (await messages(bot.threadId)).find((message) => message.card?.requestId === requestId);
   expect(swept.card.expired).toBe(true);

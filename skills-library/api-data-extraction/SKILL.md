@@ -6,7 +6,7 @@ description: |
   Do NOT use for building application-level API clients (that is software engineering), designing the full ETL pipeline (use etl-pipeline-design), or setting up API endpoints (use api-design in software development).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science analysis planning"
   category: "data-analysis"

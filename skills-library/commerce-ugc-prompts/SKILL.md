@@ -1,13 +1,12 @@
 ---
 name: commerce-ugc-prompts
 description: "Ask for reviews, photos and video at the moment the customer is most likely to say yes — prompt timing by product category (consumable, durable, cosmetic, apparel), template copy per channel, an incentive structure that stays inside platform anti-incentive rules, and the photo and video CTA. Use when a store has orders but almost no reviews. Do NOT use for responding to reviews already left, for the storefront and merchandising build (use vault-storefront-foundation), or for marketplace listing operations (use vault-marketplace-ops)."
-license: MIT
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ecommerce ugc review-prompt photo-review anti-incentive"
   category: "commerce"
-  attribution: "Wayland Business Suite (Original)"
 ---
 
 # Commerce UGC Prompts

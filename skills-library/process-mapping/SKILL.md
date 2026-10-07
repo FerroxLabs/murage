@@ -11,7 +11,7 @@ description: |
   or customer journey mapping (use customer-journey-map).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "planning analysis template strategy"
   category: "business-strategy"

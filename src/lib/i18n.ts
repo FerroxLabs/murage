@@ -54,6 +54,11 @@ export function subscribeLocale(listener: () => void): () => void {
 export function localeVersion(): number {
   return version;
 }
+/** The language in effect now ("en", "de", "pt-br"), for date and number
+ * formatting that should follow the app language. */
+export function localeCode(): string {
+  return activeCode;
+}
 
 /** Where this device remembers the language the owner chose in Settings
  * ("" follows the system), so the next start paints in it before config

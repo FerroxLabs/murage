@@ -32,7 +32,16 @@ const appRunScript = () => require(path.join(pnpm, builderDir, "node_modules", "
 const electronBinary = process.platform === "darwin"
   ? path.join(repo, "node_modules", "electron", "dist", "Electron.app", "Contents", "MacOS", "Electron")
   : path.join(repo, "node_modules", "electron", "dist", "electron");
-const REAL = process.platform === "win32" ? "POSIX AppRun" : !existsSync(electronBinary) ? "electron binary not present" : !builderDir ? "app-builder-lib not present" : false;
+// A present Electron binary is not always a runnable one: a slim container
+// without the desktop shared libraries (libnspr4, libnss3, ...) cannot start it
+// (loader exit 127). That is the host lacking the libraries, not the launcher
+// failing, so skip on exactly that loader error; any other failure still fails.
+const missingSharedLibraries = () => {
+  if (process.platform === "win32" || !existsSync(electronBinary)) return false;
+  const probe = spawnSync(electronBinary, ["--version"], { encoding: "utf8", env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
+  return probe.status === 127 && /error while loading shared libraries/.test(probe.stderr ?? "");
+};
+const REAL = process.platform === "win32" ? "POSIX AppRun" : !existsSync(electronBinary) ? "electron binary not present" : !builderDir ? "app-builder-lib not present" : missingSharedLibraries() ? "electron cannot start here: desktop shared libraries are missing" : false;
 
 function appDirFixture(root, unshareExit) {
   // A stand-in AppDir: the real AppRun text, and BIN (`murage`) that records

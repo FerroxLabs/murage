@@ -7,6 +7,7 @@ import { Globe, X } from "lucide-react";
 import { z } from "zod";
 import { api, useStore, type Bot } from "@/state/store";
 import { BrowserPanel } from "./BrowserPanel";
+import { OpenBotListButton } from "./OpenBotListButton";
 
 const controlSnapshotSchema = z.looseObject({
   held: z.boolean().optional().default(false),
@@ -66,7 +67,9 @@ export function BrowserWorkspace({ bot, onClose }: { bot: Bot; onClose: () => vo
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col bg-app">
-      <header className="flex min-h-[60px] items-center gap-3 border-b border-hairline/40 px-5 py-3">
+      <header className="flex min-h-[60px] items-center gap-3 border-b border-hairline/40 px-5 py-3 pt-[calc(0.75rem+env(safe-area-inset-top))] max-md:pl-3">
+        {/* Phones only, first on the row (OpenBotListButton.tsx). */}
+        <OpenBotListButton />
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
           <Globe size={18} />
         </div>

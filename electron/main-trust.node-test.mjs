@@ -55,3 +55,39 @@ test("derives the packaged loopback origin or the dev origin", () => {
   assert.equal(mainRendererOrigin({ packaged: false, serverPort: 8799, devUrl: "file:///x.html" }), null);
   assert.equal(mainRendererOrigin({ packaged: false, serverPort: 8799, devUrl: undefined }), null);
 });
+
+test("after a renderer restart the new top frame is accepted, stale and sub frames are not", () => {
+  const { window, webContents } = fixture();
+  // The process was replaced: the contents now report a new main frame, while the event carries
+  // a different wrapper for the same frame in the same (new) process.
+  webContents.getProcessId = () => 77;
+  webContents.mainFrame = { url: `${ORIGIN}/`, detached: false, parent: null, processId: 77, routingId: 1 };
+  const wrapper = { url: `${ORIGIN}/`, detached: false, parent: null, processId: 77, routingId: 1 };
+  const ok = (frame, origin = ORIGIN) => isOwnedMainSender({ sender: webContents, senderFrame: frame }, { window, origin });
+  assert.equal(ok(wrapper), true);
+  assert.equal(ok({ ...wrapper, processId: 12 }), false, "frame left from the dead process");
+  assert.equal(ok({ ...wrapper, routingId: 9 }), false, "another frame");
+  assert.equal(ok({ ...wrapper, parent: webContents.mainFrame }), false, "subframe");
+  assert.equal(ok({ ...wrapper, detached: true, processId: 12 }), false, "detached frame from the dead process");
+  assert.equal(ok({ ...wrapper, detached: true, routingId: 9 }), false, "detached other frame");
+  assert.equal(ok({ ...wrapper, url: "data:text/html,Reconnecting" }), false, "splash or recovery page");
+  assert.equal(ok({ ...wrapper, url: `file:///recovery.html` }), false);
+  assert.equal(ok(wrapper, "https://example.com"), false);
+  const other = fixture();
+  other.webContents.getProcessId = () => 77;
+  assert.equal(isOwnedMainSender({ sender: other.webContents, senderFrame: wrapper }, { window, origin: ORIGIN }), false, "another window");
+});
+
+test("Electron 43 marks the live main frame detached after a renderer restart: still accepted", () => {
+  // Measured on mobile.28: frame === mainFrame, detached=true, pid/rid match, origin matches.
+  const { window, webContents } = fixture();
+  webContents.getProcessId = () => 26;
+  webContents.mainFrame = { url: `${ORIGIN}/`, detached: true, parent: null, processId: 26, routingId: 4 };
+  const ok = (frame) => isOwnedMainSender({ sender: webContents, senderFrame: frame }, { window, origin: ORIGIN });
+  assert.equal(ok(webContents.mainFrame), true);
+  webContents.getProcessId = () => 31;
+  assert.equal(ok(webContents.mainFrame), false, "detached main frame whose process is gone");
+  webContents.getProcessId = () => 26;
+  webContents.mainFrame.url = "data:text/html,Reconnecting";
+  assert.equal(ok(webContents.mainFrame), false, "recovery page");
+});

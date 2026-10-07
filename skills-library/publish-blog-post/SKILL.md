@@ -12,7 +12,7 @@ description: |
   for building an ongoing content calendar (use create-content-calendar).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "blog-post writing seo editing step-by-step"
   category: "content-creation"

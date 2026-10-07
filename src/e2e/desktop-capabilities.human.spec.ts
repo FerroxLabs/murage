@@ -306,7 +306,7 @@ for (const terminal of ["EXPIRED", "FAILED"]) {
     fixture.service = { connected: false, pending: false, status: terminal, accounts: [] };
     await page.clock.fastForward(5_000);
     await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
-    await expect(page.getByText(`Authorization ${terminal.toLowerCase()} — try again`, { exact: true })).toBeVisible();
+    await expect(page.getByText(`Authorization ${terminal.toLowerCase()}. Try again.`, { exact: true })).toBeVisible();
     const finalReads = fixture.statusReads;
     await page.clock.fastForward(10_000);
     expect(fixture.statusReads).toBe(finalReads);
@@ -406,7 +406,7 @@ test("remote calendar preserves Run now while hiding schedule administration", a
   await expect(details.getByRole("button", { name: "Run now", exact: true })).toBeVisible();
   await expect(details.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Pause routine" })).toHaveCount(0);
-  await expect(details.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+  await expect(details.getByRole("button", { name: "Delete routine", exact: true })).toHaveCount(0);
   for (const skin of ["light", "dark"]) {
     await page.evaluate((value) => document.documentElement.dataset.skin = value, skin);
     await page.screenshot({ path: testInfo.outputPath(`remote-calendar-${skin}.png`) });
@@ -454,12 +454,13 @@ test("confirmed desktop retains persistent approvals, MCP and routine editing", 
   await page.getByRole("tab", { name: "MCP servers" }).click();
   await expect(page.getByRole("tab", { name: "MCP servers" })).toHaveAttribute("aria-selected", "true");
   await mount(page, "calendar", true);
-  await expect(page.getByRole("button", { name: /^Create(?: event)?$/ })).toBeVisible();
+  // The sidebar's Create below lg is the floating "New routine" button.
+  await expect(page.getByRole("button", { name: /^(?:Create(?: event)?|New routine)$/ })).toBeVisible();
   await page.locator("[data-event-card]").first().click();
   const details = page.getByRole("dialog", { name: "Routine details" });
   await expect(details.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
   await expect(details.getByRole("button", { name: "Pause routine" })).toBeVisible();
-  await expect(details.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+  await expect(details.getByRole("button", { name: "Delete routine", exact: true })).toBeVisible();
 });
 
 test("desktop profile rejects malformed success payloads", async ({ page }) => {

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -43,7 +43,7 @@ const caseFoldingScratch = (() => {
 })();
 const staged = it.skipIf(!caseFoldingScratch);
 function fixture() {
-  const original = realpathSync(mkdtempSync(join(tmpdir(), "murage-win-operation-")));
+  const original = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-win-operation-")));
   const root = join(dirname(original), original.slice(dirname(original).length + 1).toLowerCase());
   if (original !== root) renameSync(original, root); roots.push(root);
   const data = join(root, "installation"); mkdirSync(data);
@@ -94,7 +94,7 @@ staged("writes only beneath a native private root and publishes after every stag
   expect(events).toEqual(["private-stage:prepared", "encrypt:closed", "decrypt:prepared", "decrypt:authenticated", "decrypt:released", "private-stage:released"]);
   // D4: the backup folder's private stage gets only the ciphertext; the
   // readback decrypts in the owner-only work folder beside the data folder.
-  expect(dirname(privateRoots[0])).toBe(dirname(f.archive).toLowerCase()); expect(privateRoots[1].toLowerCase()).toContain(`${join(f.root, ".murage-backup-work")}/`.toLowerCase());
+  expect(dirname(privateRoots[0])).toBe(dirname(f.archive).toLowerCase()); expect(privateRoots[1].toLowerCase()).toContain(`${join(f.root, ".murage-backup-work")}${sep}`.toLowerCase());
   expect(privateRoots.every(path => !existsSync(path))).toBe(true); expect(existsSync(join(f.root, ".murage-backup-work"))).toBe(false);
   expect(readdirSync(f.root).some(name => name.startsWith(".murage-encrypted"))).toBe(false); expect(mocks.spawn).not.toHaveBeenCalled();
 });

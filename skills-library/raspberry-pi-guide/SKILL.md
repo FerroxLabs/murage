@@ -4,7 +4,7 @@ description: |
   Comprehensive guide to Raspberry Pi projects including model selection, OS setup, server builds, GPIO programming, home automation, and advanced applications. Use when the user asks about raspberry pi guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "iot guide step-by-step"
   category: "hobbies-crafts"

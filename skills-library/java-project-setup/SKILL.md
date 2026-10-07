@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Java modern idioms (use `java-modern-idioms`), Java testing (use `java-testing-patterns`), Java Spring (use `java-spring-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "java best-practices template"
   category: "software-engineering"

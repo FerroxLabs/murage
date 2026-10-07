@@ -29,7 +29,9 @@ import {
 import { api, useStore, type Bot } from "@/state/store";
 import type { Routine } from "@/lib/routines";
 import { callNative, nativeHas } from "@/lib/native-shell";
+import { possessive } from "@/lib/possessive";
 import { ApiKeyRow } from "./ApiKeys";
+import { BotAvatar, type BotAvatarProps } from "./Avatar";
 import { cn } from "@/lib/cn";
 import { useNarrowViewport } from "@/lib/media-query";
 import { usePageVisible } from "@/lib/page-visible";
@@ -66,6 +68,7 @@ import {
   type ComputerPanelView,
 } from "@/lib/computer-panel-view";
 import { usePagedScreenFrame } from "@/lib/paged-screen-frame";
+import { describeDesktopOnlyRouteError, routeErrorFrom } from "@/lib/desktop-only-route-error";
 
 export function ScreenStreamNotice({ message }: { message?: string }) {
   return message ? <p role="status" className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">{message}</p> : null;
@@ -223,6 +226,123 @@ function readPanelWidth(): number {
     /* storage blocked — default width */
   }
   return PANEL_DEFAULT_WIDTH;
+}
+
+/** What the panel's header shows. The Computer/Android/Browser tab switcher
+ *  only makes sense with a live desktop behind it, so a phone always gets
+ *  the plain title, even when it also has an Android device attached or the
+ *  Browser flag on — there is nothing for either of those tabs to do here. */
+export function computerPanelHeaderMode({
+  phone,
+  androidConnected,
+  browserEnabled,
+}: {
+  phone: boolean;
+  androidConnected: boolean;
+  browserEnabled: boolean;
+}): "tabs" | "title" {
+  if (phone) return "title";
+  return androidConnected || browserEnabled ? "tabs" : "title";
+}
+
+/** The explanation a phone gets instead of the Computer/Browser panel's live
+ *  views and settings (spec §6): both are desktop-only, the door refuses
+ *  them, and a raw route error or a grid of controls that can't work here
+ *  is not an answer. The app's one possessive rule (src/lib/possessive.ts)
+ *  decides the first sentence, so a name ending in ")" or "s" still reads
+ *  correctly. */
+export function phoneComputerNoticeSentences(botName: string): [string, string] {
+  return [
+    `Watching or taking over ${possessive(botName)} computer and browser happens on your Mac.`,
+    `${botName} can still use them when you ask from here.`,
+  ];
+}
+
+export function phoneComputerNoticeText(botName: string): string {
+  return phoneComputerNoticeSentences(botName).join(" ");
+}
+
+/** Shape BotAvatar already accepts (Avatar.tsx), narrowed to a required name
+ *  since the empty state's copy names the bot on both sides. */
+type PhoneEmptyStateBot = BotAvatarProps["bot"] & { name: string };
+
+const LAPTOP_WIDTH = 168;
+const LAPTOP_HEIGHT = 132;
+// The screen's inner bounds, shared between the outline path below and the
+// avatar overlay so the mascot sits exactly inside the drawn bezel.
+const LAPTOP_SCREEN = { left: 20, top: 6, width: 128, height: 82 };
+
+/** A laptop outline, drawn (no new image asset) in the theme's muted line
+ *  colour via `currentColor`, with the bot's own avatar sitting on its
+ *  screen. Purely decorative: the heading and body beside it already say
+ *  the same thing in words. */
+function PhoneComputerIllustration({ bot }: { bot: PhoneEmptyStateBot }) {
+  return (
+    <div
+      aria-hidden="true"
+      className="relative mx-auto shrink-0 text-ink-secondary/70"
+      style={{ width: LAPTOP_WIDTH, height: LAPTOP_HEIGHT }}
+    >
+      <svg
+        aria-hidden="true"
+        viewBox={`0 0 ${LAPTOP_WIDTH} ${LAPTOP_HEIGHT}`}
+        width={LAPTOP_WIDTH}
+        height={LAPTOP_HEIGHT}
+        fill="none"
+        className="absolute inset-0"
+      >
+        <rect
+          x={LAPTOP_SCREEN.left}
+          y={LAPTOP_SCREEN.top}
+          width={LAPTOP_SCREEN.width}
+          height={LAPTOP_SCREEN.height}
+          rx="7"
+          stroke="currentColor"
+          strokeWidth="2.5"
+        />
+        <path d="M6 112 L162 112 L150 128 L18 128 Z" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" />
+        <line x1="20" y1="98" x2="20" y2="112" stroke="currentColor" strokeWidth="2.5" />
+        <line x1="148" y1="98" x2="148" y2="112" stroke="currentColor" strokeWidth="2.5" />
+      </svg>
+      <div
+        className="absolute flex items-center justify-center"
+        style={{
+          left: LAPTOP_SCREEN.left,
+          top: LAPTOP_SCREEN.top,
+          width: LAPTOP_SCREEN.width,
+          height: LAPTOP_SCREEN.height,
+        }}
+      >
+        <BotAvatar bot={bot} size={56} animated={false} />
+      </div>
+    </div>
+  );
+}
+
+export function PhoneComputerPanelBody({ bot }: { bot: PhoneEmptyStateBot }) {
+  const [first, second] = phoneComputerNoticeSentences(bot.name);
+  return (
+    // The scroller itself only sets height/overflow; `justify-center` on a
+    // scrolling flex container is the trap where content taller than the
+    // panel can center around a virtual box bigger than the viewport and
+    // clip its own top out of scroll reach in some browsers. `my-auto` on
+    // the inner block gets the same centred look when there is room, and
+    // simply collapses to 0 (content starts at the top, fully reachable by
+    // scrolling) once it doesn't fit.
+    <div className="flex flex-1 flex-col overflow-y-auto">
+      <div className="my-auto flex flex-col items-center gap-4 px-6 py-6 text-center">
+        <PhoneComputerIllustration bot={bot} />
+        <div className="max-w-[260px]">
+          {/* The panel's own "Computer" title is a styled <span> in its
+              header, not a heading, so this is the only heading in the
+              panel's subtree — h1 fits its structure, not a nested h2. */}
+          <h1 className="text-[15px] font-semibold text-ink">On your Mac</h1>
+          <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{first}</p>
+          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">{second}</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function ComputerPanel({
@@ -440,7 +560,7 @@ export function ComputerPanel({
               status.container === "missing" &&
               status.image &&
               status.create_supported;
-            setError(canCreateHere ? null : `${status.problem ?? "The Local VM is not ready"}. Open App Settings → Local VM.`);
+            setError(canCreateHere ? null : `${status.problem ?? "The Local VM is not ready"}. Open App Settings → Computer & browser.`);
             setPhase("vm-unavailable");
           }
         })
@@ -524,7 +644,7 @@ export function ComputerPanel({
         })
         .catch((e) => {
           if (!alive) return;
-          setError(e.message);
+          setError(describeDesktopOnlyRouteError(routeErrorFrom(e)));
           setPhase("error");
         });
       return () => {
@@ -558,7 +678,7 @@ export function ComputerPanel({
       })
       .catch((e) => {
         if (!alive) return;
-        setError(e.message);
+        setError(describeDesktopOnlyRouteError(routeErrorFrom(e)));
         setPhase("error");
       });
     return () => {
@@ -935,12 +1055,12 @@ export function ComputerPanel({
   };
 
   const openVmSettings = () => {
-    window.sessionStorage.setItem("murage.settings.section", "computer");
-    dispatch({ type: "toggleAppSettings", open: true });
+    dispatch({ type: "toggleAppSettings", open: true, section: "computer" });
   };
 
+  // The VPS connection lives with the other computers (0.1.62).
   const openConnectionSettings = () => {
-    dispatch({ type: "toggleAppSettings", open: true, section: "connections" });
+    dispatch({ type: "toggleAppSettings", open: true, section: "computer" });
   };
 
   const emptyState = {
@@ -963,6 +1083,8 @@ export function ComputerPanel({
         "animate-panel-in relative flex h-full flex-col border-l border-hairline/40 bg-panel",
         "md:shrink-0",
         "max-md:absolute max-md:inset-0 max-md:z-40 max-md:w-full",
+        // Covering the chat means covering its header's status-bar inset too.
+        "max-md:pt-[var(--inset-top)] max-md:pb-[var(--inset-bottom)]",
       )}
       style={narrow ? undefined : { width: panelWidth }}
     >
@@ -987,7 +1109,7 @@ export function ComputerPanel({
         >
           <Settings size={18} />
         </button>
-        {androidConnected || browserEnabled ? (
+        {computerPanelHeaderMode({ phone, androidConnected, browserEnabled }) === "tabs" ? (
           <div className="flex overflow-hidden rounded-lg border border-hairline/40">
             <button
               onClick={() => selectPanelView("computer")}
@@ -1038,7 +1160,9 @@ export function ComputerPanel({
         </button>
       </div>
 
-      {panelView === "browser" && browserEnabled ? (
+      {phone ? (
+        <PhoneComputerPanelBody bot={bot} />
+      ) : panelView === "browser" && browserEnabled ? (
         <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
           <BrowserPanel
             bot={bot}
@@ -1374,7 +1498,7 @@ export function ComputerPanel({
                     : "Auto uses a cloud box when one exists, otherwise this computer, and asks you once before it first uses this computer. ")}
               Pick where this bot's computer lives. <b className="text-ink">Local VM</b> is a Cua-controlled Linux desktop
               in a container on this machine, kept apart from your own desktop. Set it up in App
-              Settings → Local VM.
+              Settings → Computer & browser.
           </div>
           <ComputerDestinationGrid value={bot.computer ?? "auto"} unavailable={{
             ...(!cloudSupported ? { cloud: "This engine cannot use cloud computer tools" } : {}),

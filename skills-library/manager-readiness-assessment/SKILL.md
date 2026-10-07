@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of manager readiness assessment or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "assessment teaching template guide analysis"
   category: "education"

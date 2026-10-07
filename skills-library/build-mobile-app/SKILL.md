@@ -21,7 +21,7 @@ trigger_phrases: >-
   app mobile app development guide launch an app on the app store cross-platform
   mobile development
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: mobile step-by-step planning
   category: software-project

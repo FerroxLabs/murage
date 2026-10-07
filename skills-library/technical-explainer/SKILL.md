@@ -4,7 +4,7 @@ description: |
   Making complex topics accessible to any audience. Covers analogy creation, layered explanation (ELI5 to expert), visual communication strategies, the Feynman technique, jargon translation, audience assessment, FAQ design, and explainer formats (video, article, infographic) for technical communication. Use when the user asks about technical explainer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "technical-writing writing guide"
   category: "writing"

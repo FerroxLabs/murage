@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user needs a different ai ml engineering capability -- check sibling skills in the ai ml engineering subcategory.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ai-ml devops cloud"
   category: "ai-machine-learning"

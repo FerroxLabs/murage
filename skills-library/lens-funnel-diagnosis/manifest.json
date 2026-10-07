@@ -2,7 +2,7 @@
   "id": "lens-funnel-diagnosis",
   "name": "funnel-diagnosis",
   "version": "1.0.0",
-  "description": "As of: 2026-05-16",
+  "description": "Work out where you are losing people in a funnel. Find the biggest drop, check there is enough data to trust it and see which group it hits before you change anything.",
   "defaultEnabled": false,
   "triggerTerms": [
     "lens",

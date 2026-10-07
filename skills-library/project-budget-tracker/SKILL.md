@@ -6,7 +6,7 @@ description: |
   Do NOT use for personal household budgeting (use personal-finance budgeting skills), business financial modeling (use business finance skills), or investment tracking (use personal-finance investing skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "project-management template analysis"
   category: "productivity"

@@ -2,7 +2,7 @@
   "id": "beacon-linkedin",
   "name": "linkedin",
   "version": "1.0.0",
-  "description": "As of: 2026-05-16",
+  "description": "Plan LinkedIn for B2B reach and personal brands. Choose between a personal profile and a company page, set the post mix and rhythm, and decide what to measure.",
   "defaultEnabled": false,
   "triggerTerms": [
     "beacon",

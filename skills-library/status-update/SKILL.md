@@ -8,7 +8,7 @@ description: |
   (use `stakeholder-update`), or meeting notes (use `meeting-notes`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "report writing analysis"
   category: "writing"

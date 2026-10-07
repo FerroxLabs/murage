@@ -1,8 +1,9 @@
 ---
 name: copy-lens-platform-native
 description: "**Lens mode.** Source authority: Gary Vee's \"day-trading attention\" thesis — the same idea performs differently on every platform, and the platform's native shape is non-negotiable."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "copy"
 ---

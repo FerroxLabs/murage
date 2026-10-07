@@ -1,8 +1,9 @@
 ---
 name: slate-role-design
 description: "The user is about to hire, has just hired and the seat isn't producing, or is asking \"do I need a head of X.\" Foundation skill; nothing else in Slate's craft works without it."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "slate"
 ---

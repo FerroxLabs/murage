@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of vintage electronics repair or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide woodworking budgeting stress-management testing research safety restoration"
   category: "hobbies-crafts"

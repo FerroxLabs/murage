@@ -11,7 +11,7 @@ description: |
   or cold outreach sales emails (use cold-outreach-sequence).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing email planning template"
   category: "marketing-sales"

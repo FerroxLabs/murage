@@ -6,7 +6,7 @@ description: |
   Do NOT use for finding or vetting contractors, project budgeting (use renovation-budget instead), or scheduling home maintenance tasks.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-maintenance decision-making planning"
   category: "home-household"

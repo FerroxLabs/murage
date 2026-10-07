@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Where each What's new shortcut goes. Mounted by Sidebar.tsx, which owns the
-// Tools menu entry that reopens the page. The dialog itself, art included,
+// You menu entry that reopens the page (Settings > Help & updates asks it to,
+// through lib/app-events.ts). The dialog itself, art included,
 // loads the first time the page opens, so it stays out of the first paint.
 import { Suspense } from "react";
 import { useStore, type Action } from "@/state/store";
@@ -37,21 +38,27 @@ export function runWhatsNewAction(action: WhatsNewAction, dispatch: (action: Act
     case "rooms":
       dispatch({ type: "showTeamMap" });
       return true;
-    // Settings > Tools & Connections > Image generation: the model and its
-    // limits, and the library of saved blocks and reference packs.
+    // Settings > Images: the model and its limits (Setup), and the library
+    // of saved blocks and reference packs (its own tab since 0.1.62).
+    case "shapes":
+      dispatch({ type: "toggleAppSettings", open: true, section: "images" });
+      whenRendered(() => document.getElementById("image-settings-heading"), showSetting);
+      return true;
     case "blocks":
     case "packs":
-    case "shapes":
-      dispatch({ type: "toggleAppSettings", open: true, section: "connections" });
-      whenRendered(() => document.getElementById("image-settings-heading"), showSetting);
+      dispatch({ type: "toggleAppSettings", open: true, section: "images" });
+      whenRendered(() => document.getElementById("images-tab-library"), (tab) => {
+        if (tab instanceof HTMLElement) tab.click();
+        showSetting(tab);
+      });
       return true;
     case "gemini":
       dispatch({ type: "toggleAppSettings", open: true, section: "models" });
       return true;
-    // Settings > General > Channel turns: the no activity limit, the one
+    // Settings > Bot defaults > Channel turns: the no activity limit, the one
     // clock left, which counts silence rather than working time.
     case "longwork":
-      dispatch({ type: "toggleAppSettings", open: true, section: "general" });
+      dispatch({ type: "toggleAppSettings", open: true, section: "botDefaults" });
       whenRendered(() => document.getElementById("room-turn-timeout"), showSetting);
       return true;
   }

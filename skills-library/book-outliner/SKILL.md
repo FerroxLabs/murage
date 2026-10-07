@@ -4,7 +4,7 @@ description: |
   Multiple outlining methodologies for fiction and non-fiction, covering progressive expansion, beat sheets, scene-sequel, tentpole, mind map, and zero draft approaches, with a decision tree for matching method to writer type. Use when the user asks about book outliner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing planning"
   category: "writing"

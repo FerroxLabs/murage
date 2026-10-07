@@ -6,7 +6,7 @@ description: |
   Do NOT use for in-person lesson plans (use `lesson-plan-design`), for full curriculum mapping (use `curriculum-mapping`), or for student course study guides (use `course-companion`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching curriculum lesson-plan step-by-step"
   category: "education"

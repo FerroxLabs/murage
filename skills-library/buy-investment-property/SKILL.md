@@ -19,7 +19,7 @@ trigger_phrases: >-
   investment property become a landlord buy a rental house real estate investing
   for beginners
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: home-buying investing step-by-step planning
   category: business-operations

@@ -2,7 +2,7 @@
   "id": "beacon-channel-strategy",
   "name": "channel-strategy",
   "version": "1.0.0",
-  "description": "**Mode skill.** Default-enabled on the Channels specialist.",
+  "description": "Decide which marketing channels to use and how to split the budget. Use it when someone asks where to post or how to get found, before you recommend any one platform.",
   "defaultEnabled": false,
   "triggerTerms": [
     "beacon",

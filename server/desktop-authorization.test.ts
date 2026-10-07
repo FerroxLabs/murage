@@ -3,17 +3,16 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { fixtureFetch } from "./testing/conversation-proof.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 
 let fixture: VerificationServer;
-/** Conversation routes answer only to a proven caller; a bare call here is the paired phone's credential, without the desktop proof. */
-const fetch = fixtureFetch(() => fixture);
 let desktop: Record<string, string>;
 let botId: string;
 let groupId: string;
-/** The paired phone: the marker plus the launch credential the fixture shares with its door. */
-let remote: Record<string, string> = { "x-murage-companion": "1" };
-const markerOnly = { "x-murage-companion": "1" };
+/** The companion marker plus the door header the real door stamps (audit C5):
+ * where the request came from, not owner proof. */
+const DOOR_TOKEN = "d".repeat(64);
+const remote = { "x-murage-companion": "1", "x-murage-door-token": DOOR_TOKEN };
 
 const administration: Array<[string, string]> = [
   ["PATCH", "/api/config"], ["PUT", "/api/config"],
@@ -55,8 +54,7 @@ async function api(method: string, path: string, body?: unknown, headers: Record
 }
 
 beforeAll(async () => {
-  fixture = await launchVerificationServer();
-  remote = { "x-murage-companion": "1", "x-murage-companion-token": fixture.companionToken };
+  fixture = await launchVerificationServer(process.env, undefined, { env: { MURAGE_COMPANION_TOKEN: DOOR_TOKEN } });
   const proof = await api("GET", "/api/desktop-secret");
   expect(proof.status).toBe(200);
   expect(proof.body.secret).toBeTruthy();
@@ -115,7 +113,7 @@ describe("desktop authority at the actual harness boundary", () => {
     expect(readFileSync(join(fixture.info.dataDir, "bots.json"), "utf8")).toBe(before);
   });
 
-  it("allows proven desktop authority updates and safe remote profiles", async () => {
+  it("allows proven desktop authority updates, and profile edits from the desktop only", async () => {
     const bot = await api("PATCH", `/api/bots/${botId}`, { autoApprove: false, alwaysAllow: [] }, desktop);
     expect(bot.status).toBe(200);
     expect(bot.body.bot.autoApprove).toBe(false);
@@ -123,9 +121,13 @@ describe("desktop authority at the actual harness boundary", () => {
     expect(config.status).toBe(200);
     expect(config.body.features.showToolCalls).toBe(true);
     expect((await api("PATCH", `/api/groups/${groupId}`, { name: "Reviewed room" }, desktop)).status).toBe(200);
-    const profile = await api("PATCH", `/api/bots/${botId}/profile`, { name: "Remote profile edit" }, remote);
+    // 0.1.61 (audit round 2): a profile carries the persona every turn of
+    // the bot reads, so the marker alone no longer edits it; the desktop
+    // (and the paired phone, with its launch proof) still can.
+    expect((await api("PATCH", `/api/bots/${botId}/profile`, { name: "Remote profile edit" }, remote)).status).toBe(404);
+    const profile = await api("PATCH", `/api/bots/${botId}/profile`, { name: "Desktop profile edit" }, desktop);
     expect(profile.status).toBe(200);
-    expect(profile.body.bot.name).toBe("Remote profile edit");
+    expect(profile.body.bot.name).toBe("Desktop profile edit");
     expect(profile.body.bot.autoApprove).toBe(false);
   });
 
@@ -140,7 +142,7 @@ describe("desktop authority at the actual harness boundary", () => {
     expect((await api("POST", `/api/bots/${botId}/messages`, { text: "__fixture_hold_authority__" }, remote)).status).toBe(202);
     let dump: any;
     await expect.poll(() => {
-      try { dump = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")); return true; }
+      try { dump = withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))); return true; }
       catch { return false; }
     }, { timeout: 10_000 }).toBe(true);
     const token = dump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN;
@@ -151,11 +153,10 @@ describe("desktop authority at the actual harness boundary", () => {
     expect(proposed.status).toBe(201);
     expect((await api("POST", `/api/bots/${botId}/interrupt`, undefined, remote)).status).toBe(200);
     // The companion marker alone is not the paired phone: any local process
-    // can send it. It reaches no conversation route at all, so it cannot
-    // approve either (the real phone door adds the launch credential;
-    // respond-authority.test.ts covers that path).
-    const unproven = await api("POST", `/api/threads/${sent.body.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" }, markerOnly);
-    expect(unproven.status).toBe(404);
+    // can send it. It may not approve (the real phone door adds the launch
+    // credential; respond-authority.test.ts covers that path).
+    const unproven = await api("POST", `/api/threads/${sent.body.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" }, remote);
+    expect(unproven.status).toBe(403);
     expect((await api("GET", "/api/routines", undefined, desktop)).body.routines).toHaveLength(0);
     const approved = await api("POST", `/api/threads/${sent.body.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" }, desktop);
     expect(approved.status).toBe(200);

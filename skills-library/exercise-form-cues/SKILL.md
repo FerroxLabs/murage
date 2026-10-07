@@ -6,7 +6,7 @@ description: |
   Do NOT use for programming sets, reps, or training plans (use strength training skills), yoga or stretching technique (use yoga or stretching skills), or rehabilitation exercises (consult a physical therapist).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "fitness workout-planning checklist"
   category: "health-wellness"

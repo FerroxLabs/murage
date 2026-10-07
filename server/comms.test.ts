@@ -10,6 +10,7 @@
 // turned it into `node <script>` on Windows too, so the e2e half now runs
 // everywhere alongside the mention-resolution units.
 import { spawn, type ChildProcess } from "node:child_process";
+import { request as httpRequest } from "node:http";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -145,17 +146,42 @@ describe("comms e2e (fake ACP fleet)", () => {
    * assertions would be checking the phone's view of a conversation only the
    * desktop is shown — and the marker on its own stopped being believed: the
    * harness wants this launch's desktop secret alongside it. */
-  const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
-    const res = await fetch(`${BASE}${path}`, {
-      method,
-      headers: {
-        "x-murage-surface": "desktop",
-        "x-murage-surface-secret": DESKTOP_SECRET,
-        ...(body ? { "content-type": "application/json" } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
+  const api = (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+    // One fresh connection per request (`agent: false`, `connection: close`).
+    // fetch() pools keep-alive sockets; under load the pooled socket can be
+    // reaped by the server just as the client reuses it, which surfaces as
+    // "fetch failed / read ECONNRESET" on an unrelated call. Nothing here
+    // depends on connection reuse, so never reuse one.
+    const payload = body ? JSON.stringify(body) : undefined;
+    return new Promise((resolve, reject) => {
+      const req = httpRequest(
+        `${BASE}${path}`,
+        {
+          method,
+          agent: false,
+          headers: {
+            connection: "close",
+            "x-murage-surface": "desktop",
+            "x-murage-surface-secret": DESKTOP_SECRET,
+            ...(payload ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } : {}),
+          },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (c: Buffer) => chunks.push(c));
+          res.on("error", reject);
+          res.on("end", () => {
+            try {
+              resolve({ status: res.statusCode ?? 0, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
+            } catch (error) {
+              reject(error);
+            }
+          });
+        },
+      );
+      req.on("error", reject);
+      req.end(payload);
     });
-    return { status: res.status, body: await res.json() };
   };
 
   beforeAll(async () => {
@@ -363,71 +389,67 @@ describe("comms e2e (fake ACP fleet)", () => {
     40_000,
   );
 
-  it(
-    "gives a Gemini Antigravity bot no agents MCP on Ask and Auto, because its print mode cannot ask",
-    async () => {
-      // Antigravity cannot stop to ask, so below Full access Murage runs it
-      // in accept-edits: file edits only, no mounted integrations. The peer
-      // call therefore finds no agents MCP, and nothing reaches the teammate.
-      // (Full access always worked this way.) A unique section keeps the
-      // two bots isolated from the rest of the suite's fleet.
-      const section = "Gemini agents MCP e2e";
-      const helper = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${helper.id}`, {
-        name: "Gemini Helper",
-        section,
-        modelSelection: { instanceId: "grok", model: "fake-model" },
-      });
-      const asker = (await api("POST", "/api/bots")).body.bot;
-      await api("PATCH", `/api/bots/${asker.id}`, {
-        name: "Gemini Asker",
-        section,
-        modelSelection: { instanceId: "geminiAsker", model: "gemini-3.7-flash-high" },
-      });
-
-      for (const mode of ["ask", "auto"]) {
-        const set = await api("PATCH", `/api/bots/${asker.id}`, { autoApprove: mode === "auto", fullAccess: false });
-        expect(set.status, `could not set ${mode}`).toBeLessThan(300);
-        const before = ((await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === asker.id).messages as any[]).length;
-        const send = await api("POST", `/api/bots/${asker.id}/messages`, {
-          text: "Ask the other bot for a status check.",
+  // S3b (5f1db7b26): every turn now reaches Murage's permission broker (Ask and
+  // Auto route asks, Full access keeps the stop line), and Antigravity print
+  // mode has no approval channel. So its turns run without the skip flag and no
+  // token-bearing MCP (agents, computer, custom) is mounted at ANY level. Peer
+  // calls stay covered by the ACP-based tests in this file (grok `ask-peer`).
+  for (const level of ["ask", "auto", "full"] as const) {
+    it(
+      `does not offer peer tools to a Gemini Antigravity bot at ${level} access, and the turn ends with a plain message`,
+      async () => {
+        const section = `Gemini agents MCP e2e ${level}`;
+        const helper = (await api("POST", "/api/bots")).body.bot;
+        await api("PATCH", `/api/bots/${helper.id}`, {
+          name: `Gemini Helper ${level}`,
+          section,
+          modelSelection: { instanceId: "grok", model: "fake-model" },
         });
-        expect(send.status).toBe(202);
+        const asker = (await api("POST", "/api/bots")).body.bot;
+        expect((await api("PATCH", `/api/bots/${asker.id}`, {
+          name: `Gemini Asker ${level}`,
+          section,
+          modelSelection: { instanceId: "geminiAsker", model: "gemini-3.7-flash-high" },
+          ...(level !== "ask" ? { autoApprove: true } : {}),
+        })).status).toBe(200);
+        if (level === "full") {
+          const on = await api("PATCH", `/api/bots/${asker.id}/tasks/${asker.threadId}`, { fullAccess: true, acknowledgeFullAccess: true });
+          expect(on.status).toBe(200);
+        }
+
+        expect((await api("POST", `/api/bots/${asker.id}/messages`, { text: "Ask the other bot for a status check." })).status).toBe(202);
 
         const deadline = Date.now() + 30_000;
-        let askerReply: any;
+        let askerBot: any;
+        let helperBot: any;
         for (;;) {
           const state = (await api("GET", "/api/bots")).body;
-          const askerBot = state.bots.find((bot: any) => bot.id === asker.id);
-          askerReply = askerBot.messages
-            .slice(before)
-            .findLast((message: any) => message.kind === "text" && message.role === "bot");
-          if (askerReply && !askerBot.busy) break;
+          askerBot = state.bots.find((bot: any) => bot.id === asker.id);
+          helperBot = state.bots.find((bot: any) => bot.id === helper.id);
+          const ended = askerBot.messages.some(
+            (message: any) => message.kind === "text" && message.role === "bot" && message.turnTerminal === true
+              && message.text?.includes("peer error: agents MCP not mounted"),
+          );
+          if (ended && !askerBot.busy) break;
           if (Date.now() > deadline) {
-            throw new Error(`Gemini asker never replied on ${mode}. tail: ${JSON.stringify(askerBot.messages.slice(-6))}\nstderr: ${stderr.slice(-2000)}`);
+            throw new Error(`Gemini turn did not end. asker tail: ${JSON.stringify(askerBot.messages.slice(-6))}\nstderr: ${stderr.slice(-2000)}`);
           }
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
-        expect(askerReply.text, mode).toContain("peer error: agents MCP not mounted");
-        expect(askerReply.text, mode).not.toContain("peer says:");
-      }
 
-      const helperBot = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === helper.id);
-      expect(
-        helperBot.messages.some((message: any) => message.role === "user" && message.text?.includes("[Message from @Gemini Asker")),
-        "the teammate must receive nothing",
-      ).toBe(false);
+        // The turn ended (terminal, not busy) and the helper was never reached.
+        expect(askerBot.messages.some((m: any) => m.text?.includes("peer says:"))).toBe(false);
+        expect(helperBot.messages.some((m: any) => m.role === "user" && m.text?.includes("[Message from @"))).toBe(false);
 
-      // Antigravity's global MCP config briefly carries a bearer token for
-      // this one process. It must be gone once the turn exits so neither a
-      // later bot nor the user's own agy session can inherit the capability.
-      await expect.poll(
-        () => existsSync(join(home, ".gemini", "config", "mcp_config.json")),
-        { timeout: 5_000 },
-      ).toBe(false);
-    },
-    45_000,
-  );
+        // Nothing token-bearing was left in (or put into) agy's global MCP config.
+        await expect.poll(
+          () => existsSync(join(home, ".gemini", "config", "mcp_config.json")),
+          { timeout: 5_000 },
+        ).toBe(false);
+      },
+      45_000,
+    );
+  }
 
   it(
     "lets a section Chief create a safe operator and delegate work to it",

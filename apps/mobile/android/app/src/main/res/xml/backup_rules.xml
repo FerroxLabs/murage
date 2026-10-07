@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older. Only the install id is backed up, so a reinstall
+     restored from backup replaces its own device record on the computer
+     (spec §3.3). Cookies, the saved computers and the Keystore-sealed data
+     are never backed up. clientSideEncryption: only to an end-to-end
+     encrypted cloud backup (a screen lock is set), never a plain adb or
+     unencrypted one. -->
+<full-backup-content>
+    <include domain="sharedpref" path="murage_install.xml" requireFlags="clientSideEncryption" />
+</full-backup-content>

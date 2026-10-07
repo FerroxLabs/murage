@@ -658,6 +658,14 @@ describe("exactCommandForRequest", () => {
   });
 });
 
+it("project work-folder approval keeps the question, sensitive and host guards",()=>{
+  expect(autoVerdict({},"write","/work/report.txt",{projectWorkRoots:true,unattended:true})).toMatchObject({source:"project-work-roots"});
+  expect(autoVerdict({},"write","/work/report.txt",{projectWorkRoots:false}).approve).toBeNull();
+  expect(autoVerdict({},"write","/work/.env",{projectWorkRoots:true}).approve).toBeNull();
+  expect(autoVerdict({},"write","/work/report.txt",{projectWorkRoots:true,question:true}).approve).toBeNull();
+  expect(autoVerdict({},"write","/work/report.txt",{projectWorkRoots:true,scope:"local-computer"}).approve).toBeNull();
+});
+
 // An Ask or Auto bot's engine now sends every ask to Murage (routeAsks), so
 // the answering side has to honour the mode on its own.
 describe("answering the asks an Ask or Auto bot's engine now sends", () => {

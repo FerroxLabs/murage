@@ -8,7 +8,16 @@ import { join } from "node:path";
 import { afterAll, afterEach } from "vitest";
 
 import { removeTempDir } from "./cleanup.ts";
+import { scrubAmbientMurageEnv } from "./murage-env.mjs";
 import { installSafeWipeGuard } from "./safe-wipe.mjs";
+
+// Ambient Murage runtime keys (a bot's own terminal, a server in another
+// window) never reach a test or a child it spawns: each test sets the keys it
+// means to set (upstream #1857). A data directory the shell exported stays
+// guarded by value below.
+const ambient = scrubAmbientMurageEnv();
+// Children a test spawns with the node --test preload keep what the test set.
+process.env.MURAGE_TEST_ENV_SCRUBBED = "1";
 
 // Belt and braces for the faked home below: every recursive rm/rmSync/rmdir
 // in this worker refuses the account's real ~/.murage (found through the
@@ -16,7 +25,47 @@ import { installSafeWipeGuard } from "./safe-wipe.mjs";
 // directory another process holds a Murage installation lease on. A test
 // that computes the wrong path gets SafeWipeRefused, not a wiped profile.
 // Explicit fixture teardown goes through safeWipeSync / removeTempDir.
-installSafeWipeGuard();
+installSafeWipeGuard({ protect: [ambient.MURAGE_DATA_DIR, ambient.MURAGE_COMPANION_DIR].filter((dir): dir is string => Boolean(dir)) });
+
+// The harness answers its conversation routes only to a caller that proved who
+// it is (route-policy.ts, audit C5), and the proof most callers carry is the
+// companion door's: the launch secret in `x-murage-door-token`. The suite's
+// many bare fetches to a fixture server stand in for that door (as they always
+// stood in for a remote caller), so they carry it: the fixture launchers hand
+// the server this secret as its launch secret, and this wrapper stamps it on
+// every request to a loopback /api/ route. A test that means "a bare loopback
+// request, nobody" sends `x-test-bare-loopback: 1`, which is removed before
+// the request leaves and stops the stamp. A header a test sets itself wins.
+export const TEST_DOOR_TOKEN = "c".repeat(64);
+process.env.MURAGE_TEST_DOOR_TOKEN = TEST_DOOR_TOKEN;
+// Children a test spawns inherit it as their launch secret (childEnv adds it
+// too, because it strips every ambient MURAGE_ key).
+process.env.MURAGE_COMPANION_TOKEN = TEST_DOOR_TOKEN;
+// Tests that spawn the harness with their own explicit environment never pass a
+// launch secret, so a child started from server/index.ts gets the suite's.
+const childProcess = (await import("node:child_process")).default as typeof import("node:child_process");
+const realSpawn = childProcess.spawn;
+(childProcess as { spawn: unknown }).spawn = function (this: unknown, command: string, ...rest: unknown[]) {
+  const args = Array.isArray(rest[0]) ? (rest[0] as string[]) : [];
+  const options = (Array.isArray(rest[0]) ? rest[1] : rest[0]) as { env?: NodeJS.ProcessEnv } | undefined;
+  if (options?.env && !options.env.MURAGE_COMPANION_TOKEN && args.some((arg) => /server[\\/]index\.ts$/.test(String(arg)))) {
+    options.env = { ...options.env, MURAGE_COMPANION_TOKEN: TEST_DOOR_TOKEN };
+  }
+  return (realSpawn as (...all: unknown[]) => unknown).call(this, command, ...rest);
+};
+(await import("node:module")).syncBuiltinESMExports();
+const realFetch = globalThis.fetch.bind(globalThis);
+globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+  let host = "";
+  try { host = new URL(input instanceof Request ? input.url : String(input)).hostname.replace(/^\[|\]$/g, ""); } catch { /* not a URL: leave it */ }
+  let pathname = "";
+  try { pathname = new URL(input instanceof Request ? input.url : String(input)).pathname; } catch { /* leave it */ }
+  if ((host !== "127.0.0.1" && host !== "localhost" && host !== "::1") || !pathname.startsWith("/api/")) return realFetch(input, init);
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  if (headers.has("x-test-bare-loopback")) headers.delete("x-test-bare-loopback");
+  else if (!headers.has("x-murage-door-token")) headers.set("x-murage-door-token", TEST_DOOR_TOKEN);
+  return realFetch(input, { ...init, headers });
+}) as typeof fetch;
 
 const home = mkdtempSync(join(tmpdir(), "murage-test-home-"));
 process.env.HOME = home;

@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
-  WEB_UI_TITLE,
   companionAccountActionError,
   companionBridge,
   companionDoorUrl,
@@ -20,16 +19,19 @@ import {
   typedCodeInstruction,
   loadCompanionBridgeState,
   shouldHydrateCompanionEmail,
+  type CompanionBridge,
   type CompanionRemoteAccess,
   type CompanionState,
   type PhoneSetupController,
   usePhoneSetupController,
 } from "./PhoneSetupFlow";
+import { t } from "@/lib/i18n";
 import { companionPairingMode } from "../lib/phone-setup";
 import { tailnetHttpsHelp } from "../lib/tailnet-https";
 import { useDesktopSurface } from "../lib/use-surface";
 import { Card, Switch } from "./SettingsPrimitives";
 import { KeepAwakeOffer } from "./KeepAwakeOffer";
+import { LanPairing } from "./LanPairing";
 import { ReplaceOldDevice } from "./ReplaceOldDevice";
 import { TailnetHttpsHelpCard } from "./TailnetHttpsHelp";
 
@@ -39,6 +41,85 @@ export {
   loadCompanionBridgeState,
   shouldHydrateCompanionEmail,
 };
+
+/** The page's name, and the Settings tab's. The phone's first run tells
+ * people to open Settings, then this, so the two must never drift apart
+ * (apps/mobile's screenshot of this page checks the same three strings). */
+export const COMPANION_PAGE_TITLE = "Phone and other devices";
+/** The one switch: the browser door and remote access together. */
+export const TURN_ON_LABEL = "Turn on";
+/** The card with the QR and the code, at the top of the page once it is on. */
+export const SIGN_IN_CARD_TITLE = "Sign in on another device";
+/** The line under the switch while it is on (also in the phone's picture). */
+export const TURN_ON_SUBTITLE = "On. Scan the code below with the Murage app on your phone.";
+
+type TurnOnBridge = Pick<CompanionBridge, "state" | "start" | "remoteAccess">;
+type TurnOffBridge = Pick<CompanionBridge, "stop" | "remoteAccess">;
+
+const REMOTE_ACCESS_OFF: CompanionRemoteAccess = { on: false, desired: false, url: null, available: null, reason: null, problem: null };
+
+/** The state with a sentence about remote access, shown where its problems already show. */
+const withRemoteProblem = (state: CompanionState, problem: string): CompanionState => ({
+  ...state,
+  remoteAccess: { ...(state.remoteAccess ?? REMOTE_ACCESS_OFF), problem: state.remoteAccess?.problem ?? problem },
+});
+
+/** Turning it on is one decision with two halves: the browser door, then
+ * `tailscale serve` in front of it. A door that could not start is the
+ * answer, and nothing is asked of Tailscale. A remote-access refusal (no
+ * Tailscale on this computer, no certificates) comes back as state with the
+ * problem in it, and the door stays on: plain HTTP on the tailnet, or the
+ * local network, still gets a code. */
+export async function turnOnPhoneAccess(companion: TurnOnBridge): Promise<CompanionState> {
+  const started = await companion.start();
+  if (!started.enabled || started.error) return started;
+  if (started.remoteAccess?.on) return started;
+  try {
+    return await companion.remoteAccess(true);
+  } catch {
+    // The door is running whatever happened to its second half: read what is
+    // true now rather than leaving the switch drawn Off (review fix 1).
+    return withRemoteProblem(
+      await companion.state(),
+      "Remote access could not be turned on. The door is on; try Allow remote access again.",
+    );
+  }
+}
+
+/** The switch's turn-on, and the code it promises. `forget` drops the
+ * pending "open the code" request whenever the door did not end up on, so a
+ * later start (Check Tailscale again) never opens a code nobody asked for. */
+export async function turnOnForCode(companion: TurnOnBridge, forget: () => void): Promise<CompanionState> {
+  let next: CompanionState;
+  try {
+    next = await turnOnPhoneAccess(companion);
+  } catch (cause) {
+    forget();
+    throw cause;
+  }
+  if (!next.enabled || next.error) forget();
+  return next;
+}
+
+/** Off is both halves too: our serve config first, so nothing is left in
+ * front of a door that has stopped answering. */
+export async function turnOffPhoneAccess(companion: TurnOffBridge, remote: CompanionRemoteAccess): Promise<CompanionState> {
+  let failed = false;
+  try {
+    if (remote.on || remote.desired) await companion.remoteAccess(false);
+  } catch {
+    failed = true;
+  }
+  // The door goes off whatever the serve config did (review fix 2).
+  const stopped = await companion.stop();
+  return failed ? withRemoteProblem(stopped, "Remote access could not be turned off. Turn it on and off again to clear it.") : stopped;
+}
+
+/** "Turn it on and a code appears": once the switch was turned on here and
+ * the door answers, open a pairing window without a second click. */
+export function shouldOpenCodeAfterTurnOn(asked: boolean, state: CompanionState | null, busy: boolean): boolean {
+  return asked && !busy && Boolean(state?.enabled) && !state?.error && !state?.pairing;
+}
 
 export interface CompanionPanelStatus {
   label: string;
@@ -188,9 +269,14 @@ function ConfirmRemoteAccess({
   busy: boolean;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div role="dialog" aria-modal="true" aria-label="Serve Murage on your tailnet" className="w-full max-w-[440px] rounded-2xl bg-card p-5 shadow-xl">
         <h3 className="text-[16px] font-semibold text-ink">Serve Murage on your tailnet?</h3>
+        <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">
+          This turns on the part of Murage that answers your other devices, and asks Tailscale to
+          serve it on your tailnet. If Tailscale is not on this computer, the first half still works
+          and this page says what is missing.
+        </p>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">
           Tailscale will put your tailnet’s own HTTPS certificate in front of Murage on this computer,
           and Murage will listen only on loopback behind it. Every device signed into your tailnet (a
@@ -217,6 +303,57 @@ function ConfirmRemoteAccess({
             {busy ? "Turning on…" : "Serve on my tailnet"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Asked inline under the device's row, before a revoke. Same shape as the
+ * team delete panel: the consequence in one sentence, a destructive confirm
+ * that repeats the action, Cancel focused so a stray Enter backs out, and
+ * Escape cancels (without closing the Settings dialog behind it). */
+export function RevokeDeviceConfirm({
+  name,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      role="alertdialog"
+      aria-label={t("phone.revoke.title", { name })}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.stopPropagation();
+        onCancel();
+      }}
+      className="mt-3 rounded-lg border border-danger/40 bg-danger/5 p-3"
+    >
+      <div className="text-[13px] font-medium text-ink">{t("phone.revoke.title", { name })}</div>
+      <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("phone.revoke.body", { name })}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          autoFocus
+          disabled={busy}
+          onClick={onCancel}
+          className="rounded-lg border border-hairline/50 px-3 py-1.5 text-[12.5px] text-ink hover:bg-control disabled:opacity-40"
+        >
+          {t("phone.revoke.cancel")}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onConfirm}
+          className="rounded-lg bg-danger px-3 py-1.5 text-[12.5px] font-medium text-white hover:opacity-90 disabled:opacity-40"
+        >
+          {t("phone.revoke.confirm")}
+        </button>
       </div>
     </div>
   );
@@ -262,9 +399,17 @@ function StepStrip({ steps }: { steps: WebUiStep[] }) {
   );
 }
 
+/** The sentence naming the Tailscale account the phone has to use, or null
+ * when the sidecar could not read it, in which case nothing extra is shown. */
+export function tailscaleAccountLine(state: Pick<CompanionState, "tailnetLogin"> | null): string | null {
+  const login = state?.tailnetLogin?.trim();
+  return login ? `On your phone, sign in to Tailscale as ${login}.` : null;
+}
+
 function QrLogin({ c }: { c: PhoneSetupController }) {
   const link = c.browserLink;
   const pairing = c.state?.pairing ?? null;
+  const account = tailscaleAccountLine(c.state);
   // The code was already printed here, with nowhere to type it. A person at a
   // second laptop needs the address as much as the digits.
   const typed = typedCodeInstruction(companionDoorUrl(c.browserDoor));
@@ -272,10 +417,12 @@ function QrLogin({ c }: { c: PhoneSetupController }) {
     <div>
       <div className="text-[13px] text-ink">Scan it, or type the code</div>
       <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
-        Scan this with the camera on the device you want to use (a phone, a tablet, another laptop),
-        and Murage opens signed in, in its browser. A computer with no camera types the code instead.
-        Either way that device has to be signed into the same tailnet as this one. Nothing to install.
+        Scan it with the Murage app on your phone, or with your phone's camera, and Murage opens
+        signed in. A tablet or another laptop can scan it with its camera and use its browser, and a
+        computer with no camera types the code instead. Either way that device has to be signed into
+        the same tailnet as this one.
       </p>
+      {account && <p className="mt-1.5 text-[12px] leading-relaxed text-ink">{account}</p>}
       {link && pairing ? (
         <div className="mt-3 flex flex-col items-start gap-3 sm:flex-row">
           <div className="rounded-2xl bg-white p-3" aria-label="Browser sign-in QR code">
@@ -323,6 +470,7 @@ function QrLogin({ c }: { c: PhoneSetupController }) {
           {c.state?.devices.length ? "Add another device" : "Show me the code"}
         </button>
       )}
+      <LanPairing c={c} className="mt-3" />
       {pairing && (
         <ReplaceOldDevice
           candidates={c.state?.replaceCandidates ?? []}
@@ -339,7 +487,20 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   const desktop = useDesktopSurface();
   const c = usePhoneSetupController(profileEmail);
   const state = c.state;
-  const [confirming, setConfirming] = useState(false);
+  // "both": the main switch (the door and remote access). "remote": the
+  // separate remote-access switch below, with the door already on.
+  const [confirming, setConfirming] = useState<"both" | "remote" | null>(null);
+  // The device whose removal is being asked about; nothing is revoked until
+  // its confirm button is pressed.
+  const [revoking, setRevoking] = useState<string | null>(null);
+  // Set when the switch is turned on here, cleared once a code was asked for.
+  const [codeWanted, setCodeWanted] = useState(false);
+  const openCode = c.tailscaleAvailable ? c.useTailscale : c.useLocal;
+  useEffect(() => {
+    if (!shouldOpenCodeAfterTurnOn(codeWanted, state, c.busy || c.accountBusy)) return;
+    setCodeWanted(false);
+    openCode();
+  }, [codeWanted, state, c.busy, c.accountBusy, openCode]);
 
   // Settings → this pane, seen FROM a paired device, was a list of things to
   // do to a computer it cannot see: every switch writes over the Electron
@@ -360,12 +521,12 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   if (desktop !== true) return null;
 
   if (!companionBridge()) {
-    return <Card title={WEB_UI_TITLE} subtitle="Open Settings in the Murage desktop app to set this up." />;
+    return <Card title={COMPANION_PAGE_TITLE} subtitle="Open Settings in the Murage desktop app to set this up." />;
   }
 
   if (!state) {
     return (
-      <Card title="WebUI" subtitle="Checking this computer…">
+      <Card title={COMPANION_PAGE_TITLE} subtitle="Checking this computer…">
         <Loader2 size={15} className="animate-spin text-ink-secondary" />
       </Card>
     );
@@ -388,39 +549,78 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
       {confirming && (
         <ConfirmRemoteAccess
           busy={c.busy}
-          onCancel={() => setConfirming(false)}
+          onCancel={() => setConfirming(null)}
           onConfirm={() => {
-            setConfirming(false);
-            c.setRemoteAccess(true);
+            const both = confirming === "both";
+            setConfirming(null);
+            if (both) {
+              setCodeWanted(true);
+              void c.act((companion) => turnOnForCode(companion, () => setCodeWanted(false)));
+            } else {
+              c.setRemoteAccess(true);
+            }
           }}
         />
       )}
 
       <div>
-        <h2 className="text-[19px] font-semibold text-ink">WebUI</h2>
+        <h2 className="text-[19px] font-semibold text-ink">{COMPANION_PAGE_TITLE}</h2>
         <p className="mt-1 max-w-[560px] text-[13px] leading-relaxed text-ink-secondary">
           Use Murage from any device you own. Hand it work from a phone on the sofa, a laptop in
           another city, or a browser tab next to this one. Over your own tailnet, never the internet.
         </p>
       </div>
 
-      <StepStrip steps={steps} />
-
-      <Card subtitle="Turn the browser door on so a phone, a tablet or another computer can open Murage.">
+      <Card>
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-[13px] text-ink">Enable WebUI</div>
+            <div className="text-[13px] text-ink">{TURN_ON_LABEL}</div>
             <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
-              Runs the part of Murage that answers other devices. Off, nothing listens.
+              {state.enabled
+                ? TURN_ON_SUBTITLE
+                : "Lets your phone, a tablet or another computer open Murage. Turn it on and a code appears."}
             </div>
           </div>
           <Switch
             checked={state.enabled}
-            aria-label="Enable WebUI"
+            aria-label={`${TURN_ON_LABEL}: ${COMPANION_PAGE_TITLE}`}
             disabled={c.busy}
-            onClick={() => void c.act((companion) => (state.enabled ? companion.stop() : companion.start()))}
+            onClick={() => {
+              if (state.enabled) {
+                setCodeWanted(false);
+                void c.act((companion) => turnOffPhoneAccess(companion, remote));
+              } else {
+                setConfirming("both");
+              }
+            }}
           />
         </div>
+
+        {state.enabled && (httpsHelp ? (
+          <TailnetHttpsHelpCard help={httpsHelp} className="mt-4" />
+        ) : (
+          !remote.on && remote.problem && (
+            <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-hairline/40 px-3 py-2.5">
+              <AlertTriangle size={15} className="mt-0.5 shrink-0 text-ink-secondary" />
+              <div className="text-[11.5px] leading-relaxed text-ink-secondary">{remote.problem}</div>
+            </div>
+          )
+        ))}
+
+        {(c.error || state.error) && (
+          <div className="mt-3 text-[12px] text-danger">{c.error ?? state.error}</div>
+        )}
+      </Card>
+
+      {state.enabled && (
+        <Card title={SIGN_IN_CARD_TITLE}>
+          <QrLogin c={c} />
+          {accountActionError && <div className="mt-3 text-[12px] text-danger">{accountActionError}</div>}
+        </Card>
+      )}
+
+      <Card title="Status">
+        <StepStrip steps={steps} />
 
         <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
           <div className="min-w-0">
@@ -443,7 +643,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
             disabled={c.busy || !state.enabled}
             onClick={() => {
               if (remote.on) c.setRemoteAccess(false);
-              else setConfirming(true);
+              else setConfirming("remote");
             }}
           />
         </div>
@@ -479,21 +679,10 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
             <div className="text-[11.5px] leading-relaxed text-ink-secondary">
               Remote access is on. Any device signed into your tailnet can open{" "}
               <span className="font-mono text-ink">{remote.url ?? doorUrl}</span> and, with a code from
-              below, sign in. Nothing is exposed to the public internet, and it stays on until you turn
+              above, sign in. Nothing is exposed to the public internet, and it stays on until you turn
               it off, including after a restart.
             </div>
           </div>
-        )}
-
-        {httpsHelp ? (
-          <TailnetHttpsHelpCard help={httpsHelp} className="mt-4" />
-        ) : (
-          !remote.on && remote.problem && (
-            <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-hairline/40 px-3 py-2.5">
-              <AlertTriangle size={15} className="mt-0.5 shrink-0 text-ink-secondary" />
-              <div className="text-[11.5px] leading-relaxed text-ink-secondary">{remote.problem}</div>
-            </div>
-          )
         )}
 
         <div className="mt-3 flex items-center gap-3">
@@ -505,15 +694,6 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
             <RefreshCw size={12} /> Check Tailscale again
           </button>
         </div>
-
-        {(c.error || state.error) && (
-          <div className="mt-3 text-[12px] text-danger">{c.error ?? state.error}</div>
-        )}
-      </Card>
-
-      <Card title="Sign in on another device">
-        <QrLogin c={c} />
-        {accountActionError && <div className="mt-3 text-[12px] text-danger">{accountActionError}</div>}
       </Card>
 
       <Card
@@ -541,13 +721,24 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
                   </div>
                   <button
                     disabled={c.busy}
-                    onClick={() => void c.act((companion) => companion.revoke(device.id))}
+                    onClick={() => setRevoking(device.id)}
                     aria-label={`Revoke ${device.name}`}
                     className="shrink-0 rounded px-2 py-1.5 text-[11.5px] text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-40"
                   >
                     <Trash2 size={14} />
                   </button>
                 </div>
+                {revoking === device.id && (
+                  <RevokeDeviceConfirm
+                    name={device.name}
+                    busy={c.busy}
+                    onCancel={() => setRevoking(null)}
+                    onConfirm={() => {
+                      setRevoking(null);
+                      void c.act((companion) => companion.revoke(device.id));
+                    }}
+                  />
+                )}
                 <div className="mt-3 flex items-center justify-between gap-3 border-t border-hairline/30 pt-3">
                   <div>
                     <div className="text-[12px] text-ink">Allow computer view</div>

@@ -5,7 +5,7 @@ description: |
   Do NOT use for go-to-market strategy (use go-to-market-strategy), product roadmaps (use product-roadmap), or PR pitches (use pr-pitch).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "checklist planning project-management template strategy"
   category: "business-strategy"

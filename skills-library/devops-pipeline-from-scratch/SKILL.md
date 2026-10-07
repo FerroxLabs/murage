@@ -21,7 +21,7 @@ trigger_phrases: >-
   I want to set up DevOps from scratch I need to build a CI/CD pipeline How do I
   set up infrastructure as code I want to automate my deployments
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: devops ci-cd automation step-by-step planning
   category: software-project

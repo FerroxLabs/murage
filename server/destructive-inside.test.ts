@@ -175,9 +175,10 @@ describe("a delete through a variable set earlier in the same command", () => {
     const key = stopLineKey(stop)!;
     expect(key).toMatch(/^stop:delete:unplaced:/);
     expect(stopLineKeyCovers(key, stop)).toBe(true);
-    // the same command on a later run, with only a date changed, is the same shape
+    // grants are byte-exact (S3): a later run whose command differs only by a date asks again
     const dated = (day: string) => `tmp="$(grep ${day} list.txt)"; rm "$tmp"`;
-    expect(stopLineKeyCovers(stopLineKey(hit(dated("2026-09-25"))!)!, hit(dated("2026-09-26"))!)).toBe(true);
+    expect(stopLineKeyCovers(stopLineKey(hit(dated("2026-09-25"))!)!, hit(dated("2026-09-25"))!)).toBe(true);
+    expect(stopLineKeyCovers(stopLineKey(hit(dated("2026-09-25"))!)!, hit(dated("2026-09-26"))!)).toBe(false);
     // another command is not
     expect(stopLineKeyCovers(key, hit('tmp="$(cat other.txt)"; rm "$tmp"')!)).toBe(false);
     // and the routine's own grant covers it in the routine's runs

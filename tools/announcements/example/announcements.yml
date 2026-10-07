@@ -16,7 +16,10 @@
 #   action       { label, target }: a button inside the app, one of
 #                settings-general, settings-models, settings-connections,
 #                settings-skills, settings-house-rules, settings-backups,
-#                check-for-updates
+#                check-for-updates; from 0.1.62 also settings-images,
+#                settings-web-search, settings-voice, settings-help (an older
+#                build drops a notice that names one of these, so wait until
+#                0.1.62 is on most installs)
 #   appVersions  optional range, like ">=0.1.60 <0.2.0"
 #   platforms    optional list: mac, windows, linux
 #   startsAt     optional, like "2026-10-01T09:00:00Z" (quoted)

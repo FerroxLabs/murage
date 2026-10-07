@@ -6,7 +6,7 @@ description: |
   Do NOT use for dialogue-only exchanges (use dialogue-writing), full short stories (use short-story-writing), or screenplay format (use screenplay-scene).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing guide"
   category: "writing"

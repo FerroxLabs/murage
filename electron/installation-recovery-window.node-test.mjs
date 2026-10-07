@@ -68,3 +68,45 @@ test("dedicated recovery window checks exact main frame and exposes only its nar
   assert.deepEqual(Object.keys(exposed.value), ["action"]);
   assert.equal(exposed.value.action("state")[0], "installation-recovery:action");
 });
+
+test("after Undo a restore of a separate copy, the page names the folder Murage opens next", async () => {
+  let handler;
+  class Window extends EventEmitter {
+    constructor() { super(); this.webContents = new EventEmitter(); this.webContents.mainFrame = { url: "" }; this.webContents.setWindowOpenHandler = () => {}; }
+    isDestroyed() { return false; }
+    loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; return Promise.resolve(); }
+  }
+  const restored = path.join(tmpdir(), "recovered-installations", "copy", "data"), original = path.join(tmpdir(), "original-data");
+  const status = "rolled-back", opensNext = original;
+  const opened = openInstallationRecoveryWindow({ BrowserWindow: Window,
+    ipcMain: { handle: (_channel, fn) => { handler = fn; }, removeHandler() {} },
+    baseDir: path.resolve("electron"), context: { dataDirectory: restored, backupMode: true }, isAvailable: () => true,
+    dialog: { showMessageBox: async () => ({ response: 1 }) },
+    run: async operation => { assert.equal(operation, "rollback"); return { status, receipt: "r", retainedCandidate: null, ...(opensNext ? { opensNext } : {}) }; },
+  });
+  const wc = opened.window.webContents, event = { sender: wc, senderFrame: wc.mainFrame };
+  assert.equal((await handler(event, { action: "state" })).context.dataDirectory, restored);
+  const undone = await handler(event, { action: "rollback" });
+  assert.equal(undone.error, null);
+  assert.equal(undone.result.status, "rolled-back");
+  assert.equal(undone.context.dataDirectory, original);
+  assert.equal((await handler(event, { action: "state" })).context.dataDirectory, original);
+});
+
+test("an Undo in the same folder keeps naming that folder", async () => {
+  let handler;
+  class Window extends EventEmitter {
+    constructor() { super(); this.webContents = new EventEmitter(); this.webContents.mainFrame = { url: "" }; this.webContents.setWindowOpenHandler = () => {}; }
+    isDestroyed() { return false; }
+    loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; return Promise.resolve(); }
+  }
+  const data = path.join(tmpdir(), "same-data");
+  const opened = openInstallationRecoveryWindow({ BrowserWindow: Window,
+    ipcMain: { handle: (_channel, fn) => { handler = fn; }, removeHandler() {} },
+    baseDir: path.resolve("electron"), context: { dataDirectory: data }, isAvailable: () => true,
+    dialog: { showMessageBox: async () => ({ response: 1 }) },
+    run: async () => ({ status: "rolled-back", receipt: "r", retainedCandidate: null }),
+  });
+  const wc = opened.window.webContents;
+  assert.equal((await handler({ sender: wc, senderFrame: wc.mainFrame }, { action: "rollback" })).context.dataDirectory, data);
+});

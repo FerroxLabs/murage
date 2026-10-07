@@ -6,7 +6,7 @@ description: |
   Do NOT use for interpreting symptoms, diagnosing conditions, recommending treatments, or providing medical opinions on the user's health situation.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "mental-wellness strategy time-management"
   category: "health-wellness"

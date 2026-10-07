@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Go idioms (use `go-idioms`), Go performance (use `go-performance`), Go error handling (use `go-error-handling`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "go backend optimization"
   category: "software-engineering"

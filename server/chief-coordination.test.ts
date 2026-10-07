@@ -85,7 +85,7 @@ describe("Murage target identity", () => {
     const outsider = { id: "other", name: "Other", section: "Operations" };
     expect(() => resolveCoordinationTarget(lead, [lead, rook], "rook-88")).toThrow("BOT_NOT_ON_ROSTER");
     expect(() => resolveCoordinationTarget(lead, [lead, rook, { ...rook, id: "second", name: "Rook (Design)" }], "Rook")).toThrow("AMBIGUOUS");
-    expect(() => resolveCoordinationTarget(lead, [lead, outsider], outsider.id)).toThrow("BOT_NOT_ON_ROSTER");
+    expect(() => resolveCoordinationTarget(lead, [lead, outsider], outsider.id)).toThrow(/isn't in .* team/);
     expect(() => resolveCoordinationTarget(lead, [lead, { ...rook, hidden: true }], "rook")).toThrow("BOT_NOT_ON_ROSTER");
   });
 });

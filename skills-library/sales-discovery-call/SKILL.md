@@ -1,8 +1,9 @@
 ---
 name: sales-discovery-call
 description: "You're in sales mode and a call is coming up — first conversation, follow-up, or a stalled deal. Load this when someone asks \"how do I structure the call,\" \"what should I ask,\" or hands you a pitch deck and says \"I'm presenting Thursday.\" If the deck comes first, push back: discovery before pitch."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "sales"
 ---

@@ -23,13 +23,48 @@ describe("room sender labels", () => {
     expect(transcript.match(/shownPrev = /g)).toHaveLength(2);
     expect(transcript).toMatch(/shownPrev = item\.messages\.at\(-1\);\s*return \(/);
     expect(transcript).toMatch(/if \(!row\) return null;\s*shownPrev = m;/);
-    expect(transcript).toMatch(/if \(!showToolCalls\) return null;\s*const cluster/);
+    expect(transcript).toMatch(/if \(!showToolCalls\) return null;\s*const turnOpens/);
   });
 
-  it("an error row always names its bot, even inside that bot's cluster", () => {
-    expect(transcript).toContain(
-      'const errorRow = m.kind === "activity" && Boolean(m.tool) && (m.tool!.ok === false || m.tool!.name.startsWith("error:"));',
-    );
-    expect(transcript).toMatch(/\{!user && m\.from && \(newCluster \|\| errorRow\) && \(\s*<ClusterLabel/);
+  it("an error row uses Murage presentation, never bot speech", () => {
+    expect(source).toContain('import { isErrorActivity } from "../../shared/message-visibility";');
+    expect(transcript).toContain("const errorRow = isErrorActivity(m);");
+    expect(transcript).toContain('actor === "murage" || errorRow');
+    expect(transcript).toContain('actor === "bot" && !errorRow && m.from && newTurn');
+  });
+});
+
+// B5: every bot turn names its speaker (a second reply from the same bot,
+// a tool-only turn, the live Thinking row), and says what it answers when
+// that is not the row right above.
+describe("room speaker per turn", () => {
+  it("a message row and a tool run both open with the speaker on each new turn", () => {
+    expect(transcript).toContain("const newTurn = startsBotTurn(prev, m) || newDay;");
+    expect(transcript).toContain("const turnOpens = startsBotTurn(prev, first) || newDay;");
+    expect(transcript).not.toContain("newCluster");
+  });
+
+  it("reply targets come from the full transcript, and the chip hides when the target is the row above", () => {
+    expect(transcript).toContain("sameThreadReply(message, transcript)");
+    expect(transcript).toMatch(/const shownReplyTo = \(id: string, above: Message \| undefined\)/);
+    expect(transcript).toContain("target.id === above?.id");
+  });
+
+  it("the pair-room chip stays visible with tool calls off and opens the pair room", () => {
+    expect(transcript).toContain("m.comm ? (");
+    expect(transcript).toMatch(/<RoomCommChip[\s\S]*?onOpen=\{\(\) => dispatch\(\{ type: "select", id: m\.comm!\.groupId \}\)\}/);
+  });
+
+  it("the live row names who is working", () => {
+    expect(source).toMatch(/<TurnPresence[\s\S]*?name=\{presenceName\}/);
+  });
+
+  it("an unnamed live row does not borrow the first member's mascot (audit)", () => {
+    expect(source).not.toContain("members.find((member) => member.id === popping?.botId) ?? members[0]");
+  });
+
+  it("a popped answer keeps its own author's name while the next member works (audit)", () => {
+    expect(source).toMatch(/const presenceName = popping\s*\?\s*poppingMessage\?\.from\?\.name/);
+    expect(source).toMatch(/:\s*speaker\?\.name;/);
   });
 });

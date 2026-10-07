@@ -17,6 +17,7 @@
 import { newId } from "./contracts.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import type { BotRecord, Message, Store } from "./store.ts";
+import type { RoutinePeerSource } from "./routine-permissions.ts";
 
 export { peerAllowKey } from "./peer-approval-key.ts";
 
@@ -48,14 +49,16 @@ export interface ApprovalBus {
   /** SSE broadcast (kind: "message" envelope). */
   broadcast: (payload: Record<string, unknown>) => void;
   onApproval?: (botId: string, threadId: string, requestId: string, messageId: string) => void;
-  /** Is this bot's conversation still on Full access? Consulted only for a
-   * handoff that was queued from a Full access turn the owner started. */
-  fullAccessStanding?: (botId: string, threadId: string) => boolean;
+  /** Does the current sender still cover the queued contact's ceiling? */
+  fullAccessStanding?: (botId: string, threadId: string, routineAuthority?: RoutinePeerSource) => boolean;
+  /** Scheduled routines also count as unattended for remembered contacts. */
+  unattended?: (threadId: string) => boolean;
   /** A scheduled or manual routine run owns the thread. `opened` says so
    * (true: the card is held open, with no 15-minute expiry, and the run waits
    * on the owner); `closed` reports the answer and says whether the run's
    * turn had already ended (true: the run carries on in a new turn). */
   routineCard?: RoutineCardHooks;
+  holdProjectApproval?: (threadId:string)=>boolean;
 }
 
 export interface RoutineCardHooks {
@@ -81,6 +84,9 @@ interface Pending {
   threadId: string;
   messageId: string;
   bus: ApprovalBus;
+  /** The room request this card decides, when there is one (a shared
+   *  request waiting in the drain): stopping that request cancels the card. */
+  boundRequestId?: string;
 }
 
 /** Mark the card answered so the UI stops treating it as pending. Mirrors
@@ -158,8 +164,10 @@ export function requestPeerApproval(
   message: string,
   action: PeerAction,
   sourceThreadId = from.threadId,
+  boundRequestId?: string,
+  routineAuthority?: RoutinePeerSource,
 ): Promise<PeerApprovalOutcome> {
-  if (allowKeyAllowed(from, peerAllowKey(action, target.id))) {
+  if (!bus.unattended?.(sourceThreadId) && routineAuthority?.triggerSource !== "schedule" && allowKeyAllowed(from, peerAllowKey(action, target.id))) {
     return Promise.resolve("allow");
   }
   const late = `${sourceThreadId}\u0000${peerAllowKey(action, target.id)}`;
@@ -171,7 +179,7 @@ export function requestPeerApproval(
     const card = pushApprovalCard(bus, from, target, message, action, requestId, sourceThreadId);
     let held = false;
     try { held = bus.routineCard?.opened(sourceThreadId, requestId, card.card?.title ?? "A bot-to-bot contact") === true; } catch { /* delivery never changes authority */ }
-    const timer = held ? undefined : setTimeout(() => {
+    const timer = held || bus.holdProjectApproval?.(sourceThreadId) ? undefined : setTimeout(() => {
       // 15 minutes without an answer → expired. Keeps an unattended bot from
       // stalling its own turn forever (matches the Claude broker timeout).
       const pending = pendingComms.get(requestId);
@@ -193,6 +201,7 @@ export function requestPeerApproval(
       threadId: sourceThreadId,
       messageId: card.id,
       bus,
+      ...(boundRequestId ? { boundRequestId } : {}),
     });
     try { bus.onApproval?.(from.id, sourceThreadId, requestId, card.id); } catch { /* Delivery never changes approval authority. */ }
   });
@@ -243,6 +252,23 @@ export function cancelPeerApprovalsForThread(threadId: string): void {
     closeHeld(pending, "none");
     pending.resolve("cancelled");
   }
+}
+
+/** Cancel the card that decides one room request, wherever it waits: the
+ *  request was stopped (sharing removed with Stop it now), so the owner can
+ *  no longer answer it and nothing starts from a late answer. */
+export function cancelPeerApprovalsForRequest(requestId: string): boolean {
+  let cancelled = false;
+  for (const [id, pending] of [...pendingComms]) {
+    if (pending.boundRequestId !== requestId) continue;
+    pendingComms.delete(id);
+    clearTimeout(pending.timer);
+    settleCard(pending, "deny", "system");
+    closeHeld(pending, "none");
+    pending.resolve("cancelled");
+    cancelled = true;
+  }
+  return cancelled;
 }
 
 /** Cards left on disk by a previous run can never be answered — their

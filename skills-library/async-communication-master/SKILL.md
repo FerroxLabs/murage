@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of async communication master or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management habits checklist template guide planning marketing video-production"
   category: "productivity"

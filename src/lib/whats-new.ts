@@ -23,6 +23,9 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   "0.1.61": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.61" },
   // A patch: no page (release notes are written at publish).
   "0.1.62": { kind: "none" },
+  // 1.0.0: the full notes are on the release page; the in-app page returns
+  // with art made for 1.0.
+  "1.0.0": { kind: "none" },
 };
 
 /** The page for `version`, or null when it has none. */
@@ -56,7 +59,7 @@ export async function recordWhatsNewSeen(desktop: boolean | undefined, request: 
   }
 }
 
-/** Opens by itself once when the server says so; `reopen` is the Tools menu;
+/** Opens by itself once when the server says so; `reopen` is the You menu;
  *  `close` always records the version as seen. */
 export function useWhatsNew(desktop: boolean | undefined, request: Request) {
   const [open, setOpen] = useState(false);

@@ -199,6 +199,52 @@ export function recheckSnapshot(parsed) {
   };
 }
 
+/** Where the server's image fact lands (server/model-vision.ts). The server
+ *  cannot import the 1.6 MB snapshot, so it gets only what it asks: for a
+ *  model id, does every provider that lists it take image input, or none? */
+export const VISION_TABLE_FILE = "server/model-vision.json";
+
+/** The id a table row is keyed by: lower case, without a vendor path
+ *  (`deepseek-ai/deepseek-v4-pro` and `deepseek-v4-pro` are one model). */
+export function visionKey(id) {
+  return String(id).toLowerCase().split("/").pop();
+}
+
+/** A text-only verdict needs this many listings, none declaring images.
+ *  The snapshot records image input only when a listing declares it, so a
+ *  lone listing without it is silence rather than a "no" (minicpm-v-4.5 has
+ *  one such listing and is a vision model). */
+export const TEXT_ONLY_MIN_LISTINGS = 3;
+/** Ids whose names say vision are never ruled text only on silence alone. */
+const VISION_NAME = /(?:^|[-_.])(?:v(?=$|[-_.@:])|(?:vl|vision|omni|multimodal|llava|pixtral)(?=$|[-_.@:\d]))/;
+
+/** Ids the listings agree on, split by image input. A vision verdict needs
+ *  every listing to declare images; a text-only one needs at least
+ *  TEXT_ONLY_MIN_LISTINGS listings and none declaring them. Everything else
+ *  is left out, and the server then says it does not know rather than
+ *  guessing either way. */
+export function buildVisionTable(snapshot) {
+  const seen = new Map();
+  for (const provider of Object.values(snapshot.providers)) {
+    for (const [id, model] of Object.entries(provider.models)) {
+      const key = visionKey(id), entry = seen.get(key) ?? { listings: 0, sighted: 0 };
+      entry.listings += 1;
+      if (model.vision === true) entry.sighted += 1;
+      seen.set(key, entry);
+    }
+  }
+  const pick = (test) => [...seen].filter(([key, entry]) => test(key, entry)).map(([key]) => key).sort();
+  return {
+    source: snapshot.digest,
+    vision: pick((_, entry) => entry.sighted === entry.listings),
+    textOnly: pick((key, entry) => entry.sighted === 0 && entry.listings >= TEXT_ONLY_MIN_LISTINGS && !VISION_NAME.test(key)),
+  };
+}
+
+export function renderVisionTable(table) {
+  return `${JSON.stringify(table)}\n`;
+}
+
 export function snapshotStats(snapshot) {
   const providers = Object.entries(snapshot.providers);
   const models = providers.flatMap(([, provider]) => Object.values(provider.models));
@@ -240,6 +286,12 @@ if (invokedDirectly) {
       process.exit(1);
     }
     console.log(`${SNAPSHOT_FILE} is up to date`);
+    const visionFile = join(REPO_ROOT, VISION_TABLE_FILE);
+    if (!existsSync(visionFile) || readFileSync(visionFile, "utf8") !== renderVisionTable(buildVisionTable(JSON.parse(current)))) {
+      console.error(`${VISION_TABLE_FILE} does not match ${SNAPSHOT_FILE} — run pnpm models:build`);
+      process.exit(1);
+    }
+    console.log(`${VISION_TABLE_FILE} is up to date`);
   } else {
     const response = await fetch(SOURCE_URL, { redirect: "error" });
     if (!response.ok) throw new Error(`${SOURCE_URL} -> HTTP ${response.status}`);
@@ -264,5 +316,7 @@ if (invokedDirectly) {
       writeFileSync(file, rendered);
       console.log(`${SNAPSHOT_FILE} written`);
     }
+    writeFileSync(join(REPO_ROOT, VISION_TABLE_FILE), renderVisionTable(buildVisionTable(snapshot)));
+    console.log(`${VISION_TABLE_FILE} written`);
   }
 }

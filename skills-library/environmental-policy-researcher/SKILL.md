@@ -6,7 +6,7 @@ description: |
   Do NOT use for recommending specific policy positions, lobbying or campaign strategy, climate science education (use climate-science-explainer), personal sustainability actions (use other sustainability skills), or business regulatory compliance.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sustainability research civic-engagement guide"
   category: "sustainability"

@@ -1,0 +1,421 @@
+{
+  "extName": {
+    "message": "Murage for Chrome"
+  },
+  "extDescription": {
+    "message": "Share selected browser tabs with your Murage bots and keep control with Pause and Stop."
+  },
+  "groupTitle": {
+    "message": "Murage"
+  },
+  "groupTitleBot": {
+    "message": "Murage · $BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "groupSuffixPaused": {
+    "message": " · paused"
+  },
+  "groupSuffixStopped": {
+    "message": " · stopped"
+  },
+  "groupSuffixYourTurn": {
+    "message": " · your turn"
+  },
+  "groupSuffixFull": {
+    "message": " · full"
+  },
+  "groupSuffixWorking": {
+    "message": " · working"
+  },
+  "groupSuffixDone": {
+    "message": " · done"
+  },
+  "overlayWorking": {
+    "message": "$BOT$ is working",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPause": {
+    "message": "Pause"
+  },
+  "overlayStop": {
+    "message": "Stop"
+  },
+  "overlayWaiting": {
+    "message": "Waiting for you in Murage"
+  },
+  "overlayFull": {
+    "message": "Full permissive"
+  },
+  "overlayAria": {
+    "message": "$BOT$ is using this tab. Pause or stop it here.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPointer": {
+    "message": "$BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHeader": {
+    "message": "Murage for Chrome"
+  },
+  "spConnected": {
+    "message": "Connected to Murage"
+  },
+  "spNotConnected": {
+    "message": "Murage is not connected"
+  },
+  "spBotLine": {
+    "message": "$BOT$ in \"$CONVERSATION$\"",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      },
+      "conversation": {
+        "content": "$2"
+      }
+    }
+  },
+  "spStateWorking": {
+    "message": "Working"
+  },
+  "spStateWaiting": {
+    "message": "Waiting for you"
+  },
+  "spStatePaused": {
+    "message": "Paused"
+  },
+  "spStateStopped": {
+    "message": "Stopped"
+  },
+  "spStateYourTurn": {
+    "message": "Your turn"
+  },
+  "spModeStep": {
+    "message": "Asks each step"
+  },
+  "spModeTask": {
+    "message": "Asks once per task"
+  },
+  "spModeFull": {
+    "message": "Full permissive"
+  },
+  "btnPause": {
+    "message": "Pause"
+  },
+  "btnStop": {
+    "message": "Stop"
+  },
+  "btnResume": {
+    "message": "Resume"
+  },
+  "btnEndTask": {
+    "message": "End task"
+  },
+  "btnContinue": {
+    "message": "Continue"
+  },
+  "btnShare": {
+    "message": "Share this tab"
+  },
+  "btnUnshare": {
+    "message": "Unshare"
+  },
+  "spTaskTitle": {
+    "message": "This task"
+  },
+  "spAllowedForTask": {
+    "message": "Allowed for this task:"
+  },
+  "spRevoke": {
+    "message": "Revoke"
+  },
+  "spActivityTitle": {
+    "message": "What $BOT$ did",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spActivityEmpty": {
+    "message": "Nothing yet."
+  },
+  "spSitesTitle": {
+    "message": "Sites $BOT$ may use",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spSiteAlways": {
+    "message": "Always"
+  },
+  "spSiteNever": {
+    "message": "Never"
+  },
+  "spSiteAsks": {
+    "message": "Asks each step"
+  },
+  "spShareTitle": {
+    "message": "Share this tab with $BOT$?",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spShare": {
+    "message": "Share"
+  },
+  "spNotNow": {
+    "message": "Not now"
+  },
+  "spUnshareTitle": {
+    "message": "Stop sharing this tab with $BOT$?",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshare": {
+    "message": "Stop sharing"
+  },
+  "spKeep": {
+    "message": "Keep"
+  },
+  "spDebugNote": {
+    "message": "While $BOT$ works, Chrome shows a bar saying Murage for Chrome started debugging this browser. That is Chrome telling you an extension can act in your tabs. Pressing Cancel on that bar pauses $BOT$.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUpdateWaiting": {
+    "message": "Murage for Chrome will update when $BOT$ finishes this step.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spOldExtension": {
+    "message": "Update Murage for Chrome to get the new controls."
+  },
+  "spOldApp": {
+    "message": "Update Murage on this computer to use this version of Murage for Chrome."
+  },
+  "spShortcutHint": {
+    "message": "Pause from the keyboard: $SHORTCUT$",
+    "placeholders": {
+      "shortcut": {
+        "content": "$1"
+      }
+    }
+  },
+  "spYourTurn": {
+    "message": "Your turn: $LINE$",
+    "placeholders": {
+      "line": {
+        "content": "$1"
+      }
+    }
+  },
+  "spFullOn": {
+    "message": "Full permissive is on."
+  },
+  "spTurnOff": {
+    "message": "Turn off"
+  },
+  "spModeTitle": {
+    "message": "Approval mode"
+  },
+  "spHintStep": {
+    "message": "$BOT$ asks before each action that changes a site.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintTask": {
+    "message": "One card per site, then $BOT$ works through the task.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintFull": {
+    "message": "No cards for ordinary actions. Anything only you can do still comes back to you."
+  },
+  "spRevokeAria": {
+    "message": "Revoke access to $SITE$",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshareAria": {
+    "message": "Unshare $SITE$",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spNewTab": {
+    "message": "New tab"
+  },
+  "spSharedTitle": {
+    "message": "Shared tabs"
+  },
+  "spNoTabs": {
+    "message": "No tabs shared."
+  },
+  "spNoSites": {
+    "message": "No sites yet."
+  },
+  "spShareHint": {
+    "message": "Only tabs you share here belong to this bot. Moving a tab into its group does not share it."
+  },
+  "spSetupTitle": {
+    "message": "Connect to Murage"
+  },
+  "spSetupBody": {
+    "message": "Open Murage on this computer and turn on the browser companion in Browser settings."
+  },
+  "spCheckConnection": {
+    "message": "Check connection"
+  },
+  "spProfile": {
+    "message": "Chrome profile: $PROFILE$",
+    "placeholders": {
+      "profile": {
+        "content": "$1"
+      }
+    }
+  },
+  "spBodyWorking": {
+    "message": "Working in the tabs you shared."
+  },
+  "spBodyPaused": {
+    "message": "Tabs stay private until you resume."
+  },
+  "spBodyStopped": {
+    "message": "This task was stopped. Ask the bot to start again in a new conversation."
+  },
+  "spBodyReconnect": {
+    "message": "Waiting for Murage to reconnect this bot."
+  },
+  "spErrHostOffline": {
+    "message": "Open Murage, then check the connection again."
+  },
+  "spErrSiteDenied": {
+    "message": "Murage asked you to allow this site. Allow it there, then press Share again."
+  },
+  "spErrHumanHandover": {
+    "message": "This site needs you to use it directly."
+  },
+  "spErrBindingInactive": {
+    "message": "Resume this bot in Murage before sharing tabs."
+  },
+  "spErrTabOwned": {
+    "message": "Another bot already owns this tab."
+  },
+  "spErrUnknownBinding": {
+    "message": "Start a browser task in Murage first."
+  },
+  "spErrBindingStopped": {
+    "message": "This task was stopped. Ask the bot to start again in a new conversation."
+  },
+  "spErrGeneric": {
+    "message": "The browser action could not finish. Check the connection and try again."
+  },
+  "spHeaderBrand": {
+    "message": "Murage"
+  },
+  "spHeaderSuffix": {
+    "message": "for Chrome"
+  },
+  "spTaskAccess": {
+    "message": "Task access"
+  },
+  "overlayYourTurn": {
+    "message": "Your turn: $BOT$ is waiting for you",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayStopTask": {
+    "message": "Stop task"
+  },
+  "cmdPauseDescription": {
+    "message": "Pause Murage for Chrome"
+  },
+  "spSwitchTitle": {
+    "message": "Bots"
+  },
+  "spBodyYourTurn": {
+    "message": "Do this step yourself in the browser, then let your bot carry on."
+  },
+  "spPending": {
+    "message": "Working on it"
+  },
+  "spPhaseStarting": {
+    "message": "Starting your bot"
+  },
+  "spPhaseConnecting": {
+    "message": "Connecting browser tools"
+  },
+  "spPhaseReading": {
+    "message": "Reading this page"
+  },
+  "spPhaseWaiting": {
+    "message": "Waiting for you"
+  },
+  "btnNewTask": {
+    "message": "Start a new task"
+  },
+  "spRecoveryReshare": {
+    "message": "Murage for Chrome started fresh. Share your tabs again to continue."
+  },
+  "spErrHandoffUseContinue": {
+    "message": "Your bot is waiting for you. Press Continue when you have finished the step."
+  },
+  "spErrNotHandoff": {
+    "message": "Your bot is not waiting for you right now, so there is nothing to continue."
+  },
+  "spErrIncognitoDenied": {
+    "message": "Murage for Chrome does not work in private windows. Open the site in a normal window, then share it."
+  },
+  "spErrPersistenceFailed": {
+    "message": "Chrome could not save your changes. Try again in a moment."
+  },
+  "spErrUpdateRequired": {
+    "message": "This profile was saved by a newer Murage for Chrome. Update the extension to continue."
+  },
+  "spErrStorageUnavailable": {
+    "message": "Chrome storage could not be read. Restart Chrome, then share your tabs again."
+  }
+}

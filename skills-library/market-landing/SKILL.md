@@ -1,13 +1,12 @@
 ---
 name: market-landing
 description: "Run a section-by-section conversion teardown of one landing page — hero, value proposition, social proof, features, objection handling, CTA and footer — plus form, mobile and page-speed audits, ending in prioritised fixes split into quick wins, strategic and long-term, with A/B test hypotheses. Use when one page has traffic and is not converting. Do NOT use for a whole-site marketing audit (use market-audit), for the copy voice and awareness-stage decisions behind it (use copy-awareness-stages) or for the visual system it should sit inside (use mira-visual-system)."
-license: MIT
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing landing-page cro conversion smb"
   category: "market"
-  attribution: "zubair-trabzada/ai-marketing-claude (skills/market-landing)"
 ---
 
 # Landing Page CRO Analysis

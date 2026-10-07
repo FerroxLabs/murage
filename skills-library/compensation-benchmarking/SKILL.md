@@ -5,7 +5,7 @@ description: |
   Do NOT use for personal salary negotiation (use salary-negotiation), job offer writing (use offer-letter), or financial modeling (use financial-model-structure).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis strategy planning research spreadsheets"
   category: "business-strategy"

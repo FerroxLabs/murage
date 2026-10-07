@@ -164,6 +164,59 @@ export function sentenceEnds(text: string, final = true): number[] {
   return ends;
 }
 
+export const FIRST_CLAUSE_MIN_WORDS = 7;
+export const FIRST_CLAUSE_MIN_CHARS = 40;
+
+const MONTH_WEEKDAY_NUMBER =
+  /^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|mon(?:day)?|tues?(?:day)?|wed(?:nesday)?|thu(?:rs?)?(?:day)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|\d[\d,.]*|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)$/i;
+
+/** True while a quote, round or square bracket opened in `prefix` is still open. */
+function opensUnbalanced(prefix: string): boolean {
+  const count = (re: RegExp) => (prefix.match(re) ?? []).length;
+  return (
+    count(/"/g) % 2 === 1 ||
+    count(/\u201c/g) > count(/\u201d/g) ||
+    count(/\(/g) > count(/\)/g) ||
+    count(/\[/g) > count(/\]/g)
+  );
+}
+
+/**
+ * Index just past the first clean clause end in `text`, or -1. Only a
+ * ", ", "; ", " - ", " \u2013 " or " \u2014 " boundary with a word after it.
+ *
+ * It exists so a reply can start sounding after its first clause instead of
+ * its whole first sentence, so it is strict: a prefix of at least 7 words and
+ * 40 chars, no sentence end anywhere in the text (a sentence end wins), never
+ * inside an open quote or bracket, never at a number or date ("March 3,
+ * 2026", "1, 2 and 3"), never after an abbreviation ("e.g., most"). While
+ * text streams in, a boundary with nothing after it yet waits. `_final` does
+ * not relax any of it: a clause is only ever cut early, never at the end.
+ */
+export function firstClauseEnd(text: string, _final = false): number {
+  if (sentenceEnds(text, false).length) return -1;
+  const boundary = /(,|;|\s[-\u2013\u2014])\s+(?=\p{L})/gu;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(text))) {
+    const end = match.index + match[0].length;
+    const prefix = text.slice(0, end);
+    const lead = text.slice(0, match.index);
+    const dash = match[1].length > 1;
+    if (prefix.length < FIRST_CLAUSE_MIN_CHARS) continue;
+    const words = lead.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+    if (words.length < FIRST_CLAUSE_MIN_WORDS) continue;
+    if (opensUnbalanced(lead)) continue;
+    if (!dash) {
+      if (/\d$/.test(lead)) continue;
+      const word = (lead.match(/([\p{L}\p{N}][\p{L}\p{N}.,'\u2019-]*)$/u)?.[1] ?? "").replace(/[.,]+$/, "");
+      if (MONTH_WEEKDAY_NUMBER.test(word)) continue;
+      if (ALWAYS_ABBREVIATED.test(lead.replace(/\.$/, ""))) continue;
+    }
+    return end;
+  }
+  return -1;
+}
+
 /** `text` cut at its sentence ends; the tail after the last end is kept.
  *  While text is still streaming in (`final` false), an end with nothing
  *  after it yet waits: "Sept. " may be followed by "14". */
@@ -178,6 +231,42 @@ export function splitSentences(text: string, final = true): { sentences: string[
   return { sentences, rest: text.slice(last) };
 }
 
+/** The first clause of a reply is sent to speech on its own once it has at
+ *  least this many words, and no more than the max: long enough to sound like
+ *  a phrase, short enough that its clip starts fast. */
+export const CLAUSE_MIN_WORDS = 4;
+export const CLAUSE_MAX_WORDS = 8;
+
+/**
+ * (Short-break form; `firstClauseEnd` above is the strict one.)
+ * Where the first clause of `text` ends (the index just past its comma,
+ * semicolon or colon), or -1 when there is no natural break yet. The break
+ * needs whitespace after it, so "1,000" and "3:30" never split and a clause
+ * is never cut while it streams in. A break with fewer than CLAUSE_MIN_WORDS
+ * words before it waits for the next; one past CLAUSE_MAX_WORDS is no break.
+ */
+export function firstClauseBreak(text: string): number {
+  const breaks = /[,;:](?=\s)/g;
+  let match: RegExpExecArray | null;
+  while ((match = breaks.exec(text))) {
+    const words = text.slice(0, match.index).split(/\s+/).filter(Boolean).length;
+    if (words > CLAUSE_MAX_WORDS) return -1;
+    if (words >= CLAUSE_MIN_WORDS) return match.index + 1;
+  }
+  return -1;
+}
+
+/** A whole sentence as its first clause and the rest, or null when it should
+ *  stay one piece (no break, or too little left after it to be worth a clip). */
+export function splitFirstClause(sentence: string): [string, string] | null {
+  const end = firstClauseBreak(sentence);
+  if (end < 0) return null;
+  const clause = sentence.slice(0, end).trim();
+  const rest = sentence.slice(end).trim();
+  if (rest.split(/\s+/).filter(Boolean).length < 3) return null;
+  return [clause, rest];
+}
+
 /**
  * Split speakable text into utterances a synthesizer can start on.
  *
@@ -187,12 +276,21 @@ export function splitSentences(text: string, final = true): { sentences: string[
  * a synthesizer given two words produces two words of flat, contextless
  * prosody.
  */
-export function toUtterances(input: string, { minChars = 12, maxChars = 320 } = {}): string[] {
+/** A clip shorter than this is glued to its neighbour (prepare, and the
+ *  room call's streamed sentences). */
+export const MIN_UTTERANCE_CHARS = 12;
+
+export function toUtterances(input: string, { minChars = MIN_UTTERANCE_CHARS, maxChars = 320 } = {}): string[] {
   const text = speakable(input);
   if (!text) return [];
 
   const { sentences, rest } = splitSentences(`${text} `);
   const rough = [...sentences, rest.trim()].filter(Boolean);
+
+  // The first sentence leaves as a clause and its rest, so the voice can
+  // start on a few words while the remainder is made.
+  const firstClause = rough.length ? splitFirstClause(rough[0]) : null;
+  if (firstClause) rough.splice(0, 1, ...firstClause);
 
   const out: string[] = [];
   for (const piece of rough) {
@@ -210,7 +308,9 @@ export function toUtterances(input: string, { minChars = 12, maxChars = 320 } = 
   return out;
 }
 
-function splitLong(text: string, maxChars: number): string[] {
+/** `text` in pieces of at most `maxChars`, broken at a clause, never
+ *  mid-word. Exported for the voice host, whose sentences skip toUtterances. */
+export function splitLong(text: string, maxChars: number): string[] {
   const out: string[] = [];
   let rest = text;
   while (rest.length > maxChars) {

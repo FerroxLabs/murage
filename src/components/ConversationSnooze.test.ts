@@ -50,6 +50,15 @@ describe("the snooze choices", () => {
     expect(markup).toContain(">Unsnooze<");
   });
 
+  it("offers to snooze until new activity, and says so once snoozed that way", () => {
+    expect(render()).toContain('aria-label="Snooze until new activity, the next reply or message"');
+    const markup = render({ until: now + 30 * 86_400_000, untilActivity: true });
+    expect(markup).toContain("Snoozed until new activity");
+    expect(markup).toContain(">Unsnooze<");
+    const marker = renderToStaticMarkup(createElement(SnoozedMarker, { until: now + 60_000, now, clock, untilActivity: true, iconOnly: true }));
+    expect(marker).toContain('title="Snoozed until new activity"');
+  });
+
   it("explains, rather than offers, when something is waiting on the owner", () => {
     const markup = render({ blocked: true });
     expect(markup).toContain("This conversation is waiting on your answer. Answer it first, then snooze it.");
@@ -57,6 +66,6 @@ describe("the snooze choices", () => {
   });
 
   it("uses plain words and no em dashes", () => {
-    for (const markup of [render(), render({ blocked: true }), render({ until: now + 60_000 })]) expect(markup).not.toContain("—");
+    for (const markup of [render(), render({ blocked: true }), render({ until: now + 60_000 }), render({ until: now + 60_000, untilActivity: true })]) expect(markup).not.toContain("—");
   });
 });

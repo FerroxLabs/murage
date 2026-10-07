@@ -65,8 +65,12 @@ const artefacts: Record<string, (desk: string) => void> = {
   "a socket or pipe left by a tool": desk => { execFileSync("mkfifo", [join(desk, "tool.pipe")]); },
 };
 
+// A colon cannot be in a Windows file name: mkdir refuses it, and a file
+// write makes an alternate data stream on "report 2026-09-26 10" instead.
+const colonNames = new Set(["report with a time in its name (colon)", "an empty folder with a colon in its name"]);
+
 for (const [name, make] of Object.entries(artefacts)) {
-  it(`backs up a bot folder after: ${name}`, async () => {
+  it.skipIf(process.platform === "win32" && colonNames.has(name))(`backs up a bot folder after: ${name}`, async () => {
     const f = backupFixture();
     const desk = deskOf(f.data);
     mkdirSync(desk, { recursive: true });

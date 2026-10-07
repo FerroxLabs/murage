@@ -1,8 +1,9 @@
 ---
 name: voiceprint-voice-maintenance
 description: "**Mode skill.** Default-enabled on the Voiceprint specialist. Runs the Refresh path and the running-log loop. Decay kills voice files — this discipline keeps yours useful past month six."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "voiceprint"
 ---

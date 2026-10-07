@@ -1,9 +1,10 @@
+import { managedOutputWorkspace } from "../execution-audience.ts";
 // Voice notes: an answer, said in the bot's own voice, left in the chat as
 // an audio message (and, from the Chief, sent on to Telegram, Slack and
 // Discord by the channels).
 //
 // The bytes follow the generated-image path (server/output-publication.ts):
-// written into a private Murage-owned folder, DATA_DIR/workspaces/<bot>/
+// written into a private Murage-owned folder under the turn partition,
 // generated-audio/<thread>, then saved to Files as a managed output, so the
 // chat's existing audio player plays it and Files keeps it. The speaking is
 // the same `speak()` a call uses, with the bot's own voice service and voice.
@@ -30,19 +31,19 @@ const inside = (root: string, path: string) => {
   return tail !== ".." && !tail.startsWith(`..${sep}`) && !isAbsolute(tail);
 };
 
-/** DATA_DIR/workspaces/<bot>/generated-audio/<thread>, without touching disk:
+/** <partitionRoot>/generated-audio/<thread>, without touching disk:
  *  Files authorizes a conversation's saved voice notes by it. */
 export function managedAudioOutputPath(dataDir: string, botId: string, threadId: string): string {
-  return join(dataDir, "workspaces", botId, "generated-audio", threadId);
+  return join(managedOutputWorkspace(dataDir, botId, threadId), "generated-audio", threadId);
 }
 
-/** DATA_DIR/workspaces/<bot>/generated-audio/<thread>: every component a
+/** <partitionRoot>/generated-audio/<thread>: every component a
  *  real directory inside DATA_DIR, never a link (as for generated images). */
 export function managedAudioRoot(dataDir: string, botId: string, threadId: string, create: boolean): string {
   if (!identity.test(botId) || !identity.test(threadId)) throw Object.assign(new Error("Invalid voice note workspace."), { status: 403 });
   const root = realpathSync.native(dataDir);
   let directory = root;
-  for (const part of ["workspaces", botId, "generated-audio", threadId]) {
+  for (const part of relative(dataDir, managedAudioOutputPath(dataDir, botId, threadId)).split(sep)) {
     directory = join(directory, part);
     if (create) {
       try {

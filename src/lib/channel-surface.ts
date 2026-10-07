@@ -6,6 +6,7 @@
 // happier consequence is that the two screens cannot drift apart on what
 // they call things, because there is one copy of each word.
 import type { ChannelProject, ChannelProjectStatus } from "../../shared/project";
+import { localeCode, t } from "./i18n";
 
 export const CHANNEL_DETAILS_SECTIONS = ["about", "members", "files", "memory"] as const;
 export type ChannelDetailsSection = (typeof CHANNEL_DETAILS_SECTIONS)[number];
@@ -34,6 +35,11 @@ export function roomMemorySentence(name: string, count: number): string {
 
 /** One plain line under the status word, so the word is never the only clue.
  * Written as something a person would say out loud about the work. */
+/** What a person reads for a status code, in the language in effect now.
+ * The English constants in shared/project.ts stay the server's and the codes'. */
+export const channelProjectStatusLabel = (status: ChannelProjectStatus): string => t(`projects.status.${status}`);
+export const channelProjectStatusNote = (status: ChannelProjectStatus): string => t(`projects.statusNote.${status}`);
+
 export const PROJECT_STATUS_NOTES: Record<ChannelProjectStatus, string> = {
   active: "Being worked on now.",
   paused: "Set down for the moment. Nothing is lost.",
@@ -43,8 +49,10 @@ export const PROJECT_STATUS_NOTES: Record<ChannelProjectStatus, string> = {
 /** The last line of a project's overview: when it started, and when it
  * finished if it has. Dates only. Nothing here counts anything. */
 export function projectTimingLine(project: { startedAt: number; completedAt?: number }): string {
-  const day = (at: number) => new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+  // English keeps the device's own date style, as it always did; another language follows the app language.
+  const code = localeCode();
+  const day = (at: number) => new Date(at).toLocaleDateString(code === "en" ? undefined : code, { day: "numeric", month: "long", year: "numeric" });
   return project.completedAt
-    ? `Started ${day(project.startedAt)}. Finished ${day(project.completedAt)}.`
-    : `Started ${day(project.startedAt)}.`;
+    ? t("projects.timing.startedFinished", { start: day(project.startedAt), end: day(project.completedAt) })
+    : t("projects.timing.started", { date: day(project.startedAt) });
 }

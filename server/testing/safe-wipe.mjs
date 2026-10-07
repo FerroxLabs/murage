@@ -218,12 +218,12 @@ function context(options) {
   const underTmp = (p) => !isRoot(tmp) && sameOrInside(p, tmp, platform);
   const strictlyUnderTmp = (p) => !isRoot(tmp) && isInside(p, tmp, platform);
   const scratchMarked = (p) => p.split(/[\\/]+/).some(segment => SCRATCH_SEGMENT.test(segment));
-  return { platform, env, underTmp, scratchMarked, homes: realHomes(options, strictlyUnderTmp), cwd: canonicalPath(options.cwd ?? process.cwd()), selfPid: options.selfPid ?? process.pid };
+  return { platform, env, underTmp, scratchMarked, homes: realHomes(options, strictlyUnderTmp), cwd: canonicalPath(options.cwd ?? process.cwd()), selfPid: options.selfPid ?? process.pid, protect: options.protect ?? [] };
 }
 
 /** The rules no allow rule can outrank. Throws on the first hit. */
 function denyRules(path, ctx) {
-  const { platform, env, underTmp, scratchMarked, homes, cwd } = ctx;
+  const { platform, env, underTmp, scratchMarked, homes, cwd, protect } = ctx;
   if (isRoot(path)) throw new SafeWipeRefused(path, "filesystem root");
   if (sameOrInside(cwd, path, platform)) throw new SafeWipeRefused(path, `is or contains the working directory ${cwd}`);
   for (const { path: home, disposable } of homes) {
@@ -241,7 +241,9 @@ function denyRules(path, ctx) {
       }
     }
   }
-  for (const [name, value] of [["MURAGE_DATA_DIR", env.MURAGE_DATA_DIR], ["MURAGE_COMPANION_DIR", env.MURAGE_COMPANION_DIR]]) {
+  // `protect`: data directories the shell exported before the test scrubbed
+  // them from its environment (murage-env.mjs), still guarded by value.
+  for (const [name, value] of [["MURAGE_DATA_DIR", env.MURAGE_DATA_DIR], ["MURAGE_COMPANION_DIR", env.MURAGE_COMPANION_DIR], ...protect.map(value => ["an inherited data directory", value])]) {
     if (!value) continue;
     const dataDir = canonicalPath(value);
     if (isRoot(dataDir) || underTmp(dataDir) || scratchMarked(dataDir)) continue;

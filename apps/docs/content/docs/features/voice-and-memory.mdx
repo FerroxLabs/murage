@@ -8,13 +8,19 @@ icon: AudioLines
 
 Calls, spoken replies and voice notes speak, listen and look things up through Flux by default, using the Flux key saved under Models. Your own keys (OpenAI, xAI, ElevenLabs and others) are optional and still work.
 
+## Default voices
+
+Every bot starts with its own voice. A new bot is given a female Grok voice (xAI's voices, through Flux), chosen so that bots on your computer sound different from each other where it can. The voice picker marks it "Default". The default is yours to change at any time, and a voice you pick is never changed for you.
+
 ## Change a bot's voice
 
 Each bot has its own voice. Open **Bot settings → Voice & alerts → Voice**. Under Voice engine pick the voice service for this bot: Flux, xAI, ElevenLabs, or the built-in Mac or Windows voices. Bots in one room can sound different. xAI voices work with your own xAI key or through Flux.
 
+Settings → Voice is different: it turns speech into text for recorded skills. A bot's own voice is set under Bot settings → Voice & alerts.
+
 ## Voice picker
 
-The voice picker lists every voice with its name, how it sounds and its accent, for example "Kira: Upbeat, confident, American". Flux offers 41 voices. Search voices, or narrow the list with the Female, Male and Neutral chips and the accent chips. Every voice speaks every language.
+The voice picker lists every voice with its name, how it sounds and its accent, for example "Kira: Upbeat, confident, American". Flux offers 41 voices, and the Grok voices lead the list. Search voices, or narrow the list with the Female, Male and Neutral chips and the accent chips. Every voice speaks every language.
 
 Every voice in the list has its own play button. Press it to hear a sample; it shows Loading while the sample is fetched and Stop while it plays.
 
@@ -42,4 +48,4 @@ The composer microphone uses Apple's local speech recognition in the macOS deskt
 
 ## Memory
 
-Each bot can keep plain-text memory that you can inspect, correct, or delete. Memory is not a hidden remote profile; it lives with the local Murage data.
+Each bot can keep plain-text memory that you can inspect, correct, or delete. Memory is not a hidden remote profile; it lives with the local Murage data. How a bot learns from your feedback is on the Memory and learning page.

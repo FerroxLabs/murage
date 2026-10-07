@@ -195,6 +195,23 @@ describe("ProviderRegistry", () => {
     await registry.disposeAll();
   });
 
+  // The tray re-reads the setup view every minute (SIGNED_OUT_FRESH_MS), and
+  // that read describes the fleet. With a forced catalog refresh, every read
+  // spawned `fuigo models` and sent Flux a GET /v1/models: the 60 s poll seen
+  // at Flux ingress on 2026-10-01. Background readers ask for due-only.
+  it("a background describe leaves a fresh catalog alone", async () => {
+    const fake = makeFakeDriver(); let now = 1000;
+    const registry = new ProviderRegistry([fake.driver], () => now);
+    await registry.load({ a: { driver: "fake" } });
+    let calls = 0;
+    Object.assign(registry.get("a")!, { refreshModels: async () => { calls++; } });
+    for (let minute = 0; minute < 30; minute++) { now += 60_000; await registry.describe({ catalogs: "due" }); }
+    expect(calls).toBe(0);
+    now += 24 * 60 * 60_000; await registry.describe({ catalogs: "due" });
+    expect(calls).toBe(1);
+    await registry.disposeAll();
+  });
+
   it("joins manual and scheduled catalog work and drains it before disposal", async () => {
     const fake = makeFakeDriver(); const registry = new ProviderRegistry([fake.driver]);
     await registry.load({ a: { driver: "fake" } }); let finish!: () => void, calls = 0;

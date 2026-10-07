@@ -10,7 +10,7 @@ description: |
   video production skills), or written content creation (use writing workflows).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "podcast step-by-step guide planning"
   category: "creative-project"

@@ -4,7 +4,7 @@ description: |
   Complete guide to designing and facilitating workshops covering workshop design methodology, learning objectives, interactive activities, materials preparation, timing and pacing, group dynamics management, remote versus in-person facilitation, feedback collection, and post-workshop follow-up. Use when the user asks about workshop facilitator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "event-planning planning teaching"
   category: "travel-experiences"

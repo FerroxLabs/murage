@@ -12,7 +12,9 @@
 //     next start for any left open by a previous process.
 //  D6 A run killed because Murage closed showed "fuigoAgent exited 143 before
 //     the prompt result …" under Provider settings advice. It now says Murage
-//     closed while it was running.
+//     closed while it was running. The desktop asks the harness to close
+//     before it kills it (G12): on Windows the kill is TerminateProcess, no
+//     signal handler runs, and only the request writes the note.
 //
 // Both engines are the fake Claude CLI. "claude" asks for permission on
 // `__fixture_permission_tool__`; "other" is the engine that gets turned off.
@@ -22,14 +24,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { GRACEFUL_CLOSE_MESSAGE } from "../electron/server-child-lifecycle.mjs";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
-import { loopbackFetch } from "./testing/conversation-proof.ts";
-
-/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
- * credential (the server below is started with it), without the desktop proof. */
-const TEST_COMPANION_TOKEN = "c".repeat(64);
-const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
@@ -55,29 +52,47 @@ describe("an engine change or an app close around a run waiting for the person",
     return { status: res.status, body: await res.json() as any };
   };
   const api = (method: string, path: string, body?: unknown) => request(method, path, body);
-  const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, DESKTOP_HEADERS);
+  // A packaged-shape child pushes its own per-launch secret over the port.
+  let desktopHeaders: Record<string, string> = DESKTOP_HEADERS;
+  const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
   const botView = async (id: string): Promise<BotView | undefined> =>
     (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: BotView) => bot.id === id);
   const messagesOf = async (threadId: string): Promise<MessageView[]> =>
     (await api("GET", `/api/threads/${threadId}/messages?limit=50`)).body.messages;
   const pendingApprovals = async () => (await desktopApi("GET", "/api/inbox?view=approvals")).body.approvals as number;
 
-  const start = async () => {
+  /** The app's shape: Electron's private parent port, one listener, fed here
+   * from the IPC channel, as main.mjs feeds it (utilityProcess postMessage). */
+  const PARENT_PORT_PRELUDE = `data:text/javascript,${encodeURIComponent(`
+    let listener;
+    process.on("message", (data) => listener?.({ data }));
+    Object.defineProperty(process, "parentPort", { value: {
+      on(event, callback) { if (event === "message") listener = callback; },
+      postMessage(message) { process.send?.(message); },
+    } });
+  `)}`;
+
+  const start = async ({ packaged = false } = {}) => {
     stderr = "";
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    desktopHeaders = DESKTOP_HEADERS;
+    child = spawn(process.execPath, [...(packaged ? ["--import", PARENT_PORT_PRELUDE] : []), join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,
         MURAGE_PORT: String(port),
-        MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      // The IPC channel carries the desktop's close request, as the private
+      // utility-process port does in the app.
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     child.stderr!.on("data", (chunk) => (stderr += chunk));
+    if (packaged) child.on("message", (message: { type?: string; secret?: string }) => {
+      if (message?.type === "murage:desktop-secret" && message.secret) desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": message.secret };
+    });
     const deadline = Date.now() + 30_000;
     for (;;) {
       try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* not up yet */ }
@@ -186,10 +201,26 @@ describe("an engine change or an app close around a run waiting for the person",
     }
   }, 90_000);
 
-  it("D6 + D7: Murage closing mid-wait says so, and the next start retires the approval it left open", async () => {
+  /** Quit as the desktop does: ask first, and the harness exits by itself. */
+  const closeAsTheDesktopDoes = async () => {
+    const closing = child!;
+    closing.send(GRACEFUL_CLOSE_MESSAGE);
+    await waitForExit(closing, { graceMs: 15_000 });
+    // Exited on its own (0), not killed when the wait ran out.
+    expect({ code: closing.exitCode, signal: closing.signalCode }).toEqual({ code: 0, signal: null });
+  };
+
+  const closes: Array<[string, () => Promise<void>, boolean]> = [
+    ["the desktop's close request over the app's private port (every OS, and the only way on Windows)", closeAsTheDesktopDoes, true],
+    ["the close request from a plain Node parent", closeAsTheDesktopDoes, false],
+  ];
+  // Windows has no SIGTERM a process can catch: kill() there is TerminateProcess.
+  if (process.platform !== "win32") closes.push(["SIGTERM", () => waitForExit(child!, { signal: "SIGTERM" }), false]);
+  it.each(closes)("D6 + D7: Murage closing mid-wait says so, and the next start retires the approval it left open: %s", async (_how, close, packaged) => {
+    if (packaged) { await closeAsTheDesktopDoes(); await start({ packaged: true }); }
     const bot = await makeBot("Closed mid wait");
     const card = await waitingForApproval(bot);
-    await waitForExit(child!, { signal: "SIGTERM" });
+    await close();
     await start();
 
     const after = await messagesOf(bot.threadId);

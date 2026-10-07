@@ -157,6 +157,27 @@ export function packageAgentProfileReviewHash(pkg: BotPackageDefinition, agent: 
     .digest("hex");
 }
 
+/** Bot learning (lessons, outcomes, feedback, episodes, per-bot learning
+ * settings and anything derived from prospects) is never part of a package.
+ * The schema strips unknown fields on parse; this also refuses a package that
+ * carries these keys, so a hand-edited or buggy export is caught loudly. */
+export const PACKAGE_LEARNING_KEYS = ["learning", "prospectLearning", "prospectDerived", "lessons", "outcomes_log", "feedback", "episodes", "learningLocal", "memory_feedback", "memory_outcomes", "memory_lessons"] as const;
+const LEARNING_LOCAL_MARK = /(^|[\\/])learning-local([\\/]|$)/;
+export function isLearningLocalPath(path: string): boolean { return LEARNING_LOCAL_MARK.test(path); }
+export function assertNoLearningData(value: unknown, path = "package"): void {
+  if (Array.isArray(value)) { value.forEach((item, i) => assertNoLearningData(item, `${path}[${i}]`)); return; }
+  if (!value || typeof value !== "object") return;
+  for (const [name, child] of Object.entries(value)) {
+    if ((PACKAGE_LEARNING_KEYS as readonly string[]).includes(name)) throw new Error(`Learning data is not part of a package (${path}.${name})`);
+    assertNoLearningData(child, `${path}.${name}`);
+  }
+}
+/** True when a skill's frontmatter marks it as learned from prospect or
+ * customer messages; such a skill never leaves this computer. */
+export function skillIsProspectDerived(frontmatter: unknown): boolean {
+  return Boolean(frontmatter) && typeof frontmatter === "object" && (frontmatter as { prospectDerived?: unknown }).prospectDerived === true;
+}
+
 export function isBotPackage(value: unknown): boolean {
   if (typeof value === "string") return /^---\r?\n[\s\S]*?\b(?:emberbot|botmrr):\s*1\b/m.test(value);
   return Boolean(value) && typeof value === "object" && !Array.isArray(value) &&
@@ -194,6 +215,7 @@ function markdownDocument(markdown: string): ParsedBotPackage {
  * runtime state therefore cannot ride through the package boundary. */
 export function parseBotPackage(value: JsonValue | ParsedBotPackage): ParsedBotPackage {
   const source = typeof value === "string" ? markdownDocument(value) : value;
+  assertNoLearningData(source);
   const parsed = packageSchema.safeParse(source);
   if (!parsed.success) throw new Error(schemaIssue(parsed.error, "This is not a bot package"));
   const pkg = parsed.data.package;

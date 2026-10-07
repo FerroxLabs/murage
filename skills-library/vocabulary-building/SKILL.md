@@ -6,7 +6,7 @@ description: |
   Do NOT use for grammar instruction (use `grammar-practice`), for conversation practice (use `conversation-practice`), or for general flashcard creation (use `flashcard-generation`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "language-learning spaced-repetition study-skills step-by-step"
   category: "education"

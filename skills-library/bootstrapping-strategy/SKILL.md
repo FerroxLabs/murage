@@ -5,7 +5,7 @@ description: |
   Do NOT use for fundraising from investors (use fundraising-narrative), venture-backed growth (use scaling-checklist), or financial modeling (use financial-model-structure).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship planning strategy analysis decision-making"
   category: "business-strategy"

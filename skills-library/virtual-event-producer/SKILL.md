@@ -4,7 +4,7 @@ description: |
   Plan and execute professional online events including webinars, conferences, and hybrid events with platform selection, audience engagement, and technical production guidance Use when the user asks about virtual event producer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "event-planning planning guide"
   category: "travel-experiences"

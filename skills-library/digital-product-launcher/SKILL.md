@@ -4,7 +4,7 @@ description: |
   End-to-end digital product launch system covering product ideation and validation, creation workflows for templates, courses, and ebooks, pricing psychology, delivery platform selection, marketing funnel design, launch sequences, and post-launch optimization for recurring revenue. Use when the user asks about digital product launcher or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing entrepreneurship strategy"
   category: "marketing-sales"

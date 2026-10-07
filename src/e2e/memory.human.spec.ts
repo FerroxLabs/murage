@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { launchVerificationServer, runControlMurage, type VerificationServer } from "../../scripts/control-murage.ts";
 import { openSidebar } from "./fixtures.ts";
+import { openSidebarPlace } from "./sidebar-nav";
 
 const ORIGINAL = "ORCHIDREVIEW Original launch date is Tuesday.";
 const CORRECTED = "ORCHIDREVIEW Corrected launch date is Thursday.";
@@ -71,6 +72,9 @@ test.beforeAll(async()=>{
     expect(deniedConfigure.status).toBe(404);
     const proof=await api("GET","/api/desktop-secret");
     desktop={"x-murage-surface":"desktop","x-murage-surface-secret":proof.secret};
+    // This workspace reads as an update, so What's new would open over every
+    // test; a person sees it once, and so does this fixture.
+    await api("POST","/api/whats-new/seen",{version:JSON.parse(readFileSync(new URL("../../package.json",import.meta.url),"utf8")).version});
     bot=(await api("POST","/api/bots",{name:"Memory browser fixture",title:"Review coordinator",section:"Memory Browser"})).bot;
     const other=(await api("POST","/api/bots",{name:"Other private fixture",section:"Memory Browser"})).bot;
     const room=(await api("POST","/api/groups",{name:"Reviewed audience",memberIds:[bot.id,other.id],setup:{bulletin:"Synthetic review audience",defaultResponder:{kind:"member",botId:bot.id}}})).group;
@@ -136,13 +140,11 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
   await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
   await page.goto(origin);
   await expect(page.getByRole("button",{name:/^Open .+'s profile$/}).first()).toBeVisible();
-  const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
-  await expect(invitation).toBeVisible();
-  await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
-  await expect(invitation).not.toBeVisible();
+  // The Flux key banner that used to sit here went with the 0.1.58 first run
+  // (311387b1): the key is offered in the Chief's conversation now.
+  await expect(page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true})).toHaveCount(0);
   const sidebar=await openSidebar(page);
-  await sidebar.getByRole("button",{name:"More",exact:true}).click();
-  await sidebar.getByRole("menuitem",{name:"Team map",exact:true}).click();
+  await openSidebarPlace(sidebar,"map"); // the strip (0.1.62), or the "Tools" menu before it
   await page.getByRole("button",{name:"Manage memory",exact:true}).click();
   await expect(page.getByRole("heading",{name:"Workspace memory",exact:true})).toBeVisible();
   const audience=page.getByRole("combobox",{name:"Audience",exact:true});
@@ -212,11 +214,19 @@ test("bot memory keeps workspace settings out of the narrow profile panel", asyn
   const sidebar=await openSidebar(page);
   await sidebar.getByText("Memory browser fixture",{exact:true}).click();
   await page.getByRole("button",{name:"Open Memory browser fixture's profile",exact:true}).first().click();
-  await page.getByRole("button",{name:"Open memory for Memory browser fixture",exact:true}).last().click();
+  // The profile is Bot settings now (51786fe3); its Memory section holds the launcher.
+  const settings=page.getByRole("dialog",{name:"Bot settings"});
+  const sectionSelect=settings.getByRole("combobox",{name:"Section",exact:true});
+  await expect(settings).toBeVisible();
+  if(await sectionSelect.isVisible())await sectionSelect.selectOption({label:"Memory"});
+  else await settings.getByRole("navigation",{name:"Bot settings sections"}).getByRole("button",{name:"Memory",exact:true}).click();
+  await settings.getByRole("button",{name:"Open memory for Memory browser fixture",exact:true}).click();
   const memory=page.getByRole("region",{name:"Bot memory",exact:true});
+  // The compact bot panel folds its filters away and states the workspace mode in a sentence.
+  await memory.getByText("Filters",{exact:true}).click();
   await expect(memory.getByRole("combobox",{name:"Audience",exact:true})).toBeVisible();
   await expect(memory.getByRole("combobox",{name:"Memory mode",exact:true})).toHaveCount(0);
-  await expect(memory.getByText("Workspace mode: Off",{exact:false})).toBeVisible();
+  await expect(memory.getByText("Memory is off. Capture and recall are off.",{exact:false})).toBeVisible();
   expect(await memory.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
   await memory.scrollIntoViewIfNeeded();
   await page.screenshot({path:info.outputPath("bot-memory-profile.png")});
@@ -225,7 +235,9 @@ test("bot memory keeps workspace settings out of the narrow profile panel", asyn
   await page.getByRole("button",{name:"Enable and import notebooks",exact:true}).click();
   await expect(page.getByText("Capture and recall enabled. Detected bot notebooks are being imported; originals are preserved.",{exact:true})).toBeVisible();
   expect((await api("GET","/api/memory/status")).mode).toBe("active");
+  // Dynamic defaults never overwrite the owner selection.
   expect((await api("GET","/api/memory/status")).configuration.extractorInstanceId).toBeNull();
+  expect((await api("GET","/api/memory/status")).learning.settings.version).toBe(2);
   await page.screenshot({path:info.outputPath("workspace-memory-settings.png")});
 });
 
@@ -235,24 +247,36 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
   const original=Array.from({length:230},(_,n)=>`Line ${n}: notebook context.`).join("\n")+"\nFULL_NOTEBOOK_TAIL";
   writeFileSync(join(root,"MEMORY.md"),original);
   writeFileSync(join(root,"memory","detail.md"),"TOPIC_NOTE_CANARY");
-  await api("PUT","/api/config",{flux:{apiKey:"isolated-memory-ui-fixture-key"}});
+  // Save the key the way the browser build does (38204d8b retired flux on PUT /api/config).
+  // Fixture setup over HTTP, not app gating (flux-invite.test.ts scans for that).
+  const connection=await api("GET","/api/flux-connection");
+  if(!connection.configured)await api("POST","/api/flux-connection/mutate",{action:"connect",revision:connection.revision,key:"sk-flux-FAKE_MEMORY_UI"});
+  // With a key, Flux Fast resolves dynamically while the saved selection stays null.
+  const defaults=await api("GET","/api/memory/status");
+  expect(defaults.configuration.extractorInstanceId).toBeNull();
+  expect(defaults.learning.connection).toMatchObject({instanceId:"@murage/flux-fast",source:"default"});
   await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
   await page.goto(origin);
   await expect(page.getByRole("button",{name:/^Open .+'s profile$/}).first()).toBeVisible();
   const sidebar=await openSidebar(page);
-  await sidebar.getByRole("button",{name:"More",exact:true}).click();
-  await sidebar.getByRole("menuitem",{name:"Team map",exact:true}).click();
-  await page.getByRole("button",{name:"Manage memory",exact:true}).click();
-  await page.getByText("Workspace settings and processing",{exact:true}).click();
-  await page.getByRole("combobox",{name:"Extractor preference",exact:true}).selectOption("@murage/flux-fast");
-  await clickAction(page,"Save memory settings","configure");
-  expect((await api("GET","/api/memory/status")).configuration.extractorInstanceId).toBe("@murage/flux-fast");
+  // Connection selection moved to the visible Learning card in Settings > Memory.
+  await sidebar.getByRole("button",{name:"App settings",exact:true}).click();
+  const appSettings=page.getByRole("dialog",{name:"Settings",exact:true});
+  await appSettings.getByRole("navigation").getByRole("button",{name:"Memory",exact:true}).click();
+  const selected=page.waitForResponse(response=>response.url().endsWith("/api/memory/action")&&response.request().postDataJSON()?.action==="configure");
+  await appSettings.getByRole("combobox",{name:"Connection",exact:true}).selectOption("@murage/flux-standard");
+  expect((await selected).ok()).toBe(true);
+  expect((await api("GET","/api/memory/status")).configuration.extractorInstanceId).toBe("@murage/flux-standard");
+  // Fast has a single default entry. Returning to it restores the null selection and review policy.
+  const defaulted=page.waitForResponse(response=>response.url().endsWith("/api/memory/action")&&response.request().postDataJSON()?.action==="configure");
+  await appSettings.getByRole("combobox",{name:"Connection",exact:true}).selectOption("");expect((await defaulted).ok()).toBe(true);
+  expect((await api("GET","/api/memory/status")).configuration.extractorInstanceId).toBeNull();
   await page.screenshot({path:info.outputPath("flux-memory-choice.png")});
   await page.getByText("Import existing notes",{exact:true}).click();
   await clickAction(page,"Find existing notebooks","import-inventory");
   await page.getByRole("checkbox",{name:"Memory browser fixture · MEMORY.md",exact:true}).check();
   await page.getByRole("checkbox",{name:"Memory browser fixture · detail.md",exact:true}).check();
-  await page.getByRole("checkbox",{name:/Keep imported notebooks updated/}).check();
+  await page.getByRole("switch",{name:/Keep imported notebooks updated/}).check();
   await clickAction(page,"Preview selected notebooks","import-preview");
   const preview=page.getByRole("region",{name:"Import preview",exact:true});
   await expect(preview.getByText(original,{exact:true})).toBeVisible();

@@ -138,6 +138,16 @@ describe("the shipped index", () => {
     }
   });
 
+  it("finds the MCP servers page for a bot asked how to add one (MCP-LINK T14)", () => {
+    for (const question of ["how do I add an MCP server by pasting a link", "my MCP server says my sign-in has ended", "where do I paste an API key for an MCP server"]) {
+      const top = searchHelp(question).slice(0, 3);
+      expect(top.map((result) => result.id).join(" "), question).toMatch(/features\/mcp-servers#/);
+    }
+    const page = HELP_INDEX.filter((entry) => entry.id.startsWith("features/mcp-servers#"));
+    expect(page.length).toBeGreaterThan(3);
+    expect(page.map((entry) => entry.where).join(" ")).toContain("Connected apps → MCP servers");
+  });
+
   it("is regenerated from the docs, never edited by hand", () => {
     const script = fileURLToPath(new URL("../scripts/build-help-index.mjs", import.meta.url));
     expect(() => execFileSync(process.execPath, [script, "--check"], { stdio: "pipe" })).not.toThrow();

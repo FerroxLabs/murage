@@ -1,5 +1,8 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const write=vi.hoisted(()=>vi.fn(async()=>({path:"fixture.age"})));
+// On Windows the command first proves the signed helper beside the app; this
+// suite is about the options, so that proof stands in as passed.
+vi.mock("./installation-backup-encryption.ts",async importOriginal=>({...await importOriginal<typeof import("./installation-backup-encryption.ts")>(),resolveWindowsBackupRuntime:vi.fn(async()=>({ageExecutable:"fixed-age",verifyHelper:async()=>{}}))}));
 vi.mock("./installation-encrypted-backup.ts",()=>({writeEncryptedInstallationBackup:write,inspectEncryptedInstallationBackup:vi.fn(),restoreEncryptedInstallationNew:vi.fn()}));
 import { installationRecoveryCommand } from "./installation-recovery-command.ts";
 const args=["backup-encrypted","--data-dir","fixture","--output","fixture.age","--age-tool","fixed-age","--recipient","fixture-public-recipient","--credential-policy","preserve-in-encrypted-fidelity"];

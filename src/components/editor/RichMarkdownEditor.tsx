@@ -47,7 +47,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
 
-import { modShortcut } from "@/lib/keyboard-shortcuts";
+import { modShortcut } from "@/lib/mod-shortcut";
 import { createMarkdownExtensions, EMPTY_MARKDOWN_DOC } from "@/lib/markdown-fidelity";
 import { createSlashCommand, SlashMenuPopup, type SlashKeyHandle, type SlashState } from "./slashMenu";
 import "./rich-markdown-editor.css";

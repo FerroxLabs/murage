@@ -4,7 +4,7 @@ description: |
   Structured piano instruction from fundamentals through advanced playing. Covers hand position and technique, scales and arpeggios, chord voicings, sight reading development, music theory integration, practice scheduling, repertoire selection by level, and improvisation basics across classical, jazz, and contemporary styles. Use when the user asks about piano teacher or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching design guide"
   category: "design-creative"

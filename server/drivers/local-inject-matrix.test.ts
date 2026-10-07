@@ -3,6 +3,7 @@
 // like Hermes auto-routing to OpenRouter (HTTP 401 Missing Authentication
 // header) before a user hits them.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,6 +66,7 @@ const LIVE_MODEL_IDS = [
 const OFFICIAL_SLUGS = [
   "claude-sonnet-5",
   "claude-opus-5",
+  "claude-sonnet-5-5",
   "grok-4.6",
   "grok-4.5",
   "kimi-code/k3",
@@ -448,8 +450,8 @@ describe("Qwen / Hermes ACP turns", () => {
       expect(seen.argv).toEqual(["--acp", "--auth-type", "openai", "-m", "gemma-4-31b-it-bf16"]);
       expect(seen.env.OPENAI_BASE_URL).toBe("http://127.0.0.1:8080/v1");
       expect(seen.env.OPENAI_BASE_URL).not.toContain("fluxrouter");
-      expect(seen.env.OPENAI_API_KEY).toBe("omlx");
-      expect(Object.values(seen.env)).not.toContain("sk-flux-should-not-leak");
+      expect(seen.env.OPENAI_API_KEY).toBe(fixtureCredentialFingerprint("omlx"));
+      expect(Object.values(seen.env)).not.toContain(fixtureCredentialFingerprint("sk-flux-should-not-leak"));
     } finally {
       await instance.dispose();
     }

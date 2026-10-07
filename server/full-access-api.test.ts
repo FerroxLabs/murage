@@ -16,13 +16,12 @@
 // HEADLESS ONLY: the data directory is a throwaway temp HOME and the port is
 // probed from the fixture band, clear of the live app's 8799.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { conversationProofHeaders } from "./testing/conversation-proof.ts";
+import { makeTestHome, removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { assertSafeToWipe } from "./testing/safe-wipe.mjs";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -41,7 +40,6 @@ let child: ChildProcess;
 let home: string;
 let stderr = "";
 
-const COMPANION_TOKEN = "c".repeat(64);
 const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
     method,
@@ -50,8 +48,7 @@ const request = async (method: string, path: string, body?: unknown, headers: Re
   });
   return { status: res.status, body: await res.json().catch(() => null) };
 };
-// the paired phone's door: conversation routes need the companion credential
-const api = (method: string, path: string, body?: unknown) => request(method, path, body, conversationProofHeaders(path, COMPANION_TOKEN));
+const api = (method: string, path: string, body?: unknown) => request(method, path, body);
 const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
 const botState = async (botId: string) => (await desktopApi("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === botId);
 const taskState = async (botId: string, threadId: string) => (await botState(botId)).tasks.find((task: any) => task.threadId === threadId);
@@ -103,8 +100,9 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
     const port = await freePortBlock([0, 1], 18_799, 200);
     base = `http://127.0.0.1:${port}`;
     chmodSync(FAKE_CLI, 0o755);
-    home = mkdtempSync(join(tmpdir(), "murage-full-access-"));
-    expect(home.startsWith(tmpdir())).toBe(true);
+    home = makeTestHome("murage-full-access-");
+    // A disposable home: OS temp, or the checkout's .murage-scratch on Linux.
+    expect(() => assertSafeToWipe(home)).not.toThrow();
     mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(
       join(home, ".murage", "config.json"),
@@ -138,7 +136,6 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
         HOME: home,
         USERPROFILE: home,
         MURAGE_PORT: String(port),
-        MURAGE_COMPANION_TOKEN: COMPANION_TOKEN,
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
       },

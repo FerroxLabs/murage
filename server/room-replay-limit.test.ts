@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.61 room privacy fix, gap 4: a room with more than 2048 memory receipts failed
+// 0.1.61, gap 4: a room with more than 2048 memory receipts failed
 // every memory-on turn (MEMORY_REPLAY_LIMIT), because the replay check read
 // every receipt of the room before it looked at a single line. A busy room
 // now checks only the lines a member prompt can show, reads receipts per
@@ -94,19 +94,25 @@ it(`a room past ${THREAD_RECEIPT_LIMIT} receipts no longer fails the turn, for t
   expect(otherAfter.checked.size).toBeLessThanOrEqual(8 * 60 + 1);
 });
 
-it("a line whose own receipts run past the limit is withheld, not shown and not an error", () => {
+// 0.1.61.1 memreplay: a line listed by more receipts than the old per-line
+// cap is judged by all of them, so a sound one is shown, not withheld.
+it("a line listed by more than the old per-line receipt cap is judged by all of them, not an error", () => {
   const { messages } = busyRoom(10);
   const a = access("dax", "busy-room");
   database().prepare(`WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<?)
     INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     SELECT 'crowd-'||value,'busy-room','driver','[]','[]','["reply-3"]',?,?,0,'delivered',value FROM n`).run(THREAD_RECEIPT_LIMIT + 1, a.policyRevision, a.deletionEpoch);
   const owner = roomTranscriptForTurn("busy-room", messages, true, access("finch", "busy-room"));
-  expect([...owner.withheld]).toEqual(["reply-3"]);
+  expect([...owner.withheld]).toEqual([]);
   const other = roomTranscriptForTurn("busy-room", messages, false, access("finch", "busy-room", true));
-  expect(other.messages.map(m => m.id)).not.toContain("reply-3");
+  expect(other.messages.map(m => m.id)).toContain("reply-3");
   expect(other.messages.map(m => m.id)).toContain("reply-4");
-  // a direct chat keeps its refusal: it has no withheld line to show instead
-  expect(() => filterMemoryReplay("busy-room", messages, access("finch", "busy-room"))).toThrow("MEMORY_REPLAY_LIMIT");
+  expect(filterMemoryReplay("busy-room", messages, access("finch", "busy-room")).map(m => m.id)).toContain("reply-3");
+  // one of them revoked: a reader held to receipts no longer sees the line
+  database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id='crowd-1700'").run();
+  const otherAfter = roomTranscriptForTurn("busy-room", messages, false, access("finch", "busy-room", true));
+  expect(otherAfter.messages.map(m => m.id)).not.toContain("reply-3");
+  expect(otherAfter.messages.map(m => m.id)).toContain("reply-4");
 });
 
 it("recall of a reply in a room past the limit still follows the content rule", () => {

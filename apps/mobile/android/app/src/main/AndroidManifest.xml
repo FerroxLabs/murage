@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- "Open Tailscale" on the can't-reach screen launches it directly when installed. -->
+    <queries>
+        <package android:name="com.tailscale.ipn" />
+    </queries>
+
+    <application
+        android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:usesCleartextTraffic="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <!-- The pairing scanner's UI module (play-services-code-scanner): Play fetches it at install. -->
+        <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="barcode_ui" />
+
+        <!-- standard, never singleTask: a singleTask launcher destroys the
+             workspace above it when the icon is tapped again (Phase 0 surprise 2). -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="standard"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
+        </activity>
+
+        <activity
+            android:name=".WorkspaceActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/AppTheme.NoActionBar"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|uiMode|density" />
+
+        <!-- A5 review Minor 2: every notification tap lands here, not on the exported
+             launcher. Not exported, shows nothing, finishes in onCreate. -->
+        <activity
+            android:name=".PushOpenActivity"
+            android:exported="false"
+            android:launchMode="standard"
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <service android:name=".MurageMessagingService" android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <receiver android:name=".PushActionReceiver" android:exported="false" />
+    </application>
+</manifest>

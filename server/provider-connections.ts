@@ -1,11 +1,24 @@
 import { z } from "zod";
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PROVIDER_PRESETS, keyIssuer, parseProviderBank } from "../electron/provider-connections.mjs";
+import { PROVIDER_PRESETS, isFluxKeyShape, keyIssuer, parseProviderBank } from "../electron/provider-connections.mjs";
+import { CHATGPT_IDENTITY_HEADERS, SIGNIN_PRESETS, isSignInPreset } from "../electron/model-signin-presets.mjs";
 import { MODEL_CATALOG_REFRESH_MS } from "./model-catalog-refresh.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { resolveModelLabel } from "../shared/model-label.ts";
 import type { ProviderCatalog, ProviderCatalogError, ProviderConnectionRecord, ProviderModel, ProviderPreset, PublicProviderConnection } from "../shared/provider-connections.ts";
+import type { SignInConnectionInfo } from "../shared/model-signin.ts";
+
+/** Endpoint facts for any preset, pasted-key or plan sign-in. */
+export function presetInfo(preset: ProviderPreset) {
+ return isSignInPreset(preset) ? SIGNIN_PRESETS[preset] : PROVIDER_PRESETS[preset];
+}
+/** The plan sign-in side of the connection list (server/model-signin.ts). */
+export interface SignInConnectionSource {
+ records(): ProviderConnectionRecord[];
+ info(id: string): SignInConnectionInfo | undefined;
+ bearer(id: string): { accessToken: string; accountId?: string } | null;
+}
 
 const MAX_BYTES = 4 * 1024 * 1024, MAX_MODELS = 5000, CACHE_TTL = MODEL_CATALOG_REFRESH_MS;
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -48,6 +61,7 @@ const messages: Record<ProviderCatalogError, string> = {
  "rate-limited": "The provider is limiting catalog requests. Try again later.", offline: "Could not reach the provider. The last saved catalog is retained.",
  "invalid-catalog": "The provider returned an invalid or oversized model catalog.", unavailable: "The provider catalog is unavailable. Try again later.",
  "connection-changed": "The connection changed while its catalog was loading. Refresh it again.",
+ "needs-sign-in": "This sign-in ended. Sign in again in Settings, Models, then refresh.",
 };
 function knownChat(preset: ProviderPreset, id: string, capabilities: Record<string, unknown>): boolean {
  if (MEDIA.test(id)) return false;
@@ -55,8 +69,12 @@ function knownChat(preset: ProviderPreset, id: string, capabilities: Record<stri
  if (preset === "openai") return /^(gpt-[3456]|o[134](?:-|$)|chatgpt-)/.test(id);
  if (preset === "deepseek") return id === "deepseek-flash" || /^deepseek-(chat|reasoner|v\d)/.test(id);
  if (preset === "mistral") return capabilities.completion_chat === true;
- if (preset === "xai") return /^grok-/.test(id);
+ if (preset === "xai" || preset === "supergrok") return /^grok-/.test(id);
+ // The ChatGPT plan list (codex/models) holds only models the plan can chat with.
+ if (preset === "chatgpt") return /^(gpt-|o\d|codex)/.test(id);
  if (preset === "groq") return /(?:^|\/)(llama|gemma|qwen|deepseek|gpt-oss|compound)/.test(id);
+ // Requesty routes by vendor/model ids; only the chat families it resells count.
+ if (preset === "requesty") return /^[a-z0-9-]+\/(claude-|gpt-[3456]|o[134](?:-|$)|grok-|gemini-|deepseek|mistral|llama|qwen|gemma|kimi|glm)/.test(id);
  // Gemini API: chat is the gemini/gemma families, minus the Live, robotics,
  // video and computer-use rows that share the prefix (MEDIA already drops
  // image, TTS, embedding and transcription ids).
@@ -64,7 +82,11 @@ function knownChat(preset: ProviderPreset, id: string, capabilities: Record<stri
  if (preset === "flux") return /^flux-(auto|fast|standard|reasoning|pinned-)/.test(id) || /^(claude-|gpt-|grok-|deepseek-|qwen-|gemini-)/.test(id);
  return false;
 }
-export function normalizeProviderModels(connection: ProviderConnectionRecord, payload: unknown, updatedAt: number): ProviderModel[] {
+export function normalizeProviderModels(connection: ProviderConnectionRecord, payload: unknown, updatedAt: number, secret: string = connection.key): ProviderModel[] {
+ // The ChatGPT plan backend answers {models:[{slug,display_name,visibility,…}]};
+ // only `list` rows are meant for people (Wayland chatgptSubscriptionModels.ts).
+ if (connection.preset === "chatgpt" && object(payload) && Array.isArray(payload.models) && payload.models.length <= MAX_MODELS)
+  payload = { data: payload.models.filter(row => object(row) && (row.visibility === undefined || row.visibility === "list")).map(row => ({ id: row.slug, name: row.display_name, context_window: row.context_window })) };
  if (!object(payload) || !Array.isArray(payload.data) || payload.data.length > MAX_MODELS) throw new CatalogFailure("invalid-catalog");
  const models: ProviderModel[] = [], seen = new Set<string>();
  for (const row of payload.data) {
@@ -72,7 +94,7 @@ export function normalizeProviderModels(connection: ProviderConnectionRecord, pa
   // endpoint takes the bare id, which is the id Murage stores and sends.
   if (connection.preset === "google" && object(row) && typeof row.id === "string" && row.id.startsWith("models/")) row.id = row.id.slice(7);
   if (!object(row) || typeof row.id !== "string" || !row.id || row.id.length > 200 || /[\x00-\x1f]/.test(row.id) || seen.has(row.id)) continue;
-  if ([row.id,row.name,row.display_name].some(value=>typeof value==="string"&&value.includes(connection.key)))throw new CatalogFailure("invalid-catalog");
+  if (secret && [row.id,row.name,row.display_name].some(value=>typeof value==="string"&&value.includes(secret)))throw new CatalogFailure("invalid-catalog");
   seen.add(row.id);const capabilities=object(row.capabilities)?row.capabilities:{};
   const architecture=object(row.architecture)?row.architecture:{};
   const declaredOutput=strings(architecture.output_modalities ?? row.output_modalities).filter(kind=>["text","image","video","audio","embedding"].includes(kind));
@@ -115,8 +137,11 @@ export class ProviderConnectionsService {
  private readonly attempted=new Map<string,{revision:string;at:number}>();
  private readonly listeners=new Set<(changedIds:string[])=>void|Promise<void>>();
  private readonly fetcher:typeof fetch;
- private readonly options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];resolveAlias?:(id:string)=>ProviderConnectionRecord|null};
- constructor(options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];resolveAlias?:(id:string)=>ProviderConnectionRecord|null}){this.options=options;this.fetcher=options.fetch??fetch;}
+ private readonly options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused")=>void;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource};
+ constructor(options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused")=>void;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource}){this.options=options;this.fetcher=options.fetch??fetch;}
+ /** Plan sign-in connections changed (sign-in, sign-out, account switch or
+  * an ended sign-in). Same effect as a bank change for those ids. */
+ async invalidate(ids:string[]){for(const id of ids)this.cache.delete(id);await Promise.all([...this.listeners].map(listener=>listener(ids)));}
  isCurrent(id:string,revision:string){const current=this.resolve(id);return Boolean(current?.enabled&&current.revision===revision);}
  subscribe(callback:(changedIds:string[])=>void|Promise<void>){this.listeners.add(callback);return()=>{this.listeners.delete(callback);};}
  async changed(previousBank:string|undefined,nextBank:string){const before=parseProviderBank(previousBank),after=parseProviderBank(nextBank);const ids=[...new Set([...before.map(row=>row.id),...after.map(row=>row.id)])].filter(id=>before.find(row=>row.id===id)?.revision!==after.find(row=>row.id===id)?.revision);for(const id of ids)this.cache.delete(id);await Promise.all([...this.listeners].map(listener=>listener(ids)));}
@@ -125,8 +150,10 @@ export class ProviderConnectionsService {
  // checked it, or restored from such a backup) is listed for review and never
  // enabled, refreshed or sent. Removing it and adding the key under its own
  // provider clears it.
- private records():Array<ProviderConnectionRecord|LegacyProviderConnection|(ProviderConnectionRecord&{legacyError:string})>{return [...(this.options.legacyConnections?.()??[]),...parseProviderBank(this.options.readBank()).map(row=>{const issuer=keyIssuer(row.key);return issuer&&issuer!==row.preset?{...row,enabled:false,legacyError:"This saved key belongs to a different provider. Remove it, then add the key under its own provider."}:row;})];}
- resolve(id:string){const found=this.records().find(row=>row.id===id)??this.options.resolveAlias?.(id);return found?{...PROVIDER_PRESETS[found.preset],...found}:null;}
+ private records():Array<ProviderConnectionRecord|LegacyProviderConnection|(ProviderConnectionRecord&{legacyError:string})>{return [...(this.options.legacyConnections?.()??[]),...parseProviderBank(this.options.readBank()).map(row=>{const issuer=keyIssuer(row.key);if(issuer&&issuer!==row.preset)return{...row,enabled:false,legacyError:"This saved key belongs to a different provider. Remove it, then add the key under its own provider."};
+  if(row.preset==="flux"&&!isFluxKeyShape(row.key))return{...row,enabled:false,legacyError:"This saved value is not a Flux Router key. Remove it, then add your sk-flux- key."};
+  return row;}),...(this.options.signIns?.records()??[])];}
+ resolve(id:string){const found=this.records().find(row=>row.id===id)??this.options.resolveAlias?.(id);return found?{...presetInfo(found.preset),...found}:null;}
  private readCache(connection:ProviderConnectionRecord):ProviderCatalog {
   if("legacyError" in connection && connection.legacyError)return{connectionId:connection.id,models:[],stale:false,assurance:"catalog-only",error:{code:"unavailable",message:String(connection.legacyError)}};
   if(!this.cache.has(connection.id))try{
@@ -140,7 +167,7 @@ export class ProviderConnectionsService {
   return{...cached.catalog,models:cached.catalog.models.map(currentCachedModel),stale:cached.catalog.stale||!cached.catalog.fetchedAt||this.now()-cached.catalog.fetchedAt>CACHE_TTL};
  }
  getCatalog(id:string):ProviderCatalog {const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});if(this.options.resolveAlias?.(id)){const catalog=this.getCatalog("legacy-flux");return{...catalog,connectionId:id,models:catalog.models.map(model=>({...model,connectionId:id}))};}return this.readCache(connection);}
- list():PublicProviderConnection[]{return this.records().map(connection=>{const preset=PROVIDER_PRESETS[connection.preset],catalog=this.readCache(connection);return{id:connection.id,preset:connection.preset,label:connection.label,enabled:connection.enabled,revision:connection.revision,baseUrl:preset.baseUrl,protocol:preset.protocol,configured:true,...("legacy" in connection?{legacy:true,managedIn:connection.managedIn}:{}),state:catalog.error?"needs-attention":catalog.fetchedAt?"catalog-ready":"saved",catalog};});}
+ list():PublicProviderConnection[]{return this.records().map(connection=>{const preset=presetInfo(connection.preset),catalog=this.readCache(connection),signIn=isSignInPreset(connection.preset)?this.options.signIns?.info(connection.id):undefined;return{id:connection.id,preset:connection.preset,label:connection.label,enabled:connection.enabled,revision:connection.revision,baseUrl:preset.baseUrl,protocol:preset.protocol,configured:true,...("legacy" in connection?{legacy:true,managedIn:connection.managedIn}:{}),state:catalog.error||signIn?.state==="needs-sign-in"?"needs-attention":catalog.fetchedAt?"catalog-ready":"saved",catalog,...(signIn?{signIn}:{})};});}
  async refreshDue(signal?:AbortSignal):Promise<void>{
   for(const connection of this.records()){
    if(signal?.aborted)return;
@@ -161,6 +188,8 @@ export class ProviderConnectionsService {
   entry.promise=this.refreshCatalog(id,signal).finally(()=>{if(this.pending.get(id)===entry)this.pending.delete(id);});
   this.pending.set(id,entry);return entry.promise;
  }
+ /** Tell the owner of the service what the provider said to this key (Flux's 401/403 marks the key refused). Never throws, never carries more than the key's own row. */
+ private report(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused"):void{if(this.resolve(connection.id)?.key!==connection.key)return;try{this.options.onCatalogOutcome?.({id:connection.id,preset:connection.preset,key:connection.key},outcome);}catch{/* a listener must not break a refresh */}}
  private async refreshCatalog(id:string,signal?:AbortSignal):Promise<ProviderCatalog>{
   const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});
   if(!connection.enabled)throw Object.assign(new Error("Enable this connection before refreshing models."),{status:409});
@@ -170,21 +199,23 @@ export class ProviderConnectionsService {
    const all:ProviderModel[]=[],seen=new Set<string>();let cursor:string|undefined;
    for(let page=0;page<20;page++){
     active();const url=new URL(connection.catalogUrl);if(cursor)url.searchParams.set("after_id",cursor);
-    const headers:Record<string,string>=connection.preset==="anthropic"?{"x-api-key":connection.key,"anthropic-version":"2023-06-01"}:{authorization:`Bearer ${connection.key}`};
+    let headers:Record<string,string>,secret=connection.key;
+    if(isSignInPreset(connection.preset)){const bearer=this.options.signIns?.bearer(id);if(!bearer)throw new CatalogFailure("needs-sign-in");secret=bearer.accessToken;headers={authorization:`Bearer ${bearer.accessToken}`,accept:"application/json",...(connection.preset==="chatgpt"?{...CHATGPT_IDENTITY_HEADERS,...(bearer.accountId?{"chatgpt-account-id":bearer.accountId}:{})}:{})};}
+    else headers=connection.preset==="anthropic"?{"x-api-key":connection.key,"anthropic-version":"2023-06-01"}:{authorization:`Bearer ${connection.key}`};
     const response=await this.fetcher(url.toString(),{headers,signal:controllerSignal,redirect:"error"});active();
-    if(!response.ok){void response.body?.cancel();throw new CatalogFailure(response.status===401?"unauthorized":response.status===403?"forbidden":response.status===429?"rate-limited":"unavailable");}
+    if(!response.ok){void response.body?.cancel();throw new CatalogFailure(response.status===401?isSignInPreset(connection.preset)?"needs-sign-in":"unauthorized":response.status===403?"forbidden":response.status===429?"rate-limited":"unavailable");}
     if(Number(response.headers.get("content-length")??0)>MAX_BYTES||!response.body){void response.body?.cancel();throw new CatalogFailure("invalid-catalog");}
     const reader=response.body.getReader();let size=0;const chunks:Uint8Array[]=[];try{for(;;){const next=await reader.read();if(next.done)break;size+=next.value.length;if(size>MAX_BYTES){await reader.cancel();throw new CatalogFailure("invalid-catalog");}chunks.push(next.value);}}finally{reader.releaseLock();}
     let data:unknown;try{data=JSON.parse(Buffer.concat(chunks).toString("utf8"));}catch{throw new CatalogFailure("invalid-catalog");}
-    active();for(const model of normalizeProviderModels(connection,data,this.now()))if(!seen.has(model.id)){seen.add(model.id);all.push(model);}
+    active();for(const model of normalizeProviderModels(connection,data,this.now(),secret))if(!seen.has(model.id)){seen.add(model.id);all.push(model);}
     if(all.length>MAX_MODELS)throw new CatalogFailure("invalid-catalog");
     if(connection.preset!=="anthropic"||!object(data)||data.has_more!==true){
      const catalog:ProviderCatalog={connectionId:id,models:all,fetchedAt:this.now(),stale:false,assurance:"catalog-only"};
-     active();mkdirSync(this.options.cacheDir,{recursive:true,mode:0o700});writeFileAtomic(join(this.options.cacheDir,id+".json"),JSON.stringify({revision:connection.revision,catalog}),{mode:0o600});this.cache.set(id,{revision:connection.revision,catalog});return catalog;
+     active();mkdirSync(this.options.cacheDir,{recursive:true,mode:0o700});writeFileAtomic(join(this.options.cacheDir,id+".json"),JSON.stringify({revision:connection.revision,catalog}),{mode:0o600});this.cache.set(id,{revision:connection.revision,catalog});this.report(connection,"ok");return catalog;
     }
     if(typeof data.last_id!=="string"||!data.last_id||data.last_id.length>200||data.last_id===cursor)throw new CatalogFailure("invalid-catalog");cursor=data.last_id;
    }
    throw new CatalogFailure("invalid-catalog");
-  }catch(error){const code=error instanceof CatalogFailure?error.code:"offline";const catalog:ProviderCatalog={...previous,stale:Boolean(previous.fetchedAt),error:{code,message:messages[code]},assurance:"catalog-only"};if(this.resolve(id)?.revision===connection.revision)this.cache.set(id,{revision:connection.revision,catalog});return catalog;}
+  }catch(error){const code=error instanceof CatalogFailure?error.code:"offline";if(code==="unauthorized"||code==="forbidden")this.report(connection,"refused");const catalog:ProviderCatalog={...previous,stale:Boolean(previous.fetchedAt),error:{code,message:messages[code]},assurance:"catalog-only"};if(this.resolve(id)?.revision===connection.revision)this.cache.set(id,{revision:connection.revision,catalog});return catalog;}
  }
 }

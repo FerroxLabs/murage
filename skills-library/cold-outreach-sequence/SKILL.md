@@ -11,7 +11,7 @@ description: |
   or PR media pitches (use pr-pitch).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sales email planning template"
   category: "marketing-sales"

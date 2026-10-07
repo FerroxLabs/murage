@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { Worker } from "node:worker_threads";
 import { pathToFileURL } from "node:url";
-import { backupFixture,testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture,testAgeKeys,rawAgeHost } from "./testing/backup-fixture.ts";
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const worker = fileURLToPath(new URL("../scripts/installation-recovery-worker.ts", import.meta.url));
@@ -42,11 +42,12 @@ process.argv=[process.execPath,${JSON.stringify(entry)},...${JSON.stringify(args
   expect(logs.includes(identity.trim())).toBe(false);expect(logs.includes("FAKE-CREDENTIAL-CANARY")).toBe(false);
   return{code,requests,reply};
 }
-it("actual private worker encrypts and restores using one-use identity IPC and packaged tool layout",async()=>{
+it.skipIf(!rawAgeHost)("actual private worker encrypts and restores using one-use identity IPC and packaged tool layout",async()=>{
   const f=backupFixture(),keys=testAgeKeys();roots.push(f.parent);
   try{
-    const resource=join(f.parent,"Resources","backup-tools","arm64");mkdirSync(resource,{recursive:true});
-    const ageTool=join(resource,"age");copyFileSync(new URL("../dist-native/backup-age/arm64/age",import.meta.url),ageTool);
+    // The host's own pinned age in its packaged place (a darwin-arm64 binary cannot run on Linux x64).
+    const resource=join(f.parent,"Resources","backup-tools",process.arch);mkdirSync(resource,{recursive:true});
+    const ageTool=join(resource,"age");copyFileSync(keys.ageExecutable,ageTool);
     const archive=join(f.parent,"private.age");
     const saved=await privateWorker(["backup-encrypted","--data-dir",f.data,"--output",archive,"--age-tool",ageTool,"--recipient",keys.recipient,"--credential-policy","preserve-in-encrypted-fidelity"],keys.identity,f.parent);
     expect(saved.code).toBe(0);expect(saved.requests).toBe(1);expect(saved.reply).toMatchObject({ok:true,operation:"backup-encrypted",coverage:{scope:"application-data",fullInstallation:false}});

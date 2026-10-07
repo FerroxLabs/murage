@@ -9,6 +9,7 @@ import {
   isExactCommandKey,
   normalizeCommand,
   parseExactCommandKey,
+  routineExactGrantCovers,
 } from "./exact-command.ts";
 
 describe("normalizeCommand", () => {
@@ -44,6 +45,19 @@ describe("normalizeCommand", () => {
     expect(normalizeCommand("git status")).not.toBe(normalizeCommand("git status --short"));
     expect(normalizeCommand("rm a b")).not.toBe(normalizeCommand("rm ab"));
     expect(normalizeCommand("echo 'a b'")).not.toBe(normalizeCommand("echo 'a  b'"));
+  });
+});
+
+describe("routineExactGrantCovers", () => {
+  it("matches normalized command bytes, including dates, on the same engine and in the same folder", () => {
+    const command = { engine: "claude", cwd: "/archive", command: "cat /archive/2026-01-01.txt" };
+    const key = exactCommandKey(command)!;
+    expect(routineExactGrantCovers(key, { ...command, command: "cat /archive/2026-10-03.txt" })).toBe(false);
+    expect(routineExactGrantCovers(key, command)).toBe(true);
+    expect(routineExactGrantCovers(key, { ...command, command: "cat   /archive/2026-01-01.txt " })).toBe(true);
+    expect(routineExactGrantCovers(key, { ...command, engine: "codex" })).toBe(false);
+    expect(routineExactGrantCovers(key, { ...command, cwd: "/other" })).toBe(false);
+    expect(routineExactGrantCovers("exact:invalid", command)).toBe(false);
   });
 });
 

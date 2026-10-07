@@ -1,8 +1,9 @@
 ---
 name: forge-packaging-tiers
 description: "The user has an offer and a price, and is deciding whether to sell one thing or three things at three prices. Load when you hear \"should we have a pro tier,\" \"what about a free plan,\" or \"we need basic / plus / premium.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "forge"
 ---

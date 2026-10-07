@@ -4,7 +4,7 @@ description: |
   Life transition guide for when children leave home, covering relationship renewal, identity rediscovery, home downsizing considerations, pursuing new interests, supporting adult children appropriately, financial reassessment, and social circle rebuilding. Use when the user asks about empty nester or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events parenting relationships"
   category: "family-relationships"

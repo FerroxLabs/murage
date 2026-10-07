@@ -5,11 +5,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Check, CircleHelp, ExternalLink, Loader2, TriangleAlert } from "lucide-react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { cn } from "@/lib/cn";
-// The label is shared, not copied: the Settings deep-link finds this field by
-// it, and a second spelling here would break that link without a word.
-import { APPS_KEY_FIELD_LABEL } from "./ConnectedAppsLock";
 
-export type ConfigSection = "composio" | "box" | "opencodeGo";
+export type ConfigSection = "box" | "opencodeGo";
 
 /**
  * TWO DIFFERENT QUESTIONS, AND THIS ROW USED TO ASK ONLY ONE.
@@ -41,15 +38,6 @@ const SECTIONS: Record<
     elsewhere?: string;
   }
 > = {
-  composio: {
-    body: (v) => ({ composio: { apiKey: v } }),
-    // "self-hosted" is the server's own word for "running on the key in this
-    // box" (server/composio.ts connectionMode). "managed" means a broker is
-    // carrying it, which is exactly the case this row was getting wrong.
-    stored: (c) => c.composio.mode === "self-hosted",
-    working: (c) => c.composio.configured,
-    elsewhere: "Already connected via Flux Router",
-  },
   box: { body: (v) => ({ box: { token: v } }), stored: (c) => c.box.configured, working: (c) => c.box.configured },
   opencodeGo: {
     body: (v) => ({ opencodeGo: { apiKey: v } }),
@@ -86,8 +74,7 @@ export function credentialRowState(section: ConfigSection, config: ConfigStatus 
   return { stored, working, status: "", tone: "none", detail: base };
 }
 
-const ELECTRON_CREDENTIAL: Record<ConfigSection, "composioApiKey" | "boxToken" | "opencodeGoApiKey"> = {
-  composio: "composioApiKey",
+const ELECTRON_CREDENTIAL: Record<ConfigSection, "boxToken" | "opencodeGoApiKey"> = {
   box: "boxToken",
   opencodeGo: "opencodeGoApiKey",
 };
@@ -104,14 +91,6 @@ const CREDENTIALS: Record<
     warning?: string;
   }
 > = {
-  composio: {
-    label: APPS_KEY_FIELD_LABEL,
-    placeholder: "ak_…",
-    description: "Gmail, Slack, Notion, GitHub and 500+ more.",
-    href: "https://dashboard.composio.dev",
-    linkLabel: "Create or copy your key",
-    optional: true,
-  },
   box: {
     label: "Box API key",
     placeholder: "Paste your Box API key",

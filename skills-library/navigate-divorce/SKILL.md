@@ -18,7 +18,7 @@ trigger_phrases: >-
   should I do divorce planning guide separating from my spouse how to handle a
   divorce
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: legal-literacy parenting emotional-health step-by-step planning
   category: life-event

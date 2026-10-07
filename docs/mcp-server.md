@@ -61,19 +61,25 @@ With no configuration, the MCP process probes Murage's three desktop ports (`879
 and accepts only a health response that identifies itself as Murage. This handles the desktop's normal
 fallback when another local process already owns port 8799.
 
+The harness answers its conversation routes (the fleet, transcripts, search) only to a caller that proved who
+it is, so a script on the same computer cannot read them just by reaching the port. The packaged app and the
+headless install keep no standing key on disk. Instead you make script access for one bot: in Murage, open
+Settings, switch on "Let scripts use a bot", pick the bot, and choose whether it may also send. Murage shows the
+token once; put it in `MURAGE_TOKEN` and set `MURAGE_PORT` (or `MURAGE_URL`). The harness keeps only a hash of
+the token, so nothing a bot can read in the data folder opens a door. The token reads that bot's conversation
+and, if you allowed it, sends to that bot or stops its turn; it cannot reach other bots, rooms, search or any
+setting. It lasts 30 days and you can switch it off at any time. Approving a request or changing a setting
+still happens in the app or on your paired phone.
+
+Development and fixture launches (`MURAGE_ALLOW_DEV_DESKTOP_SECRET=1`) still use the key file
+`mcp-access.token` in the data folder, which the server and the control CLI read themselves and send only to a
+loopback address.
+
 Set `MURAGE_PORT` to force one local port, or `MURAGE_URL` to use an explicit HTTP(S) origin. Cleartext remote
 HTTP is rejected unless `ALLOW_INSECURE_HTTP=true`; HTTPS should be used outside loopback. An optional
 `MURAGE_TOKEN` is sent as a bearer token for authenticated reverse proxies. When a token is set, an
 explicit `MURAGE_URL` or `MURAGE_PORT` is required so the credential is never sent while probing unrelated
 local ports. `MURAGE_MCP_TIMEOUT_MS` can set an HTTP timeout between 1,000 and 120,000 milliseconds.
-
-Murage's conversation routes (bots, threads, rooms, search and the live event stream) answer only to the
-desktop app's per-launch secret or to the paired phone, so a plain local process cannot read or steer a
-conversation. A development or fixture server that offers its secret to loopback callers
-(`MURAGE_ALLOW_DEV_DESKTOP_SECRET=1`) is handled automatically. For a development server pinned with
-`MURAGE_DEV_DESKTOP_SECRET`, set the same value as `MURAGE_DESKTOP_SECRET` for this process. The secret
-is sent only to a loopback server, never to a remote origin. The packaged desktop app keeps its secret to
-itself, so this server cannot reach those routes there.
 
 ## Tools
 

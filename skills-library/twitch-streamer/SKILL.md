@@ -4,7 +4,7 @@ description: |
   Complete Twitch streaming guide covering OBS setup, alerts, overlays, community building, moderation systems, monetization through subscriptions, bits and ads, raid strategy, and the path from Affiliate to Partner. Use when the user asks about twitch streamer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "social-media marketing content-marketing"
   category: "marketing-sales"

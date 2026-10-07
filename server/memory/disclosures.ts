@@ -2,7 +2,7 @@ import { database, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
 import { accessIncludesRoom, assertMemoryAccess, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { assertMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
-import { databaseStamp, messageCopy, messageMadeWithMemory, messageSourceForgotten, replayExclusions, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
+import { contentRevoked, databaseStamp, messageCopy, messageSourceForgotten, outputRootsBad, preLineageSessionRevoked, replayExclusions, sessionLineageBad, sessionOutputRoots, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 
 /** Persist before dispatch; records contain references, never duplicated memory text. */
@@ -18,6 +18,8 @@ export function bindMemoryDisclosureSession(bundleId: string, nativeSession: str
   if (!nativeSession) throw new Error("INVALID_MEMORY_SESSION");
   const result = database().prepare("UPDATE memory_disclosures SET native_session=? WHERE bundle_id=? AND (native_session IS NULL OR native_session=?)").run(nativeSession,bundleId,nativeSession);
   if (!result.changes) throw new Error("MEMORY_DISCLOSURE_SESSION_CONFLICT");
+  // its companion receipt (lookups, quoted working context) joins the session too
+  database().prepare("UPDATE memory_disclosures SET native_session=? WHERE bundle_id=? AND native_session IS NULL").run(nativeSession,`${bundleId}:lookup`);
 }
 
 /** Record actual adapter acceptance while dispatch authority is still live.
@@ -26,41 +28,121 @@ export function bindMemoryDisclosureSession(bundleId: string, nativeSession: str
  * at promise resolution. Session binding alone is not acceptance.
  */
 export function deliverMemoryDisclosure(bundleId: string, access: MemoryAccess, nativeSession?: string) {
-  assertMemoryAccess(access);
-  const row = database().prepare("SELECT * FROM memory_disclosures WHERE bundle_id=? AND thread_id=?").get(bundleId,access.threadId);
-  if (!row || revoked(row,access)) throw new Error("MEMORY_CONTEXT_REVOKED");
+  assertMemoryDisclosureCurrent(bundleId, access);
   if (nativeSession) bindMemoryDisclosureSession(bundleId,nativeSession);
   database().prepare("UPDATE memory_disclosures SET state='delivered' WHERE bundle_id=? AND state='prepared'").run(bundleId);
 }
 
+/** The receipt still holds under the dispatch's authority: what delivery
+ * checks, and what every later adapter write checks again (dispatch.ts). */
+export function assertMemoryDisclosureCurrent(bundleId: string, access: MemoryAccess) {
+  assertMemoryAccess(access);
+  const row = database().prepare("SELECT * FROM memory_disclosures WHERE bundle_id=? AND thread_id=?").get(bundleId,access.threadId);
+  if (!row || revoked(row,access)) throw new Error("MEMORY_CONTEXT_REVOKED");
+}
+
 function revoked(row: Disclosure, access: MemoryAccess): boolean {
-  if (row.state === "revoked" || row.policy_revision !== access.policyRevision || row.deletion_epoch !== access.deletionEpoch) return true;
+  return revokedReason(row, access) !== null;
+}
+
+/** Why a receipt no longer holds, as ids and states only (no content), or
+ * null when it still holds. Each branch is the same test revoked() made. */
+function revokedReason(row: Disclosure, access: MemoryAccess): string | null {
+  if (row.state === "revoked") return "receipt-already-revoked";
+  if (row.policy_revision !== access.policyRevision) return "policy-revision";
+  if (row.deletion_epoch !== access.deletionEpoch) return "deletion-epoch";
+  let step = "parse";
   try {
     const records: Array<{id:string;version:number}> = JSON.parse(String(row.record_versions));
-    for (const record of records) hydrateDisclosedMemoryRecord(record.id,record.version,access);
+    for (const record of records) { step = `record ${record.id}@${record.version}`; hydrateDisclosedMemoryRecord(record.id,record.version,access); }
     const sources: Array<{id:string;revision:number}> = JSON.parse(String(row.source_versions));
     for (const source of sources) {
+      step = `source ${source.id}@${source.revision}`;
       const current = database().prepare("SELECT scope_id,state,revision FROM memory_sources WHERE id=?").get(source.id);
-      if (!current || current.state!=="active" || current.revision!==source.revision || database().prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision)) return true;
+      if (!current) return `${step} missing`;
+      if (current.state!=="active") return `${step} state=${String(current.state)}`;
+      if (current.revision!==source.revision) return `${step} now@${String(current.revision)}`;
+      if (database().prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision)) return `${step} tombstoned`;
       assertMemoryAccess(access,String(current.scope_id));
     }
-    return false;
-  } catch { return true; }
+    return null;
+  } catch (error) { return `${step} ${error instanceof Error ? error.message.slice(0, 60) : "error"}`; }
 }
 
 /** Unknown historical sessions also require a fresh replay: legacy disclosure is unproven. */
-export function continuationMemoryRevoked(threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess): boolean {
+export function continuationMemoryRevoked(threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why?: { reason?: string }): boolean {
   assertMemoryAccess(access);
   if (threadId !== access.threadId) throw new Error("MEMORY_SCOPE_DENIED");
   const rows = database().prepare("SELECT * FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=?").all(threadId,driverInstance,nativeSession);
-  if (!rows.length) return true;
+  if (!rows.length) { if (why) why.reason = "no-receipts"; return true; }
   let invalid = false;
   const persist = !memoryAccessNotOwnerAudience(access);
-  for (const row of rows) if (revoked(row,access)) {
+  for (const row of rows) {
+    const reason = revokedReason(row,access);
+    if (reason === null) continue;
+    if (why && !why.reason) why.reason = `memory-changed (${reason})`;
     if (persist) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(row.bundle_id);
     invalid = true;
   }
-  return invalid;
+  if (invalid) { if (why && !why.reason) why.reason = "memory-changed"; return true; }
+  // Lineage too: a receipt whose cited reply is withheld no longer holds. The
+  // replay window reaches only the newest lines, so an old session's receipts
+  // are judged here, every one of them; a check that cannot finish resets the
+  // session (0.1.61.1 memreplay review M1).
+  const bad = new Set<string>();
+  invalid = sessionLineageBad(threadId, driverInstance, nativeSession, readerAudience(access), bad);
+  if (persist) for (const id of bad) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(id);
+  if (invalid && why) why.reason = "lineage";
+  if (invalid) return true;
+  // The replies built on memory that the session's context carried (v6), and
+  // a session shown memory before that lineage began, after a later revoke.
+  const held = sessionOutputRoots(threadId, driverInstance, nativeSession);
+  if (held.over) { if (why) why.reason = "root-ceiling"; return true; }
+  if (outputRootsBad(held)) { if (why) why.reason = "session-roots"; return true; }
+  if (preLineageSessionRevoked(rows, threadId, driverInstance, nativeSession)) { if (why) why.reason = "pre-lineage"; return true; }
+  return false;
+}
+
+/** A turn's memory lookups (memory_search, memory_get) as a companion receipt
+ * of its dispatch: same thread, engine and session, the records and sources
+ * the lookups returned, dated a millisecond before the frame's receipt so the
+ * frame stays the session's latest (memoryContinuationChanged). Its outputs
+ * are linked with the frame's (MemoryDispatchReceipt.output). */
+export function noteMemoryLookup(frameBundleId: string, lookupBundleId: string, records: ReadonlyArray<{id:string;version:number;evidence:ReadonlyArray<{sourceId:string;revision:number}>}>, sources: ReadonlyArray<{sourceId:string;revision:number}> = []): boolean {
+  return transaction(db => {
+    const frame = db.prepare("SELECT * FROM memory_disclosures WHERE bundle_id=?").get(frameBundleId);
+    if (!frame) throw new Error("MEMORY_DISCLOSURE_UNKNOWN");
+    const existing = db.prepare("SELECT record_versions,source_versions FROM memory_disclosures WHERE bundle_id=?").get(lookupBundleId);
+    const recordsBefore: Array<{id:string;version:number}> = existing ? JSON.parse(String(existing.record_versions)) : [];
+    const sourcesBefore: Array<{id:string;revision:number}> = existing ? JSON.parse(String(existing.source_versions)) : [];
+    const recordKeys = new Set(recordsBefore.map(item => `${item.id}\u0000${item.version}`));
+    const sourceKeys = new Set(sourcesBefore.map(item => `${item.id}\u0000${item.revision}`));
+    const addSource = (handle: {sourceId:string;revision:number}) => { if (!sourceKeys.has(`${handle.sourceId}\u0000${handle.revision}`)) { sourceKeys.add(`${handle.sourceId}\u0000${handle.revision}`); sourcesBefore.push({id:handle.sourceId,revision:handle.revision}); } };
+    for (const record of records) {
+      if (!recordKeys.has(`${record.id}\u0000${record.version}`)) { recordKeys.add(`${record.id}\u0000${record.version}`); recordsBefore.push({id:record.id,version:record.version}); }
+      for (const handle of record.evidence) addSource(handle);
+    }
+    for (const handle of sources) addSource(handle);
+    // Bounded like a frame. Past the bound nothing more can be noted, so the
+    // caller must not hand the turn what it looked up (Astra r1 #9).
+    if (recordsBefore.length > 256 || sourcesBefore.length > 1024) return false;
+    if (existing) {
+      db.prepare("UPDATE memory_disclosures SET record_versions=?,source_versions=? WHERE bundle_id=?").run(JSON.stringify(recordsBefore),JSON.stringify(sourcesBefore),lookupBundleId);
+      return true;
+    }
+    const outputs = String(frame.output_message_ids);
+    db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,0,?,?)")
+      .run(lookupBundleId,frame.thread_id,frame.driver_instance,frame.native_session ?? null,JSON.stringify(recordsBefore),JSON.stringify(sourcesBefore),outputs,frame.policy_revision,frame.deletion_epoch,frame.state,Number(frame.created_at)-1);
+    return true;
+  });
+}
+
+/** A reply made with no receipt on a resumed session that holds receipts
+ * (memory not active): it rests on everything the session was shown, so it
+ * joins the session's receipts as an output (memory schema v6). */
+export function linkRetainedSessionOutput(threadId: string, driverInstance: string, nativeSession: string, messageId: string) {
+  const row = database().prepare("SELECT bundle_id FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(threadId, driverInstance, nativeSession);
+  if (row) linkMemoryDisclosureOutput(String(row.bundle_id), messageId);
 }
 
 /** Link every generated output, including tool-result/checkpoint message IDs where applicable.
@@ -103,7 +185,92 @@ export function filterMemoryReplay<T extends ReplayMessage>(threadId: string, me
 }
 
 function readerAudience(access: MemoryAccess): ReplayAudience {
-  return { policyRevision: access.policyRevision, deletionEpoch: access.deletionEpoch, revoked: row => revoked(row, access) };
+  // One check, one answer per distinct receipt content: the receipts of a
+  // resumed session cite the same frame (0.1.61.1 memreplay).
+  const verdicts = new Map<string, boolean>();
+  return { policyRevision: access.policyRevision, deletionEpoch: access.deletionEpoch, revoked: row => {
+    const key = JSON.stringify([row.state, row.policy_revision, row.deletion_epoch, row.record_versions, row.source_versions]);
+    let verdict = verdicts.get(key);
+    if (verdict === undefined) { verdict = revoked(row, access); verdicts.set(key, verdict); }
+    return verdict;
+  },
+  // An owner-audience reader sees the replies of the owner's bots, so a copy's
+  // original (a delegation result) is judged on what it cites, not on whether
+  // this reader's access reaches the helper's private checkpoint.
+  ...(memoryAccessIsOwnerAudience(access) ? { copyOriginRevoked: (row: Disclosure) => contentRevoked(row, String(row.thread_id)) } : {}) };
+}
+
+/** Lines a direct turn replays (index.ts): at least the newest this many. */
+export const DIRECT_REPLAY_LINES = 40;
+
+/** Bytes per token the memory extractor already assumes (extract.ts). */
+const REPLAY_BYTES_PER_TOKEN = 3.5;
+/** The most a replay ever carries, whatever the engine's window. */
+export const REPLAY_BUDGET_CAP_BYTES = 192 * 1024;
+
+/** How much history a turn on this engine may replay: two fifths of the
+ * model's context window in bytes, never above REPLAY_BUDGET_CAP_BYTES.
+ * Undefined when the window is unknown, which keeps the 40-line floor. */
+export function replayBudgetBytes(contextWindow: number | undefined | null): number | undefined {
+  if (!contextWindow || !(contextWindow > 0)) return undefined;
+  return Math.min(Math.floor(contextWindow * REPLAY_BYTES_PER_TOKEN * 0.4), REPLAY_BUDGET_CAP_BYTES);
+}
+
+export interface ReplayWindowOptions { minLines?: number; maxBytes?: number }
+
+/** The newest lines that fit: at least `minLines` (default 40), more while
+ * they fit `maxBytes`, oldest dropped first and never a line from the middle.
+ * With no byte budget this is the plain newest-40 window. */
+export function replayWindow<T extends {text?: string}>(lines: readonly T[], options: ReplayWindowOptions = {}): T[] {
+  const minLines = options.minLines ?? DIRECT_REPLAY_LINES;
+  const candidates = options.maxBytes === undefined ? lines.slice(-minLines) : lines;
+  let bytes = 0, count = 0;
+  for (let index = candidates.length - 1; index >= 0; index--) {
+    bytes += Buffer.byteLength(candidates[index]!.text ?? "");
+    if (bytes > Math.min(options.maxBytes ?? REPLAY_BUDGET_CAP_BYTES, REPLAY_BUDGET_CAP_BYTES)) break;
+    count++;
+  }
+  return lines.slice(lines.length - count);
+}
+
+/** The transcript lines a direct turn may replay, checked like
+ * filterMemoryReplay but only over what the turn can carry: the newest
+ * lines that fit the window (replayWindow) and the lines they quote. A
+ * withheld line lets an older one move up, so the checked tail widens until
+ * the window is full or the branch runs out, in a fixed number of rounds.
+ * `replayed` is the transcript (tail lines only, newest last); `allowed`
+ * also holds the checked lines they quote, for their quote text. A quoted
+ * line never takes a newer line's place (review L1). `omitted` counts the
+ * replayable lines the replay does not carry, the window's and the check's
+ * alike, so the turn can say how many it left out.
+ *
+ * A check that cannot finish withholds its line instead of failing the turn
+ * (0.1.61.1 memreplay: a long chat with Dax failed every turn with
+ * MEMORY_REPLAY_LIMIT because the whole branch was checked). */
+export function filterDirectReplay<T extends ReplayMessage & {kind?: string; text?: string; replyToId?: string}>(threadId: string, messages: readonly T[], access: MemoryAccess, skip: ReadonlySet<string>, options: ReplayWindowOptions = {}): {allowed: T[]; replayed: T[]; omitted: number} {
+  const minLines = options.minLines ?? DIRECT_REPLAY_LINES;
+  const replayable = (message: T) => message.kind === "text" && Boolean(message.text) && !skip.has(message.id);
+  const lines = messages.filter(replayable);
+  let allowed: T[] = [], replayed: T[] = [];
+  // A line's verdict does not depend on the lines asked with it, so a line a
+  // round judged is not asked about again when the window widens: a thread
+  // whose every reply is withheld widens to the whole thread, and would
+  // otherwise pay for its receipts once per round per line already judged.
+  const kept = new Set<string>(), judged = new Set<string>();
+  for (let round = 0, limit = Math.max(1, replayWindow(lines, options).length); round < 4; round++, limit *= 2) {
+    const tail = lines.slice(-limit);
+    const tailIds = new Set(tail.map(message => message.id)), ids = new Set(tailIds);
+    for (const message of tail) if (message.replyToId) ids.add(message.replyToId);
+    const asked = messages.filter(message => ids.has(message.id));
+    const fresh = asked.filter(message => !judged.has(message.id));
+    if (fresh.length) for (const message of filterMemoryReplay(threadId, fresh, access, { failClosed: true })) kept.add(message.id);
+    for (const message of fresh) judged.add(message.id);
+    allowed = asked.filter(message => kept.has(message.id));
+    replayed = allowed.filter(message => tailIds.has(message.id));
+    if (replayed.length >= minLines || limit >= lines.length) break;
+  }
+  replayed = replayWindow(replayed, options);
+  return { allowed, replayed, omitted: lines.length - replayed.length };
 }
 
 /** The ids of a room's generated replies that bots may no longer be shown,
@@ -138,7 +305,7 @@ export function roomReplayWithheld(threadId: string, messages: readonly (ReplayM
 /** A room turn whose audience is not the owner (a channel person's room,
  * words nobody proved are the owner's) reads the room through
  * filterMemoryReplay. What that filter removes from the transcript is not
- * handed back by recall or memory search either (0.1.61 room privacy fix). Undefined
+ * handed back by recall or memory search either (0.1.61). Undefined
  * for every other turn, whose rule is the content rule alone
  * (replay-lineage.ts). */
 export function readerWithheldMessage(access: MemoryAccess): ((threadId: string, messageId: string) => boolean) | undefined {
@@ -161,64 +328,4 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
     }
     return known;
   };
-}
-
-/** The replay check gave up on a long thread (too many receipts, nodes, depth
- * or parents). Only that error: any other fault still fails the turn. */
-export function memoryReplayLimited(error: unknown): boolean {
-  return error instanceof Error && error.message.split(":")[0] === "MEMORY_REPLAY_LIMIT";
-}
-const degradedThreads = new Set<string>();
-/** Said once per conversation, so a long thread does not flood the log. */
-export function noteReplayLimitDegraded(threadId: string) {
-  if (degradedThreads.has(threadId) || degradedThreads.size > 256) return;
-  degradedThreads.add(threadId);
-  console.warn("[memory] replay check over limit, turn ran without recalled memory");
-}
-/** The transcript for a turn that runs WITHOUT memory because the replay check
- * could not finish. Nothing it cannot verify crosses: a person's own words
- * stay; a reply made under a memory receipt, a copy of one, or anything this
- * cannot look up is left out. Only the newest lines are looked at. */
-export function replayWithoutMemory<T extends ReplayMessage>(threadId: string, messages: readonly T[]): T[] {
-  return messages.slice(-200).filter(message => {
-    if (message.role === "user") return true;
-    try { return !message.copyOf && !messageMadeWithMemory(threadId, message.id); } catch { return false; }
-  });
-}
-
-/** How many of a conversation's newest text lines a turn's replay check covers.
- * A turn replays only the newest 40 (index.ts), and a withheld line is replaced
- * by an older one, so three times that leaves room for most of them to be
- * withheld and the transcript to still fill. Older lines are never replayed,
- * so nothing outside this window reaches a bot or is recalled from it. */
-export const REPLAY_WINDOW_TEXT_LINES = 120;
-/** Hard cap on messages in the window, however many non-text lines (tool
- * activity, cards) sit between the text lines. */
-export const REPLAY_WINDOW_MESSAGES = 1000;
-/** The newest messages a turn can replay: back to the REPLAY_WINDOW_TEXT_LINES-th
- * text line from the end, never more than REPLAY_WINDOW_MESSAGES. */
-export function recentReplayWindow<T extends ReplayMessage & { kind?: string; text?: unknown }>(messages: readonly T[]): T[] {
-  let lines = 0, start = messages.length;
-  while (start > 0 && messages.length - start < REPLAY_WINDOW_MESSAGES) {
-    start--;
-    const message = messages[start];
-    if (message.kind === "text" && message.text && ++lines >= REPLAY_WINDOW_TEXT_LINES) break;
-  }
-  return messages.slice(start);
-}
-/** filterMemoryReplay for a direct chat's turn: only the recent window is
- * checked, and a line whose check runs past its budget is withheld instead of
- * failing the turn. A conversation of any length replays (and recalls) its
- * recent lines in full; what it cannot verify it does not show. */
-export function filterMemoryReplayRecent<T extends ReplayMessage & { kind?: string; text?: unknown }>(threadId: string, messages: readonly T[], access: MemoryAccess, options: { persist?: boolean } = {}): T[] {
-  return filterMemoryReplay(threadId, recentReplayWindow(messages), access, { ...options, failClosed: true });
-}
-/** A resumed session holds every line it produced. When the replay check
- * withholds one of them (its receipt no longer holds, or it could not be
- * verified within budget, which nothing persists), the session must not be
- * resumed: it would carry what the transcript leaves out (0.1.62 review). */
-export function sessionHoldsWithheldLine<T extends ReplayMessage & { kind?: string; text?: unknown }>(threadId: string, driverInstance: string, nativeSession: string, messages: readonly T[], allowed: readonly T[]): boolean {
-  const kept = new Set(allowed.map(message => message.id));
-  const find = database().prepare("SELECT 1 FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? AND instr(output_message_ids,?)>0 LIMIT 1");
-  return recentReplayWindow(messages).some(message => message.role !== "user" && !kept.has(message.id) && Boolean(find.get(threadId, driverInstance, nativeSession, JSON.stringify(message.id))));
 }

@@ -6,7 +6,7 @@ description: |
   Do NOT use for single-image prompting (use model-specific skills), character consistency (use midjourney-consistency), or prompt debugging (use ai-image-prompt-debugging).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ai-image-generation automation template"
   category: "design-creative"

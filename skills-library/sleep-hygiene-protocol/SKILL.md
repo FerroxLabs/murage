@@ -6,7 +6,7 @@ description: |
   Do NOT use for diagnosing sleep disorders, treating insomnia, sleep apnea assessment, or medication-related sleep questions.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sleep mental-wellness self-care stress-management"
   category: "health-wellness"

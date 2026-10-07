@@ -3,7 +3,7 @@ name: finance-payroll-prep
 description: "Prepare quarterly Form 941 and annual Form 940 filings — deposit-schedule check, state UI and workers' comp matrix, new-hire reporting, S-corp reasonable-salary documentation (Watson, Glass Blocks, Fleischer factors) and fringe-benefit valuation. Use when the user runs W-2 payroll and a quarter is closing. Do NOT use for contractor 1099s (use finance-1099-prep), sales tax registration and filing (use finance-sales-tax), or whether a hire is affordable at all (use coin-runway-and-burn). Checklists only — have a payroll provider or CPA review before filing."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "payroll tax form-941 finance smb"
   category: "finance"

@@ -90,6 +90,7 @@ export function tailscaleAddress(addresses: string[] = lanAddresses()): string |
  * refresh this cache when Tailscale changes later. */
 let cachedTailnetName: string | null = null;
 let cachedTailnetSelfAddress: string | null = null;
+let cachedTailnetLogin: string | null = null;
 let activeTailnetRefresh: Promise<void> | null = null;
 let cachedTailscaleCli: string | null = null;
 
@@ -114,6 +115,36 @@ export function tailnetName(): string | null {
  * Null until a refresh finds one, and null again when Tailscale goes away. */
 export function tailnetSelfAddress(): string | null {
   return cachedTailnetSelfAddress;
+}
+
+/** The Tailscale account this computer is signed in to, e.g.
+ * `sean@example.com`: the Self user's `LoginName` out of the same
+ * `status --json` the name comes from.
+ *
+ * The phone has to be signed in to the same account, and "the same account
+ * as your computer" is advice nobody can follow without being told which one.
+ * It is the person's own account shown on their own screen, so it is fine to
+ * display, and it is never logged: nothing here passes it to `onAttempt`.
+ *
+ * Null until a refresh finds one, and null again when Tailscale goes away. */
+export function tailnetLogin(): string | null {
+  return cachedTailnetLogin;
+}
+
+/** `User[String(Self.UserID)].LoginName`, if it is a plain one-line string of
+ * a sensible length. Anything else reads as unknown rather than being shown. */
+function selfLogin(status: unknown, self: unknown): string | null {
+  if (!status || typeof status !== "object" || !self || typeof self !== "object") return null;
+  const id = (self as { UserID?: unknown }).UserID;
+  if (typeof id !== "number" && typeof id !== "string") return null;
+  const users = (status as { User?: unknown }).User;
+  if (!users || typeof users !== "object") return null;
+  const user = (users as Record<string, unknown>)[String(id)];
+  const login = user && typeof user === "object" ? (user as { LoginName?: unknown }).LoginName : undefined;
+  if (typeof login !== "string") return null;
+  const trimmed = login.trim();
+  if (!trimmed || trimmed.length > 256 || /[\u0000-\u001f\u007f]/.test(trimmed)) return null;
+  return trimmed;
 }
 
 /** Every place the Tailscale CLI is plausibly installed, best first. */
@@ -194,6 +225,7 @@ async function refreshTailnetNameOnce(
   // is on its way down, and "we could not ask" must read as "we do not know"
   // rather than as last week's answer.
   cachedTailnetSelfAddress = null;
+  cachedTailnetLogin = null;
   for (const cli of tailscaleCandidates()) {
     const left = deadline - Date.now();
     if (left <= 0) {
@@ -227,7 +259,8 @@ async function refreshTailnetNameOnce(
             return resolve(null);
           }
           try {
-            const self = JSON.parse(stdout)?.Self;
+            const parsed = JSON.parse(stdout);
+            const self = parsed?.Self;
             const dns = self?.DNSName;
             // MagicDNS names are fully qualified, trailing dot and all
             const trimmed = typeof dns === "string" && dns ? dns.replace(/\.$/, "") : null;
@@ -235,6 +268,9 @@ async function refreshTailnetNameOnce(
             // this field, so reading it here is the CLI's own answer without
             // a second process and a second chance to disagree with itself.
             cachedTailnetSelfAddress = firstIPv4(self?.TailscaleIPs);
+            // Same JSON again. Never passed to `onAttempt`: it is an account
+            // name, shown to its owner and kept out of every log.
+            cachedTailnetLogin = selfLogin(parsed, self);
             onAttempt?.(cli, trimmed ? `ok: ${trimmed}` : "ran, but no MagicDNS name in status");
             resolve(trimmed);
           } catch {

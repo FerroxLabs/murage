@@ -5,7 +5,7 @@ description: |
   Do NOT use for personal budgeting (use budget-planning), tax planning (use tax-preparation), or investment portfolio analysis.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "planning analysis strategy spreadsheets report"
   category: "business-strategy"

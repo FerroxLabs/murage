@@ -6,7 +6,7 @@ description: |
   Do NOT use for filing patent or trademark applications, IP infringement analysis, licensing agreement drafting, or specific legal advice on IP disputes.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy guide research checklist"
   category: "legal-civic"

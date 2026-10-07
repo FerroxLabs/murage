@@ -16,6 +16,8 @@ interface ChannelQueueItem {
   sendId?: string;
   mode: "chat" | "goal";
   origin?: MessageOrigin;
+  /** The one member this send is pinned to (a room-call hand-down). */
+  responderBotId?: string;
 }
 
 interface ChannelQueueEntry {
@@ -38,6 +40,7 @@ export function queueChannelMessage(
     sendId?: string;
     mode?: "chat" | "goal";
     origin?: MessageOrigin;
+    responderBotId?: string;
   } = {},
 ): QueuedChannelMessage {
   const entry = queues.get(threadId) ?? { groupId, items: [] };
@@ -49,6 +52,7 @@ export function queueChannelMessage(
     sendId: options.sendId,
     mode: options.mode ?? "chat",
     ...(options.origin ? { origin: options.origin } : {}),
+    ...(options.responderBotId ? { responderBotId: options.responderBotId } : {}),
   };
   entry.items.push(item);
   queues.set(threadId, entry);

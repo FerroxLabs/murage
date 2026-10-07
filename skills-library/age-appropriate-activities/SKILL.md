@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical developmental assessment, occupational therapy exercises, or school curriculum planning (use education skills instead).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "parenting step-by-step planning"
   category: "family-relationships"

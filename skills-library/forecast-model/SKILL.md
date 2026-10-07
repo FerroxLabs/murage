@@ -6,7 +6,7 @@ description: |
   Do NOT use for business financial modeling with multiple assumptions (use financial-model-template in spreadsheets), metric hierarchy design (use metric-framework), or A/B test statistical analysis (use ab-test-design).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "statistics analysis spreadsheets"
   category: "data-analysis"

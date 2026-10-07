@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of calendar optimizer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ai-ml template analysis energy-efficiency best-practices video-production email"
   category: "ai-machine-learning"

@@ -18,7 +18,7 @@ trigger_phrases: >-
   YouTube channel YouTube content strategy become a YouTuber start creating
   videos
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: >-
     youtube video-production content-marketing social-media step-by-step

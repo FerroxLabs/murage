@@ -39,6 +39,8 @@ export class EventBus {
   private unsubscribes: Array<{ instanceId: string; unsubscribe: () => void }> = [];
   private pendingLogWarnings = new Map<string, RuntimeEvent>();
   private readonly appendLog: typeof appendFileSync;
+  /** Threads whose events are delivered but never written to events/. */
+  private omitThread: (threadId: string) => boolean = () => false;
 
   constructor(appendLog: typeof appendFileSync = appendFileSync) {
     this.appendLog = appendLog;
@@ -59,7 +61,11 @@ export class EventBus {
     }
   }
 
+  /** The Chief's hidden New project proposal turns leave no event log. */
+  omitLog(predicate: (threadId: string) => boolean) { this.omitThread = predicate; }
+
   publish(event: RuntimeEvent) {
+    if (this.omitThread(event.threadId)) return this.deliver(event);
     const pendingWarning = this.pendingLogWarnings.get(event.threadId);
     const loggable = redactSecrets(withoutImageBytes(event));
     const persistedEvents = pendingWarning ? [pendingWarning, loggable] : [loggable];

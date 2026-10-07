@@ -21,7 +21,7 @@ vi.mock("@/lib/analytics", () => ({
 // A bare object is the honest answer: no shell, browser capabilities.
 (globalThis as unknown as { window?: unknown }).window ??= {};
 const { TeamFeedbackToast, teamImportFeedback, teamImportShortfall, teamUndoRestores, sidebarBotVisible, sidebarBotPreview, sidebarGroupPreview,
-  archivedBotDeleteDetail, archivedBotsDeleteDetail, archivedBotsDeleteItems, archivedBotsDeletePhrase, SidebarRowMark, sidebarThreadOwed, sidebarSnoozedUntil } =
+  archivedBotDeleteDetail, archivedBotsDeleteDetail, botDeleteDetail, archivedBotsDeleteItems, archivedBotsDeletePhrase, SidebarRowMark, sidebarThreadOwed, sidebarSnoozedUntil } =
   await import("./Sidebar");
 import type {
   ArchivedTeamBot,
@@ -310,6 +310,18 @@ describe("what the archived-bot delete confirmation says", () => {
     expect(detail).not.toContain("Kept:");
   });
 
+  it("says the same counts when a bot still in use is deleted from its menu, and offers Archive", () => {
+    const detail = botDeleteDetail(bot("k", "Kessler", { tasks: tasks(12), hidden: false }), [group("g1", "Launch", ["k"])]);
+    expect(detail).toContain("Permanently deletes Kessler: 12 conversations with it");
+    expect(detail).toContain("Kept: the channel it was in (Launch)");
+    expect(detail).toMatch(/Archive it instead if you might want it back\.$/);
+    expect(detail).not.toMatch(/—|\bsafe/i);
+    // The menu's Delete uses it, and the dialog counts the messages too.
+    const source = readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8");
+    expect(source).toContain("botDeleteDetail(state.bots.find((bot) => bot.id === pendingDelete.id)");
+    expect(source).toContain('preview={pendingDelete.kind === "bot" ? { botId: pendingDelete.id } : { groupId: pendingDelete.id }}');
+  });
+
   it("pluralises the channels that are kept", () => {
     const detail = archivedBotDeleteDetail(bot("k", "Kessler"), [group("g1", "Launch", ["k"]), group("g2", "Ops", ["k"])]);
     expect(detail).toContain("Kept: the 2 channels it was in (Launch, Ops)");
@@ -374,12 +386,23 @@ describe("sidebar menus, dialogs and rows say what they are", async () => {
     expect(panel).toContain('"Project name"');
   });
 
+  it("gives a project a picker of existing teams, never a free-text team box", () => {
+    const panel = between("function NewRoomPanel", "/** Move-to-section popover");
+    expect(panel).toContain("<select");
+    expect(panel).toContain('t("project.team.none")');
+    expect(panel).toContain("section: project ? projectSection(section, teams)");
+    // the free-text box survives only on the channel branch
+    expect(panel).toMatch(/\) : \(\s*<input\s+value=\{section\}/);
+    const picker = between("function SectionPicker", "export { leadershipPromotionBlocked }");
+    expect(picker).toContain("{allowCreate && (");
+  });
+
   it("offers Channel and Project as two named choices, each saying what it is", () => {
     const menu = between("export function SidebarCreateMenu", "export function sidebarBotVisible");
     expect(menu).toContain("New Channel");
     expect(menu).toContain("A chat with some bots.");
     expect(menu).toContain("New Project");
-    expect(menu).toContain("A piece of work with its own goal, files and chat.");
+    expect(menu).toContain("A place for work, files and chat. A goal is optional.");
   });
 
   it("gives a channel row a More-actions control that a touch screen can reach", () => {
@@ -478,4 +501,10 @@ describe("snoozing from a sidebar row", () => {
     expect(source).toContain('...(snoozable && onSnooze ? [item(');
     expect(source.match(/snoozable=\{desktop === true\}/g)).toHaveLength(2);
   });
+});
+
+it("P7 keeps defaults-only New project for non-desktop surfaces", () => {
+  const source = readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8");
+  expect(source).not.toContain('showNewProject={desktop === true}');
+  expect(source).toContain('newRoom === "project" && desktop === false && <NewRoomPanel kind="project"');
 });

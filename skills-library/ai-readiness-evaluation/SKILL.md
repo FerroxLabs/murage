@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of ai readiness evaluation or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "assessment ai-ml budgeting template cloud automation analysis research"
   category: "ai-machine-learning"

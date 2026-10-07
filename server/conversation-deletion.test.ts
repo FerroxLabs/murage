@@ -22,8 +22,11 @@ import {
   rustUrlEncode,
 } from "./conversation-deletion.ts";
 
-const scratch = realpathSync(mkdtempSync(join(tmpdir(), "murage-delete-")));
-afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-delete-")));
+// Every messages.db a test opens is closed before the folder goes: Windows
+// refuses to remove a folder with an open file in it.
+const openDatabases: DatabaseSync[] = [];
+afterAll(() => { for (const db of openDatabases) db.close(); rmSync(scratch, { recursive: true, force: true }); });
 let counter = 0;
 const fresh = (name: string) => {
   const dir = join(scratch, `${name}-${++counter}`);
@@ -136,6 +139,7 @@ describe("path confinement", () => {
 
 function messagesDb(dir: string) {
   const db = new DatabaseSync(join(dir, "messages.db"));
+  openDatabases.push(db);
   db.exec("CREATE TABLE IF NOT EXISTS messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id))");
   return db;
 }
@@ -180,7 +184,7 @@ describe("ConversationDeletions", () => {
     const order: string[] = [];
     const { report } = await runConversationDeletion(deletions, {
       threadIds: [THREAD],
-      engineKinds: ["fuigoAgent", "customAcp", "grok", "piAgent"],
+      engineKinds: ["fuigoAgent", "customAcp", "grok", "piAgent", "openclawAgent"],
       engineHomes: [{ engine: "fuigo", home: fuigoHome }, { engine: "claude", home: claudeHome }, { engine: "codex", home: codexHome }],
     }, () => {
       db.prepare("DELETE FROM messages WHERE thread_id=?").run(THREAD);
@@ -214,6 +218,9 @@ describe("ConversationDeletions", () => {
     expect(report.failed).toEqual([]);
     expect(report.leftovers.map((item) => item.what)).toContain("your custom engine's own copy of this conversation");
     expect(report.leftovers.some((item) => item.what.includes("Grok"))).toBe(false);
+    // OpenClaw is handled like the custom engine: its own sessions are named
+    // honestly as left alone, never silently skipped and never guessed at.
+    expect(report.leftovers).toContainEqual({ what: "OpenClaw's own copy of this conversation", where: "OpenClaw's history on this computer" });
     expect(deletions.pending()).toEqual([]);
     for (const item of report.leftovers) expect(`${item.what} ${item.where}`).not.toMatch(/\u2014|\bsafe(ly)?\b|\//i);
   });
@@ -337,7 +344,7 @@ describe("ConversationDeletions", () => {
     touch(join(ours, "01a0d905", "chat_history.jsonl"), MARKER_TEXT);
     touch(join(theirs, ".cwd"), `${desk}-other`);
     touch(join(fuigoHome, "logs", "unified.jsonl"), `${JSON.stringify({ sid: "01a0d905", msg: MARKER_TEXT })}\n${JSON.stringify({ sid: "other", msg: "kept" })}\n`);
-    const memory = join(fuigoHome, "memory", fuigoMemoryKey(realpathSync(desk)));
+    const memory = join(fuigoHome, "memory", fuigoMemoryKey(realpathSync.native(desk)));
     const otherMemory = join(fuigoHome, "memory", "project-0123abcd");
     touch(join(memory, "notes.md"), MARKER_TEXT);
     touch(join(otherMemory, "notes.md"), "kept");
@@ -345,7 +352,7 @@ describe("ConversationDeletions", () => {
     const index = join(fuigoHome, "sessions", "session_search.sqlite");
     fuigoSearchIndex(index, [
       { id: "01a0d905", cwd: desk, title: "Copy bot setup", content: `${MARKER_TEXT} xylophonequartz` },
-      { id: "01a0ffff", cwd: realpathSync(desk), title: "Earlier session of this conversation", content: MARKER_TEXT },
+      { id: "01a0ffff", cwd: realpathSync.native(desk), title: "Earlier session of this conversation", content: MARKER_TEXT },
       { id: "01a0aaaa", cwd: `${desk}-other`, title: "Another conversation", content: "kept words" },
     ]).close();
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
@@ -393,6 +400,44 @@ describe("ConversationDeletions", () => {
     // nothing of ours: nothing changed
     expect(scrubFuigoSearchIndex(index, ["absent"], ["/nowhere"])).toBe(false);
     expect(scrubFuigoSearchIndex(index, [], [])).toBe(false);
+  });
+
+  // 0.1.60 low (Windows RE-TEST 3/4 L6): Fuigo rewrites a session's search
+  // row as the conversation grows, without secure_delete, so earlier copies
+  // of its text sit in the file's free pages. Deleting the conversation
+  // removed the live row and left those copies readable in a raw scan.
+  it("leaves no earlier copy of the conversation's text in Fuigo's free pages", () => {
+    const dir = fresh("fuigo-freed");
+    const index = join(dir, "session_search.sqlite");
+    const db = fuigoSearchIndex(index, [
+      { id: "gone-1", cwd: "/w/threads/t", title: "zzqqgone", content: "first draft quetzalmarmot" },
+      { id: "kept-1", cwd: "/w/threads/u", title: "zzqqkept", content: "kept words" },
+    ]);
+    // Fuigo's own later writes: the row grows, the old pages are freed as-is.
+    for (let i = 0; i < 4; i++) db.prepare("UPDATE session_docs SET content = ? WHERE session_id = 'gone-1'").run(`first draft quetzalmarmot and more ${"x".repeat(3000 * (i + 1))}`);
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    db.close();
+    expect(scrubFuigoSearchIndex(index, ["gone-1"], [])).toBe(true);
+    expect(fileHas(index, "quetzalmarmot")).toBe(false);
+    expect(fileHas(index, "kept words")).toBe(true);
+  });
+
+  // Audit: a conversation deleted on 0.1.60 left copies in free pages, and a
+  // later scrub found no rows to delete, so it never vacuumed them away.
+  it("clears free-page copies a scrub finds even when no row is left to delete", () => {
+    const dir = fresh("fuigo-old-residue");
+    const index = join(dir, "session_search.sqlite");
+    const db = fuigoSearchIndex(index, [
+      { id: "old-1", cwd: "/w/threads/o", title: "zzqqold", content: `earlier words okapiheron ${"y".repeat(8000)}` },
+      { id: "kept-1", cwd: "/w/threads/u", title: "zzqqkept", content: "kept words" },
+    ]);
+    db.exec("DELETE FROM session_docs WHERE session_id = 'old-1'");
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    db.close();
+    expect(fileHas(index, "okapiheron")).toBe(true);
+    expect(scrubFuigoSearchIndex(index, ["old-1"], [])).toBe(false);
+    expect(fileHas(index, "okapiheron")).toBe(false);
+    expect(fileHas(index, "kept words")).toBe(true);
   });
 
   it("reports a folder shared with other conversations instead of removing it", async () => {

@@ -11,6 +11,7 @@
 import { BellDot } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 import type { SidebarDensity } from "@/lib/sidebar-preferences";
 
 export interface SidebarNeedsYouProps {
@@ -37,7 +38,7 @@ export function SidebarNeedsYou({ density, count, stale = false, onOpen }: Sideb
       data-sidebar-needs-you
       onClick={onOpen}
       aria-label={needsYouLabel(count, stale)}
-      title={iconOnly ? needsYouLabel(count, stale) : "Needs you"}
+      title={iconOnly ? `${t("nav.tip.needsYou")} (${count ?? "?"})` : t("nav.tip.needsYou")}
       className={cn(
         "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus",
         iconOnly ? "justify-center gap-1 px-2" : "gap-3 px-3",

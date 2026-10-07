@@ -2,7 +2,7 @@
   "id": "beacon-instagram",
   "name": "instagram",
   "version": "1.0.0",
-  "description": "As of: 2026-05-16",
+  "description": "Plan how Instagram fits your marketing. Decide which formats do which job, how often to post and how to measure Reels, carousels and Stories.",
   "defaultEnabled": false,
   "triggerTerms": [
     "beacon",

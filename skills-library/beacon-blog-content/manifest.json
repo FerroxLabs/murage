@@ -1,13 +1,16 @@
 {
   "id": "beacon-blog-content",
   "name": "blog-content",
-  "version": "1.0.0",
-  "description": "**When to use.** When the user runs (or wants to run) a long-form blog for owned-audience content marketing, distinct from SEO-targeted cluster pages.",
+  "version": "1.1.0",
+  "description": "Plan a long-form blog that builds an audience you own. Pick what the blog is for, set a publishing rhythm you can keep and plan how each post gets read.",
   "defaultEnabled": false,
   "triggerTerms": [
-    "beacon",
     "blog",
-    "content"
+    "blog post",
+    "content calendar",
+    "content marketing",
+    "what to write about",
+    "blogging"
   ],
   "requiredCapabilities": []
 }

@@ -153,7 +153,7 @@ export interface BridgeOptions {
   liveness?: BridgeLiveness;
   /** Enables the who-is-driving gate: the harness's loopback control
    * endpoint plus its per-boot token. Absent → fully transparent bridge. */
-  gate?: { url: string; token: string };
+  gate?: { url: string; token: string | (() => string) };
 }
 
 /** Collect a byte stream into complete newline-terminated lines. MCP's

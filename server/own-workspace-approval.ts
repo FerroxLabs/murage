@@ -31,6 +31,7 @@
 //     nothing needs it: the bot is handed the exact path it should use.
 // Every unreadable, unusual or unrecognized shape answers false, and false
 // means the card is raised exactly as it is today.
+import { executionStore, threadPartition, partitionRoots, isHomePartition } from "./execution-audience.ts";
 import { lstatSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
@@ -97,7 +98,7 @@ function identityOf(path: string): string | undefined {
 }
 
 /** Is `candidate` a file strictly inside `rootPath`? */
-function within(rootPath: string, candidate: unknown): boolean {
+export function within(rootPath: string, candidate: unknown, bookkeeping = true): boolean {
   if (typeof candidate !== "string" || !candidate || !isAbsolute(candidate)) return false;
   // `..` and `.` refuse outright rather than being resolved. Every resolver
   // available here collapses them LEXICALLY, before any symlink in the chain
@@ -105,6 +106,10 @@ function within(rootPath: string, candidate: unknown): boolean {
   // managed area while still looking as though it is inside it. Nothing
   // Murage asks a bot to write has a `..` in it: refusing costs nothing.
   if (segmentsOf(candidate).some(part => part === ".." || part === ".")) return false;
+  // Windows device and "no normalization" prefixes (\\?\, \\.\) skip the
+  // checks Windows itself applies to a path. No engine writes its own
+  // bookkeeping that way, so such a spelling always asks.
+  if (/^[\\/]{2}[?.][\\/]/.test(candidate)) return false;
   const root = identityOf(rootPath), target = identityOf(candidate);
   if (root === undefined || target === undefined) return false;
   const rootParts = segmentsOf(root), targetParts = segmentsOf(target);
@@ -113,7 +118,7 @@ function within(rootPath: string, candidate: unknown): boolean {
   // which is why this compares segments and never a string prefix.
   if (targetParts.length <= rootParts.length) return false;
   if (!rootParts.every((part, index) => part === targetParts[index])) return false;
-  return !targetParts.slice(rootParts.length).some(part => NOT_BOOKKEEPING.test(part));
+  return !bookkeeping || !targetParts.slice(rootParts.length).some(part => NOT_BOOKKEEPING.test(part));
 }
 
 /** A symlink BELOW a root is caught by the comparison above: the real path
@@ -150,6 +155,11 @@ export interface OwnWorkspaceScope {
  * later change that narrows the first must not silently drop the second. */
 export function ownWorkspaceRoots(scope: OwnWorkspaceScope): string[] {
   try {
+    const bot = executionStore()?.bot(scope.botId);
+    if (bot?.partitionedAt !== undefined) {
+      const partition = threadPartition(bot, scope.threadId);
+      return partitionRoots(bot, isHomePartition(partition) ? { kind: "home" } : partition, scope.dataDir);
+    }
     return [botWorkspacePath(scope.dataDir, scope.botId), taskWorkspacePath(scope.dataDir, scope.botId, scope.threadId)];
   } catch { return []; }
 }

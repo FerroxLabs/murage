@@ -4,7 +4,7 @@ description: |
   E-commerce strategy covering platform selection, product listing optimization, conversion rate optimization, cart abandonment strategies, payment processing, shipping, inventory management, customer retention, and analytics KPIs. Use when the user asks about ecommerce advisor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy seo marketing"
   category: "business-strategy"

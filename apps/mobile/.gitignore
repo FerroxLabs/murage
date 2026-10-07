@@ -1,0 +1,20 @@
+node_modules/
+dist/
+build/
+ios/App/MurageShell/.build/
+e2e/host/web-dist/
+e2e/host/companion-data/
+e2e/host/host.env
+e2e/host/*.log
+e2e/out/
+e2e/host/serve-before.json
+e2e/host/serve-after.json
+e2e/host/serve-during.json
+e2e/host/serve-now.json
+e2e/host/serve-candidate.json
+e2e/host/serve-restored.json
+e2e/host/door.pid
+e2e/host/host.lock/
+# The repo root ignores every "release" directory; the release source set is ours (R7).
+!/android/app/src/release/
+android/app/google-services.json

@@ -243,5 +243,17 @@ responses or events, no baking them into argv where another local process could 
 - [ ] macOS-only code is platform-gated; nothing breaks the packaged app
 - [ ] UI changes include before/after screenshots
 
-By contributing you agree your contributions are licensed under the
-[GNU Affero General Public License v3.0 or later](LICENSE).
+## Contributor License Agreement
+
+Murage is released under the [GNU Affero General Public License v3.0 or
+later](LICENSE). Before we can merge a pull request, its author signs the
+[Contributor License Agreement](CLA.md) once, by posting the comment the CLA
+bot asks for on the first pull request. You keep the copyright in your
+contribution. The agreement grants Ferrox Labs, LLC a perpetual license to
+use it and to relicense it, so Murage can stay under the AGPL and, if Ferrox
+Labs chooses, be offered under other terms later. Contributions are not
+accepted as "inbound equals outbound" under the AGPL alone.
+
+The agreement text is currently a draft awaiting review by counsel. The CLA
+check runs on every pull request; it never checks out or runs the pull
+request's code.

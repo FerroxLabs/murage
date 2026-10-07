@@ -6,7 +6,7 @@ description: |
   Do NOT use for batch ETL pipelines (use etl-pipeline-design), data warehouse design (use data-warehouse-design), or API data extraction (use api-data-extraction).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science analysis planning"
   category: "data-analysis"

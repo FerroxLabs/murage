@@ -6,7 +6,7 @@ description: |
   Do NOT use for initial image generation (use model-specific prompting skills), style transfer (use ai-image-style-transfer), or prompt debugging (use ai-image-prompt-debugging).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ai-image-generation design checklist"
   category: "design-creative"

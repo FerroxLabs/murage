@@ -1,3 +1,4 @@
+import { NO_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // Box agent driver — the purest form of the idea: the turn runs ON the
 // bot's own cloud computer (box.ascii.dev), not on this machine. Uses the
 // Box substrate's native agent facility:
@@ -89,10 +90,11 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
     };
 
     const sendTurn = async (turn: SendTurnInput) => {
+    turn = renderMurageTurn(turn, NO_TOOL_SURFACE, {});
       const { threadId } = turn;
       const computer = turn.integrations?.computer;
       const boxId = computer && (!computer.kind || computer.kind === "box") ? computer.boxId : undefined;
-      if (!token) throw new Error("Cloud VM is not connected yet. Add your Box key in App Settings → Tools & Connections.");
+      if (!token) throw new Error("Cloud VM is not connected yet. Add your Box key in App Settings → Computer & browser.");
       if (!boxId) {
         throw new Error("this bot has no computer yet: open the Computer panel and provision one");
       }
@@ -109,6 +111,9 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         .filter((s) => s !== undefined)
         .join("\n");
 
+      // The submission fence (SendTurnInput.beforeSubmit): api() starts its
+      // fetch with no await before it. A refusal throws, nothing is sent.
+      turn.beforeSubmit?.();
       const started: any = await api(`/boxes/${boxId}/prompt`, {
         method: "POST",
         body: JSON.stringify({ provider: providerFor(model), model, prompt }),
@@ -259,7 +264,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       if (!token) {
-        return { state: "unavailable", reason: "No Box key yet. Add one in App Settings → Tools & Connections." };
+        return { state: "unavailable", reason: "No Box key yet. Add one in App Settings → Computer & browser." };
       }
       try {
         await api("/me");
@@ -278,6 +283,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       snapshot,
       adapter: {
         provider: DRIVER_KIND,
+        mcpToolSurface: NO_TOOL_SURFACE,
         capabilities: { sessionModelSwitch: "in-session" },
         sendTurn,
         interruptTurn: async (threadId) => active.get(threadId)?.cancel(),

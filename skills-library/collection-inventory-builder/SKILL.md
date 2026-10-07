@@ -6,7 +6,7 @@ description: |
   Do NOT use for determining the monetary value of collectibles (use collection-valuation-guide), authenticating items for fraud detection (use collectible-authentication-guide), insurance appraisals, or business inventory management for retail stock.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "checklist template planning guide"
   category: "hobbies-crafts"

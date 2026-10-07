@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of travel safety expert or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness checklist cloud research planning networking safety emergency-preparedness"
   category: "health-wellness"

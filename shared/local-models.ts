@@ -578,7 +578,7 @@ export function isLocalToolTestResult(value: unknown): value is LocalToolTestRes
 export type LocalEngineSurface = keyof LocalToolSurfaces;
 
 /** Engines that run tools themselves against a local server. Absent engines
- *  (Antigravity, Cursor, Gemini, customAcp, openai-compat, grok API) are not
+ *  (Antigravity, OpenClaw, Cursor, Gemini, customAcp, openai-compat, grok API) are not
  *  offered local server rows at all — no dead ends (spec UX rule). */
 export const LOCAL_ENGINE_SURFACE: Record<string, LocalEngineSurface> = {
   fuigoAgent: "chat",

@@ -48,7 +48,10 @@ function plain(text) {
     .replace(/```[\s\S]*?```/g, "")
     .replace(/<[A-Za-z/][^>]*>/g, "")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/[*_`]/g, "")
+    // Emphasis markers go, but an underscore inside a word stays: it is part of
+    // a tool name such as ask_bot, which a search for "ask_bot" must still find.
+    .replace(/[*`]/g, "")
+    .replace(/(?<!\w)_|_(?!\w)/g, "")
     .replace(/^\s*[-*]\s+/gm, "- ")
     .replace(/\r/g, "")
     .split("\n")

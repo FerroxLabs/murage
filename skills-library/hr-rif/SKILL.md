@@ -3,7 +3,7 @@ name: hr-rif
 description: "Plan a reduction in force — federal WARN Act analysis, state mini-WARN checks, a four-fifths-rule disparate-impact pre-check on the selection list before anyone is told, the notification timeline, and an OWBPA and ADEA-compliant severance and release framework including the 45-day disclosure for group terminations. Use when more than one person is being let go for business reasons. Do NOT use for a single involuntary termination (use hr-termination-letter) or for the departure logistics checklist (use hr-offboard). Framework only — employment counsel must clear selection and notice timing before any notification goes out."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "rif layoff warn-act hr people-ops smb"
   category: "hr"

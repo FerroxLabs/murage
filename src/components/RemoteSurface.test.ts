@@ -180,10 +180,11 @@ describe("2. the phone-setup flow never reaches a phone", () => {
   it("takes the sidebar's phone button with it", () => {
     // Its only action is `phoneSettingsAction()`, which opens the section
     // above. A status dot that opens an empty pane is worse than no dot.
-    // Both sites — the icon rail and the full-width footer — carry the guard.
-    expect(sidebar.match(/desktop === true && \(\n\s*<SidebarPhoneButton/g) ?? []).toHaveLength(2);
-    expect(sidebar).toContain('{density === "icons" && desktop === true && (');
-    expect(sidebar).toContain('{density !== "icons" && desktop === true && (');
+    // Since 0.1.62 one site serves the rail and the full-width footer alike
+    // (the footer row stacks on the rail), and it carries the guard.
+    // (Not on the rail: the You menu has Phone there.)
+    expect(sidebar.match(/desktop === true && density !== "icons" && \(\n\s*<SidebarPhoneButton/g) ?? []).toHaveLength(1);
+    expect(sidebar.match(/<SidebarPhoneButton/g) ?? []).toHaveLength(1);
   });
 });
 
@@ -290,10 +291,12 @@ describe("5. the desktop is untouched", () => {
     // something, or a `desktop === false` / `desktop ?` branch, is still a
     // leak.
     const EMPTY_LIST_SPREAD = /\.\.\.\(desktop === true \? \[[^\]]*\] : \[\]\)/g;
-    // Files. Approvals and Inbox left the Tools menu in 0.1.57 for the
-    // sidebar's own "Needs you" row, which is an ordinary `desktop === true
-    // &&` guard and needs no exception here.
-    expect(sidebar.match(EMPTY_LIST_SPREAD)).toHaveLength(1);
+    // Three since 0.1.62: the Files place in the strip, and the You menu's
+    // About me + Phone and Get set up rows (all desktop-only destinations).
+    // Approvals and Inbox left the Tools menu in 0.1.57 for the sidebar's own
+    // "Needs you" row, which is an ordinary `desktop === true &&` guard and
+    // needs no exception here.
+    expect(sidebar.match(EMPTY_LIST_SPREAD)).toHaveLength(3);
     // A prop could have the same non-rendering shape: `={desktop === true ?
     // value : undefined}` passes nothing off the desktop. No sidebar prop
     // uses it today; the pattern stays pinned so re-introducing one has to be

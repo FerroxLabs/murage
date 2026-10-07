@@ -3,6 +3,13 @@ import { database, transaction } from "../database.ts";
 import { requireMemoryOwner } from "./authority.ts";
 import { applyMemoryTombstones } from "./restore.ts";
 
+/** Told, inside the forget's own transaction, which messages the forgotten
+ * material came from: derived project text citing them goes stale (SPEC-P
+ * 15.3, project-tables.ts markProjectDerivedStale; registered by index.ts). */
+type ForgottenMessagesHook = (db: import("node:sqlite").DatabaseSync, messageIds: string[]) => void;
+let forgottenMessagesHook: ForgottenMessagesHook | null = null;
+export function onMemoryMessagesForgotten(hook: ForgottenMessagesHook | null): void { forgottenMessagesHook = hook; }
+
 export function forgetMemory(ticket: object, target: {kind:"source"|"record";id:string;revision?:number}) {
   requireMemoryOwner(ticket);
   if(!target.id || target.revision!==undefined && (!Number.isSafeInteger(target.revision)||target.revision<0))throw new Error("INVALID_MEMORY_TARGET");
@@ -26,6 +33,9 @@ export function forgetMemory(ticket: object, target: {kind:"source"|"record";id:
       if(target.kind==="record"&&!notes) db.prepare("INSERT INTO memory_tombstones VALUES(?,'source',?,?,NULL,?,'forgotten-supporting-source',?)").run(randomUUID(),String(source.id),Number(source.revision),epoch,Date.now());
     }
     applyMemoryTombstones(db);
+    const messageIds=[...new Set(sources.map(source=>db.prepare("SELECT message_id FROM memory_sources WHERE id=?").get(String(source.id))?.message_id).filter((id):id is string=>typeof id==="string"&&id.length>0))];
+    // The messages the room's notes quoted are not forgotten with them.
+    if(messageIds.length&&!notes)forgottenMessagesHook?.(db,messageIds);
     const pending=Number(db.prepare("SELECT count(*) AS n FROM memory_projection_receipts WHERE lexical_status='delete-pending' OR embedding_status='delete-pending'").get()!.n);
     return {status:"excluded" as const,deletionEpoch:epoch,derivedCleanup:pending?"pending":"complete",externalHistory:"already-delivered provider text cannot be erased",originals:"retained outside memory; supporting source revisions and automatic reimport excluded"};
   });

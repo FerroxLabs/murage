@@ -48,3 +48,13 @@ describe("verified people controls", () => {
     expect(none).toContain("recalls only their own conversations and preferences");
   });
 });
+
+it("presents groups as conversation memory without person merging or sharing", () => {
+  const group: HumanBinding = { ...bindings[1], id: "group", personId: "whatsapp-group:group", origin: { platform: "whatsapp", connectionId: "c", authorityId: "1@s.whatsapp.net", userId: "123@g.us" } };
+  const people = { ownerPersonId: owner, bindings: [group] };
+  expect(linkedPersonChoices([group, ...bindings], owner, "telegram-a").map(x => x.personId)).not.toContain(group.personId);
+  expect(personShareRows(people, audiences)).toEqual([]);
+  const html = renderToStaticMarkup(createElement(MemoryPeople, { people, disabled: false, onLink: async () => {}, onRefresh: async () => {} }));
+  expect(html).toContain("Group conversation memory");
+  expect(html).not.toContain(">Separate person<"); expect(html).not.toContain("Link accounts");
+});

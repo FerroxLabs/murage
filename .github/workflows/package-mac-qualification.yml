@@ -62,6 +62,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Murage for Chrome: the store item ID and public key when the owner has
+      # set them (plan 2.3); until then this build carries no extension identity.
+      - name: Murage for Chrome identity, when set
+        run: node scripts/release-guard.mjs browser-extension-optional extensions/murage-browser/release.json >> "$GITHUB_ENV"
       - name: Prepare using the existing Mac package chain
         run: |
           set -euo pipefail
@@ -104,6 +108,14 @@ jobs:
           set -euo pipefail
           node scripts/mac-artifact-qualification.mjs | tee qualification-evidence/package-gates.json
           MURAGE_SMOKE_DIST="$PWD/release/mac-arm64/Murage.app/Contents/Resources/server" node scripts/smoke-packaged-server.mjs > qualification-evidence/packaged-server.txt 2>&1
+      # The FINAL packaged build.json, not a pre-build directory (handoff 9):
+      # release mode, the store identity, no development ID.
+      - name: Murage for Chrome identity in the packaged app
+        run: |
+          set -euo pipefail
+          test -f "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/build.json"
+          test -f "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/native-host.mjs"
+          if [ -n "${MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG:-}" ]; then node scripts/release-guard.mjs browser-extension-build "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/build.json" "$MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG"; fi
       - name: Notarize only the two exact arm64 artifacts
         env:
           APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}

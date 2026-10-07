@@ -1,3 +1,4 @@
+import { DEFAULT_MEMORY_LEARNING_V1 } from "./memory/learning-policy.ts";
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,8 +9,11 @@ import { initializeArtifacts } from "./artifacts.ts";
 import { initializeInbox } from "./inbox.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { initializeImageLibrary, initializeImageOperations } from "./image-operations-schema.ts";
-import { snapshotInstallationDatabase, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
-import { migrateMemorySchema } from "./memory/schema.ts";
+import { initializeThreadSnooze } from "./thread-snooze.ts";
+import { initializeMobilePush } from "./mobile-push-store.ts";
+import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
+import { inspectInstallationDatabase, snapshotInstallationDatabase, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
+import { MEMORY_SCHEMA_V2,MEMORY_SCHEMA_V3,migrateMemorySchema } from "./memory/schema.ts";
 import { pauseRestoredMemory } from "./memory/restore.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./memory/learning-policy.ts";
 
@@ -40,13 +44,15 @@ it("copies v2 memory classification and learning controls into a separate paused
   f.db.exec("INSERT INTO memory_scopes VALUES('bot-scope','bot','bot','[]',0);");
   f.db.exec("INSERT INTO memory_records VALUES('fact',1,'bot-scope','fact','A preserved fact','owner-statement','active',1,1,NULL,NULL,1);");
   f.db.exec("UPDATE memory_record_details SET entities='[\"project\"]',confidence=.9,confidence_basis='owner confirmed',observed_at=42;");
-  updateMemoryLearning(f.db,{reviewMode:true,dailyCostUsd:2},0);
+  updateMemoryLearning(f.db,{reviewMode:true,dailyOutputTokens:200},0);
+  f.db.exec("INSERT INTO memory_learning_events(id,scope_id,kind,record_id,record_version,created_at) VALUES('event','bot-scope','activated','fact',1,1)");
   const original=f.db.prepare("SELECT * FROM memory_record_details").all(),settings=readMemoryLearning(f.db);
   expect(await snapshotInstallationDatabase(f.data,f.target)).toMatchObject({status:"copied"});
   const restored=new DatabaseSync(f.target);
   try{
     expect(restored.prepare("SELECT * FROM memory_record_details").all()).toEqual(original);
     expect(readMemoryLearning(restored)).toEqual(settings);
+    expect(restored.prepare("SELECT id,kind FROM memory_learning_events").all()).toEqual([{id:"event",kind:"activated"}]);
     restored.exec("BEGIN IMMEDIATE");expect(pauseRestoredMemory(restored)).toBe(true);restored.exec("COMMIT");
     expect(restored.prepare("SELECT mode FROM memory_meta").get()?.mode).toBe("paused");
   }finally{restored.close();}
@@ -84,6 +90,124 @@ it("accepts the inbox and saved-file tables the harness creates, and an older ar
   initializeInbox(older.db); initializeArtifacts(older.db);
   older.db.exec("ALTER TABLE artifacts DROP COLUMN publication_id; ALTER TABLE artifacts DROP COLUMN producer");
   expect(await snapshotInstallationDatabase(older.data, older.target)).toMatchObject({ status: "copied" });
+});
+
+it("accepts conversation snoozes with and without the until-new-activity column", async () => {
+  const f = fixture();
+  initializeThreadSnooze(f.db);
+  f.db.prepare("INSERT INTO thread_snooze VALUES('t',2,1,1)").run();
+  expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied" });
+  const older = fixture();
+  older.db.exec(`CREATE TABLE IF NOT EXISTS thread_snooze (
+    thread_id TEXT PRIMARY KEY, snoozed_until INTEGER NOT NULL, snoozed_at INTEGER NOT NULL)`);
+  expect(await snapshotInstallationDatabase(older.data, older.target)).toMatchObject({ status: "copied" });
+  const hostile = fixture();
+  initializeThreadSnooze(hostile.db);
+  hostile.db.exec("ALTER TABLE thread_snooze ADD COLUMN extra TEXT");
+  await expect(snapshotInstallationDatabase(hostile.data, hostile.target)).rejects.toMatchObject({ code: "DATABASE_SCHEMA_UNSUPPORTED" });
+});
+
+it("accepts a database built exactly as database() now builds it, including phone push state", () => {
+  // database() calls initializeMessageTables, initializeInbox, initializeThreadSnooze,
+  // initializeArtifacts and initializeMobilePush (in that order) on every open. If the
+  // inspector doesn't know the push tables, every backup, restore and activation on
+  // every installation breaks the moment database() runs once (H2 fix round 1).
+  const f = fixture();
+  initializeInbox(f.db); initializeThreadSnooze(f.db); initializeArtifacts(f.db); initializeMobilePush(f.db);
+  expect(inspectInstallationDatabase(f.db)).toMatchObject({ messages: 1, threads: 1 });
+});
+
+it("accepts push_risk from before and after H9 added its revision column, with rows", async () => {
+  // Plan 3a H9 fix round 1: push_risk gained a nullable revision column by
+  // ALTER TABLE, so a database H2's initializer made and one made today (or
+  // upgraded in place) must all pass, and a foreign extra column must not.
+  const H2_PUSH_RISK = `CREATE TABLE push_risk (
+      request_key TEXT PRIMARY KEY, risk TEXT NOT NULL CHECK (risk IN ('low','risky')), rated_at INTEGER NOT NULL)`;
+  const older = fixture();
+  initializeInbox(older.db); initializeThreadSnooze(older.db); initializeArtifacts(older.db); initializeMobilePush(older.db);
+  older.db.exec("ALTER TABLE push_risk DROP COLUMN revision");
+  older.db.exec("INSERT INTO push_risk VALUES ('t:r','low',1)");
+  expect(inspectInstallationDatabase(older.db)).toMatchObject({ messages: 1, threads: 1 });
+  expect(await snapshotInstallationDatabase(older.data, older.target)).toMatchObject({ status: "copied" });
+
+  const upgraded = fixture();
+  upgraded.db.exec(H2_PUSH_RISK);
+  initializeInbox(upgraded.db); initializeThreadSnooze(upgraded.db); initializeArtifacts(upgraded.db); initializeMobilePush(upgraded.db);
+  upgraded.db.exec("INSERT INTO push_risk VALUES ('t:r','low',1,1)");
+  expect(inspectInstallationDatabase(upgraded.db)).toMatchObject({ messages: 1, threads: 1 });
+
+  const fresh = fixture();
+  initializeInbox(fresh.db); initializeThreadSnooze(fresh.db); initializeArtifacts(fresh.db); initializeMobilePush(fresh.db);
+  const text = (db: DatabaseSync) => String((db.prepare("SELECT sql FROM sqlite_schema WHERE name='push_risk'").get() as { sql: string }).sql).replace(/\s+/g, " ");
+  expect(text(upgraded.db)).toBe(text(fresh.db));
+
+  const hostile = fixture();
+  initializeInbox(hostile.db); initializeThreadSnooze(hostile.db); initializeArtifacts(hostile.db); initializeMobilePush(hostile.db);
+  hostile.db.exec("ALTER TABLE push_risk ADD COLUMN extra TEXT");
+  expect(() => inspectInstallationDatabase(hostile.db)).toThrow();
+});
+
+it("accepts push_bindings before and after key secrets and preview consent, with rows", async () => {
+  // Plan 3a final review M2: push_bindings gained a nullable key_secret column
+  // by ALTER TABLE (the host-only HMAC key for collapseKey and threadGroup).
+  const older = fixture();
+  initializeInbox(older.db); initializeThreadSnooze(older.db); initializeArtifacts(older.db); initializeMobilePush(older.db);
+  older.db.exec("ALTER TABLE push_bindings DROP COLUMN preview_content; ALTER TABLE push_bindings DROP COLUMN key_secret; ALTER TABLE push_bindings DROP COLUMN token_expires_at");
+  older.db.exec("INSERT INTO push_bindings VALUES ('b1','d1','murage_pt_x',1)");
+  expect(inspectInstallationDatabase(older.db)).toMatchObject({ messages: 1, threads: 1 });
+  expect(await snapshotInstallationDatabase(older.data, older.target)).toMatchObject({ status: "copied" });
+
+  const beforeConsent = fixture();
+  initializeInbox(beforeConsent.db); initializeThreadSnooze(beforeConsent.db); initializeArtifacts(beforeConsent.db); initializeMobilePush(beforeConsent.db);
+  beforeConsent.db.exec("ALTER TABLE push_bindings DROP COLUMN token_expires_at; ALTER TABLE push_bindings DROP COLUMN preview_content");
+  expect(inspectInstallationDatabase(beforeConsent.db)).toMatchObject({ messages: 1, threads: 1 });
+
+  const upgraded = fixture();
+  upgraded.db.exec(`CREATE TABLE push_bindings (
+      binding_id TEXT PRIMARY KEY, device_id TEXT NOT NULL UNIQUE, publisher_token TEXT NOT NULL, created_at INTEGER NOT NULL)`);
+  initializeInbox(upgraded.db); initializeThreadSnooze(upgraded.db); initializeArtifacts(upgraded.db); initializeMobilePush(upgraded.db);
+  upgraded.db.exec(`INSERT INTO push_bindings (binding_id,device_id,publisher_token,created_at,key_secret) VALUES ('b1','d1','murage_pt_x',1,'${"a".repeat(64)}')`);
+  expect(inspectInstallationDatabase(upgraded.db)).toMatchObject({ messages: 1, threads: 1 });
+  expect(await snapshotInstallationDatabase(upgraded.data, upgraded.target)).toMatchObject({ status: "copied" });
+
+  const fresh = fixture();
+  initializeInbox(fresh.db); initializeThreadSnooze(fresh.db); initializeArtifacts(fresh.db); initializeMobilePush(fresh.db);
+  const text = (db: DatabaseSync) => String((db.prepare("SELECT sql FROM sqlite_schema WHERE name='push_bindings'").get() as { sql: string }).sql).replace(/\s+/g, " ");
+  expect(text(upgraded.db)).toBe(text(fresh.db));
+
+  const hostile = fixture();
+  initializeInbox(hostile.db); initializeThreadSnooze(hostile.db); initializeArtifacts(hostile.db); initializeMobilePush(hostile.db);
+  hostile.db.exec("ALTER TABLE push_bindings ADD COLUMN extra TEXT");
+  expect(() => inspectInstallationDatabase(hostile.db)).toThrow();
+});
+
+it("accepts push_events with and without H10's request index, and refuses a re-targeted one", () => {
+  // H10 fix round 1: push_events_request_id serves the per-request revision
+  // lookup. Created by initializeMobilePush, so a fresh database has it and
+  // one from before simply lacks it.
+  const fresh = fixture();
+  initializeInbox(fresh.db); initializeThreadSnooze(fresh.db); initializeArtifacts(fresh.db); initializeMobilePush(fresh.db);
+  expect(fresh.db.prepare("SELECT name FROM sqlite_schema WHERE type='index' AND name='push_events_request_id'").get()).toBeTruthy();
+  expect(inspectInstallationDatabase(fresh.db)).toMatchObject({ messages: 1, threads: 1 });
+  const older = fixture();
+  initializeInbox(older.db); initializeThreadSnooze(older.db); initializeArtifacts(older.db); initializeMobilePush(older.db);
+  older.db.exec("DROP INDEX push_events_request_id");
+  expect(inspectInstallationDatabase(older.db)).toMatchObject({ messages: 1, threads: 1 });
+  const hostile = fixture();
+  initializeInbox(hostile.db); initializeThreadSnooze(hostile.db); initializeArtifacts(hostile.db); initializeMobilePush(hostile.db);
+  hostile.db.exec("DROP INDEX push_events_request_id; CREATE INDEX push_events_request_id ON push_events(thread_id)");
+  expect(() => inspectInstallationDatabase(hostile.db)).toThrow();
+});
+
+it("accepts the relay removal queue, with rows in it", async () => {
+  // Plan 3a H8 fix round 1: push_relay_removals holds bindings still to be
+  // deleted at the relay. A backup taken while one is queued must still copy.
+  const f = fixture();
+  initializeInbox(f.db); initializeThreadSnooze(f.db); initializeArtifacts(f.db); initializeMobilePush(f.db);
+  f.db.prepare("INSERT INTO push_relay_removals (binding_id,publisher_token,attempts,next_attempt_at,created_at) VALUES (?,?,?,?,?)")
+    .run("3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "murage_pt_x", 0, 1, 1);
+  expect(inspectInstallationDatabase(f.db)).toMatchObject({ messages: 1, threads: 1 });
+  expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied" });
 });
 
 it("accepts the saved prompt block, reference pack, render prompt and model check tables with their rows", async () => {
@@ -260,4 +384,36 @@ it("rejects malformed message JSON with no secret-bearing diagnostics or staging
   expect(existsSync(f.target)).toBe(false);
   const owner = acquireDataDirLease(f.data);
   owner.release();
+});
+
+it.each([2,3])("inspects and restores a v%s memory archive into v4",async version=>{
+ const f=fixture();f.db.exec(version===2?MEMORY_SCHEMA_V2:MEMORY_SCHEMA_V3);
+ f.db.prepare("INSERT INTO memory_meta VALUES(1,?,'00000000-0000-4000-8000-000000000000',0,0,0,'active')").run(version);
+ f.db.prepare("INSERT INTO memory_learning_config VALUES(1,0,?)").run(JSON.stringify(DEFAULT_MEMORY_LEARNING_V1));
+ expect(await snapshotInstallationDatabase(f.data,f.target)).toMatchObject({status:"copied"});
+ const restored=new DatabaseSync(f.target);try{
+ migrateMemorySchema(restored);restored.exec("BEGIN IMMEDIATE");pauseRestoredMemory(restored);restored.exec("COMMIT");
+ expect(restored.prepare("SELECT schema_version,mode FROM memory_meta").get()).toEqual({schema_version:6,mode:"paused"});expect(readMemoryLearning(restored)).toMatchObject({version:2,dailyInputTokens:400000});
+ }finally{restored.close();}
+});
+
+it("accepts shared_request_provenance with rows, snapshots it, and still accepts an archive without it; refuses an altered one", async () => {
+  const prep = (f: ReturnType<typeof fixture>) => { initializeInbox(f.db); initializeThreadSnooze(f.db); initializeArtifacts(f.db); initializeMobilePush(f.db); };
+  const withTable = fixture();
+  prep(withTable); initializeSharedRequestProvenance(withTable.db);
+  withTable.db.exec("INSERT INTO shared_request_provenance VALUES ('r1','routine','ask','schedule'),('r2','none',NULL,NULL)");
+  expect(inspectInstallationDatabase(withTable.db)).toMatchObject({ messages: 1, threads: 1 });
+  expect(await snapshotInstallationDatabase(withTable.data, withTable.target)).toMatchObject({ status: "copied" });
+  const copy = new DatabaseSync(withTable.target);
+  try { expect(copy.prepare("SELECT COUNT(*) AS n FROM shared_request_provenance").get()?.n).toBe(2); } finally { copy.close(); }
+
+  const without = fixture();
+  prep(without);
+  expect(inspectInstallationDatabase(without.db)).toMatchObject({ messages: 1, threads: 1 });
+  expect(await snapshotInstallationDatabase(without.data, without.target)).toMatchObject({ status: "copied" });
+
+  const hostile = fixture();
+  prep(hostile);
+  hostile.db.exec("CREATE TABLE shared_request_provenance (request_id TEXT PRIMARY KEY, origin TEXT NOT NULL, permission_mode TEXT, trigger_source TEXT)");
+  expect(() => inspectInstallationDatabase(hostile.db)).toThrow();
 });

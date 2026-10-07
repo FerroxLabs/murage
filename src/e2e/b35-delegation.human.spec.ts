@@ -20,7 +20,7 @@ import { createHarness, promoteFixtureChief, ROOT, waitFor, type Harness } from 
 // (evidence.ts → lane-data-dir.ts → server/testing/safe-wipe.mjs: OS temp or a
 // *scratch*/*evidence*/*.e2e* segment, never a home or Murage data dir). The
 // harness root itself is always a fresh OS-temp mkdtemp. Server evidence goes to
-// <MURAGE_E2E_DATA_DIR>/b35-delegation-server-evidence, which must be absent or
+// <MURAGE_E2E_DATA_DIR>/b35-delegation-server-evidence-<project>, which must be absent or
 // empty: the journey refuses to mix its evidence with an earlier run's.
 test.describe.configure({ mode: "serial" });
 
@@ -31,8 +31,10 @@ const REPLY_PREFIX = `@${CHILD} replied to the delegated task:`;
 const DELEGATED_TEXT = `[Delegated by @${CHIEF}, another bot in this Murage workspace. Do the work and reply directly.]\n\n${B35_CHILD_TASK}`;
 /** UI deny message (src/components/PendingApproval.tsx:176), delivered verbatim by the proxy (server/permission-proxy.ts:154). */
 const DENY_MESSAGE = "Denied by the user.";
-// evidenceRoot() is the lane data dir for every spec (evidence.ts:21-23), so this journey names its own directory.
-const evidence = join(evidenceRoot("b35-delegation"), "b35-delegation-server-evidence");
+// evidenceRoot() is the lane data dir for every spec (evidence.ts:21-23), so
+// this journey names its own directory, one per project: the desktop and
+// mobile runs are two journeys, and the second must not find the first's.
+let evidence = "";
 let harness: Harness, vite: ViteDevServer, origin = "", chiefId = "", chiefThread = "", childId = "";
 let first: { taskId: string; requestId: string; replyText: string } | undefined;
 
@@ -97,7 +99,7 @@ async function openPendingApprovals(page: Page) {
   // dialog opens on "Needs you"; this walk wants the approvals-only view.
   const sidebar = await openSidebar(page);
   await sidebar.locator("[data-sidebar-needs-you]").click();
-  await page.getByRole("button", { name: "Pending approvals", exact: true }).click();
+  await page.getByRole("button", { name: /^Approvals( \(\d+\))?$/ }).click(); // the Inbox's approvals tab (8e8a3afa)
 }
 async function showChief(page: Page, sidebar: Locator) {
   await sidebar.locator(`[data-sidebar-bot-row="${chiefId}"]`).click();
@@ -112,8 +114,9 @@ async function chiefCount(page: Page, value: string) {
   return sidebar;
 }
 
-test.beforeAll(async () => {
+test.beforeAll(async ({}, workerInfo) => {
   test.setTimeout(180_000);
+  evidence = join(evidenceRoot("b35-delegation"), `b35-delegation-server-evidence-${workerInfo.project.name}`);
   if (existsSync(evidence) && readdirSync(evidence).length > 0) throw new Error(`B35 delegation evidence directory is not empty: ${evidence}. Use a fresh MURAGE_E2E_DATA_DIR or move the earlier evidence first.`);
   mkdirSync(evidence, { recursive: true, mode: 0o700 });
   // FAKE_CLAUDE_DUMP is emptied: its turn dump would copy the MCP config, which
@@ -165,7 +168,7 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
   await tellChief(`Assign the fictional task.\n${B35_DELEGATE_MARKER}:${childId}`);
   const delegated = (await waitFor("parent delegate_bot call", () => engine("parent-delegate"), list => list.length === before.delegated + 1, 60_000)).at(-1)!;
   expect(delegated.isError, delegated.text).toBe(false);
-  expect(delegated.text).toContain(`Delegation queued — @${CHILD} will pick it up after your current turn finishes.`);
+  expect(delegated.text).toContain(`Delegation queued: @${CHILD} will pick it up after your current turn finishes.`);
   expect(delegated.env).toEqual({ MURAGE_BOT_ID: chiefId, MURAGE_THREAD_ID: chiefThread, MURAGE_TURN_DEPTH: "0" });
   const taskId = String(delegated.taskId);
   expect(taskId).toMatch(/^[\w-]{4,64}$/);

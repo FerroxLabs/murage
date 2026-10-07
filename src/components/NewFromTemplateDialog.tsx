@@ -5,13 +5,27 @@
 // best templates come up; or browse one topic at a time; or start blank.
 // Clicking a template shows what it comes with before anything is made.
 import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { track } from "@/lib/analytics";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
 import type { Routine } from "@/lib/routines";
-import { api, useStore, type Bot, type Group } from "@/state/store";
+import { api, useStore, type Bot, type Group, type InstanceInfo } from "@/state/store";
+import { retryableLazy } from "./LazyBoundary";
 import type { TeamImportResult } from "./TeamLibraryPanel";
+import { t } from "@/lib/i18n";
+import { ImportGuardFindings, guardBlockedNote, guardScanFromError, type GuardScan } from "./ImportGuardFindings";
+import { ImportScanProgress } from "./ImportScanProgress";
+import { isCheckStopped, useImportScan, withScanId } from "@/lib/importScan";
+
+// Import from Hermes loads on first use; most people never open it.
+const HermesImport = retryableLazy(() => import("./HermesImport")).Component;
+
+/** Import from Hermes is offered only where the Hermes CLI is found. */
+export function hermesDetected(instances: ReadonlyArray<Pick<InstanceInfo, "driverKind" | "snapshot">>): boolean {
+  return instances.some((instance) => instance.driverKind === "hermesAgent" && instance.snapshot.state === "available");
+}
 
 export type TemplateKind = "bot" | "team";
 
@@ -71,7 +85,14 @@ export function relevantMatches(ranked: TemplateEntry[], query: string): Templat
 /** A summary without markdown emphasis. */
 export const plainSummary = (text: string) => text.replace(/\*\*|__/g, "").replace(/\s+/g, " ").trim();
 
-type Screen = { kind: "choose" } | { kind: "preview"; entry: TemplateEntry; preview: PendingTeamImport | null; error: string };
+/** The import request for a template. The owner's go-ahead on a warning
+ * counts only for the very template whose warning they read: `reviewed` is
+ * the manifest the 409 came back for. */
+export function templateImportUrl(manifest: unknown, reviewed: unknown, acknowledged: boolean): string {
+  return `/api/teams/import?mode=add${acknowledged && reviewed !== undefined && reviewed === manifest ? "&acknowledgeWarnings=1" : ""}`;
+}
+
+type Screen = { kind: "choose" } | { kind: "hermes" } | { kind: "preview"; entry: TemplateEntry; preview: PendingTeamImport | null; error: string };
 
 export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCreated }: {
   kind: TemplateKind;
@@ -88,7 +109,15 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
   const [ranked, setRanked] = useState<string[] | null>(null);
   const [screen, setScreen] = useState<Screen>({ kind: "choose" });
   const [creating, setCreating] = useState(false);
+  const check = useImportScan(creating);
+  // Closing the dialog ends a check that is still reading the template.
+  const closeDialog = useCallback(() => { check.stop(); onClose(); }, [check, onClose]);
   const [error, setError] = useState("");
+  // What the import guard found in this template, and the owner's choice.
+  const [guard, setGuard] = useState<{ scan: GuardScan; status: number; manifest: unknown } | null>(null);
+  // Only the template opened last may fill the preview.
+  const opened = useRef(0);
+  const [guardAcknowledged, setGuardAcknowledged] = useState(false);
   const [showAllTopics, setShowAllTopics] = useState(false);
   const generation = useRef(0);
   const noun = kind === "bot" ? "bot" : "team";
@@ -105,10 +134,10 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
   }, [kind]);
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !creating) onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeDialog(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [creating, onClose]);
+  }, [closeDialog]);
 
   // Best matches: the catalogue's own ranking for the sentence typed.
   useEffect(() => {
@@ -135,11 +164,16 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
   const inTopic = topic ? (catalog ?? []).filter((entry) => entry.category === topic).sort((a, b) => a.name.localeCompare(b.name)) : [];
 
   const open = async (entry: TemplateEntry) => {
+    const mine = ++opened.current;
+    setGuard(null); setGuardAcknowledged(false);
     setScreen({ kind: "preview", entry, preview: null, error: "" });
     try {
       const preview = teamImportPreview(await api(`/api/team-library/teams/${encodeURIComponent(entry.slug)}`));
+      if (mine !== opened.current) return;
+      setGuard(null); setGuardAcknowledged(false);
       setScreen({ kind: "preview", entry, preview, error: "" });
     } catch (cause) {
+      if (mine !== opened.current) return;
       setScreen({ kind: "preview", entry, preview: null, error: cause instanceof Error ? cause.message : "This template couldn't be read." });
     }
   };
@@ -147,8 +181,10 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
   const create = async (entry: TemplateEntry, preview: PendingTeamImport) => {
     setCreating(true);
     setError("");
+    setGuard(null);
     try {
-      const response = (await api("/api/teams/import?mode=add", { method: "POST", body: JSON.stringify(preview.manifest) })) as {
+      const { scanId, signal } = check.begin();
+      const response = (await api(withScanId(templateImportUrl(preview.manifest, guard?.manifest, guardAcknowledged), scanId), { method: "POST", signal, body: JSON.stringify(preview.manifest) })) as {
         bots: Bot[]; groups?: Group[]; routines?: Routine[]; archivedBots?: Bot[]; archived?: TeamImportResult["archived"]; skillErrors?: TeamImportResult["skillErrors"];
       };
       for (const bot of response.archivedBots ?? []) dispatch({ type: "botPatched", bot });
@@ -168,7 +204,10 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
         skillErrors: response.skillErrors ?? [],
       });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : `This ${noun} couldn't be made.`);
+      if (isCheckStopped(cause)) return;
+      const refused = guardScanFromError(cause);
+      if (refused) { setGuard({ ...refused, manifest: preview.manifest }); setGuardAcknowledged(false); }
+      else setError(cause instanceof Error ? cause.message : `This ${noun} couldn't be made.`);
       setCreating(false);
     }
   };
@@ -187,15 +226,24 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
   );
 
   const title = kind === "bot" ? "New Bot" : "New Team";
-  return (
-    <div className="fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40" onMouseDown={(event) => event.target === event.currentTarget && !creating && onClose()}>
-      <div role="dialog" aria-modal="true" aria-labelledby="new-from-template-title" className="flex max-h-[min(720px,calc(var(--vvh,100dvh)-32px))] w-[min(560px,calc(100vw-32px))] flex-col overflow-hidden rounded-2xl border border-hairline bg-panel shadow-2xl">
+  // Portalled: the phone's sidebar drawer is translated, which makes it the
+  // containing block of any `fixed` descendant, so rendered inside it this
+  // overlay was laid out against the drawer instead of the screen. Below md
+  // the panel is a full-width sheet inside the safe area (overlay-inset) and
+  // the visual viewport (--vvh), like SettingsModal.
+  return createPortal(
+    <div className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40" onMouseDown={(event) => event.target === event.currentTarget && closeDialog()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="new-from-template-title" className="flex max-h-[min(720px,calc(var(--vvh,100dvh)-32px))] w-[min(560px,calc(100vw-32px))] flex-col overflow-hidden rounded-2xl border border-hairline bg-panel shadow-2xl max-md:h-[var(--vvh,100dvh)] max-md:max-h-none max-md:w-full max-md:rounded-none max-md:border-x-0">
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-hairline/40 px-5 py-3">
           <h2 id="new-from-template-title" className="text-[17px] font-semibold text-ink">{title}</h2>
-          <button type="button" aria-label="Close" onClick={onClose} disabled={creating} className="flex size-9 items-center justify-center rounded-lg hover:bg-control"><X size={17} /></button>
+          <button type="button" aria-label="Close" onClick={closeDialog} className="flex size-9 items-center justify-center rounded-lg hover:bg-control max-md:size-11"><X size={17} /></button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {screen.kind === "preview" ? (
+          {screen.kind === "hermes" ? (
+            <Suspense fallback={<p className="text-[12px] text-ink-secondary">Loading…</p>}>
+              <HermesImport onBack={() => setScreen({ kind: "choose" })} onDone={() => { track("bot_created"); onClose(); }} />
+            </Suspense>
+          ) : screen.kind === "preview" ? (
             <div>
               <button type="button" onClick={() => { setScreen({ kind: "choose" }); setError(""); }} disabled={creating} className="-ml-1.5 flex items-center gap-1 rounded px-1.5 py-1 text-[12px] text-ink-secondary hover:bg-control hover:text-ink">
                 <ChevronLeft size={14} aria-hidden="true" />
@@ -215,7 +263,22 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
               )}
               {alreadyHave(screen.entry, state.bots) && <p className="mt-3 text-[12px] text-ink-secondary">You already have this. Creating it again makes a second copy.</p>}
               {error && <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
-              <button type="button" disabled={!screen.preview || creating} onClick={() => screen.preview && void create(screen.entry, screen.preview)} className="mt-4 rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-white disabled:opacity-50">
+              {creating && <ImportScanProgress progress={check.progress} />}
+              {guard && (
+                <section aria-label={t("importGuard.listLabel")} className="mt-3 rounded-lg bg-inset px-3 py-2 text-[12px]">
+                  <p role={guard.status === 422 ? "alert" : undefined} className={guard.status === 422 ? "text-danger" : "text-ink-secondary"}>
+                    {guard.status === 422 ? guardBlockedNote(guard.scan) : t("importGuard.reviewNote")}
+                  </p>
+                  <ImportGuardFindings scan={guard.scan} />
+                  {guard.status === 409 && (
+                    <label className="mt-3 flex items-start gap-2">
+                      <input type="checkbox" checked={guardAcknowledged} onChange={(event) => setGuardAcknowledged(event.target.checked)} />
+                      {t("importGuard.acknowledge")}
+                    </label>
+                  )}
+                </section>
+              )}
+              <button type="button" disabled={!screen.preview || creating || guard?.status === 422 || (guard?.status === 409 && !guardAcknowledged)} onClick={() => screen.preview && void create(screen.entry, screen.preview)} className="mt-4 rounded-lg bg-accent px-4 py-2 text-[13px] font-medium text-white disabled:opacity-50">
                 {creating ? "Creating…" : "Create"}
               </button>
             </div>
@@ -276,11 +339,13 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
         </div>
         {screen.kind === "choose" && (
           <footer className="flex shrink-0 items-center justify-end gap-4 border-t border-hairline/40 px-5 py-3 text-[12.5px]">
+            {kind === "bot" && hermesDetected(state.instances) && <button type="button" onClick={() => setScreen({ kind: "hermes" })} className="text-ink-secondary hover:text-ink">Import from Hermes…</button>}
             <button type="button" onClick={onOpenFile} className="text-ink-secondary hover:text-ink">Open a file…</button>
             <button type="button" onClick={onBlank} className="text-ink-secondary hover:text-ink">{kind === "bot" ? "Start blank" : "Pick from my bots"} →</button>
           </footer>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

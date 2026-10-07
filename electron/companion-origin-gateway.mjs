@@ -64,7 +64,7 @@ export function createCompanionOriginEndpoint({
       stat.isSymbolicLink() ||
       (currentUid !== undefined && stat.uid !== currentUid)
     ) {
-      throw new Error("The companion origin directory is unsafe");
+      throw new Error("The companion origin folder is not private to you");
     }
     const socketPath = path.join(directory, SOCKET_NAME);
     if (Buffer.byteLength(socketPath) > 96) {

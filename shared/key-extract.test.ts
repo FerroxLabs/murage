@@ -21,7 +21,6 @@ const ANTHROPIC = `sk-ant-api03-${"a".repeat(40)}`;
 const FLUX = `sk-flux-${"F".repeat(40)}`;
 const OPENROUTER = `sk-or-v1-${"r".repeat(40)}`;
 const XAI = `xai-${"X".repeat(32)}`;
-const COMPOSIO = `ak_${"c".repeat(24)}`;
 const ELEVEN = `sk_${"a1b2c3d4".repeat(6)}`;
 const OPENAI_PROJ = `sk-proj-${"p".repeat(40)}`;
 const OPENAI_BARE = `sk-${"o".repeat(40)}`;
@@ -65,7 +64,6 @@ describe("what it recognises without being asked twice", () => {
       [FLUX, ["flux"]],
       [OPENROUTER, ["openrouter"]],
       [XAI, ["xai"]],
-      [COMPOSIO, ["composio"]],
       [ELEVEN, ["tts"]],
     ];
     for (const [key, providers] of table) {
@@ -78,7 +76,8 @@ describe("the ambiguous sk- family, which is the whole problem", () => {
   it("never picks a provider for a bare sk-", () => {
     const found = only(`my key is ${OPENAI_BARE}`);
     expect(found.providers.length).toBeGreaterThan(1);
-    expect(found.providers).toEqual(["openai", "openrouter", "deepseek", "mistral", "flux", "imageGen"]);
+    // Never Flux: every Flux key is sk-flux-, so a bare sk- is someone else's.
+    expect(found.providers).toEqual(["openai", "openrouter", "deepseek", "mistral", "imageGen"]);
     // POSITIVE control: a qualified sk- in the same family IS decided, so the
     // assertion above is the ambiguity rule and not the matcher shrugging.
     expect(only(`my key is ${FLUX}`).providers).toEqual(["flux"]);
@@ -162,15 +161,14 @@ describe("the shapes of a pasted blob", () => {
       "# my keys",
       `export XAI_API_KEY="${XAI}"`,
       `FLUX_API_KEY='${FLUX}'`,
-      `COMPOSIO_API_KEY=${COMPOSIO}   # composio project`,
       `BOX_TOKEN=${BOX}`,
       "",
     ].join("\r\n");
     const found = extractKeys(blob);
-    expect(found.map((c) => c.providers[0])).toEqual(["xai", "flux", "composio", "box"]);
+    expect(found.map((c) => c.providers[0])).toEqual(["xai", "flux", "box"]);
     // Character for character. A stray quote or \r is exactly how a key saves
     // and then 401s.
-    expect(found.map((c) => c.value)).toEqual([XAI, FLUX, COMPOSIO, BOX]);
+    expect(found.map((c) => c.value)).toEqual([XAI, FLUX, BOX]);
   });
 
   it("reads JSON, including a pasted ~/.murage/config.json", () => {
@@ -274,21 +272,17 @@ describe("the save table agrees with the rest of the app", () => {
   const apiKeys = readFileSync(fileURLToPath(new URL("../src/components/ApiKeys.tsx", import.meta.url)), "utf8");
 
   it("uses the same config bodies ApiKeys.tsx already uses", () => {
-    // ApiKeys.tsx owns three of these eight rows. If its SECTIONS table ever
+    // ApiKeys.tsx owns two of these rows. If its SECTIONS table ever
     // moves, this fails rather than letting two tables quietly disagree.
-    expect(apiKeys).toContain("composio: { apiKey: v }");
     expect(apiKeys).toContain("box: { token: v }");
     expect(apiKeys).toContain("opencodeGo: { apiKey: v }");
-    expect(JSON.stringify(PROVIDERS.composio.body("V"))).toBe(JSON.stringify({ composio: { apiKey: "V" } }));
     expect(JSON.stringify(PROVIDERS.box.body("V"))).toBe(JSON.stringify({ box: { token: "V" } }));
     expect(JSON.stringify(PROVIDERS.opencodeGo.body("V"))).toBe(JSON.stringify({ opencodeGo: { apiKey: "V" } }));
   });
 
   it("uses the same OS-store credential names ApiKeys.tsx already uses", () => {
-    expect(apiKeys).toContain('composio: "composioApiKey"');
     expect(apiKeys).toContain('box: "boxToken"');
     expect(apiKeys).toContain('opencodeGo: "opencodeGoApiKey"');
-    expect(PROVIDERS.composio.credential).toBe("composioApiKey");
     expect(PROVIDERS.box.credential).toBe("boxToken");
     expect(PROVIDERS.opencodeGo.credential).toBe("opencodeGoApiKey");
   });
@@ -334,5 +328,6 @@ describe("C22 provider-bound key destinations",()=>{
  it("uses variable context for opaque DeepSeek and Mistral keys without a host probe",()=>{
   expect(only('MISTRAL_API_KEY=opaque-mistral-fixture-key').providers).toEqual(['mistral']);
   expect(only('DEEPSEEK_API_KEY=opaque-deepseek-fixture-key').providers).toEqual(['deepseek']);
+  expect(only('REQUESTY_API_KEY=opaque-requesty-fixture-key').providers).toEqual(['requesty']);
  });
 });

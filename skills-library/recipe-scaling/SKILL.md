@@ -10,7 +10,7 @@ description: |
   planning for the week (use meal-prep-workflow), or creating new recipes.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "cooking meal-planning planning"
   category: "home-household"

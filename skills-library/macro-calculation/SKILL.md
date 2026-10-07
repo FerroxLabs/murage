@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical nutrition therapy, eating disorder guidance, specific diet prescriptions, or supplement recommendations.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "nutrition fitness step-by-step"
   category: "health-wellness"

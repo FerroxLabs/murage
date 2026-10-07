@@ -48,19 +48,24 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 
 test("B35 canonical offscreen approval survives reload and outage, opens exact task, reconciles resolution", async ({ page }, testInfo) => {
   test.setTimeout(90000);
+  // A question the bot asks is a QUESTION in the Inbox, not an approval of a
+  // drafted act (bad39136 split the owed list three ways).
   await api(`/api/bots/${botId}/messages`, "POST", { threadId: oldThread, text: "Ask me first. __fixture_ask_user_question__" });
-  await expect.poll(async () => (await api("/api/inbox?view=approvals")).total, { timeout: 25000 }).toBe(1);
-  const pending = (await api("/api/inbox?view=approvals")).items[0];
+  await expect.poll(async () => (await api("/api/inbox?view=questions")).total, { timeout: 25000 }).toBe(1);
+  const pending = (await api("/api/inbox?view=questions")).items[0];
   expect(pending.link.threadId).toBe(oldThread);
   expect(pending.sourceLabel).toContain("Previous report");
   await api("/api/inbox/state", "POST", { id: pending.id, version: pending.version, read: true, snoozedUntil: Date.now()+60000 });
-  expect((await api("/api/inbox?view=approvals")).total).toBe(1);
-  // "Needs you" is the person's own list, so their "not now" is honoured
-  // there while the approval itself stays exactly where it was.
-  expect((await api("/api/inbox?view=needs-you")).needsYou).toBe(0);
-  const snoozed = (await api("/api/inbox?view=approvals")).items[0];
+  // "Not now" is honoured in the Inbox and in "Needs you" (the sidebar's
+  // count is the decisions view, Sidebar.tsx) alike (snooze
+  // applies to decisions too, server/inbox.ts), but it never makes the
+  // question look answered: it is still pending, one checkbox away.
+  expect((await api("/api/inbox?view=questions")).total).toBe(0);
+  expect((await api("/api/inbox?view=decisions")).total).toBe(0);
+  const snoozed = (await api("/api/inbox?view=questions&includeSnoozed=true")).items[0];
+  expect(snoozed).toMatchObject({ id: pending.id, status: "pending" });
   await api("/api/inbox/state", "POST", { id: snoozed.id, version: snoozed.version, snoozedUntil: null });
-  expect((await api("/api/inbox?view=needs-you")).needsYou).toBe(1);
+  expect((await api("/api/inbox?view=decisions")).total).toBe(1);
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); });
   await page.goto(origin);
   for (const width of [390,820,1440]) {
@@ -75,8 +80,13 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
     await expect(page.getByRole("heading", { name: "Which format should the report use?", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Needs you (1)", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("button", { name: "Needs you (1)", exact: true })).toHaveClass(/bg-accent /);
-    await expect(page.getByRole("button", { name: "Pending approvals", exact: true })).toHaveAttribute("aria-pressed", "false");
-    await expect(page.getByRole("checkbox", { name: "Show snoozed items" })).toBeVisible();
+    // The breakdown tabs sit beside the umbrella (8e8a3afa, bad39136); the
+    // question is counted under "Decisions", and the Inbox opens on "Needs you".
+    await expect(page.getByRole("button", { name: /^Approvals( \(\d+\))?$/ })).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("button", { name: "Decisions (1)", exact: true })).toHaveAttribute("aria-pressed", "false");
+    // An owed list has no "Show snoozed" (e5eee06e): snoozed decisions return
+    // on their own when the snooze ends.
+    await expect(page.getByRole("checkbox", { name: "Show snoozed items" })).toHaveCount(0);
     if (process.env.MURAGE_B35_AXE_SOURCE) {
       await page.addScriptTag({ path: process.env.MURAGE_B35_AXE_SOURCE });
       const audit = await page.evaluate(async () => (window as any).axe.run(document.querySelector('dialog[open]')));
@@ -99,7 +109,7 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
   await needsYouRow.click();
   await page.getByRole("button", { name: "Open request", exact: true }).click();
   await expect(page.locator(`[data-mid="${pending.link.messageId}"]`)).toBeVisible();
-  expect((await api("/api/inbox?view=approvals")).total).toBe(1);
+  expect((await api("/api/inbox?view=questions")).total).toBe(1);
 
   // Answer it from the Inbox itself, through the conversation's own respond
   // route — no walk to the thread, and no second answering path.
@@ -111,7 +121,7 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
   await inboxCard.getByRole("radio", { name: /Summary/ }).click();
   await inboxCard.getByRole("checkbox", { name: /Intro/ }).click();
   await inboxCard.getByRole("button", { name: "Send answer" }).click();
-  await expect.poll(async () => (await api("/api/inbox?view=approvals")).total, { timeout: 20000 }).toBe(0);
+  await expect.poll(async () => (await api("/api/inbox?view=questions")).total, { timeout: 20000 }).toBe(0);
   const thread = await api(`/api/threads/${oldThread}/messages`);
   const card = thread.messages.find((message: any) => message.id === pending.link.messageId).card;
   expect(card.answered).toBeTruthy();

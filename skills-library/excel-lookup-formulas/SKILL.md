@@ -6,7 +6,7 @@ description: |
   Do NOT use for pivot table construction (use pivot-table-builder), data cleaning formulas (use spreadsheet-data-cleaning), or conditional formatting rules (use conditional-formatting-rules).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "spreadsheets data-science template"
   category: "data-analysis"

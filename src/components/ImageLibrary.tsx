@@ -51,7 +51,7 @@ export default function ImageLibrary() {
   };
   useEffect(() => { mounted.current = true; void run(async () => {}); return () => { mounted.current = false; }; }, []);
   const view = async (block: LibraryBlock) => {
-    await run(async () => { const read: { block: { text: string } } = await api(`/api/images/prompt-blocks/${block.id}`); if (mounted.current) setOpen({ id: block.id, text: read.block.text }); });
+    await run(async () => { const read: { block: { text: string } } = await api(`/api/images/prompt-blocks/${block.id}${block.botId ? `?botId=${encodeURIComponent(block.botId)}` : ""}`); if (mounted.current) setOpen({ id: block.id, text: read.block.text }); });
   };
   const saveVersion = (block: LibraryBlock, text: string) => run(async () => {
     const saved: { block: { id: string; version: number; text: string } } = await api("/api/images/prompt-blocks", { method: "POST", body: JSON.stringify({ name: block.name, text, ...(block.botId ? { botId: block.botId } : {}) }) });
@@ -71,7 +71,7 @@ export default function ImageLibrary() {
   return <ImageLibraryView snapshot={snapshot} open={open} draft={draft} busy={busy} error={error} notice={notice}
     onView={block => void view(block)} onClose={() => setOpen(null)} onEdit={text => setOpen(current => current ? { ...current, text } : current)}
     onSaveVersion={(block, text) => void saveVersion(block, text)} onDraft={setDraft} onAdd={() => void addBlock()}
-    onDeleteBlock={block => void remove(`/api/images/prompt-blocks/${block.id}`, block.name)} onDeletePack={pack => void remove(`/api/images/reference-packs/${pack.id}`, pack.name)} />;
+    onDeleteBlock={block => void remove(`/api/images/prompt-blocks/${block.id}${block.botId ? `?botId=${encodeURIComponent(block.botId)}` : ""}`, block.name)} onDeletePack={pack => void remove(`/api/images/reference-packs/${pack.id}${pack.botId ? `?botId=${encodeURIComponent(pack.botId)}` : ""}`, pack.name)} />;
 }
 
 export interface ImageLibraryViewProps {

@@ -19,7 +19,7 @@ trigger_phrases: >-
   I want to create a comic series make a comic book start a webcomic publish a
   graphic novel how to make comics comic book from scratch build a comic series
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: creative-writing design content-marketing step-by-step planning
   category: creative-project

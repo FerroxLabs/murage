@@ -74,6 +74,17 @@ ELECTRON_RUN_AS_NODE=1 /Applications/Murage.app/Contents/MacOS/Murage \
 
 It prints `{"ok":true,"operation":"memory-downgrade","status":"downgraded","from":2,"to":1}` (or `"already-v1"`). Chats and memory rows stay; only the v2 learning details and the learning policy settings are dropped, and the next 0.1.54 start upgrades again. Restoring `messages.pre-memory-v2.db` over `messages.db` by hand is the alternative, but it loses everything after the upgrade; if you do that, delete `messages.db-wal`, `messages.db-shm` and `memory-index.db` first so nothing stale is replayed (the index is rebuilt).
 
+### Upgrading to 0.1.62 (memory schema v2 to v4)
+
+Going from 0.1.61 to 0.1.62 upgrades the memory tables in `messages.db` straight from v2 to v4 in one step, after one full copy: `messages.pre-memory-v3.db` (a v2 file, so a 0.1.61 reinstall can use it). No second copy is taken. A development build that stopped at v3 gets `messages.pre-memory-v4.db` instead.
+
+- **Disk space is checked first.** Murage needs the size of the copy plus about 10% (at least 64 MB) of working room. If the disk is short, nothing is written, `messages.db` stays at v2, and a start-up screen says how much to free; free it and open Murage again.
+- **A full disk part way through** removes the partial copy and leaves `messages.db` at v2 (the upgrade is a single transaction). The copy is written as `<name>.partial` and renamed only when whole, so a copy cut short by a quit or crash is never mistaken for a finished one.
+- **It can take a minute on a large history.** While it runs Murage shows "Upgrading your memory" with progress read from the growing copy, and the start-up wait is extended for as long as the upgrade reports it is running (capped at 30 minutes). Closing that screen quits Murage and stops the upgrade; nothing is changed and the next start begins it again. If the 30 minutes run out, Murage stops the upgrade the same way and says it could not finish.
+- **0.1.61 and earlier cannot open a v4 file.** They stop on `MEMORY_SCHEMA_UNSUPPORTED` and show the generic "Murage couldn't finish starting" recovery page. To go back, reinstall 0.1.62 or later, quit Murage, and run `memory-downgrade --data-dir <data dir> --to 2` (the command above), then install 0.1.61. Restoring `messages.pre-memory-v3.db` by hand also works but loses everything since the upgrade. Before you start 0.1.61, move `messages.pre-memory-v3.db` (and any `messages.pre-memory-v3.db.partial`) out of the data folder: 0.1.61 does not know those names, and its backups pause with `BACKUP_UNCLASSIFIED_COMPONENT` until they are gone. The same applies if 0.1.62 could not finish the upgrade and you go back to 0.1.61.
+- **A file from a newer Murage** (a memory format above 4) is refused with `MEMORY_SCHEMA_NEWER`: install the latest version, or run the newer version's `memory-downgrade --to 4` first.
+- Once you are happy with 0.1.62, you can delete `messages.pre-memory-v3.db` (and `messages.pre-memory-v2.db` / `messages.pre-memory-v4.db` if present) from the data folder. They are never deleted automatically and are left out of backups.
+
 Memory is verified for ordinary interactive use. Sustained high-throughput ingestion and continuous-search saturation tuning remain deferred; it is not a promise of unlimited recall capacity or perfect model answers.
 
 ### Fuigo memory ownership

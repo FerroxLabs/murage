@@ -71,4 +71,16 @@ describe("BotAvatar shapes for a mascot", () => {
     expect(markup).toContain("border-radius:50%");
     expect(markup).not.toContain("data-avatar-shape");
   });
+
+  it("never lets the mascot's own drawing be what a press lands on", () => {
+    // The drawing is rebuilt while it animates (a motion beat swaps the state,
+    // and the body and clip are set as markup). A tap that lands on a path
+    // that is replaced before the finger lifts has no click: the header
+    // avatar on a phone opened nothing (0.1.61 CI, intake on the phone). The
+    // press has to land on the steady wrapper, or on the button around it.
+    for (const bot of [vega, { ...vega, avatarCrop: "circle" as const }]) {
+      const markup = html(bot);
+      expect(markup).toMatch(/<svg[^>]*class="[^"]*\bpointer-events-none\b/);
+    }
+  });
 });

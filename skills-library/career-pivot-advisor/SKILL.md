@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request requires professional specialized advice or falls outside the scope of career pivot advisor.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "career planning guide"
   category: "career-development"

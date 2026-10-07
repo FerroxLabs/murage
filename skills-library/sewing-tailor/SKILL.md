@@ -4,7 +4,7 @@ description: |
   Comprehensive sewing and tailoring guide covering machine selection, fabric types and uses, pattern reading, essential stitches, garment construction techniques, common alterations, hemming methods, zipper installation, and a structured project progression from beginner to advanced. Use when the user asks about sewing tailor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sewing guide step-by-step"
   category: "hobbies-crafts"

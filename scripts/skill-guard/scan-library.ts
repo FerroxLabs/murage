@@ -5,7 +5,7 @@
 // skills-library/scan-verdicts.json. Prints the counts a person reviews
 // before any severity is locked in.
 // Run: node --experimental-strip-types scripts/skill-guard/scan-library.ts
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { scanSkill } from "../../server/skill-guard/scan.ts";
 import { SPECTOR_COMMIT } from "../../server/skill-guard/spector-patterns.generated.ts";
@@ -15,7 +15,7 @@ const root = join(import.meta.dirname, "..", "..", "skills-library");
 const skills: Record<string, { verdict: string; contentHash: string; rules: string[] }> = {};
 const byRule = new Map<string, number>();
 const examples = new Map<string, string[]>();
-for (const id of readdirSync(root).filter((name) => !name.startsWith(".") && !name.endsWith(".json")).sort()) {
+for (const id of readdirSync(root).filter((name) => !name.startsWith(".") && !name.endsWith(".json") && statSync(join(root, name)).isDirectory()).sort()) {
   const manifest = JSON.parse(readFileSync(join(root, id, "manifest.json"), "utf8"));
   const content = readFileSync(join(root, id, "SKILL.md"), "utf8");
   const scan = scanSkill({ name: id, description: String(manifest.description ?? ""), triggerTerms: Array.isArray(manifest.triggerTerms) ? manifest.triggerTerms.map(String) : [], files: [{ path: "SKILL.md", content }] });

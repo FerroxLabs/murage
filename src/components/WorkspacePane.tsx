@@ -58,6 +58,7 @@ import {
   WORKSPACE_FILES_ROUTES, isWorkspaceRelativePath,
   type WorkspaceEntry, type WorkspaceListResponse, type WorkspaceReadResult, type WorkspaceRootInfo, type WorkspaceScopeRef, type WorkspaceSearchResponse,
 } from "../../shared/workspace-files";
+import { openInboxLink } from "@/lib/open-inbox-link";
 
 // The editor, its Tiptap kit and the fidelity checker are one chunk, loaded
 // the first time a file is opened for editing (spec §6). Previewing never
@@ -112,7 +113,7 @@ export function WorkspacePane({ bot }: { bot: Bot }) {
       dispatch={send}
       labelForScope={labelForScope}
       drafts={drafts}
-      savedFiles={pane.filesRequest?.artifactId || pane.filesRequest?.library ? <Files key={JSON.stringify(pane.filesRequest)} bots={state.bots} initialBotId={pane.filesRequest.botId ?? bot.id} initialThreadId={pane.filesRequest.threadId ?? state.bots.find(item => item.id === pane.filesRequest?.botId)?.threadId ?? bot.threadId} initialArtifactId={pane.filesRequest.artifactId} onOpenInPane={(scope, relativePath, mode) => send({ type: "open", scope, relativePath, mode })} onShowPane={scope => send({ type: "show", filesRequest: scope })} onNativeAction={artifactNativeAction()} /> : undefined}
+      savedFiles={pane.filesRequest?.artifactId || pane.filesRequest?.library ? <Files key={JSON.stringify(pane.filesRequest)} bots={state.bots} initialBotId={pane.filesRequest.botId ?? bot.id} initialThreadId={pane.filesRequest.threadId ?? state.bots.find(item => item.id === pane.filesRequest?.botId)?.threadId ?? bot.threadId} initialArtifactId={pane.filesRequest.artifactId} onSource={artifact => openInboxLink({ threadId: artifact.threadId }, state, dispatch)} onOpenInPane={(scope, relativePath, mode) => send({ type: "open", scope, relativePath, mode })} onShowPane={scope => send({ type: "show", filesRequest: scope })} onNativeAction={artifactNativeAction()} /> : undefined}
       memoryLabel={scopeLabel(state.bots, { botId: bot.id, threadId: bot.threadId })}
       memory={<MemorySettings key={bot.id} botId={bot.id} compact onNavigate={() => send({ type: "setOpen", open: false })} />}
       onOpenFiles={scope => send({ type: "show", filesRequest: { ...scope, library: true } })}
@@ -291,7 +292,8 @@ export function WorkspacePaneSurface({
       className={cn(
         "relative flex h-full min-w-0 flex-col border-l border-hairline/40 bg-panel text-ink",
         fills ? "flex-1" : "shrink-0",
-        narrow && "absolute inset-0 z-40 w-full border-l-0",
+        // Full-screen on a phone: its header starts below the status bar.
+        narrow && "absolute inset-0 z-40 w-full border-l-0 pt-[var(--inset-top)] pb-[var(--inset-bottom)]",
       )}
       style={wide && !pane.expanded ? { width: pane.width } : undefined}
     >

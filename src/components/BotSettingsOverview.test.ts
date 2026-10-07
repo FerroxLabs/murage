@@ -16,19 +16,20 @@ const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.m
 const settings = read("./SettingsPanel.tsx");
 const overviewAt = settings.indexOf('<SettingsSection id="overview" active={section}>');
 const at = (needle: string) => settings.indexOf(needle, overviewAt);
+const identityAt = settings.indexOf('<SettingsSection id="identity" active={section}>');
+const overviewBody = settings.slice(overviewAt, identityAt);
 
 describe("the order of Bot settings → Overview", () => {
   it("asks what the bot is for before anything else", () => {
     expect(overviewAt).toBeGreaterThan(-1);
     expect(read("./BotIntakeCard.tsx")).toContain("What is this bot for?");
     expect(at("<BotSetupAction bot={bot} />")).toBeGreaterThan(overviewAt);
-    expect(at("<BotSetupAction bot={bot} />")).toBeLessThan(at("<BotProfileAvatarCard"));
   });
 
-  it("folds Appearance away instead of opening on it", () => {
-    const details = settings.slice(at("<details"), settings.indexOf("</details>", at("<details")));
-    expect(details).toContain("<BotProfileAvatarCard");
-    expect(details).not.toContain(" open=");
+  it("no longer shows Appearance", () => {
+    expect(overviewBody).not.toContain("<BotProfileAvatarCard");
+    expect(overviewBody).not.toContain("settings.appearance.title");
+    expect(overviewBody).not.toContain("<details");
   });
 });
 

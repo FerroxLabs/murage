@@ -81,3 +81,37 @@ describe("hand-downs in the host's context", () => {
     expect(events).toContainEqual({ type: "sentence", text: "That's already under way." });
   });
 });
+
+describe("hand-down receipts (F7)", () => {
+  const base = { id: "h1", request: "send the draft", at: 1_000, state: "accepted" as const, sendId: "send_abcdefgh123456", requestId: "req1" };
+  const user = (extra: Partial<Message> = {}): Message => ({ id: "m1", at: 2_000, role: "user", kind: "text", text: "send the draft", sendId: "send_abcdefgh123456", ...extra } as Message);
+
+  it("keeps the send id and request id from the client record", () => {
+    const [kept] = parseHandDowns([base]);
+    expect(kept.sendId).toBe(base.sendId);
+    expect(kept.requestId).toBe("req1");
+  });
+  it("accepted: the message is found by its send id, whatever its text says", () => {
+    const status = handDownStatus(base, [user({ text: "something else entirely" })], true);
+    expect(status.kind).toBe("running");
+  });
+  it("accepted, nothing on the thread yet and the row still waiting: starting", () => {
+    expect(handDownStatus(base, [], false, { state: "queued" }).kind).toBe("starting");
+  });
+  it("cancelled: the owner cancelled the record, or the row says cancelled by you", () => {
+    expect(handDownStatus({ ...base, state: "cancelled" }, [], false).kind).toBe("cancelled");
+    expect(handDownStatus(base, [], false, { state: "cancelled", note: "cancelled by you" }).kind).toBe("cancelled");
+  });
+  it("failed: a refused send, a failed record, or a row that could not start", () => {
+    expect(handDownStatus({ ...base, state: "refused", reason: "busy" }, [], false)).toEqual({ kind: "failed", reason: "busy" });
+    expect(handDownStatus({ ...base, state: "failed", reason: "no" }, [], false).kind).toBe("failed");
+    expect(handDownStatus(base, [], false, { state: "failed", note: "could not start" })).toEqual({ kind: "failed", reason: "could not start" });
+  });
+  it("dropped: the row expired, was cancelled by the system, or is gone", () => {
+    expect(handDownStatus(base, [], false, { state: "expired" }).kind).toBe("dropped");
+    expect(handDownStatus(base, [], false, { state: "cancelled", note: "restore_review" }).kind).toBe("dropped");
+    expect(handDownStatus(base, [], false, "missing").kind).toBe("dropped");
+    expect(handDownStatus({ ...base, state: "dropped" }, [], false).kind).toBe("dropped");
+    expect(handDownResult({ kind: "dropped" })).toMatch(/dropped before it started/);
+  });
+});

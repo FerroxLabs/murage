@@ -6,7 +6,7 @@ description: |
   Do NOT use for exploratory data profiling (use eda-framework), correlation without causation testing (use correlation-analysis), or building predictive models (use regression-guide).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "statistics analysis data-science"
   category: "data-analysis"

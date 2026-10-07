@@ -4,7 +4,7 @@ description: |
   Comprehensive guidance for first-time homebuyers covering financial readiness assessment, mortgage options (FHA, VA, conventional), pre-approval process, house hunting strategy, making competitive offers, inspections, and navigating the closing process including first-time buyer assistance programs. Use when the user asks about first home buyer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-buying personal-finance planning checklist"
   category: "personal-finance"

@@ -196,9 +196,22 @@ export type FrameSubject =
   | { scope: "workspace" }
   | { scope: "thread"; threadId: string }
   | { scope: "bot"; botId: string }
-  | { scope: "group"; groupId: string };
+  | { scope: "group"; groupId: string }
+  /** A frame written for one kind of stream only: `desktop` for the local
+   * app's full stream, `remote` for every scoped one. Used where the two
+   * must be told different things (the sidebar order, sidebar-order.ts). */
+  | { scope: "desktop" }
+  | { scope: "remote" };
 
 const WORKSPACE: FrameSubject = { scope: "workspace" };
+
+/** Whether a stream gets a frame addressed to one audience; null when the
+ * frame is not addressed that way and the ordinary rules decide. */
+export function frameAudience(subject: FrameSubject, scoped: boolean): boolean | null {
+  if (subject.scope === "desktop") return !scoped;
+  if (subject.scope === "remote") return scoped;
+  return null;
+}
 
 /** The slice of `Store` this decision needs. Structural rather than the
  * concrete class so the unit tests can state the world in four lines, and
@@ -207,8 +220,8 @@ const WORKSPACE: FrameSubject = { scope: "workspace" };
 export interface VisibilityStore {
   bot(id: string): { hidden?: boolean } | null;
   botByThread(threadId: string): { hidden?: boolean } | null;
-  group(id: string): { dm?: boolean } | undefined;
-  groupByThread(threadId: string): { dm?: boolean } | undefined;
+  group(id: string): { dm?: boolean; hidden?: boolean } | undefined;
+  groupByThread(threadId: string): { dm?: boolean; hidden?: boolean } | undefined;
 }
 
 const id = (value: unknown): string | null =>
@@ -245,7 +258,13 @@ export const KNOWN_FRAME_KINDS = [
   "bot.deleted",
   "group.deleted",
   "config",
+  "room.requests",
+  "project.board",
+  "project.strip",
+  "sidebar.order",
   "inbox.changed",
+  "learning.remembered",
+  "learning.improved",
 ] as const;
 
 /** Read the conversation a frame is about out of its payload.
@@ -281,6 +300,17 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
       const groupId = id(nested(payload, "group")?.id);
       return groupId ? { scope: "group", groupId } : WORKSPACE;
     }
+    // A room's queue changed (SPEC-P 12.3, lane E1): ids only, an
+    // invalidation the client answers by refetching GET /requests. Scoped to
+    // the room, so a bot-to-bot pair room stays off the phone. Project board
+    // and strip frames likewise name their group at the top level and carry
+    // no transcript content (ids and revisions only, 12.3).
+    case "room.requests":
+    case "project.board":
+    case "project.strip": {
+      const groupId = id(payload.groupId);
+      return groupId ? { scope: "group", groupId } : WORKSPACE;
+    }
     case "screen":
     case "computer":
     case "computer-control": {
@@ -293,16 +323,32 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
     // frame carries an opaque id and no content, so it goes to everyone.
     case "bot.deleted":
     case "group.deleted":
-      return WORKSPACE;
+      // `audience: "remote"` is the same removal sent when a record is hidden
+      // or archived (S1b review R4): the scoped streams stop showing it, and
+      // the desktop, which keeps showing archived records, is not told.
+      return payload.audience === "remote" ? { scope: "remote" } : WORKSPACE;
     // Settings for the machine, belonging to no conversation. Listed rather
     // than left to the default branch so that "workspace" is a decision
     // somebody made about this kind, not a thing that happened to it.
     case "config":
       return WORKSPACE;
-    // Content-free: says the Inbox changed and carries no conversation, bot or
-    // text, so reaching every open stream leaks nothing.
+    // The sidebar's section order (sidebar-order.ts) is sent twice: whole to
+    // the desktop, and cut to the teams a phone or browser can see for the
+    // scoped streams. A frame that does not say `remote` is the whole one.
+    // Content-free: tells the owner's desktop the Inbox changed. Nothing to leak,
+    // and nothing a phone or browser would use, so it stays off the scoped streams.
     case "inbox.changed":
-      return WORKSPACE;
+      return { scope: "desktop" };
+    // A memory the bot just kept (B5m): carries the entry's own words, so it
+    // stays on the owner's desktop stream. A phone or browser reads the same
+    // chip from GET /lessons?threadId= when its chat settles.
+    case "learning.remembered":
+      return { scope: "desktop" };
+    // An automatic skill or routine change (B7c): carries the name of the skill or routine, so desktop only.
+    case "learning.improved":
+      return { scope: "desktop" };
+    case "sidebar.order":
+      return payload.audience === "remote" ? { scope: "remote" } : { scope: "desktop" };
     default: {
       // A frame this module has not been taught. Harness frames name their
       // subject with these exact keys, so resolving by convention keeps a
@@ -347,6 +393,8 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
 export function subjectResolves(store: VisibilityStore, subject: FrameSubject): boolean {
   switch (subject.scope) {
     case "workspace":
+    case "desktop":
+    case "remote":
       return true;
     case "thread":
       return Boolean(store.botByThread(subject.threadId) ?? store.groupByThread(subject.threadId));
@@ -360,12 +408,15 @@ export function subjectResolves(store: VisibilityStore, subject: FrameSubject): 
 export function visibleToCompanion(store: VisibilityStore, subject: FrameSubject): boolean {
   switch (subject.scope) {
     case "workspace":
+    case "remote":
       return true;
+    case "desktop":
+      return false;
     case "thread": {
       const bot = store.botByThread(subject.threadId);
       if (bot) return bot.hidden !== true;
       const group = store.groupByThread(subject.threadId);
-      if (group) return group.dm !== true;
+      if (group) return group.dm !== true && group.hidden !== true;
       return false;
     }
     case "bot": {
@@ -374,7 +425,30 @@ export function visibleToCompanion(store: VisibilityStore, subject: FrameSubject
     }
     case "group": {
       const group = store.group(subject.groupId);
-      return group ? group.dm !== true : false;
+      return group ? group.dm !== true && group.hidden !== true : false;
     }
   }
+}
+
+/** The configuration a surface that is not the desktop is shown: the same
+ * configured-or-not answers, without the owner's email or the VPS address
+ * (GET /api/config and the `config` frame; 0.1.61 audit round 2). */
+export function scopedConfig<T extends { profile?: unknown; vps?: unknown }>(config: T): T {
+  // Named, not subtracted: a field added to either object later stays home
+  // until someone decides a phone should see it (Kimi round 3, L3).
+  const out: Record<string, unknown> = { ...config };
+  if (out.features && typeof out.features === "object") {
+    const { botsSharedAcrossTeams: _sharing, ...features } = out.features as Record<string, unknown>;
+    out.features = features;
+  }
+  if (config.profile && typeof config.profile === "object") out.profile = { name: (config.profile as { name?: unknown }).name ?? "", email: "" };
+  if (config.vps && typeof config.vps === "object") out.vps = { configured: (config.vps as { configured?: unknown }).configured === true, sshAlias: "" };
+  return out as T;
+}
+
+/** A `config` frame as a scoped stream receives it; any other frame as is. */
+export function scopedConfigFrame(frame: string): string {
+  const match = /^(id: [^\n]*\n)?data: (.*)\n\n$/s.exec(frame);
+  if (!match || !match[2].startsWith('{"kind":"config"')) return frame;
+  return `${match[1] ?? ""}data: ${JSON.stringify(scopedConfig(JSON.parse(match[2]) as Record<string, unknown>))}\n\n`;
 }

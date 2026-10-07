@@ -6,7 +6,7 @@ description: |
   Do NOT use for experienced budgeters wanting a method upgrade (use budget-planning, zero-based-budget, or fifty-thirty-twenty-budget), debt management, or investment planning.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "budgeting personal-finance savings beginner-friendly"
   category: "personal-finance"

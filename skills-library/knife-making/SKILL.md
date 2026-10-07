@@ -4,7 +4,7 @@ description: |
   Comprehensive knife making guide covering stock removal and forging methods, steel selection including 1084, O1, and 80CrV2, heat treatment processes, grinding bevels, handle materials and construction, sheath making, finishing techniques, and safety practices. Use when the user asks about knife making or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide step-by-step"
   category: "hobbies-crafts"

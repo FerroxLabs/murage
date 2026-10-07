@@ -97,6 +97,24 @@ describe("the feed envelope", () => {
     expect(checkAnnouncementFeed(JSON.stringify({ version: 1, issuedAt: "yesterday", items: [] })).ok).toBe(false);
     expect(checkAnnouncementFeed(feed(Array.from({ length: ANNOUNCEMENT_LIMITS.items + 1 }, (_, n) => ({ ...base, id: `n${n}` })))).ok).toBe(false);
   });
+  // Release switches ride the signed feed so a store listing or phone tile
+  // can turn on without a desktop release (plan 2.5, 2.6).
+  it("carries known release flags, drops unknown ones in the app and refuses them in the lint", () => {
+    const withFlags = (flags: unknown) => JSON.stringify({ version: 1, issuedAt: "2026-09-25T10:00:00Z", items: [], flags });
+    const known = checkAnnouncementFeed(withFlags(["murage-for-chrome-listed"]));
+    expect(known.ok && known.value.flags).toEqual(["murage-for-chrome-listed"]);
+    const none = checkAnnouncementFeed(feed([]));
+    expect(none.ok && none.value.flags).toBeUndefined();
+    const unknown = checkAnnouncementFeed(withFlags(["murage-for-chrome-listed", "later-flag"]));
+    expect(unknown.ok && unknown.value.flags).toEqual(["murage-for-chrome-listed"]);
+    expect(unknown.ok && unknown.warnings).toEqual(['unknown flag "later-flag"']);
+    expect(checkAnnouncementFeed(withFlags(["later-flag"]), { strict: true }).ok).toBe(false);
+    expect(checkAnnouncementFeed(withFlags(["murage-for-chrome-listed"]), { strict: true }).ok).toBe(true);
+    const broken = checkAnnouncementFeed(withFlags("murage-for-chrome-listed"));
+    expect(broken.ok && broken.value.flags).toBeUndefined();
+    expect(checkAnnouncementFeed(withFlags("murage-for-chrome-listed"), { strict: true }).ok).toBe(false);
+    expect(checkAnnouncementFeed(withFlags(Array(17).fill("murage-for-chrome-listed")), { strict: true }).ok).toBe(false);
+  });
 });
 
 describe("who sees what", () => {

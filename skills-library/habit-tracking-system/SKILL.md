@@ -6,7 +6,7 @@ description: |
   Do NOT use for building new habits from scratch (use habit-stacking-framework), creating challenges (use 30-day-habit-challenge), or clinical behavior tracking.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "goal-setting checklist habits self-care"
   category: "health-wellness"

@@ -6,7 +6,7 @@ description: |
   Do NOT use for operational database schema design (use data-schema-design), ETL pipeline logic (use etl-pipeline-design), or dashboard layout (use bi-dashboard-spec).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science sql planning"
   category: "data-analysis"

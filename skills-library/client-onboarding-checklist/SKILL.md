@@ -12,7 +12,7 @@ description: |
   freelance-proposal-writer).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "freelancing career checklist planning"
   category: "career-development"

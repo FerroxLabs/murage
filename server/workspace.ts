@@ -1,3 +1,4 @@
+import { executionStore, partitionRoots, threadPartition, isHomePartition, type Partition } from "./execution-audience.ts";
 // Per-bot workspaces + file-based memory.
 //
 // Every bot that runs a local CLI engine gets its own working directory,
@@ -8,8 +9,8 @@
 // memory/ holds topic files the bot reads on demand with its ordinary
 // file tools. Plain markdown on purpose — the user can open, edit, or
 // delete anything the bot believes.
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
 
@@ -67,7 +68,10 @@ export function botWorkspacePath(dataDir: string, botId: string): string {
 
 export function taskWorkspacePath(dataDir: string, botId: string, threadId: string): string {
   if (!/^[\w-]+$/.test(botId) || !/^[\w-]+$/.test(threadId)) throw new Error("Invalid task workspace");
-  return join(botWorkspacePath(dataDir, botId), "threads", threadId);
+  const bot = executionStore()?.bot(botId);
+  const partition = bot && bot.partitionedAt !== undefined ? threadPartition(bot, threadId) : undefined;
+  const nonHome = partition && partition.kind !== "home" && !(partition.kind === "project" && "homeMember" in partition && partition.homeMember);
+  return join(bot && nonHome ? partitionRoots(bot, partition, dataDir)[0] : botWorkspacePath(dataDir, botId), "threads", threadId);
 }
 
 export interface FileWorkspaceSelection { root: string; managed: boolean }
@@ -77,9 +81,16 @@ export function selectFileWorkspace(dataDir: string, store: Pick<Store, "bots" |
   const bot = store.bots.find(item => item.id === botId);
   if (!bot) return undefined;
   const managedRoot = taskWorkspacePath(dataDir, botId, threadId);
+  const partition = threadPartition(bot, threadId);
   const selection = (root: string): FileWorkspaceSelection => ({ root, managed: artifactWorkspaceIdentity(root) === artifactWorkspaceIdentity(managedRoot) });
   const tasks: Array<{ threadId: string; cwd?: string | null; resumeCursors?: Record<string, unknown>; localOutputs?: true }> = bot.tasks ?? [{ threadId: bot.threadId, resumeCursors: bot.resumeCursors }];
   const task = tasks.find(item => item.threadId === threadId);
+  if (bot.partitionedAt !== undefined && !isHomePartition(partition)) {
+    const room = store.groups.find(item => item.memberIds.includes(botId) && (item.threadId === threadId || item.tasks?.some(t => t.threadId === threadId)));
+    const pinned = task ? task.cwd : room?.tasks?.find(t => t.threadId === threadId)?.pinnedCwd ?? room?.pinnedCwd ?? room?.cwd;
+    const managedBase = artifactWorkspaceIdentity(join(dataDir, "workspaces"));
+    if (!pinned || artifactWorkspaceIdentity(pinned).startsWith(managedBase + "/")) return { root: managedRoot, managed: true };
+  }
   if (task) {
     if (typeof task.cwd === "string") return selection(task.cwd);
     if (task.localOutputs === true || admitLocal && (task.cwd === null || Object.keys(task.resumeCursors ?? {}).length > 0)) return { root: managedRoot, managed: true };
@@ -99,10 +110,10 @@ export function selectFileWorkspace(dataDir: string, store: Pick<Store, "bots" |
 /** MEMORY.md under the load budget: first MEMORY_MAX_LINES lines or
  * MEMORY_MAX_BYTES bytes, whichever cuts first. Returns null when the file
  * is missing or effectively empty (seed-only counts as empty). */
-export function loadMemory(botId: string): { text: string; truncated: boolean } | null {
+export function loadMemory(botId: string, partition: Partition = { kind: "home" }): { text: string; truncated: boolean } | null {
   let raw: string;
   try {
-    raw = readFileSync(join(workspaceDir(botId), "MEMORY.md"), "utf8");
+    raw = readNotebookText(botId, partition, partition.kind === "general" ? "GENERAL.md" : "MEMORY.md");
   } catch {
     return null;
   }
@@ -135,28 +146,33 @@ export const MEMORY_FILE_MAX_BYTES = 256 * 1024;
  * `truncated` flag says whether loadMemory would cut it, so the UI can warn.
  * Seed-only reads as empty for the same reason loadMemory treats it so:
  * the seed is instructions, not memory. */
-export function readMemoryFile(botId: string) {
+export function readMemoryFile(botId: string, partition: Partition = { kind: "home" }): { text: string; truncated: boolean; lastWrittenAt: number | null } {
   let raw: string;
+  let lastWrittenAt: number | null = null;
+  const file = join(notebookRoot(botId, partition), partition.kind === "general" ? "GENERAL.md" : "MEMORY.md");
   try {
-    raw = readFileSync(join(workspaceDir(botId), "MEMORY.md"), "utf8");
+    raw = readNotebookText(botId, partition, partition.kind === "general" ? "GENERAL.md" : "MEMORY.md");
+    // When the notebook was last written, for "last written" in the bot's
+    // memory section (0.1.61 lane M, O5). The seed is not a write.
+    lastWrittenAt = Math.round(statSync(file).mtimeMs);
   } catch {
-    return { text: "", truncated: false };
+    return { text: "", truncated: false, lastWrittenAt: null };
   }
-  if (!raw.trim() || raw === MEMORY_SEED) return { text: "", truncated: false };
+  if (!raw.trim() || raw === MEMORY_SEED) return { text: "", truncated: false, lastWrittenAt: null };
   const truncated =
     raw.split("\n").length > MEMORY_MAX_LINES || Buffer.byteLength(raw, "utf8") > MEMORY_MAX_BYTES;
-  return { text: raw, truncated };
+  return { text: raw, truncated, lastWrittenAt };
 }
 
 /** ensureWorkspace first: the user may edit memory before the bot has ever
  * run a turn, and the write must not depend on that ordering. */
-export function writeMemoryFile(botId: string, text: string): void {
-  ensureWorkspace(botId);
+export function writeMemoryFile(botId: string, text: string, partition: Partition = { kind: "home" }): void {
+  mkdirSync(join(notebookRoot(botId, partition), "memory"), { recursive: true, mode: 0o700 });
   // Temp-then-rename: the bot's own file tools read and rewrite this file
   // from another process while a turn runs, and the next turn's system
   // prompt reads it at dispatch. A plain write can be observed half-written
   // by either; a rename is all-or-nothing on every platform we ship.
-  writeFileAtomic(join(workspaceDir(botId), "MEMORY.md"), text, { mode: 0o600 });
+  writeFileAtomic(join(notebookRoot(botId, partition), partition.kind === "general" ? "GENERAL.md" : "MEMORY.md"), text, { mode: 0o600 });
 }
 
 // One path segment, starts with a word character, plain characters only,
@@ -171,10 +187,10 @@ export function isMemoryTopicName(name: string): boolean {
 
 /** The bot's memory/ topic files, name + size only — contents are fetched
  * one at a time so listing stays cheap however large the notes grow. */
-export function listMemoryTopics(botId: string): Array<{ name: string; bytes: number }> {
+export function listMemoryTopics(botId: string, partition: Partition = { kind: "home" }): Array<{ name: string; bytes: number }> {
   let entries: string[];
   try {
-    entries = readdirSync(join(workspaceDir(botId), "memory"));
+    entries = readdirSync(join(notebookRoot(botId, partition), "memory"));
   } catch {
     return [];
   }
@@ -182,7 +198,7 @@ export function listMemoryTopics(botId: string): Array<{ name: string; bytes: nu
     .filter(isMemoryTopicName)
     .flatMap((name) => {
       try {
-        const stat = statSync(join(workspaceDir(botId), "memory", name));
+        const stat = statSync(join(notebookRoot(botId, partition), "memory", name));
         return stat.isFile() ? [{ name, bytes: stat.size }] : [];
       } catch {
         return [];
@@ -194,10 +210,10 @@ export function listMemoryTopics(botId: string): Array<{ name: string; bytes: nu
 /** Read one topic file. The name gate runs here too, not only in the HTTP
  * route — a future caller must not be able to turn this into a read of an
  * arbitrary path. Null for anything invalid or unreadable. */
-export function readMemoryTopic(botId: string, name: string): string | null {
+export function readMemoryTopic(botId: string, name: string, partition: Partition = { kind: "home" }): string | null {
   if (!isMemoryTopicName(name)) return null;
   try {
-    return readFileSync(join(workspaceDir(botId), "memory", name), "utf8");
+    return readNotebookText(botId, partition, "memory", name);
   } catch {
     return null;
   }
@@ -208,10 +224,11 @@ export function readMemoryTopic(botId: string, name: string): string | null {
  * it has written anything. Content from other bots or imported files must
  * never be recorded as fact — memory is a prompt-injection persistence
  * vector the moment a bot copies untrusted text into it. */
-export function memorySystemPrompt(botId: string, opts: { fileTools?: boolean } = {}): string {
-  const memory = loadMemory(botId);
-  const memoryFile = join(workspaceDir(botId), "MEMORY.md");
-  const topicDir = join(workspaceDir(botId), "memory");
+export function memorySystemPrompt(botId: string, opts: { fileTools?: boolean } = {}, partition: Partition = { kind: "home" }): string {
+  if (partition.kind === "isolated") return "";
+  const memory = loadMemory(botId, partition);
+  const memoryFile = join(notebookRoot(botId, partition), partition.kind === "general" ? "GENERAL.md" : "MEMORY.md");
+  const topicDir = join(notebookRoot(botId, partition), "memory");
   // An engine without local file tools still reads its notebook, but must
   // not be told to edit a file it cannot reach (adapted from OpenMausBot).
   // Unattended turns take this branch too: nobody is there to approve an edit.
@@ -233,4 +250,20 @@ export function memorySystemPrompt(botId: string, opts: { fileTools?: boolean } 
     ? ` [MEMORY.md exceeds the ${MEMORY_MAX_LINES}-line/${MEMORY_MAX_BYTES}-byte budget and was cut off here. Trim it.]`
     : "";
   return `${guidance}\n\nYour memory (MEMORY.md):\n${memory.text}${truncatedNote}`;
+}
+
+export function notebookRoot(botId: string, partition: Partition = { kind: "home" }): string {
+  if (partition.kind === "isolated") throw new Error("This conversation has no notebook.");
+  return partitionRoots({ id: botId } as import("./store.ts").BotRecord, isHomePartition(partition) ? { kind: "home" } : partition)[0];
+}
+
+function readNotebookText(botId: string, partition: Partition, ...parts: string[]): string {
+  const root = notebookRoot(botId, partition), path = join(root, ...parts);
+  let at = WORKSPACES_DIR;
+  if (lstatSync(at).isSymbolicLink()) throw new Error("Notebook links are not readable.");
+  for (const part of relative(WORKSPACES_DIR, path).split(sep)) {
+    at = join(at, part);
+    if (lstatSync(at).isSymbolicLink()) throw new Error("Notebook links are not readable.");
+  }
+  return readFileSync(path, "utf8");
 }

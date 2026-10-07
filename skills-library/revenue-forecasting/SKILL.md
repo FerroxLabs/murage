@@ -5,7 +5,7 @@ description: |
   Do NOT use for full financial modeling (use financial-model-structure), pricing strategy (use pricing-strategy), or analyzing historical P&L data (use pl-analysis).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis planning strategy sales spreadsheets"
   category: "business-strategy"

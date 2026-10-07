@@ -23,8 +23,9 @@ it("isolates native account catalog/auth/turn/review subprocesses and sessions",
   // auth status is the native protocol; every other operation uses the existing
   // stream-json fake. Dump only synthetic env keys, not the owner's environment.
   writeFileSync(wrapper,`import {readFileSync,writeFileSync} from 'node:fs';import {join} from 'node:path';
-const root=process.env.CLAUDE_CONFIG_DIR;
-if(process.argv.includes('auth')){writeFileSync(join(root,'auth-seen.json'),JSON.stringify({root,token:process.env.CLAUDE_CODE_OAUTH_TOKEN}));process.stdout.write(readFileSync(join(root,'auth-result.json'),'utf8'));}
+import {fixtureCredentialFingerprint} from ${JSON.stringify(new URL("../testing/fixture-dump.ts",import.meta.url).href)};
+const root=process.env.CLAUDE_CONFIG_DIR,oauth=process.env.CLAUDE_CODE_OAUTH_TOKEN;
+if(process.argv.includes('auth')){writeFileSync(join(root,'auth-seen.json'),JSON.stringify({root,token:oauth===undefined?undefined:fixtureCredentialFingerprint(oauth)}));process.stdout.write(readFileSync(join(root,'auth-result.json'),'utf8'));}
 else { for(const key of Object.keys(process.env))if(!['HOME','USERPROFILE','PATH','CLAUDE_CONFIG_DIR','CLAUDE_CODE_OAUTH_TOKEN','FAKE_CLAUDE_DUMP'].includes(key))delete process.env[key]; await import(${JSON.stringify(new URL(`file://${fake}`).href)}); }`);
   for(const [index,name] of ["work","personal"].entries()){
     const root=join(scratch,name);mkdirSync(root);

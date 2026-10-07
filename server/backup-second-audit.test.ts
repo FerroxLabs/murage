@@ -49,7 +49,8 @@ it("a crash's plaintext work folder is swept once its process has gone, never a 
   try {
     const live = createBackupWork(f.data);
     const dead = join(backupWorkRoot(f.data), "run-999999-AbC123"); mkdirSync(dead); writeFileSync(join(dead, "authenticated.zip"), "plaintext");
-    expect(statSync(backupWorkRoot(f.data)).mode & 0o077).toBe(0);
+    // Owner-only by mode on POSIX; Windows restricts it by ACL (backup-local-work-windows.test.ts).
+    if (process.platform !== "win32") expect(statSync(backupWorkRoot(f.data)).mode & 0o077).toBe(0);
     expect(sweepBackupWork(f.data)).toBe(1);
     expect(existsSync(dead)).toBe(false);
     expect(existsSync(live)).toBe(true);

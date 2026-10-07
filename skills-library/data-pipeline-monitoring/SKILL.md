@@ -6,7 +6,7 @@ description: |
   Do NOT use for designing the pipeline itself (use etl-pipeline-design), defining data quality rules on the data (use data-quality-rules), or designing dashboards (use bi-dashboard-spec).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-science analysis checklist"
   category: "data-analysis"

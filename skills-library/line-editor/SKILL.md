@@ -4,7 +4,7 @@ description: |
   Prose-level editing methodology covering sentence rhythm, word choice, show-don't-tell diagnosis and fixes, dialogue tag optimization, filtering word elimination, passive voice correction, prose tightening, and style sheet creation. Use when the user asks about line editor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "editing creative-writing writing"
   category: "writing"

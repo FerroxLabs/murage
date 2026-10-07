@@ -6,7 +6,7 @@ description: |
   Do NOT use for assessing relationship health, deciding whether to pursue a long-distance relationship, or replacing couples therapy.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "relationships planning strategy"
   category: "family-relationships"

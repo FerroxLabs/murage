@@ -1,0 +1,15 @@
+[
+  {"input": " https://mac.tailnet123.ts.net \n", "trimmed": "https://mac.tailnet123.ts.net", "origin": "https://mac.tailnet123.ts.net"},
+  {"input": "\t\u000b\f\r\u0085\u00a0\u2028\u2029\u3000https://mac.tailnet123.ts.net\u2003\u202f", "trimmed": "https://mac.tailnet123.ts.net", "origin": "https://mac.tailnet123.ts.net"},
+  {"input": "\u200bhttps://mac.tailnet123.ts.net", "trimmed": "\u200bhttps://mac.tailnet123.ts.net", "origin": null},
+  {"input": "https://mac.tailnet123.ts.net\u200b", "trimmed": "https://mac.tailnet123.ts.net\u200b", "origin": null},
+  {"input": " \u200b https://mac.tailnet123.ts.net \u200b ", "trimmed": "\u200b https://mac.tailnet123.ts.net \u200b", "origin": null},
+  {"input": "\ufeffhttps://mac.tailnet123.ts.net", "trimmed": "\ufeffhttps://mac.tailnet123.ts.net", "origin": null},
+  {"input": "https://mac.tailnet123.ts.net\ufeff", "trimmed": "https://mac.tailnet123.ts.net\ufeff", "origin": null},
+  {"input": "\u180ehttps://mac.tailnet123.ts.net", "trimmed": "\u180ehttps://mac.tailnet123.ts.net", "origin": null},
+  {"input": "https://mac.tailnet123.ts.net\u180e", "trimmed": "https://mac.tailnet123.ts.net\u180e", "origin": null},
+  {"input": "\u2060https://mac.tailnet123.ts.net\u2060", "trimmed": "\u2060https://mac.tailnet123.ts.net\u2060", "origin": null},
+  {"input": "\u0000https://mac.tailnet123.ts.net", "trimmed": "\u0000https://mac.tailnet123.ts.net", "origin": null},
+  {"input": "", "trimmed": "", "origin": null},
+  {"input": " \n\u200a ", "trimmed": "", "origin": null}
+]

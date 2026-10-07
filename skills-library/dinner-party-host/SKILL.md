@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of dinner party host or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "cooking home-maintenance meal-planning budgeting breathing stress-management beginner-friendly planning"
   category: "home-household"

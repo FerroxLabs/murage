@@ -120,10 +120,10 @@ it("distinguishes unavailable and malformed extraction from valid complete-empty
   expect((await extractCandidates("source",async()=>"[]",signal)).status).toBe("complete");
   expect((await extractCandidates("source",async()=>JSON.stringify([{text:"invented",quote:"not in source",startByte:0,endByte:6}]),signal)).status).toBe("deferred");
 });
-it("reserves cost durably and does not reset budget on database reopen",async()=>{
+it("reserves tokens durably and does not reset budget on database reopen",async()=>{
   const signal=new AbortController().signal;
-  // Consume the daily budget through two admitted, sub-64KiB requests,
-  // including the now-required conservative message framing reservation.
+  // V2 uses estimated tokens; exhaust an explicit daily allowance with two framed calls.
+  database().exec("UPDATE memory_learning_config SET settings=json_set(settings,'$.dailyInputTokens',28572)");
   const payload="x".repeat(50000-Buffer.byteLength(JSON.stringify(memoryExtractionMessages(""))));
   expect((await extractCandidates(payload,async()=>"[]",signal)).status).toBe("complete");
   expect((await extractCandidates(payload,async()=>"[]",signal)).status).toBe("complete");

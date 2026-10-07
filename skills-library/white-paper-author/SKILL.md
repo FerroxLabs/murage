@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of white paper author or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "writing creative-writing budgeting guide beginner-friendly analysis research planning"
   category: "writing"

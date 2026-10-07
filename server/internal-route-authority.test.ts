@@ -119,7 +119,7 @@ describe("an oversized agents-tool result for a channel person", () => {
 
     const shown = await boundedAgentResult(text, save);
     expect(shown).not.toContain("is not retrievable");
-    const notice = /tool_result_read with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
+    const notice = /tool_result_read" on this server with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
     expect(notice).not.toBeNull();
 
     // And the page-back is the same gated path, so read it the same way.
@@ -158,3 +158,5 @@ describe("an oversized agents-tool result for a channel person", () => {
 // than carrying a second copy of the allowlist, is UNPROVEN here; executing
 // it means importing server/index.ts, which starts a listening server on
 // import.
+
+it("browser setup is an owner-only optional request",()=>{const {owner,channel}=principals();expect(internalRouteRefusal({path:"/api/internal/request-browser-connection",kind:"agents",principal:owner})).toBeNull();expect(internalRouteRefusal({path:"/api/internal/request-browser-connection",kind:"agents",principal:channel})).toBe(CHANNEL_PERSON_INTERNAL_REFUSAL);});

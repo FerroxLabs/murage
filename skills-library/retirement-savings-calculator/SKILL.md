@@ -12,7 +12,7 @@ description: |
   (use tax-advantaged-optimizer).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "retirement-planning personal-finance investing planning"
   category: "personal-finance"

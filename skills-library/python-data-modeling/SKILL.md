@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Python project setup (use `python-project-setup`), type system features like generics (use `python-type-system`), or general idioms (use `python-idioms`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "python best-practices database"
   category: "software-engineering"

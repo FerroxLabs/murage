@@ -6,7 +6,7 @@ description: |
   Do NOT use for grading rubrics (use `rubric-creation`), for assessment creation (use `assessment-design`), or for peer feedback frameworks among students (use `discussion-questions`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching lesson-plan step-by-step guide"
   category: "education"

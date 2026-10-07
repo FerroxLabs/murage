@@ -21,7 +21,7 @@ trigger_phrases: >-
   I want to migrate to the cloud I need to move from on-prem to AWS How do I
   plan a cloud migration I want to modernize our infrastructure
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: cloud step-by-step planning
   category: software-project

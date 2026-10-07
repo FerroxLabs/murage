@@ -3,13 +3,17 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
 import { captureSource } from "./capture.ts";
+import { setMemoryCaptureRoster } from "./capture-scope.ts";
+import { installLearningDestination } from "./learning-destination.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
+import { archiveMemoryRecord } from "./retention.ts";
+import { ownerMemoryTicket } from "./authority.ts";
 import { enqueueProcedureCorrectionReview, pendingProcedureReviews, processProcedureReview, procedureCandidateHash,
   procedureSnapshotDigest, procedureTargetDigest, type ProcedureEvaluationReceipt, type ProcedureReviewHost, type ProcedureReviewSnapshot, type ProcedureReviewTarget } from "./procedure-review.ts";
 
-beforeEach(()=>{vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(new Date("2026-09-14T12:00:00Z"));closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster({bots:[{id:"bot",threadId:"thread"}],groups:[]});setMemoryMode("capture");});
-afterEach(()=>vi.useRealTimers());
+beforeEach(()=>{vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(new Date("2026-09-14T12:00:00Z"));closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});setMemoryCaptureRoster(()=>({bots:[{id:"bot",threadId:"thread"}],groups:[]}));reconcileMemoryRoster({bots:[{id:"bot",threadId:"thread"}],groups:[]});setMemoryMode("capture");});
+afterEach(()=>{vi.useRealTimers();setMemoryCaptureRoster(null);});
 const signal=()=>new AbortController().signal;
 function scope(){return String(database().prepare("SELECT id FROM memory_scopes WHERE kind='conversation' AND owner_key='thread'").get()!.id);}
 function settle(turn="turn"){
@@ -65,7 +69,7 @@ it("reuses durable receipt after restart and recovers already committed publicat
 });
 it("direct owner correction records its own text without borrowing superseded evidence",async()=>{
   settle();database().prepare("DELETE FROM memory_scope_bindings WHERE id LIKE 'procedure-trigger:%'").run();
-  transaction(db=>{db.prepare("INSERT INTO memory_records VALUES('edited',1,?,'procedure','Check the actual artifact','owner-statement','active',0,?,NULL,NULL,?)").run(scope(),Date.now(),Date.now());enqueueProcedureCorrectionReview(db,"edited",1);});
+  transaction(db=>{db.prepare("INSERT INTO memory_records VALUES('edited',1,?,'procedure','Check the actual artifact','owner-statement','active',0,?,NULL,NULL,?)").run(scope(),Date.now(),Date.now());enqueueProcedureCorrectionReview(db,"edited",1,{ownerAuthorized:true});});
   const h=host(),id=await expand(h);h.evaluate=async snapshot=>{expect(snapshot.evidence).toMatchObject([{kind:"record",id:"edited",text:"Check the actual artifact"}]);return receipt(snapshot);};
   await processProcedureReview(id,h,signal());expect(h.publish).toHaveBeenCalledTimes(1);
 });
@@ -84,7 +88,7 @@ it("reauthorizes unstarted reviews after learning resume but refuses revoked evi
 it("requires explicit authorization for original source scopes different from corrected record scope",async()=>{
   settle();database().prepare("DELETE FROM memory_scope_bindings WHERE id LIKE 'procedure-trigger:%'").run();
   database().prepare("INSERT INTO memory_scopes VALUES('correction-scope','bot','bot','[]',0)").run();
-  transaction(db=>{db.prepare("INSERT INTO memory_records VALUES('shared-edit',1,'correction-scope','procedure','Corrected owner instruction','owner-statement','active',0,?,NULL,NULL,?)").run(Date.now(),Date.now());db.prepare("INSERT INTO memory_evidence VALUES('shared-edit',1,'tool:turn',1,0,7)").run();enqueueProcedureCorrectionReview(db,"shared-edit",1);});
+  transaction(db=>{db.prepare("INSERT INTO memory_records VALUES('shared-edit',1,'correction-scope','procedure','Corrected owner instruction','owner-statement','active',0,?,NULL,NULL,?)").run(Date.now(),Date.now());db.prepare("INSERT INTO memory_evidence VALUES('shared-edit',1,'tool:turn',1,0,7)").run();enqueueProcedureCorrectionReview(db,"shared-edit",1,{ownerAuthorized:true});});
   const h=host();h.canReadEvidence=(review,source)=>review===source||review==="correction-scope"&&source===scope();
   h.resolveTargets=()=>[{...target(),scopeId:"correction-scope"}];
   const id=await expand(h);h.evaluate=async snapshot=>{expect(new Set(snapshot.evidence.map(e=>e.scopeId))).toEqual(new Set(["correction-scope",scope()]));return receipt(snapshot);};
@@ -187,4 +191,98 @@ it("expands a trigger into reviews even with no evaluator, then parks those revi
   await processProcedureReview(id,shut,signal());
   expect(intent(id).status).toBe("deferred");
   expect(intent(id).reason).toBe("PROCEDURE_MODEL_UNAVAILABLE");
+});
+
+it("keeps explicit owner correction outside the automatic destination hook",async()=>{
+ settle();database().exec("DELETE FROM memory_scope_bindings WHERE id LIKE 'procedure-trigger:%'");
+ transaction(db=>{db.prepare("INSERT INTO memory_records VALUES('owner-edit',1,?,'procedure','Owner instruction','owner-statement','active',0,1,NULL,NULL,1)").run(scope());enqueueProcedureCorrectionReview(db,"owner-edit",1,{ownerAuthorized:true});});
+ const h=host(),id=await expand(h);h.evaluate=async snapshot=>receipt(snapshot);
+ const hook=vi.fn(()=>({ok:false as const,reason:"needs-owner-approval" as const})),uninstall=installLearningDestination(hook);
+ try{await processProcedureReview(id,h,signal());expect(h.publish).toHaveBeenCalledTimes(1);expect(hook).not.toHaveBeenCalled();}finally{uninstall();}
+});
+it("rechecks an automatic publication after evaluation if the destination changes",async()=>{
+ settle();const h=host(),id=await expand(h);let uninstall=()=>{};
+ h.evaluate=async snapshot=>{uninstall=installLearningDestination(()=>({ok:false,reason:"needs-owner-approval"}));return receipt(snapshot);};
+ try{await processProcedureReview(id,h,signal());expect(h.publish).not.toHaveBeenCalled();expect(intent(id).reason).toBe("needs-owner-approval");}finally{uninstall();}
+});
+
+it("does not grant owner approval to a correction enqueued without explicit authority",()=>{
+ transaction(db=>{db.prepare("INSERT INTO memory_records VALUES('automatic-edit',1,?,'procedure','Instruction','owner-statement','active',0,1,NULL,NULL,1)").run(scope());enqueueProcedureCorrectionReview(db,"automatic-edit",1);});
+ const row=database().prepare("SELECT intent FROM memory_scope_bindings WHERE id LIKE 'procedure-trigger:%'").get()!;
+ expect(JSON.parse(String(row.intent)).trigger.ownerAuthorized).toBeUndefined();
+});
+
+it("room evidence parks until the owner authorizes its exact procedure review",async()=>{
+ const {createProcedureEvaluator}=await import("./procedure-evaluator.ts"),{ownerMemoryTicket}=await import("./authority.ts");
+ const roster={bots:[],groups:[{id:"room",threadId:"room-thread",memberIds:[]}]};setMemoryCaptureRoster(()=>roster);reconcileMemoryRoster(roster);
+ transaction(db=>captureSource(db,{id:"room-turn",threadId:"room-thread",turnId:"room-turn",kind:"turn",speaker:"harness",outcome:"completed",text:"Completed"}));
+ const roomScope=String(database().prepare("SELECT scope_id FROM memory_sources WHERE id='room-turn'").get()!.scope_id);
+ const h:ProcedureReviewHost={resolveTargets:()=>[{kind:"skill",scopeId:roomScope,ownerId:"bot",artifactId:"room-skill",baseRevision:"1",threadId:"room-thread",bundleId:"room-bundle"}],isTargetCurrent:()=>true,canReadEvidence:()=>true,canPublish:()=>true,publish:vi.fn(),evaluate:async snapshot=>receipt(snapshot)};
+ const id=await expand(h);await processProcedureReview(id,h,signal());expect(intent(id)).toMatchObject({status:"deferred",reason:"needs-owner-approval"});expect(h.publish).not.toHaveBeenCalled();
+ const evaluator=createProcedureEvaluator({host:h,readInstruction:()=>"---\nname: room-skill\ndescription: Check results\n---\nCheck the result.",availabilityIdentity:()=>"fixture",modelIdentity:()=>"fixture",modelLabel:()=>"Fixture",resolveExtractor:()=>null,worker:()=>({available:false,reason:"fixture"})});
+ const preview=evaluator.preview(ownerMemoryTicket(),id);expect(()=>evaluator.authorize({},preview.previewId)).toThrow("MEMORY_OWNER_REQUIRED");
+ evaluator.authorize(ownerMemoryTicket(),preview.previewId);await processProcedureReview(id,h,signal());
+ expect(intent(id)).toMatchObject({status:"complete",ownerAuthorized:true});expect(h.publish).toHaveBeenCalledTimes(1);
+});
+
+
+it("does not coalesce new automatic evidence into an owner-authorized unstarted review",async()=>{
+ const {createProcedureEvaluator}=await import("./procedure-evaluator.ts"),{ownerMemoryTicket}=await import("./authority.ts");
+ settle("approved");const h=host(),id=await expand(h);
+ const evaluator=createProcedureEvaluator({host:h,readInstruction:()=>"---\nname: synthetic\ndescription: Check results\n---\nCheck the result.",availabilityIdentity:()=>"fixture",modelIdentity:()=>"fixture",modelLabel:()=>"Fixture",resolveExtractor:()=>null,worker:()=>({available:false,reason:"fixture"})});
+ evaluator.authorize(ownerMemoryTicket(),evaluator.preview(ownerMemoryTicket(),id).previewId);
+ const approved=intent(id).evidence;
+ h.evaluatorAvailable=()=>({ready:false,reason:"PROCEDURE_MODEL_UNAVAILABLE"});
+ await processProcedureReview(id,h,signal());expect(intent(id)).toMatchObject({status:"deferred",ownerAuthorized:true});expect(intent(id).snapshot).toBeUndefined();
+ settle("unapproved");await expand(h);
+ expect(intent(id).evidence).toEqual(approved);
+ const rows=database().prepare("SELECT intent FROM memory_scope_bindings WHERE id LIKE 'procedure-review:%'").all().map(row=>JSON.parse(String(row.intent)));
+ expect(rows).toHaveLength(2);expect(rows.find(row=>row.id!==id)).toMatchObject({evidence:expect.arrayContaining([expect.objectContaining({id:"tool:unapproved"})])});
+ expect(rows.find(row=>row.id!==id).ownerAuthorized).toBeUndefined();
+});
+
+// Fix round 2, hole 4: a reply made with record R is review evidence; the owner
+// archives R while the evaluator runs. The reply's source stays active, but its
+// disclosure lineage now withholds it, so publication must refuse it.
+function replyMadeWith(record:string,turn="turn"){
+  const db=database(),meta=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;
+  db.prepare("INSERT INTO memory_records VALUES(?,1,?,'fact','The deploy key rotates on Fridays','owner-statement','active',0,1,NULL,NULL,1)").run(record,scope());
+  db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('made-with','thread','engine','s',?,'[]','[\"reply\"]',?,?,1,'delivered',1)")
+    .run(JSON.stringify([{id:record,version:1}]),meta.policy_revision,meta.deletion_epoch);
+  transaction(tx=>{
+    captureSource(tx,{id:`tool:${turn}`,threadId:"thread",turnId:turn,kind:"tool-outcome",speaker:"tool",outcome:"failed",text:"Expected output missing",action:{label:"synthetic-check",reportedOutcome:"failed",verification:"tool-reported"}});
+    captureSource(tx,{id:"message:thread:reply",threadId:"thread",messageId:"reply",turnId:turn,kind:"text",speaker:"bot",outcome:"recorded",text:"The deploy key rotates on Fridays, so I used it."});
+    captureSource(tx,{id:`turn:${turn}`,threadId:"thread",turnId:turn,kind:"turn",speaker:"harness",outcome:"completed",text:"Turn completed."});
+  });
+}
+it("refuses to publish evidence whose disclosure lineage became withheld during evaluation",async()=>{
+  replyMadeWith("deploy-fact");const h=host(),id=await expand(h);
+  expect(intent(id).evidence.map((e:{id:string})=>e.id)).toContain("message:thread:reply");
+  h.evaluate=async snapshot=>{archiveMemoryRecord(ownerMemoryTicket(),"deploy-fact",1);return receipt(snapshot);};
+  await processProcedureReview(id,h,signal());
+  expect(h.publish).not.toHaveBeenCalled();expect(intent(id).reason).toBe("PROCEDURE_EVIDENCE_STALE");
+});
+it("publishes the same reply evidence when nothing it used changed (control)",async()=>{
+  replyMadeWith("deploy-fact");const h=host(),id=await expand(h);
+  h.evaluate=async snapshot=>receipt(snapshot);
+  await processProcedureReview(id,h,signal());
+  expect(h.publish).toHaveBeenCalled();
+});
+it("a due review before the scan cursor is found on the next visit, not after a wrap-around pass",()=>{
+  const put=(id:string,intent:Record<string,unknown>)=>database().prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','procedure-review-pending',0,'granted',?)").run(id,scope(),JSON.stringify({id,...intent}));
+  put("procedure-review:due",{status:"pending"});
+  put("procedure-review:later",{status:"deferred",retryAfter:Date.now()+60_000});
+  expect(pendingProcedureReviews()).toEqual(["procedure-review:due"]);
+  // The cursor now sits on the due row; the rows after it hold nothing due. The same visit wraps back to it.
+  expect(pendingProcedureReviews()).toEqual(["procedure-review:due"]);
+  expect(pendingProcedureReviews()).toEqual(["procedure-review:due"]);
+});
+it("reaches a runnable review behind more than 128 parked reviews within a bounded number of scans",()=>{
+  const put=(id:string,intent:Record<string,unknown>)=>database().prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','procedure-review-pending',0,'granted',?)").run(id,scope(),JSON.stringify({id,...intent}));
+  for(let i=0;i<200;i++)put(`procedure-review:parked-${i}`,{status:"deferred"});
+  put("procedure-review:runnable",{status:"pending"});
+  // 201 rows are four forward pages; the cursor must keep advancing past page two instead of re-scanning 1-64.
+  const seen:string[]=[];
+  for(let scan=0;scan<8&&!seen.includes("procedure-review:runnable");scan++)seen.push(...pendingProcedureReviews());
+  expect(seen).toContain("procedure-review:runnable");
 });

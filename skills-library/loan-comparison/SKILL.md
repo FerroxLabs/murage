@@ -6,7 +6,7 @@ description: |
   Do NOT use for debt consolidation analysis (use debt-consolidation-analysis), credit score interpretation, or investment comparison.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance debt-management analysis budgeting"
   category: "personal-finance"

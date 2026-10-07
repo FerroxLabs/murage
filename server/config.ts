@@ -8,8 +8,9 @@ import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
-import type { InstanceConfig, InstanceConfigMap } from "./contracts.ts";
-import { parseStoredMcpServer } from "./mcp-registry.ts";
+import { EFFORT_LEVELS, type EffortLevel, type InstanceConfig, type InstanceConfigMap } from "./contracts.ts";
+import { isRemoteMcpServer, parseAnyStoredMcpServer, parseStoredMcpServer } from "./mcp-registry.ts";
+import { mcpEnvHeld, resolveHeldEnv } from "./mcp-secrets.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 import { dataDirLeasePaths } from "./data-dir-lease.ts";
 import { installDataDirGuard } from "./data-dir-guard.ts";
@@ -18,6 +19,7 @@ import { tightenOwnedDirectory } from "../electron/private-directory.mjs";
 import { keyIssuer } from "../electron/provider-connections.mjs";
 import { readPersistedJson, PersistedStateRecoveryError } from "./persisted-state.ts";
 import { notificationPreferencesSchema, type NotificationPreferences } from "../shared/notification-preferences.ts";
+import { isNetlifyMcpUrl, NETLIFY_TOKEN_ENTRY } from "../shared/published-sites.ts";
 
 const optionalText = z.string().optional();
 const SSH_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -238,6 +240,14 @@ const browserProfilesSchema = z.array(browserProfileSchema).max(20).superRefine(
   });
 });
 const featureConfigSchema = z.object({
+  botsSharedAcrossTeams: z.boolean().optional(),
+  learningDefaultOn: z.boolean().optional(),
+  projectsLead: z.boolean().optional(),
+  projectsGoals: z.boolean().optional(),
+  projectsBudgets: z.boolean().optional(),
+  projectsWorkProfile: z.boolean().optional(),
+  projectsBoard: z.boolean().optional(),
+  projectsDigest: z.boolean().optional(),
   /** Experimental desktop workflow recorder. Hidden unless explicitly enabled. */
   skillRecorder: z.boolean().optional(),
   /** Show each tool run in the transcript. Off unless explicitly enabled. */
@@ -245,6 +255,16 @@ const featureConfigSchema = z.object({
   /** Experimental built-in browser. Off until explicitly enabled; each bot
    * also has its own switch. */
   browser: z.boolean().optional(),
+  /** Rollback switch (plan 8.1): connected apps show Featured and search
+   * only, without the paged "All apps" list. */
+  catalogFeaturedOnly: z.boolean().optional(),
+  /** Turn-engine kill switches (server/turn-engine-flags.ts). Absent = on. */
+  roomsThreadAdmission: z.boolean().optional(),
+  roomsQueue: z.boolean().optional(),
+  roomsMentionChain: z.boolean().optional(),
+  projectsAutonomy: z.boolean().optional(),
+  projectsAutoWake: z.boolean().optional(),
+  projectsParallelCards: z.boolean().optional(),
 });
 const instanceConfigSchema = z.object({
   driver: z.string().min(1),
@@ -264,6 +284,21 @@ const appConfigSchema = z.object({
     ownerUserId: z.string().regex(/^[A-Z][A-Z0-9]{1,79}$/).optional(), targetBotId: z.string().max(180).optional() }).strict().optional(),
   discord: z.object({ botToken: z.string().max(512).optional(), applicationId: z.string().regex(/^[1-9][0-9]{0,19}$/).optional(),
     ownerUserId: z.string().regex(/^[1-9][0-9]{0,19}$/).optional(), targetBotId: z.string().max(180).optional() }).strict().optional(),
+  // WhatsApp (design 7.4). Nothing here is secret: the allowlist and group list are shown in Settings. The auth key
+  // never has a config home (it lives in the desktop credential document); targetBotId is set only by the link route.
+  whatsapp: z.object({
+    backend: z.enum(["linked-device", "cloud-api"]).optional(),
+    targetBotId: z.string().max(180).optional(),
+    mode: z.enum(["self-chat", "contacts"]).optional(),
+    allowFrom: z.array(z.string().min(1).max(200)).max(200).optional(),
+    groups: z.object({
+      policy: z.enum(["disabled", "allowlist"]),
+      allow: z.array(z.object({ jid: z.string().min(3).max(200).regex(/^[^\x00-\x1f\x7f\s]+$/), name: z.string().max(120).optional(), activation: z.enum(["mention", "always"]) }).strict()).max(50),
+      senders: z.enum(["members", "allowlist"]),
+    }).strict().optional(),
+    readReceipts: z.boolean().optional(),
+    quoteReplies: z.enum(["off", "groups", "all"]).optional(),
+  }).strict().optional(),
   notifications: notificationPreferencesSchema.optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
   /** `model` seeds the default selection; `provider` pins an OpenRouter
@@ -271,8 +306,10 @@ const appConfigSchema = z.object({
   openaiCompat: z
     .object({ key: optionalText, url: optionalText, model: optionalText, provider: optionalText })
     .optional(),
-  /** Project key used for Sessions, catalog and agent tools. userId/sessionId
-   * are non-secret local identifiers used to reuse one Composio Session. */
+  /** Retired. Connected apps run through Flux Router only; nothing reads or
+   * sends these values any more. They stay in the file, untouched, so that
+   * nothing a person saved is ever deleted, and so the panel can tell someone
+   * who had a key of their own that apps now go through Flux Router. */
   composio: z.object({ apiKey: optionalText, userId: optionalText, sessionId: optionalText }).optional(),
   box: z.object({ token: optionalText }).optional(),
   vps: vpsConfigSchema.optional(),
@@ -301,6 +338,16 @@ const appConfigSchema = z.object({
    *  a packaged build uses the hosted default and any other build collects
    *  nothing. */
   sendlane: z.object({ baseUrl: optionalText }).optional(),
+  /** In-app decision model (Flux Router /v1/decide). Everything defaults OFF.
+   * `byoKey` is an advanced write-only override; the Flux key is the default
+   * credential. See server/decider. */
+  decider: z.object({
+    enabled: z.boolean().optional(),
+    provider: z.literal("flux").optional(),
+    jobs: z.object({ roomRouting: z.boolean().optional() }).strict().optional(),
+    byoKey: optionalText,
+    baseUrl: optionalText,
+  }).strict().optional(),
   /** Non-secret profile details shown in the sidebar. */
   profile: z.object({ name: optionalText, email: optionalText }).optional(),
   /** UI language override (BCP-47, lowercase). Empty/absent = follow the
@@ -313,6 +360,12 @@ const appConfigSchema = z.object({
   instances: instanceConfigMapSchema.optional(),
   /** Restored installations require deliberate engine enablement. */
   engineDiscovery: z.enum(["automatic", "explicit"]).optional(),
+  /** Set once 0.1.61 has pinned every Hermes instance to a profile (O12).
+   *  Internal: no route can set it (appConfigPatchSchema omits it). */
+  hermesProfilesPinned: z.boolean().optional(),
+  /** Workspace defaults a new bot starts with (upstream #1728, triage row
+   *  23). `effort: null` in a patch clears it; the section is written whole. */
+  newBots: z.object({ effort: z.enum(EFFORT_LEVELS).nullable().optional() }).strict().optional(),
   /** User-configured MCP servers, mounted into every capable engine. Kept
    * loosely typed HERE on purpose: parseStoredConfig throws away the whole
    * file on a schema error, and one bad server entry must degrade to a
@@ -329,7 +382,7 @@ const notificationPreferencesPatchSchema = notificationPreferencesSchema.extend(
   failures: notificationPreferencesSchema.shape.failures.removeDefault().optional(),
   previewContent: notificationPreferencesSchema.shape.previewContent.removeDefault().optional(),
 });
-const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true }).extend({ notifications: notificationPreferencesPatchSchema.optional() });
+const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, hermesProfilesPinned: true }).extend({ notifications: notificationPreferencesPatchSchema.optional() });
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
@@ -338,8 +391,16 @@ export interface AppConfig {
   telegram?: { botToken?: string; targetBotId?: string };
   slack?: { appToken?: string; botToken?: string; teamId?: string; appId?: string; ownerUserId?: string; targetBotId?: string };
   discord?: { botToken?: string; applicationId?: string; ownerUserId?: string; targetBotId?: string };
+  whatsapp?: {
+    backend?: "linked-device" | "cloud-api"; targetBotId?: string; mode?: "self-chat" | "contacts"; allowFrom?: string[];
+    groups?: { policy: "disabled" | "allowlist"; allow: Array<{ jid: string; name?: string; activation: "mention" | "always" }>; senders: "members" | "allowlist" };
+    readReceipts?: boolean; quoteReplies?: "off" | "groups" | "all";
+  };
   notifications?: NotificationPreferences;
   engineDiscovery?: "automatic" | "explicit";
+  hermesProfilesPinned?: boolean;
+  /** Effort for a new bot whose selection names none; absent sends none. */
+  newBots?: { effort?: EffortLevel | null };
   mcpServers?: Record<string, unknown>;
   language?: string;
   xai?: { key?: string; url?: string };
@@ -357,13 +418,19 @@ export interface AppConfig {
   webSearch?: { provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
   flux?: { apiKey?: string; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
   sendlane?: { baseUrl?: string };
+  decider?: { enabled?: boolean; provider?: "flux"; jobs?: { roomRouting?: boolean }; byoKey?: string; baseUrl?: string };
   profile?: { name?: string; email?: string };
   rooms?: { turnTimeoutMinutes: number };
   /** Shared preserves the historical singleton. Per-bot gives every bot a
    * separate container, durable workspace, viewer and lease. */
   localVm?: { mode?: "shared" | "per-bot"; maxInstances?: number };
   /** Opt-in product experiments. Every flag defaults to disabled. */
-  features?: { skillRecorder?: boolean; showToolCalls?: boolean; browser?: boolean };
+  features?: {
+    botsSharedAcrossTeams?: boolean;
+    learningDefaultOn?: boolean;
+    projectsLead?: boolean; projectsGoals?: boolean; projectsBudgets?: boolean; projectsWorkProfile?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; skillRecorder?: boolean; showToolCalls?: boolean; browser?: boolean; catalogFeaturedOnly?: boolean;
+    roomsThreadAdmission?: boolean; roomsQueue?: boolean; roomsMentionChain?: boolean; projectsAutonomy?: boolean; projectsAutoWake?: boolean; projectsParallelCards?: boolean;
+  };
   /** Named browser sessions any bot can be pointed at. */
   browserProfiles?: BrowserProfile[];
   instances?: InstanceConfigMap;
@@ -527,6 +594,12 @@ export function builtInBrowserEnabled(cfg: AppConfig): boolean {
   return cfg.features?.browser === true;
 }
 
+/** Whether connected apps offer the paged "All apps" list (on unless the
+ * rollback switch is set). */
+export function allAppsListEnabled(cfg: AppConfig): boolean {
+  return cfg.features?.catalogFeaturedOnly !== true;
+}
+
 // MURAGE_DATA_DIR isolates test/soak rigs from the user's real fleet.
 // Resolve physical aliases before deriving any child path. Otherwise a
 // symlink followed by '..' can lock one directory and write into another.
@@ -584,7 +657,6 @@ export function loadConfig(): AppConfig {
     if (repaired) cfg.instances = { ...cfg.instances, openaiCompat: repaired as unknown as InstanceConfig };
   }
   cfg.composio = { ...cfg.composio };
-  if (process.env.COMPOSIO_API_KEY !== undefined) cfg.composio.apiKey = process.env.COMPOSIO_API_KEY;
   cfg.box = { ...cfg.box };
   if (process.env.BOX_TOKEN !== undefined) cfg.box.token = process.env.BOX_TOKEN;
   cfg.opencodeGo = { ...cfg.opencodeGo };
@@ -621,7 +693,6 @@ export function syncCredentialEnv(patch: ConfigWritePatch): void {
     [patch.modelProviders?.bank, "MURAGE_MODEL_PROVIDER_CONNECTIONS"],
     [patch.xai?.key, "XAI_API_KEY"],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
-    [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
     [patch.box?.token, "BOX_TOKEN"],
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
     [patch.tts?.key, "MURAGE_TTS_KEY"],
@@ -664,6 +735,9 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   // engine credential. Never pass it into tool/agent child environments.
   "MURAGE_DEV_DESKTOP_SECRET",
   "MURAGE_COMPANION_TOKEN",
+  "MURAGE_COMPANION_TOKEN_FILE",
+  "MURAGE_COMPANION_TOKEN_VIA",
+  "MURAGE_DOOR_NONCE",
   "MURAGE_INTERNAL_DATA_DIR_LEASE",
   "XAI_API_KEY",
   "OPENAI_COMPAT_API_KEY",
@@ -678,6 +752,9 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "MURAGE_DISCORD_BOT_TOKEN",
   "MURAGE_SLACK_APP_TOKEN",
   "MURAGE_SLACK_BOT_TOKEN",
+  // The WhatsApp auth key reaches the bridge over IPC only. A developer's exported copy must never ride into an engine child
+  // (design 3.3). Deliberately not a WORKSPACE_CREDENTIALS row: it has no config home.
+  "MURAGE_WHATSAPP_AUTH_KEY",
   "MURAGE_TAVILY_SEARCH_KEY",
   "MURAGE_EXA_SEARCH_KEY",
   "MURAGE_FIRECRAWL_SEARCH_KEY",
@@ -693,6 +770,11 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   // separate token that stays in the harness; per-bot app policy is enforced
   // only there.
   "MURAGE_FLUX_COMPOSIO_BROKER_TOKEN",
+  // Header values, link secrets and access tokens of servers added by link.
+  // The harness reads them once at boot and deletes the variable; no child
+  // process ever inherits it (spec MCP-LINK 3.4).
+  "MURAGE_MCP_SERVER_SECRETS",
+  "MURAGE_MCP_COMMIT_TOKEN",
   // Harness-private filesystem hints are not credentials themselves, but
   // exposing them to a shell-capable agent points straight at app-owned
   // state. The built-in browser master is delivered privately in memory.
@@ -727,12 +809,23 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "KIMI_API_KEY",
   "MOONSHOT_API_KEY",
   "MINIMAX_API_KEY",
+  "MISTRAL_API_KEY",
   "OPENAI_API_KEY",
   "OPENCODE_API_KEY",
   "XAI_API_KEY",
   "CURSOR_API_KEY",
   "CURSOR_AUTH_TOKEN",
 ] as const;
+
+/** Strip every credential from the env of a pre-save CLI probe or a Claude
+ * update child: the whole workspace list, the whole vendor-key list, and the
+ * ambient Anthropic bearer token. A wrapper chosen in Settings runs with only
+ * what it needs to start. Adapted from OpenMausBot #2027 (1542d09b, merge
+ * 48b8b534). */
+export function stripCliProbeCredentialEnv(env: Record<string, string | undefined>, platform: NodeJS.Platform = process.platform): void {
+  stripWorkspaceCredentialEnv(env, platform);
+  deleteEnvNames(env, [...PROVIDER_CREDENTIAL_ENV, "ANTHROPIC_AUTH_TOKEN"], platform);
+}
 
 /** Routing switches a third-party CLI reads to pick its endpoint or model.
  *
@@ -797,7 +890,7 @@ export function saveConfig(patch: ConfigWritePatch): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features"] as const) {
+  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "whatsapp", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features", "decider"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -815,6 +908,8 @@ export function saveConfig(patch: ConfigWritePatch): void {
   }
   // scalar, not a section: the merge loop above only walks objects
   if (checkedPatch.language !== undefined) disk.language = checkedPatch.language;
+  if (checkedPatch.hermesProfilesPinned !== undefined) disk.hermesProfilesPinned = checkedPatch.hermesProfilesPinned;
+  if (checkedPatch.newBots !== undefined) disk.newBots = checkedPatch.newBots.effort ? { effort: checkedPatch.newBots.effort } : {};
   // the whole list is the unit of change: an add or a delete arrives as the
   // new list, never as a per-item merge
   if (checkedPatch.browserProfiles !== undefined) {
@@ -896,6 +991,23 @@ export function withInstanceCli(
   return { ok: true, config: next };
 }
 
+/** Add or replace whole instance entries (Hermes profile pins and imports)
+ * through the same persistable map the CLI and enable writes use, so no
+ * injected workspace secret is written back. `update` receives the persisted
+ * entry, or undefined for a new id. */
+export function withInstanceEntries(
+  cfg: AppConfig,
+  updates: ReadonlyMap<string, (current: InstanceConfig | undefined) => InstanceConfig>,
+): AppConfig {
+  const next: AppConfig = structuredClone(cfg);
+  const map = persistableInstanceConfigs(next);
+  for (const [instanceId, update] of updates) {
+    map[instanceId] = update(Object.hasOwn(map, instanceId) ? map[instanceId] : undefined);
+  }
+  next.instances = map;
+  return next;
+}
+
 /** The fleet instanceConfigs() materializes, with each entry's `config` and
  * `environment` exactly as the caller saved them. instanceConfigs() injects
  * workspace values into the live map (credential env, and the OpenAI-compatible
@@ -955,6 +1067,34 @@ export function withInstanceEnabled(cfg: AppConfig, instanceId: string, enabled:
 interface InstanceCliUpdate {
   ok: boolean;
   config: AppConfig;
+}
+
+const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/u, "") === b.trim().replace(/\/+$/u, "");
+
+/** Whether an instance brings its own endpoint or credential, so the shared
+ * workspace key for its driver must never reach it: that key would be sent to
+ * the instance's own host (a third-party router or proxy). An instance on the
+ * workspace's own endpoint with nothing of its own still gets the key.
+ * Adapted from OpenMausBot #2053 (658763e9) and #2107 (4936cef1); the Claude
+ * and Mistral halves are left out because Murage injects no such key. */
+export function instanceOwnsRouting(cfg: AppConfig, entry: { driver: string; config?: unknown; environment?: Record<string, string> }): boolean {
+  const config = typeof entry.config === "object" && entry.config !== null && !Array.isArray(entry.config)
+    ? entry.config as Record<string, unknown>
+    : {};
+  const own = (value: unknown) => typeof value === "string" && value.trim() !== "";
+  const ownUrl = (...workspace: Array<string | undefined>) => own(config.url)
+    && !workspace.some((url) => url !== undefined && sameUrl(config.url as string, url));
+  switch (entry.driver) {
+    case "openai-compat":
+      return own(config.key) || own(entry.environment?.OPENAI_COMPAT_API_KEY)
+        || (own(config.apiKeyEnv) && config.apiKeyEnv !== "OPENAI_COMPAT_API_KEY")
+        || ownUrl(cfg.openaiCompat?.url || process.env.OPENAI_COMPAT_URL || "https://openrouter.ai/api/v1");
+    case "grok":
+      return own(entry.environment?.XAI_API_KEY) || (own(config.apiKeyEnv) && config.apiKeyEnv !== "XAI_API_KEY")
+        || ownUrl("https://api.x.ai/v1", cfg.xai?.url);
+    default:
+      return false;
+  }
 }
 
 /** The credential env instanceConfigs() injects for one driver — shared with
@@ -1032,7 +1172,11 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     const entry = { ...sourceEntry };
     map[id] = entry;
     const environment = { ...entry.environment };
-    for (const [key, value] of injectedEnvironment(cfg, entry.driver)) environment[key] = value;
+    // An instance with its own endpoint or key keeps its own credential: the
+    // shared key goes only to instances that ride the workspace endpoint.
+    if (!instanceOwnsRouting(cfg, entry)) {
+      for (const [key, value] of injectedEnvironment(cfg, entry.driver)) environment[key] = value;
+    }
     entry.environment = environment;
     // The driver URL is configuration, not a credential. Environment is
     // intentionally not consulted by ProviderRegistry when it decodes a
@@ -1062,7 +1206,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
 // ── user-configured MCP servers ─────────────────────────────────────────
 // config.json: { "mcpServers": { "notes": { "command": "npx", "args":
 // ["-y", "@x/notes-mcp"], "env": { "NOTES_TOKEN": "…" } } } }
-// stdio only for now; validate-with-skip so one bad entry never takes the
+// stdio and link entries; validate-with-skip so one bad entry never takes the
 // fleet down, and each skip is logged once with a sentence that teaches.
 
 export interface CustomMcpServer {
@@ -1079,27 +1223,76 @@ function skipMcpEntry(name: string, why: string): void {
   console.error(`mcpServers.${JSON.stringify(name)} skipped — ${why}`);
 }
 
-/** The validated, normalized custom servers from config — or {}. */
+export interface CustomRemoteMcpServer {
+  url: string;
+  transport?: "http" | "sse";
+  auth: "none" | "oauth" | "header";
+  /** Header NAMES only. Values are in the secret store. */
+  headerNames: string[];
+  local?: "this-computer" | "local-network";
+  urlSecret: boolean;
+}
+
+/** Both kinds of enabled custom server. A remote entry is returned as a
+ * descriptor with no header value in it; the relay reads values from the
+ * secret store. Invalid entries are skipped and logged once, as for stdio. */
+export function customMcpServerDescriptors(cfg: AppConfig): {
+  stdio: Record<string, CustomMcpServer>;
+  remote: Record<string, CustomRemoteMcpServer>;
+} {
+  const stdio: Record<string, CustomMcpServer> = {};
+  const remote: Record<string, CustomRemoteMcpServer> = {};
+  for (const [name, raw] of Object.entries(cfg.mcpServers ?? {})) {
+    const parsed = parseAnyStoredMcpServer(name, raw, { envHeld: mcpEnvHeld });
+    if (!parsed.ok) {
+      skipMcpEntry(name, `${parsed.error} Expected { "command": "npx", "args": [...] } or { "url": "https://..." }`);
+      continue;
+    }
+    const server = parsed.server;
+    if (!server.enabled) continue;
+    if (isRemoteMcpServer(server)) {
+      // Netlify's own deploy tools would skip the publish approval card: never handed to a bot.
+      if (isNetlifyMcpUrl(server.url)) { skipMcpEntry(name, "Netlify's own server is used only to sign in for publishing."); continue; }
+      remote[name] = {
+        url: server.url,
+        ...(server.transport ? { transport: server.transport } : {}),
+        auth: server.auth,
+        headerNames: Object.keys(server.headers).sort(),
+        ...(server.local ? { local: server.local } : {}),
+        urlSecret: server.urlSecret === true,
+      };
+    } else {
+      // The entry that only holds a pasted Netlify token is never a server a bot runs.
+      if (name === NETLIFY_TOKEN_ENTRY) continue;
+      stdio[name] = { command: server.command, args: server.args, env: resolveHeldEnv(name, server).env };
+    }
+  }
+  return { stdio, remote };
+}
+
+/** The validated, normalized custom STDIO servers from config — or {}. Remote
+ * entries are read by customMcpServerDescriptors; the drivers that mount
+ * stdio servers keep calling this one. */
 export function customMcpServers(cfg: AppConfig): Record<string, CustomMcpServer> {
   const out: Record<string, CustomMcpServer> = {};
   for (const [name, raw] of Object.entries(cfg.mcpServers ?? {})) {
-    if (raw && typeof raw === "object" && "url" in raw) {
-      skipMcpEntry(name, 'only stdio servers ("command") are supported so far: HTTP transports are a planned follow-up');
-      continue;
-    }
+    // A link entry belongs to customMcpServerDescriptors; it is not a stdio
+    // server and not a mistake, so it is passed over without a log line.
+    if (raw && typeof raw === "object" && ("url" in raw || "serverUrl" in raw || "httpUrl" in raw)) continue;
     // One parser for the file and the settings panel: mcp-registry.ts owns
     // the name rules, the reserved list and the entry shape, so a server the
     // UI accepts is exactly a server the fleet will mount.
-    const parsed = parseStoredMcpServer(name, raw);
+    const parsed = parseStoredMcpServer(name, raw, { envHeld: mcpEnvHeld });
     if (!parsed.ok) {
       skipMcpEntry(name, `${parsed.error} Expected { "command": "npx", "args": [...], "env": { ... } }`);
       continue;
     }
-    if (!parsed.server.enabled) continue;
+    if (!parsed.server.enabled || name === NETLIFY_TOKEN_ENTRY) continue;
     out[name] = {
       command: parsed.server.command,
       args: parsed.server.args,
-      env: parsed.server.env,
+      // T16: values the secret store holds are filled in here, at mount time.
+      env: resolveHeldEnv(name, parsed.server).env,
     };
   }
   return out;

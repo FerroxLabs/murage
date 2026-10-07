@@ -6,7 +6,7 @@ description: |
   Do NOT use for addiction assessment or treatment, clinical behavior analysis, or substance dependency.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "mental-wellness goal-setting habits emotional-health"
   category: "health-wellness"

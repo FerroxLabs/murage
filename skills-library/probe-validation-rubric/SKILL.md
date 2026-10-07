@@ -1,8 +1,9 @@
 ---
 name: probe-validation-rubric
 description: "A test finished. The team is staring at numbers and reaching for a story. Load whenever someone asks \"did it work,\" \"is that enough,\" \"what does this number mean,\" or — most importantly — \"should we keep going.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "probe"
 ---

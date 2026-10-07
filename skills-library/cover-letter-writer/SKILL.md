@@ -12,7 +12,7 @@ description: |
   cover letters live in career-development, not the writing category.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "cover-letter career template writing"
   category: "career-development"

@@ -29,11 +29,13 @@ const CONTROL_PORT = Number(process.env.MURAGE_CONTROL_PORT_OVERRIDE) || 8811;
 const FAKE_PID = 424242;
 const PRIVATE_TOKEN = "d".repeat(64);
 const forkEnvironments = [];
+const postedToChild = [];
 
 const child = Object.assign(new EventEmitter(), {
   pid: FAKE_PID,
   stdout: null,
   stderr: null,
+  postMessage(message) { postedToChild.push(message); },
   kill() {
     this.emit("exit", 0);
     return true;
@@ -110,7 +112,12 @@ beforeAll(async () => {
     else process.env.MURAGE_COMPANION_TOKEN = inheritedToken;
   }
   expect(started.enabled).toBe(true);
-  expect(forkEnvironments.at(-1).MURAGE_COMPANION_TOKEN).toBe(PRIVATE_TOKEN);
+  // Over the private parent port, never the environment, an argument or a file (audit P1, S1b R8).
+  expect(forkEnvironments.at(-1).MURAGE_COMPANION_TOKEN).toBeUndefined();
+  expect(forkEnvironments.at(-1).MURAGE_COMPANION_TOKEN_FILE).toBeUndefined();
+  expect(forkEnvironments.at(-1).MURAGE_COMPANION_TOKEN_VIA).toBe("parent");
+  expect(JSON.stringify(forkEnvironments.at(-1))).not.toContain(PRIVATE_TOKEN);
+  expect(postedToChild).toContainEqual({ type: "murage:launch-secret", name: "MURAGE_COMPANION_TOKEN", value: PRIVATE_TOKEN });
   expect(JSON.stringify(started)).not.toContain(PRIVATE_TOKEN);
 });
 

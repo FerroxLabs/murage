@@ -1,13 +1,16 @@
 {
   "id": "beacon-affiliate-program",
   "name": "affiliate-program",
-  "version": "1.0.0",
-  "description": "**When to use.** When the user wants partners, creators, or existing customers to drive sales on commission as a scalable Do-stage acquisition channel.",
+  "version": "1.1.0",
+  "description": "Set up an affiliate program that pays partners, creators or customers a commission. Choose the partner type, set the terms and check what partners really add.",
   "defaultEnabled": false,
   "triggerTerms": [
-    "beacon",
-    "affiliate",
-    "program"
+    "affiliate program",
+    "affiliate marketing",
+    "commission",
+    "referral program",
+    "partner program",
+    "influencer affiliate"
   ],
   "requiredCapabilities": []
 }

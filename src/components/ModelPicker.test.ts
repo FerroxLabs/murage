@@ -368,3 +368,13 @@ describe("the list reads in the owner's order, with true labels", () => {
     expect(modelPickerMaxHeight(400, 520, 390)).toBe(240);
   });
 });
+
+describe("engine switch notice (triage row 22)", () => {
+  it("lists what the engine shown would lose or gain, and nothing when it matches", async () => {
+    const { EngineSwitchNotice } = await import("./ModelPicker");
+    expect(renderToStaticMarkup(createElement(EngineSwitchNotice, { lines: [] }))).toBe("");
+    const html = renderToStaticMarkup(createElement(EngineSwitchNotice, { lines: ["Loses connected apps on this engine."] }));
+    expect(html).toContain("data-engine-switch-notice");
+    expect(html).toContain("Loses connected apps on this engine.");
+  });
+});

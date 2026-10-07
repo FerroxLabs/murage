@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request requires professional financial advice or falls outside the scope of debt payoff strategist.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance debt-management guide"
   category: "personal-finance"

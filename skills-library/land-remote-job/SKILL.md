@@ -20,7 +20,7 @@ trigger_phrases: >-
   strategy how to get hired remotely work from home job search transition to
   remote work find a fully remote role
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: career interview-prep step-by-step planning
   category: career

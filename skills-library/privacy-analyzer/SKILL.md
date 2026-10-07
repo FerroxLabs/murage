@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request requires professional legal advice or falls outside the scope of privacy analyzer.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy contracts security"
   category: "legal-civic"

@@ -6,7 +6,7 @@ description: |
   Do NOT use for enterprise project management with multiple teams (use business project-management skills), product roadmap creation (use business strategy skills), or ongoing project status tracking (use project-status-report).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "project-management planning template"
   category: "productivity"

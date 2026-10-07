@@ -10,7 +10,7 @@ description: |
   (use `readme-writing`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "blog-post seo writing"
   category: "writing"

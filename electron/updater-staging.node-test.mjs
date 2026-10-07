@@ -19,7 +19,7 @@ function initialize(platform,env={},startOptions){
   const context=vm.createContext({
     updaterCoordinator:null,checksScheduled:false,autoUpdater:null,app:{isPackaged:true},process:{platform,env},
     require:()=>({autoUpdater:updater}),updaterLogger:()=>({}),
-    linuxPackageType:()=>null,HAND_OFF_TYPES:new Set(),
+    linuxPackageType:()=>null,HAND_OFF_TYPES:new Set(),createLinuxUpdateVerifier:()=>async()=>({recheck:async()=>{}}),runningVersion:()=>"1.0.0",
     setState:patch=>{state={...state,...patch};},
     createUpdaterCoordinator:(instance,setState,passed)=>{options=passed;return createUpdaterCoordinator(instance,setState,passed);},
     setTimeout:()=>{timeouts++;return {unref(){}};},setInterval:()=>{intervals++;return {unref(){}};},

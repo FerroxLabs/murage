@@ -43,7 +43,21 @@ describe("stream delta buffer", () => {
       expect(flushed).toEqual([[["fuigo18", { text: "Recovered answer.", reasoning: "HTTP 503. Retrying model request.\n\n" }]]]);
     } finally { buffer.dispose(); vi.unstubAllGlobals(); }
   });
-  it("falls back to 100ms when rAF is paused and emits the pending channels once", () => {
+  it("clearText drops a retried attempt's pending answer text and keeps reasoning", () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const flushed: Array<Array<[string, { text: string; reasoning: string }]>> = [];
+    const buffer = createStreamDeltaBuffer(entries => flushed.push(entries));
+    try {
+      buffer.push("t", "assistant_text", "A1");
+      buffer.push("t", "reasoning_text", "why");
+      buffer.clearText("t");
+      buffer.push("t", "assistant_text", "A2");
+      buffer.flush();
+      expect(flushed).toEqual([[["t", { text: "A2", reasoning: "why" }]]]);
+    } finally { buffer.dispose(); vi.unstubAllGlobals(); }
+  });
+  it("flushes at about 30 Hz without rAF and emits the pending channels once", () => {
     vi.useFakeTimers();
     const callbacks = new Map<number, FrameRequestCallback>();
     let nextFrame = 1;
@@ -59,7 +73,7 @@ describe("stream delta buffer", () => {
       buffer.push("thread", "assistant_text", "answer");
       buffer.push("thread", "reasoning_text", "because");
 
-      vi.advanceTimersByTime(99);
+      vi.advanceTimersByTime(32);
       expect(flushed).toEqual([]);
       vi.advanceTimersByTime(1);
       expect(flushed).toEqual([[["thread", { text: "answer", reasoning: "because" }]]]);
@@ -388,6 +402,22 @@ describe("hydration", () => {
   it("is false until the first snapshot lands", () => {
     expect(initialState.hydrated).toBe(false);
     expect(reducer(initialState, { type: "hydrate", bots: [], groups: [], computerControl: {} }).hydrated).toBe(true);
+  });
+});
+
+describe("sidebar section order", () => {
+  it("takes the computer's order from hydration and from the live frame", () => {
+    expect(initialState.sidebarSectionOrder).toBeUndefined();
+    const none = reducer(initialState, { type: "hydrate", bots: [], groups: [], computerControl: {}, sidebarSectionOrder: null });
+    expect(none.sidebarSectionOrder).toBeNull();
+    const hydrated = reducer(none, { type: "hydrate", bots: [], groups: [], computerControl: {}, sidebarSectionOrder: ["section:Ops", "builtin:pinned"] });
+    expect(hydrated.sidebarSectionOrder).toEqual(["section:Ops", "builtin:pinned"]);
+    const live = reducer(hydrated, { type: "sidebarSectionOrder", order: ["builtin:pinned", "section:Ops"] });
+    expect(live.sidebarSectionOrder).toEqual(["builtin:pinned", "section:Ops"]);
+  });
+
+  it("leaves it unknown when the harness does not send one", () => {
+    expect(reducer(initialState, { type: "hydrate", bots: [], groups: [], computerControl: {} }).sidebarSectionOrder).toBeUndefined();
   });
 });
 
@@ -782,6 +812,37 @@ describe("workspace pane (F4-T3)", () => {
     expect(inspector.workspacePane.open).toBe(true);
     const settings = reducer(inspector, { type: "toggleSettings", open: true });
     expect(settings.workspacePane.open).toBe(true);
+  });
+});
+
+// E1 device acceptance (2026-09-28): a companion's "Messaged @Kessler" chip
+// dispatched `select` with a bot⇄bot group id the phone never received
+// (visibleToCompanion, server/sse-visibility.ts, keeps `dm: true` groups off
+// companions). `selectedId` was set to that id regardless, App.tsx's lookup
+// found neither a group nor a bot for it, and fell back to `state.bots[0]` —
+// tapping Dax's chip for Kessler opened Numbers instead. `select` on any id
+// the client does not have must be inert, on every device.
+describe("select with an id neither a group nor a bot (E1, 2026-09-28)", () => {
+  const member = (id: string, name: string) => ({
+    id, threadId: `t-${id}`, name, title: "", description: "", notifications: true, color: "green", unread: false,
+    modelSelection: { instanceId: "x", model: "y" }, messages: [],
+  }) as unknown as Bot;
+
+  it("keeps the current selection instead of falling through to another bot", () => {
+    const state = { ...initialState, bots: [member("a", "A"), member("b", "B")], selectedId: "a" };
+    const next = reducer(state, { type: "select", id: "group-not-sent-to-this-client" });
+    expect(next.selectedId).toBe("a");
+    expect(next).toBe(state);
+  });
+
+  it("still selects a real bot, and a real group, exactly as before", () => {
+    const state = { ...initialState, bots: [member("a", "A"), member("b", "B")], selectedId: "a" };
+    expect(reducer(state, { type: "select", id: "b" }).selectedId).toBe("b");
+    const group = { id: "room-1", name: "Launch", threadId: "t-room", unread: true, members: [], dm: false } as unknown as Group;
+    const withRoom = { ...state, groups: [group] };
+    const selected = reducer(withRoom, { type: "select", id: "room-1" });
+    expect(selected.selectedId).toBe("room-1");
+    expect(selected.groups[0].unread).toBe(false);
   });
 });
 

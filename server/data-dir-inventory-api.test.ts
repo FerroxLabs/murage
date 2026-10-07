@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ZipFile } from "yazl";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { classifyDataDirEntry } from "./data-dir-inventory.ts";
+import { dataDirWriteRecorder, unclassifiedDataDirNames } from "./testing/data-dir-guard.ts";
 import { withOfflineInstallation } from "./installation-database-snapshot.ts";
 import { inventoryFidelity } from "./installation-fidelity-snapshot.ts";
 import { stageInstallationStateWhileOwned } from "./installation-state-snapshot.ts";
@@ -28,38 +28,6 @@ const posixOnly = describe.skipIf(process.platform === "win32");
 /** What launchVerificationServer itself puts in the folder, not Murage. */
 const HARNESS = new Set(["fake-claude-dump.json", "finish-fake", ".verification-instrumentation.mjs"]);
 
-/** Preload for the server child: log each top-level name created under
- * MURAGE_DATA_DIR by any fs call, sync or async. node:sqlite's own -wal and
- * -shm files are not fs calls; the final listing covers them. */
-function recorder(log: string): string {
-  return `
-import fs from "node:fs";
-import { syncBuiltinESMExports } from "node:module";
-import { realpathSync } from "node:fs";
-process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
-const LOG = ${JSON.stringify(log)};
-const roots = [process.env.MURAGE_DATA_DIR, realpathSync(process.env.MURAGE_DATA_DIR)].map(root => root.endsWith("/") ? root : root + "/");
-const appendLog = fs.appendFileSync.bind(fs);
-const seen = new Set();
-const note = target => {
-  if (typeof target !== "string" && !(target instanceof URL)) return;
-  const path = String(target instanceof URL ? target.pathname : target);
-  for (const root of roots) if (path.startsWith(root)) {
-    const name = path.slice(root.length).split("/")[0];
-    if (name && !seen.has(name)) { seen.add(name); appendLog(LOG, name + "\\n"); }
-  }
-};
-const creating = flags => flags === undefined || typeof flags === "number" ? (flags ?? 0) & (fs.constants.O_CREAT | fs.constants.O_WRONLY | fs.constants.O_RDWR) : /[wax+]/.test(String(flags));
-const wrap = (object, name, pick) => { const original = object[name]; if (typeof original !== "function") return; object[name] = function (...args) { try { pick(args); } catch {} return original.apply(this, args); }; };
-for (const [object] of [[fs], [fs.promises]]) {
-  for (const name of ["writeFile", "writeFileSync", "appendFile", "appendFileSync", "mkdir", "mkdirSync", "createWriteStream"]) wrap(object, name, args => note(args[0]));
-  for (const name of ["open", "openSync"]) wrap(object, name, args => { if (creating(args[1])) note(args[0]); });
-  for (const name of ["rename", "renameSync", "copyFile", "copyFileSync", "symlink", "symlinkSync", "link", "linkSync", "cp", "cpSync"]) wrap(object, name, args => note(args[1]));
-  for (const name of ["mkdtemp", "mkdtempSync"]) wrap(object, name, args => note(String(args[0]) + "XXXXXX"));
-}
-syncBuiltinESMExports();
-`;
-}
 
 let fixture: VerificationServer, headers: Record<string, string>, logDir: string, log: string;
 let sequence = 0;
@@ -94,7 +62,7 @@ posixOnly("a real server's data folder stays backup-classified", () => {
   beforeAll(async () => {
     logDir = mkdtempSync(join(tmpdir(), "murage-data-dir-writes-"));
     log = join(logDir, "created.txt");
-    fixture = await launchVerificationServer(process.env, undefined, { separateHome: true, instrumentationSource: recorder(log) });
+    fixture = await launchVerificationServer(process.env, undefined, { whatsNew: "pending", separateHome: true, instrumentationSource: `process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";\n${dataDirWriteRecorder(log)}` });
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret };
   }, 60000);
   afterAll(async () => {
@@ -137,12 +105,7 @@ posixOnly("a real server's data folder stays backup-classified", () => {
     const present = readdirSync(data);
     // The recorder must actually see writes, or this test proves nothing.
     expect(created).toEqual(expect.arrayContaining(["about-me.md", "house-rules.md", "whats-new.json", "bots.json", "skill-collection"]));
-    const unclassified = [...new Set([...created, ...present])]
-      .filter(name => !HARNESS.has(name))
-      // mkdtemp prefixes are recorded with a placeholder suffix
-      .map(name => name.endsWith("XXXXXX") ? name.slice(0, -6) + "a1B2c3" : name)
-      .filter(name => !classifyDataDirEntry(name));
-    expect(unclassified).toEqual([]);
+    expect(unclassifiedDataDirNames([...created, ...present].filter(name => !HARNESS.has(name)))).toEqual([]);
 
     for (const name of HARNESS) rmSync(join(data, name), { recursive: true, force: true });
     const parent = mkdtempSync(join(tmpdir(), "murage-data-dir-stage-"));

@@ -1,8 +1,9 @@
 ---
 name: smith-agent-handoff
 description: "Use this skill when a shaped feature or ADR is ready to implement and the next step is to hand the work to the user's coding agent (Cursor, Claude Code, the IDE-of-the-week). The output is a ticket the coding agent can execute without coming back to ask basic questions, and without drifting past the"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "smith"
 ---

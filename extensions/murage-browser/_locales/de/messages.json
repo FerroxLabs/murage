@@ -1,0 +1,421 @@
+{
+  "extName": {
+    "message": "Murage for Chrome"
+  },
+  "extDescription": {
+    "message": "Gib ausgewählte Browser-Tabs für deine Murage-Bots frei und behalte mit Pause und Stopp die Kontrolle."
+  },
+  "groupTitle": {
+    "message": "Murage"
+  },
+  "groupTitleBot": {
+    "message": "Murage · $BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "groupSuffixPaused": {
+    "message": " · pausiert"
+  },
+  "groupSuffixStopped": {
+    "message": " · gestoppt"
+  },
+  "groupSuffixYourTurn": {
+    "message": " · Du bist dran"
+  },
+  "groupSuffixFull": {
+    "message": " · vollständig"
+  },
+  "groupSuffixWorking": {
+    "message": " · arbeitet"
+  },
+  "groupSuffixDone": {
+    "message": " · fertig"
+  },
+  "overlayWorking": {
+    "message": "$BOT$ arbeitet",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPause": {
+    "message": "Pause"
+  },
+  "overlayStop": {
+    "message": "Stopp"
+  },
+  "overlayWaiting": {
+    "message": "Wartet in Murage auf dich"
+  },
+  "overlayFull": {
+    "message": "Vollständig freizügig"
+  },
+  "overlayAria": {
+    "message": "$BOT$ verwendet diesen Tab. Pausiere oder stoppe ihn hier.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPointer": {
+    "message": "$BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHeader": {
+    "message": "Murage for Chrome"
+  },
+  "spConnected": {
+    "message": "Mit Murage verbunden"
+  },
+  "spNotConnected": {
+    "message": "Murage ist nicht verbunden"
+  },
+  "spBotLine": {
+    "message": "$BOT$ in „$CONVERSATION$“",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      },
+      "conversation": {
+        "content": "$2"
+      }
+    }
+  },
+  "spStateWorking": {
+    "message": "Arbeitet"
+  },
+  "spStateWaiting": {
+    "message": "Wartet auf dich"
+  },
+  "spStatePaused": {
+    "message": "Pausiert"
+  },
+  "spStateStopped": {
+    "message": "Gestoppt"
+  },
+  "spStateYourTurn": {
+    "message": "Du bist dran"
+  },
+  "spModeStep": {
+    "message": "Fragt bei jedem Schritt"
+  },
+  "spModeTask": {
+    "message": "Fragt einmal pro Aufgabe"
+  },
+  "spModeFull": {
+    "message": "Vollständig freizügig"
+  },
+  "btnPause": {
+    "message": "Pause"
+  },
+  "btnStop": {
+    "message": "Stopp"
+  },
+  "btnResume": {
+    "message": "Fortsetzen"
+  },
+  "btnEndTask": {
+    "message": "Aufgabe beenden"
+  },
+  "btnContinue": {
+    "message": "Fortfahren"
+  },
+  "btnShare": {
+    "message": "Diesen Tab freigeben"
+  },
+  "btnUnshare": {
+    "message": "Freigabe beenden"
+  },
+  "spTaskTitle": {
+    "message": "Diese Aufgabe"
+  },
+  "spAllowedForTask": {
+    "message": "Für diese Aufgabe erlaubt:"
+  },
+  "spRevoke": {
+    "message": "Widerrufen"
+  },
+  "spActivityTitle": {
+    "message": "Was $BOT$ getan hat",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spActivityEmpty": {
+    "message": "Noch nichts."
+  },
+  "spSitesTitle": {
+    "message": "Websites, die $BOT$ verwenden darf",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spSiteAlways": {
+    "message": "Immer"
+  },
+  "spSiteNever": {
+    "message": "Nie"
+  },
+  "spSiteAsks": {
+    "message": "Fragt bei jedem Schritt"
+  },
+  "spShareTitle": {
+    "message": "Diesen Tab mit $BOT$ teilen?",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spShare": {
+    "message": "Teilen"
+  },
+  "spNotNow": {
+    "message": "Jetzt nicht"
+  },
+  "spUnshareTitle": {
+    "message": "Freigabe dieses Tabs für $BOT$ beenden?",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshare": {
+    "message": "Freigabe beenden"
+  },
+  "spKeep": {
+    "message": "Behalten"
+  },
+  "spDebugNote": {
+    "message": "Während $BOT$ arbeitet, zeigt Chrome eine Leiste an, dass Murage for Chrome mit dem Debuggen dieses Browsers begonnen hat. Damit weist Chrome dich darauf hin, dass eine Erweiterung in deinen Tabs handeln kann. Wenn du in dieser Leiste auf Abbrechen klickst, wird $BOT$ pausiert.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUpdateWaiting": {
+    "message": "Murage for Chrome wird aktualisiert, sobald $BOT$ diesen Schritt beendet hat.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spOldExtension": {
+    "message": "Aktualisiere Murage for Chrome, um die neuen Steuerelemente zu erhalten."
+  },
+  "spOldApp": {
+    "message": "Aktualisiere Murage auf diesem Computer, um diese Version von Murage for Chrome zu verwenden."
+  },
+  "spShortcutHint": {
+    "message": "Pause per Tastatur: $SHORTCUT$",
+    "placeholders": {
+      "shortcut": {
+        "content": "$1"
+      }
+    }
+  },
+  "spYourTurn": {
+    "message": "Du bist dran: $LINE$",
+    "placeholders": {
+      "line": {
+        "content": "$1"
+      }
+    }
+  },
+  "spFullOn": {
+    "message": "Vollständig freizügig ist eingeschaltet."
+  },
+  "spTurnOff": {
+    "message": "Ausschalten"
+  },
+  "spModeTitle": {
+    "message": "Freigabemodus"
+  },
+  "spHintStep": {
+    "message": "$BOT$ fragt vor jeder Aktion, die eine Website verändert.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintTask": {
+    "message": "Eine Karte pro Website, danach arbeitet $BOT$ die Aufgabe ab.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintFull": {
+    "message": "Keine Karten für gewöhnliche Aktionen. Was nur du tun kannst, kommt weiterhin zu dir zurück."
+  },
+  "spRevokeAria": {
+    "message": "Zugriff auf $SITE$ widerrufen",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshareAria": {
+    "message": "Freigabe von $SITE$ beenden",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spNewTab": {
+    "message": "Neuer Tab"
+  },
+  "spSharedTitle": {
+    "message": "Geteilte Tabs"
+  },
+  "spNoTabs": {
+    "message": "Keine Tabs geteilt."
+  },
+  "spNoSites": {
+    "message": "Noch keine Websites."
+  },
+  "spShareHint": {
+    "message": "Nur hier geteilte Tabs gehören zu diesem Bot. Einen Tab in seine Gruppe zu ziehen, teilt ihn nicht."
+  },
+  "spSetupTitle": {
+    "message": "Mit Murage verbinden"
+  },
+  "spSetupBody": {
+    "message": "Öffne Murage auf diesem Computer und aktiviere den Browser-Begleiter in den Browser-Einstellungen."
+  },
+  "spCheckConnection": {
+    "message": "Verbindung prüfen"
+  },
+  "spProfile": {
+    "message": "Chrome-Profil: $PROFILE$",
+    "placeholders": {
+      "profile": {
+        "content": "$1"
+      }
+    }
+  },
+  "spBodyWorking": {
+    "message": "Arbeitet in den geteilten Tabs."
+  },
+  "spBodyPaused": {
+    "message": "Tabs bleiben privat, bis du fortsetzt."
+  },
+  "spBodyStopped": {
+    "message": "Diese Aufgabe wurde gestoppt. Bitte den Bot, in einer neuen Unterhaltung neu zu starten."
+  },
+  "spBodyReconnect": {
+    "message": "Wartet darauf, dass Murage diesen Bot wieder verbindet."
+  },
+  "spErrHostOffline": {
+    "message": "Öffne Murage und prüfe die Verbindung erneut."
+  },
+  "spErrSiteDenied": {
+    "message": "Murage hat dich gebeten, diese Website zu erlauben. Erlaube sie dort und tippe dann erneut auf Teilen."
+  },
+  "spErrHumanHandover": {
+    "message": "Diese Website musst du selbst bedienen."
+  },
+  "spErrBindingInactive": {
+    "message": "Setze diesen Bot in Murage fort, bevor du Tabs teilst."
+  },
+  "spErrTabOwned": {
+    "message": "Dieser Tab gehört bereits einem anderen Bot."
+  },
+  "spErrUnknownBinding": {
+    "message": "Starte zuerst eine Browser-Aufgabe in Murage."
+  },
+  "spErrBindingStopped": {
+    "message": "Diese Aufgabe wurde gestoppt. Bitte den Bot, in einer neuen Unterhaltung neu zu starten."
+  },
+  "spErrGeneric": {
+    "message": "Die Browser-Aktion konnte nicht abgeschlossen werden. Prüfe die Verbindung und versuche es erneut."
+  },
+  "spHeaderBrand": {
+    "message": "Murage"
+  },
+  "spHeaderSuffix": {
+    "message": "für Chrome"
+  },
+  "spTaskAccess": {
+    "message": "Zugriff für die Aufgabe"
+  },
+  "overlayYourTurn": {
+    "message": "Du bist dran: $BOT$ wartet auf dich",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayStopTask": {
+    "message": "Aufgabe beenden"
+  },
+  "cmdPauseDescription": {
+    "message": "Murage for Chrome pausieren"
+  },
+  "spSwitchTitle": {
+    "message": "Bots"
+  },
+  "spBodyYourTurn": {
+    "message": "Erledige diesen Schritt selbst im Browser und lass deinen Bot dann weitermachen."
+  },
+  "spPending": {
+    "message": "Einen Moment"
+  },
+  "spPhaseStarting": {
+    "message": "Dein Bot startet"
+  },
+  "spPhaseConnecting": {
+    "message": "Browser-Werkzeuge werden verbunden"
+  },
+  "spPhaseReading": {
+    "message": "Diese Seite wird gelesen"
+  },
+  "spPhaseWaiting": {
+    "message": "Wartet auf dich"
+  },
+  "btnNewTask": {
+    "message": "Neue Aufgabe starten"
+  },
+  "spRecoveryReshare": {
+    "message": "Murage for Chrome hat neu angefangen. Teile deine Tabs erneut, um weiterzumachen."
+  },
+  "spErrHandoffUseContinue": {
+    "message": "Dein Bot wartet auf dich. Tippe auf Fortfahren, wenn du den Schritt erledigt hast."
+  },
+  "spErrNotHandoff": {
+    "message": "Dein Bot wartet gerade nicht auf dich, also gibt es nichts fortzusetzen."
+  },
+  "spErrIncognitoDenied": {
+    "message": "Murage for Chrome funktioniert nicht in privaten Fenstern. Öffne die Website in einem normalen Fenster und teile sie dann."
+  },
+  "spErrPersistenceFailed": {
+    "message": "Chrome konnte deine Änderungen nicht speichern. Versuche es gleich noch einmal."
+  },
+  "spErrUpdateRequired": {
+    "message": "Dieses Profil wurde von einer neueren Version von Murage for Chrome gespeichert. Aktualisiere die Erweiterung, um weiterzumachen."
+  },
+  "spErrStorageUnavailable": {
+    "message": "Der Chrome-Speicher konnte nicht gelesen werden. Starte Chrome neu und teile deine Tabs dann erneut."
+  }
+}

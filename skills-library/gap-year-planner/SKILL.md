@@ -4,7 +4,7 @@ description: |
   Structured gap year design guide covering goal setting, program research for volunteer, work, and travel options, budgeting, safety planning, skills development, re-entry planning, and strategies for making the gap year meaningful and productive. Use when the user asks about gap year planner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events planning travel"
   category: "family-relationships"

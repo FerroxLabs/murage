@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,7 @@ async function waitFor(check, message, timeout = 8_000) {
 
 function fixture({ slowProbe = false, sidecarExit = false, ignoreTerm = false, missingSidecar = false, harnessExit = false, setup = false, doorPort } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "murage-start-lifecycle-")));
+  mkdirSync(join(dir, "tmp"), { recursive: true });
   const installed = join(dir, "installer");
   mkdirSync(join(installed, "bin"), { recursive: true });
   cpSync(join(INSTALLER, "lib"), join(installed, "lib"), { recursive: true });
@@ -29,8 +30,8 @@ function fixture({ slowProbe = false, sidecarExit = false, ignoreTerm = false, m
   const harness = join(dir, "harness.mjs");
   const sidecar = join(dir, "sidecar.mjs");
   const tailscale = join(dir, "tailscale-stub");
-  const record = role => `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(join(dir, role + ".pid"))},String(process.pid));
-writeFileSync(${JSON.stringify(join(dir, role + ".env.json"))},JSON.stringify({devSecretDisabled:process.env.MURAGE_NO_DEV_DESKTOP_SECRET,companionToken:process.env.MURAGE_COMPANION_TOKEN}));\n`;
+  const record = role => `import {writeFileSync,readFileSync} from 'node:fs'; 
+writeFileSync(${JSON.stringify(join(dir, role + ".env.json"))},JSON.stringify({devSecretDisabled:process.env.MURAGE_NO_DEV_DESKTOP_SECRET,companionToken:process.env.MURAGE_COMPANION_TOKEN_VIA==='stdin'?readFileSync(0,'utf8').trim():undefined,tokenInEnv:process.env.MURAGE_COMPANION_TOKEN,tokenFileInEnv:process.env.MURAGE_COMPANION_TOKEN_FILE,argv:process.argv.slice(2),environBlob:Object.entries(process.env).map(e=>e.join('=')).join('\\n')}));\nwriteFileSync(${JSON.stringify(join(dir, role + ".pid"))},String(process.pid));\n`;
   writeFileSync(harness, record("harness") + (harnessExit ? "process.exit(9);" :
     `${ignoreTerm ? "process.on('SIGTERM',()=>{});" : ""}setInterval(()=>{},1000);`));
   if (!missingSidecar) writeFileSync(sidecar, record("sidecar") + (setup
@@ -47,6 +48,7 @@ writeFileSync(${JSON.stringify(join(dir, role + ".env.json"))},JSON.stringify({d
     detached: process.platform !== "win32", stdio: ["ignore","pipe","pipe"],
     env: {
       PATH: dirname(process.execPath), HOME: dir, USERPROFILE: dir, NO_COLOR: "1",
+      TMPDIR: join(dir,"tmp"), TEMP: join(dir,"tmp"), TMP: join(dir,"tmp"),
       MURAGE_DATA_DIR: join(dir,"data"), MURAGE_ENV_FILE: join(dir,"absent.env"),
       MURAGE_SERVER_ENTRY: harness, MURAGE_COMPANION_ENTRY: sidecar,
       MURAGE_TAILSCALE_BIN: tailscale, MURAGE_BIND_MODE: "loopback",
@@ -61,7 +63,7 @@ writeFileSync(${JSON.stringify(join(dir, role + ".env.json"))},JSON.stringify({d
   launcher.stderr.on("data", chunk => { output += chunk; });
   const pid = role => Number(readFileSync(join(dir,role + ".pid"),"utf8"));
   return {
-    launcher, pid, output:()=>output,
+    launcher, pid, dir, output:()=>output,
     childEnv: role => JSON.parse(readFileSync(join(dir,role + ".env.json"),"utf8")),
     ready: role => waitFor(()=>existsSync(join(dir,role + ".pid")),()=>`no ${role} startup marker (exit=${launcher.exitCode}, signal=${launcher.signalCode}): ${output}`),
     exited: () => waitFor(()=>launcher.exitCode !== null || launcher.signalCode !== null,()=>`launcher did not exit: ${output}`),
@@ -93,8 +95,17 @@ test("shutdown waits for stubborn harness and sidecar children to exit", options
   try {
     await f.ready("harness"); await f.ready("sidecar");
     assert.equal(f.childEnv("harness").devSecretDisabled,"1","headless harness inherited developer authority");
+    assert.equal(f.childEnv("harness").tokenInEnv,undefined,"launch token left in the harness environment");
+    assert.equal(f.childEnv("sidecar").tokenInEnv,undefined,"launch token left in the sidecar environment");
     assert.match(f.childEnv("harness").companionToken,/^[a-f0-9]{64}$/);
     assert.equal(f.childEnv("harness").companionToken,f.childEnv("sidecar").companionToken);
+    for (const role of ["harness","sidecar"]) {
+      const seen = f.childEnv(role);
+      assert.equal(seen.tokenFileInEnv,undefined,`${role} was handed a token file`);
+      assert.ok(!seen.environBlob.includes(seen.companionToken),`${role} environment carries the token`);
+      assert.ok(!JSON.stringify(seen.argv).includes(seen.companionToken),`${role} argv carries the token`);
+    }
+    assert.deepEqual(readdirSync(join(f.dir,"tmp")).filter(name=>name.startsWith("murage-ls-")),[],"a temp token file was created");
     assert.ok(!f.output().includes(f.childEnv("harness").companionToken),"private launch token was printed");
     f.launcher.kill("SIGTERM");
     await f.exited();

@@ -19,7 +19,7 @@ trigger_phrases: >-
   proposal publish a tech book write a book about software author a technical
   guide book about technology
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: writing content-marketing career step-by-step planning
   category: career

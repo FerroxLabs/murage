@@ -6,7 +6,7 @@ description: |
   Do NOT use for cohort-based retention over time (use cohort-analysis), customer segmentation by attributes (use segmentation-design), or KPI definition (use kpi-definition).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis data-science data-visualization"
   category: "data-analysis"

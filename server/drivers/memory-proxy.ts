@@ -1,10 +1,12 @@
+import { murageToolOnThisServer } from "../murage-tool-surface.ts";
 // Stdio MCP adapter. The harness authenticates the issued capability and owns
 // all audience, source, revision and mutation decisions.
 import readline from "node:readline";
 import { z } from "zod";
+import { turnSecret } from "../turn-credential.ts";
 
 const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
-const TOKEN = process.env.MURAGE_MEMORY_TOKEN ?? "";
+const token = () => turnSecret("MURAGE_MEMORY_TOKEN");
 const boundedId = z.string().min(1).max(256);
 const idempotencyKey = z.string().regex(/^[\w-]{1,160}$/);
 // A remembered line is named either by the turn-local handle printed in the
@@ -38,8 +40,8 @@ const schemas = {
 };
 const handleProperties = {
   handle: { type: "string", pattern: "^m[1-9][0-9]{0,2}$", description: "Turn-local handle of a remembered line as printed in <remembered-context> (m1, m2, ...). Give either handle alone, or id and version together." },
-  id: { type: "string", minLength: 1, maxLength: 256, description: "Exact record id from memory_search; requires version." },
-  version: { type: "integer", minimum: 1, description: "Exact record version from memory_search; requires id." },
+  id: { type: "string", minLength: 1, maxLength: 256, description: `Exact record id from ${murageToolOnThisServer("memory_search")}; requires version.` },
+  version: { type: "integer", minimum: 1, description: `Exact record version from ${murageToolOnThisServer("memory_search")}; requires id.` },
 };
 const handleSchema = { type: "object", additionalProperties: false, properties: handleProperties, required: [] };
 const evidenceSchema = {
@@ -58,7 +60,7 @@ const tools = [
         historical: { type: "boolean" }, cursor: { type: "string", maxLength: 160 },
       },
     } },
-  { name: "memory_get", description: "Get up to 20 memory record versions with sources. Each entry is either {handle} using a turn-local handle from <remembered-context> (m1, m2, ...) or {id, version} from memory_search. Access is checked again by Murage. Internal record/source IDs, revisions, versions, checkpoint IDs and byte ranges are tool-argument metadata, never user-facing citations; do not echo them in replies. If attribution is needed, use an existing supplied m-handle when available, otherwise describe the source, date or action status in ordinary language. Never invent a handle.",
+  { name: "memory_get", description: `Get up to 20 memory record versions with sources. Each entry is either {handle} using a turn-local handle from <remembered-context> (m1, m2, ...) or {id, version} from ${murageToolOnThisServer("memory_search")}. Access is checked again by Murage. Internal record/source IDs, revisions, versions, checkpoint IDs and byte ranges are tool-argument metadata, never user-facing citations; do not echo them in replies. If attribution is needed, use an existing supplied m-handle when available, otherwise describe the source, date or action status in ordinary language. Never invent a handle.`,
     annotations: { readOnlyHint: true, openWorldHint: false }, inputSchema: {
       type: "object", additionalProperties: false, required: ["handles"], properties: {
         handles: { type: "array", minItems: 1, maxItems: 20, items: handleSchema },
@@ -72,7 +74,7 @@ const tools = [
         ownerInvitation:evidenceSchema.items,
       },
     } },
-  { name: "memory_propose_correction", description: "Propose an evidence-backed correction to an exact memory version, named by a turn-local handle from <remembered-context> (m1, m2, ...) or by id and version from memory_search. This does not authorize replacing owner decisions.",
+  { name: "memory_propose_correction", description: `Propose an evidence-backed correction to an exact memory version, named by a turn-local handle from <remembered-context> (m1, m2, ...) or by id and version from ${murageToolOnThisServer("memory_search")}. This does not authorize replacing owner decisions.`,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }, inputSchema: {
       type: "object", additionalProperties: false, required: ["replacement", "evidence", "idempotencyKey"], properties: {
         ...handleProperties, replacement: textSchema, evidence: evidenceSchema, idempotencyKey: { type: "string", minLength: 1, maxLength: 160, pattern: "^[A-Za-z0-9_-]+$" },
@@ -128,12 +130,12 @@ async function handleMessage(message: Json) {
   // Name the argument and what is wrong with it, from the schema's own
   // message — never the value it was given.
   if (!parsed.success) return result(id, `Memory request rejected: ${argumentProblems(parsed.error)}`, true);
-  if (!TOKEN) return result(id, "Memory is not available to this bot for this turn, so nothing was searched or saved. Answer from what is in the conversation and say that memory was unavailable.", true);
+  if (!token()) return result(id, "Memory is not available to this bot for this turn, so nothing was searched or saved. Answer from what is in the conversation and say that memory was unavailable.", true);
   const timeoutMs = name === "memory_save" || name === "memory_propose_correction" ? 65000 : 5000;
   try {
     const response = await fetch(new URL(`/api/internal/memory/${paths[name]}`, HARNESS), {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
-      headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${token()}` },
       body: JSON.stringify(parsed.data),
     });
     const body = await readResponse(response);

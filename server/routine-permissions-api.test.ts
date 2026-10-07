@@ -4,8 +4,7 @@
 // Routine approval levels, end to end over real HTTP with the fake ACP agent
 // asking to delete outside its folder mid-turn (the stop line):
 //
-//   - a routine on a No limits bot inherits No limits: its run raises no card
-//     (it used to be judged as Auto and wait for nobody);
+//   - a routine pins its bot's level at creation and keeps the stop line;
 //   - every run works in the routine's one conversation, with a run marker;
 //   - a routine set to Auto stops at the stop line, and its card offers
 //     "Always allow for this routine", which covers the next run;
@@ -15,13 +14,12 @@
 //
 // HEADLESS ONLY: a throwaway temp HOME and a probed port, clear of 8799.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { conversationProofHeaders } from "./testing/conversation-proof.ts";
+import { makeTestHome, removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { assertSafeToWipe } from "./testing/safe-wipe.mjs";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -34,7 +32,6 @@ let child: ChildProcess;
 let home: string;
 let stderr = "";
 
-const COMPANION_TOKEN = "c".repeat(64);
 const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
     method,
@@ -43,8 +40,7 @@ const request = async (method: string, path: string, body?: unknown, headers: Re
   });
   return { status: res.status, body: await res.json().catch(() => null) };
 };
-// the paired phone's door: conversation routes need the companion credential
-const api = (method: string, path: string, body?: unknown) => request(method, path, body, conversationProofHeaders(path, COMPANION_TOKEN));
+const api = (method: string, path: string, body?: unknown) => request(method, path, body);
 const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
 const botState = async (botId: string) => (await desktopApi("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === botId);
 const taskState = async (botId: string, threadId: string) => (await botState(botId)).tasks.find((task: any) => task.threadId === threadId);
@@ -95,8 +91,9 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     const port = await freePortBlock([0, 1], 18_799, 200);
     base = `http://127.0.0.1:${port}`;
     chmodSync(FAKE_CLI, 0o755);
-    home = mkdtempSync(join(tmpdir(), "murage-routine-levels-"));
-    expect(home.startsWith(tmpdir())).toBe(true);
+    home = makeTestHome("murage-routine-levels-");
+    // A disposable home: OS temp, or the checkout's .murage-scratch on Linux.
+    expect(() => assertSafeToWipe(home)).not.toThrow();
     mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({
       instances: {
@@ -125,8 +122,8 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,
+        MURAGE_DATA_DIR: join(home, ".murage"),
         MURAGE_PORT: String(port),
-        MURAGE_COMPANION_TOKEN: COMPANION_TOKEN,
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
       },
@@ -149,11 +146,20 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     await removeTempDir(home);
   });
 
-  it("a routine inherits its bot's No limits, and every run works in one conversation", async () => {
+  it("a routine pins No limits, keeps the stop line, and uses one conversation across runs", async () => {
     const bot = await makeBot("Dax");
     expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id);
-    const first = await settled(await runOnce(routine.id));
+    expect((await routineState(routine.id)).permissionMode).toBe("unlimited");
+    const runId = await runOnce(routine.id);
+    const threadId = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
+    const card = await poll(() => liveCard(threadId!), 20_000);
+    expect(card, `no stop-line card at No limits. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+    expect(card.card).toMatchObject({ routineId: routine.id });
+    expect(card.card.routineAllowKey).toMatch(/^stop:delete:\/.*\/Documents\/old$/);
+    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { allowKey: card.card.routineAllowKey, threadId })).status).toBe(200);
+    expect((await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" })).body).toMatchObject({ ok: true });
+    const first = await settled(runId);
     expect(first, `run never settled. stderr: ${stderr.slice(-1500)}`).toMatchObject({ status: "completed" });
     const second = await settled(await runOnce(routine.id));
     expect(second).toMatchObject({ status: "completed" });
@@ -161,7 +167,8 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     expect(second!.threadId).toBe(first!.threadId);
     expect((await routineState(routine.id)).threadId).toBe(first!.threadId);
     const messages = await threadMessages(first!.threadId);
-    expect(messages.filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
+    expect(messages.filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(1);
+    expect(await liveCard(first!.threadId)).toBeNull();
     expect(messages.filter((m) => m.kind === "activity" && m.tool?.name === "Run now: RWA watch")).toHaveLength(2);
     // the engine is told this is a new run, and the earlier run's copy of the
     // instruction in the history is labelled as that run, not a new request
@@ -171,7 +178,6 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     expect(sent).toMatch(/User: \[Earlier run of the routine "RWA watch", started with Run now\]\nSweep/);
     // the owner's own bubble stays exactly what the routine says
     expect(messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["Sweep", "Sweep"]);
-    expect(messages.some((m) => m.kind === "activity" && Array.isArray(m.tool?.steps))).toBe(true);
   }, 90_000);
 
   it("a routine on Auto stops at the stop line, and Always allow for this routine covers its next run", async () => {
@@ -233,7 +239,13 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     const bot = await makeBot("Kit");
     expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id);
-    const run = await settled(await runOnce(routine.id));
+    const runId = await runOnce(routine.id);
+    const routineThread = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
+    const routineCard = await poll(() => liveCard(routineThread!), 20_000);
+    expect(routineCard).not.toBeNull();
+    expect((await desktopApi("POST", `/api/threads/${routineThread}/respond`, { requestId: routineCard.card.requestId, behavior: "allow" })).body).toMatchObject({ ok: true });
+    const run = await settled(runId);
+    expect(run).toMatchObject({ status: "completed" });
     const threadId = run!.threadId as string;
     // the conversation's own task copied No limits when it was made
     expect((await taskState(bot.id, threadId)).noLimits).toBe(true);

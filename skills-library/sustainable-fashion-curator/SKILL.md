@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request requires professional specialized advice or falls outside the scope of sustainable fashion curator.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "fashion design sustainable-shopping"
   category: "design-creative"

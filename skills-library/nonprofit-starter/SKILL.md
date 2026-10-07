@@ -4,7 +4,7 @@ description: |
   Step-by-step guide to starting a nonprofit organization including mission development, 501(c)(3) application, bylaws, board formation, fiscal sponsorship, fundraising, and compliance. Use when the user asks about nonprofit starter or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning"
   category: "business-strategy"

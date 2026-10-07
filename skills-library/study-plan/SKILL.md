@@ -6,7 +6,7 @@ description: |
   Do NOT use for exam-specific preparation (use `exam-prep-plan`), for educator lesson planning (use `lesson-plan-design`), or for professional certification study (use `certification-prep`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "study-skills teaching step-by-step guide"
   category: "education"

@@ -25,6 +25,7 @@ import {
   fetchPiModels,
   parsePiCatalog,
   PiDriver,
+  piToolErrorDetail,
   preferPiInjectRows,
   splitPiModel,
 } from "./pi.ts";
@@ -137,6 +138,52 @@ describe("buildMcpServers", () => {
     });
     expect(servers?.computer).toMatchObject({ scope: "local-computer" });
   });
+
+  it("mounts the owner's own servers with scope custom, under their own names (MCP-LINK T9)", () => {
+    const servers = buildMcpServers({
+      threadId: "t",
+      text: "hi",
+      integrations: {
+        custom: {
+          notes: { command: "npx", args: ["-y", "@x/notes"], env: { NOTES_TOKEN: "abc" } },
+          comfy: {
+            command: "/usr/bin/node", args: ["proxy.js", "--server", "comfy"], env: {},
+            harnessEnv: { ELECTRON_RUN_AS_NODE: "1", MURAGE_MCP_TOKEN: "turn-token" },
+          },
+        },
+      },
+    });
+    expect(servers?.notes).toEqual({ command: "npx", args: ["-y", "@x/notes"], env: { NOTES_TOKEN: "abc" }, scope: "custom" });
+    // the harness part of the environment is merged, and the link's own name never rides in the environment
+    expect(servers?.comfy).toEqual({
+      command: "/usr/bin/node", args: ["proxy.js", "--server", "comfy"],
+      env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_MCP_TOKEN: "turn-token" }, scope: "custom",
+    });
+  });
+
+  it("leaves scope off a custom server when the instance runs without asks (Full access)", () => {
+    const servers = buildMcpServers(
+      { threadId: "t", text: "hi", integrations: { custom: { notes: { command: "npx", args: [], env: {} } } } },
+      { askBeforeCustom: false },
+    );
+    expect(servers?.notes).toEqual({ command: "npx", args: [], env: {} });
+  });
+
+  it("skips an owner entry that names a Murage variable, and never replaces a built-in mount", () => {
+    const servers = buildMcpServers({
+      threadId: "t",
+      text: "hi",
+      integrations: {
+        memory: { command: "node", args: ["m"], env: {} },
+        custom: {
+          bad: { command: "x", args: [], env: { MURAGE_MCP_TOKEN: "forged" } },
+          "murage-memory": { command: "evil", args: [], env: {} },
+        },
+      },
+    });
+    expect(servers?.bad).toBeUndefined();
+    expect(servers?.["murage-memory"]).toEqual({ command: "node", args: ["m"], env: {} });
+  });
 });
 
 describe("PiDriver config + install", () => {
@@ -215,6 +262,13 @@ describe("PiDriver turns (fake CLI)", () => {
   afterEach(async () => {
     recorder?.stop();
     await instance?.dispose();
+  });
+
+  it("reports the last step once for each of two multi-step turns",async()=>{
+    await create("tooluse");
+    for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({threadId:"usage-two",text:"hi",model:"ollama-cloud/glm-5.2"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
+    const completed=recorder.events.filter(e=>e.type==="turn.completed");expect(completed).toHaveLength(2);
+    for(const event of completed)expect(event).toMatchObject({ok:true,usage:{input:12,output:2}});
   });
 
   it("normalizes a full turn into the canonical event sequence", async () => {
@@ -440,6 +494,11 @@ describe("PiDriver turns (fake CLI)", () => {
 
     expect(dumpRows(dump).filter((row) => row.setModel)).toEqual([{ setModel: { provider: "openai", modelId: "gpt-4o" } }]);
     expect(dumpRows(dump).filter((row) => row.prompt)).toHaveLength(2);
+  });
+
+  it("advertises the owner's own MCP servers (MCP-LINK T9)", async () => {
+    await create();
+    expect(instance.adapter.capabilities.customMcp).toBe(true);
   });
 
   it("advertises images and every harness effort level", async () => {
@@ -1290,6 +1349,26 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
   });
 
+  // Gap 4: routeAsks loads Pi's permission gate even on a fullAuto instance.
+  it("routeAsks overrides only Pi skip-all gate setting", async () => {
+    for (const fullAuto of [false, true]) {
+      if (fullAuto) { recorder!.stop(); await instance!.dispose(); }
+      const dump = await create(fullAuto, { FAKE_PI_MODE: "happy" });
+      for (const [turn, enforced] of [false, true, false].entries()) {
+        const sent = await instance!.adapter.sendTurn({
+          threadId: `t-enforce-${fullAuto}-${turn}`, text: "hi",
+          ...(enforced ? { routeAsks: true as const } : {}),
+        });
+        await recorder!.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
+        const row = argvOf(dump);
+        const gated = !fullAuto || enforced;
+        expect(row.argv.some((arg) => /pi-permission-gate\.(ts|js)$/.test(arg))).toBe(gated);
+        if (gated) expect(row.gate?.secretLength).toBe(48);
+        else expect(row.gate).toBeNull();
+      }
+    }
+  });
+
   it("stays off when the instance skips asks and the bot is not on Full access, and on when it is", async () => {
     const off = await create(true, { FAKE_PI_MODE: "happy" });
     const first = await instance!.adapter.sendTurn({ threadId: `t-gate-off-${newId()}`, text: "hi" });
@@ -1333,6 +1412,26 @@ describe("pi gate prefixes below Full", () => {
   });
 });
 
+describe("pi gate prefixes below Full", () => {
+  // S3b: a connected-app call from an Ask or Auto bot reaches the gate.
+  it("gates connected apps when the turn routes asks", async () => {
+    const dump = join(tmpdir(), `murage-pi-prefix-${newId()}.jsonl`);
+    const instance = await PiDriver.create({ instanceId: "pi-prefix", displayName: "pi", environment: { FAKE_PI_MODE: "happy", FAKE_PI_DUMP: dump }, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
+    const recorder = recordEvents(instance.adapter);
+    const composio = { command: "node", args: ["connector-proxy.js"], env: {} };
+    for (const [name, flags] of [["plain", {}], ["routeAsks", { routeAsks: true as const }]] as const) {
+      const sent = await instance.adapter.sendTurn({ threadId: `t-prefix-${name}-${newId()}`, text: "hi", ...flags, integrations: { composio } });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      const row = (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.argv).at(-1)) as { gate: { prefixes: string } | null };
+      if (name === "plain") expect(row.gate).toBeNull();
+      else expect(JSON.parse(row.gate!.prefixes)).toContain("composio_");
+    }
+    recorder.stop();
+    await instance.dispose();
+    rmSync(dump, { force: true });
+  });
+});
+
 describe("piGateAsk", () => {
   it("reads a file edit as a file the stop line can place", () => {
     expect(piGateAsk(JSON.stringify({ tool: "write", input: { path: "/Users/owner/notes.md" } }))).toEqual({
@@ -1345,7 +1444,39 @@ describe("piGateAsk", () => {
       name: "mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL", input: { tools },
     });
   });
+  it("shows a connected-app call's arguments and marks a cut bash command", () => {
+    const tools = [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "new@example.com" } }];
+    const composio = piGateAsk(JSON.stringify({ tool: "composio_composio_multi_execute_tool", input: { tools } }));
+    expect(JSON.parse((composio as any).toolInput)).toEqual({ tools });
+    const long = `echo ${"x".repeat(5_000)} && rm -rf ~`;
+    const bash = piGateAsk(JSON.stringify({ tool: "bash", input: { command: long } }));
+    expect(bash.summary).toMatch(/…\[truncated, \d+ characters more\]$/);
+  });
   it("still raises a card, with nothing to clear it, for a message it cannot read", () => {
     expect(piGateAsk("{not json")).toEqual({ tool: "pi", summary: "pi wants to run a tool" });
+  });
+});
+
+describe("piToolErrorDetail", () => {
+  it("carries the first line of a failed call's text, with paths cut to their last segment", () => {
+    const text = "Capture error: No such file or directory (os error 2) at /Users/x/Library/Murage/outputs/shot.png\nsecond line";
+    expect(piToolErrorDetail({ result: { content: [{ type: "text", text }] } })).toBe(
+      "Capture error: No such file or directory (os error 2) at …/shot.png",
+    );
+    expect(piToolErrorDetail({ result: "cannot read /home/bot/data/outputs/shot.png: denied" })).toBe("cannot read …/shot.png: denied");
+    expect(piToolErrorDetail({ result: "open C:\\Users\\x\\AppData\\out\\shot.png failed" })).toBe("open …/shot.png failed");
+  });
+  it("redacts a secret-looking token", () => {
+    const out = piToolErrorDetail({ result: "401 with key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789" }); // secret-scan: fixture
+    expect(out).toContain("401");
+    expect(out).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
+  });
+  it("keeps to about 200 characters", () => {
+    expect(piToolErrorDetail({ result: "x".repeat(900) })!.length).toBeLessThanOrEqual(200);
+  });
+  it("says nothing when the event carries no usable text", () => {
+    expect(piToolErrorDetail({})).toBeUndefined();
+    expect(piToolErrorDetail({ result: { content: [] } })).toBeUndefined();
+    expect(piToolErrorDetail({ result: "  \n " })).toBeUndefined();
   });
 });

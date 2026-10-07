@@ -5,7 +5,7 @@ description: |
   Do NOT use for resume writing, job description creation (use job-description), or interview preparation for candidates (use interview-prep skill).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "template planning checklist strategy guide"
   category: "business-strategy"

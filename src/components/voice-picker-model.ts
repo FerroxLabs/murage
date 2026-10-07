@@ -37,9 +37,11 @@ const GENDERS = ["female", "male", "neutral"] as const;
  *  through `accent`. */
 const KNOWN_ACCENTS = new Set(["American", "British", "Australian", "Irish", "Scottish", "Indian", "Canadian", "South African", "New Zealand"]);
 
-/** Alphabetical by the name Murage shows. */
+/** Grok voices first (they are what a bot starts with), then the rest;
+ *  alphabetical by the name Murage shows within each. */
 export function sortVoices<T extends PickerVoice>(voices: T[]): T[] {
-  return [...voices].sort((a, b) => a.label.localeCompare(b.label));
+  const rank = (v: PickerVoice) => (v.provider === "grok" ? 0 : 1);
+  return [...voices].sort((a, b) => rank(a) - rank(b) || a.label.localeCompare(b.label));
 }
 
 export function voiceAccent(voice: PickerVoice): string | undefined {
@@ -132,4 +134,11 @@ export function previewButton(state: RowPreviewState, name: string): { text: str
   if (state === "loading") return { text: "Loading", label: `Loading ${name}` };
   if (state === "playing") return { text: "Stop", label: `Stop ${name}` };
   return { text: "Play", label: `Play ${name}` };
+}
+
+/** Marks the voice the app gave a bot on its own, so the owner can tell it
+ *  from one they picked. Other rows pass through unchanged. */
+export function markAssigned<T extends PickerVoice>(voices: T[], assignedId: string | undefined): T[] {
+  if (!assignedId) return voices;
+  return voices.map((v) => (v.id === assignedId ? { ...v, description: v.description ? `Default. ${v.description}` : "Default" } : v));
 }

@@ -292,6 +292,33 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     await removeTempDir(state);
   });
 
+  // Gap 4: Hermes must hand an enforced turn's permission request to Murage.
+  it("routeAsks overrides only Hermes skip-all permission answers", async () => {
+    for (const fullAuto of [false, true]) {
+      if (fullAuto) { recorder!.stop(); await instance!.dispose(); }
+      instance = await HermesAgentDriver.create({
+        instanceId: "hermes-enforce", displayName: "Hermes", enabled: true,
+        environment: { ...scopedEnv(), FAKE_ACP_MODE: "permission" },
+        config: { cli: FAKE_ACP, fullAuto },
+      });
+      recorder = recordEvents(instance.adapter);
+      for (const [turn, enforced] of [false, true, false].entries()) {
+        const threadId = `t-enforce-${fullAuto}-${turn}`;
+        const sent = await instance.adapter.sendTurn({ threadId, text: "go", model: "flux-auto",
+          ...(enforced ? { routeAsks: true as const } : {}),
+        });
+        const event = await recorder.until((event) => event.turnId === sent.turnId &&
+          (event.type === "request.opened" || event.type === "turn.completed"));
+        expect(event.type).toBe(!fullAuto || enforced ? "request.opened" : "turn.completed");
+        if (event.type === "request.opened") {
+          expect(event).toMatchObject({ requestType: "permission", toolCall: { name: "shell", input: { command: "echo hi" } } });
+          await instance.adapter.respondToRequest(threadId, event.requestId!, { behavior: "deny" });
+          await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
+        }
+      }
+    }
+  });
+
   it("writes a config.yaml hermes will accept, with the key INLINE", async () => {
     await spawnFor("flux-auto");
     const yaml = readFileSync(scopedYaml(), "utf8");
@@ -312,7 +339,9 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     const { argv } = await spawnFor("flux-auto");
     expect(existsSync(userConfig())).toBe(false);
     // ACP ignores -m, so the model can only come from the scoped config.yaml.
-    expect(argv).toEqual(["acp"]);
+    // `-p default` keeps the scoped home: Hermes resolves `default` to the
+    // root HERMES_HOME names, and a sticky profile is never read.
+    expect(argv).toEqual(["-p", "default", "acp"]);
   });
 
   it("aims the child env at the scoped home, and puts the key NOWHERE in it", () => {
@@ -326,7 +355,8 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     expect(env.HERMES_HOME).toBe(fluxHermesHome(scopedEnv()));
     // The bearer lives in the 0600 config.yaml and in no variable at all.
     expect(Object.keys(env).filter((key) => env[key] === FLUX_KEY)).toEqual([]);
-    expect(Object.keys(env).sort()).toEqual(["HERMES_HOME", "HOME", "MURAGE_DATA_DIR", "PATH"]);
+    expect(Object.keys(env).sort()).toEqual(["HERMES_HOME", "HOME", "MURAGE_DATA_DIR", "MURAGE_HERMES_ROUTED_HOME", "PATH"]);
+    expect(env.MURAGE_HERMES_ROUTED_HOME).toBe(env.HERMES_HOME);
   });
 
   it("POSITIVE CONTROL — the same helper touches nothing for a native id", () => {
@@ -362,11 +392,22 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     expect(statSync(fluxHermesHome(scopedEnv())).mode & 0o777).toBe(0o700);
   });
 
-  it("refuses a Flux route under HERMES_PROFILE instead of losing the persona", () => {
-    const env: Record<string, string | undefined> = { HOME: home, MURAGE_DATA_DIR: state, HERMES_PROFILE: "research" };
-    expect(() => applyHermesFluxHome(env, "flux-auto", FLUX_KEY)).toThrow(/HERMES_PROFILE/);
+  it("refuses a Flux route for a pinned profile instead of losing the persona", () => {
+    const env: Record<string, string | undefined> = { HOME: home, MURAGE_DATA_DIR: state };
+    expect(() => applyHermesFluxHome(env, "flux-auto", FLUX_KEY, { profile: "research" })).toThrow(/Hermes profile "research"/);
     expect(env.HERMES_HOME).toBeUndefined();
     expect(existsSync(scopedYaml())).toBe(false);
+  });
+
+  it("keys the refusal on the pinned profile, not HERMES_PROFILE (Hermes ignores it)", () => {
+    const env: Record<string, string | undefined> = { HOME: home, MURAGE_DATA_DIR: state, HERMES_PROFILE: "research" };
+    expect(applyHermesFluxHome(env, "flux-auto", FLUX_KEY)).toBe("flux-auto");
+    expect(env.HERMES_HOME).toBe(fluxHermesHome(scopedEnv()));
+  });
+
+  it("keeps Flux for a profile pinned from the sticky default on upgrade (O12)", () => {
+    const env: Record<string, string | undefined> = { HOME: home, MURAGE_DATA_DIR: state };
+    expect(applyHermesFluxHome(env, "flux-auto", FLUX_KEY, { profile: "flux-ceo", profileOrigin: "sticky" })).toBe("flux-auto");
   });
 
   it("surfaces that refusal as a failed turn, not a silently native one", async () => {
@@ -374,14 +415,25 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     instance = await HermesAgentDriver.create({
       instanceId: "hermes-flux-profile",
       displayName: "Hermes",
-      environment: { HOME: home, MURAGE_DATA_DIR: state, FAKE_ACP_DUMP: dump, HERMES_PROFILE: "research" },
+      environment: { HOME: home, MURAGE_DATA_DIR: state, FAKE_ACP_DUMP: dump },
       enabled: true,
-      config: { cli: FAKE_ACP, fullAuto: true },
+      config: { cli: FAKE_ACP, fullAuto: true, profile: "research" },
     });
     await expect(
       instance.adapter.sendTurn({ threadId: "t-profile", text: "hi", model: "flux-auto" }),
-    ).rejects.toThrow(/HERMES_PROFILE/);
+    ).rejects.toThrow(/Hermes profile "research"/);
     expect(existsSync(dump)).toBe(false);
+  });
+
+  it("does not offer Flux rows to a pinned profile that could never run them", async () => {
+    instance = await HermesAgentDriver.create({
+      instanceId: "hermes-profile-catalog",
+      displayName: "Hermes",
+      environment: { HOME: home, MURAGE_DATA_DIR: state },
+      enabled: true,
+      config: { cli: FAKE_ACP, fullAuto: true, profile: "research" },
+    });
+    expect(instance.models.options.filter((option) => option.id.startsWith("flux-"))).toEqual([]);
   });
 
   it("POSITIVE CONTROL — a native model writes no scoped home at all", async () => {
@@ -419,5 +471,23 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     // (ModelPicker.tsx:166) with no way back (:208), and that pane renders
     // only options carrying this flag.
     expect(flux.every((option) => option.custom === true)).toBe(true);
+  });
+});
+
+describe("hermesSpawnArgs routed homes (audit round 1, Astra 3)", () => {
+  it("keeps the pinned profile when the owner's own Hermes home sits under the data dir", async () => {
+    const { hermesSpawnArgs } = await import("./hermes.ts");
+    const dataDir = "/workspace/murage";
+    expect(hermesSpawnArgs({ profile: "fred" }, { MURAGE_DATA_DIR: dataDir, HERMES_HOME: `${dataDir}/my-hermes` })).toEqual(["-p", "fred", "acp"]);
+  });
+
+  it("passes -p default only for a home Murage made for this turn", async () => {
+    const { hermesSpawnArgs, markHermesRoutedHome } = await import("./hermes.ts");
+    const env: Record<string, string | undefined> = { HERMES_HOME: "/anywhere/turn-home" };
+    markHermesRoutedHome(env);
+    expect(hermesSpawnArgs({ profile: "fred" }, env)).toEqual(["-p", "default", "acp"]);
+    // A later HERMES_HOME that is not the marked one is the owner's again.
+    env.HERMES_HOME = "/elsewhere";
+    expect(hermesSpawnArgs({ profile: "fred" }, env)).toEqual(["-p", "fred", "acp"]);
   });
 });

@@ -1,8 +1,9 @@
 ---
 name: helm-decision-frames
 description: "The founder says \"I'm stuck on a call,\" \"I keep going back and forth,\" or \"what would you do here?\" Load for any binary decision or unresolved tradeoff older than two weeks. If they ask you to decide for them, push back: the frame is yours; the call is theirs."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "helm"
 ---

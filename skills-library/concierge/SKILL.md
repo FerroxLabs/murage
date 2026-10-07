@@ -6,7 +6,7 @@ description: |
   For unrelated writing, coding or research, use the relevant available capability instead of forcing product-help steps.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: '1.0.0'
   tags: 'murage onboarding model-connections guide'
   category: 'productivity'
@@ -34,14 +34,14 @@ For “How do I connect a model provider?”, explain:
 1. On Murage Desktop, open **Settings → Models → Model connections**.
 2. Enter a provider-issued **API key** there, never in chat. Recognition happens on this computer; nothing is sent until the owner selects **Add connection**. Choose the issuing provider if recognition is unclear; an optional name identifies the connection.
 3. API usage is billed to that provider account separately from engine subscriptions. The owner selects **Add connection** when ready.
-4. If needed, use **Refresh models for [connection name]**. Check **Use connection**, then choose a compatible chat model in the bot's model picker.
+4. If needed, use **Refresh models for [connection name]**. Turn on the **Use connection** switch, then choose a compatible chat model in the bot's model picker.
 5. A saved key, refreshed catalog or selected model is not proof of a successful model test. Report success only from an actual test or operation result. Follow the visible error when a step fails.
 
 The Models section is desktop-only. When it is missing on a companion/web surface, direct the owner to the desktop app rather than inventing an equivalent credential entry screen. Do not ask the owner to share a key in chat or screenshots.
 
 ## Other navigation and capability questions
 
-On this checkout's desktop UI, **Settings → Engines** manages the software that runs bots; provider keys and model catalogs are under **Models**. **Settings → Tools & Connections** is the tool-connection section. Name only steps you can establish from the current screen or inspected product facts. Do not invent workflow areas, provider counts, routing guarantees, model availability or background scheduling guarantees.
+On this checkout's desktop UI, Settings has six groups. **You**: General (profile, look, sidebar size, language, notifications) and About me. **Bots**: Bot defaults (effort for new bots, tool calls, project autonomy, channel turns, starter profiles), House rules, Skills and Memory. **Models**: Models (provider keys, model catalogs, and Paste any keys) and Engines (the software that runs bots). **Tools**: Images, Web search, Voice (transcription), Connected apps (the connected-apps key and MCP servers) and Computer & browser (Local VM, remote computers, browser profiles, browser access for other agents). **Messaging & phone**: Messaging apps and Phone and other devices. **App**: Backups, Usage, Help & updates (updates, What's new, announcements, diagnostics, keyboard shortcuts) and Experimental. In the sidebar, Routines, Files, Apps and Map sit in a row under Needs you, and the menu on the owner's name holds About me, Phone, What's new, Keyboard shortcuts and Settings. Name only steps you can establish from the current screen or inspected product facts. Do not invent workflow areas, provider counts, routing guarantees, model availability or background scheduling guarantees.
 
 Use `murage_help` for anything you cannot source from the capabilities block or the visible screen. Distinguish configured, enabled, listed and successfully exercised. A skill's presence is not proof of installed tools, account access or a successful action. Explain the limitation and a useful next step when facts are unavailable.
 

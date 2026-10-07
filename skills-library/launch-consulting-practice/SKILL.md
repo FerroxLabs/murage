@@ -19,7 +19,7 @@ trigger_phrases: >-
   become an independent consultant start my own advisory firm transition to
   consulting build a consulting pipeline
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: entrepreneurship freelancing step-by-step planning
   category: business-operations

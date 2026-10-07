@@ -6,7 +6,7 @@ description: |
   Do NOT use for freelance or independent contractor agreements, executive compensation packages requiring specialized counsel, or legal advice on whether to accept an offer.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy contracts checklist guide"
   category: "legal-civic"

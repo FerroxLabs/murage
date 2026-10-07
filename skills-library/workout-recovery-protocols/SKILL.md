@@ -6,7 +6,7 @@ description: |
   Do NOT use for injury rehabilitation (consult a physical therapist), sleep disorders (consult a healthcare provider), or designing the training program itself (use strength training or running skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "fitness workout-planning strategy"
   category: "health-wellness"

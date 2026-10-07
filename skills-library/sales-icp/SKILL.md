@@ -1,13 +1,12 @@
 ---
 name: sales-icp
 description: "Build an ideal customer profile across firmographic, technographic, behavioural, pain-point, budget and channel dimensions, plus the negative ICP, a 100-point scoring rubric, buyer personas, a prospecting playbook and a first-outreach draft that inherits the jurisdiction gates. Use when the user is selling to everyone and closing no one, or when a new segment needs defining. Do NOT use for evaluating one named account (use sales-qualify or sales-prospect) or for the pricing and packaging that follows from the segment (use forge's pricing work)."
-license: MIT
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sales icp personas targeting smb"
   category: "sales"
-  attribution: "Wayland Business Suite (Original)"
 ---
 
 > **Templates and analytical tools only - not legal, marketing-compliance, or data-protection advice.** ICP outputs feed downstream cold-outreach work (CAN-SPAM, CASL, GDPR, UWG §7, CCPA exposure) and should not include illegal targeting (e.g., do not target German B2B prospects for cold email - UWG §7 forbids it without prior express consent). Drafted first messages inherit the sales-outreach Phase 0 jurisdiction gate. Never instruct users to scrape LinkedIn, Glassdoor, G2, Capterra, or Crunchbase free-tier - those ToS forbid it; use official APIs or OSINT.

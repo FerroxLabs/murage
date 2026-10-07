@@ -9,7 +9,7 @@ description: |
   meeting follow-ups that are primarily about action items (use `meeting-notes`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "writing email personal-communication"
   category: "writing"

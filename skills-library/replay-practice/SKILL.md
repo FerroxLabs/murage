@@ -1,7 +1,9 @@
 ---
 name: replay-practice
 description: Practice trading in TradingView replay mode — step through historical bars, take trades, track P&L. Use when the user wants to practice or backtest manually.
-license: MIT
+license: Apache-2.0
+metadata:
+  author: Ferrox Labs
 ---
 
 # Replay Practice Trading

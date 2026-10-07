@@ -11,7 +11,8 @@ the OpenMausBot contributors, licensed under the Apache License, Version 2.0.
 Murage is a fork of OpenMausBot. Substantial modifications have been made,
 including but not limited to: renaming of the product, its identifiers,
 configuration paths and network endpoints; replacement of hosted service
-endpoints with Ferrox Labs infrastructure; and integration with Wayland Core.
+endpoints with Ferrox Labs infrastructure; and integration with the bundled
+Fuigo agent harness and Flux Router.
 
 Murage is not affiliated with, endorsed by, or sponsored by the OpenMausBot
 project or its contributors.
@@ -20,6 +21,28 @@ Murage's common ancestor with OpenMausBot is the 0.1.44 source (commit
 6140532e). Everything after that point is selective adaptation, not parity.
 Murage does not import whole upstream releases, and no upstream release
 should be described as having been imported into Murage.
+
+--------------------------------------------------------------------------
+WhatsApp channel
+--------------------------------------------------------------------------
+
+The WhatsApp channel links the user's own WhatsApp account through Baileys
+(https://github.com/WhiskeySockets/Baileys, npm package "baileys" 7.0.0-rc14),
+Copyright (c) 2025 Rajeh Taher/WhiskeySockets, licensed under the MIT License
+(third_party/baileys/LICENSE). Baileys depends on libsignal 6.0.0, licensed
+under the GNU General Public License, version 3 (third_party/libsignal-node/
+LICENSE); GPL-3.0 is compatible with this product's AGPL-3.0-or-later and its
+full text accompanies the distribution. Baileys, jimp and their dependencies
+are shipped unmodified under server/node_modules; each package's licence is
+recorded in whatsapp-runtime-manifest.json.
+
+Portions of the channel are adapted from Hermes Agent scripts/whatsapp-bridge,
+Copyright (c) 2025 Nous Research (MIT, third_party/hermes-agent/LICENSE), and
+from OpenClaw extensions/whatsapp, Copyright (c) 2026 OpenClaw Foundation
+(MIT, third_party/openclaw/LICENSE).
+
+Murage is not affiliated with, authorized, endorsed by, or in any way
+officially connected with WhatsApp or any of its subsidiaries or affiliates.
 
 --------------------------------------------------------------------------
 Upstream adaptations in Murage 0.1.52
@@ -329,6 +352,148 @@ reviewed at the exact upstream commits named. None is a wholesale import.
     Save a copy file links, which also now accept forward-slash drive paths
     and file URLs; upstream's server-side and gallery parsing were not taken.
     Murage: src/lib/markdown-windows-paths.ts, src/components/ChatMarkdown.tsx
+
+  OpenMausBot PR #1840 (skills.sh pages as skill import sources)
+    commit 95a94daa5e32ae9627104f07217722979c92684a
+    Read a skills.sh/<owner>/<repo>[/<skill>] link as the GitHub repository
+    the registry indexes and import only the named skill, matching the slug
+    against folder names first and SKILL.md names second. Adapted to
+    Murage's discovery caps and plain import messages; upstream's fetch
+    budget was not taken.
+    Murage: server/skill-fetch.ts, server/skill-import-sources.ts
+
+  OpenMausBot PR #1872 (focus the composer on thread switch)
+    merge fce2904e17b8c34c1b338c7b2c827e73d110dcf7
+    A freshly opened thread's composer takes keyboard focus from the row or
+    button that opened it, never from another text field or an open dialog,
+    and never on a touch screen. Adapted to Murage's coarse-pointer query and
+    [data-composer] marker.
+    Murage: src/lib/composer-attachments.ts, src/components/Composer.tsx
+
+  OpenMausBot PR #1840 (hide the pasted-text wrapper in the user's bubble)
+    commit 95a94daa5e32ae9627104f07217722979c92684a
+    Bubbles in 1:1 chats and rooms drop the exact <pasted-text> wrapper
+    lines and show only what was pasted; Copy copies the clean text. The
+    stored message, what the bot receives, edit and the server's own
+    readers are unchanged. Adapted to Murage's splitter as an opt-in, with
+    wrappers inside typed fenced code left visible.
+    Murage: src/lib/composer-attachments.ts, src/components/ChatView.tsx,
+    src/components/GroupView.tsx
+
+  OpenMausBot PR #1840 (Local VM confirmations anchored to the main window)
+    commit 95a94daa5e32ae9627104f07217722979c92684a
+    Delete and replace confirmations for the Local VM go through a
+    dialog:confirm IPC call that dialog.showMessageBox parents to the Murage
+    window, so tiling window managers show it over the app; a double click
+    or a click while the question is open never starts an action twice.
+    Adapted to Murage's owned-main-sender check, a Cancel-first button pair
+    with a named action, and a browser fallback.
+    Murage: electron/confirm-dialog.mjs, electron/main.mjs,
+    electron/preload.cjs, src/lib/window-confirm.ts,
+    src/components/LocalComputerSection.tsx
+
+  OpenMausBot PR #1824 (mise-managed CLIs on PATH, PATH part only)
+    commit ab26045124a447eea4bd76fdd814555932a92138
+    Scan mise's shims directory for agent CLIs, so an engine installed with
+    mise is found from a GUI launch. Adapted to honour an absolute
+    MISE_DATA_DIR or XDG_DATA_HOME; the coordinate_bots error text in the
+    same upstream change was not taken.
+    Murage: server/env-path.ts
+
+  OpenMausBot PR #1205 (snooze until new activity)
+    merge 2a41fd080c547b80bb36450653b4664567b25dbe
+    A conversation can be snoozed until its next new activity instead of a
+    time. Adapted to Murage's own conversation snooze: kept in
+    thread_snooze with an until_activity column, woken by a new reply, card
+    or run report from a bot or words from a person on a channel (never the
+    owner's own words or a working step), still woken at once by anything
+    owed, and never quiet past the 30-day limit.
+    Murage: server/thread-snooze.ts, server/index.ts, shared/thread-snooze.ts,
+    src/lib/thread-attention.ts, src/lib/thread-snooze.ts,
+    src/components/ConversationSnooze.tsx
+
+  OpenMausBot PR #1854 (relative time on thread rows)
+    commit d835917bf9b50f2ce47687f565624eff11a02caa
+    Today's work on sidebar rows and in the conversation list reads as how
+    long ago ("Just now", "5 min ago", "3 hr ago"), from one shared
+    30-second clock that rests while the window is hidden; the hover title
+    keeps the full date and time. Adapted to Murage's own list times, which
+    stay as they were for anything older than today.
+    Murage: src/lib/task-list.ts, src/lib/relative-now.ts,
+    src/components/Sidebar.tsx, src/components/TaskPicker.tsx
+
+  OpenMausBot PR #1840 (Requesty API setup preset)
+    commit 95a94daa5e32ae9627104f07217722979c92684a
+    Requesty, an OpenAI-compatible router, is offered next to OpenRouter and
+    Groq with its fixed endpoint https://router.requesty.ai/v1. Adapted as a
+    named model connection preset in Murage's own provider bank.
+    Murage: electron/provider-connections.mjs, shared/provider-connections.ts,
+    server/provider-connections.ts, shared/key-extract.ts,
+    src/components/ModelsSettings.tsx
+
+  OpenMausBot PR #2027 (CLI probe and Claude update env)
+    commits 1542d09b, 48b8b534
+    The pre-save CLI probe and the Claude update child strip the whole
+    workspace credential list and the whole vendor-key list instead of two
+    named keys. MISTRAL_API_KEY and ANTHROPIC_AUTH_TOKEN are added.
+    Murage: server/config.ts, server/index.ts
+
+  OpenMausBot PR #2053 and #2107 (shared router key stays on its own host)
+    commits 658763e94e0741628bba58e618bec2d086baf728, 4936cef1, cfe83f2a
+    instanceOwnsRouting(): the shared OpenAI-compatible and xAI keys are not
+    injected into an instance that brings its own URL, key or key variable.
+    The Claude, Mistral and routingDefaults halves are not taken because
+    Murage injects no such key and has no per-provider fleet.
+    Murage: server/config.ts
+
+  OpenMausBot PR #2053 (OpenCode project config off in owned folders)
+    commit 658763e94e0741628bba58e618bec2d086baf728
+    OPENCODE_DISABLE_PROJECT_CONFIG=1 for a turn that runs in a folder Murage
+    owns, so a file a bot writes there in Auto cannot become OpenCode
+    permission config. Adapted to Murage's workspace layout through a new
+    per-turn working-folder argument. The upstream OPENCODE_PERMISSION folder
+    policy is not taken.
+    Murage: server/drivers/acp/opencode-go.ts, server/drivers/acp/core.ts
+
+  OpenMausBot PR #1891 (book a Claude turn at its own cost)
+    commit 225e31d5ffe06389194c5cb5984d1bf598d02fe7
+    turnCostFromRunningTotal, the restored-cost base and the cost-history
+    file. Murage: server/drivers/claude.ts, server/testing/fake-claude-cli.ts
+
+  OpenMausBot PR #1920 (keep a turn alive while a quiet tool runs)
+    commit 710e2fc07f51cbcbc38f57680c57bc326b9d6c45
+    Murage: server/drivers/acp/core.ts, server/testing/fake-acp-cli.ts
+
+  OpenMausBot PR #1921 (per-webhook unfinished-task limit)
+    commit 7f0c0cd0e83767a3035d67087948ba3f6d3d442c
+    Murage: server/webhooks.ts, src/lib/webhooks.ts,
+    src/components/WebhooksPanel.tsx
+
+  OpenMausBot PR #2060 (skills index names what it left out)
+    merge d1cfb9550212920fd4a6a5b2dbd0e61c2eec7c8f
+    Also applied to Murage's pinned-skills index.
+    Murage: server/skills.ts, server/procedure-bundles.ts
+
+  OpenMausBot PR #2025 (Claude Sonnet 5.5 in the catalog)
+    merge 1529535465182604fd04a6fa2c2fdacc46d97e7c
+    Murage: server/drivers/claude.ts
+
+  OpenMausBot PR #2018 (data-dir lease survives a hostname change)
+    merge 31d47b9d34199b13b6c647f18ac209513f77b0e8
+    Murage: electron/data-dir-lease.mjs
+
+  OpenMausBot PR #2033 (macOS Dictation off)
+    merge 927dae3fb08d20c6a1a8d37bb735e2d8f2e39e83
+    Murage: electron/resources/speech-helper.swift, src/lib/call-turns.ts,
+    src/components/Composer.tsx, src/components/GroupCallView.tsx
+
+  OpenMausBot PR #1932 (reply puts focus in the composer)
+    commit 3e09f177ddca6f3717e2b071dc3345dba77a2c49
+    Murage: src/lib/composer-attachments.ts, src/components/Composer.tsx
+
+  OpenMausBot PR #1938 (action tray clear of the timestamp)
+    commit 9298918ae44ee5d19efa57d9ac29122bc3ddac99
+    Murage: src/components/ChatView.tsx
 
 --------------------------------------------------------------------------
 

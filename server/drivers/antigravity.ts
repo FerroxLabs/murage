@@ -1,3 +1,4 @@
+import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // Antigravity driver — Google's `agy` CLI in headless stream-JSON mode,
 // modeled on claude.ts but fully self-contained. Per-turn CLI process; the conversation continues across
 // turns via `--conversation <id>` (the resumeCursor is agy's conversation_id).
@@ -43,6 +44,7 @@ import type {
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
+import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { engineClosedLine } from "./stop-copy.ts";
 import { acpEngineExitStderrText } from "./acp/core.ts";
 
@@ -160,6 +162,10 @@ export function readAntigravityModelCatalog(env: Record<string, string | undefin
 // rebuilt from a fresh object (the ensureOpenCodeInjectModel discipline, 0.1.52 A8).
 export const ANTIGRAVITY_COMPUTER_MCP_KEY = "murage-computer";
 export const ANTIGRAVITY_AGENTS_MCP_KEY = "murage-agents";
+/** The owner's own servers ride the same global file under this prefix, so one
+ * of theirs named like a server of the owner's own agy config never collides,
+ * and a stale one left by a crashed turn can be found and removed. */
+export const ANTIGRAVITY_CUSTOM_MCP_PREFIX = "murage-custom-";
 
 export interface AntigravityMcpServer {
   command: string;
@@ -174,10 +180,10 @@ const ANTIGRAVITY_OWNED_MCP_KEYS = [
   ANTIGRAVITY_COMPUTER_MCP_KEY,
   ANTIGRAVITY_AGENTS_MCP_KEY,
 ] as const;
-type AntigravityOwnedMcpKey = (typeof ANTIGRAVITY_OWNED_MCP_KEYS)[number];
 export interface AntigravityMcpServers {
   [ANTIGRAVITY_COMPUTER_MCP_KEY]?: AntigravityMcpServer;
   [ANTIGRAVITY_AGENTS_MCP_KEY]?: AntigravityMcpServer;
+  [key: string]: AntigravityMcpServer | undefined;
 }
 
 // agy's MCP file is machine-global. Hold this lease for the complete child
@@ -286,6 +292,16 @@ export function antigravityAgentsMcpServer(
   return { command: agents.command, args: [...agents.args], env: { ...agents.env } };
 }
 
+/** The owner's own servers for this turn, keyed under the custom prefix, with
+ * Murage's part of each environment already merged. */
+export function antigravityCustomMcpServers(integrations: SendTurnInput["integrations"]): AntigravityMcpServers {
+  const servers: AntigravityMcpServers = {};
+  for (const mount of customMountEntries(integrations?.custom)) {
+    servers[`${ANTIGRAVITY_CUSTOM_MCP_PREFIX}${mount.name}`] = { command: mount.command, args: [...mount.args], env: { ...mount.env } };
+  }
+  return servers;
+}
+
 /** Build every Murage-owned agy MCP entry for one turn. */
 export function antigravityMcpServers(integrations: SendTurnInput["integrations"]): AntigravityMcpServers {
   const servers: AntigravityMcpServers = {};
@@ -293,13 +309,15 @@ export function antigravityMcpServers(integrations: SendTurnInput["integrations"
   const agents = antigravityAgentsMcpServer(integrations);
   if (computer) servers[ANTIGRAVITY_COMPUTER_MCP_KEY] = computer;
   if (agents) servers[ANTIGRAVITY_AGENTS_MCP_KEY] = agents;
+  Object.assign(servers, antigravityCustomMcpServers(integrations));
   return servers;
 }
 
 function ensureAntigravityOwnedMcpServers(
   desired: AntigravityMcpServers,
-  ownedKeys: readonly AntigravityOwnedMcpKey[],
+  fixedOwnedKeys: readonly string[],
   env: Record<string, string | undefined> = process.env,
+  ownedPrefix?: string,
 ): () => void {
   const home = env.HOME || env.USERPROFILE || homedir();
   const path = join(home, ".gemini", "config", "mcp_config.json");
@@ -324,6 +342,14 @@ function ensureAntigravityOwnedMcpServers(
       refusal = error;
     }
   }
+  // The keys this turn owns: the fixed ones, every key it mounts, and (for the
+  // owner's servers) any leftover under the custom prefix from a turn that never
+  // got to restore.
+  const ownedKeys = [...new Set([
+    ...fixedOwnedKeys,
+    ...Object.keys(desired),
+    ...(ownedPrefix ? Object.keys(config.mcpServers ?? {}).filter((key) => key.startsWith(ownedPrefix)) : []),
+  ])];
   if (refusal) {
     // Bytes we cannot interpret are never rewritten. A turn that needs Murage
     // tools fails with the guidance; a turn with nothing to mount leaves the
@@ -352,12 +378,21 @@ function ensureAntigravityOwnedMcpServers(
   writeFileSync(path, mounted, { mode: 0o600 });
   chmodSync(path, 0o600);
 
+  // Every key under the custom prefix is Murage's, never the owner's: one that
+  // is in the file before this turn is residue of a turn that crashed before
+  // restoring, and it can hold env values T16 moved into the credential store.
+  // It is therefore never written back, whatever the file said at the start.
+  const isCustomKey = (key: string) => ownedPrefix !== undefined && key.startsWith(ownedPrefix);
   const originalEntries = new Map(
     ownedKeys.map((key) => [
       key,
-      { had: key in (config.mcpServers ?? {}), value: config.mcpServers?.[key] },
+      { had: key in (config.mcpServers ?? {}) && !isCustomKey(key), value: config.mcpServers?.[key] },
     ] as const),
   );
+  const originalHadResidue = Object.keys(config.mcpServers ?? {}).some(isCustomKey);
+  const restoredBase = original !== null && originalHadResidue
+    ? `${JSON.stringify({ ...config, mcpServers: Object.fromEntries(Object.entries(config.mcpServers ?? {}).filter(([key]) => !isCustomKey(key))) }, null, 2)}\n`
+    : original;
 
   // Restore exactly what was present before this turn when nobody else touched
   // the file. A user's own agy process is outside our module-wide lease, so if
@@ -379,7 +414,7 @@ function ensureAntigravityOwnedMcpServers(
         unlinkSync(path);
         return;
       }
-      writeFileSync(path, original, { mode: 0o600 });
+      writeFileSync(path, restoredBase ?? "", { mode: 0o600 });
       chmodSync(path, 0o600);
       return;
     }
@@ -417,7 +452,38 @@ export function ensureAntigravityMcpServers(
   servers: AntigravityMcpServers,
   env: Record<string, string | undefined> = process.env,
 ): () => void {
-  return ensureAntigravityOwnedMcpServers(servers, ANTIGRAVITY_OWNED_MCP_KEYS, env);
+  return ensureAntigravityOwnedMcpServers(servers, ANTIGRAVITY_OWNED_MCP_KEYS, env, ANTIGRAVITY_CUSTOM_MCP_PREFIX);
+}
+
+/**
+ * Remove every `murage-custom-*` entry from agy's global file. Run once when
+ * the driver starts, under the machine-wide lease: nothing of ours is mounted
+ * then, so whatever is under the prefix is residue of a turn that crashed
+ * before it restored, and may hold env values that live in the credential
+ * store. A file that cannot be read or understood keeps its bytes.
+ */
+export function sweepAntigravityCustomMcpServers(env: Record<string, string | undefined> = process.env): boolean {
+  const home = env.HOME || env.USERPROFILE || homedir();
+  const path = join(home, ".gemini", "config", "mcp_config.json");
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return false;
+  }
+  let config: z.infer<typeof mcpConfigFileSchema>;
+  try {
+    const parsed = mcpConfigFileSchema.safeParse(JSON.parse(text));
+    if (!parsed.success) return false;
+    config = parsed.data;
+  } catch {
+    return false;
+  }
+  const kept = Object.entries(config.mcpServers ?? {}).filter(([key]) => !key.startsWith(ANTIGRAVITY_CUSTOM_MCP_PREFIX));
+  if (kept.length === Object.keys(config.mcpServers ?? {}).length) return false;
+  writeFileSync(path, `${JSON.stringify({ ...config, mcpServers: Object.fromEntries(kept) }, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(path, 0o600);
+  return true;
 }
 
 /** Backward-compatible computer-only mount helper. */
@@ -485,6 +551,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       }
     };
     await refreshModels();
+    // Residue of a turn that crashed before it restored the owner's file goes
+    // once, at start, under the same lease the turns use.
+    void acquireAntigravityMcpLease().then((release) => {
+      try { sweepAntigravityCustomMcpServers(env); } catch { /* the file keeps its bytes */ } finally { release(); }
+    }).catch(() => undefined);
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread; a second send while busy is a caller bug
     const active = new Map<string, { stop: () => void; turnId: string }>();
@@ -578,13 +649,17 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // strip filesystem-unsafe chars only — never truncate: a 36-char UUID
       // sliced to 32 would collide two threads sharing the first 32 chars onto
       // one workspace dir. replace() already keeps a UUID unique and safe.
+      // A turn that names its own folder (the Chief's proposal turn) gets no
+      // per-thread workspace: it would stay behind, empty, after every run.
       const tag = threadId.replace(/[^\w-]/g, "");
       const workspace = join(DATA_DIR, "workspaces", tag);
-      try {
-        mkdirSync(workspace, { recursive: true });
-      } catch (error) {
-        pending.delete(threadId);
-        throw error;
+      if (!turn.cwd) {
+        try {
+          mkdirSync(workspace, { recursive: true });
+        } catch (error) {
+          pending.delete(threadId);
+          throw error;
+        }
       }
       const cwd = turn.cwd ?? workspace;
 
@@ -592,6 +667,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // complete room/persona payload there: Windows' CreateProcess command
       // line is much smaller than the prompts a channel can legitimately
       // build, and putting this on `--print <prompt>` caused ENAMETOOLONG.
+      turn = renderMurageTurn(turn, NEUTRAL_TOOL_SURFACE, { agents: antigravityMcpServers(turn.integrations)[ANTIGRAVITY_AGENTS_MCP_KEY] ? ANTIGRAVITY_AGENTS_MCP_KEY : undefined });
       const prompt = turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
       const resumeCursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
 
@@ -668,6 +744,18 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         pending.delete(threadId);
         settle(false, "disposed");
         return { turnId };
+      }
+      // The submission fence (SendTurnInput.beforeSubmit), on every turn and
+      // also when it keeps `--conversation`: after the lease wait, with no
+      // await between it and the stdin write below. sendTurn has not handed
+      // its id back yet, so a refusal throws, having spawned and written
+      // nothing and touched no tool settings.
+      try {
+        turn.beforeSubmit?.();
+      } catch (refusal) {
+        releaseMcpLease();
+        pending.delete(threadId);
+        throw refusal;
       }
       let restoreMcp = () => {};
       try {
@@ -1072,6 +1160,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       snapshot,
       adapter: {
         provider: DRIVER_KIND,
+        mcpToolSurface: NEUTRAL_TOOL_SURFACE,
         capabilities: {
           sessionModelSwitch: "in-session",
           images: true,
@@ -1089,6 +1178,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           // harness only injects the short-lived agents proxy when this flag
           // is true, so safe-mode turns never expose a token they cannot use.
           agentsMcp: config.fullAuto,
+          // The owner's own servers ride the same file and the same rule: no
+          // approval channel, so they are offered only when nothing asks.
+          customMcp: config.fullAuto,
         },
         sendTurn,
         interruptTurn: async (threadId) => {

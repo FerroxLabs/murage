@@ -16,6 +16,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { startHeadlessEngine, type EngineClient } from "./drivers/headless-browser-proxy.ts";
 import { UNIFIED_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
+import { CLAUDE_TOOL_SURFACE, renderMurageTools } from "./murage-tool-surface.ts";
 
 const instrumentation = `
 import { registerHooks } from 'node:module';
@@ -108,7 +109,8 @@ it("keeps the browser's tools listed once its page is protected, and every refus
   try {
     const first = await holdTurn(bot, "before-the-lock");
     // Unlocked: the prompt is the plain browser prompt and says nothing of a lock.
-    expect(first.systemPrompt).toContain(UNIFIED_BROWSER_SYSTEM_PROMPT);
+    // As the fake Claude CLI got it: its tools named the way Claude calls them.
+    expect(first.systemPrompt).toContain(renderMurageTools(UNIFIED_BROWSER_SYSTEM_PROMPT, CLAUDE_TOOL_SURFACE, { browser: "browser" }));
     expect(first.systemPrompt).not.toContain("is locked");
     client = await openBrowser(first);
     expect(((await client.request("tools/list", {})) as any).tools).toHaveLength(2);

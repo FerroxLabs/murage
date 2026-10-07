@@ -41,3 +41,17 @@ export function useCoarsePointer(): boolean {
   }, []);
   return coarse;
 }
+
+/** Any media query, reactive like the two above. */
+export function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => globalThis.matchMedia?.(query).matches ?? false);
+  useEffect(() => {
+    const mql = globalThis.matchMedia?.(query);
+    if (!mql) return;
+    const apply = () => setMatches(mql.matches);
+    apply();
+    mql.addEventListener("change", apply);
+    return () => mql.removeEventListener("change", apply);
+  }, [query]);
+  return matches;
+}

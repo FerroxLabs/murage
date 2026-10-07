@@ -9,13 +9,13 @@ import type { ProviderPreset } from "../shared/provider-connections.ts";
 const roots:string[]=[];afterEach(()=>{roots.splice(0).forEach(root=>rmSync(root,{recursive:true,force:true}));});
 function fixture(preset:ProviderPreset="openai",now?:()=>number) {
  const cacheDir=mkdtempSync(join(tmpdir(),"provider-catalog-"));roots.push(cacheDir);let sequence=0;
- let bank=JSON.stringify(mutateProviderBank("[]",{action:"create",preset,key:"fixture-key-private"},()=>`record-${++sequence}`));
+ let bank=JSON.stringify(mutateProviderBank("[]",{action:"create",preset,key:preset==="flux"?"sk-flux-fixture-key-private":"fixture-key-private"},()=>`record-${++sequence}`));
  const fetcher=vi.fn<typeof fetch>(async()=>new Response(JSON.stringify({data:[{id:preset==="anthropic"?"claude-sonnet-test":"gpt-5-test",name:"Fixture model"}]})));
  const make=()=>new ProviderConnectionsService({readBank:()=>bank,cacheDir,fetch:fetcher,now});const service=make();const id=parseProviderBank(bank)[0]!.id;
  return{cacheDir,service,fetcher,id,make,bank:()=>bank,setBank:(next:string)=>{bank=next;},mutate:async(input:unknown)=>{const before=bank;bank=JSON.stringify(mutateProviderBank(bank,input,()=>`record-${++sequence}`));await service.changed(before,bank);}};
 }
-it("binds nine presets to fixed issuer endpoints, never arbitrary caller URLs",()=>{
- expect(Object.keys(PROVIDER_PRESETS)).toHaveLength(9);
+it("binds ten presets to fixed issuer endpoints, never arbitrary caller URLs",()=>{
+ expect(Object.keys(PROVIDER_PRESETS)).toHaveLength(10);
  expect(PROVIDER_PRESETS.google).toEqual({label:"Google",baseUrl:"https://generativelanguage.googleapis.com/v1beta/openai",catalogUrl:"https://generativelanguage.googleapis.com/v1beta/openai/models",protocol:"openai"});
  expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:`AIza${"k".repeat(35)}`},()=>"fixture")).toThrow("different provider");
  expect(mutateProviderBank("[]",{action:"create",preset:"google",key:`AIza${"k".repeat(35)}`},()=>"fixture")[0]).toMatchObject({preset:"google",label:"Google"});
@@ -34,7 +34,7 @@ it("requires current revisions, retains native labels and notifies only changed 
  await expect(f.mutate({action:"remove",id:f.id,revision:first.revision})).rejects.toThrow("changed");
 });
 it("reads scoped catalog metadata only from the chosen provider with bounded no-redirect requests",async()=>{
- for(const preset of Object.keys(PROVIDER_PRESETS) as ProviderPreset[]){const f=fixture(preset);await f.service.refresh(f.id);expect(f.fetcher.mock.calls[0]![0]).toBe(PROVIDER_PRESETS[preset].catalogUrl);expect(f.fetcher.mock.calls[0]![1]?.redirect).toBe("error");expect(f.fetcher.mock.calls[0]![1]?.method).toBeUndefined();expect(f.fetcher).toHaveBeenCalledOnce();}
+ for(const preset of Object.keys(PROVIDER_PRESETS) as (keyof typeof PROVIDER_PRESETS)[]){const f=fixture(preset);await f.service.refresh(f.id);expect(f.fetcher.mock.calls[0]![0]).toBe(PROVIDER_PRESETS[preset].catalogUrl);expect(f.fetcher.mock.calls[0]![1]?.redirect).toBe("error");expect(f.fetcher.mock.calls[0]![1]?.method).toBeUndefined();expect(f.fetcher).toHaveBeenCalledOnce();}
 });
 it("uses Anthropic auth and safe bounded cursor pagination",async()=>{
  const f=fixture("anthropic");f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({data:[{id:"claude-first"}],has_more:true,last_id:"first/id"}))).mockResolvedValueOnce(new Response(JSON.stringify({data:[{id:"claude-second"}],has_more:false})));
@@ -77,7 +77,7 @@ it("normalizes 400 eligible models with route-scoped prices and excludes media/u
 });
 it.each(["openai","flux"] as const)("refuses stale %s catalog completion after a key rotation and never retries automatically",async(preset)=>{
  const f=fixture(preset);let resolve!:(response:Response)=>void;f.fetcher.mockImplementationOnce(()=>new Promise(done=>{resolve=done;}));const refreshing=f.service.refresh(f.id);const original=f.service.list()[0]!;
- await f.mutate({action:"update",id:f.id,revision:original.revision,key:"changed-private-key"});resolve(new Response(JSON.stringify({data:[{id:"gpt-stale"}]})));
+ await f.mutate({action:"update",id:f.id,revision:original.revision,key:preset==="flux"?"sk-flux-changed-private-key":"changed-private-key"});resolve(new Response(JSON.stringify({data:[{id:"gpt-stale"}]})));
  expect((await refreshing).error?.code).toBe("connection-changed");expect(f.service.getCatalog(f.id).models).toEqual([]);expect(f.fetcher).toHaveBeenCalledOnce();
 });
 it("rejects oversized/model-flood/looping catalogs with typed failures",async()=>{
@@ -200,6 +200,12 @@ it("excludes rerankers by id, and still admits the chat model named Musica",()=>
   {id:"gemma-4-26b-a4b-it-musica",architecture:{output_modalities:["text"]}},
  ]},1);
  expect(models.filter(model=>model.chatEligible).map(model=>model.id)).toEqual(["gemma-4-26b-a4b-it-musica"]);
+});
+it("offers Requesty as an OpenAI-compatible router with its fixed endpoint and chat rows",()=>{
+ expect(PROVIDER_PRESETS.requesty).toEqual({label:"Requesty",baseUrl:"https://router.requesty.ai/v1",catalogUrl:"https://router.requesty.ai/v1/models",protocol:"openai"});
+ const bank=parseProviderBank(JSON.stringify(mutateProviderBank("[]",{action:"create",preset:"requesty",key:"fixture-requesty-key"},()=>"requesty-1")));
+ const models=normalizeProviderModels(bank[0]!,{data:[{id:"openai/gpt-5-mini"},{id:"anthropic/claude-sonnet-4-5"},{id:"openai/text-embedding-3-small"},{id:"openai/dall-e-3"},{id:"mystery/unknown-thing"}]},1);
+ expect(models.filter(model=>model.chatEligible).map(model=>model.id)).toEqual(["openai/gpt-5-mini","anthropic/claude-sonnet-4-5"]);
 });
 it("reads Google's OpenAI-compatible catalog as bare ids and keeps only its chat families",()=>{
  const connection={id:"g",preset:"google" as const,label:"Google",enabled:true,key:`AIza${"k".repeat(35)}`,revision:"r"};

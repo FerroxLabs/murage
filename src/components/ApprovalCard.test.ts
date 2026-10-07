@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -462,5 +464,54 @@ describe("the exact command grant on a pending approval", () => {
     expect(alwaysAllowLabel(pending({ allowKey: "Bash:git" }))).toBe("Always allow any git command");
     expect(alwaysAllowLabel(pending({ allowKey: "stop:delete:/Users/ada/old" }))).toBe("Always allow");
     expect(alwaysAllowLabel({ ...pending({ allowKey: "mcp__box__read" }), tool: "mcp__box__read" })).toBe("Always allow");
+  });
+});
+
+describe("Murage for Chrome action cards (Fable H4, M9)", () => {
+  const card = (subtitle: string): Message => ({ id: "ext", role: "bot", kind: "options", at: 1, card: { title: "Mira needs your approval", subtitle, options: ["Allow", "Deny"], tool: "browser_extension_action", requestId: "browser-1" } });
+  it("shows a long reviewed text collapsed, with a real toggle", () => {
+    const body = "word ".repeat(500); const html = renderToStaticMarkup(createElement(ApprovalCard, { message: card(`fill on https://example.test\nArguments: {"text":"${body}"}`) }));
+    expect(html).toContain('data-approval-held="collapsed"'); expect(html).toContain("aria-expanded");
+  });
+  it("a short one reads as before, without a toggle", () => {
+    const html = renderToStaticMarkup(createElement(ApprovalCard, { message: card("click on https://example.test") }));
+    expect(html).not.toContain("aria-expanded"); expect(html).toContain("click on https://example.test");
+  });
+});
+
+describe("ApprovalCard plain-language detail", () => {
+  const render = (tool: string, subtitle: string) => renderToStaticMarkup(createElement(ApprovalCard, { message: { id: "p", role: "bot", kind: "options", at: 1,
+    card: { title: "Approval", subtitle, options: ["Allow", "Deny"], tool } } as Message }));
+  it("shows a file path as words, with the original text behind Show details", () => {
+    const markup = render("Write", '{"file_path":"Newsletter/Spring offers.md"}');
+    expect(markup).toContain("Newsletter/Spring offers.md");
+    expect(markup).toContain("Show details");
+    expect(markup).toContain("&quot;file_path&quot;:&quot;Newsletter/Spring offers.md&quot;");
+  });
+  it("keeps a shell command first, with the bot's note below", () => {
+    const markup = render("mcp__x__run", '{"cmd":"rm -rf build","description":"Say hi"}');
+    expect(markup).toContain("cmd: rm -rf build");
+    const sh = render("Bash", '{"command":"rm -rf build","description":"Say hi"}');
+    expect(sh.indexOf("rm -rf build")).toBeLessThan(sh.indexOf("Bot&#x27;s note: Say hi"));
+  });
+  it("shows a visible expander for long values", () => {
+    expect(render("mcp__x__mystery", '{"a":"1","b":"' + "y".repeat(200) + '"}')).toContain("more characters");
+  });
+  it.each(["ask_bot", "delegate", "browser_extension_action", "edit", "shell", "other"])("renders %s free text verbatim", tool => {
+    const subtitle = '{"path":"notes.md"}';
+    const markup = render(tool, subtitle);
+    expect(markup).toContain("<pre");
+    expect(markup).not.toContain("Show details");
+  });
+});
+
+// A browser card's answer that resolves is accepted: the buttons stay held (via the controller's succeed())
+// until `card.answered` removes them, the way the other cards do. Never `.finally(settle)`.
+describe("browser card answer holds its buttons after the promise resolves", () => {
+  it("wires a resolved answer to succeed and a rejected one to settle", () => {
+    const source = readFileSync(join(__dirname, "ApprovalCard.tsx"), "utf8");
+    expect(source).toContain("({ settle, succeed }) =>");
+    expect(source).toContain(".then(succeed, settle)");
+    expect(source).not.toContain(".finally(settle)");
   });
 });

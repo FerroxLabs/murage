@@ -8,7 +8,7 @@ export class ProjectFolderLeaseError extends Error {
   readonly code: "invalid-path" | "conflict" | "owner-in-use" | "stale" | "unknown-owner" | "invalid-owner";
   constructor(code: ProjectFolderLeaseError["code"]) { super(`Project folder lease refused: ${code}`); this.name = "ProjectFolderLeaseError"; this.code = code; }
 }
-function directory(cwd: string): { requestedPath: string; canonicalPath: string; dev: string; ino: string } {
+export function directory(cwd: string): { requestedPath: string; canonicalPath: string; dev: string; ino: string } {
   if (typeof cwd !== "string" || !cwd || cwd.includes("\0")) throw new ProjectFolderLeaseError("invalid-path");
   try {
     const requestedPath = resolve(cwd);

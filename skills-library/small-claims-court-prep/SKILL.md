@@ -6,7 +6,7 @@ description: |
   Do NOT use for cases above the small claims jurisdictional limit, criminal matters, family law disputes, or cases requiring an attorney (complex contract disputes, personal injury with significant damages).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy checklist step-by-step guide"
   category: "legal-civic"

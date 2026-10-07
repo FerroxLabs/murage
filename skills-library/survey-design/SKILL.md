@@ -6,7 +6,7 @@ description: |
   Do NOT use for interview guide creation (use qualitative-coding for interview analysis), A/B test design (use ab-test-design), or market sizing research (use competitive-intelligence).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research analysis template"
   category: "data-analysis"

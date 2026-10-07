@@ -41,7 +41,12 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
 
   async create(input) {
     const { config } = input;
-    const saved = input.environment[config.apiKeyEnv] ?? process.env[config.apiKeyEnv] ?? "";
+    // The workspace xAI key arrives only through instanceConfigs(), which
+    // withholds it from an instance with its own URL or key; process.env holds
+    // it too (loadConfig, syncCredentialEnv), so it is never read from there
+    // (upstream #2053/#2107). A key variable of the instance's own is.
+    const saved = input.environment[config.apiKeyEnv]
+      ?? (config.apiKeyEnv !== "XAI_API_KEY" ? process.env[config.apiKeyEnv] : undefined) ?? "";
     // A key whose own prefix names a provider other than the one this
     // endpoint belongs to (a restored workspace slot on api.x.ai, say) is
     // never sent; the person replaces it in Models. Any other server keeps
@@ -52,6 +57,7 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
     return createOpenAIChatRuntime({
       input,
       driverKind: DRIVER_KIND,
+      includeUsageInCompleted: true,
       apiKey,
       apiUrl: config.url,
       models: () => MODELS,

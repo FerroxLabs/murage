@@ -11,7 +11,7 @@ description: |
   requirements by state.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-maintenance decision-making analysis"
   category: "home-household"

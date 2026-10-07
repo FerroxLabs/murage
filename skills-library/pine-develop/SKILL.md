@@ -1,7 +1,9 @@
 ---
 name: pine-develop
 description: Full Pine Script development loop — write code, compile, fix errors, iterate. Use when building a new indicator or strategy in TradingView.
-license: MIT
+license: Apache-2.0
+metadata:
+  author: Ferrox Labs
 ---
 
 # Pine Script Development Loop

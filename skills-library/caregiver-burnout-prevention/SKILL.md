@@ -13,7 +13,7 @@ description: |
   facility evaluation (use care-facility-evaluation).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "elder-care mental-wellness checklist"
   category: "family-relationships"

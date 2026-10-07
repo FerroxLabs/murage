@@ -10,7 +10,7 @@ description: |
   or full quarterly plans with multiple goals (use `quarterly-planning`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "goal-setting planning template"
   category: "productivity"

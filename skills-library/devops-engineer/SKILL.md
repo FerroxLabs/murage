@@ -9,7 +9,7 @@ description: |
   security penetration testing.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "devops ci-cd cloud automation best-practices"
   category: "engineering"

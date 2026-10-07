@@ -56,7 +56,7 @@ it("reconciles a scheduler commit after webhook save failure and restart without
     expect(scheduler.activeWebhookRunCount(webhook.id)).toBe(3);
     expect(scheduler.findWebhookDelivery(webhook.id, event.deliveryId)?.prompt).toBe(committed.prompt);
     expect(JSON.parse(readFileSync(file, "utf8")).deliveries).toContainEqual(expect.objectContaining({ runId: committed.id }));
-    expect(() => recovered.receive(webhook.endpointId, secret, { ...event, deliveryId: "new-delivery" })).toThrow("too many unfinished");
+    expect(() => recovered.receive(webhook.endpointId, secret, { ...event, deliveryId: "new-delivery" })).toThrow("already has 3 unfinished tasks");
     expect(startTurn).not.toHaveBeenCalled();
   } finally {
     fault.file = "";

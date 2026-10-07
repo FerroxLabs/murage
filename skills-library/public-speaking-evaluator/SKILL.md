@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of public speaking evaluator or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "assessment teaching template analysis planning presentation video-production cleaning"
   category: "education"

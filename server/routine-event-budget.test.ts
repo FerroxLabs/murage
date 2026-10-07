@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -48,7 +49,7 @@ describe("durable cumulative event action budget", () => {
   });
   it("keeps a completed root's allocation available to descendants until explicitly closed", () => {
     const f = fixture();
-    const disk = JSON.parse(readFileSync(f.options.file, "utf8")); disk.runs[0].status = "completed";
+    const disk = readRoutinesWithRuns(f.options.file); disk.runs[0].status = "completed";
     writeFileSync(f.options.file, JSON.stringify(disk));
     const restarted = new RoutineManager(f.options);
     expect(restarted.admitEventAction(f.run.id, "descendant", "handoff")).toBe(true);
@@ -64,7 +65,7 @@ describe("durable cumulative event action budget", () => {
     expect(f.manager.closeEventBudget(f.run.id)).toBe(true);
     expect(f.manager.admitEventAction(f.run.id, "request", "create")).toBe(false);
     expect(new RoutineManager(f.options).getEventBudget(f.run.id)?.closed).toBe(true);
-    const disk = JSON.parse(readFileSync(f.options.file, "utf8")); delete disk.runs[0].eventBudget;
+    const disk = readRoutinesWithRuns(f.options.file); delete disk.runs[0].eventBudget;
     writeFileSync(f.options.file, JSON.stringify(disk));
     const legacy = new RoutineManager(f.options);
     expect(legacy.getEventBudget(f.run.id)).toBeNull();

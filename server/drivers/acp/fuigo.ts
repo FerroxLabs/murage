@@ -25,9 +25,13 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 
-import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
+import type { ModelCatalog, ModelRefreshOptions, ProviderErrorCode } from "../../contracts.ts";
 import { resolveFuigoCli } from "../../env-path.ts";
+import { DATA_DIR, deleteEnvNames } from "../../config.ts";
+import { headlessTextOnlyTurn } from "../headless-text-only.ts";
 import { fluxKey } from "../../flux-config.ts";
+import { catalogFetchAllowed, noteCatalogResult } from "../../flux-key-health.ts";
+import { isFluxKeyShape } from "../../../electron/provider-connections.mjs";
 import { FLUX_TIERS, mergeFluxCatalog } from "../../flux-surface.ts";
 import { execCli } from "../../procs.ts";
 import { createAcpDriver, type AcpConfig, type AcpSupport } from "./core.ts";
@@ -53,6 +57,53 @@ const DRIVER_KIND = "fuigoAgent";
  * outrank the workspace key we just injected.
  */
 const FUIGO_KEY_ENV = ["FUIGO_API_KEY", "FUIGO_CODE_API_KEY", "FLUX_API_KEY"] as const;
+
+function isFuigoKeyName(name: string, platform: NodeJS.Platform): boolean {
+  // Windows env names are case-insensitive: `Fuigo_Api_Key` IS FUIGO_API_KEY
+  // to the child, so a case-sensitive delete left it riding next to ours.
+  return platform === "win32"
+    ? FUIGO_KEY_ENV.some((key) => key === name.toUpperCase())
+    : (FUIGO_KEY_ENV as readonly string[]).includes(name);
+}
+
+/**
+ * Put exactly one credential in front of Fuigo, and only a Flux key.
+ *
+ * Fuigo sends whatever `FUIGO_API_KEY` holds to api.fluxrouter.ai, unchecked
+ * (fuigo-shell auth_method.rs read_fuigo_api_key_env), and an EMPTY value
+ * still counts as set and goes out as `Bearer ` with nothing after it. On
+ * 2026-10-01 Flux saw a base URL, a short non-sk value, an empty bearer and
+ * another provider's key arrive that way. So:
+ *   - with Murage's Flux key: every casing of every Fuigo key name goes, and
+ *     the key is set under FUIGO_API_KEY;
+ *   - without one: a user's own ambient value survives only if it is shaped
+ *     like a Flux key. Anything else would be sent to Flux and refused.
+ * A `fuigo login` (auth.json) install is not touched here.
+ */
+export function scrubFuigoCredentialEnv(
+  env: Record<string, string | undefined>,
+  key: string | null,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (key) {
+    deleteEnvNames(env, FUIGO_KEY_ENV, platform);
+    env.FUIGO_API_KEY = key;
+    return;
+  }
+  for (const name of Object.keys(env)) {
+    if (isFuigoKeyName(name, platform) && !isFluxKeyShape(env[name] ?? "")) delete env[name];
+  }
+}
+
+/** The Flux key the child will present, after the scrub, or null. */
+function presentedFuigoKey(env: Record<string, string | undefined>): string | null {
+  for (const wanted of FUIGO_KEY_ENV) {
+    for (const [name, value] of Object.entries(env)) {
+      if (isFuigoKeyName(name, process.platform) && name.toUpperCase() === wanted && value && isFluxKeyShape(value)) return value.trim();
+    }
+  }
+  return null;
+}
 
 /**
  * Static fallback catalog — the four Flux tiers, built FROM `FLUX_TIERS` so
@@ -196,19 +247,45 @@ export function parseFuigoModels(stdout: string): ModelCatalog {
 function fetchFuigoModels(
   env: Record<string, string | undefined>,
   config: AcpConfig,
-): Promise<ModelCatalog> {
+): Promise<{ catalog: ModelCatalog; text: string }> {
   return new Promise((resolve) => {
-    execCli(config.cli, ["models"], { timeout: 10_000, env }, (err, stdout) => {
-      resolve(err ? { default: "", options: [] } : parseFuigoModels(stdout));
+    execCli(config.cli, ["models"], { timeout: 10_000, env }, (err, stdout, stderr) => {
+      const text = `${err?.message ?? ""}\n${stderr ?? ""}\n${stdout ?? ""}`;
+      resolve({ catalog: err ? { default: "", options: [] } : parseFuigoModels(stdout), text });
     });
   });
+}
+
+/**
+ * The live catalog, asked for only when it can be answered.
+ *
+ * Each `fuigo models` run is a GET /v1/api-key and a GET /v1/models at Flux.
+ * So it runs only with a Flux key in the child env (an unkeyed run is a
+ * request with no key, or with whatever a `fuigo login` file holds), and not
+ * again for a key Flux refused or one that keeps failing
+ * (flux-key-health.ts). A login-only install keeps the static tiers.
+ */
+async function liveFuigoModels(
+  env: Record<string, string | undefined>,
+  config: AcpConfig,
+  options: ModelRefreshOptions = {},
+): Promise<ModelCatalog> {
+  const key = presentedFuigoKey(env);
+  if (!key || !catalogFetchAllowed(key, Date.now(), options)) return { default: "", options: [] };
+  const { catalog } = await fetchFuigoModels(env, config);
+  // Only "ok" or "failed": Fuigo answers a refused key with its bundled models
+  // and exit 0, so a refusal cannot be read here. It comes from Murage's own
+  // Flux catalog call (flux-key-health.ts).
+  noteCatalogResult(key, catalog.options.length ? "ok" : "failed");
+  return catalog;
 }
 
 async function resolveModels(
   env: Record<string, string | undefined>,
   config: AcpConfig,
+  options: ModelRefreshOptions = {},
 ): Promise<ModelCatalog> {
-  const live = await fetchFuigoModels(env, config);
+  const live = await liveFuigoModels(env, config, options);
   const catalog = live.options.length ? live : STATIC_FUIGO_MODELS;
   // Through `mergeFluxCatalog` on purpose, and this is the whole reason the
   // shell-out is safe to combine with the Flux tables. `fuigo models` prints
@@ -322,6 +399,55 @@ export function removeFuigoLocalHost(
   return "removed";
 }
 
+/**
+ * A Murage bot must load ONLY Murage's own MCP mounts (agents, memory,
+ * composio, browser, computer), never the owner's global Claude Code or
+ * Cursor servers. Found from a real turn: the engine mounted ~21 servers,
+ * 5 of them Murage's, the rest imported from the owner's machine; most failed
+ * their handshake, one crash-looped on every turn, and the core held the
+ * first prompt for the full MCP_READY_WAIT_MS (15 s) waiting on them.
+ *
+ * MECHANISM (fuigo-shell util/config/mcp.rs, verified on the 1.0.18 binary
+ * with a poisoned HOME): the engine reads `$HOME/.claude.json` and
+ * `$HOME/.cursor/mcp.json` through `fuigo_dirs::home_dir()` and merges them
+ * under its own `config.toml` servers, each source behind a compat cell
+ * (`compat.claude.mcps`, `compat.cursor.mcps`). A cell resolves env first,
+ * so `FUIGO_CLAUDE_MCPS_ENABLED=0` / `FUIGO_CURSOR_MCPS_ENABLED=0` drops the
+ * import for this process only, without moving HOME (which would take the
+ * bot's git, ssh and toolchain config away) and without touching the owner's
+ * ~/.fuigo, so sign-in and Murage's own `mcpServers` are unaffected.
+ *
+ * The same env-first cells exist for skills, rules, agents, hooks and sessions
+ * (fuigo-tools types/compat.rs COMPAT_CELLS), so all 19 cells are closed together:
+ * the owner's Claude Code, Cursor and Codex (~/.codex) surfaces plus the shared
+ * ~/.agents skills directory. The env value takes precedence over config.toml.
+ *
+ * An explicit value already in the environment wins, so an owner who WANTS
+ * the import can set the variable to 1 on the engine's environment.
+ *
+ * NOT covered here, by design of the engine: Claude Code PLUGINS
+ * (`~/.claude/plugins`, installed_plugins.json) are discovered outside the
+ * compat cells and their `[plugins] auto_discover` switch is config.toml-only
+ * (the FUIGO_CONFIG overlay allowlist drops `plugins`), so no env can turn it
+ * off without relocating HOME or FUIGO_HOME. That needs an engine change.
+ */
+export const FUIGO_EXTERNAL_MCP_GATES = [
+  "FUIGO_CLAUDE_SKILLS_ENABLED", "FUIGO_CLAUDE_RULES_ENABLED", "FUIGO_CLAUDE_AGENTS_ENABLED",
+  "FUIGO_CLAUDE_MCPS_ENABLED", "FUIGO_CLAUDE_HOOKS_ENABLED", "FUIGO_CLAUDE_SESSIONS_ENABLED",
+  "FUIGO_CURSOR_SKILLS_ENABLED", "FUIGO_CURSOR_RULES_ENABLED", "FUIGO_CURSOR_AGENTS_ENABLED",
+  "FUIGO_CURSOR_MCPS_ENABLED", "FUIGO_CURSOR_HOOKS_ENABLED", "FUIGO_CURSOR_SESSIONS_ENABLED",
+  "FUIGO_CODEX_SKILLS_ENABLED", "FUIGO_CODEX_RULES_ENABLED", "FUIGO_CODEX_AGENTS_ENABLED",
+  "FUIGO_CODEX_MCPS_ENABLED", "FUIGO_CODEX_HOOKS_ENABLED", "FUIGO_CODEX_SESSIONS_ENABLED",
+  "FUIGO_AGENTS_SKILLS_ENABLED",
+] as const;
+
+export function isolateFuigoFromExternalMcp(env: Record<string, string | undefined>): void {
+  const present = new Set(Object.keys(env).map((name) => name.toUpperCase()));
+  for (const name of FUIGO_EXTERNAL_MCP_GATES) {
+    if (!present.has(name)) env[name] = "0";
+  }
+}
+
 const support: AcpSupport = {
   driverKind: DRIVER_KIND,
   displayName: "Fuigo",
@@ -337,6 +463,30 @@ const support: AcpSupport = {
   // because argv is built from this return value; the env key is set on the
   // same child env object the spawn uses. Every other id is passed through.
   resolveTurnModel: (model, env) => (model && decodeInjectId(model) ? ensureFuigoLocalModel(model, env) : model),
+
+  // `-m <model>` in argv is NOT applied to a session opened with
+  // `session/load`: a loaded session keeps the model it had. The engine's own
+  // answer is `session/set_model` with the same id `-m` carried, sent after
+  // session/load (and harmless after session/new). `turn.model` here is the
+  // post-resolveTurnModel id, i.e. exactly what spawnArgs passed to `-m`.
+  // Any failure fails the turn: running the previous model while the picker
+  // shows the new one is worse than an error. No pick, nothing sent.
+  async configureSession({ request, sessionId, turn, currentModelId }) {
+    if (!turn.model) return;
+    // A set_model to the model already in force is not silent in the engine
+    // (model-changed, summary and config-options notifications), so skip it.
+    // No reported current model: send anyway, which fails closed.
+    if (currentModelId && currentModelId === turn.model) return;
+    try {
+      await request("session/set_model", { sessionId, modelId: turn.model });
+    } catch (e) {
+      const detail = (e instanceof Error ? e.message : String(e)).replaceAll("\u2014", ", ");
+      throw new Error(
+        `Fuigo could not switch to the model "${turn.model}" for this conversation (${detail}). ` +
+          `The turn was not sent, so no other model answered. Try again, or pick a different model.`,
+      );
+    }
+  },
 
   // Fuigo's own enum: None | Minimal | Low | Medium | High | Xhigh | Max
   // (fuigo-sampling-types/src/types.rs:750-759). Murage's EFFORT_LEVELS
@@ -462,6 +612,7 @@ const support: AcpSupport = {
    *  once every server (the user's imported ones too) has settled. The core
    *  holds the first prompt for it, bounded (core.ts MCP_READY_WAIT_MS). */
   mcpReadyNotification: "_fuigo/mcp_initialized",
+  mcpProgressNotification: "_fuigo/mcp/init_progress",
 
   /** One process per thread between turns (upstream #1575, core.ts pool
    *  notes). Safe here because `load_session` on a session already resident
@@ -504,22 +655,23 @@ const support: AcpSupport = {
    * the value under exactly one harness-owned name and nothing more.
    *
    * NO KEY ⇒ NO WRITE. An install signed in with `fuigo login`
-   * (~/.fuigo/auth.json) or carrying the user's own ambient `FUIGO_API_KEY`
-   * is a working install, and half-writing an env over it would break it.
+   * (~/.fuigo/auth.json) or carrying the user's own ambient Flux-shaped
+   * `FUIGO_API_KEY` is a working install, and half-writing an env over it
+   * would break it. An ambient value that is not a Flux key is removed
+   * (`scrubFuigoCredentialEnv`): Fuigo would only send it to Flux.
    * Same "degrade to native rather than 401" rule `applyFluxSurface` follows
    * (flux-routing.ts:334).
    */
   transformEnv: (env) => {
     reachBundledFuigo(env);
-    const key = fluxKey();
-    if (!key) return;
+    isolateFuigoFromExternalMcp(env);
     // Ambient siblings go first: `FUIGO_CODE_API_KEY` is read by the same
     // provider row (key_discovery.rs:60-70) and a stale one in the user's
     // shell would put the child on an account the app never chose.
     // `FLUX_API_KEY` is already gone via the strip; deleting it again is free
     // and keeps this correct if a caller ever lands before the strip.
-    for (const name of FUIGO_KEY_ENV) delete env[name];
-    env.FUIGO_API_KEY = key;
+    // `fluxKey()` is null for anything not shaped like a Flux key.
+    scrubFuigoCredentialEnv(env, fluxKey());
   },
 
   /**
@@ -599,6 +751,14 @@ const support: AcpSupport = {
    *  and a No limits bot went reading session files to find the rest
    *  (0.1.60 Windows pass D6). `verbatim` sends Murage's bytes as they are. */
   promptMeta: { verbatim: true },
+  // PIP reflection: a dedicated headless spawn (never the ACP stdio path), credential = the Flux key.
+  textOnlyExecutable: config => config.cli === "fuigo" ? resolveFuigoCli(process.env).command : config.cli,
+  textOnlyTurn: (turn, config) => {
+    let cli = config.cli;
+    if (cli === "fuigo") { try { cli = resolveFuigoCli(process.env).command; } catch { /* the spawn reports a missing binary */ } }
+    const key = fluxKey();
+    return headlessTextOnlyTurn(turn, { engine: "fuigo", cli, tmpBase: join(DATA_DIR, "pip-tmp"), ...(key ? { fluxKey: key } : {}) });
+  },
 };
 
 export const FuigoAgentDriver = createAcpDriver(support);

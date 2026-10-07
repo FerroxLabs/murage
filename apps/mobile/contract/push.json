@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "categories": [
+    { "kind": "approval", "risk": "low", "category": "approval" },
+    { "kind": "approval", "risk": "risky", "category": "approval-open" },
+    { "kind": "approval", "risk": "unrated", "category": "approval-open" },
+    { "kind": "question", "risk": "unrated", "category": "question" },
+    { "kind": "takeover", "risk": "unrated", "category": "question" },
+    { "kind": "routine-failed", "risk": "unrated", "category": "question" },
+    { "kind": "turn-failed", "risk": "unrated", "category": "question" },
+    { "kind": "backup-waiting", "risk": "unrated", "category": "question" },
+    { "kind": "done", "risk": "low", "category": "done" }
+  ],
+  "iosCategory": { "approval": "APPROVAL", "approval-open": "APPROVAL_OPEN", "question": "QUESTION", "done": "DONE", "resolved": "DONE" },
+  "androidChannel": { "approval": "approvals", "approval-open": "approvals", "question": "questions", "done": "finished", "resolved": "finished" },
+  "payloads": [
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": true },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "resolved", "revision": 2, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": true },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadId": "t1" }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "chat", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9B1F", "category": "done", "revision": 1, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "done", "revision": 0, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "done", "revision": 1.5, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "done", "revision": 1, "workspaceBadge": -1, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": false },
+    { "value": { "bindingId": "not-a-uuid", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "done", "revision": 1, "workspaceBadge": 0, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "done", "revision": 1, "workspaceBadge": 0, "collapseKey": "short" }, "valid": false },
+    { "value": "approval", "valid": false },
+    { "value": null, "valid": false }
+  ],
+  "fcmData": [
+    { "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": "1", "workspaceBadge": "2", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0" }, "valid": true },
+    { "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": "01", "workspaceBadge": "2", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0" }, "valid": false },
+    { "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": "1", "workspaceBadge": "two", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0" }, "valid": false }
+  ],
+  "relayEvents": [
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": true, "expiresAt": 1790000000000 }, "valid": true },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "scout", "timeSensitive": true, "expiresAt": 1790000000000 }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": "yes", "expiresAt": 1790000000000 }, "valid": false },
+    { "value": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": true, "expiresAt": 1790000000000, "title": "Scout needs approval" }, "valid": false }
+  ],
+  "collapseKeys": [
+    { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "secret": "7c1e9a4b2f6d8053e1a7c49b0d2f6e8a3b5c7d9e1f2a4b6c8d0e2f4a6b8c0d2e", "key": "req-1", "collapseKey": "e9232c2374c355becf4ddbb8085fd50b" },
+    { "bindingId": "a1b2c3d4-e5f6-4a1b-8c2d-9e0f1a2b3c4d", "secret": "0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0", "key": "req-1", "collapseKey": "fabc27ee1484067bc8ed5b96017c50d6" },
+    { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "secret": "7c1e9a4b2f6d8053e1a7c49b0d2f6e8a3b5c7d9e1f2a4b6c8d0e2f4a6b8c0d2e", "key": "toolu_01ABC", "collapseKey": "7e86d144ab4f2087b082bfe822544f39" },
+    { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "secret": "7c1e9a4b2f6d8053e1a7c49b0d2f6e8a3b5c7d9e1f2a4b6c8d0e2f4a6b8c0d2e", "key": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "collapseKey": "6722f9c7f2e64afb252e8336e56d3d52" }
+  ],
+  "threadGroups": [
+    { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "secret": "7c1e9a4b2f6d8053e1a7c49b0d2f6e8a3b5c7d9e1f2a4b6c8d0e2f4a6b8c0d2e", "botId": "scout", "threadGroup": "5a3567833f67ecaa" },
+    { "bindingId": "a1b2c3d4-e5f6-4a1b-8c2d-9e0f1a2b3c4d", "secret": "0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0", "botId": "scout", "threadGroup": "e06c3d1a4be4e108" },
+    { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "secret": "7c1e9a4b2f6d8053e1a7c49b0d2f6e8a3b5c7d9e1f2a4b6c8d0e2f4a6b8c0d2e", "botId": "ember", "threadGroup": "7f41fa37dc4ede24" }
+  ],
+  "respond": [
+    { "body": { "requestId": "req-1", "decision": "allow", "revision": 1 }, "valid": true },
+    { "body": { "requestId": "req-1", "decision": "deny", "revision": 3 }, "valid": true },
+    { "body": { "requestId": "req-1", "decision": "answer", "revision": 1 }, "valid": false },
+    { "body": { "requestId": "req-1", "decision": "allow" }, "valid": false },
+    { "body": { "requestId": "req-1", "decision": "allow", "revision": 1, "allowForTask": true }, "valid": false },
+    { "body": { "requestId": "", "decision": "deny", "revision": 1 }, "valid": false },
+    { "body": { "requestId": "req\u0000", "decision": "deny", "revision": 1 }, "valid": false },
+    { "body": { "requestId": "req-1", "decision": "deny", "revision": 0 }, "valid": false },
+    { "body": { "requestId": "req-1", "decision": "deny", "revision": "1" }, "valid": false },
+    { "body": [], "valid": false }
+  ],
+  "issueTokens": [
+    { "args": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "detail": "murage_pd_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "respond": "murage_pr_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "expiresAt": 1790000000000 }, "valid": true },
+    { "args": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "detail": "murage_pr_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "respond": "murage_pd_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "expiresAt": 1790000000000 }, "valid": false },
+    { "args": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "detail": "murage_pd_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "respond": "murage_pr_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" }, "valid": false },
+    { "args": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "detail": "murage_pd_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "respond": "murage_pr_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "expiresAt": 1790000000000, "extra": 1 }, "valid": false }
+  ],
+  "tokens": [
+    { "kind": "grant", "value": "murage_pg_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", "valid": true },
+    { "kind": "publisher", "value": "murage_pt_DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD", "valid": true },
+    { "kind": "deviceSecret", "value": "murage_ds_EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE", "valid": true },
+    { "kind": "detail", "value": "murage_pd_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "valid": true },
+    { "kind": "respond", "value": "murage_pr_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "valid": true },
+    { "kind": "detail", "value": "murage_pd_short", "valid": false },
+    { "kind": "detail", "value": "murage_pr_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "valid": false }
+  ],
+  "generic": {
+    "approval": { "title": "Murage", "body": "Your attention is needed." },
+    "approval-open": { "title": "Murage", "body": "Your attention is needed." },
+    "question": { "title": "Murage", "body": "Your attention is needed." },
+    "done": { "title": "Murage", "body": "A task has finished." },
+    "resolved": { "title": "Murage", "body": "No longer waiting." }
+  },
+  "resolvedText": { "desktop": "Answered on desktop.", "elsewhere": "Answered on another device.", "expired": "No longer waiting.", "dismissed": "No longer waiting." },
+  "provider": {
+    "event": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0", "timeSensitive": true, "expiresAt": 1790000000000 },
+    "now": 1789999100000,
+    "deviceBadge": 3,
+    "apns": {
+      "path": "/3/device/TOKEN",
+      "headers": { "apns-topic": "com.murage.mobile", "apns-push-type": "alert", "apns-priority": "10", "apns-expiration": "1790000000", "apns-collapse-id": "be753ac14d84299e2b22e52b6dba3a17" },
+      "body": { "aps": { "alert": { "title": "Murage", "body": "Your attention is needed." }, "mutable-content": 1, "category": "APPROVAL", "thread-id": "46af17e29b1130f0", "badge": 3, "interruption-level": "time-sensitive", "sound": "default" }, "murage": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": 1, "workspaceBadge": 2, "collapseKey": "be753ac14d84299e2b22e52b6dba3a17" } }
+    },
+    "apnsResolved": {
+      "headers": { "apns-priority": "5", "apns-collapse-id": "be753ac14d84299e2b22e52b6dba3a17" },
+      "aps": { "alert": { "title": "Murage", "body": "No longer waiting." }, "mutable-content": 1, "category": "DONE", "thread-id": "46af17e29b1130f0", "badge": 3, "interruption-level": "passive" }
+    },
+    "fcm": {
+      "message": {
+        "token": "TOKEN",
+        "data": { "bindingId": "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3", "eventRef": "9b1f0c4e2a7d3e8f5c6b1a0d9e8f7c6b5a4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f", "category": "approval", "revision": "1", "workspaceBadge": "2", "collapseKey": "be753ac14d84299e2b22e52b6dba3a17", "threadGroup": "46af17e29b1130f0" },
+        "android": { "priority": "HIGH", "ttl": "900s", "restricted_package_name": "com.murage.mobile" }
+      }
+    }
+  }
+}

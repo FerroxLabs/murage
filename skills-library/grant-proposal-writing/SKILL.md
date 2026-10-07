@@ -6,7 +6,7 @@ description: |
   Do NOT use for business proposals (use business skills), scholarship applications (different format), or research paper writing (use research-paper-structure).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "academic-writing writing proposal"
   category: "writing"

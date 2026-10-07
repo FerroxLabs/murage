@@ -4,7 +4,7 @@ description: |
   Social media strategy covering platform selection by audience, content strategy per platform, posting cadence, engagement tactics, hashtag strategy, influencer collaboration, analytics and KPIs, community management, and crisis communication. Use when the user asks about social media strategist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "social-media marketing strategy planning"
   category: "marketing-sales"

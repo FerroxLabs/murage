@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of mobility fitness or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness breathing stress-management guide beginner-friendly quick-reference research performing-arts"
   category: "health-wellness"

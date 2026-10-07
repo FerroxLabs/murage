@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of clinical trial navigator or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "healthcare health-wellness budgeting analysis research video-production cleaning"
   category: "health-wellness"

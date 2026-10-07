@@ -6,7 +6,7 @@ description: |
   Do NOT use for steady-state cardio programming (use cardio-training-zones), strength training programs (use beginner-strength-training or intermediate-strength-training), or yoga and flexibility work (use yoga-routine-builder).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "fitness workout-planning template"
   category: "health-wellness"

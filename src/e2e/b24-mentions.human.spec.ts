@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
-import { openSidebar } from "./fixtures.ts";
+import { openSidebar, SEND_KEY } from "./fixtures.ts";
 
 const ROOM = "B24 mention fixture";
 const NAMES = Array.from({ length: 7 }, (_, index) => `B24 bot ${index + 1}`);
@@ -94,7 +94,7 @@ test("B24 keeps all authorised room mentions reachable and keyboard-selectable",
     if (width < 768) await page.mouse.click(width - 5, 100);
     await page.screenshot({ path: evidencePath(info, `seventh-active-${width}`), fullPage: true });
   }
-  await composer.press("Enter");
+  await composer.press(SEND_KEY);
   await expect(composer).toHaveValue("@B24 bot 7 ");
 });
 
@@ -194,7 +194,7 @@ test("B24 mobile confirmation keeps seventh mention visible and everyone room-on
       node.contains(document.elementFromPoint(row.x + row.width / 2, row.y + row.height / 2));
   })).toBe(true);
   await page.screenshot({ path: evidencePath(info, "seventh-active-390"), fullPage: true });
-  await composer.press("Enter");
+  await composer.press(SEND_KEY);
   await expect(composer).toHaveValue("@B24 bot 7 ");
   await (await openSidebar(page)).getByText(NAMES[0], { exact: true }).click();
   await settleMobileSidebar(page);

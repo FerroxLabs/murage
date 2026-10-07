@@ -4,7 +4,7 @@ description: |
   Comprehensive puzzle design covering puzzle types (logic, mechanical, word, mathematical, spatial), difficulty calibration, hint systems, crossword construction, escape room design, physical and digital puzzle design, testing methodologies, and creating satisfying "aha" moments. Use when the user asks about game puzzle designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design design"
   category: "game-development"

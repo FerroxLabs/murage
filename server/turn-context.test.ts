@@ -39,14 +39,16 @@ describe("buildTurnContext", () => {
     expect(out.turnText.endsWith("hi")).toBe(true);
   });
 
-  it("never wraps for native-replay drivers — they get history via SendTurnInput.transcript", () => {
+  it("sends native replay metadata without duplicating transcript rows", () => {
     for (const flags of [
       { rewound: true, fresh: false, externallyUpdated: false },
       { rewound: false, fresh: true, externallyUpdated: false },
       { rewound: false, fresh: false, externallyUpdated: true },
     ]) {
       const out = buildTurnContext({ text: "hi", transcript, ...flags, replaysNatively: true });
-      expect(out.turnText).toBe("hi");
+      expect(out.turnText).toContain("do not restate");
+      expect(out.turnText.endsWith("hi")).toBe(true);
+      expect(out.turnText).not.toContain("Biscuit");
       expect(out.resume).toBe(false);
     }
   });
@@ -167,7 +169,8 @@ describe("TRANSCRIPT_REPLAY_DRIVER_KINDS", () => {
         text: "hi", transcript, rewound: false, fresh: true,
         externallyUpdated: false, replaysNatively: replaysTranscriptNatively(kind),
       });
-      expect(out.turnText, `${kind} embedded the branch in turnText as well`).toBe("hi");
+      expect(out.turnText, `${kind} embedded the branch in turnText as well`).not.toContain("Biscuit");
+      expect(out.turnText).toContain("do not restate");
     }
     expect(replaysTranscriptNatively("claudeAgent")).toBe(false);
   });

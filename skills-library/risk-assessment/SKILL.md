@@ -11,7 +11,7 @@ description: |
   assessment (requires specialized security expertise).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis planning strategy decision-making"
   category: "business-strategy"

@@ -11,7 +11,7 @@ description: |
   research interviews (use customer-discovery-interview).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sales planning template strategy"
   category: "marketing-sales"

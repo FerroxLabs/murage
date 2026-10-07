@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical emotional dysregulation treatment, personality disorder management, or replacing professional mental health support.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "mental-wellness self-care stress-management emotional-health"
   category: "health-wellness"

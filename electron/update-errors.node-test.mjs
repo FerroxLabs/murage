@@ -3,6 +3,13 @@ import test from "node:test";
 
 import { updateErrorMessage } from "./update-errors.mjs";
 
+test("publisher verification refusals have one exact recovery line", () => {
+  for (const diagnostic of ["404", "offline", "unsupported packet", "rollback", "ENOSPC", "certificate error"]) {
+    assert.equal(updateErrorMessage(Object.assign(new Error(diagnostic), { code: "ERR_MURAGE_UPDATE_VERIFICATION" })),
+      "This update could not be verified, so Murage did not install it.");
+  }
+});
+
 test("update failures distinguish integrity, TLS, and recoverable environment categories", () => {
   for (const [error, expected] of [
     [Object.assign(new Error("certificate chain; no space left"), { code: "ERR_UPDATER_INVALID_SIGNATURE" }), /failed verification/],

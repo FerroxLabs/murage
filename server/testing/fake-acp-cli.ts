@@ -8,7 +8,18 @@
 //   FAKE_ACP_LOAD_NULL  answer session/load with null, the way a real agent
 //                       reports a session it no longer has, so the resume
 //                       cursor is dropped and the driver falls to session/new
-//   FAKE_ACP_MODE   happy (default) | image | empty-reply | reasoning-only | exit-early | fail-after-text | hang | stall-after-text | no-auth | auth-required | permission
+//   FAKE_CUSTOM_TOOL_SERVER / FAKE_CUSTOM_TOOL_LOG  every prompt calls the first
+//                   tool of that owner server from session/new's mcpServers
+//                   (fake-custom-tool.ts)
+//   FAKE_ACP_MODE   happy (default) | project-propose (the Chief's New project
+//                   proposal through the mounted agents server; see fake-mcp-propose.ts) | text-propose
+//                   (the proposal as a block in the reply, after a refused shell ask) | lead-delegate | lead-loop | image | empty-reply | reasoning-only | exit-early | fail-after-text | hang | stall-after-text | no-auth | auth-required | permission
+//                   | slow-tool (start a tool call and send nothing while it
+//                     "runs" for FAKE_ACP_TOOL_MS, default 600, a quiet
+//                     `sleep` or build, then finish it and answer)
+//                   | stall-after-tool (finish a tool call, then go fully
+//                     silent forever: the guard must still fire once no tool
+//                     is running)
 //                   | stall-after-text (stream one message chunk, then go
 //                     fully silent forever — no update, no result, no exit:
 //                     a wedged agent mid-answer. Nothing else will arrive, so
@@ -74,6 +85,8 @@
 //                     peer, and reply with what the peer said — the comms e2e)
 //                   | delegate-peer (same as ask-peer but uses delegate_bot —
 //                     returns immediately, the peer runs after our turn)
+//                     (FAKE_ACP_DELEGATE_MESSAGE overrides the task text, default
+//                     "delegated task")
 //                   | chief-delegate (delegates only for an ASSIGN_TO_PEER
 //                     prompt; ordinary follow-ups stay responsive)
 //                   | create-peer (a Chief creates a specialist, then delegates
@@ -110,7 +123,19 @@
 //   FAKE_ACP_RPC_LOG     append one JSON line per request or notification this
 //                        child receives,
 //                        {pid, method, noReplay?, agentsToken?}; unlike
-//                        FAKE_ACP_RPC_DUMP it survives a respawn
+//                        FAKE_ACP_RPC_DUMP it survives a respawn. The
+//                        token is a fingerprint (fixture-dump.ts), as are
+//                        credential-named MCP env entries in every dump
+//   FAKE_ACP_AGENTS_CAPABILITY  path to write the agents server's env as
+//                        handed, for the one test that must call Murage
+//                        with the turn's own capability; never a dump
+//   FAKE_ACP_UNIQUE_SESSIONS=1  every session/new opens its own session id
+//                        (`fake-acp-session-<pid>-<n>`), the way a real engine does
+//   FAKE_ACP_LATE_FRAMES_MS  N: N ms after this process's FIRST prompt completes,
+//                        send that session's late output (an agent_message_chunk
+//                        "LATE FRAME FROM THE EARLIER SESSION") and a
+//                        session/request_permission (id 9300) naming it; the
+//                        client's reply is appended to FAKE_ACP_LATE_REPLY_LOG
 //   FAKE_ACP_REJECT_LIVE_LOAD  refuse session/load of a session that is
 //                        already live in this process (an engine that cannot
 //                        re-establish a resident session)
@@ -118,10 +143,41 @@
 //                        session/new or session/load hands it servers, and —
 //                        like Fuigo — after a resident load only when the
 //                        servers actually changed
+//   FAKE_ACP_MCP_READY_NEW_ONLY=1  announce readiness after session/new only,
+//                        never after session/load (servers that never report
+//                        ready on a reused process)
+//   FAKE_ACP_MCP_CHILD_LOG  run each handed server set as a real child
+//                        process (the first server's command and args, as
+//                        handed; `sleep 300` when none), the way Fuigo starts its MCP
+//                        servers: session/new starts one, and a resident
+//                        session/load with changed servers stops it and starts
+//                        a replacement (a new pid). Each pid is appended to the log
 //   __fixture_cancel_ack__  (prompt marker) hold THIS prompt open and answer
 //                        it "cancelled" on session/cancel, staying alive: a
 //                        cooperative cancel on a process that is otherwise
 //                        in its ordinary mode
+//   FAKE_ACP_NAMED_UPDATES=1  every session/update the fixture sends names the
+//                        live session (a real engine always does)
+//   FAKE_ACP_LATE_SHAPE  with FAKE_ACP_LATE_FRAMES_MS: "sessionless" sends the
+//                        late chunk and permission request naming no session;
+//                        "helper" announces a helper (child_session_id
+//                        "late-helper") under the earlier session, then sends
+//                        the permission request from that helper's session
+//   __fixture_tool_after_turn__  (prompt marker) finish the turn, then report a
+//                        tool call (and its progress) 150 ms later, while idle
+//   __fixture_wake_after_turn__  (prompt marker) finish the turn, then 2 s later
+//                        report turn_completed on _fuigo/session_notification,
+//                        the way Fuigo starts a turn of its own after end_turn
+//   FAKE_ACP_INIT_DELAY_MS  answer initialize only after this long: a startup
+//                        cost, so a reused process's saving is measurable
+//   __fixture_child_later__  (prompt marker) finish the turn, then start
+//                        `sleep 30` as its own child FAKE_ACP_CHILD_DELAY_MS
+//                        (default 800) later and write its pid to
+//                        FAKE_ACP_CHILD_PID_FILE: a child that appears after
+//                        the park check passed
+//   __fixture_child_after_turn__  (prompt marker) start `sleep 30` as its own
+//                        child, write its pid to FAKE_ACP_CHILD_PID_FILE, then
+//                        finish the turn with the child still running
 //   __fixture_request_after_turn__  (prompt marker) finish the turn, then
 //                        ask for a permission 150 ms later, while idle
 //   Like Fuigo, session/load of the session this process already holds
@@ -163,10 +219,14 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { execFileSync, spawn } from "node:child_process";
-import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { fixtureCredentialFingerprint } from "./fixture-dump.ts";
+import { logProposalTurn, proposalFrom, proposalReply, proposeThroughMcp } from "./fake-mcp-propose.ts";
+import { fakeReviewByTool, fakeReviewReply, fakeReviewToolArgs } from "./fake-review.ts";
+import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 // permission modes: the command the approval asks about (default "echo hi")
@@ -212,6 +272,25 @@ const sessionModels = () =>
   acpModels.length ? { currentModelId: acpModels[0].modelId, availableModels: acpModels } : null;
 
 const argv = process.argv.slice(2);
+// Explicit assertion fields only, never the inherited environment.
+// Credentials are fingerprints (fixture-dump.ts), never values.
+const dumpCredentials = new Set([
+  "OPENCODE_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "XAI_API_KEY",
+  "BOX_TOKEN",
+  "MURAGE_TTS_KEY",
+  "FACTORY_API_KEY",
+  "UNSLOTH_STUDIO_AUTH_TOKEN",
+  "CURSOR_API_KEY",
+  "CURSOR_AUTH_TOKEN",
+  "KIMI_MODEL_API_KEY",
+  "MURAGE_PROVIDER_API_KEY",
+  "MY_AGENT_TOKEN",
+  "ANTHROPIC_AUTH_TOKEN",
+]);
 const dumpEnv = Object.fromEntries(
   [
     "PATH",
@@ -221,34 +300,21 @@ const dumpEnv = Object.fromEntries(
     "FAKE_ACP_MODE",
     "FAKE_ACP_RPC_DUMP",
     "TEST_POLICY",
-    "OPENCODE_API_KEY",
-    "OPENAI_API_KEY",
-    "OPENROUTER_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "XAI_API_KEY",
-    "BOX_TOKEN",
-    "MURAGE_TTS_KEY",
-    "FACTORY_API_KEY",
-    "UNSLOTH_STUDIO_AUTH_TOKEN",
-    "CURSOR_API_KEY",
-    "CURSOR_AUTH_TOKEN",
     "KIMI_MODEL_NAME",
-    "KIMI_MODEL_API_KEY",
     "KIMI_MODEL_BASE_URL",
     "KIMI_MODEL_PROVIDER_TYPE",
     "KIMI_MODEL_DISPLAY_NAME",
     "TEST_TURN_MODEL",
     "FUIGO_HOME",
     "HERMES_HOME",
-    "MURAGE_PROVIDER_API_KEY",
-    "MY_AGENT_TOKEN",
+    "OPENCODE_DISABLE_PROJECT_CONFIG",
     // routing switches: stripped unconditionally, never allowlistable
     "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",
     "OPENAI_BASE_URL",
     "OPENAI_MODEL",
-  ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]] as const)),
+    ...dumpCredentials,
+  ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, dumpCredentials.has(key) ? fixtureCredentialFingerprint(process.env[key]!) : process.env[key]]] as const)),
 );
 const dumpState: Record<string, unknown> = { argv, env: dumpEnv };
 if (process.env.FAKE_ACP_DUMP) {
@@ -302,7 +368,16 @@ if (argv[0] === "models" || argv.includes("--list-models")) {
   );
 }
 
-const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
+const rawOut = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
+// FAKE_ACP_NAMED_UPDATES=1: every session/update names the live session, as the
+// ACP spec has a real engine do (the fixture's own shorthand frames omit it).
+const out = (obj: unknown) => {
+  const frame = obj as { method?: unknown; params?: { sessionId?: unknown } } | null;
+  if (process.env.FAKE_ACP_NAMED_UPDATES === "1" && frame?.method === "session/update" && frame.params && frame.params.sessionId === undefined && liveSession) {
+    return rawOut({ ...frame, params: { sessionId: liveSession, ...frame.params } });
+  }
+  return rawOut(obj);
+};
 // Mirrors ENGINE_FRAME_MAX_BYTES in server/drivers/bounded-lines.ts (this
 // fake stays dependency-free). "é" is two UTF-8 bytes: the text alone is one
 // KiB over the limit, so the limit is counted in bytes, not characters.
@@ -322,6 +397,26 @@ const fixtureRequested = (text: string, marker: string) => {
   return (lines.pop() ?? "").includes(marker);
 };
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
+// `_fuigo/interject`, Fuigo's steer into a running prompt. FAKE_ACP_INTERJECT:
+// "fallback" answers queued and echoes it, then runs it as its own
+// `interject-fallback-` turn after the prompt result (a steer that missed the
+// turn's final drain); "silent" answers nothing and echoes it after
+// FAKE_ACP_LATE_ECHO_MS. Unset: method not found, as other engines answer.
+const strandedInterjections: string[] = [];
+let fallbackTurns = 0;
+const runStrandedInterjection = () => {
+  const text = strandedInterjections.shift();
+  if (text === undefined) return;
+  const promptId = `interject-fallback-${++fallbackTurns}`;
+  setTimeout(() => {
+    out({ jsonrpc: "2.0", method: "_fuigo/queue/changed", params: { entries: [], runningPromptId: promptId, runningText: text, runningKind: "prompt" } });
+    out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: ` fallback reply #${fallbackTurns}` } } } });
+    setTimeout(() => {
+      out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { update: { sessionUpdate: "turn_completed", prompt_id: promptId, stop_reason: "end_turn" } } });
+      out({ jsonrpc: "2.0", method: "_fuigo/queue/changed", params: { entries: [] } });
+    }, 300);
+  }, 100);
+};
 const rpcMethods: string[] = [];
 const recordMethod = (method: string) => {
   rpcMethods.push(method);
@@ -400,6 +495,8 @@ const configCalls: Array<{ method: string; params: unknown }> = [];
 
 // pending server→client permission request id → resolver
 let pendingPermissionId: number | null = null;
+/** project-propose mode's own permission asks, answered by id. */
+const proposalAsks = new Map<number, (result: any) => void>();
 let onPermissionAnswered: (() => void) | null = null;
 // folder-trust mode: what the client advertised and whether the folder was
 // trusted when the session was built (argv --trust, the way `fuigo --trust`
@@ -452,13 +549,25 @@ const agentsMdForReply = () => {
 };
 
 // ask-peer mode: the "agents" MCP server entry from session/new's mcpServers
-type McpEntry = { command: string; args?: string[]; env?: Array<{ name: string; value: string }> };
+type McpEntry = { name?: string; command: string; args?: string[]; env?: Array<{ name: string; value: string }> };
 let agentsMcp: McpEntry | null = null;
 /** The session this process built or loaded, as Fuigo keeps it resident. */
 let liveSession: string | null = null;
 /** The serialized servers the live session was last handed. */
 let liveServers: string | null = null;
 let markerCancelAck = false;
+/** FAKE_ACP_MCP_CHILD_LOG: the running stand-in for the session's MCP servers. */
+let mcpChild: ReturnType<typeof spawn> | null = null;
+const startMcpChild = (servers: unknown) => {
+  const log = process.env.FAKE_ACP_MCP_CHILD_LOG;
+  if (!log) return;
+  mcpChild?.kill("SIGKILL");
+  const first = Array.isArray(servers) ? servers[0] as { command?: unknown; args?: unknown } | undefined : undefined;
+  mcpChild = typeof first?.command === "string"
+    ? spawn(first.command, Array.isArray(first.args) ? first.args.map(String) : [], { stdio: "ignore" })
+    : spawn("sleep", ["300"], { stdio: "ignore" });
+  appendFileSync(log, `${mcpChild.pid}\n`);
+};
 const announceMcpReady = (sessionId: string, servers: unknown) => {
   if (process.env.FAKE_ACP_MCP_READY !== "1" || !Array.isArray(servers) || !servers.length) return;
   out({ jsonrpc: "2.0", method: "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: servers.length, elapsedMs: 1 } });
@@ -466,7 +575,20 @@ const announceMcpReady = (sessionId: string, servers: unknown) => {
 const agentsTokenOf = (servers: unknown): string | undefined => {
   if (!Array.isArray(servers)) return undefined;
   const agents = servers.find((s: any) => s?.name === "agents") as McpEntry | undefined;
-  return agents?.env?.find(entry => entry.name === "MURAGE_COMMS_TOKEN")?.value;
+  const token = agents?.env?.find(entry => entry.name === "MURAGE_COMMS_TOKEN")?.value;
+  return token === undefined ? undefined : fixtureCredentialFingerprint(token);
+};
+/** The handed MCP servers as the dumps record them: a credential-named env
+ * entry or header is a fingerprint (fixture-dump.ts), never its value. */
+const CREDENTIAL_NAME = /token|key|secret|password|passwd|auth|credential|cookie/i;
+const dumpedServers = (servers: unknown): unknown => {
+  if (!Array.isArray(servers)) return servers;
+  const rows = (list: unknown) => Array.isArray(list)
+    ? list.map((row: any) => typeof row?.name === "string" && typeof row?.value === "string" && CREDENTIAL_NAME.test(row.name) ? { ...row, value: fixtureCredentialFingerprint(row.value) } : row)
+    : list;
+  return servers.map((server: any) => server && typeof server === "object"
+    ? { ...server, ...(server.env !== undefined ? { env: rows(server.env) } : {}), ...(server.headers !== undefined ? { headers: rows(server.headers) } : {}) }
+    : server);
 };
 if (process.env.FAKE_ACP_SPAWN_LOG) appendFileSync(process.env.FAKE_ACP_SPAWN_LOG, `${process.pid}\n`);
 
@@ -478,7 +600,10 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
     for (const { name, value } of entry.env ?? []) env[name] = value;
     const child = spawn(entry.command, entry.args ?? [], { env, stdio: ["pipe", "pipe", "inherit"] });
     child.on("error", reject);
-    const timer = setTimeout(() => (child.kill(), reject(new Error("mcp timeout"))), 60_000);
+    // FAKE_ACP_MCP_TIMEOUT_MS: the engine gives up on a tool call that long
+    // after it started (the tool's own connection closes), as a real engine's
+    // tool timeout does; the turn then goes on
+    const timer = setTimeout(() => (child.kill(), reject(new Error("mcp timeout"))), Number(process.env.FAKE_ACP_MCP_TIMEOUT_MS) || 60_000);
     let step = -1; // -1 = initialize in flight
     let last = "";
     const write = (obj: unknown) => child.stdin.write(JSON.stringify(obj) + "\n");
@@ -634,7 +759,83 @@ function afterSessionBuilt() {
   }
 }
 
+/** `__fixture_subagents__` (Fuigo's shape): three sub agents are announced on
+ * `_fuigo/session_notification`, the prompt ends `end_turn` while they run,
+ * then each raises permission asks of its own, then they finish.
+ *   FAKE_ACP_BG_ASKS  asks raised after the prompt result (default 2)
+ *   FAKE_ACP_BG_HOLD  "1": the sub agents never finish (Stop and cap tests)
+ *   FAKE_ACP_BG_WAKE  "1": the last finish says will_wake, and a reply plus
+ *                     turn_completed follow it
+ *   FAKE_ACP_BG_LOG   one line per ask verdict and per finish */
+const bgAnswers = new Map<number, (outcome: any) => void>();
+const bgLog = (line: string) => { if (process.env.FAKE_ACP_BG_LOG) appendFileSync(process.env.FAKE_ACP_BG_LOG, `${line}\n`); };
+async function playSubagents(promptMsg: any) {
+  const sessionId = promptMsg.params?.sessionId;
+  const note = (update: Record<string, unknown>) => out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId, update } });
+  const chunk = (text: string) => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
+  const ids = ["sub-1", "sub-2", "sub-3"];
+  chunk("Three helpers are reading.");
+  for (const id of ids) note({ sessionUpdate: "subagent_spawned", subagent_id: id, parent_session_id: sessionId, child_session_id: `child-${id}`, subagent_type: "explore", description: `Helper ${id}` });
+  result(promptMsg.id, { stopReason: "end_turn", _meta: { inputTokens: 1, outputTokens: 1 } });
+  const asks = Number(process.env.FAKE_ACP_BG_ASKS ?? "2");
+  for (let i = 0; i < asks; i += 1) {
+    note({ sessionUpdate: "subagent_progress", subagent_id: ids[0], parent_session_id: sessionId, child_session_id: "child-sub-1", duration_ms: 5, turn_count: 1, tool_call_count: i + 1, tokens_used: 1, context_window_tokens: 100, context_usage_pct: 1, tools_used: ["read"], error_count: 0 });
+    const id = 9200 + i;
+    const answered = new Promise<any>((resolve) => bgAnswers.set(id, resolve));
+    out({ jsonrpc: "2.0", id, method: "session/request_permission", params: { sessionId: `child-sub-1`, toolCall: { toolCallId: `bg-${i}`, title: "Read /outside/cwd/file.md", kind: "read" }, options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject", kind: "reject_once" }] } });
+    const outcome = (await answered)?.outcome;
+    bgLog(`verdict:${outcome?.outcome === "selected" ? outcome.optionId : String(outcome?.outcome)}`);
+  }
+  if (process.env.FAKE_ACP_BG_HOLD === "1") { bgLog("held"); return; }
+  ids.forEach((id, index) => {
+    const last = index === ids.length - 1;
+    note({ sessionUpdate: "subagent_finished", subagent_id: id, child_session_id: `child-${id}`, status: "completed", tool_calls: 1, turns: 1, duration_ms: 9, tokens_used: 1, will_wake: last && process.env.FAKE_ACP_BG_WAKE === "1" });
+  });
+  if (process.env.FAKE_ACP_BG_WAKE === "1") {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    chunk("All helpers reported.");
+    note({ sessionUpdate: "turn_completed", prompt_id: "wake-1", stop_reason: "end_turn" });
+  }
+  bgLog("finished");
+}
+
+let sessionSeq = 0;
+let lateScheduled = false;
+function scheduleLateFrames(sessionId: unknown) {
+  const ms = Number(process.env.FAKE_ACP_LATE_FRAMES_MS);
+  if (lateScheduled || !Number.isFinite(ms) || ms <= 0 || typeof sessionId !== "string") return;
+  lateScheduled = true;
+  setTimeout(() => {
+    const shape = process.env.FAKE_ACP_LATE_SHAPE;
+    const named = shape === "sessionless" ? {} : { sessionId };
+    if (shape === "helper") {
+      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update: { sessionUpdate: "subagent_spawned", subagent_id: "late", parent_session_id: sessionId, child_session_id: "late-helper", subagent_type: "explore", description: "Late helper" } } });
+      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "late-helper", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "LATE FRAME FROM THE EARLIER SESSION" } } } });
+      out({ jsonrpc: "2.0", id: 9300, method: "session/request_permission", params: { sessionId: "late-helper", toolCall: { toolCallId: "late-1", title: "Late ask from the earlier session", kind: "execute" }, options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject", kind: "reject_once" }] } });
+      return;
+    }
+    rawOut({ jsonrpc: "2.0", method: "session/update", params: { ...named, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "LATE FRAME FROM THE EARLIER SESSION" } } } });
+    rawOut({ jsonrpc: "2.0", id: 9300, method: "session/request_permission", params: { ...named, toolCall: { toolCallId: "late-1", title: "Late ask from the earlier session", kind: "execute" }, options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject", kind: "reject_once" }] } });
+  }, ms);
+}
+
 function handle(msg: any) {
+  if (msg.id === 9300 && !msg.method) {
+    if (process.env.FAKE_ACP_LATE_REPLY_LOG) appendFileSync(process.env.FAKE_ACP_LATE_REPLY_LOG, JSON.stringify({ result: msg.result, error: msg.error }) + "\n");
+    return;
+  }
+  if (msg.id !== undefined && !msg.method && bgAnswers.has(msg.id)) {
+    const answered = bgAnswers.get(msg.id)!;
+    bgAnswers.delete(msg.id);
+    answered(msg.result ?? { outcome: { outcome: "error" } });
+    return;
+  }
+  if (msg.id !== undefined && !msg.method && proposalAsks.has(msg.id)) {
+    const answered = proposalAsks.get(msg.id)!;
+    proposalAsks.delete(msg.id);
+    answered(msg.result ?? { error: msg.error });
+    return;
+  }
   // client's response to our permission request
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingPermissionId) {
     pendingPermissionId = null;
@@ -680,7 +881,9 @@ function handle(msg: any) {
         dumpState.initialize = msg.params ?? null;
         writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
       }
-      result(msg.id, { protocolVersion: 1, authMethods, _meta: { modelState: { currentModelId: "fake-acp-model" } } });
+      const initDelay = Number(process.env.FAKE_ACP_INIT_DELAY_MS) || 0;
+      const answer = () => result(msg.id, { protocolVersion: 1, authMethods, ...(mode.startsWith("fuigo-retry:disc-") ? { agentCapabilities: { _meta: { "fuigo/capabilities": { retryDiscard: { version: 1 } } } } } : {}), _meta: { modelState: { currentModelId: "fake-acp-model" } } });
+      if (initDelay > 0) setTimeout(answer, initDelay); else answer();
       break;
     }
     case "authenticate":
@@ -697,23 +900,33 @@ function handle(msg: any) {
       }
       const servers: McpEntry[] = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
       if (process.env.FAKE_ACP_DUMP) {
-        dumpState.mcpServers = servers;
+        dumpState.mcpServers = dumpedServers(servers);
         writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
       }
-      agentsMcp = servers.find((s: any) => s?.name === "agents") ?? null;
+      agentsMcp = servers.find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? null;
       if (process.env.FAKE_ACP_DUMP) {
-        writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(servers, null, 2));
+        writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(dumpedServers(servers), null, 2));
+      }
+      if (process.env.FAKE_ACP_AGENTS_CAPABILITY && agentsMcp) {
+        // always a new owner-only file: a stale file or a link left at the
+        // path is removed first, never written through
+        const path = process.env.FAKE_ACP_AGENTS_CAPABILITY;
+        try { unlinkSync(path); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+        const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
+        try { writeSync(fd, JSON.stringify(agentsMcp.env ?? [])); } finally { closeSync(fd); }
       }
       const opts = configOptions();
       const mdls = sessionModels();
-      liveSession = "fake-acp-session";
+      const newSessionId = process.env.FAKE_ACP_UNIQUE_SESSIONS ? `fake-acp-session-${process.pid}-${++sessionSeq}` : "fake-acp-session";
+      liveSession = newSessionId;
       liveServers = JSON.stringify(servers);
+      startMcpChild(servers);
       result(msg.id, {
-        sessionId: "fake-acp-session",
+        sessionId: newSessionId,
         ...(opts ? { configOptions: opts } : {}),
         ...(mdls ? { models: mdls } : {}),
       });
-      announceMcpReady("fake-acp-session", servers);
+      announceMcpReady(newSessionId, servers);
       // Fuigo 1.0.x and Grok Build advertise their "/" commands right after
       // session/new, before any prompt (session_setup.rs
       // send_available_commands_update). JSON array of ACP AvailableCommand.
@@ -722,7 +935,7 @@ function handle(msg: any) {
           jsonrpc: "2.0",
           method: "session/update",
           params: {
-            sessionId: "fake-acp-session",
+            sessionId: newSessionId,
             update: { sessionUpdate: "available_commands_update", availableCommands: JSON.parse(process.env.FAKE_ACP_COMMANDS) },
           },
         });
@@ -741,8 +954,9 @@ function handle(msg: any) {
       if (resident && Array.isArray(msg.params?.mcpServers)) {
         // Fuigo's reconnect: the resident session takes the new servers
         const servers: McpEntry[] = msg.params.mcpServers;
-        agentsMcp = servers.find((s: any) => s?.name === "agents") ?? null;
-        if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(servers, null, 2));
+        agentsMcp = servers.find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? null;
+        if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(dumpedServers(servers), null, 2));
+        if (serversChanged) startMcpChild(servers);
       }
       if (process.env.FAKE_ACP_LOAD_ERROR) {
         out({ jsonrpc: "2.0", id: msg.id, error: JSON.parse(process.env.FAKE_ACP_LOAD_ERROR) });
@@ -757,7 +971,7 @@ function handle(msg: any) {
       if (typeof msg.params?.sessionId === "string") liveSession = msg.params.sessionId;
       liveServers = loadServers;
       result(msg.id, { ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}) });
-      if (serversChanged && typeof msg.params?.sessionId === "string") announceMcpReady(msg.params.sessionId, msg.params?.mcpServers);
+      if (serversChanged && typeof msg.params?.sessionId === "string" && process.env.FAKE_ACP_MCP_READY_NEW_ONLY !== "1") announceMcpReady(msg.params.sessionId, msg.params?.mcpServers);
       // the real engine runs the trust prompt after session/load too
       // (`load_session_inner`), so a resumed turn is gated like a new one
       afterSessionBuilt();
@@ -812,7 +1026,34 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      if (mode === "parallel-card-retry" && process.env.FAKE_ACP_FAIL_ONCE_FILE && !existsSync(process.env.FAKE_ACP_FAIL_ONCE_FILE)) {
+        writeFileSync(process.env.FAKE_ACP_FAIL_ONCE_FILE, "failed launch");
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "429 too many requests", data: { http_status: 429, error_kind: "rate_limited" } } });
+        return;
+      }
+      // A marker is observable before the held prompt has a terminal message.
+      if (process.env.FAKE_ACP_ACCEPT_DIR && ["parallel-card", "parallel-card-retry", "cancel-ack"].includes(mode)) {
+        writeFileSync(join(process.env.FAKE_ACP_ACCEPT_DIR, `${process.pid}-${msg.id}.accepted`), String(Date.now()));
+      }
       if (process.env.FAKE_ACP_PROMPT_DUMP) writeFileSync(process.env.FAKE_ACP_PROMPT_DUMP, JSON.stringify(msg.params?.prompt ?? null));
+      // FAKE_CUSTOM_TOOL_SERVER (fake-custom-tool.ts): call the first tool of
+      // that owner server, started from the session's mcpServers entry.
+      const customPrompt = (Array.isArray(msg.params?.prompt) ? msg.params.prompt : []).map((part: { text?: unknown }) => String(part?.text ?? "")).join("\n");
+      const customServer = customToolServer(customPrompt);
+      if (customServer) {
+        let servers: McpEntry[] = [];
+        try { servers = JSON.parse(liveServers ?? "[]") as McpEntry[]; } catch { servers = []; }
+        const entry = servers.find((server) => server?.name === customServer);
+        const promptText = customPrompt;
+        void (async () => {
+          const outcome = entry
+            ? await callFirstCustomTool("acp", customServer, { command: entry.command, args: entry.args ?? [], env: Object.fromEntries((entry.env ?? []).map(({ name, value }) => [name, value])) }, promptText)
+            : { tools: [], text: `no ${customServer} server was mounted`, isError: true };
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: customToolReply(outcome) } } } });
+          result(msg.id, { stopReason: "end_turn" });
+        })();
+        return;
+      }
       if (mode.startsWith("fuigo18-contract:")) {
         const variant = mode.slice("fuigo18-contract:".length);
         dumpState.promptRequests = Number(dumpState.promptRequests ?? 0) + 1;
@@ -842,6 +1083,101 @@ function handle(msg: any) {
       }
       if (mode === "exit-with-stderr-history") {
         process.stderr.write("STDERR_EARLY_CANARY\nsk-test-" + "SYNTHETICKEYCANARY".repeat(24) + "\n" + ("x".repeat(4000) + "\n").repeat(4) + "STDERR_VISIBLE_END\n", () => process.exit(4));
+        return;
+      }
+      if (mode === "fuigo-retry:restream" || mode === "fuigo-retry:tool") {
+        // Fuigo resends the request after a mid-stream failure: the same
+        // answer streams again from the start, announced by retry_state.
+        const sid = msg.params.sessionId;
+        const chunk = (text: string) => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
+        const retrying = (n: number) => out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: sid, update: { sessionUpdate: "retry_state", type: "retrying", attempt: n }, _meta: { eventId: `retry-${n}`, agentTimestampMs: Date.now() } } });
+        if (mode === "fuigo-retry:restream") {
+          chunk("A1"); retrying(1); chunk("A2"); retrying(2); chunk("A3");
+        } else {
+          chunk("Before. ");
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "tool_call", toolCallId: "tc-retry", title: "run", kind: "execute" } } });
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "tool_call_update", toolCallId: "tc-retry", status: "completed", rawOutput: "done" } } });
+          chunk("After one. "); retrying(1); chunk("Final answer.");
+        }
+        result(msg.id, { stopReason: "end_turn" });
+        return;
+      }
+      if (mode.startsWith("fuigo-retry:disc-")) {
+        // Fuigo 1.0.22: retryDiscard advertised at initialize; the discarding
+        // retry_state carries discardEmitted and streamStartMs, the dead
+        // attempt's chunks carry _meta.streamStartMs.
+        const sid = msg.params.sessionId;
+        const chunk = (text: string, startMs?: number, kind = "agent_message_chunk", extra: any = {}) => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: kind, content: { type: "text", text } }, ...(startMs !== undefined || extra.meta ? { _meta: { ...(startMs !== undefined ? { streamStartMs: startMs } : {}), ...(extra.meta ?? {}) } } : {}) } });
+        const retry = (update: any, method = "_fuigo/session_notification", meta: any = {}) => out({ jsonrpc: "2.0", method, params: { sessionId: sid, update: { sessionUpdate: "retry_state", type: "retrying", attempt: 1, ...update }, _meta: { eventId: `r-${Math.random().toString(36).slice(2)}`, agentTimestampMs: Date.now(), ...meta } } });
+        const completed = () => out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: sid, update: { sessionUpdate: "response_completed", stop_reason: "end_turn" }, _meta: {} } });
+        const variant = mode.slice("fuigo-retry:disc-".length);
+        if (variant === "exact") {
+          chunk("Earlier. ", 100); completed(); chunk("BAD", 200); retry({ discardEmitted: true, streamStartMs: 200 }); chunk("Final", 300);
+        } else if (variant === "nodiscard") {
+          chunk("A", 1); retry({}); chunk("B", 2); retry({ streamStartMs: 2 }); chunk("C", 3);
+        } else if (variant === "boundary") {
+          chunk("R1 "); completed(); chunk("R2bad"); retry({ discardEmitted: true }); chunk("R2ok");
+        } else if (variant === "status") {
+          chunk("Think. ", 1, "agent_thought_chunk"); chunk("BAD", 1); retry({ discardEmitted: true, streamStartMs: 1 });
+          chunk("Retrying after a hiccup", undefined, "agent_thought_chunk", { meta: { "fuigo/retryStatus": { attempt: 1 } } });
+          chunk("Final", 2);
+        } else if (variant === "resurrect") {
+          chunk("Old ", 1, "agent_thought_chunk"); chunk("Done.", 1);
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "tool_call", toolCallId: "t-res", title: "look", kind: "read", status: "completed" } } });
+          chunk("New", 2, "agent_thought_chunk"); retry({ discardEmitted: true, streamStartMs: 2 }); chunk("Final", 3);
+        } else if (variant.startsWith("hosted")) {
+          // Responses-path hosted tools: the row streams inside the attempt,
+          // tagged with its streamStartMs and `_meta.backend`.
+          const tool = (id: string, startMs: number, backend = true) => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "tool_call", toolCallId: id, title: backend ? "web_search" : "read", kind: backend ? "fetch" : "read", status: "in_progress" }, _meta: { streamStartMs: startMs, ...(backend ? { backend: true } : {}) } } });
+          const done = (id: string, startMs: number, backend = true) => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "tool_call_update", toolCallId: id, status: "completed", rawOutput: "ok" }, _meta: { streamStartMs: startMs, ...(backend ? { backend: true } : {}) } } });
+          if (variant === "hosted") {
+            chunk("A", 1); tool("ws-1", 1); done("ws-1", 1); retry({ discardEmitted: true, streamStartMs: 1 });
+            chunk("A2", 2); tool("ws-2", 2); done("ws-2", 2); chunk(" Answer.", 2); completed();
+          } else if (variant === "hosted-open") {
+            chunk("A", 1); tool("ws-1", 1); retry({ discardEmitted: true, streamStartMs: 1 });
+            chunk("A2", 2); tool("ws-2", 2); done("ws-2", 2); completed();
+          } else if (variant === "hosted-nodiscard") {
+            chunk("A", 1); tool("ws-1", 1); retry({}); chunk("B", 1); done("ws-1", 1); completed();
+          } else if (variant === "hosted-ok") {
+            // an ordinary successful hosted search; the untagged thought after
+            // response_completed marks when the text was saved
+            chunk("Let me search.", 1); tool("ws-1", 1); done("ws-1", 1); chunk("Here is what I found.", 1); completed();
+            chunk("mark", undefined, "agent_thought_chunk");
+          } else if (variant === "hosted-twin") {
+            chunk("Let me search.", 1); tool("ws-1", 1); tool("ws-2", 1); done("ws-1", 1); done("ws-2", 1); chunk("Found.", 1); completed();
+          } else if (variant === "hosted-local") {
+            // a client-executed row (tagged, not backend), then a backend row
+            // without streamStartMs: the text before each is committed first
+            chunk("Let me read.", 1); tool("rd-1", 1, false); done("rd-1", 1, false); chunk("A", 1);
+            out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "tool_call", toolCallId: "ws-1", title: "web_search", kind: "fetch", status: "in_progress" }, _meta: { backend: true } } });
+            done("ws-1", 1); chunk("B", 1); completed();
+          } else if (variant === "hosted-epoch") {
+            // the discarding retry_state carries no streamStartMs
+            chunk("A", 1); tool("ws-1", 1); retry({ discardEmitted: true }); chunk("A2", 2); completed();
+          } else if (variant === "hosted-rowonly") {
+            // the discarded attempt streamed only a running row, no text, and
+            // the discarding retry_state carries no streamStartMs
+            tool("ws-1", 1); retry({ discardEmitted: true }); tool("ws-2", 2); done("ws-2", 2); chunk("A2", 2); completed();
+          } else if (variant === "hosted-rowonly-done") {
+            // a row of a response that already completed is not that attempt's
+            tool("ws-1", 1); completed(); retry({ discardEmitted: true }); done("ws-1", 1); chunk("B", 2); completed();
+          } else if (variant === "hosted-many") {
+            // a discarded attempt with 600 hosted rows still running: more
+            // than the 512 the driver once tracked
+            for (let index = 1; index <= 600; index++) tool(`ws-${index}`, 1);
+            retry({ discardEmitted: true, streamStartMs: 1 }); chunk("A2", 2); completed();
+          } else if (variant === "hosted-client") {
+            chunk("R", 1); completed(); tool("rd-1", 1, false);
+            chunk("X", 2); tool("ws-2", 2); retry({ discardEmitted: true, streamStartMs: 2 });
+            done("rd-1", 1, false); chunk("Y", 3); completed();
+          }
+        } else if (variant === "carrier") {
+          chunk("X", 5);
+          retry({ discardEmitted: true, streamStartMs: 5 }, "_fuigo/session/update", { isReplay: true });
+          chunk("Y", 6);
+          retry({ discardEmitted: true, streamStartMs: 5 }, "_fuigo/session/update");
+        }
+        result(msg.id, { stopReason: "end_turn" });
         return;
       }
       if (mode.startsWith("fuigo-diagnostic:")) {
@@ -927,6 +1263,18 @@ function handle(msg: any) {
         out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message } });
         return;
       }
+      if (mode === "fuigo-live-notices") {
+        process.stderr.write("ordinary diagnostic\nfuigo: lowercase log line\nFu");
+        setTimeout(() => {
+          process.stderr.write("igo: found memory from an older version at /home/u/.fuigo/memory/old. It belongs to another repository. Memory for this repository now lives at /home/u/.fuigo/memory/new. Nothing was deleted.\r\nFuigo: the feedback session archive was NOT uploaded. token=fixture-secret-canary\nFuigo: " + "x".repeat(1400) + "\nFuigo: fourth omitted\n");
+          // A live output marker lets tests observe delivery without an exit.
+          setTimeout(() => out({ jsonrpc: "2.0", method: "session/update", params: {
+            update: { sessionUpdate: "agent_message_chunk", content: { text: "notices written" } },
+          } }), 25);
+          // Stay live until interrupted so the test cannot pass on exit capture.
+        }, 25);
+        return;
+      }
       if (mode === "stderr-rpc-error" || mode === "stderr-happy") {
         const lines = ["STDERR_EVICTED_FIRST_LINE"];
         for (let i = 0; i < 200; i++) lines.push(`\u001b[2mretry ${i}: empty response from model (reasoning_only), waiting\u001b[0m`);
@@ -972,6 +1320,27 @@ function handle(msg: any) {
         setInterval(() => {}, 1_000);
         return;
       }
+      if (mode === "slow-tool" || mode === "stall-after-tool") {
+        const tool = (update: Record<string, unknown>) =>
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { toolCallId: "tc-slow", ...update } } });
+        // ACP's default status is pending: this tool_call carries none.
+        tool({ sessionUpdate: "tool_call", title: "sleep", rawInput: { command: "sleep 45 && echo done" } });
+        tool({ sessionUpdate: "tool_call_update", status: "in_progress" });
+        const finishTool = () => tool({ sessionUpdate: "tool_call_update", status: "completed", rawOutput: { output: "done" } });
+        if (mode === "stall-after-tool") {
+          // FAKE_ACP_TOOL_NEVER_FINISHES: an engine that never reports the
+          // tool as finished (the guard's tool cap is the only bound).
+          if (!process.env.FAKE_ACP_TOOL_NEVER_FINISHES) finishTool();
+          setInterval(() => {}, 1_000);
+          return;
+        }
+        setTimeout(() => {
+          finishTool();
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "done" } } } });
+          result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } });
+        }, Number(process.env.FAKE_ACP_TOOL_MS ?? 600));
+        return;
+      }
       if (mode === "stall-after-text") {
         // Stream a chunk, then go fully silent forever: no further update, no
         // result, no exit. The shape of a wedged OpenCode agent that stopped
@@ -993,16 +1362,32 @@ function handle(msg: any) {
       }
       const complete = () => {
         recordMethod("session/prompt.result");
+        setImmediate(runStrandedInterjection);
+        scheduleLateFrames(msg.params?.sessionId);
         result(
           msg.id,
           // FAKE_ACP_USAGE_ROOT reproduces opencode 1.18.18's shape: usage at
           // the result root with an empty _meta, instead of usage under _meta.
-          process.env.FAKE_ACP_USAGE_ROOT
+          process.env.FAKE_ACP_USAGE_ROOT === "fuigo"
+            ? { stopReason: "end_turn", _meta: { inputTokens: 1, outputTokens: 2, usage: { inputTokens: 100, outputTokens: 50, cachedReadTokens: 30, costUsdTicks: 2500000000 } } }
+            : process.env.FAKE_ACP_USAGE_ROOT
             ? { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5 }, _meta: {} }
             : { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } },
         );
       };
       const promptText = String(msg.params?.prompt?.[0]?.text ?? "");
+      // lane review: a review run answers with its verdict (fake-review.ts)
+      const reviewText = fakeReviewReply(promptText);
+      if (reviewText !== null) {
+        const say = (text: string) => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text } } } }); complete(); };
+        if (fakeReviewByTool() && agentsMcp) {
+          void driveMcp(agentsMcp, [{ name: "project_review_result", args: () => fakeReviewToolArgs(promptText) }])
+            .then(reply => say(`Reviewed with the tool: ${reply}`)).catch((e: Error) => say(`review tool error: ${e.message}`));
+          return;
+        }
+        say(reviewText);
+        return;
+      }
       if (mode === "retry-status-thought") {
         // Wire shape of fuigo-shell retry_status_update (1.0.18): a thought, never answer text.
         const retryStatus = { type: "retrying", attempt: 1, max_retries: 2, reason: "empty response from model (reasoning_only)", error_type: "empty_response" };
@@ -1057,6 +1442,67 @@ function handle(msg: any) {
       }
       // Bounded-ingress fixtures (A4), keyed on the prompt so one fake can
       // run an oversized turn beside an ordinary one.
+      if (fixtureRequested(promptText, "__fixture_subagents__")) {
+        void playSubagents(msg);
+        return;
+      }
+      if (fixtureRequested(promptText, "__fixture_tool_after_turn__")) {
+        // a background task that keeps working after end_turn
+        out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "handed to a background task" } } } });
+        complete();
+        setTimeout(() => {
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "tool_call", toolCallId: "bg-1", title: "make clean", kind: "execute" } } });
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "tool_call_update", toolCallId: "bg-1", status: "in_progress" } } });
+        }, 150);
+        return;
+      }
+      if (fixtureRequested(promptText, "__fixture_summary_with_work__")) {
+        // a trailing-allowed update type that smuggles a tool call or a prompt
+        out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "done" } } } });
+        complete();
+        const sid = msg.params?.sessionId;
+        const extra = process.env.FAKE_ACP_SMUGGLE === "prompt"
+          ? { prompt: [{ type: "text", text: "continue" }] }
+          : { toolCall: { toolCallId: "late-tool", kind: "execute" } };
+        setTimeout(() => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "last_turn_summary" }, ...extra } }), 100);
+        return;
+      }
+      if (fixtureRequested(promptText, "__fixture_summary_after_turn__")) {
+        // what real Fuigo sends after end_turn: last_turn_summary ~0.3 s, then title metadata
+        out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "done" } } } });
+        complete();
+        const sid = msg.params?.sessionId;
+        setTimeout(() => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "last_turn_summary", summary: "did a thing" } } }), 300);
+        setTimeout(() => {
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "session_summary_generated", title: "A title" } } });
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "session_info_update", title: "A title" } } });
+        }, 900);
+        return;
+      }
+      if (fixtureRequested(promptText, "__fixture_wake_after_turn__")) {
+        out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "will wake later" } } } });
+        complete();
+        setTimeout(() => out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "turn_completed", prompt_id: "self-1", stop_reason: "end_turn" } } }), 2_000);
+        return;
+      }
+      if (fixtureRequested(promptText, "__fixture_child_later__")) {
+        // background work that starts its own child only after the turn ended
+        out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "a shell will start later" } } } });
+        complete();
+        setTimeout(() => {
+          const later = spawn("sleep", ["30"], { stdio: "ignore" });
+          if (process.env.FAKE_ACP_CHILD_PID_FILE) writeFileSync(process.env.FAKE_ACP_CHILD_PID_FILE, String(later.pid));
+        }, Number(process.env.FAKE_ACP_CHILD_DELAY_MS) || 800);
+        return;
+      }
+      if (fixtureRequested(promptText, "__fixture_child_after_turn__")) {
+        // a shell a tool started during the turn and left running past end_turn
+        const leftover = spawn("sleep", ["30"], { stdio: "ignore" });
+        if (process.env.FAKE_ACP_CHILD_PID_FILE) writeFileSync(process.env.FAKE_ACP_CHILD_PID_FILE, String(leftover.pid));
+        out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "left a shell running" } } } });
+        complete();
+        return;
+      }
       if (fixtureRequested(promptText, "__fixture_request_after_turn__")) {
         // background work that outlives the turn and asks for permission once
         // the turn is over (a Fuigo background task or subagent)
@@ -1087,6 +1533,80 @@ function handle(msg: any) {
         // real frame reaches, and well inside the frame limit
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "image", data: fixtureLargeImageBase64(), mimeType: "image/png" } } } });
         complete();
+        return;
+      }
+      if (mode === "text-propose" && promptText.includes("<murage-project-proposal")) {
+        // Lane N2: the Chief answers with the proposal block in its reply. First the model
+        // tries a native shell command, as a gated engine asks for it; the answer is logged.
+        const options = [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject-once", kind: "reject_once" }];
+        void new Promise<string>(resolve => {
+          proposalAsks.set(9401, result => resolve(String(result?.outcome?.optionId ?? result?.outcome?.outcome ?? "none")));
+          out({ jsonrpc: "2.0", id: 9401, method: "session/request_permission", params: { sessionId: msg.params?.sessionId, toolCall: { toolCallId: "t-shell", title: "cat /etc/hosts", kind: "execute", rawInput: { command: "cat /etc/hosts" } }, options } });
+        }).then(shell => {
+          logProposalTurn({ engine: process.env.FAKE_PROPOSE_ENGINE ?? "acp", asks: { shell }, agentsMounted: Boolean(agentsMcp) });
+          // "[fail]" in the owner's words: half a reply, then the turn fails; "[stall]": a whole block, then silence
+          if (promptText.includes("[fail]")) {
+            out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "Half a thought about the report" } } } });
+            out({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "fake acp: turn failed after streaming" } });
+            return;
+          }
+          if (promptText.includes("[tool-stall]")) {
+            // a line, a tool (the engine closes the text item there), then the whole block streams and the engine goes silent
+            out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "Let me look first." } } } });
+            out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "tool_call", toolCallId: "t-think", title: "Thinking", kind: "think", status: "completed" } } });
+            out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: proposalReply(promptText) } } } });
+            return;
+          }
+          if (promptText.includes("[stall]")) {
+            out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: proposalReply(promptText) } } } });
+            return;
+          }
+          // an engine that searches the web on its own, no ask (not on Fuigo or Grok Build, where it stops the turn)
+          if (!agentsMcp) out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "tool_call", toolCallId: "t-search", title: "Web search", kind: "search", status: "completed", rawInput: { query: "quarterly report" } } } });
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: proposalReply(promptText) } } } });
+          complete();
+        });
+        return;
+      }
+      if (mode === "project-propose" && agentsMcp && promptText.includes("project_propose")) {
+        // The Chief's New project proposal (lane N): through the mounted agents server only.
+        // First the engine asks, as a gated engine does: a native shell command, a native
+        // edit dressed up as the propose tool, and Fuigo's own use_tool call of project_propose.
+        const entry = agentsMcp;
+        const options = [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject-once", kind: "reject_once" }];
+        const ask = (id: number, toolCall: Record<string, unknown>) => new Promise<string>(resolve => {
+          proposalAsks.set(id, result => resolve(String(result?.outcome?.optionId ?? result?.outcome?.outcome ?? "none")));
+          out({ jsonrpc: "2.0", id, method: "session/request_permission", params: { sessionId: msg.params?.sessionId, toolCall, options } });
+        });
+        const toolName = `${(entry as { name?: string }).name ?? "agents"}__project_propose`;
+        const proposal = proposalFrom(promptText);
+        const fuigoUseTool = { "fuigo/tool": { version: 1, namespace: "fuigo_build", name: "use_tool", kind: "use_tool", read_only: false } };
+        if (process.env.FAKE_ACP_PROPOSE_UNASKED === "1") {
+          // An engine that reads a file on its own, with no ask, then proposes a second later.
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "tool_call", toolCallId: "p-unasked", title: "Read", kind: "read", status: "pending", rawInput: { path: "/etc/hosts" } } } });
+          void new Promise(resolve => setTimeout(resolve, 1000))
+            .then(() => proposeThroughMcp({ command: entry.command, args: entry.args, env: Object.fromEntries((entry.env ?? []).map(({ name, value }) => [name, value])) }, promptText, { unasked: true }))
+            .then(text => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text } } } }); complete(); })
+            .catch(() => complete());
+          return;
+        }
+        // Fuigo's own tool items before the asks, as it stamps them: the catalog search (kind read) and the
+        // use_tool call of project_propose, labelled by the inner name and carrying the model's input (R9-4)
+        const item = (toolCallId: string, title: string, kind: string, rawInput: unknown, name: string) =>
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "tool_call", toolCallId, title, kind, status: "pending", rawInput, _meta: { "fuigo/tool": { version: 1, namespace: "fuigo_build", name, kind: name, read_only: name === "search_tool" } } } } });
+        item("p-search", "search_tool", "read", { query: "project_propose" }, "search_tool");
+        item("p-use-item", toolName, "other", { variant: "UseTool", tool_name: toolName, tool_input: proposal }, "use_tool");
+        void (async () => ({
+          shell: await ask(9201, { toolCallId: "p-shell", title: "echo proposal > ./notes.txt", kind: "execute", rawInput: { command: "echo proposal > ./notes.txt" } }),
+          disguised: await ask(9202, { toolCallId: "p-edit", title: "use_tool", kind: "edit", rawInput: { tool_name: toolName, input: proposal } }),
+          read: await ask(9204, { toolCallId: "p-read", title: "use_tool", kind: "read", rawInput: proposal }),
+          titled: await ask(9205, { toolCallId: "p-title", title: toolName, kind: "other", rawInput: { path: "/etc/hosts" } }),
+          otherMount: await ask(9206, { toolCallId: "p-mount", title: "use_tool", kind: "other", rawInput: { variant: "UseTool", tool_name: "agents__project_propose", tool_input: proposal }, _meta: fuigoUseTool }),
+          propose: await ask(9203, { toolCallId: "p-use", title: "use_tool", kind: "other", rawInput: { variant: "UseTool", tool_name: toolName, tool_input: proposal }, _meta: fuigoUseTool }),
+        }))()
+          .then(asks => proposeThroughMcp({ command: entry.command, args: entry.args, env: Object.fromEntries((entry.env ?? []).map(({ name, value }) => [name, value])) }, promptText, { asks }))
+          .then(text => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text } } } }); complete(); })
+          .catch(error => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `propose error: ${(error as Error).message}` } } } }); complete(); });
         return;
       }
       if (mode === "chief-delegate" && promptText.includes("CHIEF_RESULT_CONTEXT")) {
@@ -1161,6 +1681,18 @@ function handle(msg: any) {
           .catch(error => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `batch error: ${error.message}` } } } }); complete(); });
         return;
       }
+      if (mode === "fuigo-surface" && agentsMcp) {
+        // Emulate Fuigo's model surface: no MCP tool is callable bare. Follow
+        // the prompt's qualified use_tool instruction, then dispatch via MCP.
+        const qualified = /use_tool with tool_name "(agents__ask_bot)"/.exec(promptText)?.[1];
+        const reply = (text: string) => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text } } } }); complete(); };
+        if (!qualified) { reply("Tool not found: ask_bot"); return; }
+        void driveMcp(agentsMcp, [
+          { name: "list_bots", args: () => ({}) },
+          { name: qualified.slice("agents__".length), args: list => ({ bot_id: /id: ([\w-]+)/.exec(list)?.[1] ?? "", message: "PF qualified tool reached you" }) },
+        ]).then(result => reply(`qualified MCP result: ${result}`)).catch(error => reply(`qualified MCP error: ${error.message}`));
+        return;
+      }
       if (mode === "ask-peer" && agentsMcp) {
         // the comms e2e: reach a peer bot through the injected agents proxy
         // and reply with whatever it said (the peer's fake runs plain happy
@@ -1183,6 +1715,8 @@ function handle(msg: any) {
         return;
       }
       if (mode === "create-peer" && agentsMcp) {
+        // a refused create surfaces its own words, not the empty delegate that follows it
+        let createdReply = "";
         void driveMcp(agentsMcp, [
           {
             name: "create_bot",
@@ -1195,14 +1729,14 @@ function handle(msg: any) {
           {
             name: "delegate_bot",
             args: (created) => ({
-              bot_id: /id: ([\w-]+)/.exec(created)?.[1] ?? "",
+              bot_id: /id: ([\w-]+)/.exec(createdReply = created)?.[1] ?? "",
               message: "Review the new onboarding flow.",
               reason: "design review",
             }),
           },
         ])
           .then((reply) => {
-            out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `team created: ${reply}` } } } });
+            out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: /id: [\w-]+/.test(createdReply) ? `team created: ${reply}` : `create error: ${createdReply}` } } } });
             complete();
           })
           .catch((e) => {
@@ -1212,12 +1746,15 @@ function handle(msg: any) {
           });
         return;
       }
-      if (mode === "echo-gated") {
+      if (mode === "echo-gated" || mode === "parallel-card" || mode === "parallel-card-retry") {
+        // Parallel-card protocol: prove prompt acceptance, hold all workers at
+        // the test's file barrier, then return one result. No network services.
+        if (mode === "parallel-card" || mode === "parallel-card-retry") out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "PARALLEL_CARD_ACCEPTED\n" } } } });
         // echoing the WHOLE prompt (system + turn text) lets a test assert
         // both what a drained turn was sent and what it was NOT sent (e.g.
         // the webhook untrusted-data paragraph a steered turn must not get)
         const finish = () => {
-          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `echo: ${promptText}` } } } });
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: mode !== "echo-gated" ? "Independent card finished." : `echo: ${promptText}` } } } });
           complete();
         };
         const gate = process.env.FAKE_ACP_GATE_FILE;
@@ -1232,6 +1769,51 @@ function handle(msg: any) {
         finish();
         return;
       }
+      if (mode === "project-image" && agentsMcp) {
+        // a card run asks for an image through the mounted agents server and
+        // waits on the owner's approval card (image-operations project hold)
+        void driveMcp(agentsMcp, [{ name: "generate_image", args: () => ({ request_id: "late-allow-image", prompt: "A red cube on a white table" }) }])
+          .then(reply => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `image: ${reply}` } } } }); complete(); })
+          .catch((e: Error) => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `image error: ${e.message}` } } } }); complete(); });
+        return;
+      }
+      if (mode === "project-card-lead") {
+        const woken = promptText.includes("Results came back for work you handed over");
+        const assignee = /E2A_ASSIGN:([\w-]+)/.exec(promptText)?.[1];
+        // lane review: a review that ended without a verdict leaves the lead to decide; this lead accepts
+        const decide = /ended without a verdict, so you decide now \(card_id "([^"]+)"\)/.exec(promptText)?.[1];
+        const text = decide ? `REVIEW_DECIDED\n<murage-goal>${JSON.stringify({ v: 2, status: "accept", card: decide })}</murage-goal>`
+          : woken ? "CARD_RESULT_RECEIVED" : assignee
+          ? `Assigning one card.\n<murage-goal>${JSON.stringify({ v: 2, status: "assign", cards: [{ key: "payments", assignee, title: "Assigned payments", description: "Count the payments and report the result", writes: false }] })}</murage-goal>`
+          : "Waiting for the card assignment.";
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text } } } });
+        complete(); return;
+      }
+      if ((mode === "lead-delegate" || mode === "lead-loop") && agentsMcp) {
+        // turn-engine e2e (lane E1): a room lead hands work over with
+        // delegate_bot; the teammate's result comes back as a wake whose
+        // prompt says "Results came back". lead-delegate then reports what it
+        // saw; lead-loop hands over again on every wake (the step cap test).
+        const woken = promptText.includes("Results came back for work you handed over");
+        const sawResult = woken && /<result from="[^"]+">/.test(promptText);
+        if (woken && mode === "lead-delegate") {
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: sawResult ? "lead saw the result and is done" : "lead was woken without a result" } } } });
+          complete();
+          return;
+        }
+        if (!promptText.includes("LEAD_ASSIGN")) {
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "lead has nothing to hand over" } } } });
+          complete();
+          return;
+        }
+        void driveMcp(agentsMcp, [
+          { name: "list_bots", args: () => ({}) },
+          { name: "delegate_bot", args: (list) => ({ bot_id: /id: ([\w-]+)/.exec(list)?.[1] ?? "", message: "LEAD_TASK please do the work", reason: "handover" }) },
+        ])
+          .then((reply) => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `lead handed over: ${reply}` } } } }); complete(); })
+          .catch((e) => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `lead error: ${(e as Error).message}` } } } }); complete(); });
+        return;
+      }
       if (mode === "delegate-peer" && agentsMcp) {
         // async peer-handoff e2e: queue the delegation and return
         // immediately; the harness fires the peer's depth-1 turn after our
@@ -1243,7 +1825,7 @@ function handle(msg: any) {
             name: "delegate_bot",
             args: (list) => ({
               bot_id: /id: ([\w-]+)/.exec(list)?.[1] ?? "",
-              message: "delegated task",
+              message: process.env.FAKE_ACP_DELEGATE_MESSAGE ?? "delegated task",
               reason: "followup",
             }),
           },
@@ -1270,6 +1852,13 @@ function handle(msg: any) {
           },
         });
       } else if (mode === "interleave") playInterleaveTurn();
+      else if (mode === "action-guard") {
+        for (const update of [
+          { sessionUpdate: "tool_call", toolCallId: "shell", title: "printf hello > notes.txt", kind: "execute", status: "in_progress", rawInput: { command: "printf hello > notes.txt" } },
+          { sessionUpdate: "tool_call_update", toolCallId: "shell", status: "completed", rawOutput: { exitCode: 0, stdout: "" } },
+          { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "I saved the file." } },
+        ]) out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update } });
+      }
       else if (mode === "wrapped-tool") playWrappedToolTurn();
       else if (mode === "tool-image") playToolImageTurn();
       else if (mode === "computer-exec-image") playComputerExecImageTurn();
@@ -1287,7 +1876,7 @@ function handle(msg: any) {
           id: pendingPermissionId,
           method: "_fuigo/ask_user_question",
           params: {
-            sessionId: "fake-session",
+            sessionId: msg.params?.sessionId ?? "fake-acp-session",
             toolCallId: "tc-1",
             mode: "default",
             questions: [
@@ -1308,7 +1897,7 @@ function handle(msg: any) {
           id: pendingPermissionId,
           method: "_fuigo/mcp/elicit",
           params: {
-            sessionId: "fake-session",
+            sessionId: msg.params?.sessionId ?? "fake-acp-session",
             toolCallId: "mcp-elicit-1",
             serverName: "deployer",
             message: "Which environment?",
@@ -1328,7 +1917,7 @@ function handle(msg: any) {
           id: pendingPermissionId,
           method: mode === "elicitation-legacy" ? "session/elicitation" : "elicitation/create",
           params: {
-            sessionId: "fake-session",
+            sessionId: msg.params?.sessionId ?? "fake-acp-session",
             toolCallId: "tc-2",
             mode: "form",
             message: "Deploy settings",
@@ -1353,7 +1942,7 @@ function handle(msg: any) {
           id: pendingPermissionId,
           method: "elicitation/create",
           params: {
-            sessionId: "fake-session",
+            sessionId: msg.params?.sessionId ?? "fake-acp-session",
             mode: "url",
             elicitationId: "el-1",
             url: "https://example.com/authorize?state=abc",
@@ -1416,6 +2005,18 @@ function handle(msg: any) {
         return;
       }
       complete();
+      break;
+    }
+    case "_fuigo/interject": {
+      const interjectMode = process.env.FAKE_ACP_INTERJECT;
+      const echo = () => out({ jsonrpc: "2.0", method: "_fuigo/session/interjection", params: { sessionId: msg.params?.sessionId, text: msg.params?.text, interjectionId: msg.params?.interjectionId } });
+      if (interjectMode === "fallback") {
+        result(msg.id, { result: { status: "queued" } });
+        echo();
+        strandedInterjections.push(String(msg.params?.text ?? ""));
+      } else if (interjectMode === "silent") {
+        setTimeout(echo, Number(process.env.FAKE_ACP_LATE_ECHO_MS ?? 1000));
+      } else if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
       break;
     }
     case "session/cancel":

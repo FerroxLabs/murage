@@ -55,4 +55,35 @@ describe("fetching a skill from a link", () => {
     const down = (async () => { throw new TypeError("fetch failed"); }) as unknown as typeof fetch;
     expect(await fetchSkillFromLink("https://raw.githubusercontent.com/acme/skills/main/x/SKILL.md", down)).toMatchObject({ code: "unreachable" });
   });
+
+  it("takes a skills.sh page, and says plainly when the skill it names is not there", async () => {
+    const listing = (entries: object[]) => new Response(JSON.stringify(entries), { headers: { "content-type": "application/json" } });
+    const fetcher = (async (input: string) => {
+      const url = String(input);
+      if (url.endsWith("/contents/")) return listing([{ type: "dir", name: "skills", path: "skills" }]);
+      if (url.endsWith("/contents/skills")) return listing([{ type: "dir", name: "my-skill", path: "skills/my-skill" }]);
+      if (url.includes("api.github.com")) return listing([{ type: "file", name: "SKILL.md", path: "skills/my-skill/SKILL.md", download_url: "https://raw.githubusercontent.com/acme/skills/main/skills/my-skill/SKILL.md" }]);
+      return new Response(md);
+    }) as unknown as typeof fetch;
+    expect(await fetchSkillFromLink("https://skills.sh/acme/skills/my-skill", fetcher)).toEqual({ files: [{ path: "SKILL.md", content: md }] });
+    expect(await fetchSkillFromLink("https://skills.sh/acme/skills/other-skill", fetcher)).toEqual({
+      error: "That skills.sh page names a skill that isn't in its repository.",
+      code: "invalid",
+    });
+  });
+
+  it("asks for the skill's own folder when the repository is too big to search", async () => {
+    const listing = (entries: object[]) => new Response(JSON.stringify(entries), { headers: { "content-type": "application/json" } });
+    const fetcher = (async (input: string) => {
+      const url = String(input);
+      if (url.endsWith("/contents/")) return listing([{ type: "dir", name: "skills", path: "skills" }]);
+      if (url.endsWith("/contents/skills")) return listing(Array.from({ length: 25 }, (_, i) => ({ type: "dir", name: `s-${i}`, path: `skills/s-${i}` })));
+      if (url.includes("api.github.com")) return listing([{ type: "file", name: "SKILL.md", path: "x/SKILL.md", download_url: "https://raw.githubusercontent.com/acme/skills/main/x/SKILL.md" }]);
+      return new Response("---\nname: filler\n---\n");
+    }) as unknown as typeof fetch;
+    expect(await fetchSkillFromLink("https://skills.sh/acme/skills/wanted", fetcher)).toEqual({
+      error: "That repository has too many folders to search for this skill. Paste the GitHub link to the skill's own folder instead.",
+      code: "invalid",
+    });
+  });
 });

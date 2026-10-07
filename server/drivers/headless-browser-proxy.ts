@@ -5,10 +5,15 @@ import type { Readable, Writable } from "node:stream";
 import { existsSync } from "node:fs";
 import type { AgentBrowserSpec } from "../browser-engine.ts";
 import { createLineSplitter, writeMcpLine } from "../mcp-bridge.ts";
-import { listHeadlessBrowserTools, validateHeadlessBrowserCall } from "../browser-engine-policy.ts";
+import { BuiltinFloorGate, floorToolResult } from "../browser-floor-builtin.ts";
+import { BEFOREUNLOAD_GUARD_SCRIPT } from "../browser-beforeunload-guard.ts";
+import { cdpUrlFromCli, startTargetGuard, type TargetGuard } from "./headless-target-guard.ts";
+import { HEADLESS_MODEL_TOOLS, listHeadlessBrowserTools, validateHeadlessBrowserCall } from "../browser-engine-policy.ts";
+import { turnSecret, turnSecretWired } from "../turn-credential.ts";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+const TOOL_NOT_AVAILABLE = "That browser tool is not available to bots.";
 const FAILURE = "Headless browser request refused or unavailable; the turn may have ended or control changed.";
 type Authority = { spec: AgentBrowserSpec; held: boolean };
 type Rpc = { id?: string | number | null; method?: string; params?: Record<string, unknown> };
@@ -51,7 +56,7 @@ async function boundedJson(response: Response, maxBytes: number): Promise<unknow
 function authorityUrl(env: NodeJS.ProcessEnv): URL {
   const url = new URL("/api/internal/headless-browser", env.MURAGE_CONTROL_URL);
   if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
-    || !env.MURAGE_CONTROL_TOKEN || !env.MURAGE_BOT_ID || !env.MURAGE_THREAD_ID) throw new Error(FAILURE);
+    || !turnSecretWired("MURAGE_CONTROL_TOKEN", env) || !env.MURAGE_BOT_ID || !env.MURAGE_THREAD_ID) throw new Error(FAILURE);
   url.searchParams.set("botId", env.MURAGE_BOT_ID);
   url.searchParams.set("threadId", env.MURAGE_THREAD_ID);
   return url;
@@ -60,7 +65,7 @@ export function createHeadlessAuthorityReader(env: NodeJS.ProcessEnv, fetchImpl:
   const url = authorityUrl(env);
   return async () => {
     const value = await boundedJson(await fetchImpl(url, {
-      headers: { authorization: `Bearer ${env.MURAGE_CONTROL_TOKEN}` },
+      headers: { authorization: `Bearer ${turnSecret("MURAGE_CONTROL_TOKEN", env)}` },
       redirect: "error", signal: AbortSignal.timeout(5000),
     }), MAX_REQUEST_BYTES) as Partial<Authority> | null;
     const spec = value?.spec;
@@ -76,7 +81,7 @@ export function createHeadlessAuthorityReader(env: NodeJS.ProcessEnv, fetchImpl:
  * Revoked authority is not an acknowledgment that a daemon actually exited. */
 export async function closeHeadlessAuthority(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fetch): Promise<void> {
   const response = await fetchImpl(authorityUrl(env), {
-    method: "DELETE", headers: { authorization: `Bearer ${env.MURAGE_CONTROL_TOKEN}` },
+    method: "DELETE", headers: { authorization: `Bearer ${turnSecret("MURAGE_CONTROL_TOKEN", env)}` },
     redirect: "error", signal: AbortSignal.timeout(15_000),
   });
   const receipt = await boundedJson(response, MAX_REQUEST_BYTES) as { closed?: unknown } | null;
@@ -87,6 +92,8 @@ export async function closeHeadlessAuthority(env: NodeJS.ProcessEnv, fetchImpl: 
  * protocol errors never become model-visible diagnostics. */
 /** How long a withdrawn request with no clock may take to answer. */
 const WITHDRAW_GRACE_MS = 10_000;
+/** The longest close() waits for the child to be gone. */
+const CLOSE_BOUND_MS = 5_000;
 
 export function startHeadlessEngine(spec: AgentBrowserSpec): EngineClient {
   const child = spawn(spec.command, spec.args, { env: spec.env, shell: false, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
@@ -100,6 +107,9 @@ export function startHeadlessEngine(spec: AgentBrowserSpec): EngineClient {
     pending.clear();
   };
   const closed = new Promise<void>((resolve) => child.once("close", () => { fail(); resolve(); }));
+  // 'close' also waits for every stdio pipe to end. The engine's daemon inherits those pipes and
+  // outlives the MCP process until its idle timeout (60 s), so 'exit' is the real end of the child.
+  const exited = new Promise<void>((resolve) => child.once("exit", () => { fail(); resolve(); }));
   child.on("error", fail);
   child.stdin.on("error", fail);
   child.stderr.resume();
@@ -148,23 +158,64 @@ export function startHeadlessEngine(spec: AgentBrowserSpec): EngineClient {
         fail();
         child.stdin.end();
         const timer = setTimeout(() => child.kill("SIGKILL"), 1000);
-        try { await closed; } finally { clearTimeout(timer); }
+        // Bounded: never wait on pipes a surviving daemon still holds; closeSession stops the daemon.
+        let bound: ReturnType<typeof setTimeout> | undefined;
+        try { await Promise.race([exited, closed, new Promise<void>((resolve) => { bound = setTimeout(resolve, CLOSE_BOUND_MS); })]); }
+        finally { clearTimeout(timer); clearTimeout(bound); child.stdout.destroy(); child.stderr.destroy(); child.stdin.destroy(); }
       })();
       return closePromise;
     },
   };
 }
 
+const SELF_ANSWERED_DIALOGS = new Set(["alert", "beforeunload"]);
+function pendingDialogType(reply: unknown): string | undefined {
+  const r = reply as { structuredContent?: { response?: { data?: unknown } }; content?: Array<{ text?: unknown }> } | null;
+  const candidates: unknown[] = [r?.structuredContent?.response?.data];
+  for (const part of r?.content ?? []) if (typeof part?.text === "string") { try { candidates.push(JSON.parse(part.text)); } catch { /* not JSON */ } }
+  for (const c of candidates) {
+    const d = c as { hasDialog?: unknown; type?: unknown } | null;
+    if (d && d.hasDialog === true && typeof d.type === "string") return d.type;
+  }
+  return undefined;
+}
+/** Answers a pending alert or beforeunload through the engine's own dialog tools. Only used where the
+ * engine's auto-answer is off (Windows, browser-engine.ts). confirm and prompt are left for the owner. */
+async function answerPendingAlerts(client: EngineClient): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    const type = pendingDialogType(await client.request("tools/call", { name: "agent_browser_dialog_status", arguments: {} }));
+    if (!type || !SELF_ANSWERED_DIALOGS.has(type)) return;
+    await client.request("tools/call", { name: "agent_browser_dialog_accept", arguments: {} });
+  }
+}
+
 export function createHeadlessBrowserProxy(options: {
   authorize: () => Promise<Authority>;
   start?: (spec: AgentBrowserSpec) => EngineClient;
   closeSession: (spec: AgentBrowserSpec) => Promise<void>;
-  secrets?: string[];
+  secrets?: string[] | (() => string[]);
+  /** Windows only: opens the guard connection that covers tabs opened later. */
+  startTargetGuard?: (url: string, source: string) => Promise<TargetGuard>;
+  /** The engine's browser endpoint; by default asked of the engine's own CLI for this session. */
+  cdpUrl?: (spec: AgentBrowserSpec) => Promise<string | undefined>;
 }) {
   let engine: EngineClient | null = null;
   let spec: AgentBrowserSpec | null = null;
   let stopped = false;
+  let targetGuard: Promise<TargetGuard | undefined> | undefined;
+  let activeGuard: TargetGuard | undefined;
+  let guardAttempts = 0;
   let closePromise: Promise<void> | undefined;
+  const connectGuard = async () => {
+    guardAttempts++;
+    const attempt = (async () => {
+      const url = await (options.cdpUrl ?? cdpUrlFromCli)(spec!);
+      return url ? await (options.startTargetGuard ?? startTargetGuard)(url, BEFOREUNLOAD_GUARD_SCRIPT) : undefined;
+    })().catch(() => undefined);
+    targetGuard = attempt;
+    activeGuard = await attempt;
+    if (!activeGuard?.alive()) { activeGuard?.close(); activeGuard = undefined; targetGuard = undefined; }
+  };
   const identity = (value: AgentBrowserSpec) => JSON.stringify([value.command, value.args, Object.entries(value.env).sort(([a], [b]) => a.localeCompare(b))]);
   const authorized = async () => {
     if (stopped) throw new Error(FAILURE);
@@ -184,11 +235,12 @@ export function createHeadlessBrowserProxy(options: {
   const clean = (value: unknown) => {
     let serialized = JSON.stringify(value);
     if (serialized === undefined || Buffer.byteLength(serialized) > MAX_RESPONSE_BYTES) throw new Error(FAILURE);
-    for (const secret of [...(options.secrets ?? []), spec?.env.AGENT_BROWSER_ENCRYPTION_KEY]) {
+    for (const secret of [...(typeof options.secrets === "function" ? options.secrets() : options.secrets ?? []), spec?.env.AGENT_BROWSER_ENCRYPTION_KEY]) {
       if (secret) serialized = serialized.replaceAll(secret, "[redacted]");
     }
     return JSON.parse(serialized);
   };
+  const gate = new BuiltinFloorGate();
   return {
     async handle(message: Rpc): Promise<unknown | undefined> {
       if (message.id === undefined) return undefined;
@@ -199,19 +251,49 @@ export function createHeadlessBrowserProxy(options: {
         if (message.method === "tools/list") {
           const client = await ensureEngine();
           const upstream = await client.request("tools/list");
-          const tools = listHeadlessBrowserTools((upstream as { tools?: unknown } | null)?.tools);
+          const upstreamTools = (upstream as { tools?: unknown } | null)?.tools;
+          const tools = listHeadlessBrowserTools(Array.isArray(upstreamTools) ? upstreamTools.filter((t) => HEADLESS_MODEL_TOOLS.includes((t as { name?: string } | null)?.name ?? "")) : upstreamTools);
           await authorized();
           return result({ tools });
         }
         if (message.method === "tools/call") {
+          if (!HEADLESS_MODEL_TOOLS.includes(String(message.params?.name))) return result({ isError: true, content: [{ type: "text", text: TOOL_NOT_AVAILABLE }] });
           const call = validateHeadlessBrowserCall(message.params?.name, message.params?.arguments ?? {});
           const client = await ensureEngine();
           // Initialization can cross a turn cancellation; check again at the
           // last boundary before the child receives any browser action.
           await authorized();
-          const reply = await client.request("tools/call", call);
+          // The hard floor (T39), before the child receives any step the owner must take.
+          const stop = await gate.guardAgentBrowser(call.name, call.arguments, async (selector) => {
+            const html = clean(await client.request("tools/call", { name: "agent_browser_get_html", arguments: { selector } })) as { content?: Array<{ text?: unknown }> };
+            return (html.content ?? []).map((c) => (typeof c.text === "string" ? c.text : "")).join("\n");
+          });
+          if (stop !== null) return result(floorToolResult(stop));
+          const answersDialogs = spec?.env.AGENT_BROWSER_NO_AUTO_DIALOG === "1";
+          if (answersDialogs) await answerPendingAlerts(client).catch(() => {});
+          // A guard whose connection ended gets one bounded reconnect; after that tabs are created as before.
+          if (activeGuard && !activeGuard.alive()) { activeGuard = undefined; targetGuard = undefined; guardAttempts = 2; await connectGuard(); }
+          let reply: unknown;
+          const wantedUrl = call.name === "agent_browser_tab_new" && typeof call.arguments.url === "string" ? call.arguments.url : undefined;
+          if (activeGuard && wantedUrl !== undefined) {
+            // A tab created with a URL commits that page before any script can be registered, so it is
+            // created blank, given the guard, and only then sent to the page.
+            const { url: _url, ...blank } = call.arguments;
+            reply = await client.request("tools/call", { name: call.name, arguments: blank });
+            const targetId = /targetId\\?"\s*:\s*\\?"([0-9A-Fa-f]{16,64})/u.exec(JSON.stringify(reply) ?? "")?.[1];
+            if (targetId) await activeGuard.installed(targetId);
+            await client.request("tools/call", { name: "agent_browser_open", arguments: { url: wantedUrl } });
+          } else reply = await client.request("tools/call", call);
+          if (answersDialogs) {
+            await answerPendingAlerts(client).catch(() => {});
+            // Once a browser exists: later tabs get the beforeunload guard at document start.
+            // A failed attempt (no browser yet) is retried on the next calls, at most three times.
+            if (!targetGuard && guardAttempts < 3) await connectGuard();
+          }
           await authorized();
-          return result(clean(reply));
+          const cleaned = clean(reply);
+          gate.rememberToolResult(call.name, cleaned);
+          return result(cleaned);
         }
         return { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Unsupported MCP method" } };
       } catch {
@@ -222,6 +304,7 @@ export function createHeadlessBrowserProxy(options: {
       if (closePromise) return closePromise;
       stopped = true;
       closePromise = (async () => {
+        (await targetGuard?.catch(() => undefined))?.close();
         if (engine) await engine.close();
         if (spec) await options.closeSession(spec);
       })();
@@ -231,7 +314,7 @@ export function createHeadlessBrowserProxy(options: {
 }
 
 export async function runHeadlessBrowserProxy(input: Readable = process.stdin, output: Writable = process.stdout, env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  const proxy = createHeadlessBrowserProxy({ authorize: createHeadlessAuthorityReader(env), closeSession: () => closeHeadlessAuthority(env), secrets: [env.MURAGE_CONTROL_TOKEN ?? ""] });
+  const proxy = createHeadlessBrowserProxy({ authorize: createHeadlessAuthorityReader(env), closeSession: () => closeHeadlessAuthority(env), secrets: () => [turnSecret("MURAGE_CONTROL_TOKEN", env)] });
   const stop = () => { input.destroy(); void proxy.close().catch(() => { process.exitCode = 1; }); };
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);

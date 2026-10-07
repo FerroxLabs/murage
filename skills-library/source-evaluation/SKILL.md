@@ -6,7 +6,7 @@ description: |
   Do NOT use for finding sources (use `literature-search`), for citation formatting (use `citation-management`), or for writing about sources (use `annotated-bibliography`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research academic-writing study-skills step-by-step"
   category: "education"

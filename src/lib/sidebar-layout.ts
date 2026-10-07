@@ -188,43 +188,8 @@ export function placeSection(
   return result;
 }
 
-/** Preserve temporarily empty sections in the saved order so their position
- * returns when a bot or channel is later assigned to them again. */
-export function mergeSectionOrder(
-  savedOrder: SidebarSectionId[],
-  visibleOrder: SidebarSectionId[],
-): SidebarSectionId[] {
-  const saved = unique(savedOrder);
-  const result = unique(visibleOrder);
-  const included = new Set(result);
-
-  for (let savedIndex = 0; savedIndex < saved.length; savedIndex += 1) {
-    const id = saved[savedIndex]!;
-    if (included.has(id)) continue;
-    let destination = result.length;
-    let foundPredecessor = false;
-    for (let previous = savedIndex - 1; previous >= 0; previous -= 1) {
-      const previousPosition = result.indexOf(saved[previous]!);
-      if (previousPosition >= 0) {
-        destination = previousPosition + 1;
-        foundPredecessor = true;
-        break;
-      }
-    }
-    if (!foundPredecessor) {
-      for (let next = savedIndex + 1; next < saved.length; next += 1) {
-        const nextPosition = result.indexOf(saved[next]!);
-        if (nextPosition >= 0) {
-          destination = nextPosition;
-          break;
-        }
-      }
-    }
-    result.splice(destination, 0, id);
-    included.add(id);
-  }
-  return result;
-}
+/** Shared with the harness, which keeps the order every device reads. */
+export { mergeSectionOrder } from "../../shared/sidebar-order";
 
 export function sameSectionOrder(a: SidebarSectionId[], b: SidebarSectionId[]): boolean {
   return a.length === b.length && a.every((id, index) => id === b[index]);

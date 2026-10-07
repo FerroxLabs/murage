@@ -7,6 +7,8 @@ export interface SlackTransport {
   sendPermission?(input: { dmId: string; text: string; approveId: string; denyId: string; denyOnly?: boolean; signal: AbortSignal }): Promise<{ channel: string; ts: string }>;
   settlePermission?(input: { dmId: string; messageId: string; text: string; signal: AbortSignal }): Promise<void>;
   verifyBot(): Promise<{ teamId: string; userId: string; botId: string }>;
+  /** What Slack calls this user (needs users:read; absent or refused means no name). Kept only to keep names out of customer turns. */
+  userDisplay?(userId: string): Promise<{ name?: string; username?: string }>;
   start(onEnvelope: (value: unknown, ack: () => Promise<void>) => void, onHealth: (state: "connected" | "disconnected" | "error") => void): Promise<void>;
   stop(): Promise<void>;
   sendText(input: { dmId: string; text: string; signal: AbortSignal }): Promise<{ channel: string; ts: string }>;
@@ -131,6 +133,16 @@ export class SlackSocketTransport implements SlackTransport {
       const result = object(await sdk.web.files.uploadV2({ channel_id: input.dmId, file: Buffer.from(input.bytes), filename: input.name, title: input.title }));
       if (result.ok !== true) throw { data: result };
     } catch (e) { throw safeFailure(e, true); }
+  }
+  async userDisplay(userId: string): Promise<{ name?: string; username?: string }> {
+    try {
+      const sdk = await this.client();
+      const users = (sdk.web as unknown as { users?: { info?(input: { user: string }): Promise<unknown> } }).users;
+      const user = object(object(await users?.info?.({ user: userId })).user), profile = object(user.profile);
+      const text = (v: unknown) => typeof v === "string" ? v.trim().slice(0, 80) : "";
+      const name = text(profile.real_name) || text(user.real_name) || text(profile.display_name), username = text(user.name);
+      return { ...(name ? { name } : {}), ...(username ? { username } : {}) };
+    } catch { return {}; }
   }
   async sendText(input: { dmId: string; text: string; signal: AbortSignal }) {
     if (this.stopped || input.signal.aborted) throw new ChannelSendError("offline", false);

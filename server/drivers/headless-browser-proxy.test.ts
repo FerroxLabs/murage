@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
+import { WebSocketServer } from "ws";
+import { cdpUrlFromReply, startTargetGuard } from "./headless-target-guard.ts";
 import { closeHeadlessAuthority, createHeadlessAuthorityReader, createHeadlessBrowserProxy, startHeadlessEngine } from "./headless-browser-proxy.ts";
 
 const spec = { command: "/fixture/engine", args: ["mcp"], env: { AGENT_BROWSER_SESSION: "owned", AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64) } };
@@ -177,4 +179,175 @@ describe("real isolated engine subprocess", () => {
       expect(await outcome).toBe("rejected");
     } finally { vi.useRealTimers(); await client.close(); }
   });
+});
+
+describe("alerts where the engine does not auto-answer (Windows)", () => {
+  const winSpec = { ...spec, env: { ...spec.env, AGENT_BROWSER_NO_AUTO_DIALOG: "1" } };
+  const status = (hasDialog: boolean, type = "alert") => ({ structuredContent: { response: { data: hasDialog ? { hasDialog, type, message: "m" } : { hasDialog } } }, content: [{ type: "text", text: JSON.stringify(hasDialog ? { hasDialog, type } : { hasDialog }) }] });
+  function run(statuses: unknown[]) {
+    const queue = [...statuses];
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === "tools/call" && params?.name === "agent_browser_dialog_status") return queue.shift() ?? status(false);
+      return { content: [{ type: "text", text: "fixture page" }] };
+    });
+    const proxy = createHeadlessBrowserProxy({ authorize: async () => ({ spec: winSpec, held: false }), start: () => ({ request, close: async () => {} }), closeSession: async () => {} });
+    return { proxy, request, names: () => request.mock.calls.filter(([m]) => m === "tools/call").map(([, p]) => (p as { name: string }).name) };
+  }
+  it("accepts an alert the click opened, then returns the click result", async () => {
+    const f = run([status(false), status(true, "alert"), status(false)]);
+    expect(await f.proxy.handle({ ...call, params: { name: "agent_browser_open", arguments: { url: "https://example.com" } } })).toMatchObject({ result: { content: [{ text: "fixture page" }] } });
+    expect(f.names()).toEqual(["agent_browser_dialog_status", "agent_browser_open", "agent_browser_dialog_status", "agent_browser_dialog_accept", "agent_browser_dialog_status"]);
+    await f.proxy.close();
+  });
+  it("never asks about dialogs when the engine answers them itself", async () => {
+    const f = fixture();
+    await f.proxy.handle(call);
+    expect(f.request.mock.calls.map(([m]) => m)).toEqual(["initialize", "tools/call"]);
+    await f.proxy.close();
+  });
+});
+
+describe("closing the engine child", () => {
+  it("does not wait for a daemon that still holds the stdio pipes", async () => {
+    // the child exits at once; a grandchild keeps its inherited stdout open for 30 s, like the engine's daemon
+    const script = `require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},30000)"],{stdio:["ignore","inherit","inherit"],detached:true}).unref();process.stdin.on("data",()=>{});process.stdin.on("end",()=>process.exit(0));`;
+    const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: {} });
+    const started = Date.now();
+    await client.close();
+    expect(Date.now() - started).toBeLessThan(4_000);
+  });
+});
+
+describe("beforeunload guard for tabs opened later (Windows)", () => {
+  const winSpec = { ...spec, env: { ...spec.env, AGENT_BROWSER_NO_AUTO_DIALOG: "1" } };
+  const cdpReply = { content: [{ type: "text", text: JSON.stringify({ cdpUrl: "ws://127.0.0.1:9222/devtools/browser/abc" }) }] };
+  function guarded(startGuard: (url: string, source: string) => Promise<{ close: () => void; installed: (id: string) => Promise<boolean>; alive: () => boolean }>, url: string | undefined = "ws://127.0.0.1:9222/devtools/browser/abc") {
+    const request = vi.fn(async (_m: string, _p?: Record<string, unknown>) => ({ content: [{ type: "text", text: "page" }] }));
+    const cdpUrl = vi.fn(async () => url);
+    const proxy = createHeadlessBrowserProxy({ authorize: async () => ({ spec: winSpec, held: false }), start: () => ({ request, close: async () => {} }), closeSession: async () => {}, startTargetGuard: startGuard, cdpUrl });
+    return { proxy, request, cdpUrl, names: () => request.mock.calls.filter(([m]) => m === "tools/call").map(([, p]) => (p as { name: string }).name) };
+  }
+  it("opens the guard once after the first call, keeps it for the turn, and closes it with the proxy", async () => {
+    const close = vi.fn();
+    const start = vi.fn(async (_url: string, _source: string) => ({ close, installed: async () => true, alive: () => true }));
+    const f = guarded(start);
+    await f.proxy.handle(call); await f.proxy.handle({ ...call, id: 2 });
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start.mock.calls[0][0]).toBe("ws://127.0.0.1:9222/devtools/browser/abc");
+    expect(f.cdpUrl).toHaveBeenCalledTimes(1);
+    expect(f.names()).not.toContain("agent_browser_get_cdp_url");
+    await f.proxy.close();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+  it("never starts where the engine answers dialogs itself, and survives an unavailable guard", async () => {
+    const start = vi.fn(async () => ({ close: () => {}, installed: async () => true, alive: () => true }));
+    const plain = fixture();
+    await plain.proxy.handle(call);
+    expect(start).not.toHaveBeenCalled();
+    expect(plain.request.mock.calls.map(([m]) => m)).toEqual(["initialize", "tools/call"]);
+    const failing = guarded(async () => { throw new Error("no socket"); });
+    expect(await failing.proxy.handle(call)).toMatchObject({ result: { content: [{ text: "page" }] } });
+    for (let i = 0; i < 5; i++) await failing.proxy.handle(call);
+    expect(failing.cdpUrl).toHaveBeenCalledTimes(3);
+    await failing.proxy.close();
+  });
+  it("creates a tab with a URL blank, waits for the guard on it, then opens the page", async () => {
+    const order: string[] = [];
+    const installed = vi.fn(async (id: string) => { order.push(`installed ${id}`); return true; });
+    const f = guarded(async () => ({ close: () => {}, installed, alive: () => true }));
+    const request = f.request;
+    request.mockImplementation(async (_m: string, p?: Record<string, unknown>) => {
+      order.push(`${String(p?.name)} ${JSON.stringify(p?.arguments)}`);
+      return p?.name === "agent_browser_tab_new" ? { content: [{ type: "text", text: JSON.stringify({ tabId: "t2", targetId: "ABCDEF0123456789ABCDEF0123456789" }) }] } : { content: [{ type: "text", text: "page" }] };
+    });
+    await f.proxy.handle(call);
+    order.length = 0;
+    await f.proxy.handle({ id: 5, method: "tools/call", params: { name: "agent_browser_tab_new", arguments: { url: "https://example.com/a", label: "x" } } });
+    const calls = order.filter((o) => !o.startsWith("agent_browser_dialog_status"));
+    expect(calls).toEqual([
+      'agent_browser_tab_new {"label":"x"}',
+      "installed ABCDEF0123456789ABCDEF0123456789",
+      'agent_browser_open {"url":"https://example.com/a"}',
+    ]);
+    await f.proxy.close();
+  });
+  it("after the guard's connection dies, tries one reconnect and then stops paying for it", async () => {
+    let alive = true;
+    const guards: Array<{ alive: () => boolean }> = [];
+    const f = guarded(async () => { const g = { close: () => {}, installed: async () => true, alive: () => alive }; guards.push(g); return g; });
+    await f.proxy.handle(call);
+    expect(guards).toHaveLength(1);
+    alive = false;
+    for (let i = 0; i < 4; i++) await f.proxy.handle({ id: 6 + i, method: "tools/call", params: { name: "agent_browser_tab_new", arguments: { url: "https://example.com/a" } } });
+    expect(f.cdpUrl).toHaveBeenCalledTimes(2); // the first connect and one reconnect, which itself came back dead
+    expect(guards).toHaveLength(2);
+    await f.proxy.close();
+  });
+  it("refuses a tool outside the list with its own plain message", async () => {
+    const f = guarded(async () => ({ close: () => {}, installed: async () => true, alive: () => true }));
+    const reply = await f.proxy.handle({ id: 9, method: "tools/call", params: { name: "agent_browser_get_html", arguments: { selector: "a" } } }) as { result: { isError: boolean; content: Array<{ text: string }> } };
+    expect(reply.result).toEqual({ isError: true, content: [{ type: "text", text: "That browser tool is not available to bots." }] });
+    await f.proxy.close();
+  });
+  it("leaves tab_new alone when no guard is running", async () => {
+    const f = guarded(async () => { throw new Error("no socket"); });
+    await f.proxy.handle({ id: 5, method: "tools/call", params: { name: "agent_browser_tab_new", arguments: { url: "https://example.com/a" } } });
+    expect(f.request.mock.calls.filter(([, p]) => (p as { name?: string } | undefined)?.name === "agent_browser_tab_new").map(([, p]) => (p as { arguments: object }).arguments)).toEqual([{ url: "https://example.com/a" }]);
+    await f.proxy.close();
+  });
+  it("accepts only a loopback browser endpoint", () => {
+    expect(cdpUrlFromReply("ws://127.0.0.1:9222/devtools/browser/abc\n")).toBe("ws://127.0.0.1:9222/devtools/browser/abc");
+    expect(cdpUrlFromReply(cdpReply)).toBe("ws://127.0.0.1:9222/devtools/browser/abc");
+    expect(cdpUrlFromReply({ content: [{ text: "ws://evil.example/devtools/browser/x" }] })).toBeUndefined();
+    expect(cdpUrlFromReply({ content: [{ text: "no endpoint" }] })).toBeUndefined();
+  });
+  it("pauses nothing: installs the script on each new page target before resuming it, and resumes other targets", async () => {
+    const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    const log: Array<{ method: string; sessionId?: string; params: any }> = [];
+    server.on("connection", (ws) => ws.on("message", (raw) => {
+      const m = JSON.parse(String(raw));
+      log.push({ method: m.method, sessionId: m.sessionId, params: m.params });
+      ws.send(JSON.stringify({ id: m.id, result: {} }));
+      if (m.method === "Target.setAutoAttach") {
+        ws.send(JSON.stringify({ method: "Target.attachedToTarget", params: { sessionId: "S-page", waitingForDebugger: true, targetInfo: { type: "page" } } }));
+        ws.send(JSON.stringify({ method: "Target.attachedToTarget", params: { sessionId: "S-worker", waitingForDebugger: true, targetInfo: { type: "service_worker" } } }));
+      }
+    }));
+    await new Promise<void>((r) => server.once("listening", () => r()));
+    const { port } = server.address() as { port: number };
+    const guard = await startTargetGuard(`ws://127.0.0.1:${port}/devtools/browser/x`, "GUARD_SOURCE");
+    for (let i = 0; i < 50 && log.filter((l) => l.method === "Runtime.runIfWaitingForDebugger").length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+    guard.close();
+    server.close();
+    expect(log[0]).toMatchObject({ method: "Target.setAutoAttach", params: { autoAttach: true, waitForDebuggerOnStart: true, flatten: true } });
+    const page = log.filter((l) => l.sessionId === "S-page").map((l) => l.method);
+    expect(page).toEqual(["Page.enable", "Page.addScriptToEvaluateOnNewDocument", "Runtime.runIfWaitingForDebugger"]);
+    expect(log.find((l) => l.method === "Page.addScriptToEvaluateOnNewDocument")!.params.source).toBe("GUARD_SOURCE");
+    expect(log.filter((l) => l.sessionId === "S-worker").map((l) => l.method)).toEqual(["Runtime.runIfWaitingForDebugger"]);
+  });
+});
+
+describe("the model-facing tool list is fixed", () => {
+  const CORE_27 = ["open", "read", "snapshot", "click", "fill", "type", "press", "check", "uncheck", "select", "scroll", "wait_ms", "wait_for_selector", "wait_for_text", "wait_for_load", "screenshot", "get_text", "get_url", "get_title", "close", "back", "forward", "reload", "tab_new", "tab_list", "tab_switch", "tab_close"].map((n) => `agent_browser_${n}`);
+  // what an engine started with --tools all (or anything wider) would offer, and the narrower profiles
+  const upstream = [...CORE_27, "dblclick", "focus", "get_attr", "get_box", "get_count", "get_html", "get_styles", "get_value", "hover", "is_checked", "is_enabled", "is_visible", "keyboard_insert_text", "keyboard_type", "keydown", "keyup", "scroll_into_view", "wait_for_url", "eval", "get_cdp_url", "dialog_accept"].map((n) => n.startsWith("agent_browser_") ? n : `agent_browser_${n}`);
+  for (const platform of ["win32", "darwin", "linux"] as const) {
+    it(`lists exactly the 27 core tools on ${platform}, and refuses the rest`, async () => {
+      const real = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { value: platform });
+      try {
+        const env = platform === "win32" ? { ...spec.env, AGENT_BROWSER_NO_AUTO_DIALOG: "1" } : spec.env;
+        const request = vi.fn(async (method: string, params?: Record<string, unknown>) => method === "tools/list" ? { tools: upstream.map((name) => ({ name })) } : { content: [{ type: "text", text: `ran ${String(params?.name)}` }] });
+        const proxy = createHeadlessBrowserProxy({ authorize: async () => ({ spec: { ...spec, env }, held: false }), start: () => ({ request, close: async () => {} }), closeSession: async () => {}, cdpUrl: async () => undefined });
+        const listed = await proxy.handle({ id: 1, method: "tools/list" }) as { result: { tools: Array<{ name: string }> } };
+        expect(listed.result.tools.map((t) => t.name).sort()).toEqual([...CORE_27].sort());
+        for (const name of ["agent_browser_get_html", "agent_browser_dblclick", "agent_browser_eval", "agent_browser_get_cdp_url", "agent_browser_dialog_accept"]) {
+          expect(await proxy.handle({ id: 2, method: "tools/call", params: { name, arguments: { selector: "a" } } })).toMatchObject({ result: { isError: true } });
+          expect(request.mock.calls.some(([, p]) => (p as { name?: string } | undefined)?.name === name)).toBe(false);
+        }
+        expect(await proxy.handle({ id: 3, method: "tools/call", params: { name: "agent_browser_tab_new", arguments: { url: "https://example.com" } } })).toMatchObject({ result: { content: [{ text: "ran agent_browser_tab_new" }] } });
+        await proxy.close();
+      } finally { Object.defineProperty(process, "platform", real); }
+    });
+  }
 });

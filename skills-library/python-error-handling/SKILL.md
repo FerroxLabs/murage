@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Python project setup (use `python-project-setup`), async-specific error handling (use `python-async-patterns`), or language-agnostic error patterns (check framework-specific skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "python best-practices debugging"
   category: "software-engineering"

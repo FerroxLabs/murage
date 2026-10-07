@@ -1,27 +1,99 @@
 import { createHash } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import { database, transaction } from "../database.ts";
 import { resultSchema, type MemoryWork, type MemoryWorkResult } from "./worker-protocol.ts";
 import { recordMemoryProcessing } from "./health.ts";
+import { traceSlowStep } from "./claim-trace.ts";
+import { jobErrorText } from "./park.ts";
 
 let lastScope = "";
+const workListeners=new Set<()=>void>();
+export function notifyMemoryWork(){for(const listener of workListeners)listener();}
+export function onMemoryWork(listener:()=>void){workListeners.add(listener);return ()=>{workListeners.delete(listener);};}
+
+/** Use the queue index before starting a helper or opening a claim transaction. */
+export function hasClaimableMemoryJob(now=Date.now()):boolean {
+  const db=database();
+  if(db.prepare("SELECT 1 FROM memory_scope_bindings WHERE id='memory-roster-policy' AND state='pending'").get())return false;
+  return Boolean(db.prepare(`SELECT 1 FROM memory_jobs j
+    JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision
+    JOIN memory_source_versions v ON v.source_id=j.source_id AND v.revision=j.source_revision
+    WHERE j.status IN ('pending','partial','deferred','leased') AND j.attempts<3 AND j.retry_at<=?
+    AND (j.status!='leased' OR j.lease_until<?) AND s.state='active' AND s.outcome!='working'
+    AND NOT (s.kind IN ('tool-outcome','activity') AND s.outcome='failed') LIMIT 1`).get(now,now));
+}
+
+/** Future retries and expiring leases keep their due time between notifications. */
+export function nextMemoryJobDelay(now=Date.now()):number|undefined {
+  const row=database().prepare(`SELECT MIN(CASE WHEN j.status='leased' THEN MAX(j.retry_at,j.lease_until+1) ELSE j.retry_at END) AS due
+    FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision
+    WHERE j.status IN ('pending','partial','deferred','leased') AND j.attempts<3
+    AND (j.retry_at>? OR (j.status='leased' AND j.lease_until>=?))
+    AND s.state='active' AND s.outcome!='working' AND NOT (s.kind IN ('tool-outcome','activity') AND s.outcome='failed')`).get(now,now);
+  return row?.due==null?undefined:Math.max(1,Number(row.due)-now);
+}
+/** Test hook: forget which scope was served last (the round-robin restarts). */
+export function resetMemoryClaimCursor() { lastScope = ""; }
+
+/* The claim chooses a job WITHOUT touching memory_source_versions.payload (the
+ * big column, on overflow pages): the old single statement computed the
+ * payload length of every candidate and sorted them by a computed CASE before
+ * LIMIT 1, so one claim cost O(pending) payload reads and a draining backlog
+ * O(N^2) of them on the server's one synchronous thread.
+ *
+ * Order is unchanged: the first scope after the last one served (scope ids
+ * ascending), wrapping to the lowest scope; inside it the lowest job rowid.
+ * That is two aggregate queries over the (status,retry_at) index with a
+ * primary-key probe per candidate, no ORDER BY and so no sort, and then the
+ * payload of the ONE chosen job is read. No new index: memory tables are
+ * validated against an exact schema (validateMemorySchema), so an extra index
+ * would make an older build refuse the file. */
+const CLAIM_FROM = `FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision`;
+const CLAIM_WHERE = `s.state='active' AND s.outcome!='working' AND NOT (s.kind IN ('tool-outcome','activity') AND s.outcome='failed') AND j.attempts<3 AND j.retry_at<=?
+  AND j.status IN ('pending','partial','deferred','leased') AND (j.status!='leased' OR j.lease_until<?)`;
+export const MEMORY_CLAIM_SQL = {
+  /** Idle guard: is any job open at all? Index only, no join, no write lock. */
+  anyOpen: `SELECT 1 FROM memory_jobs j WHERE j.attempts<3 AND j.retry_at<=? AND j.status IN ('pending','partial','deferred','leased') AND (j.status!='leased' OR j.lease_until<?) LIMIT 1`,
+  /** The scope to serve: first after the last served, else the lowest. */
+  scope: `SELECT min(s.scope_id) FILTER (WHERE s.scope_id>?) AS after,min(s.scope_id) AS first ${CLAIM_FROM} WHERE ${CLAIM_WHERE}`,
+  /** The oldest claimable job of that scope. */
+  head: `SELECT min(j.rowid) AS rid ${CLAIM_FROM} WHERE ${CLAIM_WHERE} AND s.scope_id=?`,
+  /** Recent-scopes mode: newest capture job of the listed scopes. */
+  recent: `SELECT max(j.rowid) AS rid ${CLAIM_FROM} WHERE ${CLAIM_WHERE} AND j.stage='capture' AND s.scope_id IN (SELECT value FROM json_each(?))`,
+  row: `SELECT j.*,s.scope_id,s.kind,s.speaker,s.outcome ${CLAIM_FROM} WHERE j.rowid=?`,
+  /** The single payload read of a claim: length and first slice, one parse. */
+  payload: `WITH t AS MATERIALIZED (SELECT CAST(json_extract(payload,'$.text') AS BLOB) AS b FROM memory_source_versions WHERE source_id=? AND revision=?)
+    SELECT length(b) AS total_bytes,substr(b,?,65536) AS bytes FROM t`,
+} as const;
+
 export function claimMemoryJob(worker: string, now = Date.now(), recentScopes?: readonly string[]): MemoryWork | null {
+  const started = performance.now();
+  try { return claimOnce(worker, now, recentScopes); }
+  finally { traceSlowStep("memory.claim", performance.now() - started); }
+}
+function bigStatement(db: DatabaseSync, sql: string) { const statement = db.prepare(sql); statement.setReadBigInts(true); return statement; }
+function claimOnce(worker: string, now: number, recentScopes?: readonly string[]): MemoryWork | null {
+  // Idle guard: with nothing open this is one indexed probe, not a write transaction.
+  if (!database().prepare(MEMORY_CLAIM_SQL.anyOpen).get(now,now)) return null;
   return transaction(db => {
     const meta = db.prepare("SELECT * FROM memory_meta WHERE id=1").get()!;
     if (!["capture","active"].includes(String(meta.mode))) return null;
     if (db.prepare("SELECT 1 FROM memory_scope_bindings WHERE id='memory-roster-policy' AND state='pending'").get()) return null;
-    const row = db.prepare(`SELECT j.*,s.scope_id,s.kind,s.speaker,s.outcome,
-      length(CAST(json_extract(v.payload,'$.text') AS BLOB)) AS total_bytes
-      FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision
-      JOIN memory_source_versions v ON v.source_id=j.source_id AND v.revision=j.source_revision
-      WHERE s.state='active' AND s.outcome!='working' AND j.attempts<3 AND j.retry_at<=?
-      AND (j.status IN ('pending','partial','deferred') OR (j.status='leased' AND j.lease_until<?))
-      AND (? IS NULL OR (j.stage='capture' AND s.scope_id IN (SELECT value FROM json_each(?))))
-      ORDER BY ${recentScopes ? "j.rowid DESC" : "CASE WHEN s.scope_id>? THEN 0 ELSE 1 END,s.scope_id,j.rowid"} LIMIT 1`)
-      .get(...[now,now,recentScopes?JSON.stringify(recentScopes):null,recentScopes?JSON.stringify(recentScopes):null,...recentScopes?[]:[lastScope]]);
+    // Rowids are read and bound as BigInt: a rowid past 2^53 does not fit a JS number.
+    let rid: bigint | null | undefined;
+    if (recentScopes) rid = bigStatement(db,MEMORY_CLAIM_SQL.recent).get(now,now,JSON.stringify(recentScopes))?.rid as bigint | undefined;
+    else {
+      const pick = db.prepare(MEMORY_CLAIM_SQL.scope).get(lastScope,now,now);
+      const scope = pick?.after ?? pick?.first;
+      if (scope == null) return null;
+      rid = bigStatement(db,MEMORY_CLAIM_SQL.head).get(now,now,scope)?.rid as bigint | null | undefined;
+    }
+    const row = rid == null ? undefined : db.prepare(MEMORY_CLAIM_SQL.row).get(rid);
     if (!row) return null;
     if(!recentScopes)lastScope=String(row.scope_id);
-    const cursor=Number(row.cursor), totalBytes=Number(row.total_bytes);
-    const payload = db.prepare("SELECT substr(CAST(json_extract(payload,'$.text') AS BLOB),?,65536) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?").get(cursor+1,row.source_id,row.source_revision)!.bytes as Uint8Array;
+    const cursor=Number(row.cursor);
+    const slice = db.prepare(MEMORY_CLAIM_SQL.payload).get(row.source_id,row.source_revision,cursor+1)!;
+    const totalBytes=Number(slice.total_bytes), payload=slice.bytes as Uint8Array;
     let end=payload.length, text="";
     while (end>=Math.max(0,payload.length-3)) {
       try { text=new TextDecoder("utf-8",{fatal:true}).decode(payload.subarray(0,end));break; } catch {end--;}
@@ -35,7 +107,7 @@ export function claimMemoryJob(worker: string, now = Date.now(), recentScopes?: 
   });
 }
 
-/** A publication refused because the authority moved under the lease — the
+/** A publication refused because the authority moved under the lease: the
  * source revision, the policy revision or the deletion epoch changed while
  * the worker held the job (STALE_MEMORY_SOURCE), or the lease itself is no
  * longer the holder's (STALE_MEMORY_LEASE). The work is discarded either way;
@@ -48,31 +120,18 @@ export function isStaleMemoryPublication(error: unknown): boolean {
 /** Return a job whose publication was refused as stale to `pending` at once,
  * so the next claim runs it under the current authority. Attempts are not
  * counted: the worker did not fail, the authority moved. Only the holder's
- * own live lease is released — a lease another worker took over (a newer
+ * own live lease is released; a lease another worker took over (a newer
  * generation) and a job cancelled by a newer source revision are untouched,
  * and the next claim's generation still fences the old holder's late output.
- * Without this the job stayed `leased` with nobody working it until the
- * lease expired: up to 30 s in which a queue that should be drained holds one
- * job (RED2J, the checkpoint-roll drain under load). */
+ * The current authority can claim the released job immediately (RED2J). */
 export function requeueStaleMemoryWork(work: MemoryWork, worker: string): boolean {
   return Boolean(database().prepare("UPDATE memory_jobs SET status='pending',lease_owner=NULL,lease_until=0 WHERE id=? AND lease_owner=? AND lease_generation=? AND status='leased'").run(work.id,worker,work.leaseGeneration).changes);
 }
 
-/** The bound on requeueStaleMemoryWork (RED2K). Each stale requeue is one
- * more claim-and-run of the same job under an authority that moved again
- * before it could publish; under continuous churn (a settings sweep that
- * saves a bot per tick, a roster import) that is unbounded work with no
- * record of it — the baseline's lease-expiry reclaim was equally unbounded,
- * just slower. Five is well above what a burst of churn produces in one lease
- * (the refused publication and the reclaim are one tick apart, and a bot,
- * room or task creation moves the revision once), so genuine races still
- * cost nothing; past it the job spends an attempt through the ordinary
- * deferral path, so the attempt cap (3) ends a job that can never publish
- * under a standing authority, with the reason on the row. The count is kept
- * by the worker controller per job and source revision and is cleared
- * whenever the job settles — its result published, or the job deferred,
- * whether past this bound or by the worker's own deferral (RED2L) — so a
- * re-claimed job is refused up to this many times again, free. */
+/** Up to five stale requeues preserve the attempt count (RED2K). Further
+ * authority changes use ordinary deferral and its three-attempt cap. The
+ * controller tracks each job and source revision until publication or
+ * deferral settles that lease cycle (RED2L). */
 export const STALE_MEMORY_REQUEUE_LIMIT = 5;
 
 /** Defer a job whose publication was refused as stale, spending one attempt
@@ -85,7 +144,7 @@ export const STALE_MEMORY_REQUEUE_LIMIT = 5;
 export function deferStaleMemoryWork(work: MemoryWork, worker: string, reason: string, now=Date.now()): boolean {
   return Boolean(database().prepare(`UPDATE memory_jobs SET status=CASE WHEN attempts+1>=3 THEN 'failed' ELSE 'deferred' END,
     attempts=attempts+1,retry_at=?+CASE WHEN attempts=0 THEN 5000 ELSE 30000 END,lease_owner=NULL,lease_until=0,error=?
-    WHERE id=? AND lease_owner=? AND lease_generation=? AND status='leased'`).run(now,reason,work.id,worker,work.leaseGeneration).changes);
+    WHERE id=? AND lease_owner=? AND lease_generation=? AND status='leased'`).run(now,jobErrorText(reason),work.id,worker,work.leaseGeneration).changes);
 }
 
 export function heartbeatMemoryJob(work: MemoryWork, worker: string, now=Date.now()) {
@@ -103,7 +162,7 @@ export function publishMemoryWork(work: MemoryWork, worker: string, input: Memor
       if(result.chunks.length || result.nextCursor!==work.cursor) throw new Error("INVALID_FAILURE_COVERAGE");
       const attempts=Number(job.attempts)+1;
       db.prepare("UPDATE memory_jobs SET status=?,attempts=?,retry_at=?,lease_owner=NULL,lease_until=0,error=? WHERE id=?")
-        .run(attempts>=3?"failed":"deferred",attempts,now+(attempts===1?5000:30000),result.reason??"worker-failed",work.id);return;
+        .run(attempts>=3?"failed":"deferred",attempts,now+(attempts===1?5000:30000),jobErrorText(result.reason??"worker-failed"),work.id);return;
     }
     const expectedEnd=work.cursor+Buffer.byteLength(work.text);
     if(result.nextCursor!==expectedEnd || (result.status==="complete")!==(expectedEnd===work.totalBytes)) throw new Error("INCOMPLETE_MEMORY_SOURCE");

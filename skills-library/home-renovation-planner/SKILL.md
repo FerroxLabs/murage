@@ -4,7 +4,7 @@ description: |
   Comprehensive guidance for planning home renovation projects including project scoping, permit requirements research, contractor selection and vetting, budget planning with contingency reserves, timeline management, material selection strategies, project phasing, and the DIY versus contractor decision framework. Use when the user asks about home renovation planner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-buying personal-finance planning"
   category: "personal-finance"

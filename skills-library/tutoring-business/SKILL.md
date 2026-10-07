@@ -4,7 +4,7 @@ description: |
   Complete guide to building a tutoring business covering subject positioning, pricing tiers, online versus in-person delivery, curriculum development, parent communication, scheduling systems, scaling strategies, and marketing to schools and organizations. Use when the user asks about tutoring business or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship teaching strategy"
   category: "business-strategy"

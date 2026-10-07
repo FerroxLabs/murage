@@ -20,7 +20,7 @@ test.beforeAll(async () => {
     resolve: { alias: { "@": join(root, "src") } }, server: { host: "127.0.0.1", port: 0, watch: null, hmr: false },
     plugins: [{ name: "dialog-locale-fixture", enforce: "pre", resolveId(id, importer) {
       if (id === "/__dialog.js") return "\0dialog-entry";
-      // openInboxLink (src/lib, since 0.1.60) calls the store's api for the Inbox dialog.
+      // The dialogs reach the store directly and through open-inbox-link.ts.
       if ((importer?.endsWith("Dialog.tsx") || importer?.endsWith("open-inbox-link.ts")) && (id.endsWith("/state/store") || id.endsWith("/state/store.tsx"))) return "\0dialog-store";
       if (importer?.endsWith("Dialog.tsx") && (id === "./Files" || id === "./Inbox")) return `\0dialog-${id.slice(2)}`;
     }, load(id) {

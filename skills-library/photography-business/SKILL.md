@@ -4,7 +4,7 @@ description: |
   Complete guide to running a photography business covering portfolio building, pricing packages, contracts and model releases, session workflow, editing turnaround, client gallery delivery, album design, marketing strategy, and specialty comparisons across wedding, portrait, and commercial photography. Use when the user asks about photography business or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship photography strategy"
   category: "business-strategy"

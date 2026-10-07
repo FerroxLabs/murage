@@ -27,7 +27,7 @@ import {
   saveWebhookCredential,
   webhookCredentialStore,
 } from "@/lib/webhook-credentials";
-import { webhookActivationDefaults, type WebhookAttempt, type WebhookCredential, type WebhookTrigger, type WebhookTriggerInput } from "@/lib/webhooks";
+import { WEBHOOK_DEFAULT_MAX_PENDING_RUNS, WEBHOOK_MAX_PENDING_RUNS_LIMIT, webhookActivationDefaults, webhookMaxPendingRunsInput, type WebhookAttempt, type WebhookCredential, type WebhookTrigger, type WebhookTriggerInput } from "@/lib/webhooks";
 import { api, useStore, type Bot } from "@/state/store";
 
 function relativeTime(at?: number) {
@@ -86,6 +86,7 @@ function WebhookEditor({ webhook, bots, onClose, onCredential }: { webhook?: Web
   const [prompt, setPrompt] = useState(webhook?.prompt ?? "");
   const [runOn, setRunOn] = useState<RoutineRunOn>(webhook?.runOn ?? "ember");
   const [eventTypes, setEventTypes] = useState((webhook?.eventTypes ?? []).join(", "));
+  const [maxPendingRuns, setMaxPendingRuns] = useState(webhook?.maxPendingRuns?.toString() ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const cloudInstance = state.instances.find((instance) => instance.driverKind === "boxAgent");
@@ -93,7 +94,12 @@ function WebhookEditor({ webhook, bots, onClose, onCredential }: { webhook?: Web
 
   const save = async () => {
     const bot = bots.find((candidate) => candidate.id === botId);
-    const input: WebhookTriggerInput = { name: name.trim() || suggestedName(prompt, bot), prompt: prompt.trim(), botId, runOn, ...webhookActivationDefaults(webhook), eventTypes: eventTypes.split(",").map((value) => value.trim()).filter(Boolean) };
+    const pendingLimit = webhookMaxPendingRunsInput(maxPendingRuns);
+    if (pendingLimit === undefined) {
+      setError(`Unfinished tasks at once must be a whole number from 1 to ${WEBHOOK_MAX_PENDING_RUNS_LIMIT}.`);
+      return;
+    }
+    const input: WebhookTriggerInput = { name: name.trim() || suggestedName(prompt, bot), prompt: prompt.trim(), botId, runOn, ...webhookActivationDefaults(webhook), eventTypes: eventTypes.split(",").map((value) => value.trim()).filter(Boolean), maxPendingRuns: pendingLimit };
     setSaving(true);
     setError("");
     try {
@@ -109,7 +115,7 @@ function WebhookEditor({ webhook, bots, onClose, onCredential }: { webhook?: Web
   };
 
   return (
-    <div className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/70 p-5 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/70 p-5 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="flex max-h-[calc(0.9*var(--vvh,100dvh))] w-full max-w-[590px] flex-col overflow-hidden rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
         <div className="flex items-start justify-between border-b border-hairline/40 px-5 py-4"><div><div className="text-[17px] font-semibold text-ink">{webhook ? "Edit webhook" : "New local webhook"}</div><div className="mt-1 text-[12px] text-ink-secondary">Each request starts a new task in the bot's chat.</div></div><button onClick={onClose} className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"><X size={18} /></button></div>
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
@@ -122,6 +128,7 @@ function WebhookEditor({ webhook, bots, onClose, onCredential }: { webhook?: Web
               <label className="block"><span className="mb-1.5 block text-[11.5px] font-medium text-ink-secondary">Default instructions <span className="font-normal">· optional</span></span><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} placeholder="For every event, summarize what happened and suggest the next step…" className="w-full resize-y rounded-xl border border-hairline/60 bg-panel px-3.5 py-3 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/60 focus:border-accent/70" /><span className="mt-1.5 block text-[10.5px] leading-relaxed text-ink-secondary">Use this only when every event needs the same handling rule. Otherwise the request’s task is used.</span></label>
               <div><div className="mb-2 text-[11.5px] font-medium text-ink-secondary">Run on</div><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setRunOn("ember")} className={cn("rounded-xl border p-3 text-left", runOn === "ember" ? "border-accent/70 bg-accent/10" : "border-hairline/50 bg-panel hover:bg-raised/60")}><div className="flex items-center gap-2 text-[12.5px] font-medium text-ink"><Laptop size={14} />This computer</div></button><button type="button" disabled={!cloudReady && runOn !== "cloud"} onClick={() => setRunOn("cloud")} className={cn("rounded-xl border p-3 text-left disabled:cursor-not-allowed disabled:opacity-45", runOn === "cloud" ? "border-accent/70 bg-accent/10" : "border-hairline/50 bg-panel hover:bg-raised/60")}><div className="flex items-center gap-2 text-[12.5px] font-medium text-ink"><Cloud size={14} />Cloud VM</div></button></div></div>
               <label className="block"><span className="mb-1.5 block text-[11.5px] font-medium text-ink-secondary">Only accept event types <span className="font-normal">· optional</span></span><input value={eventTypes} onChange={(event) => setEventTypes(event.target.value)} placeholder="push, workflow_run" className="w-full rounded-xl border border-hairline/60 bg-panel px-3.5 py-2.5 text-[13px] text-ink outline-none placeholder:text-ink-secondary/60 focus:border-accent/70" /><span className="mt-1.5 block text-[10.5px] text-ink-secondary">Comma-separated values from the sender’s event-type header.</span></label>
+              <label className="block"><span className="mb-1.5 block text-[11.5px] font-medium text-ink-secondary">Unfinished tasks at once <span className="font-normal">· optional</span></span><input type="number" inputMode="numeric" min={1} max={WEBHOOK_MAX_PENDING_RUNS_LIMIT} step={1} value={maxPendingRuns} onChange={(event) => setMaxPendingRuns(event.target.value)} placeholder={String(WEBHOOK_DEFAULT_MAX_PENDING_RUNS)} className="w-full rounded-xl border border-hairline/60 bg-panel px-3.5 py-2.5 text-[13px] text-ink outline-none placeholder:text-ink-secondary/60 focus:border-accent/70" /><span className="mt-1.5 block text-[10.5px] text-ink-secondary">How many of this webhook’s tasks can be queued or running together. More requests are turned away until one finishes. Leave blank for {WEBHOOK_DEFAULT_MAX_PENDING_RUNS}.</span></label>
             </div>
           </details>
           {error && <div className="rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-3 text-[12px] text-danger">{error}</div>}
@@ -334,7 +341,7 @@ export function WebhooksPanel({ bots }: { bots: Bot[] }) {
                       <div className="grid gap-4 text-[11.5px] sm:grid-cols-2"><div><div className="text-[10px] uppercase tracking-wider text-ink-secondary">Tasks go to</div><div className="mt-1.5 font-medium text-ink">{selectedBot?.name ?? "Deleted bot"}</div></div><div><div className="text-[10px] uppercase tracking-wider text-ink-secondary">Runs on</div><div className="mt-1.5 font-medium text-ink">{selected.runOn === "cloud" ? "Cloud VM" : "This computer"}</div></div></div>
                     </div>
 
-                    <details className="group mt-5 border-t border-hairline/35 pt-4"><summary className="flex cursor-pointer list-none items-center justify-between text-[11.5px] font-medium text-ink"><span>Advanced</span><ChevronDown size={14} className="text-ink-secondary transition-transform group-open:rotate-180" /></summary><div className="mt-4 space-y-3 text-[10.5px] leading-relaxed text-ink-secondary">{selected.prompt ? <p><span className="font-medium text-ink">Default instruction:</span> {selected.prompt}</p> : <p>The task or message sent with each request becomes the bot's instruction.</p>}{selected.eventTypes?.length ? <p><span className="font-medium text-ink">Accepted events:</span> {selected.eventTypes.join(", ")}</p> : <p>All event types are accepted.</p>}<button onClick={() => setEditor(selected)} className="rounded-lg border border-hairline/50 px-3 py-2 text-[11px] font-medium text-ink hover:bg-raised">Edit settings</button></div></details>
+                    <details className="group mt-5 border-t border-hairline/35 pt-4"><summary className="flex cursor-pointer list-none items-center justify-between text-[11.5px] font-medium text-ink"><span>Advanced</span><ChevronDown size={14} className="text-ink-secondary transition-transform group-open:rotate-180" /></summary><div className="mt-4 space-y-3 text-[10.5px] leading-relaxed text-ink-secondary">{selected.prompt ? <p><span className="font-medium text-ink">Default instruction:</span> {selected.prompt}</p> : <p>The task or message sent with each request becomes the bot's instruction.</p>}{selected.eventTypes?.length ? <p><span className="font-medium text-ink">Accepted events:</span> {selected.eventTypes.join(", ")}</p> : <p>All event types are accepted.</p>}<p><span className="font-medium text-ink">Unfinished tasks at once:</span> {selected.maxPendingRuns ?? WEBHOOK_DEFAULT_MAX_PENDING_RUNS}. More requests are turned away until one finishes.</p><button onClick={() => setEditor(selected)} className="rounded-lg border border-hairline/50 px-3 py-2 text-[11px] font-medium text-ink hover:bg-raised">Edit settings</button></div></details>
                   </div>
                 </div>
               ) : (

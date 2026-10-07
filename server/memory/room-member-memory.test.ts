@@ -8,7 +8,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase } from "../database.ts";
+import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { ensureWorkspace } from "../workspace.ts";
 import { bindHumanThread, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding } from "../human-principals.ts";
@@ -48,7 +48,9 @@ it("gives a member its own bot and team scopes in an owner room, never a teammat
   expect(scopes).toContain(ensureScope("team", "alpha"));
   expect(scopes).not.toContain(ensureScope("bot", "b"));
   expect(scopes).not.toContain(ensureScope("team", "beta"));
-  expect(scopes).not.toContain(ensureScope("conversation", "private-a"));
+  // 0.1.61 lane M, recall both ways: its own direct chat too, never a teammate's
+  expect(scopes).toContain(ensureScope("conversation", "private-a"));
+  expect(scopes).not.toContain(ensureScope("conversation", "private-b"));
 });
 
 it("keeps a room with a linked channel person to the room boundary", () => {
@@ -60,6 +62,7 @@ it("keeps a room with a linked channel person to the room boundary", () => {
   expect(scopes).toContain(ensureScope("room", "room"));
   expect(scopes).not.toContain(ensureScope("bot", "a"));
   expect(scopes).not.toContain(ensureScope("team", "alpha"));
+  expect(scopes).not.toContain(ensureScope("conversation", "private-a"));
 });
 
 it("keeps owner-private continuity out of an owner room even when it is pinned", async () => {
@@ -68,7 +71,9 @@ it("keeps owner-private continuity out of an owner room even when it is pinned",
   const record = writeBotIdentity(ticket, { action: "identity-write", botId: "a", kind: "continuity-brief", key: "core", expectedVersion: 0, text: "Private harbour continuity", basis: "fiction", audience: "owner-private" }, roster) as { id: string; version: number };
   const direct = await buildMemoryBundle("harbour", access("private-a"), bridge([]));
   expect(direct.text).toContain("Private harbour continuity");
-  pinMemory(ticket, record.id, record.version, true);
+  // a PIP kind can no longer be pinned (P2 I-10); an older build could, so pin the row directly
+  expect(() => pinMemory(ticket, record.id, record.version, true)).toThrow("MEMORY_IDENTITY_NOT_PINNABLE");
+  database().prepare("UPDATE memory_records SET owner_pinned=1 WHERE id=? AND version=?").run(record.id, record.version);
   const room = access("room-thread");
   const bundle = await buildMemoryBundle("harbour continuity", room, bridge([record]));
   expect(bundle.text).not.toContain("Private harbour continuity");

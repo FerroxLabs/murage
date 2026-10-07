@@ -6,7 +6,7 @@ description: |
   Do NOT use for intermediate or advanced running training, marathon preparation, speed work or interval training for experienced runners, or trail running technique (use hiking-trip-planner for trail planning).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "beginner-friendly workout-planning running checklist"
   category: "hobbies-crafts"

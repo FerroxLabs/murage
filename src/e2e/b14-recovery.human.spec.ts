@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
-import { openSidebar } from "./fixtures.ts";
+import { openSidebar, SEND_KEY } from "./fixtures.ts";
 
 const BOT = "B14 visual fixture";
 const TASK = "B14 error and busy picker";
@@ -133,7 +133,7 @@ test("B14 busy picker stays on screen and inspect-only across viewport changes",
   const hold = "__fixture_hold_authority__ B14 picker inspection";
   const sent = page.waitForResponse((response) => response.url().endsWith(`/api/bots/${botId}/messages`) && response.request().method() === "POST");
   await composer.fill(hold);
-  await composer.press("Enter");
+  await composer.press(SEND_KEY);
   expect((await sent).status()).toBe(202);
   await expect.poll(busy).toBe(true);
   const modelTrigger = page.getByRole("button", { name: /^Thread model:/ });

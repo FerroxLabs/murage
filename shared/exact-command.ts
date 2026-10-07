@@ -142,14 +142,7 @@ export function commandCwdFromToolInput(input: unknown): string | null | undefin
   return named[0] as string;
 }
 
-// ── a routine's grant across runs ──────────────────────────────────────
-// A routine that writes the time into its own log sends a different command
-// text every run, so an exact grant made from one run's card never matched
-// the next. "Always allow for this routine" therefore matches the command
-// with its dates and times set aside: the same text, the same folder and the
-// same engine, where only date and time values may differ. Nothing else is
-// loosened. A changed word, path, flag or plain number is a different
-// command, and a date or time only matches another date or time.
+// Date patterns used by unplaced-delete stop-line grants in server/stop-line.ts.
 
 /** Letters in either case, without the `i` flag: a time zone must stay
  * upper case, so "13:25 tick" never reads as a zone. */
@@ -192,11 +185,9 @@ export function commandWithoutDateTimes(command: string): string {
   return out;
 }
 
-/** Does a routine's exact grant cover this command in a later run: the same
- * engine and folder, and the same command apart from dates and times? */
+/** A routine's exact grant names the same engine, folder and normalized command. */
 export function routineExactGrantCovers(grantKey: string, exact: ExactCommand): boolean {
   const granted = parseExactCommandKey(grantKey);
   if (!granted || granted.engine !== exact.engine || granted.cwd !== exact.cwd) return false;
-  if (exactCommandKey(exact) === grantKey) return true;
-  return commandWithoutDateTimes(granted.command) === commandWithoutDateTimes(exact.command);
+  return exactCommandKey(exact) === grantKey;
 }

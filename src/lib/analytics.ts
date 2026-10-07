@@ -13,6 +13,8 @@
 // every submitted email landed in someone else's account.
 import posthog from "posthog-js";
 
+import { inNativeShell } from "./native-shell";
+
 const TOKEN = (import.meta.env?.VITE_POSTHOG_KEY as string | undefined)?.trim() ?? "";
 const API_HOST =
   (import.meta.env?.VITE_POSTHOG_HOST as string | undefined)?.trim() || "https://us.i.posthog.com";
@@ -75,8 +77,16 @@ export function setAnalyticsEnabled(enabled: boolean) {
   }
 }
 
+/** Whether this window may start the analytics client at all. The iPhone and
+ * Android apps load this same interface, and their store privacy answers say
+ * the apps collect no usage analytics, so the native shell never starts it,
+ * whatever the switch says. Desktop and browser keep the switch. */
+export function analyticsAllowed(facts: { token: string; enabled: boolean; nativeShell: boolean }): boolean {
+  return facts.token !== "" && facts.enabled && !facts.nativeShell;
+}
+
 export function initAnalytics() {
-  if (ready || !TOKEN || !analyticsEnabled()) return;
+  if (ready || !analyticsAllowed({ token: TOKEN, enabled: analyticsEnabled(), nativeShell: inNativeShell() })) return;
   posthog.init(TOKEN, {
     api_host: API_HOST,
     autocapture: false, // never capture clicked-element text (conversation leak)

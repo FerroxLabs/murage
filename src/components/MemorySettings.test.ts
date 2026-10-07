@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { memoryListAction, memoryModeDescription } from "./MemorySettings";
+import { folderMemoryInUse, memoryAudienceLabel, memoryListAction, memoryModeDescription } from "./MemorySettings";
 
 describe("owner memory audience requests", () => {
   it("retains the bot boundary through search, audience changes and pagination", () => {
@@ -27,5 +27,14 @@ describe("compact memory state", () => {
   it("distinguishes capture-only from active recall", () => {
     expect(memoryModeDescription("capture")).toBe("Capture is on. Recall is off.");
     expect(memoryModeDescription("active")).toBe("Capture and recall are on.");
+  });
+});
+
+describe("folder memory is never called a project (PM5)", () => {
+  it("labels a folder audience as folder memory and offers it only where it is used", () => {
+    expect(memoryAudienceLabel({ kind: "project", label: "/Users/alex/closedesk" })).toBe("Folder memory: /Users/alex/closedesk");
+    expect(memoryAudienceLabel({ kind: "room", label: "Tallyroo Launch" })).toBe("Tallyroo Launch");
+    expect(folderMemoryInUse([{ kind: "room" }, { kind: "bot" }])).toBe(false);
+    expect(folderMemoryInUse([{ kind: "project" }])).toBe(true);
   });
 });

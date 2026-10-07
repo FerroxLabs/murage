@@ -60,7 +60,7 @@ export const INBOX_BADGED_SEGMENTS = ["approval", "question", "connection"] as c
 export const INBOX_DECISION_STATUSES = ["pending", "waiting", "needs-input", "needs-you"] as const;
 
 /** Statuses that are news rather than a question. */
-export const INBOX_TO_READ_STATUSES = ["blocked", "limit-reached", "failed", "missed", "paused"] as const;
+export const INBOX_TO_READ_STATUSES = ["blocked", "limit-reached", "failed", "missed", "paused", "digest"] as const;
 
 // TYPE ONLY, so nothing from the server is bundled into the renderer: this
 // import is erased at compile time. The rules live in server/inbox-rollup.ts
@@ -99,13 +99,34 @@ export interface InboxItem {
    *  way the card's own "Not now" does (connector-cards/:id/dismiss). Old
    *  ones from routines that stopped days ago had no way out of the Inbox. */
   dismissible?: true;
+  /** Which card route sets it aside: absent for a connected-app request
+   *  (connector-cards), "mcp-sign-in" for a link server's sign-in card
+   *  (mcp-sign-in-cards). */
+  dismissVia?: "mcp-sign-in";
   /** Nothing is owed on it, so the owner may clear it away (InboxStateUpdate
    *  `cleared`). It comes back only if it happens again. */
   clearable?: true;
   link: InboxLink;
 }
 export interface InboxQuery { view?: InboxView; query?: string; page?: number; pageSize?: number; includeSnoozed?: boolean }
+export interface ProjectInboxRow {
+  groupId:string; name:string; sentence:string; count:number;
+  approvals:Array<{requestId:string;threadId:string;messageId:string;summary:string;card:unknown}>;
+  goals:Array<{goalId:string;state:"awaiting_plan_ok"|"awaiting_signoff"}>;
+  deadWaitCards:Array<{cardId:string;waitingKind:string;requestId:string|null}>;
+}
+/** One suggestion owed in the Inbox: a lesson, an offer to share a lesson (scope "bots" or "team"), or a
+ *  change to a skill or routine (`lessonId` starts "psug-"). Suggestions only; nothing applies by itself. */
+export interface InboxLearningSuggestion {
+  botId: string; botName: string; lessonId: string; version: number; text: string; at: number;
+  kind?: "lesson" | "procedure";
+  /** A lesson: "style" is code-written (no edit), "note" is the owner's own words. */
+  lessonKind?: "style" | "note";
+  scope?: "bot" | "bots" | "team"; fromName?: string; recipients?: Array<{ id: string; name: string }>;
+  targetKind?: "skill" | "routine"; label?: string; summary?: string; reasons?: string[]; proposedHash?: string; edited?: boolean;
+}
 export interface InboxPage {
+  projects?:ProjectInboxRow[];
   items: InboxItem[]; total: number; page: number; pageSize: number;
   unread: number;
   /** Everything owed, across all the owner can see, not just this page. This
@@ -141,6 +162,10 @@ export interface InboxPage {
    *  cleared, so it is owed) and in no segment, gone once the review is
    *  cleared. See server/inbox-backup-notices.ts. */
   backupFailed?: { sentence: string; at: number };
+  /** Lessons a bot suggested that wait for the owner's yes (Apply / Edit / Not now in the bot's
+   *  Learning section). The only learning the Inbox shows. Desktop only; counted in `decisions`
+   *  and in no segment. See server/inbox-learning-suggestions.ts. */
+  learningSuggestions?: InboxLearningSuggestion[];
   /** ONE ROW PER ROUTINE, NOT PER RUN. Present only on `view=routines`.
    *  This is the promise the routines tab makes in words, kept in data:
    *  the owner's thirty six rows were twelve of one routine, three of

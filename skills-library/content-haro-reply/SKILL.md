@@ -1,13 +1,12 @@
 ---
 name: content-haro-reply
 description: "Write a HARO, Qwoted or SourceBottle expert-source reply that gets quoted instead of skimmed — a credentialed one-liner that answers why this source for this query, three to five tight bullets with specifics and a contrarian angle, and a closing pull quote written to be lifted verbatim. Use when a journalist query has landed, the user genuinely has the expertise, and there is a short reply window. Do NOT use for a press release or a cold pitch to a journalist with no query (use content-brief for the underlying angle) or for long-form thought leadership (use copywriter)."
-license: MIT
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "content earned-media haro pr expert-source"
   category: "content"
-  attribution: "Peter Shankman (HARO founder) on journalist time pressure and source quality; Cameron Herold 'Double Double' (2011) for earned-media positioning; Eugene Schwartz 'Breakthrough Advertising' (1966) for specificity-as-credibility; David Ogilvy 'Ogilvy on Advertising' (1983) for the pull-quote as the unit of communication; Sean Donahoe (28-year DR practitioner) for the 90-second quotability frame"
 ---
 
 # Content HARO Reply - The 90-Second Quotability Stack

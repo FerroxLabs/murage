@@ -6,7 +6,7 @@ description: |
   Do NOT use for manual qualitative coding of interviews (use qualitative-coding), survey question design (use survey-design), or general text mining beyond sentiment (use text-mining-protocol).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research analysis ai-ml"
   category: "data-analysis"

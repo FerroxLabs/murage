@@ -4,7 +4,7 @@ description: |
   Comprehensive puzzle design as a creative hobby covering crossword construction, logic puzzle creation, escape room design, word puzzles, mechanical puzzles, difficulty calibration, testing methodology, and the craft of creating satisfying solving experiences for others. Use when the user asks about puzzle designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "board-games game-design guide"
   category: "hobbies-crafts"

@@ -21,7 +21,7 @@ trigger_phrases: >-
   in my field build an audience around my expertise personal brand strategy
   become known for my expertise build influence in my industry
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: content-marketing career step-by-step planning
   category: career

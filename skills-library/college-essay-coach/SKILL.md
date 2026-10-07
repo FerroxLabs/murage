@@ -4,7 +4,7 @@ description: |
   Expert guidance for college application essays including Common App prompt analysis, brainstorming exercises for finding compelling topics, discovering authentic voice, effective essay structure, showing versus telling techniques, the revision process, supplemental essay strategies, and understanding what admissions officers look for. Use when the user asks about college essay coach or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching writing guide"
   category: "education"

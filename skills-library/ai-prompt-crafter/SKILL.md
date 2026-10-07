@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of ai prompt crafter or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ai-ml template step-by-step beginner-friendly advanced api-design automation analysis"
   category: "ai-machine-learning"

@@ -1,0 +1,8 @@
+[
+  { "name": "challenge", "method": "POST", "path": "/v1/challenges", "auth": "none", "body": null, "ok": 201 },
+  { "name": "registerDevice", "method": "POST", "path": "/v1/devices", "auth": "none", "body": ["attestation", "challenge", "environment", "platform", "pushToken"], "ok": 201 },
+  { "name": "approvalStatement", "method": "POST", "path": "/v1/approval-keys", "auth": "none", "body": ["approvalKey", "attestation", "challenge", "environment", "installId", "platform"], "ok": 201 },
+  { "name": "updateToken", "method": "PUT", "path": "/v1/devices/self/token", "auth": "device", "body": ["pushToken"], "ok": 200 },
+  { "name": "createBinding", "method": "POST", "path": "/v1/bindings", "auth": "device", "body": null, "ok": 201 },
+  { "name": "deleteBinding", "method": "DELETE", "path": "/v1/bindings/:id", "auth": "device", "body": null, "ok": 200 }
+]

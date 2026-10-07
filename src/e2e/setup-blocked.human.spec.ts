@@ -17,6 +17,14 @@ import { HARNESS_URL, desktopHeaders } from "./rig";
 import { axeScriptPath } from "./axe";
 import { FIXTURE_INSTANCE } from "./setup-fixture.mjs";
 
+// BLOCKED ON A DECISION (0.1.61): the setup checklist this spec drives was
+// removed in favour of the Chief-led first run, and where a capped account's
+// message now goes has not been decided (recommended, pending Sean: a line in
+// the Chief's first message). The spec stays so the decision has its test
+// waiting; until then every test here reports skipped with this reason, which
+// the CI job lists instead of counting as a pass or a failure.
+test.skip(true, "blocked on Sean's decision: where the capped-account message goes now that the setup checklist is gone (0.1.61)");
+
 const WCAG = { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] } } as const;
 
 /** Obviously not a credential: it says what it is for, in words no provider

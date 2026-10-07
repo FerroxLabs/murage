@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 import { evidenceDir } from "./evidence";
-// IMGSET1: Settings → Tools & Connections → Image generation against a real
+// IMGSET1: Settings → Images (Tools & Connections before 0.1.62) against a real
 // isolated harness. MURAGE_E2E_DATA_DIR is required (the spec refuses ~/.murage),
 // and the config refuses too: its old fallback wrote results under .planning/
 // inside the repository (CLAC2).

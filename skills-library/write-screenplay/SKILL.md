@@ -12,7 +12,7 @@ description: |
   producing a film (this is writing only, not production planning).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing editing step-by-step planning"
   category: "content-creation"

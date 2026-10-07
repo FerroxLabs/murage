@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of classroom technology or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "education-industry teaching budgeting checklist api-design testing automation analysis"
   category: "education"

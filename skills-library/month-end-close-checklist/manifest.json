@@ -1,0 +1,14 @@
+{
+  "id": "month-end-close-checklist",
+  "name": "Month-End Close Checklist",
+  "version": "1.0.0",
+  "description": "Closes a small-business month in a traceable sequence: source inventory, bank and card reconciliation, transaction categorization, open invoices and bills, timing adjustments and statement review. Produces a draft accountant pack with unresolved differences and proposed entries. Use for closing actual books; use financial-model-template for a forecast. Posting entries or sending the pack requires the owner's approval.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "bookkeeping",
+    "month-end",
+    "reconciliation",
+    "close"
+  ],
+  "requiredCapabilities": []
+}

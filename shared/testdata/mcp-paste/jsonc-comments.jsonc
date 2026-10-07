@@ -1,0 +1,11 @@
+{
+  // the docs say to add this block
+  "mcpServers": {
+    /* one server */
+    "notes": {
+      "command": "npx", // run it
+      "args": ["-y", "@x/notes-mcp",],
+      "env": { "NOTES_TOKEN": "",  },
+    },
+  },
+}

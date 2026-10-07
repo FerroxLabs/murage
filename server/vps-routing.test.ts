@@ -29,12 +29,6 @@ import {
 } from "./container-computer.ts";
 import { VPS_CONTAINER_LABEL, VPS_IMAGE, VPS_MANAGED_LABEL, VPS_VIEWER_LABEL } from "./vps-computer.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { loopbackFetch } from "./testing/conversation-proof.ts";
-
-/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
- * credential (the server below is started with it), without the desktop proof. */
-const TEST_COMPANION_TOKEN = "c".repeat(64);
-const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -204,7 +198,6 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
-      MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
       MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
       MURAGE_EXTRA_PATH: fakeBin,
       FAKE_DOCKER_DIR: fakeBin,
@@ -242,7 +235,7 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
     async () => {
       expect((await desktopApi("PUT", "/api/config", { vps: { sshAlias: "production-vps" } })).status).toBe(200);
 
-      const bot = (await api("POST", "/api/bots")).body.bot;
+      const bot = (await desktopApi("POST", "/api/bots")).body.bot;
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, {
         name: "Remote hand",
         modelSelection: { instanceId: "vps", model: "fake-model" },
@@ -250,7 +243,9 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps" })).status).toBe(200);
       // bot.computer stays unset — Auto, the mode that must never provision
 
-      const sent = await api("POST", `/api/bots/${bot.id}/messages`, { text: "check the remote desktop" });
+      // The owner's own words: a computer rides only a turn that answers them
+      // (0.1.61 lane dmowner), so the send carries the desktop proof.
+      const sent = await api("POST", `/api/bots/${bot.id}/messages`, { text: "check the remote desktop" }, DESKTOP_HEADERS);
       expect(sent.status).toBe(202);
       await until(async () => (await botById(bot.id))?.busy === true, "the gated turn");
 
@@ -305,7 +300,7 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
       }
 
       // the status route reads the same fake daemon and reports ready
-      const status = await api("GET", `/api/bots/${bot.id}/computer`);
+      const status = await desktopApi("GET", `/api/bots/${bot.id}/computer`);
       expect(status.status).toBe(200);
       expect(status.body).toMatchObject({ backend: "vps", ready: true, container: "running" });
 

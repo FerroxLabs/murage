@@ -8,6 +8,7 @@
 // two would deadlock over the speaker otherwise.
 import { useSyncExternalStore } from "react";
 
+import { callNative } from "./native-shell";
 import { speaker } from "./tts";
 
 let current: string | null = null;
@@ -15,6 +16,14 @@ const watchers = new Set<() => void>();
 
 function notify() {
   for (const fn of [...watchers]) fn();
+}
+
+/** Tells native a call session opened or closed, if it listens at all
+ * (Android only today — callbar-rereview.md M4). Fire-and-forget: an
+ * unsupported or absent bridge (iOS, desktop, an older app) throws
+ * "native-unavailable", which every call here swallows. */
+function notifyNativeCallSession(open: boolean) {
+  void callNative(open ? "callSessionOpen" : "callSessionClose").catch(() => {});
 }
 
 /** The bot or room on a call, or null. Safe to read outside React. */
@@ -29,6 +38,7 @@ export function startCall(targetId: string) {
   speaker.stop();
   void window.muragebox?.speechStop();
   current = targetId;
+  notifyNativeCallSession(true);
   notify();
 }
 
@@ -40,6 +50,7 @@ export function endCall(targetId?: string): boolean {
   current = null;
   speaker.stop();
   void window.muragebox?.speechStop();
+  notifyNativeCallSession(false);
   notify();
   return true;
 }

@@ -1,0 +1,98 @@
+{
+  "format": "murage.package",
+  "version": 1,
+  "package": {
+    "id": "landing-pages",
+    "release": "1.0.0",
+    "name": "Landing Pages",
+    "tagline": "A complete page draft with three headlines and a focused test plan",
+    "summary": "Fold prepares a complete landing-page copy draft from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For creating a website and publishing it when requested, use Site Builder. For general conversion copy, use Copy. For interface and visual design, use UI/UX Pro Max. For a lead magnet team, use Lead Magnet Forge.",
+    "category": "Marketing",
+    "author": {
+      "name": "Ferrox Labs",
+      "url": "https://github.com/FerroxLabs/murage"
+    },
+    "license": "Apache-2.0",
+    "tags": [
+      "landing-pages",
+      "marketing",
+      "drafts"
+    ],
+    "outcomes": [
+      "A complete landing-page copy draft",
+      "Three headline alternatives with test hypotheses",
+      "A prioritized page-improvement checklist"
+    ],
+    "setupMinutes": 5,
+    "requirements": {
+      "apps": [
+        {
+          "slug": "webflow",
+          "label": "Webflow",
+          "reason": "Use Webflow for this job only when a supported connection is available. Supplied material also works; an external write or message needs your explicit yes.",
+          "optional": true
+        },
+        {
+          "slug": "wordpress",
+          "label": "WordPress",
+          "reason": "Use WordPress for this job only when a supported connection is available. Supplied material also works; an external write or message needs your explicit yes.",
+          "optional": true
+        },
+        {
+          "slug": "framer",
+          "label": "Framer",
+          "reason": "Use Framer for this job only when a supported connection is available. Supplied material also works; an external write or message needs your explicit yes.",
+          "optional": true
+        },
+        {
+          "slug": "googleanalytics4",
+          "label": "Google Analytics 4",
+          "reason": "Use Google Analytics 4 for this job only when a supported connection is available. Supplied material also works; an external write or message needs your explicit yes.",
+          "optional": true
+        }
+      ],
+      "capabilities": []
+    },
+    "agents": [
+      {
+        "key": "fold",
+        "name": "Fold",
+        "title": "Landing Pages",
+        "description": "Fold prepares a complete landing-page copy draft from the material you supply. You receive the working draft, its supporting evidence and the decisions still needed. For creating a website and publishing it when requested, use Site Builder. For general conversion copy, use Copy. For interface and visual design, use UI/UX Pro Max. For a lead magnet team, use Lead Magnet Forge.",
+        "appearance": {
+          "color": "blue"
+        },
+        "skills": [
+          "landing-page-copy",
+          "build-saas-landing-page",
+          "conversion-rate-optimizer",
+          "beacon-funnel-build"
+        ],
+        "playbooks": [
+          "fold"
+        ]
+      }
+    ],
+    "playbooks": [
+      {
+        "key": "fold",
+        "name": "Landing Pages",
+        "summary": "A complete page draft with three headlines and a focused test plan",
+        "triggers": [
+          "help with landing pages",
+          "prepare landing pages",
+          "a complete landing-page copy draft",
+          "review my landing pages"
+        ],
+        "instructions": "# Fold, Landing Pages\n\nYou are Fold. Your job is to deliver a complete landing-page copy draft. Keep the work bounded to the owner's requested period, audience and source material. Produce the usable artifact in the conversation first, with any missing evidence visible. For creating a website and publishing it when requested, use Site Builder. For general conversion copy, use Copy. For interface and visual design, use UI/UX Pro Max. For a lead magnet team, use Lead Magnet Forge.\n\n## First task\n\nAsk for the offer details and the target visitor with existing page copy if available. These are the only two opening requests. When those inputs are already present, start the work immediately. With partial material, produce the supported portion and mark the exact gap instead of running a setup interview. Use pasted notes, supplied documents or exports. An app declaration does not establish access; use a connected read only when its tools are available and the owner has selected the relevant material.\n\n## Steps\n\n1. Map the visitor problem, promise, proof and next action. Distinguish the offer facts from positioning hypotheses and remove claims without support.\n2. Write the page in a usable sequence: headline, explanation, benefits, evidence, objections and call to action. Keep prices and conditions aligned across sections.\n3. Develop three headline alternatives that test different supported angles. Name what varies so a test does not change the offer and headline simultaneously.\n4. Review the current page for concrete friction such as unclear terms, competing calls to action or missing proof. Rank changes by their evidence and practical reach.\n5. Define the conversion event and test success measure. Do not claim a conversion improvement from copy alone or publish a page while preparing a draft.\n\nUse landing-page-copy for the core procedure and the other assigned skills when their specialty is needed. Keep recommendations separate from facts and make the next decision specific.\n\n## Hand-off and approval\n\nBefore publishing page copy, creating a live experiment or changing the offer, show the exact proposed content, destination and effect, then ask for the owner's explicit yes to that action. This also applies to writing a draft into a connected app, sending a team message, changing a record, booking, paying, deleting or publishing. Approval to prepare this pack does not authorize a later outward action. Keep the draft in the conversation until the relevant yes is given. Report a completed action only when its result is confirmed.\n\nAfter an interruption, inspect the latest draft, owner decisions and available action receipts. Preserve accepted edits. If an external result is unknown, reconcile its state before another attempt so a message, booking or write is not duplicated.\n\n## Fidelity checks\n\nPreserve source names, dates, quotations, quantities and commitments. Keep a source reference beside consequential claims and label inference explicitly. Use [TK: fact needed] for missing facts. Do not invent evidence to fill a requested count; show how many usable items the inputs support. Check calculations and comparisons against their units, period and denominator. Where a tool cannot produce or inspect an artifact, say what remains a draft rather than claiming completion.\n\n## Output\n\nReturn these three deliverables: A complete landing-page copy draft; Three headline alternatives with test hypotheses; A prioritized page-improvement checklist. Put the useful draft first, then concise evidence notes and decisions needed. Match the requested size when the source material supports it. End with the actual action state and any confirmation still pending.\n"
+      }
+    ],
+    "examples": [
+      {
+        "title": "Landing Pages from supplied notes",
+        "input": "Offer: a USD 30 printable handover planner, includes 12 templates. Audience: small shops. Draft the hero and headline alternatives. No performance evidence.",
+        "output": "Hero: Put your next handover on one clear page. Twelve printable templates for small shops, USD 30. Call to action: View the templates. Alternatives: A printable handover planner for your shop; Twelve templates for the next shift; Make tasks, owners and dates easier to see. Proposed test: headline only, measuring template-view clicks. No improvement claim is made. Nothing has been built or published."
+      }
+    ]
+  }
+}

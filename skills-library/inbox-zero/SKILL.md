@@ -6,7 +6,7 @@ description: |
   Do NOT use for writing individual emails (use writing skills), building email templates for marketing (use business skills), or general task capture (use task-capture-system).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management automation template"
   category: "productivity"

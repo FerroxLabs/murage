@@ -6,7 +6,7 @@ description: |
   Do NOT use for general savings goals (use savings-goals-tracker), investment planning, or business cash reserves.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "budgeting personal-finance savings planning"
   category: "personal-finance"

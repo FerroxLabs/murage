@@ -19,7 +19,7 @@ describe("downloads", () => {
   });
 
   // R6 (D4 fix round 1): /api/artifacts is desktop-authority-only
-  // (server/desktop-policy.ts DESKTOP_AUTHORITY_ROUTES) and answers 404
+  // (server/route-policy.ts, class desktop) and answers 404
   // without the desktop proof, which the phone app cannot supply. So — unlike
   // every other download site — this one deliberately keeps its own blob
   // anchor via `clickDownload` and never reaches for native at all.

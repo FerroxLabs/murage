@@ -14,6 +14,7 @@
 import { desktopHeaders, FIXTURES, HARNESS_URL } from "./rig";
 import { expect, openSidebar, test } from "./fixtures";
 import type { Page } from "@playwright/test";
+import { possessive } from "../lib/possessive";
 
 const api = async (method: string, path: string, body?: unknown) => {
   const res = await fetch(`${HARNESS_URL}${path}`, {
@@ -28,24 +29,27 @@ const api = async (method: string, path: string, body?: unknown) => {
 
 const QUESTION = "What do you mostly want help with?";
 
+// The + menu's New Team opens the chooser (2274a095: "New Bot from Template"
+// and the library door are gone); a template's summary is on its row and its
+// description on the preview.
 test("team descriptions explain the customer outcome in cards and previews", async ({ app }, testInfo) => {
   await expect(app.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
   await openSidebar(app);
   await app.getByRole("button", { name: "New or share", exact: true }).click();
-  await app.getByRole("button", { name: "New Bot from Template", exact: true }).click();
-  const library = app.getByRole("dialog", { name: "Templates", exact: true });
-  await library.getByRole("tab", { name: "Teams", exact: true }).click();
-  await expect(library.getByText("66 teams", { exact: true })).toBeVisible();
-  await library.getByRole("textbox", { name: "Search teams", exact: true }).fill("Cold Outbound");
+  await app.getByRole("button", { name: "New Team", exact: true }).click();
+  const chooser = app.getByRole("dialog", { name: "New Team", exact: true });
+  await expect(chooser).toBeVisible();
+  await chooser.getByLabel("What should it do?").fill("cold outbound outreach to prospective customers");
   const description = "For businesses starting direct outreach to prospective customers. Define your audience and offer, then prepare personalized messages and follow-ups for your review.";
-  const card = library.getByRole("article").filter({ has: app.getByRole("heading", { name: "Cold Outbound", exact: true }) });
-  await expect(card.getByText(description, { exact: true })).toBeVisible();
+  const row = chooser.getByRole("button").filter({ hasText: "Cold Outbound" }).first();
+  await expect(row).toBeVisible();
   await app.screenshot({ path: testInfo.outputPath("team-description-card.png") });
-  await card.getByRole("button", { name: "Preview", exact: true }).click();
-  await expect(app.getByRole("heading", { name: "Cold Outbound", exact: true })).toBeVisible();
-  await expect(app.getByText(description, { exact: true })).toBeVisible();
+  await row.click();
+  await expect(chooser.getByRole("heading", { name: "Cold Outbound", exact: true })).toBeVisible();
+  await expect(chooser.getByText(description, { exact: true })).toBeVisible();
   expect(await app.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await app.screenshot({ path: testInfo.outputPath("team-description-preview.png") });
+  await chooser.getByRole("button", { name: "Close", exact: true }).click();
 });
 
 test("plus menu separates blank bots from specialist templates", async ({ app }, testInfo) => {
@@ -55,25 +59,20 @@ test("plus menu separates blank bots from specialist templates", async ({ app },
   const trigger = app.getByRole("button", { name: "New or share", exact: true });
   await trigger.click();
   await expect(app.getByRole("button", { name: "New Bot", exact: true })).toBeVisible();
-  await expect(app.getByRole("button", { name: "New Bot from Template", exact: true })).toBeVisible();
   await app.screenshot({ path: testInfo.outputPath("bot-creation-options.png") });
   await app.getByRole("button", { name: "New Bot", exact: true }).press("Escape");
   await expect(trigger).toBeFocused();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
-  await trigger.click();
-  await app.getByRole("button", { name: "New Bot from Template", exact: true }).click();
-  const library = app.getByRole("dialog", { name: "Templates", exact: true });
-  await expect(library).toBeVisible();
-  await expect(library.getByRole("tab", { name: "Bots", exact: true })).toHaveAttribute("aria-selected", "true");
-  expect((await api("GET", "/api/bots")).bots.length).toBe(before);
-  await app.screenshot({ path: testInfo.outputPath("specialist-templates.png") });
-  await library.getByRole("button", { name: "Close", exact: true }).click();
-  const drawerToggle = app.getByRole("button", { name: "Open bot list" });
-  if (await drawerToggle.isVisible() && await drawerToggle.getAttribute("aria-expanded") !== "true") {
-    await openSidebar(app);
-  }
+  // New Bot opens the chooser: templates first, and nothing is made yet.
   await trigger.click();
   await app.getByRole("button", { name: "New Bot", exact: true }).click();
+  const chooser = app.getByRole("dialog", { name: "New Bot", exact: true });
+  await expect(chooser).toBeVisible();
+  await expect(chooser.getByText("or browse:")).toBeVisible();
+  expect((await api("GET", "/api/bots")).bots.length).toBe(before);
+  await app.screenshot({ path: testInfo.outputPath("specialist-templates.png") });
+  // Start blank is the quiet way to a blank bot.
+  await chooser.getByRole("button", { name: "Start blank →", exact: true }).click();
   await expect.poll(async () => (await api("GET", "/api/bots")).bots.length).toBe(before + 1);
 });
 
@@ -92,13 +91,15 @@ test("New Team files the chosen bots under a new heading with its instructions",
     expect(menuBox.x).toBeGreaterThanOrEqual(0);
     expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(app.viewportSize()!.width);
     expect((await app.locator("#sidebar-create-options button").allTextContents()).slice(0, 5)).toEqual(
-      ["New Bot", "New Bot from Template", "New Team", "New Channel", "Export bots…"],
+      ["New Bot", "New Team", "New ChannelA chat with some bots.", "New ProjectA place for work, files and chat. A goal is optional.", "Export bots…"],
     );
     for (const skin of ["light", "dark"] as const) {
       await app.evaluate((value) => { document.documentElement.dataset.skin = value; }, skin);
       await app.screenshot({ path: testInfo.outputPath(`plus-menu-${skin}.png`) });
     }
+    // New Team opens the chooser; "Pick from my bots" is the team dialog.
     await app.getByRole("button", { name: "New Team", exact: true }).click();
+    await app.getByRole("button", { name: "Pick from my bots →", exact: true }).click();
     const dialog = app.getByRole("dialog", { name: "New Team", exact: true });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("status")).toHaveText("Give the team a name.");
@@ -124,6 +125,7 @@ test("New Team files the chosen bots under a new heading with its instructions",
     // The same name again, in any case, is the existing team.
     await trigger.click();
     await app.getByRole("button", { name: "New Team", exact: true }).click();
+    await app.getByRole("button", { name: "Pick from my bots →", exact: true }).click();
     await dialog.getByRole("textbox", { name: "Team name", exact: true }).fill(team.toUpperCase());
     await expect(dialog.getByRole("status")).toHaveText(`There is already a team called ${team}. To add bots to it, use Move to team… on each bot.`);
     await expect(dialog.getByRole("button", { name: "Create Team", exact: true })).toBeDisabled();
@@ -142,7 +144,7 @@ const openBot = async (page: Page, name: string) => {
   await expect(page.getByRole("button", { name: /^Open .+'s profile$/ }).first()).toBeVisible();
   const sidebar = await openSidebar(page);
   await sidebar.getByText(name, { exact: true }).click();
-  await expect(page.getByRole("button", { name: `Open ${name}'s profile` }).last()).toBeVisible();
+  await expect(page.getByRole("button", { name: `Open ${possessive(name)} profile` }).last()).toBeVisible();
   const menu = page.getByRole("button", { name: "Open bot list" });
   if (await menu.isVisible()) await expect(menu).toHaveAttribute("aria-expanded", "false");
 };
@@ -153,7 +155,7 @@ const card = (page: Page) => page.getByTestId("bot-intake-card");
  * input in the chat composer. These tests exercise that approved entry point. */
 const openSetup = async (page: Page, name: string) => {
   await openBot(page, name);
-  await page.getByRole("button", { name: `Open ${name}'s profile` }).first().click();
+  await page.getByRole("button", { name: `Open ${possessive(name)} profile` }).first().click();
   await page.getByRole("button", { name: "Set up", exact: true }).click();
   await expect(card(page)).toBeVisible();
 };
@@ -388,7 +390,7 @@ test.describe("setup is somewhere you go and ask for it", () => {
       // Removed through the UI on purpose. That is the moment that has to
       // invalidate the renderer's cached count (M1); doing it over HTTP would
       // leave the cache untouched and prove nothing.
-      await app.getByRole("button", { name: "Open E2E Intake Returns's profile" }).first().click();
+      await app.getByRole("button", { name: "Open E2E Intake Returns' profile" }).first().click();
       await app.getByRole("button", { name: "Set up", exact: true }).click();
       await expect(app.getByText(/1 skill it already has/)).toBeVisible();
       await app.getByRole("button", { name: "Cancel", exact: true }).click();

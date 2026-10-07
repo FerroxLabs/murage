@@ -4,7 +4,7 @@ description: |
   Compassionate grief support guide covering modern understanding of grief stages, coping strategies, supporting others in grief, memorial planning, practical tasks after loss, grief timelines, and indicators for seeking professional help. Use when the user asks about grief counselor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events emotional-health self-care"
   category: "family-relationships"

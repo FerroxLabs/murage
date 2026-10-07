@@ -20,7 +20,7 @@ trigger_phrases: >-
   system design interview prep how to pass system design round practice system
   design questions system design at FAANG architecture interview preparation
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: architecture interview-prep career step-by-step planning
   category: career

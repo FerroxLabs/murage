@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12 and newer. Cloud backup carries only the install id, like
+     backup_rules.xml; an <include> backs up only what it names, so the
+     WebView's cookies, the routes and the sealed book (murage_secure.xml,
+     useless without its Keystore key) stay on this phone.
+     Device-to-device transfer carries nothing (review ruling): the old phone
+     is often still in use, and a copied install id would let pairing the new
+     phone replace the old phone's device record. -->
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionKey="true">
+        <include domain="sharedpref" path="murage_install.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </device-transfer>
+</data-extraction-rules>

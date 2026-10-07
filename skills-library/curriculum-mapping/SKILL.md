@@ -6,7 +6,7 @@ description: |
   Do NOT use for single lesson plans (use `lesson-plan-design`), individual assessment creation (use `assessment-design`), or student study plans (use `study-plan`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "curriculum teaching lesson-plan step-by-step"
   category: "education"

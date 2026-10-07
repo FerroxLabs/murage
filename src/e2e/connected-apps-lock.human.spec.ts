@@ -1,11 +1,11 @@
 // CTA1 (Sean 2026-09-11): the connected-apps panel is locked until a
-// FluxRouter key or a Composio key of the person's own exists, and the lock
+// FluxRouter key exists, and the lock
 // sells what a key buys. The real PluginsPanel and SettingsModal render under
 // the real store against a controlled fixture backend that counts every
 // connector request. What is proven here and nowhere else: the locked panel
 // sends nothing to the connector routes, the primary button lands the cursor
 // in the Flux key field in Settings → Models, the secondary link lands it in
-// the Composio key field, keyboard order starts at the primary and skips the
+// keyboard order starts at the primary and skips the
 // showcase, a saved key flips the panel open without a reopen, and how it
 // looks narrow and wide, light and dark.
 import { expect, test, type Page } from "@playwright/test";
@@ -18,7 +18,7 @@ import { join } from "node:path";
 import type { ConfigStatus } from "../state/store";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
-type Keys = "none" | "flux" | "composio";
+type Keys = "none" | "flux" | "oldkey";
 let server: ViteDevServer, origin: string, cache: string;
 let keys: Keys = "none";
 let configDelayMs = 0;
@@ -28,7 +28,7 @@ const proof = "ab".repeat(32);
 
 function configFor(which: Keys): ConfigStatus {
   return {
-    composio: which === "composio" ? { configured: true, mode: "self-hosted" } : { configured: false, mode: "unavailable" },
+    composio: { configured: false, mode: "unavailable", ...(which === "oldkey" ? { ownKeyRetired: true } : {}) },
     box: { configured: false },
     vps: { configured: false, sshAlias: "" },
     rooms: { turnTimeoutMinutes: 15 },
@@ -70,7 +70,7 @@ test.beforeAll(async () => {
         else if (path === "/api/bots") json({ bots: [], groups: [] });
         else if (path === "/api/flux-connection") json({ configured: keys === "flux", revision: "fixture", conflict: false, choices: [] });
         else if (path === "/api/provider-connections" && req.method === "GET") json({ connections: [], storage: "local-config" });
-        else if (path === "/api/connectors/catalog") json({ cards: CARDS, source: "curated", configured: keys !== "none", mode: keys === "composio" ? "self-hosted" : keys === "flux" ? "managed" : "unavailable", broker: keys === "flux" ? "flux" : null, migration: { state: "none", legacyUntil: null }, fluxConfigured: keys === "flux", fluxBrokerEnabled: true, freeRunsRemainingToday: null });
+        else if (path === "/api/connectors/catalog") json({ cards: CARDS, source: "curated", configured: keys !== "none", mode: keys === "flux" ? "managed" : "unavailable", broker: keys === "flux" ? "flux" : null, migration: { state: "none", legacyUntil: null }, fluxConfigured: keys === "flux", fluxBrokerEnabled: true, freeRunsRemainingToday: null });
         else if (path === "/api/connectors/connected") json({ configured: keys !== "none", credentialStore: "ok", services: {} });
         else if (path === "/api/connectors") json({ configured: keys !== "none", services: {} });
         else if (path.startsWith("/api/") && !["GET", "HEAD"].includes(req.method ?? "GET")) json({ error: "Unexpected fixture write" }, 409);
@@ -99,9 +99,9 @@ for (const [skin, width] of [["dark", 1100], ["light", 1100], ["dark", 390], ["l
   await open(page, { skin, width });
   await expect(lock(page)).toBeVisible();
   await expect(page.getByRole("heading", { name: "Connect your apps", exact: true })).toBeVisible();
-  await expect(page.getByText("Your bots can use hundreds of apps, including Gmail, Slack, Notion and GitHub. Add your Flux Router key to unlock them, with a free daily allowance included.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Your bots can use hundreds of apps, including Gmail, Slack, Notion and GitHub. Add your Flux Router key to unlock them, with a daily allowance included.", { exact: true })).toBeVisible();
   await expect(primary(page)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Have your own Composio key? Add it under Advanced.", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /own key/i })).toHaveCount(0);
   // The live panel's controls are not there to be found.
   await expect(page.getByRole("textbox", { name: "Search apps" })).toHaveCount(0);
   await expect(page.getByRole("tab", { name: "Marketplace" })).toHaveCount(0);
@@ -128,8 +128,6 @@ test("keyboard: the offer's button is the first tab stop and the showcase is ski
   await open(page);
   await expect(primary(page)).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Have your own Composio key? Add it under Advanced.", exact: true })).toBeFocused();
-  await page.keyboard.press("Tab");
   // Wrapped inside the dialog: the next stop is the dialog's first control,
   // never anything inside the showcase.
   const focusedInsideShowcase = () => page.evaluate(() => Boolean(document.activeElement?.closest("[data-connected-apps-lock] [aria-hidden='true']")));
@@ -154,15 +152,12 @@ test("the button opens Settings → Models with the cursor in the Flux key field
   expect(connectorHits).toEqual([]);
 });
 
-test("the link opens Tools & Connections with the cursor in the Composio key field", async ({ page }, info) => {
-  await open(page);
-  await page.getByRole("button", { name: "Have your own Composio key? Add it under Advanced.", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toBeVisible();
-  const field = page.getByLabel("Connected apps key", { exact: true });
-  await expect(field).toBeVisible();
-  await expect(field).toBeFocused();
-  expect(await page.evaluate(() => (window as any).fixtureStore.state.appSettingsSection)).toBe("connections");
-  await page.screenshot({ path: info.outputPath("after-own-key-connections.png") });
+test("there is no own-key link, and someone with an old key sees one quiet line", async ({ page }) => {
+  await open(page, { which: "oldkey" });
+  await expect(lock(page)).toBeVisible();
+  await expect(page.getByRole("button", { name: /own key/i })).toHaveCount(0);
+  await expect(page.getByText("Connected apps now run through Flux Router. Reconnect your apps here.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(connectorHits).toEqual([]);
 });
 
@@ -179,7 +174,7 @@ test("a late config answer holds the panel, fetches nothing, then locks", async 
   expect(connectorHits).toEqual([]);
 });
 
-for (const which of ["flux", "composio"] as const) test(`with a ${which} key the panel is the normal one and loads the catalog`, async ({ page }, info) => {
+for (const which of ["flux"] as const) test(`with a ${which} key the panel is the normal one and loads the catalog`, async ({ page }, info) => {
   await open(page, { which });
   await expect(lock(page)).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "Search apps" })).toBeVisible();
@@ -189,7 +184,6 @@ for (const which of ["flux", "composio"] as const) test(`with a ${which} key the
   await expect(page.locator('[data-connector-action="slack"]')).toBeVisible();
   await expect.poll(() => connectorHits).toContain("GET /api/connectors/catalog");
   expect(connectorHits).toContain("GET /api/connectors/connected");
-  if (which === "composio") await expect(page.getByText("Connected with your own key.", { exact: false })).toBeVisible();
   await page.screenshot({ path: info.outputPath(`unlocked-${which}.png`) });
 });
 

@@ -10,7 +10,7 @@ description: >
   projections (use finance-analyst).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing analysis report planning template"
   category: "business"

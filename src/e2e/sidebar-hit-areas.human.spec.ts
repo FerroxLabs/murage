@@ -50,7 +50,8 @@ test.beforeAll(async () => {
 test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
 
 async function open(page: Page, { density = "comfortable", query = "" } = {}) {
-  await page.addInitScript(value => localStorage.setItem("murage.sidebarDensity", value), density);
+  // The density under test holds at every width: no narrow-window rail.
+  await page.addInitScript(value => { localStorage.setItem("murage.sidebarDensity", value); localStorage.setItem("murage.sidebarAutoRail", "off"); }, density);
   await page.route("**/api/config", route => route.fulfill({ json: { features: {} } }));
   await page.route("**/api/desktop-secret", route => route.fulfill({ json: { secret: "fixture-secret" } }));
   await page.goto(`${origin}/__hit${query}`);
@@ -101,7 +102,9 @@ for (const skin of ["dark", "light"] as const) test(`team leader role colour sta
       await page.keyboard.press("Enter");
       expect(await selectedId(page)).toBe("lead");
       await expect(lead.locator("[data-sidebar-select]")).toBeFocused();
-      await expect(lead).toHaveClass(/border-team-lead\/45 bg-raised/);
+      // Selected, the lead carries the gold selection edge like every row
+      // (7d42d199, sidebar-row-tone.ts); its role stays in the blue label.
+      await expect(lead).toHaveClass(/border-warning shadow-\[inset_0_0_0_1px_var\(--color-warning\)\] bg-raised/);
       await expect(label).toHaveCSS("color", skin === "dark" ? "rgb(130, 181, 239)" : "rgb(36, 95, 165)");
       await expect(chief.getByText("Chief of Staff", { exact: true })).toHaveClass(/text-accent/);
       if (density !== "icons") {
@@ -110,7 +113,12 @@ for (const skin of ["dark", "light"] as const) test(`team leader role colour sta
         expect(rename!.width).toBeGreaterThanOrEqual(24);
         await expect(label).toBeVisible();
         await expect(lead).toContainText("Working…");
-        await expect(lead.locator(".size-2.bg-accent")).toBeVisible();
+        // No orange dot since 911799db. The lead is busy AND unread, and a row
+        // carries one mark: working outranks unread (sidebar-attention.ts
+        // sidebarBotMark), so it says Working, never both.
+        await expect(lead.locator(".size-2.bg-accent")).toHaveCount(0);
+        await expect(lead.locator("[data-sidebar-select]")).toHaveAttribute("aria-label", /· Working/);
+        await expect(lead.locator("[data-sidebar-select]")).not.toHaveAttribute("aria-label", /Unread/);
         const contrast = await label.evaluate(element => {
           const luminance = (css: string) => {
             const [r, g, b] = css.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(value => {

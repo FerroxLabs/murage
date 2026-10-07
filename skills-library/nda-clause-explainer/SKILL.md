@@ -6,7 +6,7 @@ description: |
   Do NOT use for drafting NDAs, advising whether to sign, or reviewing other contract types (use contract-basics-explainer for general contracts).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy contracts guide checklist"
   category: "legal-civic"

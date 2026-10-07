@@ -4,7 +4,7 @@ description: |
   Guide to observational astronomy including telescope selection, finding celestial objects, astrophotography basics, dark sky observing, and connecting with the astronomy community. Use when the user asks about astronomy observer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide step-by-step"
   category: "hobbies-crafts"

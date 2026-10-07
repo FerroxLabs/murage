@@ -84,12 +84,18 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
 
   async create(input) {
     const { config } = input;
+    // The workspace key (OPENAI_COMPAT_API_KEY) reaches an instance only
+    // through instanceConfigs(), which withholds it from an instance that
+    // brings its own URL, key or key variable (instanceOwnsRouting). So it is
+    // never read from process.env here, where loadConfig() and
+    // syncCredentialEnv() keep it too: that fallback sent the shared router
+    // key to any instance's own host (upstream #2053/#2107). An instance that
+    // names its own key variable reads only that variable.
+    const ownKeyVariable = config.apiKeyEnv !== "OPENAI_COMPAT_API_KEY";
     let apiKey =
       config.key ??
       input.environment[config.apiKeyEnv] ??
-      input.environment.OPENAI_COMPAT_API_KEY ??
-      process.env[config.apiKeyEnv] ??
-      process.env.OPENAI_COMPAT_API_KEY ??
+      (ownKeyVariable ? process.env[config.apiKeyEnv] : undefined) ??
       "";
     let credentialMismatch = false;
     // Never send a key whose own prefix names another provider (Google's
@@ -206,6 +212,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           : {}),
       }),
       httpErrorLabel: "upstream",
+      jsonSchemaResponse: true,
       missingKeyError: credentialMismatch ? "The saved key does not match this endpoint's provider. Connect its provider in Models." : "This engine has no API key yet. Add one in App Settings → Models.",
       unavailableReason: credentialMismatch ? "The saved key does not match this endpoint's provider. Connect its provider in Models." : "No API key yet. Add one in App Settings → Models.",
       // No provider idle cut of its own (0.1.61): the thread's silence watch,
@@ -231,7 +238,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
         :requestMemoryExtraction(extractionConfig,text,maximumOutputTokens,signal,dispatch?.messages);
     };
     if(usable)runtime.groundMemory=(claim,maximumOutputTokens,signal)=>requestMemoryGrounding({url:config.url,apiKey,model:catalog.default,
-      ...(config.provider&&isOpenRouterUrl(config.url)?{provider:{order:[config.provider],allow_fallbacks:false as const}}:{})},claim,maximumOutputTokens,signal);
+      ...(config.provider&&isOpenRouterUrl(config.url)?{provider:{order:[config.provider],allow_fallbacks:false as const}}:{})},claim,Math.min(64,maximumOutputTokens),signal);
     return runtime;
   },
 };

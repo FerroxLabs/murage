@@ -1,0 +1,23 @@
+{
+  "note": "Written by scripts/desktop-phone-shot.mjs. Rerun it when the desktop page changes.",
+  "strings": {
+    "title": "Phone and other devices",
+    "switchLabel": "Turn on",
+    "switchSubtitle": "On. Scan the code below with the Murage app on your phone.",
+    "cardTitle": "Sign in on another device"
+  },
+  "width": 1188,
+  "height": 854,
+  "shots": {
+    "light": {
+      "file": "desktop-phone-light.webp",
+      "bytes": 55710,
+      "sha256": "bb3692549b0f740704390891c7d1955c787968df4b719625a2bbcbf6e6519ea8"
+    },
+    "dark": {
+      "file": "desktop-phone-dark.webp",
+      "bytes": 60420,
+      "sha256": "3468ee3b751e83fed0a4025075190231426203775dcd829dc69baa81f0225366"
+    }
+  }
+}

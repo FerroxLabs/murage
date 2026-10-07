@@ -1,8 +1,9 @@
 ---
 name: copy-lens-storytelling
 description: "**Lens mode.** Source authority: Steven Bartlett's \"diary\"-format storytelling — emotional honesty, scene-led narration, the turning-point structure."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "copy"
 ---

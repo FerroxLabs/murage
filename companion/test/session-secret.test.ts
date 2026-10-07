@@ -16,7 +16,8 @@ describe("the session secret", () => {
   it("is created once, owner-only, and read back unchanged", () => {
     const first = loadSessionSecret();
     expect(first).toHaveLength(32);
-    expect(statSync(SESSION_SECRET_FILE).mode & 0o777).toBe(0o600);
+    // Windows has no mode bits to check: the file takes the owner's profile ACL.
+    if (process.platform !== "win32") expect(statSync(SESSION_SECRET_FILE).mode & 0o777).toBe(0o600);
     expect(loadSessionSecret().equals(first)).toBe(true);
     expect(readFileSync(SESSION_SECRET_FILE, "utf8").trim()).toBe(first.toString("hex"));
   });

@@ -4,10 +4,11 @@
 // chat app must not run dpkg itself. Everything before the install is shared.
 // It receives the staged paths and resolves with an optional state patch
 // describing what is left to do, which the card renders.
-import { updateErrorMessage } from "./update-errors.mjs";
+import { rm } from "node:fs/promises";
+import { isUpdateVerificationError, updateErrorMessage, updateVerificationError } from "./update-errors.mjs";
 import { assertCandidateManifest, captureUpdateCandidate, validateUpdateCandidate } from "./updater-candidate.mjs";
 
-export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null } = {}) {
+export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null, verifyDownload = null } = {}) {
   let checkOperation = null;
   let retryAction = "check";
   // Set from downloadUpdate's resolution: the paths electron-updater staged.
@@ -16,6 +17,10 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   let downloadOperation = null;
   let installOperation = null;
   let downloadedCandidate = null;
+  // An opted-in verifier returns a recheck of the same signed digests. It
+  // runs again at each install boundary, including cached continuation.
+  let verifiedDownload = null;
+  let verificationRefusal = null;
   let resumeRequested = false;
   // Staged files, installation instructions and failed user actions remain
   // actionable until the user explicitly asks for a fresh check.
@@ -23,7 +28,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   const routedErrors = new WeakSet();
 
   const routeError = (manual, error) => {
-    const message = installOperation?.prepared
+    const message = installOperation?.prepared && !isUpdateVerificationError(error)
       ? `Murage has finished closing. Retry the update, or quit and reopen Murage. ${updateErrorMessage(error)}`
       : updateErrorMessage(error);
     if (installOperation) retryAction = "install";
@@ -41,8 +46,33 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       setState({ status: "idle" });
       return;
     }
-    setState({ status: "error", message });
+    setState({ status: "error", message, ...(isUpdateVerificationError(error) ? { action: "download-from-murage" } : {}) });
   };
+
+  async function refuseDownload(files, error) {
+    downloadedFiles = null;
+    downloadedCandidate = null;
+    verifiedDownload = null;
+    verificationRefusal = isUpdateVerificationError(error) ? error : updateVerificationError(error);
+    const removals = await Promise.allSettled((files ?? []).filter(file => typeof file === "string").map(file => rm(file, { force: true })));
+    for (const result of removals) if (result.status === "rejected") updater.logger?.error("Update cache removal failed", result.reason);
+    throw verificationRefusal;
+  }
+
+  async function verifyDownloadedFiles(files, version) {
+    try {
+      const receipt = await verifyDownload({ files, version });
+      if (typeof receipt?.recheck !== "function") throw new Error("Update verifier did not return an install check.");
+      return receipt;
+    } catch (error) { return refuseDownload(files, error); }
+  }
+
+  async function recheckDownload() {
+    try {
+      if (!verifiedDownload) throw new Error("Verified update is unavailable.");
+      await verifiedDownload.recheck();
+    } catch (error) { return refuseDownload(downloadedFiles, error); }
+  }
 
   function handleRejectedOperation(manual, error) {
     if (error instanceof Error && routedErrors.has(error)) return;
@@ -133,6 +163,12 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
 
     const operation = { downloadedInfo: null, failed: false, promise: null };
     downloadOperation = operation;
+    if (verifyDownload) {
+      downloadedFiles = null;
+      downloadedCandidate = null;
+      verifiedDownload = null;
+      verificationRefusal = null;
+    }
     // macOS finishes serving the ZIP before Squirrel validates and stages it.
     // Subscribe before the download starts so a fast native event is retained.
     let finishNativeStage = null;
@@ -175,6 +211,8 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
           if (!operation.failed) {
             downloadedFiles = Array.isArray(result) ? result.filter((file) => typeof file === "string") : null;
             downloadedCandidate = null;
+            if (verifyDownload) verifiedDownload = await verifyDownloadedFiles(downloadedFiles, operation.downloadedInfo?.version);
+            if (operation.failed) return result;
             // Ordinary updates remain usable when the optional backup identity
             // cannot be built. An opted-in hook must refuse a null candidate.
             try { downloadedCandidate = await captureUpdateCandidate(updater, { downloadedFiles }); } catch { /* optional identity */ }
@@ -205,11 +243,12 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     retryAction = "install";
     if (!downloadedFiles?.length) {
       retryAction = "download";
-      routeError(true, new Error("Download the update before installing it."));
+      routeError(true, verificationRefusal ?? new Error("Download the update before installing it."));
       return;
     }
     actionOwnsState = true;
     if (handOffInstall) {
+      if (verifyDownload) return handOff();
       handOff();
       return;
     }
@@ -238,8 +277,9 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
         operation.timer.unref?.();
       }
     };
-    if (beforeInstall) {
+    if (beforeInstall || verifyDownload) {
       operation.promise = Promise.resolve().then(async () => {
+        if (verifyDownload) await recheckDownload();
         // Refresh actual bytes at the admission boundary, not just at download.
         let candidate = null;
         if (downloadedCandidate) {
@@ -248,8 +288,11 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
             if (candidate.candidateId !== downloadedCandidate.candidateId) candidate = null;
           } catch { /* opted-in hook refuses unavailable identity */ }
         }
-        return beforeInstall(candidate);
-      }).then(launch).catch((error) => routeError(true, error));
+        return beforeInstall?.(candidate);
+      }).then(verifyDownload ? async (decision) => {
+        if (decision?.status !== "deferred") await recheckDownload();
+        return launch(decision);
+      } : launch).catch((error) => routeError(true, error));
       return operation.promise;
     }
     launch();
@@ -279,12 +322,21 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       // once. No private state seeding, arbitrary path install or retry loop.
       const files = await updater.downloadUpdate();
       active();
+      if (verifyDownload) {
+        downloadedFiles = Array.isArray(files) ? files : null;
+        verifiedDownload = await verifyDownloadedFiles(downloadedFiles, candidate.version);
+        active();
+      }
       if (!Array.isArray(files) || files.length < 1 || files.some((file) => typeof file !== "string")) throw new Error("The pending update download did not return verified files.");
       const actual = await captureUpdateCandidate(updater, { downloadedFiles: files });
       if (actual.candidateId !== candidate.candidateId) throw new Error("The selected update artifact changed.");
       const decision = await admit(actual);
       active();
       if (!decision || decision.status !== "continue") throw new Error("Update continuation was not explicitly admitted.");
+      if (verifyDownload) {
+        await recheckDownload();
+        active();
+      }
       operation.prepared = true;
       resumeRequested = true;
       setState({ status: "installing", version: candidate.version });
@@ -309,8 +361,12 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     const operation = { failed: false, timer: null };
     installOperation = operation;
     setState({ status: "installing" });
-    Promise.resolve()
-      .then(() => handOffInstall(downloadedFiles))
+    operation.promise = Promise.resolve()
+      .then(verifyDownload ? async () => {
+        await recheckDownload();
+        if (installOperation !== operation || operation.failed) return;
+        return handOffInstall(downloadedFiles);
+      } : () => handOffInstall(downloadedFiles))
       .then((patch) => {
         if (installOperation !== operation) return;
         installOperation = null;
@@ -320,6 +376,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
         if (installOperation !== operation) return;
         routeError(true, error);
       });
+    return operation.promise;
   }
 
   const retry = () => retryAction === "download" ? download() : retryAction === "install" ? install() : check(true);

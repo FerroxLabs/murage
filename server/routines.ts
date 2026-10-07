@@ -1,14 +1,16 @@
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { ROUTINE_INSTRUCTIONS_MAX, routineInstructionsTooLongMessage } from "../shared/routine-instructions.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import { DATA_DIR } from "./config.ts";
 import type { RuntimeEvent } from "./contracts.ts";
-import { writeFileAtomic } from "./atomic.ts";
+import { cancelCoalesced, flushCoalesced, scheduleCoalesced, writeFileAtomic } from "./atomic.ts";
+import { RoutineRunsJournal, routinesCommit } from "./routine-runs-journal.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { CLOUD_ROUTINE_NOT_YET, type RoutineRunCardData } from "../shared/routine-run.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
 import { channelOriginSchema, routineEventForRun, type ChannelOrigin, type RoutineEvent } from "../shared/routine-event.ts";
@@ -63,6 +65,30 @@ export const isOpenRoutineRunStatus = (status: RoutineRunStatus): boolean => isO
 /** Running, waiting, or waiting on you: the run owns a live turn. */
 export const isLiveRoutineRunStatus = (status: RoutineRunStatus): boolean => isLive(status);
 
+/** The untouched routines.json from before routine ceilings were pinned. */
+export function routinesPrePinFile(routinesFile: string): string {
+  return join(dirname(routinesFile), "events", "routines.json.pre-pin");
+}
+
+export function routineRunCard(run: RoutineRun): RoutineRunCardData {
+  const visibleSummary = run.status === "waiting" ? run.attention
+    : run.status === "needs-you" ? `Waiting on you: ${run.attention ?? "an approval"}. Answer it in the routine's conversation to let this run finish.`
+    : run.output;
+  const summary = visibleSummary ? redactSecretsInText(visibleSummary).slice(0, 2_000) : undefined;
+  const error = run.error ? redactSecretsInText(run.error).slice(0, 500) : undefined;
+  const card: RoutineRunCardData = {
+    runId: run.id,
+    routineId: run.routineId,
+    routineName: redactSecretsInText(run.routineName),
+    status: run.status,
+  };
+  if (run.goalStatus) card.goalStatus = run.goalStatus;
+  if (run.threadId) card.executionThreadId = run.threadId;
+  if (summary) card.summary = summary;
+  if (error) card.error = error;
+  return card;
+}
+
 export interface RoutineInstructionRevision {
   id: string;
   prompt: string;
@@ -107,9 +133,9 @@ export interface Routine {
    * run waiting behind it; further occurrences are skipped until it starts.
    * Manual, webhook and channel runs are separate requests either way. */
   overlap?: "skip" | "queue";
-  /** The approval level this routine's scheduled and manual runs are judged
-   * at (server/routine-permissions.ts). Absent means inherit: the bot's own
-   * level when the run starts. Older files have none and inherit. */
+  /** The stored approval ceiling for scheduled and manual runs. The bot's
+   * current level can lower it (server/routine-permissions.ts). Older files
+   * receive a ceiling on load. */
   permissionMode?: RoutinePermissionMode;
   /** "Always allow for this routine": exact-command and stop-line keys the
    * owner allowed from a card in one of this routine's runs. Only granted
@@ -178,6 +204,8 @@ export interface RoutineRun {
   telegramConnectionId?: string;
   channelOrigin?: ChannelOrigin;
   humanPrincipal?: HumanPrincipal;
+  /** Server-owned: the audience of this channel run is not the owner (a WhatsApp group). Carried into startTurn as defence beside the guest principal. */
+  notOwnerAudience?: true;
   deliveryId?: string;
   /** Snapshot the routine's reporting destination. Execution remains on the
    * separate `threadId` so recurring work never contaminates chat context. */
@@ -263,14 +291,18 @@ export interface RoutineInput {
   timeoutMinutes?: number | null;
   attachments?: RoutineContextAttachment[];
   overlap?: "skip" | "queue";
-  /** A level, or `inherit` / null to follow the bot's level. */
+  /** A ceiling, or `inherit` / null to pin the bot's current level. */
   permissionMode?: RoutinePermissionMode | "inherit" | null;
 }
 
 interface RoutineFile {
   version: 1;
   routines: Routine[];
-  runs: RoutineRun[];
+  /** Empty since 0.1.62 (kept so 0.1.61 still reads and restores the file):
+   * runs live in events/routine-runs/. Read only to migrate. */
+  runs?: RoutineRun[];
+  /** The journal commit this file records (routine-runs-journal.ts). */
+  runsCommit?: number;
   /** Durable commit receipts for cross-file confirmation recovery. */
   routineRequestReceipts?: RoutineRequestReceipt[];
 }
@@ -282,6 +314,8 @@ function routineRequestOwnerKey(owner: RoutineRequestOwner): string {
 }
 
 export interface RoutineManagerOptions {
+  /** The bot's current level when a routine's ceiling is pinned. */
+  botMode?: (botId: string) => RoutinePermissionMode | undefined;
   /** Host evaluator must validate the retained receipt, exact candidate and current source authority. */
   validateInstructionPromotion?: (routine: Readonly<Routine>, proposal: Readonly<RoutineInstructionPromotion>) => boolean;
   validateInstructionEvidence?: (context: Pick<Routine, "botId" | "groupId" | "target">, evidence: NonNullable<RoutineInstructionRevision["evidence"]>) => boolean;
@@ -291,6 +325,19 @@ export interface RoutineManagerOptions {
   readWatchSource?: (ownerBotId: string, botId: string, source: RoutineWatchSource, signal: AbortSignal) => Promise<RoutineWatchObservation>;
   /** Admission only: never interrupts active work or blocks manual/channel requests. */
   automaticPaused?: () => boolean;
+  /** Startup gate: true once the connected-apps inventory has loaded and the
+   * MCP mounts have settled. Scheduled runs (including catch-up runs for
+   * occurrences missed while the app was closed) wait for it, bounded by
+   * `startupWaitMs`, then run anyway with a note in their prompt. */
+  startupReady?: () => boolean | Promise<boolean>;
+  /** Longest a scheduled run waits for `startupReady` after start(). */
+  startupWaitMs?: number;
+  /** Gap between two catch-up runs, so they never start at the same instant. */
+  catchUpStaggerMs?: number;
+  /** Step 0 check for a scheduled bot run: true while this bot should have
+   * connected-app tools and they have not registered. The run is deferred
+   * (see CONNECTOR_DEFER_DELAYS_MS) instead of running without them. */
+  connectorsMissing?: (botId: string) => boolean | Promise<boolean>;
   file?: string;
   now?: () => number;
   /** Keyed frames only: every payload on this bus is `{ kind, … }`, which
@@ -311,6 +358,8 @@ export interface RoutineManagerOptions {
   onRunDispatch?: (run: RoutineRun, reused: boolean) => void;
   /** Telegram messages continue the bot's current conversation. */
   channelThread?: (botId: string, principal?: HumanPrincipal) => { threadId: string } | null;
+  /** Returns the existing chat after durable project delivery, or null for a channel. */
+  projectRoutine?: (run: RoutineRun) => { threadId: string } | null;
   createGoalTask?: (groupId: string, title: string) => { threadId: string } | null;
   startTurn: (
     botId: string,
@@ -320,6 +369,7 @@ export interface RoutineManagerOptions {
     triggerSource: RoutineRunTrigger,
     onDispatchError: (message: string) => void,
     eventId?: string,
+    notOwnerAudience?: boolean,
   ) => Promise<void>;
   startGoal?: (
     groupId: string,
@@ -638,7 +688,20 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
   };
 }
 
+/** A scheduled run whose connected-app tools are still missing waits this
+ * long, then this long again, before it runs anyway with a note. */
+export const CONNECTOR_DEFER_DELAYS_MS = [2 * 60_000, 10 * 60_000] as const;
+export const STARTUP_WAIT_MS = 90_000;
+export const STARTUP_NOTE =
+  "Note: connected apps had not finished loading when this run started, so their tools may be missing. If a tool you need is not available, say so plainly and stop instead of guessing; this run will be retried.";
+
 export class RoutineManager {
+  private startedAt: number;
+  private gateOpened = false;
+  private gateForced = false;
+  private lastCatchUpAt: number | null = null;
+  private readonly heldByStartup = new Set<string>();
+  private readonly deferrals = new Map<string, { attempts: number; notBefore: number }>();
   private readonly file: string;
   private readonly now: () => number;
   private readonly options: RoutineManagerOptions;
@@ -648,13 +711,27 @@ export class RoutineManager {
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
   private watchReads = new Map<string, AbortController>();
+  private readonly journal: RoutineRunsJournal;
+  /** What routines.json last held, so an unchanged file is never rewritten. */
+  private lastWritten: { text: string; size: number; mtimeMs: number; ino: number } | null = null;
+  /** The journal commit routines.json holds; undefined for a pre-0.1.62 file. */
+  private runsCommit: number | undefined;
+  /** A tag whose routines.json write has not succeeded yet: every later save
+   * reuses it until one does, so no line from that save counts early. */
+  private pendingCommit: number | null = null;
 
   constructor(options: RoutineManagerOptions) {
     this.options = options;
     this.file = options.file ?? join(DATA_DIR, "routines.json");
+    this.journal = new RoutineRunsJournal(dirname(this.file));
+    flushCoalesced(); // a load reads the files: deferred writes land first
+    let migratedLegacyRuns = false;
+    let prePin: string | undefined;
     this.now = options.now ?? Date.now;
+    this.startedAt = this.now();
     try {
-      const disk = JSON.parse(readFileSync(this.file, "utf8")) as Partial<RoutineFile>;
+      const original = readFileSync(this.file, "utf8");
+      const disk = JSON.parse(original) as Partial<RoutineFile>;
       this.routines = Array.isArray(disk.routines)
         ? disk.routines.flatMap((routine) => {
             const schedule = loadSchedule(routine.schedule);
@@ -671,14 +748,13 @@ export class RoutineManager {
               sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
               threadId: persistedSourceThreadId.parse(routine.threadId),
               overlap: routine.overlap === "queue" ? "queue" : undefined,
-              permissionMode: loadRoutinePermissionMode(routine.permissionMode),
+              permissionMode: loadRoutinePermissionMode(routine.permissionMode) ?? this.options.botMode?.(routine.botId) ?? "ask",
               alwaysAllow: routineGrantKeys(routine.alwaysAllow),
               skippedRuns: Number.isSafeInteger(routine.skippedRuns) && routine.skippedRuns! > 0 ? routine.skippedRuns : undefined,
               lastSkippedAt: Number.isSafeInteger(routine.lastSkippedAt) && routine.lastSkippedAt! >= 0 && routine.lastSkippedAt! <= MAX_DATE_MS ? routine.lastSkippedAt : undefined,
             };
-            // Absent rather than undefined keys, so a load and save round-trip
-            // leaves an older file's routines byte-for-byte shaped as before.
-            for (const key of ["overlap", "permissionMode", "threadId", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
+            // Keep optional metadata absent when it has no stored value.
+            for (const key of ["overlap", "threadId", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
             if (!loaded.alwaysAllow?.length) delete loaded.alwaysAllow;
             delete loaded.failureStreak;
             if (routine.watch !== undefined) {
@@ -686,11 +762,31 @@ export class RoutineManager {
               catch { return []; }
             }
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
+            if (loaded.permissionMode !== routine.permissionMode) prePin = original;
             return [loaded];
           })
         : [];
-      this.runs = Array.isArray(disk.runs)
-        ? disk.runs.map((run) => {
+      // Run history lives in routine-runs/ (routine-runs-journal.ts). A
+      // routines.json from 0.1.61 or earlier still carries `runs`; those are
+      // overlaid on the journal (the file is the newer copy when a downgrade
+      // happened in between) and moved out below. Idempotent: a crash after the
+      // journal write but before the file rewrite just repeats this on next boot.
+      this.runsCommit = routinesCommit(disk);
+      const journalRuns = this.journal.load(this.runsCommit) as RoutineRun[];
+      let diskRuns: RoutineRun[] = journalRuns;
+      if (Array.isArray(disk.runs) && disk.runs.length > 0) {
+        const byId = new Map(journalRuns.map((run) => [run.id, run] as const));
+        for (const run of disk.runs) if (run && typeof run.id === "string") byId.set(run.id, run);
+        diskRuns = [...byId.values()];
+        migratedLegacyRuns = true;
+      }
+      // Journals are per routine; restore the global creation order that
+      // history trimming and channel FIFO dispatch read from this.runs.
+      diskRuns = diskRuns.map((run, index) => ({ run, index }))
+        .sort((a, b) => (Number(a.run.createdAt) || 0) - (Number(b.run.createdAt) || 0) || a.index - b.index)
+        .map(({ run }) => run);
+      this.runs = diskRuns.length > 0
+        ? diskRuns.map((run) => {
             const target = loadTarget(run.target);
             const loaded: RoutineRun = {
               ...run,
@@ -732,6 +828,7 @@ export class RoutineManager {
           )
         : [];
     } catch {
+      prePin = undefined;
       this.routines = [];
       this.runs = [];
       this.routineRequestReceipts = [];
@@ -757,6 +854,17 @@ export class RoutineManager {
         recovered.push(cloneRun(run));
       }
     }
+    // Preserve the original before any migrating save, including run recovery.
+    // Atomic replacement leaves complete JSON at both paths after interruption.
+    // It sits under events/, an owner folder every shipped release backs up:
+    // a new name at the top of the data folder stops a backup as unclassified
+    // (data-dir-inventory.ts), in this release and after a downgrade.
+    const prePinFile = routinesPrePinFile(this.file);
+    if (prePin !== undefined && !existsSync(prePinFile)) {
+      mkdirSync(dirname(prePinFile), { recursive: true, mode: 0o700 });
+      writeFileAtomic(prePinFile, prePin, { mode: 0o600 });
+    }
+    if ((migratedLegacyRuns || prePin !== undefined) && recovered.length === 0) this.save();
     if (recovered.length > 0) {
       this.save();
       for (const run of recovered) {
@@ -895,10 +1003,6 @@ export class RoutineManager {
     return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: structuredClone(run.humanPrincipal) } : {}) };
   }
 
-  /** The routine whose scheduled or manual run is working in this thread,
-   * and the level it chose (absent = inherit), so the host can judge the run
-   * at that level. Null for webhook and channel work, room goals, and a
-   * routine that no longer exists: those keep their own rules. */
   /** One of the harness's own cards opened in this thread. In a scheduled or
    * manual bot run it is held open (true) and the run waits on the owner. */
   cardOpened(threadId: string, requestId: string, summary: string): boolean {
@@ -931,14 +1035,15 @@ export class RoutineManager {
     return resume;
   }
 
+  /** The stored ceiling for scheduled and manual work, including room goals. */
   routineRunForThread(threadId: string): { routineId: string; botId: string; permissionMode?: RoutinePermissionMode; alwaysAllow: string[] } | null {
     const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
-    if (!run || run.target !== "bot") return null;
+    if (!run) return null;
     const trigger = run.triggerSource ?? (run.manual ? "manual" : "schedule");
     if (trigger !== "schedule" && trigger !== "manual") return null;
     const routine = this.routines.find((candidate) => candidate.id === run.routineId);
-    if (!routine || routine.botId !== run.botId) return null;
-    return { routineId: routine.id, botId: routine.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
+    if (!routine) return null;
+    return { routineId: routine.id, botId: run.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
   }
 
   /** The routine whose own conversation this is (Routine.threadId), with
@@ -1000,6 +1105,7 @@ export class RoutineManager {
     const routine: Routine = {
       id: randomUUID(),
       ...clean,
+      permissionMode: clean.permissionMode ?? this.options.botMode?.(clean.botId) ?? "ask",
       // Only a confirmed chat card supplies `request`; the public calendar
       // API cannot choose an arbitrary transcript as a reporting target.
       sourceThreadId: request?.threadId,
@@ -1049,6 +1155,7 @@ export class RoutineManager {
       overlap: Object.hasOwn(patch, "overlap") ? patch.overlap : routine.overlap,
       permissionMode: Object.hasOwn(patch, "permissionMode") ? patch.permissionMode : routine.permissionMode,
     });
+    clean.permissionMode ??= this.options.botMode?.(clean.botId) ?? "ask";
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
     if (routine.watch && (clean.target !== "bot" || clean.botId !== routine.botId || clean.runOn !== "ember" || clean.schedule.type !== "interval" || clean.attachments?.length)) throw new Error("A file watch must keep its approved bot, local interval and source");
     if (routine.watch && patch.enabled === true) {
@@ -1063,6 +1170,7 @@ export class RoutineManager {
     // 1e6737b0; FIFO dispatch order is deliberately not part of this.)
     const keepsCursor = clean.enabled && routine.enabled && sameSchedule(clean.schedule, routine.schedule);
     const cancelledRuns: RoutineRun[] = [];
+    const reassigned = clean.botId !== routine.botId;
     this.commitMutation(() => {
       if (clean.prompt !== routine.prompt) {
         const history = retainRoutineInstructions(routine);
@@ -1085,14 +1193,13 @@ export class RoutineManager {
       }
       // Object.assign cannot remove a key, and skip is stored as absence.
       if (clean.overlap !== "queue") delete routine.overlap;
-      if (clean.permissionMode === undefined) delete routine.permissionMode;
-      if (patch.enabled === false) {
+      if (patch.enabled === false || reassigned) {
         for (const run of this.runs) {
           if (run.routineId !== routine.id || run.status !== "queued") continue;
           run.status = "cancelled";
           run.attention = undefined;
           run.finishedAt = this.now();
-          run.error = "The routine was paused before this run started";
+          run.error = reassigned ? "The routine changed bots before this run started. Run it again with its current bot." : "The routine was paused before this run started";
           cancelledRuns.push(run);
         }
       }
@@ -1281,10 +1388,17 @@ export class RoutineManager {
     telegramConnectionId?: string;
     channelOrigin?: ChannelOrigin;
     humanPrincipal?: HumanPrincipal;
+    /** Group audiences only (WhatsApp). Stored on the run and forwarded to startTurn. */
+    notOwnerAudience?: true;
+    /** Images a channel message carried (WhatsApp). Validated and cloned like a routine's attachments; the run's prompt
+     * names them, so the engine can look at them. Local runs only: the files live on this computer. */
+    attachments?: RoutineContextAttachment[];
   }): RoutineRun {
     if(input.telegramConnectionId || input.channelOrigin){if(!input.humanPrincipal)throw new Error("HUMAN_LINK_REQUIRED");assertHumanPrincipal(input.humanPrincipal);}
     const existing = this.findWebhookDelivery(input.webhookId, input.deliveryId);
     if (existing) return existing;
+    const attachments = cleanAttachments(input.attachments);
+    if (attachments.length > 0 && (input.runOn === "cloud" || !input.channelOrigin)) throw new Error("Attachments can only run on this computer from a channel message");
     if (input.channelOrigin !== undefined && (!channelOriginSchema.safeParse(input.channelOrigin).success || input.telegramConnectionId || this.options.isChannelCurrent?.(input.channelOrigin, input.botId) !== true)) throw new Error("Channel binding is not current");
     if(!input.telegramConnectionId&&!input.channelOrigin&&this.options.automaticPaused?.())throw Object.assign(new Error("Automatic work is paused. Resume automations before accepting new webhook work."),{status:409,code:"automations_paused"});
     if (this.options.botState(input.botId) === "missing") {
@@ -1305,9 +1419,10 @@ export class RoutineManager {
       ...(input.telegramConnectionId ? { telegramConnectionId: input.telegramConnectionId } : {}),
       ...(input.channelOrigin ? { channelOrigin: { ...input.channelOrigin } } : {}),
       ...(input.humanPrincipal?{humanPrincipal:{...input.humanPrincipal}}:{}),
+      ...(input.notOwnerAudience === true ? { notOwnerAudience: true as const } : {}),
       webhookId: input.webhookId,
       deliveryId: input.deliveryId,
-      attachments: [],
+      attachments: cloneAttachments(attachments),
       createdAt: this.now(),
     };
     run.event = routineEventForRun(run);
@@ -1427,7 +1542,7 @@ export class RoutineManager {
     if (!run) return null;
     if (!run.seenAt) {
       run.seenAt = this.now();
-      this.save();
+      this.save({ defer: true });
       this.emitRun(run);
     }
     return cloneRun(run);
@@ -1435,6 +1550,9 @@ export class RoutineManager {
 
   start() {
     if (this.timer) return;
+    this.startedAt = this.now();
+    this.gateOpened = false;
+    this.gateForced = false;
     void this.tick();
     this.timer = setInterval(() => void this.tick(), 10_000);
     this.timer.unref?.();
@@ -1598,10 +1716,41 @@ export class RoutineManager {
         // requested/received timestamps.
         const triggerSource = run.triggerSource ?? (run.manual ? "manual" : "schedule");
         if((triggerSource==="schedule"||triggerSource==="webhook")&&this.options.automaticPaused?.())continue;
-        const definition = triggerSource === "schedule"
+        let startupNote = "";
+        if (triggerSource === "schedule" && run.target === "bot") {
+          if (this.options.startupReady && !this.gateOpened && !(await this.startupGateOpen(this.now()))) { this.heldByStartup.add(run.id); continue; }
+          if (this.heldByStartup.has(run.id) && this.gateForced) startupNote = STARTUP_NOTE;
+          const stagger = this.options.catchUpStaggerMs ?? 0;
+          if (run.scheduledFor < this.startedAt && stagger > 0 && this.lastCatchUpAt !== null && this.now() - this.lastCatchUpAt < stagger) continue;
+          const deferral = this.deferrals.get(run.id);
+          if (deferral && deferral.notBefore > this.now()) continue;
+          if (this.options.connectorsMissing) {
+            let missing = false;
+            try { missing = await this.options.connectorsMissing(run.botId); } catch { missing = false; }
+            const attempts = deferral?.attempts ?? 0;
+            if (missing && attempts < CONNECTOR_DEFER_DELAYS_MS.length) {
+              const notBefore = this.now() + CONNECTOR_DEFER_DELAYS_MS[attempts];
+              this.deferrals.set(run.id, { attempts: attempts + 1, notBefore });
+              run.attention = `Waiting for connected apps to load. Retrying in ${Math.round(CONNECTOR_DEFER_DELAYS_MS[attempts] / 60_000)} minutes (attempt ${attempts + 1} of ${CONNECTOR_DEFER_DELAYS_MS.length + 1}).`;
+              this.save({ defer: true });
+              this.emitRun(run);
+              continue;
+            }
+            if (missing) startupNote = STARTUP_NOTE;
+          }
+        }
+        const definition = triggerSource === "schedule" || triggerSource === "manual"
           ? this.routines.find((routine) => routine.id === run.routineId)
           : undefined;
-        if (definition?.schedule.type === "interval") {
+        if (definition && definition.botId !== run.botId) {
+          run.status = "cancelled";
+          run.finishedAt = this.now();
+          run.error = "The routine changed bots before this run started. Run it again with its current bot.";
+          this.save();
+          this.emitRun(run);
+          continue;
+        }
+        if (triggerSource === "schedule" && definition?.schedule.type === "interval") {
           const latest = latestIntervalOccurrence(definition.schedule, now);
           if (latest !== null && latest > run.scheduledFor) {
             run.scheduledFor = latest;
@@ -1620,6 +1769,27 @@ export class RoutineManager {
         if (state === "missing") {
           this.failRun(run, this.missingTargetMessage(run.target));
           continue;
+        }
+        // Fail closed: a cloud run has no way to ask for approval yet, so no
+        // routine level can be enforced there. Webhook jobs carry no routine
+        // level and keep their own unattended rules.
+        if (run.runOn === "cloud" && definition) {
+          this.failRun(run, CLOUD_ROUTINE_NOT_YET);
+          continue;
+        }
+        if (run.target === "room-goal" && this.options.projectRoutine) {
+          const delivered = this.options.projectRoutine(cloneRun(run));
+          if (delivered) {
+            run.threadId = delivered.threadId;
+            run.startedAt = this.now();
+            run.finishedAt = this.now();
+            run.status = "completed";
+            run.goalStatus = "completed";
+            run.attention = "Posted to the project chat";
+            this.save();
+            this.emitRun(run);
+            continue;
+          }
         }
         if (run.watch) { await this.checkWatch(run); continue; }
         // One conversation per routine: a scheduled or manual run of a bot
@@ -1653,6 +1823,9 @@ export class RoutineManager {
         run.threadId = task.threadId;
         run.startedAt = this.now();
         run.status = "running";
+        if (triggerSource === "schedule" && run.scheduledFor < this.startedAt) this.lastCatchUpAt = this.now();
+        if (this.deferrals.delete(run.id) && run.attention?.startsWith("Waiting for connected apps")) run.attention = undefined;
+        this.heldByStartup.delete(run.id);
         const adopted = owner && this.options.taskExists && owner.threadId !== task.threadId;
         if (adopted) owner.threadId = task.threadId;
         this.save();
@@ -1694,11 +1867,12 @@ export class RoutineManager {
             await this.options.startTurn(
               run.botId,
               task.threadId,
-              composeExecutionPrompt(prompt, run.attachments),
+              startupNote ? `${startupNote}\n\n${composeExecutionPrompt(prompt, run.attachments)}` : composeExecutionPrompt(prompt, run.attachments),
               run.runOn ?? "ember",
               triggerSource,
               failDispatch,
               run.event?.budgetId,
+              run.notOwnerAudience === true,
             );
           }
         } catch (error) {
@@ -1708,6 +1882,20 @@ export class RoutineManager {
     } finally {
       this.ticking = false;
     }
+  }
+
+  private async startupGateOpen(now: number): Promise<boolean> {
+    if (this.gateOpened) return true;
+    const gate = this.options.startupReady;
+    if (!gate) { this.gateOpened = true; return true; }
+    try { if (await gate()) { this.gateOpened = true; return true; } }
+    catch { /* a failing check counts as not ready until the bound */ }
+    if (now - this.startedAt >= (this.options.startupWaitMs ?? STARTUP_WAIT_MS)) {
+      this.gateOpened = true;
+      this.gateForced = true;
+      return true;
+    }
+    return false;
   }
 
   handleRuntimeEvent(event: RuntimeEvent): RoutineRun | null {
@@ -1721,7 +1909,7 @@ export class RoutineManager {
         if (event.type !== "turn.started" || this.runs.some((prior) => prior.id !== run.id &&
           prior.threadId === event.threadId && prior.channelTurnId === event.turnId)) return null;
         run.channelTurnId = event.turnId;
-        this.save();
+        this.save({ defer: true });
       }
       if (event.turnId !== run.channelTurnId) return null;
     }
@@ -2041,17 +2229,29 @@ export class RoutineManager {
   preparePackageAddition(additions: Routine[]) {
     const ids = new Set(this.routines.map(routine => routine.id));
     for (const routine of additions) {
-      if (ids.has(routine.id) || routine.enabled || routine.nextRunAt !== null) throw new Error("Unsafe package routine addition");
+      if (ids.has(routine.id) || routine.enabled || routine.nextRunAt !== null) throw new Error("A package routine must be new and switched off");
       ids.add(routine.id);
     }
-    const next = [...this.routines, ...additions];
+    // An imported routine arrives with its ceiling pinned: imported bots start at Ask, so does the routine.
+    const next = [...this.routines, ...additions.map(routine => routine.permissionMode ? routine : { ...routine, permissionMode: "ask" as const })];
     return {
-      bytes: Buffer.from(JSON.stringify({ version: 1, routines: next, runs: this.runs, routineRequestReceipts: this.routineRequestReceipts } satisfies RoutineFile, null, 2)),
+      // runsCommit stays as recorded: a file without it accepts every journal line, including
+      // those of a save that was interrupted before its routines.json write (audit A-3).
+      bytes: Buffer.from(JSON.stringify({ version: 1, routines: next, routineRequestReceipts: this.routineRequestReceipts, ...(this.runsCommit === undefined ? {} : { runsCommit: this.runsCommit }) } satisfies RoutineFile, null, 2)),
       publish: () => { this.routines = next; },
     };
   }
 
-  private save() {
+  /** Persist routines.json and the run journal. Immediate by default (receipts,
+   * grants, schedules and run starts rely on it throwing); `defer` coalesces to
+   * once per 250 ms for cosmetic bookkeeping such as marking a run seen. */
+  private save(options: { defer?: boolean } = {}) {
+    if (options.defer) { scheduleCoalesced(this.file, () => this.saveNow()); return; }
+    this.saveNow();
+    cancelCoalesced(this.file);
+  }
+
+  private saveNow() {
     // Active receipts own cancellation, timeout, and provider-event routing;
     // evicting one would strand live work. Treat MAX_RUNS as a soft history
     // cap and reclaim only the oldest terminal receipts. An unusually large
@@ -2066,11 +2266,44 @@ export class RoutineManager {
       excess -= 1;
     }
     mkdirSync(dirname(this.file), { recursive: true });
-    writeFileAtomic(this.file, JSON.stringify({
+    // History first: if routines.json then fails, nothing is lost, and a run
+    // that exists only in the journal is still loaded on the next start.
+    // When routines.json changes too, the appended lines carry a commit tag
+    // that only counts once routines.json records it (routine-runs-journal.ts):
+    // a crash between the two writes rolls both back, so a tick or a confirmed
+    // action is applied exactly once on the next start.
+    const textFor = (runsCommit: number | undefined) => JSON.stringify({
       version: 1,
       routines: this.routines,
-      runs: this.runs,
+      runs: [],
       routineRequestReceipts: this.routineRequestReceipts,
-    } satisfies RoutineFile, null, 2), { mode: 0o600 });
+      ...(runsCommit === undefined ? {} : { runsCommit }),
+    } satisfies RoutineFile, null, 2);
+    if (this.pendingCommit === null && this.fileUnchanged(textFor(this.runsCommit))) {
+      this.journal.sync(this.runs);
+      return;
+    }
+    const tag = this.pendingCommit ?? Math.max(this.runsCommit ?? 0, this.journal.highestTag) + 1;
+    this.pendingCommit = tag;
+    this.journal.sync(this.runs, tag);
+    const text = textFor(tag);
+    writeFileAtomic(this.file, text, { mode: 0o600 });
+    this.runsCommit = tag;
+    this.pendingCommit = null;
+    try { const stat = statSync(this.file); this.lastWritten = { text, size: stat.size, mtimeMs: stat.mtimeMs, ino: stat.ino }; }
+    catch { this.lastWritten = null; }
+    this.journal.compact();
+  }
+
+  /** True only when the file on disk is still exactly what this process wrote
+   * last (size, mtime and inode checked), so an outside replacement is never
+   * mistaken for our own content. */
+  private fileUnchanged(text: string): boolean {
+    const last = this.lastWritten;
+    if (!last || last.text !== text) return false;
+    try {
+      const stat = statSync(this.file);
+      return stat.size === last.size && stat.mtimeMs === last.mtimeMs && stat.ino === last.ino;
+    } catch { return false; }
   }
 }

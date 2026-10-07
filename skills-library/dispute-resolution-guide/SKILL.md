@@ -6,7 +6,7 @@ description: |
   Do NOT use for active litigation strategy, representing the user in any process, filing lawsuits, or providing legal advice on specific disputes.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy contracts checklist guide"
   category: "legal-civic"

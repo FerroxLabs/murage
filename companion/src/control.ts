@@ -17,7 +17,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import type { BrowserDoor } from "./browser.ts";
 import { MAX_DEVICES, PAIRING_TTL_MS, type DeviceRegistry } from "./devices.ts";
 import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts";
-import { lanAddresses, tailnetName, tailscaleAddress } from "./listener.ts";
+import { lanAddresses, tailnetLogin, tailnetName, tailscaleAddress } from "./listener.ts";
 import { defaultHostName } from "./mdns.ts";
 
 /** What the pairing page needs to render itself and act on what you click. */
@@ -32,6 +32,9 @@ export interface ControlOptions {
   setHostedUrl?: (url: string | null) => void;
   /** Whether Bonjour came up, and under what name. */
   discovery: () => { advertising: boolean; name: string };
+  /** Where the device door is bound: `lan` is plain HTTP on the local network
+   * (audit C6), so the pairing screens say so. */
+  deviceDoor?: () => { mode: "off" | "lan" | "tailnet" | "loopback"; unencrypted: boolean };
   /** Device ids with at least one live authenticated event stream. */
   connectedDeviceIds?: () => string[];
   /** Terminate every authenticated event stream owned by a revoked device. */
@@ -209,6 +212,7 @@ export function companionState(options: ControlOptions) {
   const addresses = lanAddresses();
   const tailscale = tailscaleAddress(addresses);
   const name = tailnetName();
+  const login = tailnetLogin();
   // First, so an unreadable file that has since become readable is loaded
   // before the device list below is read.
   const registry = options.devices.registryStatus();
@@ -222,6 +226,9 @@ export function companionState(options: ControlOptions) {
     addresses,
     ...(tailscale ? { tailscale } : {}),
     ...(tailscale && name ? { tailnetName: name } : {}),
+    // The Tailscale account this computer is signed in to, so the panel can
+    // say which one the phone needs. Left out when it cannot be read.
+    ...(login ? { tailnetLogin: login } : {}),
     lan: addresses.find((a) => a !== tailscale) ?? null,
     // The ordered fallback list the pairing QR hands the phone, so it can
     // walk to the next address when the first stops resolving.
@@ -248,6 +255,7 @@ export function companionState(options: ControlOptions) {
     ...(registry.available ? {} : { error: registryPaused(registry.problem) }),
     connectedDeviceIds: options.connectedDeviceIds?.() ?? [],
     discovery: options.discovery(),
+    ...(options.deviceDoor ? { deviceDoor: options.deviceDoor() } : {}),
     // Always a key, never an absence. `null` is the door saying it is not
     // listening; a missing field would be indistinguishable from an older
     // sidecar, and the panel would have to guess between them.
@@ -336,7 +344,7 @@ export function createControlServer(options: ControlOptions): Server {
     const changesDevices =
       (method === "POST" && path === "/pairing") ||
       (method === "DELETE" && /^\/devices\/[\w-]+$/.test(path)) ||
-      ((method === "POST" || method === "DELETE") && /^\/devices\/[\w-]+\/cloud-desktop$/.test(path));
+      ((method === "POST" || method === "DELETE") && /^\/devices\/[\w-]+\/(?:cloud-desktop|script-access)$/.test(path));
     if (changesDevices && !registry.available) {
       return json(res, 503, { error: registryPaused(registry.problem) });
     }
@@ -381,6 +389,17 @@ export function createControlServer(options: ControlOptions): Server {
         }
       } catch {
         return json(res, 500, { error: "could not save cloud desktop access" });
+      }
+      return json(res, 200, companionState(options));
+    }
+    const scriptAccess = path.match(/^\/devices\/([\w-]+)\/script-access$/);
+    if (scriptAccess && (method === "POST" || method === "DELETE")) {
+      try {
+        if (!options.devices.setScriptAccess(scriptAccess[1], method === "POST")) {
+          return json(res, 404, { error: "no such device" });
+        }
+      } catch {
+        return json(res, 500, { error: "could not save script access" });
       }
       return json(res, 200, companionState(options));
     }

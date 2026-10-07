@@ -1,13 +1,12 @@
 ---
 name: sales-prospect
 description: "Run a five-dimension workup on a target company from its URL using public sources only — company research, opportunity qualification, decision-maker mapping, competitive positioning and ICP fit — then aggregate a weighted prospect score, a prioritised action plan and a jurisdiction-gated first email (CAN-SPAM, CASL, GDPR and UWG §7 aware; refuses pure cold outreach to DE, AT and CH). Use when a whole account needs to be assessed before anyone reaches out. Do NOT use for a single BANT/MEDDIC pass on a lead already in play (use sales-qualify), for mapping named people only (use sales-contacts), or for deciding who to sell to at all (use sales-icp)."
-license: MIT
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sales prospecting osint bant meddic smb"
   category: "sales"
-  attribution: "zubair-trabzada/ai-sales-team-claude (skills/sales-prospect)"
 ---
 
 > **Templates and analytical tools only - not legal, marketing-compliance, or data-protection advice.** Sales prospecting touches LinkedIn ToS §8.2 (no scraping), Glassdoor / G2 / Capterra ToS, GDPR Art. 14 (indirect-collection notice for EU/UK persons), CCPA/CPRA §1798.100(b), and CAN-SPAM / CASL / UWG §7 / ePrivacy on any downstream outreach. The aggregated first-email lift inherits the `sales-outreach` Phase 0 jurisdiction gate - the parent will refuse to lift cold copy targeting Germany/Austria/Switzerland or Canadian recipients without consent, and will refuse Framework 4 / mutual-connection content without a documented referrer.

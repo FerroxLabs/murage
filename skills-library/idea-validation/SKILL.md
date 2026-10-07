@@ -5,7 +5,7 @@ description: |
   Do NOT use for building a full business plan (use business-plan), creating a Lean Canvas (use lean-canvas), or defining an MVP (use mvp-definition).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning research analysis"
   category: "business-strategy"

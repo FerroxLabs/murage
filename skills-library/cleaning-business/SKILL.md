@@ -4,7 +4,7 @@ description: |
   Complete guide to starting and growing a cleaning business covering service pricing, supplies and equipment, scheduling systems, hiring and training, quality control, insurance requirements, client acquisition, and scaling from solo operator to team-based operation. Use when the user asks about cleaning business or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning"
   category: "business-strategy"

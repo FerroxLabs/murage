@@ -5,7 +5,7 @@ description: |
   Do NOT use for technical specifications (use technical-specification), user story writing alone (use user-story-writing), or feature specs (use feature-spec).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "planning strategy template agile project-management"
   category: "business-strategy"

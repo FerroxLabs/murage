@@ -20,7 +20,7 @@ trigger_phrases: >-
   book children's book illustration publish a book for kids how to write for
   children picture book idea
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: >-
     parenting creative-writing writing design content-marketing study-skills

@@ -21,7 +21,7 @@ trigger_phrases: >-
   I want to build an API product I want to launch a developer API How do I
   monetize my API I need to build a developer portal
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: documentation step-by-step planning
   category: software-project

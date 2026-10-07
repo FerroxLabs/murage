@@ -11,7 +11,7 @@ description: |
   needed (use sprint-facilitator instead).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "multi-agent orchestration agent-coordination handoff-protocol planning"
   category: "orchestration"

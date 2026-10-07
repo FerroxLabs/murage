@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of oss security responder or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "best-practices checklist template guide testing automation analysis networking"
   category: "software-engineering"

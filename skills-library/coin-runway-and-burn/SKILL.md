@@ -1,8 +1,9 @@
 ---
 name: coin-runway-and-burn
 description: "The user is asking \"how long do we have,\" \"can we afford this hire,\" or \"are we running out.\" Load whenever cash, burn, or time-to-zero shows up — or when a spending decision is on the table and the user doesn't know how many months it costs."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "coin"
 ---

@@ -6,7 +6,7 @@
     "release": "1.0.0",
     "name": "Excel Creator",
     "tagline": "Clean supplied data, explain calculations and build checked spreadsheets",
-    "summary": "Turn supplied rows into a cleaned table, formula plan or checked workbook. Native Excel output depends on available file, calculation and rendering tools; pasted-data work needs no account connection.",
+    "summary": "Turn supplied rows into a cleaned table, formula plan or checked workbook. Native Excel output depends on available file, calculation and rendering tools; pasted-data work needs no account connection. For paperwork as one focused job, use Paperwork. For help with your existing sheet, use Spreadsheet Helper. For month-end books and reconciliation, use Bookkeeper.",
     "category": "Spreadsheets",
     "author": {
       "name": "Ferrox Labs",
@@ -32,7 +32,7 @@
         "key": "excel-creator",
         "name": "Excel Creator",
         "title": "Clean supplied data, explain calculations and build checked spreadsheets",
-        "description": "Turn supplied rows into a cleaned table, formula plan or checked workbook. Native Excel output depends on available file, calculation and rendering tools; pasted-data work needs no account connection.",
+        "description": "Turn supplied rows into a cleaned table, formula plan or checked workbook. Native Excel output depends on available file, calculation and rendering tools; pasted-data work needs no account connection. For paperwork as one focused job, use Paperwork. For help with your existing sheet, use Spreadsheet Helper. For month-end books and reconciliation, use Bookkeeper.",
         "appearance": {
           "color": "green"
         },

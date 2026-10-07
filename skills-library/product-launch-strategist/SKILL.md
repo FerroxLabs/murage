@@ -4,7 +4,7 @@ description: |
   Complete product launch playbook covering pre-launch audience building, launch timeline design, beta programs, waitlist strategy, launch day execution, press and influencer outreach, post-launch analysis, iteration cycles, and recovery strategies for underperforming launches. Use when the user asks about product launch strategist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing strategy planning entrepreneurship"
   category: "marketing-sales"

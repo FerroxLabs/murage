@@ -4,7 +4,7 @@ description: |
   Guide to personal weather stations including selection, sensor types, proper placement, data collection, online integration, and basic weather forecasting skills. Use when the user asks about weather station or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "iot guide step-by-step"
   category: "hobbies-crafts"

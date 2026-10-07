@@ -1,8 +1,9 @@
 ---
 name: sentry-employment-and-classification
 description: "This skill explains employment-law concepts and the classification framework. It does not draft binding terms, separation agreements, or equity grants. I am not your lawyer. Escalate to actual counsel when: any termination in California, New York, Washington, Massachusetts, or Illinois; any equity g"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "sentry"
 ---

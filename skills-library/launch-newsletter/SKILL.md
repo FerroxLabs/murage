@@ -13,7 +13,7 @@ description: |
   create-content-calendar).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "newsletter writing email content-marketing step-by-step planning"
   category: "content-creation"

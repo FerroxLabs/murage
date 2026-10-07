@@ -1,7 +1,9 @@
 ---
 name: strategy-ab-test
 description: Head-to-head strategy comparison — snapshot state, sweep params on strategy A, restore, sweep strategy B, then compare metrics side-by-side. Use when the user asks "which strategy is better?" or "A/B test these two".
-license: MIT
+license: Apache-2.0
+metadata:
+  author: Ferrox Labs
 ---
 
 # Strategy A/B Test

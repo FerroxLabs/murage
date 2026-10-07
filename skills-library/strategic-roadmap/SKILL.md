@@ -11,7 +11,7 @@ description: |
   with financial projections (use business-plan).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy planning project-management"
   category: "business-strategy"

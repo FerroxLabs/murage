@@ -16,13 +16,16 @@ import type { LocalOutputReceipt } from "../shared/output-publication.ts";
 import { completeImageOutput, outputReceipt, outputReceiptsForRun, retainImageOutput, type ImageOutputCompletion } from "./output-publication.ts";
 import { conversationImageAttachments } from "./image-reference-resolver.ts";
 import { recordRenderPrompt } from "./image-library.ts";
-import { murageTool } from "./tool-call-context.ts";
+import { murageToolOnThisServer } from "./murage-tool-surface.ts";
+import { redactSecretsInText } from "./redact.ts";
 
 export interface ImageActor { botId: string; threadId: string; generation: string; assertActive: () => void; signal: AbortSignal }
 interface Pending { threadId: string; botId: string; messageId: string; settle: (allow: boolean, source?: "user" | "system") => void; active: () => void;
   /** Held open by a routine run: its tool call gave up (the turn ended) and
    * the card is still the owner's to answer. */
-  detached?: boolean }
+  detached?: boolean;
+  /** Its late Allow had nothing to carry it on, so it made no image. */
+  unused?: boolean }
 /** How long an image approval card waits for the owner: the same 15 minutes
  * every engine permission request gets (drivers/acp/core.ts, drivers/codex.ts)
  * before the harness closes it as unanswered. The generate_image MCP call in
@@ -85,6 +88,8 @@ interface ImageOperationResult { artifact: ImageArtifact; artifacts?: ImageArtif
 /** What an operation row's `result` holds while it runs: the retained
  * images, and the provider job it waits on (kept before the first poll). */
 interface OperationProgress { pending?: PendingPublication; job?: { id: string };
+  /** Images this render asked for, kept at reserve so a turn's total is known. */
+  count?: number;
   /** bot, thread and request_id: finds a provider job again from a later turn. */
   resumeKey?: string }
 
@@ -135,8 +140,15 @@ export function publishImage(store: Store, actor: ImageActor, image: DecodedGene
 }
 
 export const imagePublishRecoveryMessage = (category?: string) => `Image received and kept locally, but publishing it to this conversation did not finish${category ? ` (${category})` : ""}. `
-  + `Call ${murageTool("generate_image")} again with the same request_id during this turn to finish; no new provider request will be sent.`;
+  + `Call ${murageToolOnThisServer("generate_image")} again with the same request_id during this turn to finish; no new provider request will be sent.`;
 
+/** The decision to make an image without a card (server/image-approval.ts):
+ * `basis` names why ("Full access", "No limits", "the Images setting"). */
+export interface ImageAutoApproval { basis: "Full access" | "No limits" | "the Images setting" }
+/** What the decision is given: the images this request asks for, and the
+ * images this turn has already made (so the "ask again after N" guard can see
+ * both). A probe asks with `count: 0` whether the no-card path is open at all. */
+export interface ImageAutoAsk { count: number; madeThisTurn: number }
 export type PublishOperationImage = (image: DecodedGeneratedImage, metadata: GeneratedImageMetadata) => Promise<ImageArtifact>;
 export type ImageReserve = (details: ImageOperationDetails, card?: ImageApprovalCardInput) => Promise<{ finish: (outcome: ImageAttemptOutcome) => void }>;
 /** What the operation hands its work: its id (the Flux Idempotency-Key is its
@@ -144,12 +156,17 @@ export type ImageReserve = (details: ImageOperationDetails, card?: ImageApproval
  * record a new job id before the first poll. */
 export interface ImageWorkContext { operationId: string; resumeJob?: { id: string }; jobStarted: (job: { id: string }) => void }
 
-/** One explicit count grant, one attempt per turn, one active operation per bot workspace. */
+/** One explicit count grant, one active operation per bot workspace. A turn gets one attempt where the card is shown; where the bot makes images without asking it may go on, once every earlier attempt of the turn is settled. */
 export class ImageOperations {
   private readonly store: Store;
   private readonly waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void;
   private readonly speaker?: (threadId: string, botId: string) => Message["from"] | undefined;
   private readonly routineCard?: RoutineCardHooks;
+  private readonly holdProjectApproval?: (threadId:string)=>boolean;
+  /** Whether this render needs no card. Null means ask; a throw means ask. */
+  private readonly autoApproval?: (actor: ImageActor, ask: ImageAutoAsk) => ImageAutoApproval | null;
+  /** Told once an image really is going ahead without a card (the decision log). */
+  private readonly autoApprovalLogged?: (actor: ImageActor, details: ImageOperationDetails, auto: ImageAutoApproval) => void;
   /** Tells the turn's silence watch that Murage is working on this image
    * (approval, then the render) and returns the release. */
   private readonly rendering?: (actor: Pick<ImageActor, "threadId" | "generation">) => () => void;
@@ -158,13 +175,18 @@ export class ImageOperations {
   private readonly lateAllows = new Set<string>();
   private readonly pending = new Map<string, Pending>();
   private readonly jobs = new Map<string, Promise<unknown>>();
+  private readonly startupUndispatched: Set<string>;
   private readonly workspaces = new Set<string>();
   /** `speaker` names the member who asked when the card lands in a channel:
    * without it the card has no sender, so neither the channel view nor the
    * native approval notification can tell whose request it is. */
-  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void; speaker?: (threadId: string, botId: string) => Message["from"] | undefined; routineCard?: RoutineCardHooks;
-    rendering?: (actor: Pick<ImageActor, "threadId" | "generation">) => () => void }) {
-    this.store = options.store; this.waiting = options.waiting; this.speaker = options.speaker; this.routineCard = options.routineCard; this.rendering = options.rendering;
+  constructor(options: { store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void; speaker?: (threadId: string, botId: string) => Message["from"] | undefined; routineCard?: RoutineCardHooks; holdProjectApproval?: (threadId:string)=>boolean;
+    rendering?: (actor: Pick<ImageActor, "threadId" | "generation">) => () => void;
+    autoApproval?: (actor: ImageActor, ask: ImageAutoAsk) => ImageAutoApproval | null;
+    autoApprovalLogged?: (actor: ImageActor, details: ImageOperationDetails, auto: ImageAutoApproval) => void }) {
+    this.autoApproval = options.autoApproval; this.autoApprovalLogged = options.autoApprovalLogged;
+    this.store = options.store; this.waiting = options.waiting; this.speaker = options.speaker; this.routineCard = options.routineCard; this.holdProjectApproval=options.holdProjectApproval; this.rendering = options.rendering;
+    this.startupUndispatched = new Set((this.db().prepare("SELECT id FROM image_operations WHERE state='awaiting' AND result IS NULL").all() as Array<{ id: string }>).map(row => row.id));
   }
   private db() {
     const db = database();
@@ -234,8 +256,20 @@ export class ImageOperations {
     if (prior && !priorJob) throw error(409, "This image request already finished or was interrupted. Check its earlier result and provider billing; it will not be retried automatically.");
     if (this.workspaces.has(actor.botId)) throw error(409, "An image request is already active in this bot's workspace.");
     if (!priorJob) {
-      if (this.db().prepare("SELECT id FROM image_operations WHERE generation=?").get(actor.generation)) throw error(429, "One image attempt is allowed per turn. Start a new task or turn for another image.");
-      this.db().prepare("INSERT INTO image_operations VALUES(?,?,?,'awaiting',NULL,?)").run(id, actor.generation, requestHash, Date.now());
+      const earlier = this.turnOperations(actor);
+      if (earlier.length) {
+        // Card path: one attempt per turn, as always. Only where this bot makes
+        // images without asking (probed with no images: the level, the setting
+        // and the audience, not the count) may a turn go on, and only once every
+        // earlier attempt is known: a new request_id can never start a second
+        // render while the first one's outcome is unknown.
+        if (!this.autoDecision(actor, { count: 0, madeThisTurn: 0 })) throw error(429, "One image attempt is allowed per turn. Start a new task or turn for another image. (Several requests in one turn are allowed only when this bot makes images without asking.)");
+        if (earlier.some(row => row.state !== "published" && row.state !== "not-dispatched")) throw error(409, "An earlier image request in this turn has not finished or was interrupted. Check its earlier result and provider billing; no new request was sent.");
+      }
+      // The first attempt of a turn is keyed by the generation itself; a later one
+      // gets its own key under it (the column is unique), so every row of the
+      // turn is found by that prefix.
+      this.db().prepare("INSERT INTO image_operations VALUES(?,?,?,'awaiting',NULL,?)").run(id, earlier.length ? `${actor.generation}#${id}` : actor.generation, requestHash, Date.now());
     }
     this.workspaces.add(actor.botId);
     // The render is bounded by its own ceiling; until it ends, the engine's
@@ -268,7 +302,7 @@ export class ImageOperations {
       // The full prompt and the block versions it pinned, kept before the
       // provider is asked, so an uncertain render still has them.
       if (card?.prompt !== undefined) recordRenderPrompt(this.db(), { operationId: id, prompt: card.prompt, blocks: details.promptBlocks ?? [] });
-      record("running");
+      record("running", { count: details.count });
       return { finish: (outcome: ImageAttemptOutcome) => record(outcome) };
     };
     const context: ImageWorkContext = { operationId: id, ...(priorJob ? { resumeJob: priorJob } : {}), jobStarted: job => record("running", { job, resumeKey }) };
@@ -372,6 +406,7 @@ export class ImageOperations {
     const rows = this.db().prepare("SELECT id FROM image_operations WHERE state='awaiting' AND result IS NULL ORDER BY updated_at LIMIT ?").all(limit) as Array<{ id: string }>;
     let released = 0;
     for (const row of rows) {
+      if (!this.startupUndispatched.has(row.id) || this.jobs.has(row.id)) continue;
       // Belt and braces: bytes are only ever retained through a receipt, and
       // retaining one writes `running` and a result in the same statement, so
       // this cannot match. Refuse to clear a row that somehow has one anyway —
@@ -382,6 +417,28 @@ export class ImageOperations {
     }
     return released;
   }
+  /** Every operation row this turn (generation) has, first attempt and later ones. */
+  private turnOperations(actor: Pick<ImageActor, "generation">) {
+    return this.db().prepare("SELECT state,result FROM image_operations WHERE generation=? OR generation LIKE ?").all(actor.generation, `${actor.generation}#%`) as Array<{ state: string; result: string | null }>;
+  }
+  /** Images this turn already made or has under way: a finished render's own
+   * image count, and the count a running one recorded when it was reserved. */
+  private madeThisTurn(actor: Pick<ImageActor, "generation">): number {
+    let total = 0;
+    for (const row of this.turnOperations(actor)) {
+      if (row.state === "published" && row.result) {
+        try { const value = JSON.parse(row.result) as unknown; total += isOperationResult(value) ? (value.artifacts?.length || 1) : 1; } catch { total += 1; }
+      } else if (row.state === "running" || row.state === "uncertain" || row.state === "publish-pending") {
+        const count = progressOf(row.result).count;
+        total += typeof count === "number" && count > 0 ? count : 1;
+      }
+    }
+    return total;
+  }
+  /** The no-card decision for this turn, or null (ask). A decision that cannot be read asks. */
+  private autoDecision(actor: ImageActor, ask: { count: number; madeThisTurn: number }): ImageAutoApproval | null {
+    try { return this.autoApproval?.(actor, ask) ?? null; } catch { return null; }
+  }
   private approve(actor: ImageActor, details: ImageOperationDetails, request: unknown, input?: ImageApprovalCardInput): Promise<ApprovalAnswer> {
     if (this.lateAllows.delete(actor.threadId)) return Promise.resolve("allow");
     const requestId = `image-${randomUUID()}`;
@@ -389,6 +446,20 @@ export class ImageOperations {
     const prompt = (input?.prompt ?? (request && typeof request === "object" && "prompt" in request ? String(request.prompt) : ""))
       + (input?.negativePrompt ? `\n\nNegative prompt (sent in its own field): ${input.negativePrompt}` : "");
     const from = this.speaker?.(actor.threadId, actor.botId);
+    // No card when the bot's level or its Images setting says so for this
+    // turn's audience (server/image-approval.ts). A decision that cannot be
+    // read asks, as it always has. The turn's Stop still ends the render.
+    const auto = this.autoDecision(actor, { count: details.count, madeThisTurn: this.madeThisTurn(actor) });
+    if (auto) {
+      if (actor.signal.aborted) return Promise.resolve("gone");
+      // logged only now: a Stop before this point must not log an image that was never made
+      try { this.autoApprovalLogged?.(actor, details, auto); } catch { /* the log never changes the render */ }
+      this.store.appendMessage(actor.threadId, { role: "bot", kind: "activity", ...(from ? { from } : {}), tool: {
+        name: `Making an image without asking (${auto.basis})`, ok: true,
+        imageRecord: { summary: imageApprovalSubtitle(details), prompt: redactSecretsInText(prompt) },
+      } });
+      return Promise.resolve("allow");
+    }
     const card = this.store.appendMessage(actor.threadId, { role: "bot", kind: "options", ...(from ? { from } : {}), card: {
       title: details.operation === "edit" ? "Approve image edit" : "Approve image generation",
       // F1-T4: the owner approves the exact upstream that will bill them. An
@@ -401,6 +472,7 @@ export class ImageOperations {
     this.waiting(actor.threadId, true, requestId, card.id, actor.botId);
     let held = false;
     try { held = this.routineCard?.opened(actor.threadId, requestId, card.card?.title ?? "Approve image") === true; } catch { /* delivery never changes authority */ }
+    const projectHeld = this.holdProjectApproval?.(actor.threadId) === true;
     return new Promise<ApprovalAnswer>(resolve => {
       let settled = false;
       let answered = false;
@@ -414,10 +486,16 @@ export class ImageOperations {
         if (entry?.detached) {
           // the tool call already gave up; this is the owner's late answer
           if (answered) return; answered = true; this.pending.delete(requestId);
-          const current = this.store.messagesFor(actor.threadId).find(message => message.id === card.id);
-          if (current?.card && !current.card.answered) this.store.patchMessage(actor.threadId, card.id, { card: { ...current.card, answered: source === "user" ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" } });
           let resumed = false;
           try { resumed = this.routineCard?.closed(actor.threadId, requestId, source === "user" ? (allow ? "allow" : "deny") : "none") === true; } catch { /* delivery never changes authority */ }
+          // an Allow that nothing carries on (a project card whose call
+          // ended, a routine that does not resume) makes no image: the card
+          // closes as expired and the answer returns unavailable (the answer
+          // route then says the request is no longer open), never "allowed"
+          const unused = source === "user" && allow && !resumed;
+          const current = this.store.messagesFor(actor.threadId).find(message => message.id === card.id);
+          if (current?.card && !current.card.answered) this.store.patchMessage(actor.threadId, card.id, { card: { ...current.card, answered: source === "user" && !unused ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" || unused } });
+          if (unused && entry) entry.unused = true;
           if (resumed && allow && source === "user") this.lateAllows.add(actor.threadId);
           return;
         }
@@ -432,7 +510,7 @@ export class ImageOperations {
         // A routine run holds the card: the tool call gave up (its turn is
         // over), but the card stays the owner's to answer and the run waits.
         const entry = this.pending.get(requestId);
-        if (held && entry && !settled) {
+        if ((held || projectHeld) && entry && !settled) {
           settled = true; actor.signal.removeEventListener("abort", abort);
           entry.detached = true;
           this.waiting(actor.threadId, false, requestId, undefined, actor.botId); resolve("gone");
@@ -440,7 +518,7 @@ export class ImageOperations {
         }
         finish(false);
       };
-      const timer = held ? undefined : setTimeout(() => { expired = true; abort(); }, IMAGE_APPROVAL_TIMEOUT_MS); timer?.unref();
+      const timer = held || projectHeld ? undefined : setTimeout(() => { expired = true; abort(); }, IMAGE_APPROVAL_TIMEOUT_MS); timer?.unref();
       this.pending.set(requestId, { threadId: actor.threadId, botId: actor.botId, messageId: card.id, settle: finish, active: actor.assertActive });
       actor.signal.addEventListener("abort", abort, { once: true });
       if (actor.signal.aborted) abort();
@@ -451,7 +529,9 @@ export class ImageOperations {
     const pending = this.pending.get(requestId);
     if (!pending || pending.threadId !== threadId || behavior === "answer") return "unavailable";
     if (!pending.detached) { try { pending.active(); } catch { pending.settle(false); return "unavailable"; } }
-    pending.settle(behavior === "allow", "user"); return behavior === "allow" ? "allowed-once" : "rejected";
+    pending.settle(behavior === "allow", "user");
+    if (pending.unused) return "unavailable";
+    return behavior === "allow" ? "allowed-once" : "rejected";
   }
   cancelThread(threadId: string) { for (const pending of this.pending.values()) if (pending.threadId === threadId) pending.settle(false); }
 }

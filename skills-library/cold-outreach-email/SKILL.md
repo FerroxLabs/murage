@@ -11,7 +11,7 @@ description: |
   or post-interview thank-you emails (use thank-you-email-writer).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "career email writing template"
   category: "career-development"

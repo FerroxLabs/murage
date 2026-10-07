@@ -6,15 +6,22 @@
 // step (ACTIVE then DONE) → agent_response step with usage → result with
 // status SUCCESS. Deterministic, no network.
 //
+//   FAKE_AGY_MODE=text-propose
+//     answers the Chief's New project proposal turn with the proposal block
+//     (fake-mcp-propose.ts proposalReply) and logs whether it ran gated.
+//
 //   FAKE_AGY_MODE=ask-peer
 //     reads Murage's temporary `murage-agents` entry from agy's
 //     global MCP config, calls list_bots then ask_bot, and returns the peer's
 //     real reply. This pins the Antigravity/Gemini comms path end to end.
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
+import { fixtureDumpEnvironment } from "./fixture-dump.ts";
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { logProposalTurn, proposalReply } from "./fake-mcp-propose.ts";
+import { fakeReviewReply } from "./fake-review.ts";
 
 const mode = process.env.FAKE_AGY_MODE ?? "happy";
 
@@ -132,7 +139,7 @@ if (process.env.FAKE_AGY_IGNORE_SIGTERM === "1") {
   process.on("SIGTERM", () => {});
 }
 if (process.env.FAKE_AGY_DUMP) {
-  writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
+  writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: fixtureDumpEnvironment() }, null, 2));
 }
 if (argv.includes("--version")) {
   const versionDelayMs = Number(process.env.FAKE_AGY_VERSION_DELAY_MS ?? 0);
@@ -183,7 +190,7 @@ if (streamInput) {
 }
 if (!prompt) process.exit(0);
 if (process.env.FAKE_AGY_DUMP) {
-  writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: process.env, prompt }, null, 2));
+  writeFileSync(process.env.FAKE_AGY_DUMP, JSON.stringify({ argv, env: fixtureDumpEnvironment(), prompt }, null, 2));
 }
 
 const toolName = mode === "ask-peer" ? "ask_bot" : "write_to_file";
@@ -211,6 +218,14 @@ if (process.env.FAKE_AGY_CRASH_BEFORE_RESULT === "1") {
 }
 
 let response = "done from fake agy";
+// Lane N2: the Chief's proposal as a block in the reply; agy runs gated when it
+// was not handed --dangerously-skip-permissions.
+// lane review: a review run answers with its verdict (fake-review.ts)
+if (fakeReviewReply(prompt) !== null) response = fakeReviewReply(prompt)!;
+if (mode === "text-propose" && prompt.includes("<murage-project-proposal")) {
+  logProposalTurn({ engine: "antigravityAgent", skipPermissions: argv.includes("--dangerously-skip-permissions"), agentsMounted: agentsMcpEntry() !== null });
+  response = proposalReply(prompt);
+}
 if (mode === "ask-peer") {
   const agents = agentsMcpEntry();
   if (!agents) {

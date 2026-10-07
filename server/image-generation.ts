@@ -14,7 +14,7 @@ import {
 import { loadCrop, type CropImage } from "./image-fit.ts";
 import { sniffMedia } from "./media-assets.ts";
 import { IMAGE_PROMPT_BLOCKS_MAX } from "./image-library.ts";
-import { providerDispatcher } from "./provider-dispatcher.ts";
+import { UPLOAD_STALL_MS, imageDispatcher, watchRequestStart } from "./provider-dispatcher.ts";
 
 export type ImageProvider = "openai" | "flux" | "openrouter" | "xai" | "google";
 /** Each provider as the owner reads it (Settings' names, not a connection's
@@ -178,6 +178,11 @@ export const IMAGE_RESPONSE_MAX_BYTES = 128 * 1024 * 1024;
  * around it, within the fixed whole-answer cap. */
 export const imageResponseCap = (count: number) => Math.min(IMAGE_RESPONSE_MAX_BYTES, count * (Math.ceil(GENERATED_IMAGE_RECEIVE_MAX_BYTES / 3) * 4 + 64 * 1024) + 1024 * 1024);
 const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
+/** How long a Flux image request may take from sending to the whole answer.
+ * api.fluxrouter.ai sits behind an edge that stops waiting for the render
+ * after about 100 seconds (HTTP 524), and real renders take 40 to 81 s; the
+ * rest is connection, upload and download. Past this, nothing is coming. */
+export const FLUX_ANSWER_DEADLINE_MS = 180_000;
 /** Bounds the checks before the owner's approval; the render has its own limits after it. */
 const PREFLIGHT_TIMEOUT_MS = 180_000;
 const ENDPOINT_TIMEOUT_MS = 15_000;
@@ -410,6 +415,14 @@ const dataUrl = (reference: ImageReference) => `data:${reference.mime};base64,${
  * not part of the result; it is attached only at dispatch, after
  * assertCredentialOrigin has accepted this URL.
  */
+/** A reference as 64 KiB parts: fetch streams a Blob part by part, so undici
+ * hands the socket one slice at a time and the upload stall clock sees each
+ * one move (one part would be one chunk the size of the whole image). */
+function uploadSlices(bytes: Buffer): Uint8Array<ArrayBuffer>[] {
+  const slices: Uint8Array<ArrayBuffer>[] = [];
+  for (let offset = 0; offset < bytes.length; offset += 64 * 1024) slices.push(new Uint8Array(bytes.subarray(offset, offset + 64 * 1024)));
+  return slices;
+}
 function serializeImageRequest(provider: ImageProvider, operation: "generate" | "edit", payload: Record<string, unknown>, references: readonly ImageReference[]): { url: string; body: string | FormData; headers: Record<string, string> } {
   if (provider === "google") {
     // generateContent: the prompt and any references as parts of one user
@@ -425,7 +438,7 @@ function serializeImageRequest(provider: ImageProvider, operation: "generate" | 
   if (!url) return fail("unsupported-edit", "Editing is not supported on this image connection.");
   if (provider === "openai" || provider === "flux") {
     const form = new FormData(); for (const [key, value] of Object.entries(payload)) form.append(key, String(value));
-    for (let index = 0; index < references.length; index++) { const reference = references[index]!; form.append("image[]", new Blob([new Uint8Array(reference.bytes)], { type: reference.mime }), `reference-${index}.${reference.mime === "image/jpeg" ? "jpg" : reference.mime.slice(6)}`); }
+    for (let index = 0; index < references.length; index++) { const reference = references[index]!; form.append("image[]", new Blob(uploadSlices(reference.bytes), { type: reference.mime }), `reference-${index}.${reference.mime === "image/jpeg" ? "jpg" : reference.mime.slice(6)}`); }
     return { url, body: form, headers: {} };
   }
   // xAI: JSON edits. One input uses `image`, two or more use `images`; never both.
@@ -577,6 +590,8 @@ export interface ImageGenerationServiceOptions {
   fluxCatalogue?: boolean;
   /** fit exact cropping; defaults to sharp when it loads. */
   crop?: () => Promise<CropImage | null>;
+  /** The Flux answer deadline, the image connect bound and the upload stall limit, shorter for tests only. */
+  answerDeadlineMs?: number; connectTimeoutMs?: number; uploadStallMs?: number;
   /** Job polling clock, for tests. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>; now?: () => number;
 }
@@ -931,17 +946,48 @@ export class ImageGenerationService {
         // The idle clock starts at the response headers: until then only the
         // render ceiling applies (a provider may hold headers while it works).
         const idle = delivery === "stream" ? idleWatch(idleMs, false) : null;
+        // Flux: the edge in front of it gives up on a render at about 100 s,
+        // so an answer that has not come by this deadline never will. Buffered,
+        // it covers the whole answer; a stream or a job only until its headers
+        // (from there the idle watch and the job's own polling take over).
+        const answerMs = this.options.answerDeadlineMs ?? FLUX_ANSWER_DEADLINE_MS;
+        const answer = connection.provider === "flux" ? idleWatch(answerMs) : null;
+        const postSignal = AbortSignal.any([signal, ...(idle ? [idle.signal] : []), ...(answer ? [answer.signal] : [])]);
+        let retried = false, uploadStalled = false;
         try {
-          // No transport clock of its own: the render ceiling, the stream's
-          // idle watch and Stop bound it (server/provider-dispatcher.ts).
-          const response = await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, ...auth }, body: outbound.body, signal: idle ? AbortSignal.any([signal, idle.signal]) : signal, redirect: "error", dispatcher: providerDispatcher(outbound.url) } as RequestInit);
+          // No transport clock of its own: the render ceiling, the watches
+          // above and Stop bound it. Each POST opens its own connection
+          // (server/provider-dispatcher.ts imageDispatcher).
+          const post = async (): Promise<Response> => {
+            // The upload has its own stall clock (no body byte moving for
+            // UPLOAD_STALL_MS); it stops once the body is sent.
+            const watch = watchRequestStart(imageDispatcher(outbound.url, this.options.connectTimeoutMs), { stallMs: this.options.uploadStallMs });
+            try { return await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, ...auth }, body: outbound.body, signal: AbortSignal.any([postSignal, watch.signal]), redirect: "error", dispatcher: watch.dispatcher } as RequestInit); }
+            catch (error) {
+              if (watch.stalled()) { uploadStalled = true; throw error; }
+              // One retry, only when this request provably never left: it
+              // reached the dispatcher, no response came, and undici never
+              // began writing it on its fresh connection (a refused, timed
+              // out or failed connect, TLS or proxy tunnel). Once the first
+              // byte may have gone, the provider may be rendering (and
+              // charging) it, so that failure is reported, never repeated.
+              if (retried || !watch.reached() || watch.started() || postSignal.aborted) throw error;
+              retried = true;
+              active();
+              return post();
+            }
+          };
+          const response = await post();
           idle?.touch();
+          if (delivery !== "buffered") answer?.stop();
           if (!response.ok) {
             outcome = response.status >= 400 && response.status < 500 ? "failed" : "uncertain";
             // A 4xx body from the provider says why (Flux: error.code such as
             // moderation_blocked or invalid_reference_image, plus error.message).
             // Throwing it away left the person with only the status number.
             const detail = outcome === "failed" ? await providerErrorDetail(response) : (void response.body?.cancel(), "");
+            // 524: the provider's edge stopped waiting while the render ran on.
+            if (response.status === 524) fail("provider-timeout", "The image provider's edge stopped waiting for the render (HTTP 524). The render may still have finished on its side. Check before trying again; no automatic retry was attempted.", outcome);
             fail("provider-error", `The selected image provider rejected the request (HTTP ${response.status})${detail}. No fallback or automatic retry was attempted.`, outcome);
           }
           const type = response.headers.get("content-type") ?? "";
@@ -960,9 +1006,16 @@ export class ImageGenerationService {
             }
           }
         } catch (error) {
+          // Bytes had left, so the provider may hold part of it: never retried.
+          if (uploadStalled) fail("upload-stalled", `The upload to ${imageProviderName(connection.provider)} stalled: no image data moved for ${Math.round(UPLOAD_STALL_MS / 1000)} seconds, so Murage stopped. The image may not have reached ${imageProviderName(connection.provider)}. Nothing was retried automatically.`, "uncertain");
+          if (answer?.fired()) fail("provider-timeout", `${imageProviderName(connection.provider)} did not send the image within ${Math.round(FLUX_ANSWER_DEADLINE_MS / 1000)} seconds, so Murage stopped waiting. The render may still have finished on its side. Check before trying again; no automatic retry was attempted.`, "uncertain");
+          if (retried && !(error instanceof ImageGenerationError)) {
+            const transport = describeTransportFailure(error);
+            throw new ImageGenerationError(transport.code, `${transport.message} The first connection could not be opened, so Murage tried once more on a new connection; no further retry was attempted.`, outcome);
+          }
           if (idle?.fired()) fail("provider-idle", `The image provider sent nothing for ${Math.round(idleMs / 1000)} seconds, so Murage stopped waiting. The render may still finish on the provider's side. Check before trying again; no automatic retry was attempted.`, "uncertain");
           throw error;
-        } finally { idle?.stop(); }
+        } finally { idle?.stop(); answer?.stop(); }
       }
       const encodedList = connection.provider === "google" ? [googleImageData(result)].filter((item): item is string => item !== undefined)
         : record(result) && Array.isArray(result.data) ? result.data.flatMap(item => record(item) && typeof item.b64_json === "string" ? [item.b64_json] : []) : [];

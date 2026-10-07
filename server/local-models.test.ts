@@ -149,7 +149,7 @@ async function addSeanBeast(localRoot: string): Promise<LocalServerView> {
 }
 
 describe("/api/local-models authority", () => {
-  it("is desktop-only: hidden from other surfaces and listed in DESKTOP_AUTHORITY_ROUTES", async () => {
+  it("is desktop-only: hidden from other surfaces and classified desktop in route-policy.ts", async () => {
     expect((await route()(request("GET", "/api/local-models", undefined, false))).status).toBe(404);
     expect((await route()(request("POST", "/api/local-models/servers", { address: "127.0.0.1:1" }, false))).status).toBe(404);
     for (const [method, path] of [
@@ -162,7 +162,8 @@ describe("/api/local-models authority", () => {
     ] as const) {
       expect(requiresDesktopAuthority(method, path), `${method} ${path}`).toBe(true);
     }
-    expect(requiresDesktopAuthority("GET", "/api/local-modelsx")).toBe(false);
+    // 0.1.61: a route nobody classified is desktop-only too (route-policy.ts).
+    expect(requiresDesktopAuthority("GET", "/api/local-modelsx")).toBe(true);
   });
 });
 

@@ -4,7 +4,7 @@ description: |
   Comprehensive woodworking guide covering tool selection by budget level, joinery techniques from basic to advanced, wood species selection, project planning methodology, finishing techniques, shop safety protocols, and a structured beginner-to-advanced project progression. Use when the user asks about woodworking master or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "woodworking guide step-by-step"
   category: "hobbies-crafts"

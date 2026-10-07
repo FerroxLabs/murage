@@ -156,6 +156,23 @@ test("actual closed finish waits for cleanup and exits once without recovery or 
   // A closed run leaves how far it got in its own log (stage names only).
   assert.deepEqual(traces,["finishing","cleaned up"]);
 });
+test("ordinary launch forks without waiting on the backup tool check; closed and upgrade paths still await it",()=>{
+  const initialize=actualFunction("initializeBackupScheduleHost");
+  assert.doesNotMatch(initialize.slice(0,initialize.indexOf('closedTrace("tool-checked")')),/await\s+requireDesktopBackupTool\(\)/,"the attestation is never awaited unconditionally");
+  assert.match(initialize,/backupToolCheck=requireDesktopBackupTool\(\)\.then\(\(\)=>\{\},\(\)=>\{/,"the check starts at once and its rejection is handled");
+  assert.match(initialize,/if\(closedBackupRequested\)await backupToolCheck;/,"the closed-app run still awaits it before reading the host");
+  const start=main.slice(main.indexOf("const desktopStartup ="));
+  const complete=start.indexOf("await backupScheduleHost.completeUpgrade");
+  assert.ok(complete>0&&start.lastIndexOf("await backupToolCheck",complete)>start.lastIndexOf("install-requested",complete),"a pending upgrade awaits the check before completing");
+  assert.ok(start.indexOf("await initializeBackupScheduleHost()")<start.indexOf('phase==="handoff-armed"'),"the armed-handoff check still reads a built host");
+  assert.match(start,/handoff-armed[\s\S]{0,400}desktopBackupTool\.waitReady\(\)/,"the handoff path waits for the tool before resuming");
+});
+test("backup mode awaits the tool check before showing the recovery page",()=>{
+  const show=main.lastIndexOf('showDesktopRecovery("BACKUP_REQUESTED")');
+  assert.ok(show>0,"backup mode shows the recovery page");
+  const before=main.slice(Math.max(0,show-300),show);
+  assert.match(before,/await backupToolCheck/,"the recovery page reads the tool state once, so the check settles first");
+});
 test("actual startup fences closed invocation before normal writers and selected protected path precedes refs",async()=>{
   const start=main.slice(main.indexOf("const desktopStartup ="));assert.ok(start.indexOf("if(closedBackupRequested)")<start.indexOf("createServerConnections"));assert.ok(start.indexOf("if(closedBackupRequested)")<start.indexOf("migrateLegacyDataDirectory"));
   const initialize=actualFunction("initializeBackupScheduleHost");assert.ok(initialize.indexOf("CREDENTIALS_FILE=selectedProfile.credentialsFile")<initialize.indexOf("readProtected:"));assert.ok(initialize.includes("desktopDataOwner.utilityServerLeaseEnvironment()"));assert.ok(initialize.includes("assertInvocation(closedBackupDescriptor,closedBackupInvocation.descriptorPath)"));
@@ -164,7 +181,7 @@ test("actual startup fences closed invocation before normal writers and selected
   const declaration=parsed.statements.find(node=>ts.isVariableStatement(node)&&node.declarationList.declarations.some(value=>value.name.getText(parsed)==="desktopStartup"));assert.ok(declaration);
   const calls=[];
   const traced=[];
-  const context=vm.createContext({closedTrace:stage=>traced.push(stage),app:{whenReady:()=>Promise.resolve()},assertDesktopStartupActive:()=>{},closedBackupRequested:true,desktopRecoveryMode:false,
+  const context=vm.createContext({closedTrace:stage=>traced.push(stage),desktopMark:()=>{},app:{whenReady:()=>Promise.resolve()},assertDesktopStartupActive:()=>{},closedBackupRequested:true,desktopRecoveryMode:false,
     acquireDesktopDataOwner:()=>calls.push("owner"),initializeBackupScheduleHost:async()=>calls.push("host"),
     // A slow first tool check must not turn the closed-app run into "unavailable".
     desktopBackupTool:{waitReady:async()=>{calls.push("tool");}},

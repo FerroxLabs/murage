@@ -51,11 +51,33 @@ function hiddenText(text: string): string | null {
 }
 
 function padding(text: string): string | null {
-  const blank = text.match(/(?:\r?\n[ \t]*){30,}\S[^\n]{0,60}/);
-  if (blank) return evidence(`${blank[0].split("\n").length - 1} blank lines, then: ${blank[0].trim()}`);
-  const wide = text.match(/[ \t]{200,}\S[^\n]{0,60}/);
-  return wide ? evidence(`a long run of spaces, then: ${wide[0].trim()}`) : null;
+  // One pass over each stretch of whitespace: a long stretch of blank lines, or a
+  // very long run of spaces on one line, with more text right after it.
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const first = text.charCodeAt(i);
+    if (first !== 32 && first !== 9 && first !== 10 && first !== 13) { i++; continue; }
+    let j = i, breaks = 0, run = 0;
+    for (; j < n; j++) {
+      const c = text.charCodeAt(j);
+      if (c === 10) { breaks++; run = 0; }
+      else if (c === 32 || c === 9) run++;
+      else if (c === 13) run = 0;
+      else break;
+    }
+    if (j < n) {
+      const tail = text.slice(j, j + 61).split("\n")[0]!.trim();
+      if (breaks >= 30) return evidence(`${breaks} blank lines, then: ${tail}`);
+      if (run >= 200) return evidence(`a long run of spaces, then: ${tail}`);
+    }
+    i = j + 1;
+  }
+  return null;
 }
+
+/** Skill Guard's padding check, for callers that read a very long text themselves. */
+export const paddingEvidence = padding;
 
 export const SKILL_RULES: SkillRule[] = [
   { id: "SG1", category: "credential-access", severity: "critical", confidence: 0.9, source: "skill-guard", test: (t) => first(t, CREDENTIAL_USE) },

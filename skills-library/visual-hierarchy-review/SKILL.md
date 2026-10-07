@@ -6,7 +6,7 @@ description: |
   Do NOT use for general UX audits (use ux-audit), accessibility-specific reviews (use accessibility-review), or full layout analysis (use layout-principles).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design analysis checklist"
   category: "design-creative"

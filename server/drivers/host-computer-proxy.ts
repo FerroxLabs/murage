@@ -2,6 +2,7 @@
 import { request as httpRequest } from "node:http";
 import { pathToFileURL } from "node:url";
 import { createLineSplitter, writeMcpLine } from "../mcp-bridge.ts";
+import { turnSecret, turnSecretWired } from "../turn-credential.ts";
 
 /** One loopback POST with no clock; `signal` withdraws it. At most 16 MB back. */
 function post(url: URL, token: string, body: string, signal: AbortSignal): Promise<{ status: number; body: string }> {
@@ -24,7 +25,7 @@ function post(url: URL, token: string, body: string, signal: AbortSignal): Promi
 
 export async function runHostComputerProxy(env: NodeJS.ProcessEnv = process.env) {
   const base = new URL(env.MURAGE_CONTROL_URL!);
-  if (base.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(base.hostname) || !env.MURAGE_CONTROL_TOKEN || !env.MURAGE_BOT_ID || !env.MURAGE_THREAD_ID) throw new Error("Missing computer authority");
+  if (base.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(base.hostname) || !turnSecretWired("MURAGE_CONTROL_TOKEN", env) || !env.MURAGE_BOT_ID || !env.MURAGE_THREAD_ID) throw new Error("Missing computer authority");
   const url = new URL("/api/internal/host-computer", base);
   url.searchParams.set("botId", env.MURAGE_BOT_ID); url.searchParams.set("threadId", env.MURAGE_THREAD_ID);
   const unavailable = "Computer action unavailable, busy, or control changed. A failed response does not prove the action stopped. Inspect the screen before retrying.";
@@ -45,7 +46,7 @@ export async function runHostComputerProxy(env: NodeJS.ProcessEnv = process.env)
       else {
         // node:http, not fetch: fetch gives up on a reply that takes over five
         // minutes (its default header and body timeouts)
-        const response = await post(url, env.MURAGE_CONTROL_TOKEN!, JSON.stringify({ method: rpc.method, params: rpc.params }), withdrawn.signal);
+        const response = await post(url, turnSecret("MURAGE_CONTROL_TOKEN", env), JSON.stringify({ method: rpc.method, params: rpc.params }), withdrawn.signal);
         if (response.status !== 200 && response.status !== 409) throw new Error();
         const body = JSON.parse(response.body);
         if (response.status === 409) result = { isError: true, content: [{ type: "text", text: body?.code === "cancelled" ? stopped : unavailable }] };

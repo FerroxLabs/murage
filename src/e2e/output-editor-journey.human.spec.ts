@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
+import { openSidebar } from "./fixtures";
 let fixture:VerificationServer,vite:ViteDevServer,origin:string,headers:Record<string,string>,bot:any,artifact:any,workspace:string;
 const original="# B11\n",edited="# B11 working copy\n\nEdited in the current Files sidebar.\n";
 const sha=(text:string)=>createHash("sha256").update(text).digest("hex");
@@ -35,7 +36,9 @@ test.afterAll(async()=>{try{await vite?.close();}finally{await fixture?.close();
 test("registered engine Markdown opens beside chat, edits only working bytes and survives restart",async({page},info)=>{
   await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("murage-flux-invite-dismissed","1");});
   await page.setViewportSize({width:1440,height:1000});await page.goto(origin);
-  await page.getByRole("button",{name:/^Output journey bot Rename/}).click();
+  // The row's name is its own hit target (sidebar hit areas); on a phone the
+  // bot list is a drawer to open first.
+  await (await openSidebar(page)).getByText("Output journey bot",{exact:true}).first().click();
   const card=page.getByTestId("chat-scroll").locator(`[data-artifact-id="${artifact.id}"]`);await expect(card).toBeVisible();
   await card.locator('[data-pane-action="open-here"]').click();
   const pane=page.getByTestId("workspace-pane");await expect(pane).toBeVisible();
@@ -54,7 +57,7 @@ test("registered engine Markdown opens beside chat, edits only working bytes and
   expect(readFileSync(join(workspace,artifact.relativePath),"utf8")).toBe(edited);expect(await saved()).toBe(original);
   const transcript=(await api("GET",`/api/threads/${bot.threadId}/messages?limit=100`)).messages;
   expect(transcript.filter((message:any)=>message.artifactIds?.includes(artifact.id))).toHaveLength(1);
-  await page.reload();await page.getByRole("button",{name:/^Output journey bot Rename/}).click();await expect(card).toBeVisible();
+  await page.reload();await (await openSidebar(page)).getByText("Output journey bot",{exact:true}).first().click();await expect(card).toBeVisible();
   await expect(card.getByText("Original file has changed.",{exact:false})).toBeVisible();
   expect((await api("GET",`/api/workspace-files/root?botId=${bot.id}&threadId=${bot.threadId}`)).displayPath).toBe(workspace);
 });

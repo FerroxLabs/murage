@@ -218,3 +218,58 @@ it("the routine rows are read once per audience, not once per view, page and sea
   console.log(`[perf] 9 distinct cached answers: bounded (routine) scans=${counts.bounded}`);
   expect(counts.bounded).toBe(1);
 });
+
+/** COLD-LOAD COST (the 60 s "Needs you" load). Every ordinary bot chat message
+ *  is kind='text'; a busy user has tens of thousands, and only those with a
+ *  saved file (artifactIds[0]) are ever items. The full projection used to scan
+ *  and json_extract ALL of them, then drop them after the window sort.
+ *  Deterministic cost metric: the query plan of the full projection must
+ *  never SCAN messages and must reach the text rows through the partial index
+ *  on saved files. At base the plan was `SEARCH m USING INDEX messages_inbox`
+ *  with kind='text' (every chat row visited, ~20 json_extract each), so the
+ *  partial-index assertion FAILS at base (verified) and passes with the fix. */
+function seedBulk() {
+  const db = seed(2000);
+  const insert = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)");
+  db.exec("BEGIN");
+  for (let i = 0; i < 40_000; i++) {
+    const thread = `t${i % THREADS}`, id = `chat${i}`, at = 2_000_000 + i * 50;
+    insert.run(thread, id, at, "bot", "text", "hello there", JSON.stringify({ id, at, role: "bot", kind: "text", text: "hello there, this is ordinary chat " + i }));
+    if (i % 100 === 0) {
+      const aid = `art${i}`, art = `${String(i % 90).padStart(4, "0")}${"b".repeat(32)}`;
+      insert.run(thread, aid, at + 1, "bot", "text", "file", JSON.stringify({ id: aid, at: at + 1, role: "bot", kind: "text", text: `Saved file ${i}`, artifactIds: [art] }));
+    }
+  }
+  db.exec("COMMIT");
+  return db;
+}
+
+it("the full Needs-you projection never scans messages, and returns what the old one did", () => {
+  const db = seedBulk();
+  const seen: Array<{ sql: string; args: unknown[] }> = [];
+  const prepare = db.prepare.bind(db);
+  (db as unknown as { prepare: unknown }).prepare = (sql: string) => {
+    const statement = prepare(sql);
+    if (!sql.includes("WITH raw AS")) return statement;
+    for (const method of ["get", "all"] as const) {
+      const original = statement[method].bind(statement) as (...a: unknown[]) => unknown;
+      (statement as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => { seen.push({ sql, args }); return original(...args); };
+    }
+    return statement;
+  };
+  const page = listInbox(db, { view: "decisions" }, access, 9_000_000);
+  const full = seen.find(s => !/m\.kind IN \('routine\.run','goal\.run'(,'activity')?\)/.test(s.sql));
+  expect(full, "a full-leg projection statement ran").toBeDefined();
+  const plan = (db.prepare("EXPLAIN QUERY PLAN " + full!.sql) as unknown as { all: (...a: unknown[]) => Array<{ detail: string }> })
+    .all(...full!.args).map(r => r.detail);
+  console.log("[perf] full-leg plan:\n  " + plan.join("\n  "));
+  expect(plan.filter(d => /^SCAN (m|messages)\b/.test(d)), "full projection scans messages").toEqual([]);
+  expect(plan.some(d => /messages_inbox_text_artifact/.test(d)), "text branch uses the partial index").toBe(true);
+  // Same answer as the old query on the big seed, every view.
+  for (const view of ["decisions", "approvals", "questions", "connections", "routines", "to-read", "results", "all"] as const) {
+    const query = { view, pageSize: 25 };
+    expect(listInbox(db, query, access, 9_000_000), view).toEqual(legacy.listInbox(db, query, access, 9_000_000));
+  }
+  expect([...owedThreads(db, access)].sort()).toEqual([...legacy.owedThreads(db, access)].sort());
+  expect(page.total).toBeGreaterThan(0);
+}, 300_000);

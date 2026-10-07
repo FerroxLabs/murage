@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical anxiety treatment, trauma processing, workplace harassment situations, or crisis intervention. Do NOT use when the user describes symptoms of panic disorder, PTSD, or severe depression.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "mental-wellness self-care stress-management emotional-health"
   category: "health-wellness"

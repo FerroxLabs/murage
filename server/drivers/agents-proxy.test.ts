@@ -51,6 +51,7 @@ let routinesResponse: unknown = {
   ],
 };
 let lastRoutineRequestBody: any = null;
+let lastOutcomeProposalBody: any = null;
 let lastSkillQuery = "";
 let lastSkillStageBody: any = null;
 /** The harness's overflow cache, driven by the real class so the proxy's
@@ -195,6 +196,16 @@ beforeAll(async () => {
       });
       return;
     }
+    if (req.method === "POST" && req.url === "/api/internal/outcome-proposals") {
+      let data = "";
+      req.on("data", (c) => (data += c));
+      req.on("end", () => {
+        lastOutcomeProposalBody = JSON.parse(data);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ created: lastOutcomeProposalBody.note !== "again" }));
+      });
+      return;
+    }
     if (req.method === "GET" && req.url?.startsWith("/api/internal/skills?")) {
       lastSkillQuery = req.url;
       res.writeHead(200, { "content-type": "application/json" });
@@ -305,7 +316,7 @@ afterAll(async () => {
 describe("agents-proxy MCP surface", () => {
   it("answers the MCP handshake and lists the agents tools", async () => {
     const init = await rpc("initialize", { protocolVersion: "2024-11-05" });
-    expect(init.result.serverInfo.name).toContain("agents");
+    expect(init.result.serverInfo.name).toBe("murage-agents");
     const list = await rpc("tools/list");
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([
       "murage_help",
@@ -336,12 +347,16 @@ describe("agents-proxy MCP surface", () => {
       "move_bot",
       "set_team_lead",
       "create_bot",
+      "request_browser_connection",
       "request_credential",
       "list_routines",
       "propose_routine",
       "propose_routine_action",
+      "propose_outcome",
       "skills_list",
       "skill_manage",
+      "publish_site",
+      "take_down_site",
     ]);
     const ask = list.result.tools.find((tool: { name: string }) => tool.name === "ask_bot");
     const delegate = list.result.tools.find((tool: { name: string }) => tool.name === "delegate_bot");
@@ -351,7 +366,7 @@ describe("agents-proxy MCP surface", () => {
     expect(ask.description).toContain("Do not use for assigning work");
     expect(delegate.description).toContain("DEFAULT FOR ASSIGNING WORK");
     expect(delegate.description).toContain("delivered automatically");
-    expect(wait.description).toContain("Never call it in the same turn as delegate_bot");
+    expect(wait.description).toContain("Never call it in the same turn as MCP tool \"delegate_bot\" on this server");
   });
 
   it("tells bots that managed outputs/ files are saved automatically and other files need register_artifact", async () => {
@@ -434,7 +449,7 @@ describe("agents-proxy MCP surface", () => {
       expect(shown).toContain("Do not repeat an action just to retrieve its output.");
       expect(savedToolResultBodies).toHaveLength(1);
 
-      const id = /tool_result_read with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
+      const id = /tool_result_read" on this server with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
       expect(id).not.toBeNull();
       const askCallsBefore = lastAskBody;
 
@@ -445,7 +460,7 @@ describe("agents-proxy MCP surface", () => {
       // whole reply including the "Helper replied:" line the tool built.
       const retained = savedToolResultBodies[0].text as string;
       expect(pageText.startsWith(retained.slice(Number(id![2]), Number(id![2]) + TOOL_RESULT_PREVIEW_CHARS))).toBe(true);
-      expect(pageText).toContain("Read more with tool_result_read");
+      expect(pageText).toContain("Read more with MCP tool \"tool_result_read\" on this server");
       // Paging is a read of what was already produced — the peer is not asked again.
       expect(lastAskBody).toBe(askCallsBefore);
     } finally { askResponse = previous; }
@@ -500,7 +515,7 @@ describe("agents-proxy MCP surface", () => {
       expect(shown.startsWith(blown.slice(0, TOOL_RESULT_PREVIEW_CHARS))).toBe(true);
       expect(savedToolResultBodies).toHaveLength(1);
 
-      const notice = /tool_result_read with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
+      const notice = /tool_result_read" on this server with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
       expect(notice).not.toBeNull();
       const offset = Number(notice![2]);
       const page = await callTool("tool_result_read", { id: notice![1], offset });
@@ -542,7 +557,8 @@ describe("agents-proxy MCP surface", () => {
     const text = missing.result.content[0].text as string;
     expect(text).toContain("request_id");
     expect(text).not.toMatch(/requestId|invalid_type|Required|expected string/);
-    expect(text).toMatch(/generate_image again with request_id/);
+    expect(text).toContain(`MCP tool "generate_image" on this server needs request_id`);
+    expect(text).toMatch(/Call it again with request_id/);
     expect(text).toMatch(/letters, digits/);
     expect(generateCalls).toHaveLength(0);
   });
@@ -605,7 +621,7 @@ describe("agents-proxy MCP surface", () => {
       // It is nevertheless a byte-exact prefix of the real body, not a rewrite.
       expect(whole.startsWith(shown.slice(0, TOOL_RESULT_PREVIEW_CHARS))).toBe(true);
 
-      const notice = /tool_result_read with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
+      const notice = /tool_result_read" on this server with id "(r-[0-9a-f-]{36})" and offset (\d+)/.exec(shown);
       expect(notice).not.toBeNull();
       const id = notice![1];
       let offset = Number(notice![2]);
@@ -704,8 +720,8 @@ describe("agents-proxy MCP surface", () => {
     const text = res.result.content[0].text;
     expect(text).toContain("Helper");
     expect(text).toContain("bot-helper");
-    expect(text).toContain("Assign work with delegate_bot");
-    expect(text).toContain("Use ask_bot only for a short answer");
+    expect(text).toContain("Assign work with MCP tool \"delegate_bot\" on this server");
+    expect(text).toContain("Use MCP tool \"ask_bot\" on this server only for a short answer");
     expect(lastAuth).toBe(`Bearer ${TOKEN}`);
   });
 
@@ -840,6 +856,18 @@ describe("agents-proxy MCP surface", () => {
     }
   });
 
+  it("tells the Chief what the specialist's engine lacks next to its own (triage row 22)", async () => {
+    createResponseExtra = { engineChanges: ["Loses connected apps on this engine."] };
+    try {
+      const res = await callTool("create_bot", { name: "Pixel", role: "Product designer", instructions: "Design." });
+      expect(res.result.content[0].text).toContain("Its engine differs from yours: Loses connected apps on this engine.");
+    } finally {
+      createResponseExtra = {};
+    }
+    const plain = await callTool("create_bot", { name: "Pixel", role: "Product designer", instructions: "Design." });
+    expect(plain.result.content[0].text).not.toContain("engine differs");
+  });
+
   it("requests an allowlisted credential without putting a secret in the request", async () => {
     const res = await callTool("request_credential", {
       credential_id: "opencodeGoApiKey",
@@ -928,6 +956,19 @@ describe("agents-proxy MCP surface", () => {
     expect(query.get("fromBotId")).toBe("bot-asker");
     expect(query.get("fromThreadId")).toBe("thread-asker-routine");
     expect(lastAuth).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("proposes an outcome: a note at most, the owner decides, and a repeat is not a new card", async () => {
+    lastOutcomeProposalBody = null;
+    const first = await callTool("propose_outcome", { note: "They said they will sign Friday" });
+    expect(lastOutcomeProposalBody).toEqual({ fromBotId: "bot-asker", fromThreadId: "thread-asker-routine", note: "They said they will sign Friday" });
+    expect(first.result.content[0].text).toContain("Nothing is recorded until they tap");
+    expect(first.result.isError).toBeFalsy();
+    const again = await callTool("propose_outcome", { note: "again" });
+    expect(again.result.content[0].text).toContain("already been asked");
+    const tool = (await rpc("tools/list")).result.tools.find((entry: { name: string }) => entry.name === "propose_outcome");
+    expect(tool.inputSchema.properties).not.toHaveProperty("kind");
+    expect(JSON.stringify(tool)).not.toMatch(/—/);
   });
 
   it("proposes a weekly routine through a confirmation-only request", async () => {
@@ -1168,6 +1209,52 @@ describe("agents-proxy MCP surface", () => {
   it("requires bot_id and message", async () => {
     const res = await callTool("ask_bot", { bot_id: "", message: "" });
     expect(res.result.isError).toBe(true);
+  });
+
+  // The AFTER-PF run: models passed a teammate's name under bot_name,
+  // recipient or member and got "needs bot_id and message" back.
+  it("takes a teammate's name under the keys models guess, and names the inputs when one is missing", async () => {
+    askResponse = { botName: "Helper", text: "hi from helper" };
+    delegateResponse = { queued: true, message: "Delegation queued." };
+    await callTool("ask_bot", { bot_name: "Helper", message: "ping" });
+    expect(lastAskBody).toMatchObject({ toBotId: "Helper", message: "ping" });
+    await callTool("delegate_bot", { recipient: "Helper", message: "take this" });
+    expect(lastDelegateBody).toMatchObject({ toBotId: "Helper", message: "take this" });
+    await callTool("ask_bot", { member: "Helper", message: "ping again" });
+    expect(lastAskBody).toMatchObject({ toBotId: "Helper", message: "ping again" });
+    for (const tool of ["ask_bot", "delegate_bot"]) {
+      const res = await callTool(tool, { message: "ping" });
+      expect(res.result.isError).toBe(true);
+      expect(res.result.content[0].text).toMatch(/takes bot_id \(a bot id from .*list_bots.*, or a teammate's exact name\) and message\./);
+    }
+  });
+
+  it("answers a register_artifact input mistake in one plain line naming its fields", async () => {
+    lastArtifactBody = undefined;
+    for (const args of [{ relativePath: "LAUNCH-PLAN.md" }, { path: "LAUNCH-PLAN.md" }, {}]) {
+      const res = await callTool("register_artifact", args);
+      const text = res.result.content[0].text as string;
+      expect(res.result.isError).toBe(true);
+      expect(text).toMatch(/takes relative_path \(the file's path inside the file workspace\) and an optional name\./);
+      expect(text).not.toMatch(/expected string|invalid_type|\[\s*\{/);
+      expect(text.split("\n")).toHaveLength(1);
+    }
+    expect((await callTool("register_artifact", { relativePath: "a.md" })).result.content[0].text).toContain("Unknown fields: relativePath.");
+    expect(lastArtifactBody).toBeUndefined();
+  });
+
+  it("turns a validation dump from the harness into one plain line", async () => {
+    artifactStatus = 500;
+    artifactResponse = { error: JSON.stringify([{ code: "invalid_type", expected: "string", received: "undefined", path: ["relativePath"], message: "Required" }], null, 2) };
+    try {
+      const res = await callTool("register_artifact", { relative_path: "a.md" });
+      const text = res.result.content[0].text as string;
+      expect(res.result.isError).toBe(true);
+      expect(text).toBe("The input was not valid: relativePath: Required.");
+    } finally {
+      artifactStatus = 201;
+      artifactResponse = { artifact: { id: "verified-fixture", name: "Morning brief" } };
+    }
   });
 
   it("lists, views, and stages skills without enabling them", async () => {

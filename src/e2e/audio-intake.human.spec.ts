@@ -83,7 +83,7 @@ test("missing key and plan refusal remain actionable without retries", async ({ 
   configured = false; await open(page); await pick(page); await expect(transcribe(page)).toBeDisabled();
   await expect(page.getByRole("button", { name: "Open engine settings" })).toBeVisible(); expect(calls).toHaveLength(0);
   configured = true; mode = "error"; await page.reload(); await pick(page); await transcribe(page).click();
-  await expect(page.getByRole("alert")).toContainText("paid Flux plan"); expect(calls).toHaveLength(1); await expect(page.getByRole("textbox", { name: "Review transcript" })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toContainText("not included in your Flux Router plan"); expect(calls).toHaveLength(1); await expect(page.getByRole("textbox", { name: "Review transcript" })).toHaveCount(0);
 });
 test("oversized or unsupported audio is refused before upload", async ({ page }) => {
   await open(page); await page.locator('input[type="file"]').setInputFiles({ name: "large.wav", mimeType: "audio/wav", buffer: Buffer.alloc(4 * 1024 * 1024 + 1) });

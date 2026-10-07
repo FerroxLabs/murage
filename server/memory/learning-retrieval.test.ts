@@ -39,7 +39,7 @@ function drain() {
   return jobs;
 }
 function capture(id: string, text: string, speaker = "owner", outcome = "recorded", turnId?: string) {
-  captureSource(database(), { id, threadId: "thread", kind: "text", speaker, outcome, text, ...(turnId ? { turnId } : {}),
+  captureSource(database(), { id, threadId: "thread", origin:{kind:"attended"},kind: "text", speaker, outcome, text, ...(turnId ? { turnId } : {}),
     ...(speaker === "tool" ? { action: { label: "fixture", reportedOutcome: outcome as "completed" | "failed", verification: "tool-reported" as const } } : {}) });
   const job = drain().get(id); expect(job).toBeTruthy(); return job!;
 }
@@ -94,7 +94,9 @@ it("never recalls a failed tool action as done and qualifies a completed one", a
   expect(bundle).toContain("a tool reported a failed action"); expect(bundle).not.toContain("a tool showed");
   const saved = "saved weekly report to the reports folder", done = capture("saved-report", saved, "tool", "completed");
   await consolidateMemorySource(done, extract(saved, "observation"), signal());
-  expect(facts(await recall("weekly report reports folder"))).toEqual([expect.objectContaining({ text: saved, assertion: "tool-observation" })]);
+  // Tool outcomes remain recallable raw evidence; per-turn learning no longer distills them.
+  expect(facts(await recall("weekly report reports folder"))).toEqual([]);
+  expect((await recall("weekly report reports folder")).some(hit=>hit.text.includes(saved))).toBe(true);
 });
 
 it("keeps a cancelled turn's assistant claim out of current recall but preserves its completed tool result", async () => {
@@ -106,7 +108,8 @@ it("keeps a cancelled turn's assistant claim out of current recall but preserves
   await consolidateMemorySource(did, extract(tool, "observation"), signal());
   for (const hit of await recall("release notes published customers")) expect(hit.text).not.toContain(claim);
   expect(await bundleText("release notes published customers")).not.toContain(claim);
-  expect(facts(await recall("release notes review folder"))).toEqual([expect.objectContaining({ text: tool, assertion: "tool-observation" })]);
+  expect(facts(await recall("release notes review folder"))).toEqual([]);
+  expect((await recall("release notes review folder")).some(hit=>hit.text.includes(tool))).toBe(true);
 });
 
 it("marks a turn interrupted by restart as unsettled so its assistant claim leaves current recall", async () => {
@@ -165,7 +168,7 @@ it("does not treat repeated assistant claims or a duplicate capture as independe
   expect(facts(await recall("launch date Friday"))).toEqual([]);
   const owner = "My launch date is Monday.", job = capture("owner-launch", owner);
   await consolidateMemorySource(job, extract(owner, "owner-statement"), signal());
-  captureSource(database(), { id: "owner-launch", threadId: "thread", kind: "text", speaker: "owner", outcome: "recorded", text: owner });
+  captureSource(database(), { id: "owner-launch", threadId: "thread", origin:{kind:"attended"},kind: "text", speaker: "owner", outcome: "recorded", text: owner });
   expect(drain().size).toBe(0);
   expect((await consolidateMemorySource(job, async () => { throw Error("must not call"); }, signal())).status).toBe("unchanged");
   const active = facts(await recall("launch date Monday"));

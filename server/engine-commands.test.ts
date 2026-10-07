@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CODEX_BUILTIN_COMMANDS, EngineCommandCache, engineCommandsView, normalizeEngineCommands } from "./engine-commands.ts";
+import { CODEX_BUILTIN_COMMANDS, EngineCommandCache, engineCommandLabel, engineCommandsView, engineReportsCommands, normalizeEngineCommands } from "./engine-commands.ts";
 import { engineCommandInText, engineCommandText } from "../shared/engine-commands.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
@@ -95,5 +95,12 @@ describe("EngineCommandCache and engineCommandsView", () => {
   it("reads a damaged file as empty rather than failing", () => {
     writeFileSync(join(dir, "engine-commands.json"), "{not json");
     expect(engineCommandsView(new EngineCommandCache(dir), "bot-1", "claudeAgent").status).toBe("unknown");
+  });
+});
+
+describe("OpenClaw in the engine tables", () => {
+  it("is a command-reporting ACP engine under its own name", () => {
+    expect(engineReportsCommands("openclawAgent")).toBe(true);
+    expect(engineCommandLabel("openclawAgent")).toBe("OpenClaw");
   });
 });

@@ -20,7 +20,7 @@ trigger_phrases: >-
   guide how to shoot a documentary tell a true story on film nonfiction
   filmmaking documentary from start to finish
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: >-
     video-production interview-prep editing creative-writing step-by-step

@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
-import { initialState, reducer, type AppState, type Bot, type Message } from "@/state/store";
-import { createScrollback, DEEP_LINK_MAX_PAGES, hydratePageSize, MESSAGE_PAGE_MAX, MESSAGE_PAGE_SIZE, needsNewestPage, PHONE_HYDRATE_PAGE, unheardMessages } from "./scrollback";
+import { initialState, reducer, visibleMessages, type AppState, type Bot, type Message } from "@/state/store";
+import { createScrollback, DEEP_LINK_MAX_PAGES, hydratePageSize, MESSAGE_PAGE_MAX, MESSAGE_PAGE_SIZE, needsNewestPage, PHONE_HYDRATE_PAGE, heardReplyAfter, unheardMessages, callStartHeard } from "./scrollback";
 
 // A thread of `total` messages m0..m{total-1}; the client holds the newest
 // `held`. The fake server answers `before=` and `around=` like the harness.
@@ -143,6 +145,79 @@ describe("unheardMessages", () => {
   });
   it("reads everything when nothing was on screen", () => {
     expect(unheardMessages([m("a")], new Set())).toEqual([m("a")]);
+  });
+  it("reads text saved in front of a tool row the call already heard", () => {
+    // visibleMessages after Store.insertMessageBefore: ask → lead → row
+    expect(unheardMessages([m("ask"), m("lead"), m("row")], new Set(["ask", "row"]))).toEqual([m("lead")]);
+    // and a page prepended in the same render is still history
+    expect(unheardMessages([m("old"), m("ask"), m("lead"), m("row")], new Set(["ask", "row"]))).toEqual([m("lead")]);
+  });
+});
+
+describe("unheardMessages before the oldest heard row", () => {
+  const m = (id: string) => ({ id });
+  it("reads text saved in front of the only row a phone's boot page held", () => {
+    // the call started holding just the tool row; the lead-in arrived live
+    // and the transcript reads it first
+    expect(unheardMessages([m("lead"), m("row")], new Set(["row"]), [m("row"), m("lead")])).toEqual([m("lead")]);
+  });
+  it("still treats a page prepended mid-call as history, with a live insert behind it", () => {
+    const transcript = [m("old1"), m("old2"), m("lead"), m("row")];
+    expect(unheardMessages(transcript, new Set(["row"]), [m("old1"), m("old2"), m("row"), m("lead")])).toEqual([m("lead")]);
+    // a lead-in saved before the call, loaded with that page, is history
+    expect(unheardMessages(transcript, new Set(["row"]), [m("old1"), m("old2"), m("lead"), m("row")])).toEqual([]);
+  });
+  it("says it only when no later reply was heard", () => {
+    const isReply = (message: { id: string }) => message.id !== "row";
+    const transcript = [m("lead"), m("row"), m("answer")];
+    expect(heardReplyAfter(transcript, new Set(["row"]), transcript[0]!, isReply)).toBe(false);
+    expect(heardReplyAfter(transcript, new Set(["row", "answer"]), transcript[0]!, isReply)).toBe(true);
+  });
+  it("a call on a phone boot page hears the lead-in the server saves in front of its row", () => {
+    const msg = (id: string, parentId: string | null, extra: Partial<Message> = {}) => ({ id, at: 1, role: "bot", kind: "text", text: id, parentId, ...extra }) as Message;
+    const row = msg("row", "ask", { kind: "activity", text: undefined });
+    const bot = { id: "bot", threadId: "t", messages: [row], activeLeafId: "row", hasMore: true } as never as Bot;
+    let state: AppState = { ...initialState, bots: [bot] };
+    const heard = new Set(visibleMessages(state.bots[0]!).map((message) => message.id)); // as CallView seeds spokenIds
+    // Store.insertMessageBefore: the new row, then the moved row
+    state = reducer(state, { type: "messageAdded", threadId: "t", message: msg("lead", "ask", { insertedBefore: "row" }) });
+    state = reducer(state, { type: "messagePatched", threadId: "t", message: { ...row, parentId: "lead" } });
+    const held = state.bots[0]!;
+    expect(visibleMessages(held).map((message) => message.id)).toEqual(["lead", "row"]);
+    expect(unheardMessages(visibleMessages(held), heard, held.messages).map((message) => message.id)).toEqual(["lead"]);
+    const source = readFileSync(fileURLToPath(new URL("../components/CallView.tsx", import.meta.url)), "utf8");
+    expect(source).toContain("unheardMessages(messages, spokenIds.current, bot.messages)");
+  });
+});
+
+describe("callStartHeard", () => {
+  const m = (id: string) => ({ id });
+  it("a lead-in held but off screen at call start is history when its older page loads mid-call", () => {
+    // held [T3,T4,T5,L]: L was saved before the call, in front of unloaded T1,
+    // so the transcript on screen is only T3..T5
+    const heard = callStartHeard([m("T3"), m("T4"), m("T5")], [m("T3"), m("T4"), m("T5"), m("L")]);
+    // the older page is prepended; L now joins the transcript ahead of T1
+    const arrival = [m("ask"), m("T1"), m("T2"), m("T3"), m("T4"), m("T5"), m("L")];
+    const transcript = [m("ask"), m("L"), m("T1"), m("T2"), m("T3"), m("T4"), m("T5")];
+    expect(unheardMessages(transcript, heard, arrival)).toEqual([]);
+    // a lead-in that arrives live during the call is still news
+    expect(unheardMessages([m("ask"), m("L2"), ...transcript.slice(1)], heard, [...arrival, m("L2")])).toEqual([m("L2")]);
+    const source = readFileSync(fileURLToPath(new URL("../components/CallView.tsx", import.meta.url)), "utf8");
+    expect(source).toContain("spokenIds.current = callStartHeard(messages, bot.messages)");
+  });
+});
+
+describe("heardReplyAfter", () => {
+  const msg = (id: string, reply = false) => ({ id, reply });
+  const isReply = (message: { reply: boolean }) => message.reply;
+  const transcript = [msg("ask"), msg("lead", true), msg("row"), msg("answer", true)];
+  it("holds back a lead-in when the answer after it was already said", () => {
+    expect(heardReplyAfter(transcript, new Set(["ask", "row", "answer"]), transcript[1]!, isReply)).toBe(true);
+  });
+  it("lets a lead-in through when it is the only reply", () => {
+    expect(heardReplyAfter(transcript.slice(0, 3), new Set(["ask", "row"]), transcript[1]!, isReply)).toBe(false);
+    // an unheard answer in the same burst is chosen as the newest reply instead
+    expect(heardReplyAfter(transcript, new Set(["ask", "row"]), transcript[1]!, isReply)).toBe(false);
   });
 });
 

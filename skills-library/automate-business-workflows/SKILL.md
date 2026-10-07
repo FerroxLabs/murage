@@ -20,7 +20,7 @@ trigger_phrases: >-
   I want to automate our business processes I need to reduce manual work How do
   I automate our workflows I want to eliminate manual repetitive tasks
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: automation step-by-step planning
   category: cross-domain

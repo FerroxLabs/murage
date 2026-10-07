@@ -1,8 +1,9 @@
 ---
 name: probe-mvp-design
 description: "Past the fake-door stage. Demand signal exists. The question now: does the actual product produce the outcome customers expected. Load when someone says \"people signed up — what do we ship to the first cohort,\" or \"we need to know if this works before we scale.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "probe"
 ---

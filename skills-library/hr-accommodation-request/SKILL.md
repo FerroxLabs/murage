@@ -3,7 +3,7 @@ name: hr-accommodation-request
 description: "Document the ADA, PWFA or religious accommodation interactive process — request intake, the essential-functions and effectiveness analysis, the undue-hardship framework, the response letter (grant, alternative, or deny with reasons) and the appeal path. Use when an employee has asked for a change to how, when or where they work for medical, pregnancy or religious reasons. Do NOT use for FMLA or state PFML leave eligibility (use hr-leave-of-absence) or for the handbook policy that describes the process (use hr-handbook). Templates only — denials and undue-hardship claims should be reviewed by employment counsel before they are sent."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ada pwfa accommodation hr people-ops smb"
   category: "hr"

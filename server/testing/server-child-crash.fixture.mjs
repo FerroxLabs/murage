@@ -17,16 +17,18 @@
 //   sync|async        which writer the observer is handed — `sync` is the
 //                     shipped `writeCrashLineSync`, `async` is the ordinary
 //                     `process.stderr.write` it exists to avoid
-//   backlog           queue 4 MB on the async stderr stream ahead of the
+//   backlog           queue 32 MB on the async stderr stream ahead of the
 //                     crash line, which is the state a busy server's log is
 //                     already in when it dies
 import { installServerChildCrashObserver, writeCrashLineSync } from "../server-child-crash.mjs";
 
 const [, , observer, fault, writer = "sync", backlog] = process.argv;
 
-// Enough to overflow the OS pipe buffer several times over, so the stream has
-// a real queue rather than a write that happened to complete inline.
-const BACKLOG = `${"P".repeat(4 * 1024 * 1024)}\n`;
+// Enough to overflow the OS pipe buffer many times over, so the stream has a
+// real queue rather than a write that happened to complete inline. 4 MB was
+// sometimes drained by a fast reader before the exit on macOS runners, and
+// the negative control then saw the line survive (CI 36309620844).
+const BACKLOG = `${"P".repeat(32 * 1024 * 1024)}\n`;
 
 function chosenWrite(line) {
   if (backlog === "backlog") process.stderr.write(BACKLOG);

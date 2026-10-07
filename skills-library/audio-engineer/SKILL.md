@@ -4,7 +4,7 @@ description: |
   Professional audio engineering covering recording techniques, microphone selection and placement, signal chain design, acoustic treatment, gain staging, live sound vs studio workflow, mixing console operation, monitor setup, and troubleshooting common audio problems. Use when the user asks about audio engineer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design guide"
   category: "design-creative"

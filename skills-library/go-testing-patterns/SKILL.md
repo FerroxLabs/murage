@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Go project setup (use `go-project-setup`), Go idioms (use `go-idioms`), general testing concepts (use `unit-testing-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "go testing tdd"
   category: "software-engineering"

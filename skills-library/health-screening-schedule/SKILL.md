@@ -6,7 +6,7 @@ description: |
   Do NOT use for interpreting screening results, recommending specific tests for individuals, or making scheduling decisions for users with existing health conditions.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "fitness guide strategy"
   category: "health-wellness"

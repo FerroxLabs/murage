@@ -4,7 +4,7 @@ description: |
   Guide to board game design including mechanics taxonomy, theme integration, prototyping, playtesting methodology, balance iteration, rulebook writing, art direction, Kickstarter launch, and publisher pitching. Use when the user asks about board game designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "board-games game-design guide"
   category: "hobbies-crafts"

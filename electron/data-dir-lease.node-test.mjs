@@ -7,6 +7,8 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { hostname, tmpdir, uptime } from "node:os";
 import { dirname, join, parse, relative } from "node:path";
 import { inspect } from "node:util";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import test from "node:test";
 import { acquireDataDirLease, acquireDataDirLeaseForProcess, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
@@ -328,6 +330,37 @@ for (const stale of ["fresh", "dead-pid", "prior-boot"]) {
   });
 }
 
+// Eight contenders on Windows: one read the record while another replaced it
+// and failed LEASE_UNREADABLE / LEASE_INVALID instead of waiting its turn (CI
+// 36323645974; 1 in 15 on the 0.1.61 Windows VM). A record that is replaced
+// or removed while it is being read is someone else's election in progress.
+test("a lease record replaced while it is read is another contender's turn, not a broken lease", async () => {
+  for (const change of ["replaced", "removed"]) {
+    const f = fixture();
+    const dead = await sleeper(); const live = await sleeper();
+    const deadRecord = record(dead.pid);
+    writeRecord(f.leasePath, deadRecord);
+    const deadExit = new Promise((resolve) => dead.once("close", resolve));
+    dead.kill("SIGKILL"); await deadExit;
+    const originalOpen = fs.openSync;
+    let raced = false;
+    fs.openSync = function (path, ...rest) {
+      if (!raced && path === f.leasePath) {
+        raced = true;
+        rmSync(f.leasePath);
+        if (change === "replaced") writeRecord(f.leasePath, record(live.pid));
+      }
+      return originalOpen.call(this, path, ...rest);
+    };
+    syncBuiltinESMExports();
+    try {
+      if (change === "replaced") assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
+      else acquireDataDirLease(f.dataDir).release();
+      assert.equal(raced, true);
+    } finally { fs.openSync = originalOpen; syncBuiltinESMExports(); }
+  }
+});
+
 test("a killed primary owner can be recovered from its complete nonce record", async () => {
   const f = fixture();
   const holder = worker(f);
@@ -561,6 +594,51 @@ test("foreign primary, child and recovery owners are preserved", async () => {
     assert.equal(readFileSync(path, "utf8"), before);
     if (kind === "reaper") assert.deepEqual(JSON.parse(readFileSync(f.leasePath, "utf8")), owner);
   }
+});
+
+// upstream #2018 (MOCA-270): macOS renames the host when it joins another
+// network. A lease a crash left on one network looked like another machine's on
+// the next, and the app refused to start until the file was deleted by hand.
+// The boot session id is random per boot, so it proves a record is this
+// computer's whatever its hostname says.
+const OLD_NAME = "old-network-name.local";
+
+test("a lease this computer left under its old hostname is recovered", { skip: process.platform === "win32" }, async () => {
+  for (const kind of ["primary", "child", "reaper"]) {
+    const f = fixture(`renamed-${kind}`);
+    const mine = currentRecord(f);
+    assert.notEqual(mine.boot, null, "native boot identity must be available on this verification host");
+    const stale = record(await deadPid(), { host: OLD_NAME, boot: mine.boot, uptime: mine.uptime });
+    let path = kind === "child" ? f.childLeasePath : f.leasePath;
+    if (kind === "reaper") {
+      const owner = record(await deadPid(), { host: OLD_NAME, boot: mine.boot, uptime: mine.uptime });
+      writeRecord(f.leasePath, owner);
+      path = `${f.leasePath}.reap-${owner.token}`;
+      stale.targetToken = owner.token;
+    }
+    writeRecord(path, stale);
+    const lease = acquireDataDirLease(f.dataDir);
+    assert.equal(JSON.parse(readFileSync(f.leasePath, "utf8")).host, hostname());
+    assert.equal(lease.release(), true);
+  }
+});
+
+test("a live owner under an old hostname on this boot is busy, not foreign", { skip: process.platform === "win32" }, () => {
+  const f = fixture("renamed-live");
+  const mine = currentRecord(f);
+  assert.notEqual(mine.boot, null);
+  writeRecord(f.leasePath, record(process.pid, { host: OLD_NAME, boot: mine.boot, uptime: mine.uptime }));
+  assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_BUSY"));
+});
+
+test("another hostname on another boot still fails closed", async () => {
+  const f = fixture("renamed-other-boot");
+  const mine = currentRecord(f);
+  const other = record(await deadPid(), { host: OLD_NAME, boot: randomUUID(), uptime: mine.uptime });
+  writeRecord(f.leasePath, other);
+  const before = readFileSync(f.leasePath, "utf8");
+  assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_FOREIGN_HOST"));
+  assert.equal(readFileSync(f.leasePath, "utf8"), before);
 });
 
 test("inspection reports foreign claims without leaking or changing records", async () => {

@@ -4,7 +4,7 @@
 // the kitchen at 8am.
 import { describe, expect, it } from "vitest";
 
-import { narrateTool, pronounceable, speakable, splitSentences, toUtterances } from "./speech-text.ts";
+import { firstClauseEnd, narrateTool, pronounceable, speakable, splitSentences, toUtterances } from "./speech-text.ts";
 
 describe("speakable", () => {
   it("names a code block instead of reading it", () => {
@@ -84,8 +84,12 @@ describe("toUtterances", () => {
   });
 
   it("does not split inside a decimal or an abbreviation", () => {
-    const out = toUtterances("It dropped to 11.7 seconds per step, i.e. about half of what it was before.");
-    expect(out).toHaveLength(1);
+    const text = "It dropped to 11.7 seconds per step, i.e. about half of what it was before.";
+    const out = toUtterances(text);
+    // the first clause leaves early (a comma after six words); neither the
+    // decimal nor the abbreviation is cut, and nothing is lost
+    expect(out).toEqual(["It dropped to 11.7 seconds per step,", "i.e. about half of what it was before."]);
+    expect(out.join(" ")).toBe(text);
   });
 
   it("glues a fragment onto its neighbour", () => {
@@ -185,5 +189,62 @@ describe("splitSentences", () => {
 
   it("keeps an unfinished sentence for the next piece of the stream", () => {
     expect(splitSentences("It lands Sept.")).toEqual({ sentences: [], rest: "It lands Sept." });
+  });
+});
+
+describe("firstClauseEnd", () => {
+  const cut = (text: string, final?: boolean) => {
+    const at = firstClauseEnd(text, final);
+    return at < 0 ? null : text.slice(0, at);
+  };
+
+  it("cuts a long first clause at its comma, keeping the space", () => {
+    expect(cut("Sure, I can pull that together for you, and I will send it after lunch.")).toBe("Sure, I can pull that together for you, ");
+    expect(cut("Sure, I can pull that together for you, and I will send it after lunch.", false)).toBe("Sure, I can pull that together for you, ");
+  });
+
+  it("leaves a short line, or one with a sentence end, alone", () => {
+    expect(firstClauseEnd("Sure, that works.")).toBe(-1);
+    expect(firstClauseEnd("Okay, that works, and I will send it right over. Then more")).toBe(-1);
+  });
+
+  it("never cuts a date or a number list", () => {
+    expect(firstClauseEnd("The meeting moved to Thursday March 3, 2026 at the main office downtown")).toBe(-1);
+    expect(firstClauseEnd("The counts for the three runs this week were 1, 2 and 3 in that order")).toBe(-1);
+    expect(firstClauseEnd("We should meet on Tuesday, because Monday is already full of calls")).toBe(-1);
+    // the comma inside 1,240 is no boundary; the one after "dollars" is
+    expect(cut("The invoice from the vendor was 1,240 dollars, which is more than planned")).toBe("The invoice from the vendor was 1,240 dollars, ");
+  });
+
+  it("never cuts inside quotes or brackets", () => {
+    expect(firstClauseEnd('She said "we should wait, then go" and left early today')).toBe(-1);
+    expect(firstClauseEnd("She said (we should wait, then go) and left early today")).toBe(-1);
+    expect(firstClauseEnd("She said [we should wait, then go] and left early today")).toBe(-1);
+    expect(firstClauseEnd("She said \u201cwe should wait, then go\u201d and left early today")).toBe(-1);
+  });
+
+  it("never cuts after an abbreviation, and takes the first clean boundary", () => {
+    expect(cut("For the three options we discussed with them, e.g., the cheaper vendor list")).toBe("For the three options we discussed with them, ");
+    expect(firstClauseEnd("Please send the two vendors, e.g., the cheaper list soon")).toBe(-1);
+  });
+
+  it("never cuts after an abbreviation's own comma, with no earlier comma to cut at", () => {
+    expect(firstClauseEnd("I can send you the cheaper vendors today e.g., the first one")).toBe(-1);
+    expect(firstClauseEnd("The call is booked for tomorrow morning at 9 a.m., then we start")).toBe(-1);
+    expect(firstClauseEnd("The contract was sent to the vendor Acme Inc., and they signed it")).toBe(-1);
+    expect(firstClauseEnd("I can send you the cheaper vendors today i.e., the first one")).toBe(-1);
+  });
+
+  it("cuts at a semicolon or a dash", () => {
+    expect(cut("I looked at your calendar for this week; Tuesday is wide open")).toBe("I looked at your calendar for this week; ");
+    expect(cut("I looked at your calendar for this week - Tuesday is wide open")).toBe("I looked at your calendar for this week - ");
+    expect(cut("I looked at your calendar for this week \u2014 Tuesday is wide open")).toBe("I looked at your calendar for this week \u2014 ");
+    expect(cut("I looked at your calendar for this week \u2013 Tuesday is wide open")).toBe("I looked at your calendar for this week \u2013 ");
+  });
+
+  it("waits while nothing follows the boundary yet", () => {
+    expect(firstClauseEnd("I looked at your calendar for this week, ", false)).toBe(-1);
+    expect(firstClauseEnd("I looked at your calendar for this week,", false)).toBe(-1);
+    expect(firstClauseEnd("I looked at your calendar for this week, 2", false)).toBe(-1);
   });
 });

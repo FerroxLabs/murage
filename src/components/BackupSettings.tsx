@@ -3,6 +3,7 @@
 // resets, locks and credential clearing; the views only arrange them.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
+import { Switch } from "./SettingsPrimitives";
 import { OffsiteCleanup, OffsiteDetails, OffsiteRecover, OffsiteRefresh, OffsiteStatus, useBackupRemote, type RemoteController } from "./BackupRemoteSettings";
 import { enabledSchedule, scheduleCardNotice, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
 import { api, useStore } from "@/state/store";
@@ -16,6 +17,7 @@ const scheduleInput = "mt-1 min-h-11 w-full min-w-0 rounded-lg border border-hai
 const scheduleButton = "min-h-11 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 const primaryButton = "min-h-11 rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-accent-ink hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 const checkbox = "mt-1 size-4 shrink-0 accent-accent focus-visible:ring-2 focus-visible:ring-accent-border";
+const switchFocus = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border";
 
 /** Restore from a backup on this computer (Backup mode). */
 export function BackupSettingsView({supported,busy,error,unavailable,onRestart}:{supported:boolean;busy:boolean;error?:string;unavailable?:"tool"|"closing";onRestart:()=>void}) {
@@ -209,9 +211,12 @@ export function useBackupSchedule() {
 }
 export type ScheduleController=ReturnType<typeof useBackupSchedule>;
 
-function ScheduleMessages({s,area}:{s:ScheduleController;area:ScheduleArea}) {
+function ScheduleMessages({s,area,attention=[]}:{s:ScheduleController;area:ScheduleArea;attention?:readonly string[]}) {
   if(s.area!==area)return null;
-  return <>{s.error&&<p role="alert" className="text-[13px] text-danger">{s.error}</p>}{s.notice&&<p role="status" className="text-[13px] text-ink-secondary">{s.notice}</p>}</>;
+  // A failed Back up now says the same sentence as the Needs attention list
+  // above it (the missing folder, 0.1.60 Windows final 2 L1): said once.
+  const error=s.error&&!attention.some(line=>line.includes(s.error!))?s.error:null;
+  return <>{error&&<p role="alert" className="text-[13px] text-danger">{error}</p>}{s.notice&&<p role="status" className="text-[13px] text-ink-secondary">{s.notice}</p>}</>;
 }
 /** Status, lock and failure lines for the schedule, shown on whichever of
  * the setup or schedule card is visible so they are never folded away. */
@@ -332,12 +337,12 @@ export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController
               <datalist id="backup-timezones">{zones.map(zone=><option key={zone} value={zone}/>)}</datalist>
             </div>
             <p id="backup-timezone-help" className="text-[12px] text-ink-secondary">Your computer's time zone is filled in. Start typing to pick another, such as Asia/Bangkok.</p>
-            {(closedBridge||draft.closedApp)&&<label className="flex min-h-11 items-start gap-3 py-2 text-[13px] text-ink">
-              <input type="checkbox" checked={draft.closedApp} disabled={!draft.closedApp&&!closedAllowed} onChange={event=>s.setClosedApp(event.target.checked)} className={checkbox} aria-describedby={closedReason?"backup-closed-help backup-closed-reason":"backup-closed-help"}/>
-              <span>Also back up when Murage is closed</span>
-            </label>}
+            {(closedBridge||draft.closedApp)&&<div className="flex min-h-11 items-center justify-between gap-3 py-2 text-[13px] text-ink">
+              <span id="backup-closed-label">Also back up when Murage is closed</span>
+              <Switch aria-labelledby="backup-closed-label" checked={draft.closedApp} disabled={editingLocked||(!draft.closedApp&&!closedAllowed)} onClick={()=>s.setClosedApp(!draft.closedApp)} className={switchFocus} aria-describedby={closedReason?"backup-closed-help backup-closed-reason":"backup-closed-help"}/>
+            </div>}
             {closedReason&&<p id="backup-closed-reason" className="text-[12px] text-warning">{closedReason}</p>}
-            {(closedBridge||draft.closedApp)&&<p id="backup-closed-help" className="text-[12px] text-ink-secondary">Only while you're signed in to this computer; it won't wake a sleeping computer. Ticking this sets up a background job for your user account.</p>}
+            {(closedBridge||draft.closedApp)&&<p id="backup-closed-help" className="text-[12px] text-ink-secondary">Only while you're signed in to this computer; it won't wake a sleeping computer. Turning this on sets up a background job for your user account.</p>}
           </fieldset>
           {closedAction==="setup"&&<p role="status" className="text-[12px] text-ink-secondary">Setting up the background job…</p>}
           {(!closedBridge||closed?.supported===false)&&<p className="text-[12px] text-ink-secondary">{typeof window!=="undefined"&&window.muragebox?.platform==="win32"?"Backing up while Murage is closed isn't available on Windows yet. Backups while Murage is open work without it.":"Backing up while Murage is closed needs a supported desktop app, backup tool and your signed-in session. Backups while Murage is open work without it."}</p>}
@@ -397,10 +402,10 @@ function ScheduleAdvanced({s}:{s:ScheduleController}) {
       <p id="backup-size-help" className="text-[12px] text-ink-secondary">1 GiB is about 1.07 GB. More than zero and up to 1,024 GiB.</p>
       <label className="block text-[13px] text-ink-secondary">Maximum run time (minutes)<input type="number" min={1/60} max={30} step="any" value={draft.duration} onChange={event=>s.edit("duration",event.target.value)} className={scheduleInput} aria-describedby="backup-duration-help"/></label>
       <p id="backup-duration-help" className="text-[12px] text-ink-secondary">1 second to 30 minutes.</p>
-      {status.preUpgradeSupported===true&&<label className="flex min-h-11 items-start gap-3 py-2 text-[13px] text-ink">
-        <input type="checkbox" checked={draft.preUpgrade} onChange={event=>s.edit("preUpgrade",event.target.checked)} className={checkbox}/>
-        <span>Back up before installing an in-app update.</span>
-      </label>}
+      {status.preUpgradeSupported===true&&<div className="flex min-h-11 items-center justify-between gap-3 py-2 text-[13px] text-ink">
+        <span id="backup-pre-upgrade-label">Back up before installing an in-app update.</span>
+        <Switch aria-labelledby="backup-pre-upgrade-label" checked={draft.preUpgrade} onClick={()=>s.edit("preUpgrade",!draft.preUpgrade)} className={switchFocus}/>
+      </div>}
     </fieldset>
     {status.enabled&&<p className="text-[12px] text-ink-secondary">Turn off daily backups before changing these.</p>}
     <div className="space-y-2 border-t border-hairline/40 pt-3">
@@ -445,7 +450,7 @@ export function BackupStatusCard({summary,s,r,onRestore}:{summary:BackupSummary;
       {stale&&<button type="button" className={scheduleButton} disabled={s.busy||Boolean(r.busy)} onClick={()=>{s.refreshNow("summary");r.refreshNow();}}>Check again</button>}
     </div>
     {s.bridge?.runNow&&!s.status?.refs&&<p className="text-[12px] text-ink-secondary">Back up now is available once a backup folder and recovery key are chosen.</p>}
-    <ScheduleMessages s={s} area="summary"/>
+    <ScheduleMessages s={s} area="summary" attention={summary.attention}/>
   </section>;
 }
 

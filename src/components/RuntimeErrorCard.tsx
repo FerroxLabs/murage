@@ -3,13 +3,14 @@ import { AlertTriangle, Hourglass, MonitorX, RefreshCw, Settings2 } from "lucide
 import { classifyLocalResourceConflict, classifyLocalSetupFailure, engineErrorCategory, type LocalResourceConflict, type LocalSetupFailure } from "../../shared/provider-error";
 import { t } from "@/lib/i18n";
 import { isProviderSafetyBlock } from "../../shared/provider-safety";
+import { plainEngineError } from "../../shared/plain-engine-error";
 import { DiagnosticDetails,type IncidentMessageSelection } from "./DiagnosticDetails";
 
 const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
 /** Plain-text diagnostics only. No provider HTML or automatic retry. */
-export function RuntimeErrorCard({ message, details, errorKind, localFailure, diagnostic: tracking, turnId, incident, setup, onRetry, onOpenProviderSettings }: {
-  message: string; details?: string; errorKind?: string; localFailure?: string; setup?: ReactNode;
+export function RuntimeErrorCard({ message, details, errorKind, localFailure, diagnostic: tracking, turnId, incident, setup, botName, onRetry, onOpenProviderSettings }: {
+  message: string; details?: string; errorKind?: string; localFailure?: string; setup?: ReactNode; botName?: string;
   diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection;
   onRetry?: () => void; onOpenProviderSettings: () => void;
 }) {
@@ -26,7 +27,11 @@ export function RuntimeErrorCard({ message, details, errorKind, localFailure, di
   // own message, which must never be able to choose this copy.
   const category = engineErrorCategory(errorKind);
   const explanation = category ? t(`runtimeError.engineKind.${category}`) : undefined;
-  const diagnostic = details || message;
+  // A raw provider response (`API error (status 400): {…}`) is not a
+  // sentence: say what happened, naming the bot, and keep the provider's
+  // words under Technical details (G11).
+  const plain = !setup && botName ? plainEngineError(message, botName) : undefined;
+  const diagnostic = plain && details && !details.includes(message) ? `${message}\n${details}` : details || message;
   return <div className="flex justify-start">
     <section role="alert" aria-labelledby={titleId} className="w-full max-w-[42rem] rounded-xl border border-danger/30 bg-card p-4 text-ink shadow-sm sm:p-5">
       <div className="flex items-start gap-3">
@@ -35,8 +40,8 @@ export function RuntimeErrorCard({ message, details, errorKind, localFailure, di
           <h3 id={titleId} className="break-words text-[16px] font-semibold leading-snug">{setup ? "This engine needs setup" : safetyBlocked ? "The provider blocked this request" : "This request hit a problem"}</h3>
           <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{explanation ?? (generic
             ? "The engine reported an error without explaining what went wrong. Any available diagnostic information is below."
-            : message)}</p>
-          {explanation && !generic && <p className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{message}</p>}
+            : plain ?? message)}</p>
+          {explanation && !generic && <p className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{plain ?? message}</p>}
         </div>
       </div>
       {setup || <p className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[13px] leading-relaxed text-ink-secondary">{safetyBlocked

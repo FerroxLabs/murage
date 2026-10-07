@@ -6,7 +6,7 @@ description: |
   Do NOT use for wedding planning, large event coordination, or assessing relationship quality.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "relationships event-planning planning"
   category: "family-relationships"

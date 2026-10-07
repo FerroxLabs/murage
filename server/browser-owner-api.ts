@@ -7,7 +7,13 @@ export function browserOwnerId(launchKind: "desktop" | "companion", realm: strin
   return createHash("sha256").update(`${realm}:${launchKind}`).digest("hex").slice(0, 32);
 }
 export async function browserOwnerRequest(controller: UnifiedBrowserController, authority: BrowserOwnerAuthority | null, method: string, body: Record<string, unknown> = {}, frameGeneration?: number) {
-  const valid = () => { if (!authority?.active()) throw Object.assign(new Error("Browser owner authentication required"), { status: 401 }); };
+  // Distinct `code` from the door's own 401 two lines up in server/index.ts
+  // (`"desktop_only"`): this one fires whenever `authority.active()` goes
+  // false mid-session on an already-authenticated caller — a profile
+  // switch, "Use my Chrome" toggled, the bot removed, or the built-in
+  // browser disabled while a request is in flight — never a device-auth
+  // problem, so a client must not tell it apart from that with status alone.
+  const valid = () => { if (!authority?.active()) throw Object.assign(new Error("Browser owner authentication required"), { status: 401, code: "browser_inactive" }); };
   valid(); const { owner, profileKey } = authority!;
   if (method === "GET") {
     if (frameGeneration !== undefined) return controller.frame(profileKey, frameGeneration);

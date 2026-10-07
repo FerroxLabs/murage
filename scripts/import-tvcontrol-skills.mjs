@@ -1,7 +1,7 @@
 // Convert the 11 published tvcontrol skills into Murage skill directories.
 //
-// Source of truth is ~/dev/tvcontrol/skills/<id>/SKILL.md — the MIT-licensed
-// skills that ship with the tvcontrol package. Only these eleven ship; the
+// Source of truth is ~/dev/tvcontrol/skills/<id>/SKILL.md — Ferrox Labs' own
+// skills (owner ruling 2026-10-02: Apache-2.0), published with the tvcontrol package. Only these eleven ship; the
 // unpublished trading research that lives elsewhere on disk is deliberately
 // not a source here and must never become one.
 //
@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const DEFAULT_SOURCE = join(homedir(), "dev/tvcontrol/skills");
 const DEFAULT_OUT = join(repoRoot, "skills-library");
-const LICENSE = "MIT";
+const LICENSE = "Apache-2.0"; // owner ruling 2026-10-02: Ferrox Labs' own work
 
 // Named rather than discovered: the source directory is someone else's repo,
 // so a skill appearing there later must be an explicit decision to publish it.
@@ -78,7 +78,8 @@ for (const id of SKILLS) {
 
   // The store displays `license` and the catalog is public, so the term the
   // source ships under is carried rather than assumed downstream.
-  const skillMd = fields.license ? raw : `---\n${head}\nlicense: ${LICENSE}\n---\n${body}`;
+  const cleanHead = head.split(/\r?\n/).filter((l) => !/^license:/.test(l)).join("\n");
+  const skillMd = `---\n${cleanHead}\nlicense: ${LICENSE}\nmetadata:\n  author: Ferrox Labs\n---\n${body}`;
   const manifest = {
     id,
     name: humanName(id),

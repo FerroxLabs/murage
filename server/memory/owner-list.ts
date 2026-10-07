@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { database } from "../database.ts";
 import { DATA_DIR } from "../config.ts";
 import { ensureScope, type MemoryRoster } from "./policy.ts";
+import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 
 export interface OwnerListInput {
   query?:string; scopeId?:string; botId?:string; state?:string; cursor?:string;
@@ -21,6 +22,7 @@ export function ownerListScopes(input:OwnerListInput,roster:MemoryRoster):string
     (kind='conversation' AND owner_key IN (SELECT value FROM json_each(?))) OR (kind='team' AND owner_key=?)
     UNION SELECT scope_id AS id FROM memory_scope_bindings WHERE subject_type='bot' AND subject_id=? AND state='granted'`)
     .all(JSON.stringify([bot.threadId,...(bot.tasks??[]).map(task=>task.threadId)]),bot.section?.trim()||"",bot.id).map(row=>String(row.id))];
+  ids.push(...database().prepare("SELECT id FROM memory_scopes WHERE kind='bot' AND substr(owner_key,1,?)=?").all(bot.id.length+1,bot.id+"#").map(row=>String(row.id)));
   if(input.scopeId&&!ids.includes(input.scopeId))throw new Error("MEMORY_SCOPE_DENIED");
   return input.scopeId?[input.scopeId]:[...new Set(ids)];
 }
@@ -52,7 +54,8 @@ export function ownerMemoryList(input:OwnerListInput,roster:MemoryRoster){
     if(input.query?.trim()){
       const terms=[...new Set(input.query.match(/[\p{L}\p{N}_-]+/gu)??[])].slice(0,32);
       const path=join(DATA_DIR,"memory-index.db");
-      const pending=db.prepare(`SELECT 1 FROM memory_records r WHERE ${filters.join(" AND ")} AND NOT EXISTS
+      // Continuity rows are never indexed (PIP); they are matched from the record text below.
+      const pending=db.prepare(`SELECT 1 FROM memory_records r WHERE ${filters.join(" AND ")} AND r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND NOT EXISTS
         (SELECT 1 FROM memory_projection_receipts p WHERE p.record_id=r.id AND p.record_version=r.version AND p.lexical_status='indexed') LIMIT 1`).get(...args);
       if(terms.length&&!pending&&existsSync(path)&&lstatSync(path).isFile()&&!lstatSync(path).isSymbolicLink()){
         // Read-only handle: this owner UI never rebuilds or mutates the index.
@@ -62,8 +65,9 @@ export function ownerMemoryList(input:OwnerListInput,roster:MemoryRoster){
         index.prepare("ATTACH DATABASE ? AS authority").run(`file:${join(DATA_DIR,"messages.db")}?mode=ro`);
         const expression=terms.map(term=>`"${term.replaceAll('"','""')}"`).join(" AND ");
         const rows=index.prepare(`SELECT r.* FROM authority.memory_records r WHERE ${filters.join(" AND ")}
-          AND EXISTS (SELECT 1 FROM lexical WHERE lexical MATCH ? AND lexical.id=r.id AND CAST(lexical.version AS INTEGER)=r.version)
-          ORDER BY r.created_at DESC,r.id,r.version DESC LIMIT 51`).all(...args,expression);
+          AND ((r.kind IN ${PIP_ALL_KINDS_SQL} AND instr(lower(r.text),lower(?))>0)
+            OR EXISTS (SELECT 1 FROM lexical WHERE lexical MATCH ? AND lexical.id=r.id AND CAST(lexical.version AS INTEGER)=r.version))
+          ORDER BY r.created_at DESC,r.id,r.version DESC LIMIT 51`).all(...args,input.query.trim(),expression);
         searchMode="indexed";
         return page(rows,searchMode,scopes);
       }

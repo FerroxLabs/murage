@@ -19,7 +19,7 @@ trigger_phrases: >-
   plan a business exit succession planning for my business prepare my business
   for sale
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: strategy step-by-step planning
   category: business-operations

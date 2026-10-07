@@ -1,4 +1,9 @@
 import { database } from "./database.ts";
+import { DEFAULT_BOT_LEARNING, readBotLearning } from "./bot-learning.ts";
+import { classifyRoutineOutbound, contextsContained, type RunContextFacts } from "./routine-outbound.ts";
+import { readProspectScope } from "./memory/learnable.ts";
+import { landingReasons, procedureEvidenceProspectDerived, procedureHardCheck, setProcedureLandingHost, type AppliedChange, type LandingDecision } from "./memory/procedure-landing.ts";
+import { publishOwnerEditedScopedSkill, rollbackScopedSkillRevision } from "./skills.ts";
 import { isWorkspaceOwner } from "./human-principals.ts";
 import { readProcedureBundle } from "./procedure-bundles.ts";
 import { backgroundMemoryAudience } from "./memory/policy.ts";
@@ -17,6 +22,8 @@ export interface ProcedureHostOptions {
     publish(snapshot: ProcedureReviewSnapshot, receipt: ProcedureEvaluationReceipt, audience: Audience): void;
     wasPublished(snapshot: ProcedureReviewSnapshot, receipt: ProcedureEvaluationReceipt, audience: Audience): boolean;
   };
+  /** Is this bot bound to Telegram, Slack, Discord or any other channel? Unknown must answer true: a skill that may reach a channel is not contained. */
+  channelBound?: (botId: string) => boolean;
   evaluate?: ProcedureReviewHost["evaluate"];
   automaticFailureRetry?:boolean;
   evaluatorAvailable?:ProcedureReviewHost["evaluatorAvailable"];
@@ -49,7 +56,7 @@ export function createProcedureReviewHost(options: ProcedureHostOptions) {
     }
     const result: Audience[] = [];
     for (const bot of store.bots) {
-      if (scope.kind === "bot" && bot.id !== scope.owner_key) continue;
+      if (scope.kind === "bot" && bot.id !== String(scope.owner_key).split("#")[0]) continue;
       for (const threadId of new Set([bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)])) {
         const context = audience(bot.id, threadId);
         if (context?.scopeIds.includes(scopeId)) { result.push(context); break; }
@@ -57,9 +64,29 @@ export function createProcedureReviewHost(options: ProcedureHostOptions) {
     }
     return result;
   };
+  /** The structural facts about each context that can run a skill in this scope (permission level, always-allow, audience, room, channel). */
+  const skillRunFacts = (scopeId: string): RunContextFacts[] => contextsForScope(scopeId).map(context => {
+    const bot = store.bot(context.botId);
+    const holders = bot ? [bot, ...(bot.tasks ?? [])] : [];
+    // A routine of this bot can run the skill under its own level, grants, watch and delivery, so every one counts (unknown manager: not contained).
+    const manager = options.routines();
+    const routines = manager ? manager.listRoutines().filter(routine => routine.botId === context.botId) : null;
+    // A bot that sits in any room can run the skill there, so a room anywhere means not contained.
+    const inRoom = store.groups.some(group => group.memberIds.includes(context.botId) || group.threadId === context.threadId);
+    return {
+      asksFirst: Boolean(bot) && routines !== null && holders.every(holder => holder.autoApprove !== true) && routines.every(routine => routine.permissionMode === "ask"),
+      alwaysAllowCount: holders.reduce((sum, holder) => sum + (holder.alwaysAllow?.length ?? 0), 0) + (routines ?? []).reduce((sum, routine) => sum + (routine.alwaysAllow?.length ?? 0), 0),
+      ownerOnly: isWorkspaceOwner(context.humanPrincipal) && context.audienceKey === `bot:${context.botId}:owner` && (routines ?? []).every(routine => !routine.watch && routineContexts(routine).length > 0),
+      inRoom: inRoom || (routines ?? []).some(routine => routine.target === "room-goal"),
+      channelBound: options.channelBound?.(context.botId) ?? false,
+    };
+  });
   const pinFor = (context: Audience) => {
     const room = store.groups.find(group => group.threadId === context.threadId || group.tasks?.some(task => task.threadId === context.threadId));
-    return room ? store.groupTaskByThread(room.id, context.threadId)?.procedurePins?.[context.botId] : store.taskByThread(context.botId, context.threadId)?.procedurePin;
+    // A pair room is its own pin holder; any other room holds pins on its tasks
+    // (the same rule index.ts uses when it pins, store.pinGroupProcedures).
+    const holder = room?.dm && room.threadId === context.threadId ? room : room ? store.groupTaskByThread(room.id, context.threadId) : undefined;
+    return room ? holder?.procedurePins?.[context.botId] : store.taskByThread(context.botId, context.threadId)?.procedurePin;
   };
   const evidenceCurrent = (context: Audience, evidence: Evidence) => {
     try { return options.validateEvidence(context, evidence ?? []); } catch { return false; }
@@ -84,6 +111,50 @@ export function createProcedureReviewHost(options: ProcedureHostOptions) {
     const routine=options.routines()?.listRoutines().find(item=>item.id===target.artifactId);
     if(target.kind!=="routine"||!routine||routine.botId!==target.ownerId)throw Error("PROCEDURE_TARGET_STALE");
     return {revision:routineBase(routine),sha256:procedureCandidateHash(routine.prompt)};
+  };
+  const readInstruction=(target:ProcedureReviewTarget):string=>{
+      if(!host.isTargetCurrent(target))throw Error("PROCEDURE_TARGET_STALE");
+      if(target.kind==="routine")return options.routines()!.listRoutines().find(item=>item.id===target.artifactId)!.prompt;
+      if(target.kind!=="skill")throw Error("PROCEDURE_TARGET_STALE");
+      const bundle=readProcedureBundle(target.ownerId,target.threadId,{schema:1,bundleId:target.bundleId});
+      const imported=bundle.imported.find(item=>item.name===target.artifactId&&item.revision===target.baseRevision&&item.editable);
+      const payload=bundle.files.find(item=>item.path===`skills/${target.artifactId}/SKILL.md`);
+      if(!imported||!payload||payload.sha256!==imported.sha256)throw Error("PROCEDURE_TARGET_STALE");
+      const bytes=Buffer.from(payload.bytes,"base64"),text=new TextDecoder("utf-8",{fatal:true}).decode(bytes);
+      if(procedureCandidateHash(text)!==payload.sha256)throw Error("PROCEDURE_TARGET_STALE");return text;
+    };
+  const describe=(snapshot:ProcedureReviewSnapshot,text:string,receiptId:string,beforeSha256:string,label:string):Omit<AppliedChange,"via"> => {
+    const target=snapshot.target,now=currentInstructionRevision(target),routine=target.kind==="routine";
+    return {kind:routine?"routine":"skill",artifactId:target.artifactId,label,ownerId:target.ownerId,threadId:target.threadId,scopeId:target.scopeId,bundleId:target.bundleId,baseRevision:target.baseRevision,
+      beforeRevision:routine?String(JSON.parse(target.baseRevision)[0]):target.baseRevision,afterRevision:routine?String(JSON.parse(now.revision)[0]):now.revision,beforeSha256,afterSha256:procedureCandidateHash(text),receiptId};
+  };
+  const landing=(snapshot:ProcedureReviewSnapshot,receipt:ProcedureEvaluationReceipt):LandingDecision => {
+    const target=snapshot.target;
+    if(target.kind==="memory-policy")return {mode:"auto",beforeSha256:"",label:""};
+    let beforeText:string;
+    try{beforeText=readInstruction(target);}catch{return {mode:"refuse",reason:"target-unavailable"};}
+    const check=procedureHardCheck(beforeText,receipt.candidate);
+    if(!check.ok)return {mode:"refuse",reason:check.reason};
+    const bot=store.bot(target.ownerId),learning=bot?readBotLearning(bot):DEFAULT_BOT_LEARNING;
+    let outbound=false,label=target.artifactId;
+    if(target.kind==="routine"){
+      const routine=options.routines()?.listRoutines().find(item=>item.id===target.artifactId);
+      if(!routine)return {mode:"refuse",reason:"target-unavailable"};
+      label=routine.name;
+      // When the exact fields are unclear the routine counts as outbound (design 12): an always-allowed action or a non-owner audience is enough.
+      // Known-safe only when the routine asks before acting (its own level is "ask" and nothing is always allowed) and runs for the owner alone; anything else, including a level it inherits, is unknown.
+      // A routine run happens in a conversation of its bot, whose always-allow entries (copied from the bot into each task) also answer
+      // approvals during the run, so the bot's and every task's entries count too. An unknown bot is not contained.
+      const runner=store.bot(routine.botId);
+      const heldAllow=runner?[runner,...(runner.tasks??[])].reduce((sum,holder)=>sum+(holder.alwaysAllow?.length??0),0):1;
+      const ctx={writeToolsMounted:(routine.alwaysAllow?.length??0)>0||heldAllow>0||routine.permissionMode!=="ask",deliversToOwnOnly:!routine.watch&&routineContexts(routine).length>0};
+      outbound=classifyRoutineOutbound(routine,ctx).outbound||classifyRoutineOutbound({...routine,prompt:receipt.candidate},ctx).outbound;
+    }
+    // Tier 1 allowlist 3.7. A skill lands on its own only when EVERY context that can run it is structurally contained. The text is never read.
+    if(target.kind==="skill")outbound=!contextsContained(skillRunFacts(target.scopeId));
+    const reasons=landingReasons({askFirst:learning.askFirst,outbound,prospectDerived:procedureEvidenceProspectDerived(database(),snapshot,bot?readProspectScope(bot).threadIds:[])});
+    const beforeSha256=procedureCandidateHash(beforeText);
+    return reasons.length?{mode:"suggest",reasons,beforeText,beforeSha256,label}:{mode:"auto",beforeSha256,label};
   };
   const host: ProcedureReviewHost = {
     get automaticFailureRetry(){return options.automaticFailureRetry;},
@@ -137,6 +208,8 @@ export function createProcedureReviewHost(options: ProcedureHostOptions) {
       const context = audience(snapshot.target.ownerId, snapshot.target.threadId);
       return Boolean(context && context.scopeId === snapshot.target.scopeId && evidenceCurrent(context, handles(snapshot)) && host.isTargetCurrent(snapshot.target));
     },
+    landing,
+    appliedChange:(snapshot,receipt,decision)=>describe(snapshot,receipt.candidate,receipt.id,decision.beforeSha256,decision.label),
     get evaluate() { return options.evaluate; },
     get evaluatorAvailable(){return options.evaluatorAvailable;},
     get evaluationReadiness(){return options.evaluationReadiness;},
@@ -165,20 +238,34 @@ export function createProcedureReviewHost(options: ProcedureHostOptions) {
       } finally { authorizedRoutine = undefined; }
     },
   };
+  setProcedureLandingHost({
+    describe,
+    base:target=>{try{return currentInstructionRevision(target);}catch{return null;}},
+    publishEvaluated:(snapshot,receipt)=>host.publish!(snapshot,receipt),
+    publishEdited:(snapshot,text,receiptId)=>{
+      const target=snapshot.target;
+      if(!host.canPublish(snapshot))throw Error("PROCEDURE_AUDIENCE_REVOKED");
+      if(target.kind==="skill"){const context=audience(target.ownerId,target.threadId);if(!context)throw Error("PROCEDURE_TARGET_STALE");publishOwnerEditedScopedSkill(snapshot,text,receiptId,{audienceKey:context.audienceKey,allowedScopeIds:context.scopeIds});return;}
+      const manager=options.routines(),routine=manager?.listRoutines().find(item=>item.id===target.artifactId);
+      if(!manager||!routine||routineBase(routine)!==target.baseRevision)throw Error("PROCEDURE_TARGET_STALE");
+      manager.update(routine.id,{prompt:text});
+    },
+    rollback:change=>{
+      const context=audience(change.ownerId,change.threadId);
+      if(!context||context.scopeId!==change.scopeId)return {ok:false};
+      if(change.kind==="skill"){
+        const result=rollbackScopedSkillRevision(change.ownerId,change.artifactId,change.afterRevision,change.beforeRevision,{audienceKey:context.audienceKey,allowedScopeIds:context.scopeIds});
+        return "error" in result?{ok:false}:{ok:true};
+      }
+      const manager=options.routines(),routine=manager?.listRoutines().find(item=>item.id===change.artifactId);
+      if(!manager||!routine||routineInstructionRevision(routine)!==change.afterRevision)return {ok:false};
+      try{return manager.rollbackInstructions(routine.id,change.afterRevision,routine.updatedAt,change.beforeRevision)?{ok:true}:{ok:false};}catch{return {ok:false};}
+    },
+  });
   return {
     host,
     currentInstructionRevision,
-    readInstruction(target:ProcedureReviewTarget):string {
-      if(!host.isTargetCurrent(target))throw Error("PROCEDURE_TARGET_STALE");
-      if(target.kind==="routine")return options.routines()!.listRoutines().find(item=>item.id===target.artifactId)!.prompt;
-      if(target.kind!=="skill")throw Error("PROCEDURE_TARGET_STALE");
-      const bundle=readProcedureBundle(target.ownerId,target.threadId,{schema:1,bundleId:target.bundleId});
-      const imported=bundle.imported.find(item=>item.name===target.artifactId&&item.revision===target.baseRevision&&item.editable);
-      const payload=bundle.files.find(item=>item.path===`skills/${target.artifactId}/SKILL.md`);
-      if(!imported||!payload||payload.sha256!==imported.sha256)throw Error("PROCEDURE_TARGET_STALE");
-      const bytes=Buffer.from(payload.bytes,"base64"),text=new TextDecoder("utf-8",{fatal:true}).decode(bytes);
-      if(procedureCandidateHash(text)!==payload.sha256)throw Error("PROCEDURE_TARGET_STALE");return text;
-    },
+    readInstruction,
     validateRoutinePromotion(routine: Readonly<Routine>, proposal: Readonly<RoutineInstructionPromotion>) {
       const approved = authorizedRoutine;
       return Boolean(approved && approved.snapshot.target.artifactId === routine.id && approved.snapshot.target.baseRevision === routineBase(routine) && approved.receipt.id === proposal.evaluationReceiptId && approved.receipt.candidate === proposal.prompt && JSON.stringify(handles(approved.snapshot)) === JSON.stringify(proposal.evidence) && host.canPublish(approved.snapshot));

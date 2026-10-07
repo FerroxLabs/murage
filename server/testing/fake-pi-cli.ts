@@ -5,12 +5,16 @@
 // / set_model, and streams a scripted turn in response to `prompt`. Failure
 // modes mirror how the real CLI misbehaves:
 //
-//   FAKE_PI_MODE   happy (default) | tooluse | permission | host-confirm | gate | question | editor | interleave | todo | turn-error | no-models | exit-early | stream
+//   FAKE_PI_MODE   happy (default) | project-propose (the Chief's New project proposal through
+//                  the agents server in MURAGE_MCP_CONFIG; see fake-mcp-propose.ts) | text-propose (the
+//                  proposal as a block in the reply, after a gated read) | tooluse | permission | host-confirm | gate | question | editor | interleave | todo | turn-error | no-models | exit-early | stream
 //                  stream = long work that keeps streaming: one text delta every FAKE_PI_STREAM_EVERY_MS
 //                  (default 500) for FAKE_PI_STREAM_FOR_MS (default 8000), then "long reply done" and a clean turn_end
 //                  permission = a `select` ask ("Run bash: echo hi?", Allow once / Deny) — since 0.1.52 ASK3 a select
 //                  is a QUESTION for the owner (its answer is {value}); host-confirm = a `confirm` ask, the permission
 //                  shape; question = an `input` ask; editor = an `editor` ask with prefill
+//   FAKE_CUSTOM_TOOL_SERVER / FAKE_CUSTOM_TOOL_LOG  every prompt calls the first tool of that
+//                  owner server from MURAGE_MCP_CONFIG (fake-custom-tool.ts)
 //   FAKE_PI_MODELS comma-separated provider/model pairs (default "ollama-cloud/glm-5.2,openai/gpt-4o")
 //   FAKE_PI_SET_MODEL ok (default) | reject (success:false with pi's error text) | silent (never answers)
 //   FAKE_PI_SESSION   ok (default) | reject (new_session / switch_session answer success:false)
@@ -35,6 +39,13 @@
 
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { logProposalTurn, proposalReply, proposeThroughMcp, type McpServerEntry } from "./fake-mcp-propose.ts";
+import { fakeReviewReply } from "./fake-review.ts";
+import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
+import { PI_GATE_TITLE_PREFIX, piGateAsks, piGateMessage } from "../drivers/pi-permission-gate.ts";
+
+/** project-propose mode's gate asks, answered by extension_ui_response id. */
+const proposalAsks = new Map<string, (confirmed: boolean) => void>();
 
 const mode = process.env.FAKE_PI_MODE ?? "happy";
 const modelPairs = (process.env.FAKE_PI_MODELS ?? "ollama-cloud/glm-5.2,openai/gpt-4o")
@@ -92,7 +103,7 @@ if (process.env.FAKE_PI_DUMP) {
           (k) => process.env[k] !== undefined,
         ),
         mcpConfig,
-        gate: process.env.MURAGE_PI_GATE ? { secretLength: process.env.MURAGE_PI_GATE.length, prefixes: process.env.MURAGE_PI_GATE_PREFIXES } : null,
+        gate: process.env.MURAGE_PI_GATE ? { secretLength: process.env.MURAGE_PI_GATE.length, prefixes: process.env.MURAGE_PI_GATE_PREFIXES, only: process.env.MURAGE_PI_GATE_ONLY ?? null } : null,
       }) + "\n",
     );
   } catch {
@@ -136,6 +147,15 @@ const streamTurn = () => {
   for (const delta of ["Hello", " from", " pi", ...(process.env.FAKE_PI_UNIQUE ? [` ${randomUUID().slice(0, 6)}`] : [])]) {
     send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta } });
   }
+  send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
+  send({ type: "agent_end" });
+};
+
+/** A whole turn that says `text` (project-propose mode's outcome). */
+const streamTextTurn = (text: string) => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text } });
   send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
   send({ type: "agent_end" });
 };
@@ -406,7 +426,70 @@ function handle(cmd: any) {
       }
       // CR2: accepted prompt remains active until the owned fixture is stopped.
       if (mode === "hold") return;
-      if (mode === "tooluse") streamToolTurn();
+      // FAKE_CUSTOM_TOOL_SERVER (fake-custom-tool.ts): call the first tool of
+      // that owner server, from the MURAGE_MCP_CONFIG pi-mcp-extension reads.
+      {
+        const customServer = customToolServer(String(cmd.message ?? ""));
+        if (customServer) {
+          let entry: McpServerEntry | undefined;
+          try { entry = (JSON.parse(readFileSync(process.env.MURAGE_MCP_CONFIG ?? "", "utf8")) as { mcpServers?: Record<string, McpServerEntry> }).mcpServers?.[customServer]; } catch { entry = undefined; }
+          void (async () => {
+            const outcome = entry
+              ? await callFirstCustomTool("pi", customServer, { command: entry.command, args: entry.args ?? [], env: entry.env ?? {} }, String(cmd.message ?? ""))
+              : { tools: [], text: `no ${customServer} server was mounted`, isError: true };
+            streamTextTurn(customToolReply(outcome));
+          })();
+          return;
+        }
+      }
+      // lane review: a review run answers with its verdict (fake-review.ts)
+      const reviewText = fakeReviewReply(String(cmd.message ?? ""));
+      if (reviewText !== null) { streamTextTurn(reviewText); return; }
+      if (mode === "text-propose" && String(cmd.message ?? "").includes("<murage-project-proposal")) {
+        // Lane N2: the Chief answers with the proposal block, after reading /etc/hosts
+        // exactly as the gate decides for that call.
+        const secret = process.env.MURAGE_PI_GATE ?? "", only = process.env.MURAGE_PI_GATE_ONLY || undefined;
+        void new Promise<string>(resolve => {
+          if (!secret || !piGateAsks("read", { path: "/etc/hosts" }, process.cwd(), [], only)) return resolve("ran unasked");
+          proposalAsks.set("ask-read", confirmed => resolve(confirmed ? "allowed" : "denied"));
+          send({ type: "extension_ui_request", id: "ask-read", method: "confirm", title: `${PI_GATE_TITLE_PREFIX}${secret}`, message: piGateMessage("read", { path: "/etc/hosts" }) });
+        }).then(read => {
+          logProposalTurn({ engine: "piAgent", asks: { read }, agentsMounted: Boolean(process.env.MURAGE_MCP_CONFIG) });
+          streamTextTurn(proposalReply(String(cmd.message)));
+        });
+        return;
+      }
+      if (mode === "project-propose" && String(cmd.message ?? "").includes("project_propose")) {
+        // The Chief's New project proposal (lane N), through the agents server
+        // pi-mcp-extension would mount from MURAGE_MCP_CONFIG.
+        let agents: McpServerEntry | undefined;
+        try { agents = (JSON.parse(readFileSync(process.env.MURAGE_MCP_CONFIG ?? "", "utf8")) as { mcpServers?: Record<string, McpServerEntry> }).mcpServers?.agents; } catch { agents = undefined; }
+        if (!agents) { streamTextTurn("propose error: no agents server"); return; }
+        // Before proposing, the model reads /etc/hosts: exactly what pi-permission-gate.ts
+        // decides for that call with this process's gate settings, asked the way it asks.
+        const secret = process.env.MURAGE_PI_GATE ?? "", only = process.env.MURAGE_PI_GATE_ONLY || undefined;
+        const gateAsk = (id: string, toolName: string, input: Record<string, unknown>) => new Promise<string>(resolve => {
+          if (!secret || !piGateAsks(toolName, input, process.cwd(), [], only)) return resolve("ran unasked");
+          proposalAsks.set(id, confirmed => resolve(confirmed ? "allowed" : "denied"));
+          send({ type: "extension_ui_request", id, method: "confirm", title: `${PI_GATE_TITLE_PREFIX}${secret}`, message: piGateMessage(toolName, input) });
+        });
+        void (async () => ({ read: await gateAsk("ask-read", "read", { path: "/etc/hosts" }), propose: await gateAsk("ask-propose", "agents_project_propose", {}) }))()
+          .then(asks => proposeThroughMcp(agents!, String(cmd.message), { asks }))
+          .then(streamTextTurn, (error: Error) => streamTextTurn(`propose error: ${error.message}`));
+        return;
+      }
+      if (mode === "action-guard") {
+        send({ type: "tool_execution_start", toolCallId: "wrapper", toolName: "MULTI_EXECUTE_TOOL", args: { tools: [
+          { tool_slug: "GMAIL_SEND_EMAIL", call_id: "first" }, { tool_slug: "GMAIL_SEND_EMAIL", call_id: "second" },
+        ] } });
+        send({ type: "tool_execution_end", toolCallId: "wrapper", toolName: "MULTI_EXECUTE_TOOL", isError: false,
+          result: { content: [{ type: "text", text: JSON.stringify({ results: [
+            { tool_slug: "GMAIL_SEND_EMAIL", call_id: "second", response: { successful: false } },
+            { tool_slug: "GMAIL_SEND_EMAIL", call_id: "first", response: { successful: true } },
+          ] }) }] } });
+        streamTextTurn("I sent it. I paid it.");
+      }
+      else if (mode === "tooluse") streamToolTurn();
       else if (mode === "permission") streamPermissionTurn();
       else if (mode === "host-confirm") streamHostConfirmTurn();
       else if (mode === "gate") streamGateTurn();
@@ -427,6 +510,7 @@ function handle(cmd: any) {
           /* never let dumping break a run */
         }
       }
+      if (proposalAsks.has(cmd.id)) { const answered = proposalAsks.get(cmd.id)!; proposalAsks.delete(cmd.id); answered(cmd.confirmed === true); return; }
       if (cmd.id === "ask-1" || cmd.id === "ask-host" || cmd.id === "ask-q" || cmd.id === "ask-e") finishPermissionTurn();
       return;
     case "abort":

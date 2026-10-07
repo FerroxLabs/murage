@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of epistemology explorer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching study-skills journaling guide testing analysis performing-arts branding"
   category: "education"

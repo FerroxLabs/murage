@@ -6,7 +6,7 @@ description: |
   Do NOT use for making the decision itself (use weighted-decision-matrix or pro-con-analysis), business strategic decision documentation (use business strategy skills), or project change control (use scope-creep-management).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decision-making template planning"
   category: "productivity"

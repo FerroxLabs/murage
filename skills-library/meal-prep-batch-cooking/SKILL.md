@@ -6,7 +6,7 @@ description: |
   Do NOT use for meal planning (use meal-planning-framework), macro calculations (use macro-calculation), or specific recipe creation.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "nutrition meal-planning cooking"
   category: "health-wellness"

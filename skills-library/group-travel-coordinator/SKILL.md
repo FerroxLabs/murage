@@ -11,7 +11,7 @@ description: |
   solo travel, or event planning (use family-relationships event skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "travel planning event-planning checklist"
   category: "travel-experiences"

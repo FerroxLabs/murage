@@ -3,7 +3,7 @@ name: finance-balance-sheet
 description: "Build a balance sheet — assets, liabilities and owner equity at a point in time — with entity-aware equity treatment (sole prop, partnership, LLC, S-corp, C-corp) and the GAAP vs tax-basis distinction called out. Use when someone needs the position statement for a loan application, a buyer, an investor, or a year-end close. Do NOT use for how a period performed (use finance-pl) or for where the cash went (use finance-cashflow). Statements and analysis only — have a CPA review before it goes to a third party."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "balance-sheet accounting finance smb"
   category: "finance"

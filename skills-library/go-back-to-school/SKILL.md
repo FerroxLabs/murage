@@ -17,7 +17,7 @@ trigger_phrases: >-
   I want to go back to school help me return to college going back to school as
   an adult finish my degree get a graduate degree adult learner education plan
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: study-skills career step-by-step planning
   category: life-event

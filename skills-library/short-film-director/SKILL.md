@@ -4,7 +4,7 @@ description: |
   Complete guidance for directing short films from concept through festival exhibition. Covers script development, casting, location scouting, actor direction, blocking, visual storytelling, continuity management, post-production, and festival strategy specific to the short film format. Use when the user asks about short film director or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "video-production creative-writing"
   category: "design-creative"

@@ -14,6 +14,7 @@
 // recovery was to run the action again.
 import { redactSecretsInText } from "../redact.ts";
 import { TOOL_RESULT_MAX_CHARS, TOOL_RESULT_PREVIEW_CHARS, toolResultPrefix } from "../tool-results.ts";
+import { murageToolOnThisServer } from "../murage-tool-surface.ts";
 
 /** Anything at or under this is passed through untouched. */
 export const AGENT_RESULT_CAP_CHARS = 24_000;
@@ -21,9 +22,7 @@ export const AGENT_RESULT_CAP_CHARS = 24_000;
 /** The operation already happened. Saving overflow must never retry it or turn
  * a successful operation into a failed MCP call, so every failure below falls
  * back to the preview and says the tail was lost. Only the cache I/O is timed. */
-/** `readTool` is tool_result_read as this turn's engine calls it
- * (shared/murage-tool-names.ts); the bare name when the caller gives none. */
-export async function boundedAgentResult(text: string, save: (text: string, truncated: boolean) => Promise<unknown>, readTool = "tool_result_read"): Promise<string> {
+export async function boundedAgentResult(text: string, save: (text: string, truncated: boolean) => Promise<unknown>): Promise<string> {
   if (text.length <= AGENT_RESULT_CAP_CHARS) return text;
   const redacted = redactSecretsInText(text);
   const prefix = toolResultPrefix(redacted, TOOL_RESULT_PREVIEW_CHARS);
@@ -34,7 +33,7 @@ export async function boundedAgentResult(text: string, save: (text: string, trun
     if (!saved || typeof saved.id !== "string" || !/^r-[0-9a-f-]{36}$/.test(saved.id)) throw new Error("Invalid saved result");
     return `${prefix}\n\n[Large tool result: showing the first ${prefix.length} characters. ${truncated || saved.truncated
       ? "Only a bounded portion was retained; the remaining tail was omitted."
-      : "The rest of the result is temporarily saved."} If a missing detail is needed, call ${readTool} with id "${saved.id}" and offset ${prefix.length}. Saved results expire after one hour, on app restart, or under cache pressure. Do not repeat an action just to retrieve its output.]`;
+      : "The rest of the result is temporarily saved."} If a missing detail is needed, call ${murageToolOnThisServer("tool_result_read")} with id "${saved.id}" and offset ${prefix.length}. Saved results expire after one hour, on app restart, or under cache pressure. Do not repeat an action just to retrieve its output.]`;
   } catch {
     return `${prefix}\n\n[Large tool result: showing the first ${prefix.length} characters. The remaining output could not be saved and is not retrievable. The original operation was not retried. Do not repeat an action just to retrieve its output.]`;
   }

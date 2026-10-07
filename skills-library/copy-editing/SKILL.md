@@ -6,7 +6,7 @@ description: |
   Do NOT use for proofreading only (use proofreading), structural reorganization (use structural-editing), or fact verification (use fact-check-framework).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "editing writing guide"
   category: "writing"

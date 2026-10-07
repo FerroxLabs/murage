@@ -4,7 +4,7 @@ description: |
   Comprehensive pregnancy-to-nursery guide covering trimester planning, birth plan creation, nursery setup, registry building, parental leave planning, hospital bag checklist, childcare research, and financial preparation for new and expecting parents. Use when the user asks about baby preparation or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events parenting planning checklist"
   category: "family-relationships"

@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical meditation therapy, trauma-sensitive meditation, or treating any mental health condition.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "mental-wellness self-care meditation breathing"
   category: "health-wellness"

@@ -5,7 +5,7 @@ description: |
   Do NOT use for product metrics (use metrics-framework), P&L analysis (use pl-analysis), or personal finance tracking (use budget-planning).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis planning strategy report spreadsheets"
   category: "business-strategy"

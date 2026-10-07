@@ -6,7 +6,7 @@ description: |
   Do NOT use for summative assessments like tests or exams (use `summative-assessment` or `assessment-design`), for rubric creation (use `rubric-creation`), or for student self-quizzing (use `active-recall-practice`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching lesson-plan step-by-step active-recall"
   category: "education"

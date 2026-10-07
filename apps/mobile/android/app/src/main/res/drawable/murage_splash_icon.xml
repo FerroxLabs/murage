@@ -1,0 +1,1 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:width="288dp" android:height="288dp"><shape><solid android:color="@android:color/transparent"/></shape></item><item android:width="192dp" android:height="192dp" android:gravity="center"><bitmap android:src="@drawable/murage_splash_mark" android:gravity="fill"/></item></layer-list>

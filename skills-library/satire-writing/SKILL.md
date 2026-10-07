@@ -6,7 +6,7 @@ description: |
   Do NOT use for straight humor or comedy without a critical target (use writing-prompt-response), serious opinion pieces (use opinion-piece), or academic analysis of satire.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing analysis"
   category: "writing"

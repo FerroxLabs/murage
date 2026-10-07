@@ -3,7 +3,7 @@ export interface MemoryEvolutionStatus {
   authorized:boolean;
   corpus:{id:string;version:string;kind:"synthetic"};
   policy:{revision:string};
-  job:null|{id:string;status:"pending"|"running"|"waiting"|"deferred"|"complete"|"blocked";reason:string|null;started:boolean;decision:"accepted"|"rejected"|"no-change"|null;publishedRevision:string|null;costKnown:boolean;actualCostUsd:number|null;heldout:null|{corpusDigest:string;untouched:true;cases:number;baseline:number;candidate:number;regressions:number}};
+  job:null|{id:string;status:"pending"|"running"|"waiting"|"deferred"|"complete"|"blocked";reason:string|null;started:boolean;decision:"accepted"|"rejected"|"no-change"|null;publishedRevision:string|null;heldout:null|{corpusDigest:string;untouched:true;cases:number;baseline:number;candidate:number;regressions:number}};
 }
 export type MemoryEvolutionKind="recall"|"classification";
 export type MemoryEvolutionAction={action:"evolution-authorize"}|{action:"evolution-authorize-classification"}|{action:"evolution-retry";jobId:string};
@@ -20,20 +20,13 @@ export function memoryEvolutionReason(status:MemoryEvolutionStatus,kind:MemoryEv
     "MEMORY_EVOLUTION_MODEL_UNAVAILABLE":"Waiting for an available learning connection.",
     "GEPA_EXTRACTOR_UNAVAILABLE":"Waiting for an available learning connection.",
     "MEMORY_EVOLUTION_ADMISSION_REQUIRED":"Waiting for current authorization and automatic-learning settings.",
-    "GEPA_COST_AUTHORITY_REQUIRED":"Your spending limit requires reliable cost information before this check can run.",
-    "cost-estimate-unavailable":"Your spending limit requires reliable cost information before this check can run.",
+    "GEPA_COST_AUTHORITY_REQUIRED":"This check needs updated authorization before it can run.",
     "budget-exhausted":"The memory processing limit has been reached.",
     "MEMORY_EVOLUTION_INTERRUPTED":"The earlier check was interrupted after it started.",
     "GEPA_RESOURCE_UNAVAILABLE":"Memory improvement tools are unavailable on this installation.",
     "GEPA_BUNDLED_RESOURCE_UNAVAILABLE":"Memory improvement tools are unavailable on this installation.",
   };
   return reasons[job.reason??""]??(job.status==="blocked"?"This check is blocked because its inputs or authority changed.":job.started?"The check stopped after it started. It has not been retried automatically.":"The check is waiting for its requirements to become available.");
-}
-export function memoryEvolutionCost(status:MemoryEvolutionStatus):string {
-  const job=status.job;
-  return job?.costKnown&&typeof job.actualCostUsd==="number"&&Number.isFinite(job.actualCostUsd)&&job.actualCostUsd>=0
-    ?job.actualCostUsd.toLocaleString("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:6})
-    :"Cost unavailable";
 }
 export async function runMemoryEvolutionAction(request:HistoryRequest,status:MemoryEvolutionStatus,action:MemoryEvolutionAction):Promise<MemoryEvolutionStatus> {
   if(action.action==="evolution-retry"&&(!canRetryMemoryEvolution(status)||status.job?.id!==action.jobId))throw Error("This check cannot be retried from its current state. Refresh its status.");

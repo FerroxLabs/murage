@@ -59,25 +59,41 @@ test("Computer gear opens the same bot settings exclusively and allows reopening
   }
 });
 
-test("Appearance is folded in Overview and remains user-expandable", async ({ page }, testInfo) => {
+test("Appearance is open at the top of Identity & instructions, and an image avatar opens larger", async ({ page }, testInfo) => {
   await page.goto(`${origin}/__bot-settings`);
   await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true });
   await expect(dialog).toBeVisible();
-  // 0.1.57: the panel opens on what the bot is FOR, not on the avatar studio.
+  // the panel opens on what the bot is FOR; Appearance is no longer on Overview
   await expect(dialog.getByText("What is this bot for?", { exact: true })).toBeVisible();
-  const summary = dialog.locator("summary").filter({ hasText: /^Appearance$/ });
-  const disclosure = summary.locator("..");
-  await expect(disclosure).not.toHaveAttribute("open", "");
-  await summary.click();
-  await expect(disclosure).toHaveAttribute("open", "");
-  await summary.click();
-  await expect(disclosure).not.toHaveAttribute("open", "");
-  await summary.click();
+  await expect(dialog.getByRole("button", { name: "Upload image", exact: true })).toHaveCount(0);
+  await dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button", { name: "Identity & instructions", exact: true }).click();
+  await expect(dialog.getByRole("heading", { name: "Appearance", exact: true })).toBeVisible();
+  await expect(dialog.locator("details")).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Upload image", exact: true })).toBeVisible();
+  // the mascot has nothing larger to show
+  await expect(dialog.getByRole("button", { name: "View avatar larger", exact: true })).toHaveCount(0);
+  const png = await page.evaluate(() => { const canvas = document.createElement("canvas"); canvas.width = 2; canvas.height = 2; canvas.getContext("2d")!.fillRect(0, 0, 2, 2); return canvas.toDataURL("image/png").split(",")[1]; });
+  await dialog.locator('input[type="file"]').setInputFiles({ name: "viewer-avatar.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
+  const avatar = dialog.getByRole("button", { name: "View avatar larger", exact: true });
+  await expect(avatar).toBeVisible();
+  const viewer = page.getByTestId("image-lightbox");
+  // keyboard: Enter opens, Escape closes and focus returns to the avatar
+  await avatar.focus(); await page.keyboard.press("Enter");
+  await expect(viewer).toBeVisible(); await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(viewer).toHaveCount(0); await expect(dialog).toBeVisible(); await expect(avatar).toBeFocused();
+  // Space opens; the close button closes
+  await page.keyboard.press("Space"); await expect(viewer).toBeVisible();
+  await viewer.getByRole("button", { name: "Close image preview", exact: true }).click();
+  await expect(viewer).toHaveCount(0); await expect(avatar).toBeFocused();
+  // a click opens; a click outside closes
+  await avatar.click(); await expect(viewer).toBeVisible();
+  await page.mouse.click(2, 2);
+  await expect(viewer).toHaveCount(0); await expect(avatar).toBeFocused();
   for (const width of [390, 820, 1440]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.screenshot({ path: testInfo.outputPath(`appearance-folded-${width}.png`), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`appearance-open-${width}.png`), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
   await dialog.getByRole("button", { name: "Close bot settings", exact: true }).click();
@@ -117,18 +133,15 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
       if (route.request().method() !== "POST") return route.continue();
       const response = await route.fetch(); await new Promise<void>(resolve => { finishUpload = resolve; }); await route.fulfill({ response });
     });
-    // Appearance is folded on Overview since 0.1.57, so the avatar editor
-    // has to be opened before its file input exists.
-    await dialog.locator("summary").filter({ hasText: /^Appearance$/ }).click();
-    await expect(dialog.locator("summary").filter({ hasText: /^Appearance$/ }).locator("..")).toHaveAttribute("open", "");
+    // Appearance opens Identity & instructions, so go there for the file input.
+    await dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button", { name: "Identity & instructions", exact: true }).click();
+    await expect(dialog.getByRole("heading", { name: "Appearance", exact: true })).toBeVisible();
     const png = await page.evaluate(() => { const canvas = document.createElement("canvas"); canvas.width = 2; canvas.height = 2; canvas.getContext("2d")!.fillRect(0, 0, 2, 2); return canvas.toDataURL("image/png").split(",")[1]; });
     await dialog.locator('input[type="file"]').setInputFiles({ name: "fixture-avatar.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
     await expect.poll(() => Boolean(finishUpload)).toBe(true);
     await dialog.getByRole("button", { name: "Close bot settings", exact: true }).click();
     await expect(dialog.getByRole("status")).toHaveText("Wait for the current operation to finish before closing.");
     finishUpload!(); await expect(dialog.getByRole("button", { name: "Upload image", exact: true })).toBeEnabled();
-    // Was (closed the disclosure this block used to open):
-    //   await dialog.getByText("Appearance", { exact: true }).click();
   }
   const search = dialog.getByRole("searchbox", { name: "Search settings" });
   await search.fill("working folder"); await expect(dialog.getByRole("heading", { name: "Access", exact: true })).toBeVisible();

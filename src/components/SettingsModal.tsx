@@ -1,12 +1,21 @@
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { ProjectAutonomySetting } from "./ProjectAutonomySetting";
+import { BrowserExternalClients } from "./BrowserExternalClients";
+import { effortLabel } from "@/lib/effort-label";
 import { t } from "@/lib/i18n";
 // App settings, as a real modal with sections rather than one long panel.
-// Per-bot settings (persona, model, computer) stay in SettingsPanel — this
-// is the stuff shared by every bot: who you are, your keys, and the
-// machine your bots can borrow.
-import { useEffect, useRef, useState } from "react";
-import { Archive, BookOpen, Coins, FlaskConical, Globe, KeyRound, MessageCircle, Monitor, ScrollText, Search, Smartphone, Terminal, Trash2, User, UserRound, X } from "lucide-react";
+// Per-bot settings (persona, model, computer) stay in SettingsPanel; this is
+// the stuff shared by every bot: who you are, your keys, and the machine your
+// bots can borrow.
+//
+// 0.1.62 (NAV-OVERHAUL.md, Option B): six group headings over short pages
+// that each do one job. The section ids, their groups and their search words
+// live in lib/settings-sections.ts; this file owns the icons and the pages.
+import { Suspense, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Archive, BookOpen, ChevronDown, Coins, Cpu, FlaskConical, Globe, Image as ImageIcon, LifeBuoy, MessageCircle, Mic, Monitor, Puzzle, ScrollText, Search, SlidersHorizontal, Smartphone, Terminal, Trash2, User, UserRound, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
+import { inNativeShell } from "@/lib/native-shell";
 import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
 import { localeChoices } from "@/locales";
 import { ApiKeyRow, VpsConnection } from "./ApiKeys";
@@ -25,6 +34,7 @@ import { TranscriptionSettings } from "./TranscriptionSettings";
 import { SearchSettings } from "./SearchSettings";
 import { SkillsSettings } from "./skills/SkillsSettings";
 import { HouseRulesSettings } from "./HouseRulesSettings";
+import { ScriptAccessSettings } from "./ScriptAccessSettings";
 import { AboutMeSettings } from "./AboutMeSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { BackupSettings } from "./BackupSettings";
@@ -32,74 +42,74 @@ import { StartupSettings } from "./StartupSettings";
 import { AnnouncementsSettings } from "./AnnouncementsSettings";
 import { TelegramSettings } from "./TelegramSettings";
 import { SlackSettings } from "./SlackSettings";
+import { WhatsAppSettings } from "./WhatsAppSettings";
 import { DiscordSettings } from "./DiscordSettings";
 import { StarterProfiles } from "./StarterProfiles";
 import { RemoteSignOut } from "./RemoteSignOut";
+import { PhoneNotifications } from "./PhoneNotifications";
 import { openFirstRun } from "@/lib/first-run";
 import { cn } from "@/lib/cn";
-import { useDesktopSurface } from "@/lib/use-surface";
+import { useDesktopSurface, useSurfaceState } from "@/lib/use-surface";
 import {
   browserProfileDeletionBlockReason,
   browserProfilesForPatch,
   browserProfileReplacementPatch,
 } from "@/lib/browser-profiles";
+import { returnFocus } from "@/lib/return-focus";
+import {
+  SETTINGS_GROUPS,
+  SETTINGS_SECTIONS,
+  sectionsForSurface,
+  settingsGroupLabel,
+  settingsGroupNote,
+  settingsSectionLabel,
+  settingsSectionNote,
+  settingsSectionRedirect,
+  type SettingsSectionEntry,
+} from "@/lib/settings-sections";
+import { settingsSectionMatches } from "@/lib/settings-search";
+import {
+  chooseAutoRail,
+  chooseSidebarDensity,
+  sidebarDensityState,
+  subscribeSidebarDensity,
+  type SidebarDensity,
+} from "@/lib/sidebar-preferences";
+import { APP_VERSION, whatsNewPage } from "@/lib/whats-new";
+import { sourceCodeLink, sourceVersionLabel } from "@/lib/source-code";
+import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
 
-const SECTIONS: Array<{
-  id: AppSettingsSection;
-  label: string;
-  icon: typeof User;
-  /** Hidden on any surface that is not the confirmed desktop. */
-  desktopOnly?: boolean;
-  keywords: string[];
-}> = [
-  { id: "general", label: "General", icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "notifications", "sound", "sounds", "mute", "chime", "quiet hours", "privacy", "previews", "startup", "background", "tray", "login", "sign in", "version", "app version", "about", "setup", "first run", "get set up", "walkthrough", "announcements", "news", "notices"] },
-  { id: "backups", label: "Backups", icon: Archive, desktopOnly: true, keywords: ["backup", "restore", "recovery", "schedule", "s3", "off-site", "remote", "restic", "age", "key", "recovery key", "age key", "encryption key"] },
-  { id: "experimental", label: "Experimental", icon: FlaskConical, desktopOnly: true, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
-  // `desktopOnly` is not a tidiness flag. These four are the credential and
-  // execution surface of the app: API keys for xAI, Box, Composio and the
-  // OpenCode gateway, the VPS connection, the engine CLI installers, and the
-  // local VM controls. A paired phone was rendering every one of them —
-  // readable, editable, on a device that is only supposed to be able to read
-  // conversations. The door already refuses the routes behind them, so
-  // nothing could execute, but a key on screen is a key disclosed.
-  //
-  // Phone is here for a different reason: on a phone it is an offer to do the
-  // thing you have already done.
-  { id: "models", label: "Models", icon: Globe, desktopOnly: true, keywords: ["models", "providers", "keys", "catalog", "flux", "pricing", "openai", "anthropic"] },
-  { id: "engines", label: "Engines", icon: Terminal, desktopOnly: true, keywords: ["models", "claude", "grok", "providers", "cli", "flux", "flux router", "router", "opencode", "keys"] },
-  { id: "connections", label: "Tools & Connections", icon: KeyRound, desktopOnly: true, keywords: ["keys", "api", "composio", "box", "xai", "vps", "paste", "env", "search", "tavily", "exa", "transcription"] },
-  { id: "channels", label: "Messaging apps", icon: MessageCircle, desktopOnly: true, keywords: ["telegram", "botfather", "pair", "slack", "discord", "whatsapp", "messaging", "channels"] },
-  { id: "companion", label: "Phone", icon: Smartphone, desktopOnly: true, keywords: ["companion", "phone", "pair", "mobile"] },
-  { id: "computer", label: "Local VM", icon: Monitor, desktopOnly: true, keywords: ["vm", "virtual", "desktop"] },
-  { id: "skills", label: "Skills", icon: BookOpen, desktopOnly: true, keywords: ["skills", "skill", "import", "scan", "library", "instructions", "safety"] },
-  { id: "houseRules", label: "House rules", icon: ScrollText, desktopOnly: true, keywords: ["house rules", "constitution", "soul", "rules", "principles", "guidance", "values", "tone", "every bot"] },
-  { id: "aboutMe", label: "About me", icon: UserRound, desktopOnly: true, keywords: ["about me", "profile", "who i am", "my name", "myself", "time zone", "preferences", "every bot"] },
-  { id: "usage", label: "Usage", icon: Coins, keywords: ["tokens", "cost", "billing"] },
-];
+export { sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sections";
+export { settingsSearchResults } from "@/lib/settings-search";
 
-function sectionMatches(section: (typeof SECTIONS)[number], query: string): boolean {
-  if (!query) return true;
-  return [section.label, ...section.keywords].some((part) => part.toLowerCase().includes(query));
-}
+const MemorySection = retryableLazy(() => import("./MemorySection"));
+// The same chunk ImageSettings opens behind its button elsewhere.
+const ImageLibrary = retryableLazy(() => import("./ImageLibrary"));
 
-/** The desktop sections the settings search box keeps for `query`. */
-export function settingsSearchResults(query: string): AppSettingsSection[] {
-  const q = query.trim().toLowerCase();
-  return SECTIONS.filter((entry) => sectionMatches(entry, q)).map((entry) => entry.id);
-}
+const SECTION_ICONS: Record<AppSettingsSection, typeof User> = {
+  general: User,
+  aboutMe: UserRound,
+  botDefaults: SlidersHorizontal,
+  houseRules: ScrollText,
+  skills: BookOpen,
+  memory: Cpu,
+  models: Globe,
+  engines: Terminal,
+  images: ImageIcon,
+  webSearch: Search,
+  voice: Mic,
+  connections: Puzzle,
+  computer: Monitor,
+  channels: MessageCircle,
+  companion: Smartphone,
+  backups: Archive,
+  usage: Coins,
+  about: LifeBuoy,
+  experimental: FlaskConical,
+};
 
-/** The sections this surface may see.
- *
- * `undefined` — the surface has not answered yet — withholds the desktop-only
- * ones. Neutral is the narrow side: showing an API key for one frame and then
- * hiding it has already disclosed it, and a section appearing a moment late on
- * the desktop costs nothing. */
-export function sectionsForSurface(
-  sections: typeof SECTIONS,
-  desktop: boolean | undefined,
-): typeof SECTIONS {
-  return desktop === true ? sections : sections.filter((entry) => !entry.desktopOnly);
-}
+type Section = SettingsSectionEntry & { icon: typeof User };
+const SECTIONS: Section[] = SETTINGS_SECTIONS.map((entry) => ({ ...entry, icon: SECTION_ICONS[entry.id] }));
 
 /** Reopens the guided first run.
  *
@@ -191,6 +201,7 @@ function ProfileFields() {
 /** The Updates row's line. It leads with the running version: Linux has no
  * About panel, so this is the one place that version is shown. */
 export function updatesSubtitle(s: UpdaterState | null): string {
+  if (s?.status === "error" && s.action === "download-from-murage") return t("updates.verificationRefused");
   const running = s?.currentVersion ? `Murage ${s.currentVersion}. ` : "";
   return running + (
     s?.status === "deferred" ? "This update is waiting for the pre-upgrade backup flow. Review Settings → Backups if it needs attention." : s?.status === "checking"
@@ -220,6 +231,7 @@ export function UpdatesRow() {
     <Card title={t("updates.title")} subtitle={label}>
       {s?.status !== "deferred" && <button
         onClick={() => {
+          if (s?.status === "error" && s.action === "download-from-murage") return void window.muragebox?.openExternal?.("https://murage.ai/download");
           if (s?.status === "available") return void updater.download();
           if (s?.status === "downloaded") return void updater.install();
           if (s?.status === "error") return void updater.retry();
@@ -233,7 +245,7 @@ export function UpdatesRow() {
           : s?.status === "downloaded"
             ? s.installMode === "handoff" ? "Install" : t("updates.restartInstall")
             : s?.status === "installing" ? "Preparing…"
-              : s?.status === "error" ? t("updates.retry")
+              : s?.status === "error" ? s.action === "download-from-murage" ? t("updates.downloadFromMurage") : t("updates.retry")
             : t("updates.check")}
       </button>}
     </Card>
@@ -306,6 +318,36 @@ function LanguageRow() {
           </option>
         ))}
       </select>
+      {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
+    </Card>
+  );
+}
+
+const NEW_BOT_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+/** Effort for new bots (triage row 23): applied only where the new bot's
+ *  engine offers that level; an explicit choice on the bot wins. */
+function NewBotEffortRow() {
+  const { state, dispatch } = useStore();
+  const [error, setError] = useState("");
+  const current = state.config?.newBots?.effort ?? "";
+  const change = async (value: string) => {
+    setError("");
+    try {
+      const config: ConfigStatus = await api("/api/config", { method: "PATCH", body: JSON.stringify({ newBots: { effort: value || null } }) });
+      dispatch({ type: "configStatus", config });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save the effort for new bots.");
+    }
+  };
+  return (
+    <Card title="New bots" subtitle="The effort a new bot starts with, when its engine offers that level. You can change it on any bot later.">
+      <label className="flex items-center justify-between gap-4 text-[14px] text-ink">
+        Effort for new bots
+        <select value={current} onChange={(event) => void change(event.target.value)} className="rounded-md bg-inset px-2 py-1.5 text-[13px] text-ink">
+          <option value="">Engine default</option>
+          {NEW_BOT_EFFORTS.map((level) => <option key={level} value={level}>{effortLabel(level)}</option>)}
+        </select>
+      </label>
       {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
     </Card>
   );
@@ -525,11 +567,13 @@ export function BrowserProfilesRow() {
             const editing = renaming?.id === profile.id;
             return (
               <div key={profile.id} className="flex items-center justify-between gap-3 py-2.5">
-                <div className="flex min-w-0 items-center gap-2">
+                <div className="flex min-w-0 flex-1 items-center gap-2">
                   <Globe size={14} className="shrink-0 text-ink-secondary" />
                   {editing ? (
+                    // Shrinks with the row: at phone width the name field
+                    // overflowed under Delete, so a tap on Save hit Delete.
                     <form
-                      className="flex items-center gap-2"
+                      className="flex min-w-0 flex-1 items-center gap-2"
                       onSubmit={(event) => {
                         event.preventDefault();
                         rename();
@@ -540,13 +584,13 @@ export function BrowserProfilesRow() {
                         value={renaming.name}
                         onChange={(event) => setRenaming({ ...renaming!, name: event.target.value })}
                         maxLength={40}
-                        className="rounded-md bg-inset px-2 py-1 text-[13px] text-ink outline-none"
+                        className="min-w-0 flex-1 rounded-md bg-inset px-2 py-1 text-[13px] text-ink outline-none"
                         aria-label="Profile name"
                       />
-                      <button type="submit" disabled={busy !== null} className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-ink disabled:opacity-50">
+                      <button type="submit" disabled={busy !== null} className="shrink-0 rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-ink disabled:opacity-50">
                         Save
                       </button>
-                      <button type="button" onClick={() => setRenaming(null)} className="text-[12px] text-ink-secondary hover:text-ink">
+                      <button type="button" onClick={() => setRenaming(null)} className="shrink-0 text-[12px] text-ink-secondary hover:text-ink">
                         Cancel
                       </button>
                     </form>
@@ -636,22 +680,281 @@ function DiagnosticsRow() {
   );
 }
 
+const DENSITY_OPTIONS: readonly { id: SidebarDensity; label: () => string }[] = [
+  { id: "compact", label: () => t("settings.sidebar.standard") },
+  { id: "comfortable", label: () => t("settings.sidebar.roomy") },
+  { id: "icons", label: () => t("settings.sidebar.rail") },
+];
+
+/** Sidebar density, beside the skin (it used to be a menu in the sidebar's
+ *  header, next to a Collapse button that did the same thing). */
+function SidebarDensityRow() {
+  const prefs = useSyncExternalStore(subscribeSidebarDensity, sidebarDensityState, sidebarDensityState);
+  return (
+    <div className="mt-4 border-t border-hairline/30 pt-4 max-md:hidden">
+      <div id="settings-sidebar-density" className="text-[14px] font-medium text-ink">{t("settings.sidebar.label")}</div>
+      <div role="radiogroup" aria-labelledby="settings-sidebar-density" className="mt-2 grid grid-cols-3 overflow-hidden rounded-lg border border-hairline">
+        {DENSITY_OPTIONS.map(({ id, label }, index) => {
+          const selected = prefs.density === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              tabIndex={selected ? 0 : -1}
+              onKeyDown={(event) => {
+                const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+                if (!step) return;
+                event.preventDefault();
+                const at = (index + step + DENSITY_OPTIONS.length) % DENSITY_OPTIONS.length;
+                chooseSidebarDensity(DENSITY_OPTIONS[at].id);
+                event.currentTarget.parentElement?.querySelectorAll("button")[at]?.focus();
+              }}
+              onClick={() => chooseSidebarDensity(id)}
+              className={cn(
+                "flex h-9 items-center justify-center px-3 text-[13px] transition-colors",
+                index > 0 && "border-l border-hairline",
+                selected
+                  ? "bg-control font-medium text-accent-text shadow-[inset_0_0_0_1px_var(--color-accent-border)]"
+                  : "text-ink-secondary hover:bg-control/50",
+              )}
+            >
+              {label()}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <div id="settings-auto-rail" className="text-[13.5px] text-ink">{t("settings.sidebar.autoRail")}</div>
+          <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t("settings.sidebar.autoRailNote")}</div>
+        </div>
+        <Switch checked={prefs.autoRail} aria-labelledby="settings-auto-rail" onClick={() => chooseAutoRail(!prefs.autoRail)} />
+      </div>
+    </div>
+  );
+}
+
+/** Opens the page What's new showed after the last update. */
+function WhatsNewRow() {
+  const { dispatch } = useStore();
+  const desktop = useDesktopSurface();
+  if (desktop !== true || !whatsNewPage()) return null;
+  return (
+    <Card title={t("settings.about.whatsNewTitle")} subtitle={t("settings.about.whatsNewNote")}>
+      <button
+        type="button"
+        onClick={() => {
+          dispatch({ type: "toggleAppSettings", open: false });
+          openWhatsNew();
+        }}
+        className="min-h-11 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+      >
+        {t("settings.about.whatsNewOpen")}
+      </button>
+    </Card>
+  );
+}
+
+/** The source offer the GNU AGPL (section 13) asks for. Shown on every
+ * surface, the browser door included: whoever uses Murage over a network is
+ * told where the source of this version is. */
+function SourceCodeRow() {
+  return (
+    <Card title={t("settings.about.sourceTitle")} subtitle={`${t("settings.about.sourceNote")} ${sourceVersionLabel(APP_VERSION)}.`}>
+      <a
+        href={sourceCodeLink()}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex min-h-11 items-center rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+      >
+        {t("settings.about.sourceOpen")}
+      </a>
+    </Card>
+  );
+}
+
+function ShortcutsRow() {
+  const { dispatch } = useStore();
+  return (
+    <Card title={t("settings.about.shortcutsTitle")} subtitle={t("settings.about.shortcutsNote")}>
+      <button
+        type="button"
+        onClick={() => {
+          dispatch({ type: "toggleAppSettings", open: false });
+          openKeyboardShortcuts();
+        }}
+        className="min-h-11 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+      >
+        {t("settings.about.shortcutsOpen")}
+      </button>
+    </Card>
+  );
+}
+
+const linkButton = "rounded px-0.5 font-medium text-accent-text underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus";
+const secondaryButton = "min-h-11 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus";
+
+/** Settings > Connected apps: the key and the way into the panel. The apps
+ *  themselves live in the panel (the sidebar's Apps place). */
+function ConnectedAppsSettings() {
+  const { state, dispatch } = useStore();
+  const go = (section: AppSettingsSection) => dispatch({ type: "toggleAppSettings", open: true, section });
+  const openPanel = (surface: "apps" | "mcp") => {
+    dispatch({ type: "toggleAppSettings", open: false });
+    dispatch({ type: "togglePlugins", open: true, surface });
+  };
+  return (
+    <>
+      <Card title={t("settings.section.connections")} subtitle={t("settings.connections.note")}>
+        <div className="flex flex-col gap-4">
+          {state.config?.composio.mode === "managed" ? (
+            <div className="rounded-lg border border-success/25 bg-success/10 px-3 py-2 text-[13px] text-success">
+              {t("settings.connections.ready")}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => openPanel("apps")} className={secondaryButton}>{t("settings.connections.openApps")}</button>
+            <button type="button" onClick={() => openPanel("mcp")} className={secondaryButton}>{t("settings.connections.openMcp")}</button>
+          </div>
+        </div>
+      </Card>
+      {/* 0.1.62 only: Image generation, web search and transcription keys
+          used to sit on this page, and an old notice or habit still lands
+          here looking for them. */}
+      <p className="px-1 text-[12.5px] leading-relaxed text-ink-secondary">
+        {t("settings.connections.moved")}{" "}
+        <button type="button" onClick={() => go("images")} className={linkButton}>{settingsSectionLabel("images")}</button>
+        {" · "}
+        <button type="button" onClick={() => go("webSearch")} className={linkButton}>{settingsSectionLabel("webSearch")}</button>
+        {" · "}
+        <button type="button" onClick={() => go("voice")} className={linkButton}>{settingsSectionLabel("voice")}</button>
+        {" · "}
+        <button type="button" onClick={() => go("models")} className={linkButton}>{t("settings.models.pasteTitle")}</button>
+      </p>
+    </>
+  );
+}
+
+/** Settings > Images: the setup, and the library of saved prompt blocks and
+ *  reference packs as a tab of its own rather than a button inside a card. */
+function ImagesSettings() {
+  const [tab, setTab] = useState<"setup" | "library">("setup");
+  const tabs = [
+    { id: "setup" as const, label: t("settings.images.setup") },
+    { id: "library" as const, label: t("settings.images.library") },
+  ];
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    event.preventDefault();
+    const next = tab === "setup" ? "library" : "setup";
+    setTab(next);
+    document.getElementById(`images-tab-${next}`)?.focus();
+  };
+  return (
+    <>
+      <div role="tablist" aria-label={settingsSectionLabel("images")} onKeyDown={onKeyDown} className="flex gap-1 rounded-lg bg-control/50 p-1 self-start">
+        {tabs.map(({ id, label }) => (
+          <button
+            key={id}
+            id={`images-tab-${id}`}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            aria-controls={tab === id ? `images-panel-${id}` : undefined}
+            tabIndex={tab === id ? 0 : -1}
+            onClick={() => setTab(id)}
+            className={cn(
+              "min-h-9 rounded-md px-3.5 text-[13px] max-md:min-h-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
+              tab === id ? "bg-panel font-medium text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div id={`images-panel-${tab}`} role="tabpanel" aria-labelledby={`images-tab-${tab}`} className="min-w-0">
+        {tab === "setup" ? (
+          <ImageSettings showLibrary={false} />
+        ) : (
+          <div className="rounded-xl bg-card p-4">
+            <LazyBoundary inline onRetry={ImageLibrary.retry}>
+              <Suspense fallback={<p role="status" className="text-[12px] text-ink-secondary">{t("imageLibrary.busy")}</p>}>
+                <ImageLibrary.Component />
+              </Suspense>
+            </LazyBoundary>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** Settings > Computer & browser: every computer a bot can borrow, and the
+ *  browser it can use. It used to be spread over Local VM, Tools &
+ *  Connections and Experimental. */
+function ComputerAndBrowserSettings() {
+  return (
+    <>
+      <LocalComputerSection />
+      <Card title={t("settings.computer.remoteTitle")} subtitle={t("settings.computer.remoteNote")}>
+        <div className="flex flex-col gap-4">
+          <ApiKeyRow section="box" />
+          <VpsConnection />
+        </div>
+      </Card>
+      <BrowserProfilesRow />
+      <BrowserExternalClients />
+    </>
+  );
+}
+
+/** Up/Down (Left/Right on the phone strip) move between sections, Home and
+ *  End jump to the ends. Group headings are not stops. */
+function moveBetweenSections(event: ReactKeyboardEvent<HTMLElement>) {
+  const keys: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
+  if (!(event.target instanceof HTMLElement) || !event.target.hasAttribute("data-settings-section")) return;
+  const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-settings-section]"));
+  const at = buttons.indexOf(event.target);
+  let next = -1;
+  if (event.key in keys) next = (at + keys[event.key]! + buttons.length) % buttons.length;
+  else if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = buttons.length - 1;
+  if (next < 0) return;
+  event.preventDefault();
+  buttons[next]?.focus();
+}
+
 export function SettingsModal() {
   const { state, dispatch } = useStore();
   const section = state.appSettingsSection;
   const dialogRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
-  const desktop = useDesktopSurface();
+  const { desktop, confirmed } = useSurfaceState();
   const allowed = sectionsForSurface(SECTIONS, desktop);
-  const visibleSections = allowed.filter((entry) => sectionMatches(entry, q));
+  const visibleSections = allowed.filter((entry) => settingsSectionMatches(entry, q));
+  const current = SECTIONS.find((entry) => entry.id === section);
 
   useEffect(() => {
-    const visible = sectionsForSurface(SECTIONS, desktop).filter((entry) => sectionMatches(entry, q));
-    if (visible.some((entry) => entry.id === section)) return;
-    const first = visible[0];
-    if (first) dispatch({ type: "toggleAppSettings", open: true, section: first.id });
-  }, [dispatch, desktop, q, section]);
+    const visible = sectionsForSurface(SECTIONS, desktop).filter((entry) => settingsSectionMatches(entry, q));
+    const next = settingsSectionRedirect(SECTIONS, section, desktop, visible, confirmed);
+    if (next) dispatch({ type: "toggleAppSettings", open: true, section: next });
+  }, [dispatch, desktop, confirmed, q, section]);
+
+  // The open section stays in view in the list: a deep link to Experimental
+  // on a short window, or a chip at the far end of the phone strip.
+  useEffect(() => {
+    const nav = navRef.current;
+    const active = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !active) return;
+    const box = nav.getBoundingClientRect(), row = active.getBoundingClientRect();
+    if (row.top < box.top || row.bottom > box.bottom || row.left < box.left || row.right > box.right) {
+      active.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }, [section]);
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -666,11 +969,16 @@ export function SettingsModal() {
       }
       if (event.key !== "Tab" || !dialog) return;
 
+      // A folded <details> (Models > Paste any keys) keeps its contents out
+      // of the Tab order but its summary in it, so the loop has to agree.
       const focusable = Array.from(
         dialog.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])',
         ),
-      );
+      ).filter((element) => {
+        const folded = element.closest("details:not([open])");
+        return !folded || element.parentElement === folded && element.tagName === "SUMMARY";
+      });
       if (focusable.length === 0) {
         event.preventDefault();
         dialog.focus();
@@ -692,9 +1000,13 @@ export function SettingsModal() {
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      previousFocus?.focus();
+      returnFocus(previousFocus);
     };
   }, [dispatch]);
+
+  // A handful of sections (a paired phone sees three) read better as plain
+  // chips on the phone strip than under headings that each hold one or two.
+  const fewSections = visibleSections.length <= 4;
 
   return (
     <div
@@ -711,31 +1023,48 @@ export function SettingsModal() {
         aria-labelledby="app-settings-title"
         tabIndex={-1}
         className={cn(
-          "flex w-full max-w-[860px] overflow-hidden rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none",
-          // 560px flat used to overflow a short window; the codebase already
-          // knows this shape (PluginsPanel, TeamLibraryPanel).
-          "h-[min(560px,calc(100dvh-2rem))]",
-          // Below md a 190px nav beside the content left 152px of settings on a
-          // 390px screen. Full-bleed sheet, nav folded to a horizontal scroller
-          // above it. --vvh rather than 100dvh so the footer buttons stay
+          "settings-dialog flex w-full max-w-[920px] overflow-clip rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none",
+          // overflow-clip, not overflow-hidden: a hidden box can still be
+          // scrolled by focus, which slid the title and header off the top.
+          // The list and the page each scroll on their own; the dialog never
+          // does. 780 fits the grouped list (19 rows of 28px under 6 headings
+          // of 22px, about 750px) in a 1440x900 window; a shorter window
+          // scrolls the list, with the app's always-visible scrollbar.
+          "h-[min(780px,calc(100dvh-2rem))]",
+          // Below md a side list beside the content left too little of either
+          // on a 390px screen. Full-bleed sheet, list folded to a horizontal
+          // strip above it. --vvh rather than 100dvh so the footer buttons stay
           // reachable with the keyboard up (100dvh is the layout viewport,
           // which iOS does not shrink).
           "max-md:h-[var(--vvh,100dvh)] max-md:max-w-none max-md:flex-col max-md:rounded-none",
+          // Full-bleed from the top of the screen, so the sheet keeps its own
+          // ground under the status bar and the home indicator and its
+          // controls start below the one and end above the other.
+          "max-md:pt-[var(--inset-top)] max-md:pb-[var(--inset-bottom)]",
         )}
       >
         {/* section nav */}
         <nav
           className={cn(
-            "flex flex-col gap-0.5 border-r border-hairline/40 p-3",
-            "md:w-[190px] md:shrink-0",
-            "max-md:w-full max-md:shrink-0 max-md:flex-row max-md:items-center max-md:overflow-x-auto max-md:border-r-0 max-md:border-b",
+            "flex flex-col border-r border-hairline/40 px-3 pb-2 pt-3",
+            // A window too short for every section scrolls the list, with the
+            // app's always-visible scrollbar, rather than clipping it (G3).
+            // 240px: the longest label, "Phone and other devices", fits in Inter
+            // even beside the list's scrollbar on a short window.
+            "md:w-[240px] md:shrink-0 md:min-h-0 md:overflow-y-auto",
+            "max-md:w-full max-md:shrink-0 max-md:flex-row max-md:items-center max-md:gap-1.5 max-md:overflow-x-auto max-md:border-r-0 max-md:border-b max-md:px-4 max-md:py-2",
+            // On the phone strip, the right edge fades: there is more to swipe to.
+            "max-md:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]",
           )}
+          ref={navRef}
+          aria-label={t("settings.navAria")}
+          onKeyDown={moveBetweenSections}
         >
-          <div id="app-settings-title" className="px-2 pb-2 pt-1 text-[15px] font-semibold text-ink max-md:hidden">
-            Settings
+          <div id="app-settings-title" className="px-2 pb-1.5 pt-0.5 text-[15px] font-semibold text-ink max-md:hidden">
+            {t("settings.title")}
           </div>
-          <div className="mb-1.5 flex items-center gap-2 rounded-lg bg-control/70 px-2.5 py-1.5 max-md:mb-0 max-md:w-[9rem] max-md:shrink-0">
-            <Search size={14} className="shrink-0 text-ink-secondary" />
+          <div className="mb-1 flex min-h-8 items-center gap-2 rounded-lg bg-control/70 px-2.5 max-md:mb-0 max-md:min-h-11 max-md:w-[9rem] max-md:shrink-0">
+            <Search size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -745,142 +1074,190 @@ export function SettingsModal() {
                 if (query) setQuery("");
                 else dispatch({ type: "toggleAppSettings", open: false });
               }}
-              placeholder="Search"
-              aria-label="Search settings"
+              placeholder={t("settings.search")}
+              aria-label={t("settings.searchAria")}
               className="w-full bg-transparent text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
             />
           </div>
           {visibleSections.length === 0 && (
-            <div className="px-2.5 py-4 text-[12.5px] leading-relaxed text-ink-secondary">
-              Nothing matches “{query.trim()}”
+            <div className="px-2.5 py-4 text-[12.5px] leading-relaxed text-ink-secondary max-md:shrink-0 max-md:whitespace-nowrap max-md:py-0">
+              {t("settings.noMatch", { query: query.trim() })}
             </div>
           )}
-          {visibleSections.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: id })}
-              aria-current={section === id ? "page" : undefined}
-              className={cn(
-                "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[14px]",
-                "max-md:shrink-0 max-md:whitespace-nowrap",
-                section === id ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
-              )}
-            >
-              <Icon size={15} />
-              {label}
-            </button>
-          ))}
+          {SETTINGS_GROUPS.map((group) => {
+            const entries = visibleSections.filter((entry) => entry.group === group);
+            if (entries.length === 0) return null;
+            return (
+              <div
+                key={group}
+                role="group"
+                aria-labelledby={`settings-group-${group}`}
+                aria-description={settingsGroupNote(group)}
+                className="flex flex-col max-md:shrink-0 max-md:flex-row max-md:items-center max-md:gap-1.5"
+              >
+                <div
+                  id={`settings-group-${group}`}
+                  title={settingsGroupNote(group)}
+                  className={cn(
+                    "flex h-[22px] items-end px-2.5 pb-1 text-[11px] font-medium uppercase leading-none tracking-[0.06em] text-ink-secondary",
+                    "max-md:h-auto max-md:whitespace-nowrap max-md:pb-0 max-md:pl-2 max-md:pr-0.5 max-md:text-[10.5px]",
+                    fewSections && "max-md:sr-only",
+                  )}
+                >
+                  {settingsGroupLabel(group)}
+                </div>
+                {entries.map(({ id, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    data-settings-section={id}
+                    onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: id })}
+                    aria-current={section === id ? "page" : undefined}
+                    title={settingsSectionLabel(id)}
+                    className={cn(
+                      "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px]",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
+                      "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
+                      section === id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
+                    )}
+                  >
+                    <Icon size={15} className="shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 truncate">{settingsSectionLabel(id)}</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })}
         </nav>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex items-center justify-between px-5 py-3">
-            <span className="text-[15px] font-semibold text-ink">
-              {SECTIONS.find((s) => s.id === section)?.label}
-            </span>
+          <div className="flex items-start justify-between gap-3 px-5 py-3">
+            <div className="min-w-0">
+              <span className="block truncate text-[15px] font-semibold text-ink">
+                {current && <><span className="font-normal text-ink-secondary">{settingsGroupLabel(current.group)}</span><span aria-hidden="true" className="px-1.5 font-normal text-ink-secondary">/</span></>}
+                <span>{current ? settingsSectionLabel(current.id) : null}</span>
+              </span>
+              {/* What the page is for, in one line (the grandma test). */}
+              {current && <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{settingsSectionNote(current.id)}</p>}
+            </div>
             <button
               onClick={() => dispatch({ type: "toggleAppSettings", open: false })}
-              aria-label="Close settings"
-              className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
+              aria-label={t("settings.close")}
+              className="flex size-10 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
             >
               <X size={18} />
             </button>
           </div>
 
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 pb-5">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-5 pb-5">
             {section === "general" && (
               <>
                 <Card title="Profile" subtitle={desktop === true ? "Shown in the sidebar. Saved as you go." : "Shown in the sidebar."}>
                   <ProfileFields />
                 </Card>
-                {desktop === true && <SetupAgainRow />}
-                {desktop === true && <StarterProfiles />}
-                <Card title="Appearance" subtitle="Applies instantly and is remembered on this machine.">
+                <Card title={t("settings.appearance.title")} subtitle={t("settings.appearance.note")}>
                   <SkinPicker />
+                  {/* The phone's drawer has no rail or density: desktop only. */}
+                  {desktop === true && <SidebarDensityRow />}
                 </Card>
+                {desktop === true && <LanguageRow />}
                 {desktop === true && <NotificationSettings />}
                 {desktop === true && <StartupSettings />}
-                {desktop === true && <><Card title="Channel turns" subtitle="Stop a bot that goes quiet in a channel. Use Stop to end a reply yourself.">
-                  <RoomTurnTimeoutSettings />
-                </Card>
-                <LanguageRow />
-                <ToolCallsRow /></>}
-                {desktop !== true && <p className="text-[12px] text-ink-secondary">Language, tool-call display and channel settings are managed in the desktop app.</p>}
-                <UpdatesRow />
-                {desktop === true && <AnnouncementsSettings />}
-                <DiagnosticsRow />
-                <AnalyticsRow />
+                {desktop !== true && <p className="text-[12px] text-ink-secondary">{t("settings.general.remoteNote")}</p>}
+                {/* The phone apps never send usage analytics, so they show no switch for it. */}
+                {!inNativeShell() && <AnalyticsRow />}
                 {/* Confirmed remote only. `undefined` renders the neutral
                   * thing, and the desktop has no session to sign out of: the
                   * route lives on the browser door alone. */}
                 {desktop === false && <RemoteSignOut />}
+                {desktop === false && <PhoneNotifications />}
+                {/* Headless installs have no desktop to make a script grant on; the owner's own browser door can (S1b R2). */}
+                {desktop === false && <ScriptAccessSettings bots={state.bots} />}
               </>
             )}
-
-            {desktop === true && section === "backups" && <BackupSettings />}
-
-            {desktop === true && section === "experimental" && (
-              <>
-                <ExperimentalFeaturesRow />
-                <BrowserProfilesRow />
-              </>
-            )}
-
-            {desktop === true && section === "connections" && (
-              <Card
-                title="Tools & Connections"
-                subtitle="Keys for search, images, transcription and connected apps. Apps themselves live under Tools → Connected apps."
-              >
-                <div className="flex flex-col gap-4">
-                  {state.config?.composio.mode === "managed" ? (
-                    <div className="rounded-lg border border-success/25 bg-success/10 px-3 py-2 text-[13px] text-success">
-                      Connected apps service is ready
-                    </div>
-                  ) : null}
-                  <TranscriptionSettings />
-                  <SearchSettings />
-                  <ImageSettings />
-                  {/* Composio sits with the other keys rather than folded into
-                      a "Self-host connected apps" disclosure, which is where it
-                      used to live. That disclosure made sense while Ferrox's
-                      managed broker was the default and bringing your own key
-                      was the exotic case. It is not the default any more —
-                      connected apps need the person's own project key — so
-                      hiding the only way to switch them on behind a collapsed
-                      summary hid the feature itself. */}
-                  <ApiKeyRow section="composio" />
-                  <ApiKeyRow section="box" />
-                  <VpsConnection />
-                  <details className="border-t border-hairline/40 pt-2">
-                    <summary className="min-h-11 cursor-pointer py-3 text-[13px] text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">Advanced: Add or replace keys</summary>
-                    <PasteKeys />
-                  </details>
-                </div>
-              </Card>
-            )}
-
-            {desktop === true && section === "models" && <ModelsSettings />}
-
-            {desktop === true && section === "engines" && (
-              <>
-                <Card title="Your engines" subtitle="Install, connect and update the software that runs your bots. Manage provider keys and model catalogs under Models.">
-                  <EnginesSettings />
-                </Card>
-              </>
-            )}
-
-            {desktop === true && section === "channels" && <div className="space-y-4"><TelegramSettings /><SlackSettings /><DiscordSettings /></div>}
-
-            {desktop === true && section === "companion" && <CompanionSection profileEmail={state.config?.profile?.email} />}
-
-            {desktop === true && section === "computer" && <LocalComputerSection />}
-
-            {desktop === true && section === "skills" && <SkillsSettings />}
-
-            {desktop === true && section === "houseRules" && <HouseRulesSettings />}
 
             {desktop === true && section === "aboutMe" && <AboutMeSettings />}
 
+            {desktop === true && section === "botDefaults" && (
+              <>
+                <NewBotEffortRow />
+                <ToolCallsRow />
+                <ProjectAutonomySetting />
+                <Card title="Channel turns" subtitle="Stop a bot that goes quiet in a channel. Use Stop to end a reply yourself.">
+                  <RoomTurnTimeoutSettings />
+                </Card>
+                <StarterProfiles />
+              </>
+            )}
+
+            {desktop === true && section === "houseRules" && <HouseRulesSettings />}
+
+            {desktop === true && section === "skills" && <SkillsSettings />}
+
+            {desktop === true && section === "memory" && <LazyBoundary inline onRetry={MemorySection.retry}><Suspense fallback={<p role="status" className="text-[13px] text-ink-secondary">Loading memory settings…</p>}><MemorySection.Component /></Suspense></LazyBoundary>}
+
+            {desktop === true && section === "models" && (
+              <>
+                <ModelsSettings />
+                {/* PasteKeys already files each pasted key under the section
+                    that owns it, so it can sit with the keys people paste
+                    most. Folded: most visits here are about models. */}
+                <details id="paste-any-keys" className="group rounded-xl bg-card p-4">
+                  <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">
+                    <span className="min-w-0">
+                      <span className="block text-[15px] font-medium text-ink">{t("settings.models.pasteTitle")}</span>
+                      <span className="mt-0.5 block text-[13px] leading-relaxed text-ink-secondary">{t("settings.models.pasteNote")}</span>
+                    </span>
+                    <ChevronDown size={16} aria-hidden="true" className="shrink-0 text-ink-secondary transition-transform group-open:rotate-180" />
+                  </summary>
+                  <div className="mt-4">
+                    <PasteKeys />
+                  </div>
+                </details>
+              </>
+            )}
+
+            {desktop === true && section === "engines" && (
+              <Card title="Your engines" subtitle="Install, connect and update the software that runs your bots. Manage provider keys and model catalogs under Models.">
+                <EnginesSettings />
+              </Card>
+            )}
+
+            {desktop === true && section === "images" && <ImagesSettings />}
+
+            {desktop === true && section === "webSearch" && <SearchSettings />}
+
+            {desktop === true && section === "voice" && (
+              <Card title={t("settings.voice.title")} subtitle={t("settings.voice.note")}>
+                <TranscriptionSettings />
+              </Card>
+            )}
+
+            {desktop === true && section === "connections" && <ConnectedAppsSettings />}
+
+            {desktop === true && section === "computer" && <ComputerAndBrowserSettings />}
+
+            {desktop === true && section === "channels" && <div className="space-y-4"><TelegramSettings /><SlackSettings /><DiscordSettings /><WhatsAppSettings /></div>}
+
+            {desktop === true && section === "companion" && <><CompanionSection profileEmail={state.config?.profile?.email} /><ScriptAccessSettings bots={state.bots} /></>}
+
+            {desktop === true && section === "backups" && <BackupSettings />}
+
             {section === "usage" && <UsageSection />}
+
+            {section === "about" && (
+              <>
+                <UpdatesRow />
+                <WhatsNewRow />
+                {desktop === true && <AnnouncementsSettings />}
+                <DiagnosticsRow />
+                {desktop === true && <SetupAgainRow />}
+                <ShortcutsRow />
+                <SourceCodeRow />
+              </>
+            )}
+
+            {desktop === true && section === "experimental" && <ExperimentalFeaturesRow />}
           </div>
         </div>
       </div>

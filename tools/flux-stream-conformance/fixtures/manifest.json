@@ -1,0 +1,249 @@
+[
+{
+  "id": "f01-plain",
+  "text": "What's the weather like in Bangkok today?",
+  "segments_text": [
+    "What's the weather like in Bangkok today?"
+  ],
+  "expected_turns": 1,
+  "class": "plain",
+  "speech_segments": [
+    [
+      10,
+      2070
+    ]
+  ],
+  "speech_end_ms": 2070,
+  "duration_ms": 2115,
+  "sha256": "d98c0495187b7fa5c7dd149ce52a29d037b367792cecf8c5db16fd95e0f0b149",
+  "keyterms": []
+},
+{
+  "id": "f02-comma",
+  "text": "My favourite movies are Blues Brothers, and Heartbreak Ridge.",
+  "segments_text": [
+    "My favourite movies are Blues Brothers,",
+    "and Heartbreak Ridge."
+  ],
+  "expected_turns": 1,
+  "class": "pause",
+  "speech_segments": [
+    [
+      0,
+      2060
+    ],
+    [
+      3280,
+      4340
+    ]
+  ],
+  "speech_end_ms": 4340,
+  "duration_ms": 4393,
+  "sha256": "3e5ecd4960cb1d4feaecb35550933bf4610ffd4896a4aa95424f51f656738367",
+  "keyterms": []
+},
+{
+  "id": "f03-list",
+  "text": "Blues Brothers, Trading Places, and Ghostbusters.",
+  "segments_text": [
+    "Blues Brothers,",
+    "Trading Places,",
+    "and Ghostbusters."
+  ],
+  "expected_turns": 1,
+  "class": "pause",
+  "speech_segments": [
+    [
+      10,
+      810
+    ],
+    [
+      1780,
+      2710
+    ],
+    [
+      3670,
+      4660
+    ]
+  ],
+  "speech_end_ms": 4660,
+  "duration_ms": 4753,
+  "sha256": "62264466dd22255e9b22b5d5f957d77c444761543b687d753786ec07ee9f8fff",
+  "keyterms": []
+},
+{
+  "id": "f04-clause",
+  "text": "I wouldn't say cliche because most people never actually watch it.",
+  "segments_text": [
+    "I wouldn't say cliche because most people",
+    "never actually watch it."
+  ],
+  "expected_turns": 1,
+  "class": "pause",
+  "speech_segments": [
+    [
+      10,
+      2200
+    ],
+    [
+      3500,
+      4810
+    ]
+  ],
+  "speech_end_ms": 4810,
+  "duration_ms": 4907,
+  "sha256": "176c3cd26c7da7ffc541d5f12857f47fb54b238de2be5cd01c32cbd22936d29a",
+  "keyterms": []
+},
+{
+  "id": "f05-tail",
+  "text": "I appreciate that, and dead on the money across the board there.",
+  "segments_text": [
+    "I appreciate that, and dead on the money",
+    "across the board there."
+  ],
+  "expected_turns": 1,
+  "class": "pause",
+  "speech_segments": [
+    [
+      0,
+      2330
+    ],
+    [
+      3430,
+      4580
+    ]
+  ],
+  "speech_end_ms": 4580,
+  "duration_ms": 4617,
+  "sha256": "da81ac2d96666d10dc51a2d7ac0d6d8fab264205802e71e4e5d639899df241a2",
+  "keyterms": []
+},
+{
+  "id": "f06-frame",
+  "text": "Put yourself in the fixer frame and think about strengths.",
+  "segments_text": [
+    "Put yourself in the fixer frame",
+    "and think about strengths."
+  ],
+  "expected_turns": 1,
+  "class": "pause",
+  "speech_segments": [
+    [
+      10,
+      1710
+    ],
+    [
+      2710,
+      4090
+    ]
+  ],
+  "speech_end_ms": 4090,
+  "duration_ms": 4178,
+  "sha256": "5a0bb09f666f9ab3ba9e76a213ea7368b39d1cdf1fabeaf0a493e05b57cbe4bc",
+  "keyterms": []
+},
+{
+  "id": "f07-two",
+  "text": "Tell me a joke. Actually, make it about cats.",
+  "segments_text": [
+    "Tell me a joke.",
+    "Actually, make it about cats."
+  ],
+  "expected_turns": 2,
+  "class": "plain",
+  "speech_segments": [
+    [
+      0,
+      780
+    ],
+    [
+      4560,
+      6560
+    ]
+  ],
+  "speech_end_ms": 6560,
+  "duration_ms": 6629,
+  "sha256": "ec693c1f675cf31d67e758c1252cc5086f4b5f417c83c7b3a272b13bd76e3ba4",
+  "keyterms": []
+},
+{
+  "id": "f08-stop",
+  "text": "Stop.",
+  "segments_text": [
+    "Stop."
+  ],
+  "expected_turns": 1,
+  "class": "plain",
+  "speech_segments": [
+    [
+      20,
+      440
+    ]
+  ],
+  "speech_end_ms": 440,
+  "duration_ms": 525,
+  "sha256": "5fc101bc7fd50e9f6ab91b64282cbc99cb4eece36ed171c872ca797c72e19db2",
+  "keyterms": []
+},
+{
+  "id": "f09-backchannel",
+  "text": "Uh-huh.",
+  "segments_text": [
+    "Uh-huh."
+  ],
+  "expected_turns": 1,
+  "class": "plain",
+  "speech_segments": [
+    [
+      10,
+      530
+    ]
+  ],
+  "speech_end_ms": 530,
+  "duration_ms": 552,
+  "sha256": "72c7a99d78822a8fa16a87080f165b37c736a16cfb84e8b08d1089a6feeb8acf",
+  "keyterms": []
+},
+{
+  "id": "f10-long",
+  "text": "I have been thinking about the trip for a while now and I would like to go somewhere warm in the winter, maybe the south of Thailand or somewhere in Vietnam, with good food and a quiet beach where I can read and swim every morning before it gets too hot to do anything at all.",
+  "segments_text": [
+    "I have been thinking about the trip for a while now and I would like to go somewhere warm in the winter, maybe the south of Thailand or somewhere in Vietnam, with good food and a quiet beach where I can read and swim every morning before it gets too hot to do anything at all."
+  ],
+  "expected_turns": 1,
+  "class": "long",
+  "speech_segments": [
+    [
+      10,
+      13880
+    ]
+  ],
+  "speech_end_ms": 13880,
+  "duration_ms": 13928,
+  "sha256": "ac629078cf5a0d05157ac8ad2b3c776350f28d68178631420a58b4686ff9e997",
+  "keyterms": []
+},
+{
+  "id": "f12-names",
+  "text": "Ask Sable about Heartbreak Ridge.",
+  "segments_text": [
+    "Ask Sable about Heartbreak Ridge."
+  ],
+  "expected_turns": 1,
+  "class": "plain",
+  "speech_segments": [
+    [
+      10,
+      1830
+    ]
+  ],
+  "speech_end_ms": 1830,
+  "duration_ms": 1889,
+  "sha256": "656aa90b60b72137ba4458f8a6580c119eb4f4d065e692bf99071574a400996e",
+  "keyterms": [
+    "Sable"
+  ]
+},
+{"id":"f11-silence","text":"","segments_text":[],"expected_turns":0,"class":"silence","speech_segments":[],"speech_end_ms":0,"duration_ms":8000,"sha256":"24a046dc04fefdb652e4077b41162490b344a4dd45f918505477f84c592f3070","keyterms":[]}
+]

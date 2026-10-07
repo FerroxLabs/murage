@@ -18,7 +18,7 @@ trigger_phrases: >-
   transform my body in 3 months I want to start working out build a fitness
   routine
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: fitness workout-planning nutrition health-wellness step-by-step planning
   category: life-event

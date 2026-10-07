@@ -6,7 +6,7 @@ description: |
   Do NOT use for yoga sequence design (use yoga-routine-builder), injury rehabilitation stretching, or foam rolling and self-myofascial release protocols.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "yoga fitness guide"
   category: "health-wellness"

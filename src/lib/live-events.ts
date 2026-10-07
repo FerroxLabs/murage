@@ -123,6 +123,28 @@ export function desktopSurfaceHeaders(): Record<string, string> {
   return desktopSecret ? { [SURFACE_SECRET_HEADER]: desktopSecret } : {};
 }
 
+/** What a request to a conversation route needs from the desktop window: the
+ * surface mark and the per-launch proof. The harness answers a conversation
+ * route that carries neither with 404 "no such route" (server/route-policy.ts).
+ * A phone has no proof and is let in by its companion, so the extra headers
+ * change nothing for it. */
+export function desktopCallerHeaders(): Record<string, string> {
+  return { "x-murage-surface": "desktop", ...desktopSurfaceHeaders() };
+}
+
+/** A same-origin /api URL that a browser loads on its own (<img src>, an
+ * audio or download link) cannot send headers, so the proof rides in the
+ * query, the way the live stream's does. Anything that is not a local /api
+ * path, and every renderer that holds no secret (a phone, a paired browser),
+ * gets the URL back unchanged. */
+export function desktopResourceUrl<T extends string | null | undefined>(url: T): T | string {
+  if (typeof url !== "string" || !url.startsWith("/api/") || !desktopSecret) return url;
+  const hash = url.indexOf("#");
+  const base = hash < 0 ? url : url.slice(0, hash);
+  const params = new URLSearchParams({ surface: "desktop", [SURFACE_SECRET_QUERY]: desktopSecret });
+  return `${base}${base.includes("?") ? "&" : "?"}${params}${hash < 0 ? "" : url.slice(hash)}`;
+}
+
 /** Resolve the secret and remember it; refresh before a replacement stream.
  *
  * Called before the first hydration fetch and before the stream opens. It

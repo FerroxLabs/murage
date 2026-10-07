@@ -10,7 +10,12 @@ export const FULL_ACCESS_STOP_LINE =
   "It still asks before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords.";
 
 export const FULL_ACCESS_STILL_ASKS =
-  "Turns started by webhooks still ask, as they do in Auto, and image generation still asks first.";
+  "Turns started by webhooks still ask, as they do in Auto.";
+
+/** Images follow the level now (server/image-approval.ts): made without a card in
+ * the owner's own conversations and routines, with a record, unless the bot's Images setting says otherwise. */
+export const FULL_ACCESS_IMAGES =
+  "It also makes images without asking in your own conversations and routines, and leaves a record of each. Change that under Images in Bot settings.";
 
 /** Which level the dialog switches on: a conversation's (the composer chip),
  * the bot's own (Bot settings), or one routine's. A routine run is judged at
@@ -75,7 +80,7 @@ export function FullAccessWarning({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
       onMouseDown={(event) => event.target === event.currentTarget && onCancel()}
     >
       <div
@@ -97,6 +102,7 @@ export function FullAccessWarning({
               {onThisComputer && <p>{FULL_ACCESS_ON_THIS_COMPUTER}</p>}
               {scope && <p>{fullAccessScopeNote(scope)}</p>}
               <p>{FULL_ACCESS_STILL_ASKS}</p>
+              <p>{FULL_ACCESS_IMAGES}</p>
               <p>{FULL_ACCESS_ASKS_UNLESS_ALLOWED}</p>
               <p>You are asked this once for this bot. Switch back to {level === "unlimited" ? "Full access, " : ""}Auto or Ask at any time.</p>
             </div>

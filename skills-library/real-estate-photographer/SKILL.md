@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of real estate photographer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design photography template guide quick-reference cloud performing-arts gardening"
   category: "design-creative"

@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of virtual team builder or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "time-management budgeting checklist template api-design game-design video-production presentation"
   category: "productivity"

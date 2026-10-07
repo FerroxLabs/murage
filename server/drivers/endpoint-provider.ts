@@ -15,7 +15,7 @@ export function endpointProvider(url: string): ProviderPreset | undefined {
   } catch {
     return undefined;
   }
-  return (Object.keys(PROVIDER_PRESETS) as ProviderPreset[]).find((preset) => {
+  return (Object.keys(PROVIDER_PRESETS) as (keyof typeof PROVIDER_PRESETS)[]).find((preset) => {
     const presetHost = new URL(PROVIDER_PRESETS[preset].baseUrl).hostname;
     return host === presetHost || host.endsWith(`.${presetHost}`);
   });

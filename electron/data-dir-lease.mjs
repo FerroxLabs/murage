@@ -210,6 +210,19 @@ const fail = (code, io) => new DataDirLeaseError(code, io);
 const absent = (error) => error?.code === "ENOENT";
 const localHost = () => hostname();
 
+/** Whether a record was written on this computer. The hostname alone cannot
+ * say: macOS renames the host when it joins another network, so a lease left
+ * by a crash on one network looked like another machine's on the next and the
+ * app refused to start until the file was deleted by hand (upstream #2018).
+ * The boot session id proves it too: it is random per boot, so no two
+ * computers share one. A record from an earlier boot under another name
+ * cannot be told apart from another computer's and still fails closed. */
+function sameMachine(record) {
+  if (record.host === localHost()) return true;
+  const boot = bootSession();
+  return boot !== null && typeof record.boot === "string" && record.boot === boot;
+}
+
 function withoutWindowsNamespace(path) {
   if (process.platform !== "win32") return path;
   if (/^\\\\\?\\UNC\\/i.test(path)) return `\\\\${path.slice(8)}`;
@@ -322,6 +335,11 @@ const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
 const sameOwner = (a, b) => Boolean(a && b && a.pid === b.pid && a.host === b.host && a.token === b.token && a.createdAt === b.createdAt
   && a.boot === b.boot && a.uptime === b.uptime);
 
+/** The record named by this path changed or went away while it was being
+ * read: another contender is publishing, retiring or releasing it. That is
+ * an election in progress, not a broken lease; claim() reads it again. */
+const racedRead = (code) => Object.assign(fail(code), { raced: true });
+
 /** No follow, no unbounded allocation, no special-file open, no raw causes. */
 function readRecord(path, reaperTarget, validate = (value) => isOwner(value, reaperTarget)) {
   let before;
@@ -331,9 +349,11 @@ function readRecord(path, reaperTarget, validate = (value) => isOwner(value, rea
   if ((before.mode & 0o444) === 0) throw fail("LEASE_UNREADABLE");
   let fd;
   try {
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    try { fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)); }
+    catch (error) { if (absent(error)) throw racedRead("LEASE_UNREADABLE"); throw error; }
     const opened = fstatSync(fd);
-    if (!opened.isFile() || !sameFile(before, opened)) throw fail("LEASE_INVALID");
+    if (!opened.isFile()) throw fail("LEASE_INVALID");
+    if (!sameFile(before, opened)) throw racedRead("LEASE_INVALID");
     const buffer = Buffer.alloc(MAX_RECORD_BYTES + 1);
     let length = 0;
     while (length < buffer.length) {
@@ -342,10 +362,13 @@ function readRecord(path, reaperTarget, validate = (value) => isOwner(value, rea
       length += count;
     }
     if (length > MAX_RECORD_BYTES) throw fail("LEASE_INVALID");
-    const after = lstatSync(path);
+    let after;
+    try { after = lstatSync(path); }
+    catch (error) { if (absent(error)) throw racedRead("LEASE_UNREADABLE"); throw error; }
     const final = fstatSync(fd);
-    if (!after.isFile() || after.isSymbolicLink() || !sameFile(opened, after)
-      || opened.size !== final.size || opened.mtimeMs !== final.mtimeMs || length !== final.size) throw fail("LEASE_INVALID");
+    if (!after.isFile() || after.isSymbolicLink()) throw fail("LEASE_INVALID");
+    if (!sameFile(opened, after)) throw racedRead("LEASE_INVALID");
+    if (opened.size !== final.size || opened.mtimeMs !== final.mtimeMs || length !== final.size) throw fail("LEASE_INVALID");
     let value;
     try { value = JSON.parse(buffer.subarray(0, length).toString("utf8")); }
     catch { throw fail("LEASE_INVALID"); }
@@ -420,7 +443,7 @@ function claimReaper(leasePath, target) {
     if (publishRecord(path, candidate)) return true;
     const current = readRecord(path, target.token)?.owner;
     if (!current) continue;
-    if (current.host !== localHost()) throw fail("LEASE_FOREIGN_HOST");
+    if (!sameMachine(current)) throw fail("LEASE_FOREIGN_HOST");
     if (ownerIsAlive(current)) return false;
     const digest = createHash("sha256").update(current.token).digest("hex").slice(0, 32);
     path = `${leasePath}.reap-${target.token}-${digest}`;
@@ -432,7 +455,7 @@ function retireDeadOwner(path, expected) {
   if (!claimReaper(path, expected)) throw fail("LEASE_RECOVERY_BUSY");
   const current = readRecord(path)?.owner;
   if (!current || !sameOwner(current, expected)) return;
-  if (current.host !== localHost()) throw fail("LEASE_FOREIGN_HOST");
+  if (!sameMachine(current)) throw fail("LEASE_FOREIGN_HOST");
   if (ownerIsAlive(current, path)) throw fail("LEASE_BUSY");
   removeOwnedRecord(path, expected);
   removeIdentity(path, expected);
@@ -441,7 +464,7 @@ function retireDeadOwner(path, expected) {
 function assertNoLiveChild(paths) {
   const child = readRecord(paths.childLeasePath)?.owner;
   if (!child) return;
-  if (child.host !== localHost()) throw fail("LEASE_FOREIGN_HOST");
+  if (!sameMachine(child)) throw fail("LEASE_FOREIGN_HOST");
   if (ownerIsAlive(child, paths.childLeasePath)) throw fail("LEASE_CHILD_BUSY");
 }
 
@@ -469,18 +492,18 @@ export function inspectDataDirLease(dataDir) {
     // and only a dead primary requires traversing its immutable reapers.
     const child = read(paths.childLeasePath, "child");
     if (child) {
-      if (child.host !== host) return result("blocked", "LEASE_FOREIGN_HOST");
+      if (!sameMachine(child)) return result("blocked", "LEASE_FOREIGN_HOST");
       if (ownerIsAlive(child, paths.childLeasePath)) return result("blocked", "LEASE_CHILD_BUSY");
     }
     const primary = read(paths.leasePath, "primary");
     if (primary) {
-      if (primary.host !== host) return result("blocked", "LEASE_FOREIGN_HOST");
+      if (!sameMachine(primary)) return result("blocked", "LEASE_FOREIGN_HOST");
       if (ownerIsAlive(primary, paths.leasePath)) return result("blocked", "LEASE_BUSY");
       let path = `${paths.leasePath}.reap-${primary.token}`;
       for (let generation = 0; generation < MAX_REAPER_GENERATIONS; generation++) {
         const reaper = read(path, "reaper", primary.token);
         if (!reaper) break;
-        if (reaper.host !== host) return result("blocked", "LEASE_FOREIGN_HOST");
+        if (!sameMachine(reaper)) return result("blocked", "LEASE_FOREIGN_HOST");
         if (ownerIsAlive(reaper)) return result("blocked", "LEASE_RECOVERY_BUSY");
         if (generation === MAX_REAPER_GENERATIONS - 1) return result("blocked", "LEASE_RECOVERY_LIMIT");
         const digest = createHash("sha256").update(reaper.token).digest("hex").slice(0, 32);
@@ -504,11 +527,14 @@ function claim(path, guard = () => {}) {
       catch (error) { removeOwnedRecord(path, owner); throw error; }
       return owner;
     }
-    const current = readRecord(path)?.owner;
+    let current;
+    try { current = readRecord(path)?.owner; }
+    catch (error) { if (error?.raced) continue; throw error; }
     if (!current) continue;
-    if (current.host !== owner.host) throw fail("LEASE_FOREIGN_HOST");
+    if (!sameMachine(current)) throw fail("LEASE_FOREIGN_HOST");
     if (ownerIsAlive(current, path)) throw fail("LEASE_BUSY");
-    retireDeadOwner(path, current);
+    try { retireDeadOwner(path, current); }
+    catch (error) { if (!error?.raced) throw error; }
   }
   throw fail("LEASE_RECOVERY_LIMIT");
 }
@@ -579,7 +605,7 @@ export function acquireDataDirLeaseForProcess(dataDir, environment = process.env
   const validateParent = () => {
     const owner = readRecord(paths.leasePath)?.owner;
     if (!owner || owner.pid !== Number(match[1]) || owner.token !== match[2]
-      || owner.host !== localHost() || !ownerIsAlive(owner)) throw fail("LEASE_DELEGATION_INVALID");
+      || !sameMachine(owner) || !ownerIsAlive(owner)) throw fail("LEASE_DELEGATION_INVALID");
     assertNotClosing(paths, owner);
   };
   validateParent();

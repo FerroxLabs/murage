@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about C# project setup (use `csharp-project-setup`), C# async (use `csharp-async-patterns`), C# testing (use `csharp-testing-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "csharp backend frameworks"
   category: "software-engineering"

@@ -82,7 +82,7 @@ posixOnly("a handoff to a teammate who was next in the same channel", () => {
     const transcript = await messages(room.threadId);
     expect(transcript.some((message) => message.tool?.name?.includes("retry 2/"))).toBe(false);
     // Maple, still waiting her turn when Ember handed off, is held until her
-    // own room reply: the handoff never costs her that turn (0.1.61 room transcript fix).
+    // own room reply: the handoff never costs her that turn (0.1.61).
     expect(transcript.some((message) => message.tool?.name?.includes("skipped this round"))).toBe(false);
     expect(transcript.some((message) => message.kind === "text" && message.from?.botId === maple.id && !String(message.text).startsWith("@Maple replied"))).toBe(true);
     expect(transcript.filter((message) => message.delegationWait)).toEqual([]);

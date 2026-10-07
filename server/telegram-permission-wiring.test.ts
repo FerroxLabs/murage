@@ -18,9 +18,10 @@ function channelApprovalActions(store: object, askMessageByRequest: Map<string, 
   const owner = { personId: "workspace-owner", bindingId: "owner", revision: 1 };
   const resolveHumanBinding = (id: string) => { if (id !== "owner") throw new Error("HUMAN_LINK_REQUIRED"); return owner; };
   const channelHumanIsOwner = (id: string | undefined) => id === "owner";
-  const humanTask = (_store: unknown, _botId: string, principal: typeof owner) => principal === owner ? { threadId: "thread" } : null;
-  return new Function("store", "askMessageByRequest", "createHash", "redactSecretsInText", "answerRequest", "isQuestionCard", "questionsForCard", "questionReply", "channelHumanIsOwner", "humanTask", "resolveHumanBinding", `return ${expression}("bot", arguments[11]);`)(
-    store, askMessageByRequest, createHash, (text: string) => text, answerRequest, isQuestionCard, questionsForCard, questionReply, channelHumanIsOwner, humanTask, resolveHumanBinding, binding);
+  // audienceTask (execution-audience.ts) replaced humanTask here: the owner's task projection of the bot.
+  const audienceTask = (_store: unknown, _botId: string, principal: typeof owner) => principal === owner ? { threadId: "thread" } : null;
+  return new Function("store", "askMessageByRequest", "createHash", "redactSecretsInText", "answerRequest", "isQuestionCard", "questionsForCard", "questionReply", "channelHumanIsOwner", "audienceTask", "resolveHumanBinding", `return ${expression}("bot", arguments[11]);`)(
+    store, askMessageByRequest, createHash, (text: string) => text, answerRequest, isQuestionCard, questionsForCard, questionReply, channelHumanIsOwner, audienceTask, resolveHumanBinding, binding);
 }
 it("actual root approval actions bind live card, instance and thread and resolve only once", async () => {
   const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
@@ -48,6 +49,15 @@ it("actual root approval actions bind live card, instance and thread and resolve
   expect(await actions.resolve(changed, "allow")).toBe(true);
   expect(await actions.resolve(changed, "allow")).toBe(false);
   expect(answerRequest).toHaveBeenCalledExactlyOnceWith("thread", "claude", "request", "allow", undefined, { id: "bot", name: "Fixture" });
+});
+it("a card whose tool input was cut is never offered on Telegram (full review stays in-app)", () => {
+  const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
+  const message = { id: "card", card: { requestId: "request", tool: "Bash", subtitle: "ls", toolInputTruncated: undefined as boolean | undefined, answered: undefined as string | undefined } };
+  const store = { bot: () => bot, workspaceChief: () => bot, messagesFor: () => [message], projectBotForTask: () => bot };
+  const actions = channelApprovalActions(store, new Map([["thread:request", "card"]]), vi.fn(), () => ({ kind: "none" }), () => "owner");
+  expect(actions.pending()).toHaveLength(1);
+  message.card.toolInputTruncated = true;
+  expect(actions.pending()).toEqual([]);
 });
 it("normalizes callbacks only from identifiable humans in private chats", () => {
   const callback = { id: "cb", from: { id: 7, is_bot: false }, message: { message_id: 3, chat: { id: 7, type: "private" } }, data: "nonce:a" };

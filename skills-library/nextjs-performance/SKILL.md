@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user needs a different web development capability -- check sibling skills in the web development subcategory.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "typescript frameworks optimization web-development"
   category: "web-development"

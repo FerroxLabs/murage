@@ -1,0 +1,11 @@
+import type { ProviderProtocol, SignInPreset } from "../shared/provider-connections.ts";
+export const SIGNIN_PRESETS: Readonly<Record<SignInPreset, { label: string; baseUrl: string; catalogUrl: string; protocol: ProviderProtocol }>>;
+export const SIGNIN_CONNECTION_IDS: Readonly<Record<SignInPreset, string>>;
+export const SIGNIN_PROVIDERS: readonly SignInPreset[];
+export const SIGNIN_FLAG_ENV: Readonly<Record<SignInPreset, string>>;
+export function signInProviderEnabled(provider: unknown, env?: Record<string, string | undefined>): boolean;
+export function isSignInPreset(value: unknown): value is SignInPreset;
+export function signInProviderForConnection(id: string): SignInPreset | null;
+export const CHATGPT_ORIGINATOR: "codex_cli_rs";
+export const CHATGPT_USER_AGENT: string;
+export const CHATGPT_IDENTITY_HEADERS: Readonly<{ originator: string; "user-agent": string }>;

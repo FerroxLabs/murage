@@ -40,14 +40,14 @@ describe("the + menu", () => {
     // "New Project" sits next to "New Channel", because a project IS a
     // channel with a purpose and the two are chosen in the same breath.
     expect(text(html)).toEqual(["New Bot", "New Team", "New Channel", "A chat with some bots.",
-      "New Project", "A piece of work with its own goal, files and chat.", "Export bots…", "Archived bots", "3"]);
+      "New Project", "A place for work, files and chat. A goal is optional.", "Export bots…", "Archived bots", "3"]);
     expect(html.indexOf("New Project")).toBeLessThan(html.indexOf('role="separator"'));
     expect(html.indexOf('role="separator"')).toBeLessThan(html.indexOf("Export bots…"));
   });
 
   it("shows Archived bots only when there are some", () => {
     expect(text(menu(0))).toEqual(["New Bot", "New Team", "New Channel", "A chat with some bots.",
-      "New Project", "A piece of work with its own goal, files and chat.", "Export bots…"]);
+      "New Project", "A place for work, files and chat. A goal is optional.", "Export bots…"]);
   });
 });
 

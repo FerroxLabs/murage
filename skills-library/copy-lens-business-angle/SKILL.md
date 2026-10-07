@@ -1,8 +1,9 @@
 ---
 name: copy-lens-business-angle
 description: "**Lens mode.** Source authority: Codie Sanchez's \"boring business\" framing — money, ownership, and operational reality as the primary story."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "copy"
 ---

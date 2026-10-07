@@ -348,3 +348,13 @@ describe("GFM tables", () => {
     expect(editor.getMarkdown()).toBe("| a   |\n| --- |\n| 1   |");
   });
 });
+
+// Audit (0.1.61 polish): `<123@example.com>` is a Markdown email autolink
+// even though it starts with a digit, so its `<` must stay escaped.
+describe("minimal text escapes keep an email autolink literal", () => {
+  it("leaves &lt; before an address escaped, and unescapes a plain less-than", async () => {
+    const { minimalTextEscapes } = await import("./markdown-fidelity");
+    expect(minimalTextEscapes("&lt;123@example.com&gt;")).toBe("&lt;123@example.com>");
+    expect(minimalTextEscapes("a &lt; 3")).toBe("a < 3");
+  });
+});

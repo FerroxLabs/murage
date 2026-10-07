@@ -209,6 +209,50 @@ describe("WebhookManager", () => {
     expect(h.manager.list()).toHaveLength(0);
   });
 
+  // MOCA-93: three was a code constant; a webhook fanning out a project
+  // manager's events got 429 from the fourth unfinished task on.
+  it("lets a webhook set how many unfinished tasks it may hold", () => {
+    const h = harness();
+    const { webhook, secret } = h.manager.create({ name: "PM events", prompt: "Handle it", botId: "ember-1", maxPendingRuns: 5 });
+    expect(webhook.maxPendingRuns).toBe(5);
+    h.setPending(4);
+    expect(h.manager.receive(webhook.endpointId, secret, { payload: {}, deliveryId: "fifth" })).toMatchObject({ duplicate: false });
+    h.setPending(5);
+    expect(() => h.manager.receive(webhook.endpointId, secret, { payload: {}, deliveryId: "sixth" }))
+      .toThrow(/already has 5 unfinished tasks \(its limit is 5\).*"Unfinished tasks at once"/);
+    try { h.manager.receive(webhook.endpointId, secret, { payload: {}, deliveryId: "sixth" }); } catch (error) {
+      expect((error as { status?: number }).status).toBe(429);
+    }
+
+    // Editing other settings keeps it; null goes back to the default of 3.
+    expect(h.manager.update(webhook.id, { name: "Renamed" })?.maxPendingRuns).toBe(5);
+    const reset = h.manager.update(webhook.id, { maxPendingRuns: null });
+    expect(reset).not.toHaveProperty("maxPendingRuns");
+    // Lowered below what is already unfinished: say both numbers.
+    expect(() => h.manager.receive(webhook.endpointId, secret, { payload: {}, deliveryId: "default" })).toThrow("already has 5 unfinished tasks (its limit is 3)");
+    h.setPending(3);
+    expect(() => h.manager.receive(webhook.endpointId, secret, { payload: {}, deliveryId: "default" })).toThrow("already has 3 unfinished tasks (its limit is 3)");
+    expect(h.manager.update(webhook.id, { maxPendingRuns: 1 })?.maxPendingRuns).toBe(1);
+    h.setPending(1);
+    expect(() => h.manager.receive(webhook.endpointId, secret, { payload: {}, deliveryId: "one" })).toThrow("already has 1 unfinished task (its limit is 1)");
+
+    // Survives a restart.
+    expect(new WebhookManager(h.options).list().find((candidate) => candidate.id === webhook.id)?.maxPendingRuns).toBe(1);
+  });
+
+  it("refuses an out-of-range limit, and reads a hand-edited one as the default", () => {
+    const h = harness();
+    for (const maxPendingRuns of [0, 51, 2.5, "10"]) {
+      expect(() => h.manager.create({ name: "Bad", prompt: "x", botId: "ember-1", maxPendingRuns } as never)).toThrow();
+    }
+    const { webhook } = h.manager.create({ name: "Good", prompt: "x", botId: "ember-1", maxPendingRuns: 7 });
+    const saved = JSON.parse(readFileSync(h.file, "utf8"));
+    saved.webhooks.find((candidate: { id: string }) => candidate.id === webhook.id).maxPendingRuns = 9_999;
+    writeFileSync(h.file, JSON.stringify(saved));
+    const reloaded = new WebhookManager(h.options).list();
+    expect(reloaded.find((candidate) => candidate.id === webhook.id)?.maxPendingRuns).toBeUndefined();
+  });
+
   it("filters event types, caps unfinished work, and rate-limits a noisy endpoint", () => {
     const h = harness();
     const { webhook, secret } = h.manager.create({ name: "Builds", prompt: "Review it", botId: "ember-1", eventTypes: ["push"] });

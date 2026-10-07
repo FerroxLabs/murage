@@ -4,8 +4,11 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { murageRenderPlugins } from "./scripts/vite-render-plugin";
 import { precompressPlugin } from "./scripts/compress-dist.mjs";
+import { resolveBuildCommit } from "./scripts/build-commit.mjs";
 
 export default defineConfig({
+  // The commit behind this build, for the About source link (null without git).
+  define: { __MURAGE_COMMIT__: JSON.stringify(resolveBuildCommit()) },
   // murageRenderPlugins: the sandboxed diagram frame page, and the lazy
   // katex/mermaid/dompurify imports that fall back to source when missing.
   // precompressPlugin: `.br`/`.gz` copies of hashed assets for the browser
@@ -23,6 +26,7 @@ export default defineConfig({
       "electron/**/*.test.mjs",
       "src/**/*.test.ts",
       "shared/**/*.test.ts",
+      "tools/**/*.test.ts",
       "companion/**/*.test.ts",
       "scripts/**/*.test.mjs",
     ],
@@ -53,6 +57,8 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: `http://127.0.0.1:${process.env.MURAGE_PORT || process.env.MURAGEBOX_PORT || 8799}`,
+        // the streaming voice websocket rides /api in dev
+        ws: true,
       },
     },
   },

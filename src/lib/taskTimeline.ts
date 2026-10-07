@@ -1,6 +1,7 @@
 import { hostStoppedReason } from "../../shared/host-stop.ts";
 import { folderTrustDisplayName } from "../../shared/folder-trust.ts";
 import { browserUnavailableDisplayName } from "../../shared/browser-unavailable.ts";
+import { imagesLeftOutDisplayName } from "../../shared/images-left-out.ts";
 import { imagesNotSentDisplayName } from "../../shared/turn-image-note.ts";
 
 /** The persisted message fields this pure projection needs. Keeping this
@@ -8,7 +9,7 @@ import { imagesNotSentDisplayName } from "../../shared/turn-image-note.ts";
 export interface TimelineMessage {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run";
+  kind: "text" | "options" | "activity" | "screen" | "connector" | "mcpSignIn" | "secret" | "routine.run" | "goal.run";
   text?: string;
   tool?: { name: string; ok?: boolean };
   png?: string;
@@ -48,7 +49,7 @@ export function timelineEvents(messages: TimelineMessage[]): TimelineEvent[] {
         continue;
       }
       // a folder-trust notice is observed the same way: not a run, not a failure
-      const trustNotice = folderTrustDisplayName(message.tool.name) ?? browserUnavailableDisplayName(message.tool.name) ?? imagesNotSentDisplayName(message.tool.name);
+      const trustNotice = folderTrustDisplayName(message.tool.name) ?? browserUnavailableDisplayName(message.tool.name) ?? imagesLeftOutDisplayName(message.tool.name, "This bot") ?? imagesNotSentDisplayName(message.tool.name);
       if (trustNotice) {
         events.push({ id: message.id, at: message.at, label: trustNotice, state: "observed", kind: "tool" });
         continue;

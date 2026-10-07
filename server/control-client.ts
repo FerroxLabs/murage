@@ -22,6 +22,9 @@
 // doesn't turn into two dozen loopback round trips. An unavailable reading
 // is never cached: the next call asks again.
 
+import { murageToolOnThisServer } from "./murage-tool-surface.ts";
+import { turnSecret, turnSecretWired } from "./turn-credential.ts";
+
 export interface ControlState {
   /** The person is driving; actions must be refused, not queued. */
   held: boolean;
@@ -52,26 +55,27 @@ const UNAVAILABLE: ControlState = Object.freeze({ held: false, helpOpen: false, 
 
 export function createControlClient(options?: {
   url?: string;
-  token?: string;
+  token?: string | (() => string);
   cacheMs?: number;
   /** Per-request deadline for the loopback read; defaults to 2 s. */
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }): ControlClient {
   const url = options?.url ?? process.env.MURAGE_CONTROL_URL ?? "";
-  const token = options?.token ?? process.env.MURAGE_CONTROL_TOKEN ?? "";
+  const tokenOption = options?.token;
+  const currentToken = () => (typeof tokenOption === "function" ? tokenOption() : tokenOption ?? turnSecret("MURAGE_CONTROL_TOKEN"));
   const cacheMs = options?.cacheMs ?? 750;
   const timeoutMs = options?.timeoutMs ?? 2_000;
   const fetchImpl = options?.fetchImpl ?? fetch;
-  const configured = Boolean(url && token);
-  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const configured = Boolean(url && (tokenOption || turnSecretWired("MURAGE_CONTROL_TOKEN")));
+  const headers = () => ({ authorization: `Bearer ${currentToken()}`, "content-type": "application/json" });
 
   let cachedAt = 0;
   let cached: ControlState = DISENGAGED;
 
   async function read(): Promise<ControlState> {
     try {
-      const res = await fetchImpl(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+      const res = await fetchImpl(url, { headers: headers(), signal: AbortSignal.timeout(timeoutMs) });
       if (!res.ok) return UNAVAILABLE;
       const body: unknown = await res.json().catch(() => null);
       // The harness always answers {held: boolean, helpOpen: boolean}. Any
@@ -105,7 +109,7 @@ export function createControlClient(options?: {
       try {
         const res = await fetchImpl(url, {
           method: "POST",
-          headers,
+          headers: headers(),
           body: JSON.stringify({ reason }),
           signal: AbortSignal.timeout(2_000),
         });
@@ -121,7 +125,7 @@ export function createControlClient(options?: {
       try {
         await fetchImpl(url, {
           method: "DELETE",
-          headers,
+          headers: headers(),
           body: JSON.stringify({ requestId }),
           signal: AbortSignal.timeout(2_000),
         });
@@ -139,7 +143,7 @@ export function createControlClient(options?: {
 export const CONTROL_REFUSAL =
   "A person has taken control of this computer, so this call was NOT performed. " +
   "Do not retry it: the screen is changing under their hands. " +
-  "Call computer_request_help (no reason needed) to wait for them to finish, " +
+  `Call ${murageToolOnThisServer("computer_request_help")} (no reason needed) to wait for them to finish, ` +
   "then take a fresh screenshot before your next action.";
 
 /** The bridge-gated computers (Local VM, VPS) speak Cua Driver's own tool

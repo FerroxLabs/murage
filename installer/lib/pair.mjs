@@ -174,6 +174,25 @@ export async function removeDevice({ port, id, send = controlRequest }) {
 }
 
 /**
+ * Let one paired device's browser make script access grants, or stop it (S1b
+ * R2). The owner's own browser on a headless box is the one that needs it.
+ * @param {{ port: number, id: string, allowed: boolean, send?: typeof controlRequest }} opts
+ * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
+ */
+export async function setScriptAccess({ port, id, allowed, send = controlRequest }) {
+  if (typeof id !== "string" || !/^[\w-]+$/.test(id)) return { ok: false, reason: "that is not a device id. Run `murage devices` to list them." };
+  let answer;
+  try {
+    answer = await send(port, allowed ? "POST" : "DELETE", `/devices/${id}/script-access`, 5_000);
+  } catch {
+    return { ok: false, reason: `nothing answered on the companion's control page, 127.0.0.1:${port}. Is \`murage start\` running?` };
+  }
+  if (answer.status === 200) return { ok: true };
+  if (answer.status === 404) return { ok: false, reason: "no paired device has that id. Run `murage devices` to list them." };
+  return { ok: false, reason: "the companion could not save that. Nothing was changed; try again." };
+}
+
+/**
  * Wait for the window to end, and say how.
  *
  * "Paired" is a device created after this window opened, rather than a count

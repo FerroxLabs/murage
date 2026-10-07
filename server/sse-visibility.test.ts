@@ -16,10 +16,13 @@ import {
   SURFACE_SECRET_QUERY,
   desktopSurfaceSecret,
   devDesktopSecretOffered,
+  frameAudience,
   frameSubject,
   requestSurface,
   subjectResolves,
   visibleToCompanion,
+  scopedConfig,
+  scopedConfigFrame,
   type FrameSubject,
   type VisibilityStore,
 } from "./sse-visibility.ts";
@@ -42,8 +45,9 @@ const world = (): VisibilityStore => {
     open: { id: "open", threads: ["t-open", "t-open-task"] },
     secret: { id: "secret", hidden: true, threads: ["t-secret", "t-secret-task"] },
   };
-  const groups: Record<string, { id: string; dm?: boolean; threads: string[] }> = {
+  const groups: Record<string, { id: string; dm?: boolean; hidden?: boolean; threads: string[] }> = {
     room: { id: "room", threads: ["t-room", "t-room-task"] },
+    archived: { id: "archived", hidden: true, threads: ["t-archived", "t-archived-task"] },
     chatter: { id: "chatter", dm: true, threads: ["t-dm"] },
   };
   return {
@@ -275,6 +279,9 @@ describe("frameSubject", () => {
     expect(frameSubject({ kind: "bot", bot: { id: "b1" } })).toEqual({ scope: "bot", botId: "b1" });
     expect(frameSubject({ kind: "group", group: { id: "g1" } })).toEqual({ scope: "group", groupId: "g1" });
     expect(frameSubject({ kind: "screen", botId: "b1" })).toEqual({ scope: "bot", botId: "b1" });
+    // lane E1: the room queue's invalidation carries its room, never text
+    expect(frameSubject({ kind: "room.requests", groupId: "g1", threadId: "t1" })).toEqual({ scope: "group", groupId: "g1" });
+    expect(frameSubject({ kind: "room.requests" })).toEqual({ scope: "workspace" });
   });
 
   it("treats a deletion as workspace-level", () => {
@@ -284,6 +291,38 @@ describe("frameSubject", () => {
     // and no content.
     expect(frameSubject({ kind: "bot.deleted", botId: "b1" })).toEqual({ scope: "workspace" });
     expect(frameSubject({ kind: "group.deleted", groupId: "g1" })).toEqual({ scope: "workspace" });
+  });
+
+  it("keeps a remembered entry's text on the desktop stream: a phone reads it from the chip list instead", () => {
+    const subject = frameSubject({ kind: "learning.remembered", botId: "b1", threadId: "t1", text: "The board meets on the first Tuesday" });
+    expect(subject).toEqual({ scope: "desktop" });
+    expect(frameAudience(subject, false)).toBe(true);
+    expect(frameAudience(subject, true)).toBe(false);
+  });
+
+  it("sends the removal for a hidden or archived record to the scoped streams only (S1b R4)", () => {
+    for (const payload of [{ kind: "group.deleted", groupId: "g1", audience: "remote" }, { kind: "bot.deleted", botId: "b1", audience: "remote" }]) {
+      const subject = frameSubject(payload);
+      expect(subject).toEqual({ scope: "remote" });
+      expect(frameAudience(subject, true)).toBe(true);
+      expect(frameAudience(subject, false)).toBe(false);
+    }
+  });
+
+  it("sends the whole sidebar order to the desktop and the cut one to scoped streams", () => {
+    // sidebar-order.ts: a phone is never told a team it cannot see. A frame
+    // that does not say `remote` is the whole order, so it fails closed.
+    const whole = frameSubject({ kind: "sidebar.order", order: ["section:Vault"] });
+    const cut = frameSubject({ kind: "sidebar.order", audience: "remote", order: [] });
+    expect(whole).toEqual({ scope: "desktop" });
+    expect(cut).toEqual({ scope: "remote" });
+    expect(frameAudience(whole, false)).toBe(true);
+    expect(frameAudience(whole, true)).toBe(false);
+    expect(frameAudience(cut, false)).toBe(false);
+    expect(frameAudience(cut, true)).toBe(true);
+    expect(frameAudience({ scope: "workspace" }, true)).toBeNull();
+    expect(visibleToCompanion(world(), whole)).toBe(false);
+    expect(subjectResolves(world(), whole)).toBe(true);
   });
 
   it("resolves an unfamiliar kind by convention rather than exempting it", () => {
@@ -373,6 +412,12 @@ describe("visibleToCompanion", () => {
     expect(visible({ scope: "group", groupId: "chatter" })).toBe(false);
   });
 
+  it("drops an archived room and its task threads, the way it drops a hidden bot (audit C1)", () => {
+    expect(visible({ scope: "group", groupId: "archived" })).toBe(false);
+    expect(visible({ scope: "thread", threadId: "t-archived" })).toBe(false);
+    expect(visible({ scope: "thread", threadId: "t-archived-task" })).toBe(false);
+  });
+
   it("fails closed on a subject it cannot resolve", () => {
     // A thread belonging to no bot and no room is one this surface has no
     // route to open, so dropping its frames costs nothing — and it is the
@@ -380,5 +425,23 @@ describe("visibleToCompanion", () => {
     expect(visible({ scope: "thread", threadId: "t-nowhere" })).toBe(false);
     expect(visible({ scope: "bot", botId: "gone" })).toBe(false);
     expect(visible({ scope: "group", groupId: "gone" })).toBe(false);
+  });
+});
+
+// 0.1.61 audit round 2 (Kimi M2): the owner's email and the VPS address stay
+// off every surface but the desktop, on GET /api/config and on the stream.
+describe("scoped configuration", () => {
+  it("blanks the owner's email and the VPS address and keeps the rest", () => {
+    const config = { xai: { configured: true }, profile: { name: "Sam", email: "sam@example.com" }, vps: { configured: true, sshAlias: "shop-vps" } };
+    expect(scopedConfig(config)).toEqual({ xai: { configured: true }, profile: { name: "Sam", email: "" }, vps: { configured: true, sshAlias: "" } });
+    const frame = `id: s:7\ndata: ${JSON.stringify({ kind: "config", ...config, seq: 7 })}\n\n`;
+    expect(scopedConfigFrame(frame)).not.toContain("sam@example.com");
+    expect(scopedConfigFrame(frame)).not.toContain("shop-vps");
+    expect(scopedConfigFrame(frame)).toContain('"name":"Sam"');
+    const other = `id: s:8\ndata: ${JSON.stringify({ kind: "message", text: "sam@example.com" })}\n\n`;
+    expect(scopedConfigFrame(other)).toBe(other);
+    // a field added later stays home until someone names it
+    expect(scopedConfig({ profile: { name: "Sam", email: "e", phone: "123" }, vps: { configured: true, sshAlias: "a", host: "h" } }))
+      .toEqual({ profile: { name: "Sam", email: "" }, vps: { configured: true, sshAlias: "" } });
   });
 });

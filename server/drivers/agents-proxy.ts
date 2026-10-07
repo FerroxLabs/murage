@@ -1,3 +1,5 @@
+import { murageToolOnThisServer } from "../murage-tool-surface.ts";
+import { PROJECT_TOOLS } from "./project-tool-schemas.ts";
 // Agent-to-agent comms MCP proxy — spawned as an MCP server inside a bot's
 // agent process (via the "agents" integration). Exposes peer, routine, and
 // skill tools routed back through the harness so the harness stays the
@@ -16,6 +18,7 @@
 //   list_routines()                       → inspect this bot's scheduled work
 //   propose_routine(...)                  → show a confirmation card for a new routine
 //   propose_routine_action(...)           → show a confirmation card for a routine change
+//   propose_outcome(note?)                → ask the owner whether this work closed (Won / Lost / Not yet)
 //
 // Speaks raw JSON-RPC 2.0 over stdio (no MCP SDK — house style, matches
 // computer-proxy / permission-proxy). All state comes from env, injected by
@@ -40,25 +43,23 @@ import { searchHelp, helpTopics } from "../../shared/help-search.ts";
 // reads no path and no env, so it does not disturb the bundled proxy's
 // anchoring invariant either.
 import { boundedAgentResult } from "./agents-result.ts";
-// Pure as well: how this turn's engine names these tools.
-import { TOOL_CALL_STYLE_ENV, TOOL_CALL_STYLE_HEADER, TOOL_SERVER_NAME_ENV, murageToolDescriptions, murageToolName, murageToolText, parseToolCallStyle } from "../../shared/murage-tool-names.ts";
 import { IMAGE_LIBRARY_ENV, IMAGE_LIBRARY_TOOLS } from "../../shared/image-library-audience.ts";
+import { turnSecret } from "../turn-credential.ts";
 
 const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
 const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
 const THREAD_ID = process.env.MURAGE_THREAD_ID ?? "";
-const TOKEN = process.env.MURAGE_COMMS_TOKEN ?? "";
+const token = () => turnSecret("MURAGE_COMMS_TOKEN");
 const DEPTH = Number(process.env.MURAGE_TURN_DEPTH ?? "0") || 0;
 const SKILL_AUTHORING_ENABLED = process.env.MURAGE_SKILL_AUTHORING_ENABLED === "1";
 /** Off on a turn whose audience is not the owner (shared/image-library-audience.ts). */
 const IMAGE_LIBRARY_ON = process.env[IMAGE_LIBRARY_ENV] !== "0";
-/** How this turn's engine calls these tools, set by the driver that mounted
- * this server (shared/murage-tool-names.ts). Unset: the bare name. */
-const STYLE = parseToolCallStyle(process.env[TOOL_CALL_STYLE_ENV]);
-const SERVER_NAME = process.env[TOOL_SERVER_NAME_ENV] || "agents";
-const callable = (name: string) => murageToolName(name, STYLE, SERVER_NAME);
-/** Only for text written here, never for a bot's, owner's or harness's data. */
-const authored = (text: string) => murageToolText(text, STYLE, ["agents"], { agents: SERVER_NAME });
+/** A project turn with the owner's audience (0.1.61 lane M): "lead" or
+ * "member". The listing is presentation only; the harness decides every
+ * call from current state (project-tool-routing.ts). "proposal" is the
+ * Chief's hidden New project turn (lane N): it lists project_propose and
+ * nothing else, and its capability reaches only that route. */
+const PROJECT_ROLE = process.env.MURAGE_PROJECT_ROLE === "lead" || process.env.MURAGE_PROJECT_ROLE === "member" || process.env.MURAGE_PROJECT_ROLE === "proposal" ? process.env.MURAGE_PROJECT_ROLE : "";
 const MAX_CREATED_PER_TURN = 4;
 /** Attached to every murage_help answer. Documentation is data: it describes
  * the product, it does not extend this bot's permissions or override the
@@ -261,7 +262,7 @@ const TOOLS = [
   { name: "register_artifact", description: "Save a completed report or deliverable into Murage Files. Create the real file inside the host-specified file workspace, which may differ from the engine's working directory, then register its relative path. Follow this turn's destination instructions: admitted managed outputs/ files are checked automatically after successful completion; other files and custom folders require this tool. Murage verifies and preserves bytes before showing a downloadable card. Do not pass absolute paths, private setup/memory files or credentials. A filename in prose is not a saved deliverable.", inputSchema: { type: "object", required: ["relative_path"], additionalProperties: false, properties: { relative_path: { type: "string", minLength: 1, maxLength: 4096 }, name: { type: "string", minLength: 1, maxLength: 200 } } } },
   { name: "send_voice_note", description: "Send the owner a voice note: Murage says `text` in your own voice (the voice set in your profile) and leaves it in this conversation as an audio message with the words as its caption. When the owner is talking to you from Telegram, Slack or Discord, it is sent there too. Use it when the owner asks for a voice note, audio or to hear something, or for a short spoken summary of an answer. Write it to be heard: plain sentences, no markdown, lists, links, code or tables; say numbers and dates the way a person would. At most 1,500 characters (about a minute and a half): summarise and leave detail in the chat. Hosted voices are billed per character, so at most three voice notes per turn.", inputSchema: { type: "object", required: ["text"], additionalProperties: false, properties: { text: { type: "string", minLength: 1, maxLength: 1500, description: "What to say, written to be spoken." }, title: { type: "string", minLength: 1, maxLength: 120, description: "Optional short title for the saved file." } } } },
   { name: "list_image_models", description: "List Murage's configured image connections, the selected default and every model with its own limits: prompt budget in characters (maxPromptChars), size rule in words and as data, qualities, output formats, reference cap (maxReferences), what it supports (edits, transparent background, seed, negative prompt, images per request) and how results are delivered. Limits differ per model, so read them here before writing a prompt. This checks metadata only; no image is generated. Image tools use server-owned keys, never a CLI subscription.", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "resolve_image_reference", description: "Prepare up to 16 reference images for an image edit, from this exact conversation only: an image attachment it already shows (uploaded by the person or generated earlier), a saved Files image of this conversation pinned by its sha256, or an image file inside this task's workspace named by its relative path (optionally pinned to a revision). Murage checks the exact bytes (PNG, JPEG or WebP; at most 10 MB each and 64 MB together), shows the prepared images in the conversation and returns their ids for generate_image reference_ids. Each model takes its own number of references: list_image_models gives maxReferences. If any source fails, none is prepared. Nothing is generated or billed. A reference image is not a numeric seed. Never pass absolute paths, URLs or another conversation's files.", inputSchema: { type: "object", required: ["sources"], additionalProperties: false, properties: {
+  { name: "resolve_image_reference", description: `Prepare up to 16 reference images for an image edit, from this exact conversation only: an image attachment it already shows (uploaded by the person or generated earlier), a saved Files image of this conversation pinned by its sha256, or an image file inside this task's workspace named by its relative path (optionally pinned to a revision). Murage checks the exact bytes (PNG, JPEG or WebP; at most 10 MB each and 64 MB together), shows the prepared images in the conversation and returns their ids for ${murageToolOnThisServer("generate_image")} reference_ids. Each model takes its own number of references: ${murageToolOnThisServer("list_image_models")} gives maxReferences. If any source fails, none is prepared. Nothing is generated or billed. A reference image is not a numeric seed. Never pass absolute paths, URLs or another conversation's files.`, inputSchema: { type: "object", required: ["sources"], additionalProperties: false, properties: {
     sources: { type: "array", minItems: 1, maxItems: 16, items: { type: "object", additionalProperties: false, properties: {
       attachment_id: { type: "string", maxLength: 180, description: "An image attachment name already in this conversation, e.g. the basename of an attached-image path or a generated image's referenceId." },
       artifact_id: { type: "string", description: "A saved Files image of this conversation; requires sha256." },
@@ -270,10 +271,10 @@ const TOOLS = [
       revision: { type: "string", maxLength: 256, description: "Optional workspace revision; a changed file is then refused." },
     } } },
   } } },
-  { name: "generate_image", description: "Create images, or edit reference images from this exact conversation. Murage shows the owner an approval card with the connection, model, size, image count, references and prompt length before any provider request. A request the chosen model cannot take (a prompt over its budget, or a size, quality, reference count or setting it does not support) is refused with the reason and the numbers before the card; nothing is ever cut or quietly changed. Limits differ per model: read them with list_image_models first. Ask for a shape with aspect_ratio and resolution, or exact width and height; fit exact renders the nearest size the model supports and crops it here to what you asked. When a prompt is over a model's budget, condense it yourself and pass condensed_from_chars. Saved prompt blocks (prompt_blocks) go first, in order, then the scene prompt; saved reference-pack images (reference_pack) come before reference_ids and count against the model's cap. Flux defaults to GPT Image 2.5 Flare high. Never pass keys, provider URLs, local paths or remote reference URLs. Keep request_id stable for the same logical request: repeating it resumes the same render and never starts a second one. Do not retry or switch connections after a timeout or uncertain result. Generated images are saved in this bot's private generated-images workspace, attached to this conversation and saved to Files. One image request per turn.", inputSchema: { type: "object", properties: {
+  { name: "generate_image", description: `Create images, or edit reference images from this exact conversation. Murage shows the owner an approval card with the connection, model, size, image count, references and prompt length before any provider request, unless this bot's level or its Images setting lets it make images without asking in this turn; then it leaves a record with the full prompt in the conversation instead and the request is made at once. A request the chosen model cannot take (a prompt over its budget, or a size, quality, reference count or setting it does not support) is refused with the reason and the numbers before the card; nothing is ever cut or quietly changed. Limits differ per model: read them with ${murageToolOnThisServer("list_image_models")} first. Ask for a shape with aspect_ratio and resolution, or exact width and height; fit exact renders the nearest size the model supports and crops it here to what you asked. When a prompt is over a model's budget, condense it yourself and pass condensed_from_chars. Saved prompt blocks (prompt_blocks) go first, in order, then the scene prompt; saved reference-pack images (reference_pack) come before reference_ids and count against the model's cap. Flux defaults to GPT Image 2.5 Flare high. Never pass keys, provider URLs, local paths or remote reference URLs. Keep request_id stable for the same logical request: repeating it resumes the same render and never starts a second one. Do not retry or switch connections after a timeout or uncertain result. Generated images are saved in this bot's private generated-images workspace, attached to this conversation and saved to Files. Where the card is shown, one image request per turn. When images are made without asking, several requests per turn are allowed: wait for each to finish, and never retry an uncertain one with a new request_id.`, inputSchema: { type: "object", properties: {
     request_id: {type:"string",minLength:1,maxLength:80,pattern:"^[\\w-]{1,80}$"}, prompt:{type:"string",minLength:1,maxLength:100000,description:"The scene prompt, sent whole after any prompt_blocks. Optional when prompt_blocks are given. The whole assembled prompt must fit the model's maxPromptChars."},
-    prompt_blocks:{type:"array",maxItems:8,items:{type:"string",maxLength:80,pattern:"^[a-z0-9][a-z0-9-]{0,63}(@[1-9][0-9]{0,8})?$"},description:"Saved prompt blocks, by name or name@version (see list_prompt_blocks), sent first in this order, each separated by a blank line."},
-    reference_pack:{type:"string",maxLength:80,pattern:"^[a-z0-9][a-z0-9-]{0,63}(@[1-9][0-9]{0,8})?$",description:"A saved reference pack, by name or name@version (see list_reference_packs). Its images come first, then reference_ids."},
+    prompt_blocks:{type:"array",maxItems:8,items:{type:"string",maxLength:80,pattern:"^[a-z0-9][a-z0-9-]{0,63}(@[1-9][0-9]{0,8})?$"},description:`Saved prompt blocks, by name or name@version (see ${murageToolOnThisServer("list_prompt_blocks")}), sent first in this order, each separated by a blank line.`},
+    reference_pack:{type:"string",maxLength:80,pattern:"^[a-z0-9][a-z0-9-]{0,63}(@[1-9][0-9]{0,8})?$",description:`A saved reference pack, by name or name@version (see ${murageToolOnThisServer("list_reference_packs")}). Its images come first, then reference_ids.`},
     operation:{type:"string",enum:["generate","edit"]},
     connection_id:{type:"string"},model:{type:"string"},quality:{type:"string",enum:["low","medium","high","xhigh","max"],description:"Checked against the model's qualities."},
     aspect_ratio:{type:"string",pattern:"^[0-9]{1,2}:[0-9]{1,2}$",description:"W:H with whole numbers 1 to 64, e.g. 9:16, 4:5, 1:1, 16:9."},
@@ -287,9 +288,9 @@ const TOOLS = [
     seed:{type:"integer",minimum:0,maximum:2147483647,description:"Only for models whose supports.seed is true."},
     negative_prompt:{type:"string",minLength:1,maxLength:2000,description:"What to keep out. Sent natively where the model supports it, otherwise added as an Avoid: line and counted in the prompt."},
     condensed_from_chars:{type:"integer",minimum:1,description:"When you condensed a longer prompt to fit this model: the original length. The card and result say so."},
-    reference_ids:{type:"array",maxItems:16,items:{type:"string"},description:"Image attachment ids already in this conversation (uploaded or generated) or ids returned by resolve_image_reference; never file paths. At most the model's maxReferences."}
+    reference_ids:{type:"array",maxItems:16,items:{type:"string"},description:`Image attachment ids already in this conversation (uploaded or generated) or ids returned by ${murageToolOnThisServer("resolve_image_reference")}; never file paths. At most the model's maxReferences.`}
   },required:["request_id"],additionalProperties:false } },
-  { name: "save_prompt_block", description: "Save a reusable part of an image prompt (a character, product or brand lock) under a name, in your own saved blocks. Each save is a new version; saving the same text again returns the version that already holds it. Use it in generate_image prompt_blocks. Nothing is generated.", inputSchema: { type: "object", required: ["name", "text"], additionalProperties: false, properties: {
+  { name: "save_prompt_block", description: `Save a reusable part of an image prompt (a character, product or brand lock) under a name, in your own saved blocks. Each save is a new version; saving the same text again returns the version that already holds it. Use it in ${murageToolOnThisServer("generate_image")} prompt_blocks. Nothing is generated.`, inputSchema: { type: "object", required: ["name", "text"], additionalProperties: false, properties: {
     name: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,63}$", description: "Lowercase letters, digits and hyphens, e.g. brand-lock." },
     text: { type: "string", minLength: 1, maxLength: 100000, description: "The block, saved exactly as given (trimmed)." },
   } } },
@@ -297,9 +298,9 @@ const TOOLS = [
   { name: "get_prompt_block", description: "Read a saved prompt block in full, the latest version or a given one, for example to condense it for a model with a smaller budget.", annotations: { readOnlyHint: true }, inputSchema: { type: "object", required: ["name"], additionalProperties: false, properties: {
     name: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,63}$" }, version: { type: "integer", minimum: 1 },
   } } },
-  { name: "save_reference_pack", description: "Save reference images already in this conversation (ids as generate_image reference_ids takes them) as a named, versioned pack of up to 16, in your own saved packs. Murage keeps a copy of each image and checks it is unchanged every time the pack is used. Use it in generate_image reference_pack. Nothing is generated.", inputSchema: { type: "object", required: ["name", "reference_ids"], additionalProperties: false, properties: {
+  { name: "save_reference_pack", description: `Save reference images already in this conversation (ids as ${murageToolOnThisServer("generate_image")} reference_ids takes them) as a named, versioned pack of up to 16, in your own saved packs. Murage keeps a copy of each image and checks it is unchanged every time the pack is used. Use it in ${murageToolOnThisServer("generate_image")} reference_pack. Nothing is generated.`, inputSchema: { type: "object", required: ["name", "reference_ids"], additionalProperties: false, properties: {
     name: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,63}$" },
-    reference_ids: { type: "array", minItems: 1, maxItems: 16, items: { type: "string" }, description: "Image attachment ids from this conversation or from resolve_image_reference, in the order the model should see them." },
+    reference_ids: { type: "array", minItems: 1, maxItems: 16, items: { type: "string" }, description: `Image attachment ids from this conversation or from ${murageToolOnThisServer("resolve_image_reference")}, in the order the model should see them.` },
   } } },
   { name: "list_reference_packs", description: "List the saved reference packs you can use: your own and the workspace's, with the latest version, image count and scope.", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: {}, additionalProperties: false } },
 
@@ -342,17 +343,17 @@ const TOOLS = [
   {
     name: "list_bots",
     description:
-      "List the other bots (agents) in your Murage section, with their model and whether they're busy. Call this before delegate_bot or ask_bot to discover who's available. Use delegate_bot for assignments; use ask_bot only for a short consultation needed inline.",
+      `List the other bots (agents) in your Murage section, with their model and whether they're busy. Call this before ${murageToolOnThisServer("delegate_bot")} or ${murageToolOnThisServer("ask_bot")} to discover who's available. Use ${murageToolOnThisServer("delegate_bot")} for assignments; use ${murageToolOnThisServer("ask_bot")} only for a short consultation needed inline.`,
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: "ask_bot",
     description:
-      "Brief synchronous consultation: send a short question to another bot. Quick replies return inline; slow replies become asynchronous delegations and return automatically after you finish your turn. Use only when that reply is required to write your current response. Do not use for assigning work, background tasks, or potentially long work; use delegate_bot for those. Returns promptly with a note if that bot is busy.",
+      `Brief synchronous consultation: send a short question to another bot. Quick replies return inline; slow replies become asynchronous delegations and return automatically after you finish your turn. Use only when that reply is required to write your current response. Do not use for assigning work, background tasks, or potentially long work; use ${murageToolOnThisServer("delegate_bot")} for those. Returns promptly with a note if that bot is busy.`,
     inputSchema: {
       type: "object",
       properties: {
-        bot_id: { type: "string", description: "The stable Murage bot ID from list_bots, or a unique exact display name in your authorized roster. Never use a native provider session address." },
+        bot_id: { type: "string", description: `The stable Murage bot ID from ${murageToolOnThisServer("list_bots")}, or a unique exact display name in your authorized roster. Never use a native provider session address.` },
         message: { type: "string", description: "What to say / ask the bot." },
       },
       required: ["bot_id", "message"],
@@ -361,11 +362,11 @@ const TOOLS = [
   {
     name: "delegate_bot",
     description:
-      "DEFAULT FOR ASSIGNING WORK. Hand a task to another bot asynchronously: this returns immediately, your turn can end, and you remain available while the peer works. The peer starts after your current turn finishes and its result is delivered automatically to the originating conversation. Acknowledge the assignment; do not call check_delegation or wait_delegation in this same turn.",
+      `DEFAULT FOR ASSIGNING WORK. Hand a task to another bot asynchronously: this returns immediately, your turn can end, and you remain available while the peer works. The peer starts after your current turn finishes and its result is delivered automatically to the originating conversation. Acknowledge the assignment; do not call ${murageToolOnThisServer("check_delegation")} or ${murageToolOnThisServer("wait_delegation")} in this same turn.`,
     inputSchema: {
       type: "object",
       properties: {
-        bot_id: { type: "string", description: "The stable Murage bot ID from list_bots, or a unique exact display name in your authorized roster. Never use a native provider session address." },
+        bot_id: { type: "string", description: `The stable Murage bot ID from ${murageToolOnThisServer("list_bots")}, or a unique exact display name in your authorized roster. Never use a native provider session address.` },
         message: { type: "string", description: "What the peer should do / answer." },
         reason: { type: "string", description: "Optional one-line reason for the delegation (shown to the user as a chip)." },
       },
@@ -375,11 +376,11 @@ const TOOLS = [
   {
     name: "check_delegation",
     description:
-      "In a later turn, check what happened to a delegation without waiting: still queued, running (with elapsed time and the peer's recent activity), or finished with the result. Prefer this when a delegated bot is taking long or might be stuck: empty recent activity usually means it is stuck, not working. Do not poll it right after delegate_bot; completion is delivered to the conversation automatically.",
+      `In a later turn, check what happened to a delegation without waiting: still queued, running (with elapsed time and the peer's recent activity), or finished with the result. Prefer this when a delegated bot is taking long or might be stuck: empty recent activity usually means it is stuck, not working. Do not poll it right after ${murageToolOnThisServer("delegate_bot")}; completion is delivered to the conversation automatically.`,
     inputSchema: {
       type: "object",
       properties: {
-        task_id: { type: "string", description: "The task id delegate_bot returned." },
+        task_id: { type: "string", description: `The task id ${murageToolOnThisServer("delegate_bot")} returned.` },
       },
       required: ["task_id"],
     },
@@ -387,11 +388,11 @@ const TOOLS = [
   {
     name: "wait_delegation",
     description:
-      "BLOCKING status tool for a delegation from an earlier turn. Use only when the user explicitly asks you to wait for that earlier task. Never call it in the same turn as delegate_bot: a fresh delegation cannot start until your current turn ends, and its result will arrive automatically.",
+      `BLOCKING status tool for a delegation from an earlier turn. Use only when the user explicitly asks you to wait for that earlier task. Never call it in the same turn as ${murageToolOnThisServer("delegate_bot")}: a fresh delegation cannot start until your current turn ends, and its result will arrive automatically.`,
     inputSchema: {
       type: "object",
       properties: {
-        task_id: { type: "string", description: "The task id delegate_bot returned." },
+        task_id: { type: "string", description: `The task id ${murageToolOnThisServer("delegate_bot")} returned.` },
         timeout_seconds: { type: "integer", description: "give up waiting after this many seconds; default 60, max 240" },
       },
       required: ["task_id"],
@@ -404,7 +405,7 @@ const TOOLS = [
   },
   {
     name: "request_bot_access",
-    description: "Ask the owner to review a subordinate bot's connected-app access in one bundle. Read get_permission_status for its revision. Use exact account IDs already available to you and only supported tools. Nothing is granted until the owner approves in the bot profile. Never approve your own request.",
+    description: `Ask the owner to review a subordinate bot's connected-app access in one bundle. Read ${murageToolOnThisServer("get_permission_status")} for its revision. Use exact account IDs already available to you and only supported tools. Nothing is granted until the owner approves in the bot profile. Never approve your own request.`,
     inputSchema: { type: "object", properties: {
       bot_id: { type: "string" }, revision: { type: "integer", minimum: 0 }, allow_writes: { type: "boolean" },
       grants: { type: "array", minItems: 1, maxItems: 12, items: { type: "object", properties: {
@@ -419,7 +420,7 @@ const TOOLS = [
   },
   {
     name: "update_bot",
-    description: "Update a subordinate bot's name, role, instructions or model. Read get_bot first and pass its revision. Instructions apply next turn; model changes wait for active work. Cannot change permissions or the Chief of Staff.",
+    description: `Update a subordinate bot's name, role, instructions or model. Read ${murageToolOnThisServer("get_bot")} first and pass its revision. Instructions apply next turn; model changes wait for active work. Cannot change permissions or the Chief of Staff.`,
     inputSchema: { type: "object", properties: {
       bot_id: { type: "string" }, revision: { type: "string" },
       name: { type: "string", maxLength: 80 }, role: { type: "string", maxLength: 120 }, instructions: { type: "string", maxLength: 8000 },
@@ -428,10 +429,10 @@ const TOOLS = [
   },
   ...(["archive_bot", "restore_bot", "move_bot", "set_team_lead"] as const).map(name => ({
     name,
-    description: name === "archive_bot" ? "Reversibly archive an idle subordinate. Active or pending work blocks the change. Read get_bot for the revision. Hard deletion remains an owner action."
-      : name === "restore_bot" ? "Restore an archived subordinate without adding permissions. Read get_bot for the revision."
-      : name === "move_bot" ? "Chief of Staff only: move an idle bot to a team, preserving its history and respecting existing leadership. Pass revision and organizationRevision from get_bot."
-      : "Chief of Staff only: appoint an idle team member as that team's lead. Pass revision and organizationRevision from get_bot. Cannot replace the workspace Chief or interrupt admitted work.",
+    description: name === "archive_bot" ? `Reversibly archive an idle subordinate. Active or pending work blocks the change. Read ${murageToolOnThisServer("get_bot")} for the revision. Hard deletion remains an owner action.`
+      : name === "restore_bot" ? `Restore an archived subordinate without adding permissions. Read ${murageToolOnThisServer("get_bot")} for the revision.`
+      : name === "move_bot" ? `Chief of Staff only: move an idle bot to a team, preserving its history and respecting existing leadership. Pass revision and organizationRevision from ${murageToolOnThisServer("get_bot")}.`
+      : `Chief of Staff only: appoint an idle team member as that team's lead. Pass revision and organizationRevision from ${murageToolOnThisServer("get_bot")}. Cannot replace the workspace Chief or interrupt admitted work.`,
     inputSchema: { type: "object", properties: {
       bot_id: { type: "string" }, revision: { type: "string" },
       ...name === "move_bot" || name === "set_team_lead" ? { organization_revision: { type: "string" } } : {},
@@ -451,7 +452,7 @@ const TOOLS = [
         model_selection: { type: "object", properties: { instanceId: { type: "string" }, model: { type: "string" }, effort: { type: "string" }, connectionId: { type: "string" } }, required: ["instanceId", "model"], additionalProperties: false },
         section: {
           type: "string",
-          description: "The team the specialist joins, exactly as list_bots spells it. Required if you are the workspace Chief of Staff; omit it otherwise. When creating a team's first lead this names the NEW team.",
+          description: `The team the specialist joins, exactly as ${murageToolOnThisServer("list_bots")} spells it. Required if you are the workspace Chief of Staff; omit it otherwise. When creating a team's first lead this names the NEW team.`,
         },
         lead: {
           type: "boolean",
@@ -460,6 +461,11 @@ const TOOLS = [
       },
       required: ["name", "role", "instructions"],
     },
+  },
+  {
+    name: "request_browser_connection",
+    description: "Offer the owner optional access to their signed-in browser for this task. Use when the task needs their existing browser session. This creates a consent card; it does not enable access. End the turn after requesting. Murage continues the original conversation only after the owner declines or explicitly checks a connected profile and continues. Never ask for passwords or attempt installation yourself.",
+    inputSchema: { type: "object", properties: { reason: { type: "string", maxLength: 240, description: "Brief explanation of why this task needs the owner's browser. Do not include page content or secrets." } }, additionalProperties: false },
   },
   {
     name: "request_credential",
@@ -490,7 +496,7 @@ const TOOLS = [
   {
     name: "propose_routine",
     description:
-      "Prepare a new routine after the user explicitly asks to schedule recurring or future work. Call list_routines first for relative dates or times so you use its authoritative current time and timezone. This only creates a durable confirmation card; it does NOT enable the routine. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. After calling it, end the turn and do not claim the routine exists until the user confirms the card. If the user asks for the routine to run as ANOTHER bot in your section, call list_bots and pass that bot's id as for_bot_id.",
+      `Prepare a new routine after the user explicitly asks to schedule recurring or future work. Call ${murageToolOnThisServer("list_routines")} first for relative dates or times so you use its authoritative current time and timezone. This only creates a durable confirmation card; it does NOT enable the routine. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. After calling it, end the turn and do not claim the routine exists until the user confirms the card. If the user asks for the routine to run as ANOTHER bot in your section, call ${murageToolOnThisServer("list_bots")} and pass that bot's id as for_bot_id.`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -504,7 +510,7 @@ const TOOLS = [
         for_bot_id: {
           type: "string",
           description:
-            "Only when the user asks to schedule this routine for ANOTHER bot in your section: that bot's id from list_bots. Omit to schedule it for yourself. The routine then belongs to that bot and each run uses its engine and permissions.",
+            `Only when the user asks to schedule this routine for ANOTHER bot in your section: that bot's id from ${murageToolOnThisServer("list_bots")}. Omit to schedule it for yourself. The routine then belongs to that bot and each run uses its engine and permissions.`,
         },
       },
       required: ["name", "instructions", "schedule"],
@@ -513,12 +519,12 @@ const TOOLS = [
   {
     name: "propose_routine_action",
     description:
-      "Prepare a user-requested change to one of this bot's existing routines. This only creates a durable confirmation card; it does NOT apply the change. Use list_routines first to get the routine id. After calling it, end the turn and do not claim the action completed until the user confirms the card.",
+      `Prepare a user-requested change to one of this bot's existing routines. This only creates a durable confirmation card; it does NOT apply the change. Use ${murageToolOnThisServer("list_routines")} first to get the routine id. After calling it, end the turn and do not claim the action completed until the user confirms the card.`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        routine_id: { type: "string", minLength: 1, description: "Routine id from list_routines." },
+        routine_id: { type: "string", minLength: 1, description: `Routine id from ${murageToolOnThisServer("list_routines")}.` },
         action: {
           type: "string",
           enum: ["update", "pause", "resume", "run_now", "delete"],
@@ -535,9 +541,21 @@ const TOOLS = [
     },
   },
   {
+    name: "propose_outcome",
+    description:
+      "Ask the owner whether the work in this conversation has reached a result, for example a deal that looks closed. This only shows the owner a short card with Won, Lost and Not yet; it records nothing until they tap. Use it at most once, only when the conversation itself shows a clear close (a signed quote, a firm yes, a firm no), never to guess. After calling it, carry on normally and do not say the result is confirmed.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        note: { type: "string", maxLength: 140, description: "One short, non-sensitive line on why this looks closed, shown on the card. Example: They said they will sign on Friday." },
+      },
+    },
+  },
+  {
     name: "skills_list",
     description:
-      "List this bot's imported skills (enabled and disabled) and any staged skill writes waiting for the user to confirm. Use this before skill_manage to avoid duplicate names. Listing does not enable anything.",
+      `List this bot's imported skills (enabled and disabled) and any staged skill writes waiting for the user to confirm. Use this before ${murageToolOnThisServer("skill_manage")} to avoid duplicate names. Listing does not enable anything.`,
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
   },
   {
@@ -555,7 +573,7 @@ const TOOLS = [
         },
         skill_name: {
           type: "string",
-          description: "Required for update: the exact existing name from skills_list. Omit for create.",
+          description: `Required for update: the exact existing name from ${murageToolOnThisServer("skills_list")}. Omit for create.`,
         },
         skill_md: {
           type: "string",
@@ -574,7 +592,68 @@ const TOOLS = [
       required: ["action", "skill_md", "source"],
     },
   },
+  {
+    name: "publish_site",
+    description: `Put a small static website (a folder of plain files with an index.html at the top) online on Netlify, at a public address. This ALWAYS shows the owner an approval card listing every file, the total size, the public address and that anyone with the link can see it, and nothing is uploaded until the owner presses Allow, whatever the access mode. Wait for the answer; do not tell the owner it is live until this returns status "live". Private files (dotfiles such as .env, keys, node_modules, memory files) are left out automatically and a shortcut (symlink) stops the publish. The folder must be inside your own files folder. To update a site you published before, publish again with the same site_name (or no name when you have just one site), or pass its site_id: you can change only sites you published or the owner gave you. If it says Netlify is not connected, ask the owner to connect Netlify, then call it again. Never put private information in a site. To remove one, use ${murageToolOnThisServer("take_down_site")}.`,
+    inputSchema: { type: "object", additionalProperties: false, properties: {
+      folder: { type: "string", minLength: 1, maxLength: 300, description: "The site folder, relative to your files folder. Defaults to \"site\"." },
+      site_name: { type: "string", minLength: 1, maxLength: 80, description: "A short name for the address, such as \"my-shop\" (letters, numbers and hyphens). Publishing again with the same name updates that site. Ignored when site_id is given. Leave it out to update your only site." },
+      site_id: { type: "string", minLength: 1, maxLength: 64, description: "The site_id returned by an earlier publish, to update that site instead of making a new one." },
+    } },
+  },
+  {
+    name: "take_down_site",
+    description: "Take a site you published off the internet, by its site_id (and optionally one saved version by deploy_id). This ALWAYS shows the owner an approval card first and removes nothing until they press Allow. The files in your own folder are not touched.",
+    inputSchema: { type: "object", required: ["site_id"], additionalProperties: false, properties: {
+      site_id: { type: "string", minLength: 1, maxLength: 64, description: "The site_id returned when the site was published." },
+      deploy_id: { type: "string", minLength: 1, maxLength: 64, description: "Remove only this saved version instead of the whole site." },
+    } },
+  },
 ];
+
+const PROJECT_TOOL_ROUTES: Record<string, { route: string; body: (args: Json) => Json }> = {
+  // Everything the model sent: the server names the fields it does not take
+  // and accepts one card without the list (AFTER-PF: guessed shapes).
+  project_assign: { route: "assign", body: args => ({ ...args }) },
+  project_accept: { route: "accept", body: args => ({ cardId: args.card_id }) },
+  project_card_manage: { route: "card-manage", body: args => ({ cardId: args.card_id, action: args.action, assigneeBotId: args.assignee_bot_id, note: args.note, writes: args.writes, workRoot: args.work_root }) },
+  project_review_assign: { route: "review-assign", body: args => ({ cardId: args.card_id, reviewer: args.reviewer_bot_id }) },
+  project_criteria: { route: "criteria", body: args => ({ propose: args.propose, met: args.met }) },
+  project_done: { route: "done", body: args => ({ detail: args.detail }) },
+  project_blocked: { route: "blocked", body: args => ({ detail: args.detail }) },
+  project_brief_update: { route: "brief-update", body: args => ({ decision: args.decision, note: args.note, sourceMessageIds: args.source_message_ids }) },
+  project_card_update: { route: "card-update", body: args => ({ cardId: args.card_id, milestone: args.milestone, blocked: args.blocked }) },
+  project_review_result: { route: "review-result", body: args => ({ cardId: args.card_id, verdict: args.verdict, notes: args.notes }) },
+
+  project_read_messages: { route: "read-messages", body: args => ({ threadId: args.thread_id, before: args.before, limit: args.limit }) },
+  project_bring_in: { route: "bring-in", body: args => ({ recordId: args.record_id, sourceMessageId: args.source_message_id, threadId: args.thread_id, text: args.text }) },
+  project_suggest: { route: "suggest", body: args => ({ botId: args.bot_id, cardId: args.card_id, why: args.why }) },
+  project_summary_update: { route: "summary-update", body: args => ({ text: args.text, sourceMessageIds: args.source_message_ids }) },
+};
+const PROJECT_TOOLS_FOR: Record<string, readonly string[]> = {
+  lead: PROJECT_TOOLS.map(tool => tool.name),
+  member: ["project_read_messages", "project_bring_in", "project_suggest", "project_card_update", "project_review_result"],
+};
+
+/** The Chief's New project proposal (lane N, SPEC-P 11.1): the same shape the
+ * server validates in project-new.ts. It creates nothing; the owner edits
+ * the proposal and clicks Create. */
+const PROJECT_PROPOSE_TOOL = {
+  name: "project_propose",
+  description: "Send your New project proposal to the owner. It creates nothing: the owner reviews it, edits it and decides. Use member ids from the list you were given. If it is refused, fix the field it names and send it again.",
+  inputSchema: { type: "object", additionalProperties: false, required: ["members", "mode", "brief", "budget", "planOutline"], properties: {
+    members: { type: "array", maxItems: 32, items: { type: "string", maxLength: 80 }, description: "Member bot ids." },
+    leadBotId: { type: "string", maxLength: 80, description: "One of the members, or omit for no lead." },
+    mode: { type: "string", enum: ["goal", "chat", "ongoing", "bots"], description: "goal: get something done; chat: a chat room; ongoing: ongoing work; bots: a group of bots on a thing." },
+    brief: { type: "object", additionalProperties: false, required: ["summary", "doneMeans", "rules"], properties: {
+      summary: { type: "string", maxLength: 200 }, doneMeans: { type: "string", maxLength: 4000 }, rules: { type: "string", maxLength: 12000 },
+    } },
+    budget: { type: "object", additionalProperties: false, required: ["minutes", "tokens"], properties: {
+      minutes: { type: "integer", minimum: 1, maximum: 100000 }, tokens: { type: "integer", minimum: 1 },
+    } },
+    planOutline: { type: "array", maxItems: 8, items: { type: "string", maxLength: 280 } },
+  } },
+};
 
 const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_manage"]);
 const LIBRARY_TOOL_NAMES = new Set<string>(IMAGE_LIBRARY_TOOLS);
@@ -591,10 +670,11 @@ function withoutImageLibrary(tools: typeof TOOLS): typeof TOOLS {
       inputSchema: { ...tool.inputSchema, required: ["request_id", "prompt"], properties: { ...properties, prompt: { ...properties.prompt, description: "The scene prompt, sent whole. It must fit the model's maxPromptChars." } } } };
   }) as typeof TOOLS;
 }
-// The descriptions are this file's own text: sibling tools in them are named
-// the way this turn's engine calls them.
 const LISTED_TOOLS = SKILL_AUTHORING_ENABLED ? TOOLS : TOOLS.filter((tool) => !SKILL_TOOL_NAMES.has(tool.name));
-const AVAILABLE_TOOLS = murageToolDescriptions(IMAGE_LIBRARY_ON ? LISTED_TOOLS : withoutImageLibrary(LISTED_TOOLS), STYLE, ["agents"], { agents: SERVER_NAME });
+const AVAILABLE_TOOLS = PROJECT_ROLE === "proposal" ? [PROJECT_PROPOSE_TOOL] : [
+  ...(IMAGE_LIBRARY_ON ? LISTED_TOOLS : withoutImageLibrary(LISTED_TOOLS)),
+  ...(PROJECT_ROLE ? PROJECT_TOOLS.filter((tool) => PROJECT_TOOLS_FOR[PROJECT_ROLE]!.includes(tool.name)) : []),
+];
 
 type Json = Record<string, unknown>;
 type RoutineAction = "update" | "pause" | "resume" | "run_now" | "delete";
@@ -616,6 +696,9 @@ const GENERATE_IMAGE_WAIT_MINUTES = Math.max(1, Math.round(GENERATE_IMAGE_TIMEOU
  * do next, in words it can pass on. Not the control-channel failure line: the
  * connection did not fail, nothing came back in time. A held card (a
  * routine's) stays open for the owner after the call gives up. */
+/** The 15-minute approval wait (server/publish/publish-ops.ts) plus 10 minutes to upload and check. */
+const PUBLISH_WAIT_MS = 25 * 60_000;
+const PUBLISH_NO_ANSWER = "No answer came back for this publish request, so this call stopped waiting. The approval card may still be open for the owner. Nothing is retried automatically. Tell the owner, and ask again only if they still want it.";
 const GENERATE_IMAGE_NO_ANSWER = `No answer came back for this image request within ${GENERATE_IMAGE_WAIT_MINUTES} minute${GENERATE_IMAGE_WAIT_MINUTES === 1 ? "" : "s"}, `
   + "so this call stopped waiting. The approval card may still be open for the owner, or the render did not finish. "
   + "No automatic retry was made. Tell the owner, and ask for the image again only if they still want it.";
@@ -626,14 +709,51 @@ async function api(path: string, init?: RequestInit): Promise<Json> {
     res = await fetch(HARNESS + path, {
       ...init,
       signal: init?.signal ?? AbortSignal.timeout(250_000),
-      headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, [TOOL_CALL_STYLE_HEADER]: STYLE, ...init?.headers },
+      headers: { "content-type": "application/json", authorization: `Bearer ${token()}`, ...init?.headers },
     });
   } catch {
     throw new Error("MURAGE_AGENTS_UNAVAILABLE: the Murage control connection failed or timed out. Report the failure; do not switch to native ListAgents/SendMessage or retry the assignment blindly.");
   }
   const body = (await res.json().catch(() => ({}))) as Json;
-  if (!res.ok) throw new Error(String(body.error ?? `HTTP ${res.status}`));
+  if (!res.ok) throw new Error(refusalText(body, res.status));
   return body;
+}
+
+/** A validation dump (a JSON list of issues) as one plain line; any other
+ * error text as it came. */
+function plainError(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value !== "string") return String(value);
+  if (value.trim().startsWith("[")) {
+    try {
+      const issues = JSON.parse(value) as unknown;
+      if (Array.isArray(issues) && issues.length && issues.every(issue => jsonRecord(issue) && typeof issue.message === "string")) {
+        return `The input was not valid: ${(issues as Json[]).map(issue => {
+          const path = Array.isArray(issue.path) ? issue.path.join(".") : "";
+          return `${path ? `${path}: ` : ""}${String(issue.message)}`;
+        }).join("; ")}.`;
+      }
+    } catch { /* not a validation dump */ }
+  }
+  return value;
+}
+
+/** What a refused call said, in words the model can act on. Project tool
+ * refusals (SPEC-P 11.3) carry the why in `reason`, `blockers` and a per-card
+ * `refused` list; reading only `error` handed the AFTER-PF lead "HTTP 409"
+ * for every project_assign, so it never learned why. */
+function refusalText(body: Json, status: number): string {
+  const parts: string[] = [];
+  const error = plainError(body.error);
+  const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+  // a machine code such as not_allowed adds nothing to the reason beside it
+  if (error && !(reason && /^[a-z_]+$/.test(error))) parts.push(error);
+  if (reason && reason !== error) parts.push(reason);
+  const blockers = Array.isArray(body.blockers) ? body.blockers.filter((item): item is string => typeof item === "string") : [];
+  if (blockers.length) parts.push(`Still open: ${blockers.join("; ")}.`);
+  const refused = Array.isArray(body.refused) ? body.refused.filter(jsonRecord) : [];
+  if (refused.length) parts.push(`Nothing was assigned. Refused: ${refused.map(item => `card ${String(item.key)}: ${String(item.reason)}`).join("; ")}.`);
+  return parts.join(" ") || `The request was refused (status ${status}).`;
 }
 
 /**
@@ -651,7 +771,7 @@ function apiLong(path: string, body: string, signal: AbortSignal, noAnswer?: str
     let url: URL;
     try { url = new URL(HARNESS + path); } catch { reject(unavailable()); return; }
     const send = url.protocol === "https:" ? httpsRequest : httpRequest;
-    const req = send(url, { method: "POST", signal, headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, [TOOL_CALL_STYLE_HEADER]: STYLE, "content-length": Buffer.byteLength(body) } }, res => {
+    const req = send(url, { method: "POST", signal, headers: { "content-type": "application/json", authorization: `Bearer ${token()}`, "content-length": Buffer.byteLength(body) } }, res => {
       const chunks: Buffer[] = []; let size = 0;
       res.on("data", (chunk: Buffer) => { size += chunk.length; if (size > 32 * 1024 * 1024) { req.destroy(); reject(unavailable()); return; } chunks.push(chunk); });
       res.on("error", () => reject(unavailable()));
@@ -674,7 +794,7 @@ function apiLong(path: string, body: string, signal: AbortSignal, noAnswer?: str
  * succeeded; if it fails, the caller still gets the preview and a notice. */
 const capResult = (text: string) => boundedAgentResult(text, (retained, truncated) =>
   api("/api/internal/tool-result", { method: "POST", signal: AbortSignal.timeout(3_000),
-    body: JSON.stringify({ text: retained, truncated }) }), callable("tool_result_read"));
+    body: JSON.stringify({ text: retained, truncated }) }));
 
 function jsonRecord(value: unknown): value is Json {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -747,10 +867,45 @@ function jsonToolResult(result: Json): { text: string; isError?: boolean } {
   return { text: JSON.stringify(result), ...(failed ? { isError: true } : {}) };
 }
 
+/** The keys models put a teammate under (bot_name, recipient and member in
+ * the AFTER-PF run). Each is the same selector the harness resolves in the
+ * caller's own roster, by id or by unique exact name, so none of them
+ * reaches a bot bot_id could not. */
+const TEAMMATE_KEYS = ["bot_id", "bot_name", "name", "member", "recipient", "bot", "to"];
+function teammateSelector(args: Json): string {
+  for (const key of TEAMMATE_KEYS) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+const needsTeammate = (tool: string) =>
+  `${murageToolOnThisServer(tool)} takes bot_id (a bot id from ${murageToolOnThisServer("list_bots")}, or a teammate's exact name) and message.`;
+
 async function callTool(name: string, args: Json): Promise<{ text: string; isError?: boolean }> {
+  if (name === "project_propose") {
+    const body = { members: args.members, leadBotId: args.leadBotId ?? null, mode: args.mode, brief: args.brief, budget: args.budget, planOutline: args.planOutline };
+    return jsonToolResult(await api("/api/internal/project/propose", { method: "POST", body: JSON.stringify(body) }));
+  }
+  const project = PROJECT_TOOL_ROUTES[name];
+  if (project) {
+    const body = Object.fromEntries(Object.entries(project.body(args)).filter(([, value]) => value !== undefined));
+    return jsonToolResult(await api(`/api/internal/project/${project.route}`, { method: "POST", body: JSON.stringify(body) }));
+  }
   if (name === "register_artifact") {
+    const unknown = Object.keys(args).filter(key => key !== "relative_path" && key !== "name");
+    if (typeof args.relative_path !== "string" || !args.relative_path.trim() || (args.name !== undefined && typeof args.name !== "string") || unknown.length) {
+      return { text: `${murageToolOnThisServer("register_artifact")} takes relative_path (the file's path inside the file workspace) and an optional name.${unknown.length ? ` Unknown fields: ${unknown.join(", ")}.` : ""}`, isError: true };
+    }
     const result = await api("/api/internal/register-artifact", { method: "POST", body: JSON.stringify({ relativePath: args.relative_path, ...(args.name === undefined ? {} : { name: args.name }) }) });
     return jsonToolResult(result);
+  }
+  if (name === "publish_site" || name === "take_down_site") {
+    const takeDown = name === "take_down_site";
+    const body = takeDown ? { siteId: args.site_id, deployId: args.deploy_id } : { folder: args.folder, name: args.site_name, siteId: args.site_id };
+    const clean = Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined));
+    // The harness holds this request open while the owner's card waits, then while it uploads.
+    return jsonToolResult(await apiLong(takeDown ? "/api/internal/take-down-site" : "/api/internal/publish-site", JSON.stringify(clean), AbortSignal.timeout(PUBLISH_WAIT_MS), PUBLISH_NO_ANSWER));
   }
   if (name === "send_voice_note") {
     const result = await api("/api/internal/voice-note", { method: "POST", body: JSON.stringify({ text: args.text, ...(args.title === undefined ? {} : { title: args.title }) }) });
@@ -770,7 +925,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     // leave request_id out: say so in the tool's own words, not the harness's
     // requestId.
     if (typeof args.request_id !== "string" || !/^[\w-]{1,80}$/.test(args.request_id)) {
-      return { text: authored('generate_image needs request_id: a short name you choose for this request, 1 to 80 letters, digits, "-" or "_", such as "harbor-sunset-1". Call generate_image again with request_id and the same prompt, and keep that request_id if you ask for this same image again.'), isError: true };
+      return { text: `${murageToolOnThisServer("generate_image")} needs request_id: a short name you choose for this request, 1 to 80 letters, digits, "-" or "_", such as "harbor-sunset-1". Call it again with request_id and the same prompt, and keep that request_id if you ask for this same image again.`, isError: true };
     }
     const result = await apiLong("/api/internal/generate-image", JSON.stringify({
       requestId: args.request_id, prompt: args.prompt, promptBlocks: args.prompt_blocks, referencePack: args.reference_pack, operation: args.operation, connectionId: args.connection_id,
@@ -818,7 +973,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     if (!jsonRecord(args) || Object.keys(args).some(key => !["question", "limit"].includes(key))
       || (args.question !== undefined && (typeof args.question !== "string" || args.question.length > 400))
       || (args.limit !== undefined && (typeof args.limit !== "number" || !Number.isInteger(args.limit) || args.limit < 1 || args.limit > 5))) {
-      return { text: authored("murage_help takes an optional question of at most 400 characters and an optional limit from 1 to 5."), isError: true };
+      return { text: `${murageToolOnThisServer("murage_help")} takes an optional question of at most 400 characters and an optional limit from 1 to 5.`, isError: true };
     }
     const question = typeof args.question === "string" ? args.question.trim() : "";
     if (!question) return { text: JSON.stringify({ topics: helpTopics(), note: HELP_NOTE }) };
@@ -826,7 +981,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     if (!results.length) {
       return { text: JSON.stringify({
         results: [],
-        note: authored("Murage's documentation does not cover that. Say so plainly rather than inventing an answer, and offer the topics murage_help does cover if that would help."),
+        note: `Murage's documentation does not cover that. Say so plainly rather than inventing an answer, and offer the topics ${murageToolOnThisServer("murage_help")} does cover if that would help.`,
         topics: helpTopics(),
       }) };
     }
@@ -842,7 +997,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     if (!jsonRecord(args) || Object.keys(args).some(key => !["query", "max_results"].includes(key))
       || typeof args.query !== "string" || !args.query.trim() || args.query.length > 4096
       || (args.max_results !== undefined && (typeof args.max_results !== "number" || !Number.isInteger(args.max_results) || args.max_results < 1 || args.max_results > 10))) {
-      return { text: authored("web_search needs a nonempty query of at most 4096 characters and optional max_results from 1 to 10. Provider and credentials are configured in Settings."), isError: true };
+      return { text: `${murageToolOnThisServer("web_search")} needs a nonempty query of at most 4096 characters and optional max_results from 1 to 10. Provider and credentials are configured in Settings.`, isError: true };
     }
     const result = await api("/api/internal/web-search", { method: "POST", body: JSON.stringify({
       fromBotId: BOT_ID, fromThreadId: THREAD_ID, query: args.query, maxResults: args.max_results ?? 5,
@@ -853,7 +1008,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
   if (name === "list_bots") {
     const r = await api(`/api/internal/agents?self=${encodeURIComponent(BOT_ID)}`);
     const bots = (r.bots as Array<Json>) ?? [];
-    if (!bots.length) return { text: "No other bots in this section yet." };
+    if (!bots.length) return { text: "No other bots you can talk to yet. To add one, the owner opens your settings, Permissions, Can talk to, and picks the bots (or Everyone)." };
     const lines = bots.map((b) => {
       const role = b.title ? `: ${b.title}` : "";
       const about = b.description ? ` (${String(b.description).slice(0, 120)})` : "";
@@ -867,13 +1022,13 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${team}${rank}${b.busy ? ", busy" : ""}${b.reachable === false ? ", coordinate through its team lead" : ""}]`;
     });
     return {
-      text: `Bots you can inspect:\n${lines.join("\n")}\n\n${authored("Assign work with delegate_bot within your permitted roster; seeing a bot does not grant direct messaging access. Use ask_bot only for a short answer you need inline. Use get_bot to inspect or update a profile.")}`,
+      text: `Bots you can inspect:\n${lines.join("\n")}\n\nAssign work with ${murageToolOnThisServer("delegate_bot")} within your permitted roster; seeing a bot does not grant direct messaging access. Use ${murageToolOnThisServer("ask_bot")} only for a short answer you need inline. Use ${murageToolOnThisServer("get_bot")} to inspect or update a profile.`,
     };
   }
   if (name === "ask_bot") {
-    const toBotId = String(args.bot_id ?? "").trim();
+    const toBotId = teammateSelector(args);
     const message = String(args.message ?? "").trim();
-    if (!toBotId || !message) return { text: authored("ask_bot needs bot_id and message."), isError: true };
+    if (!toBotId || !message) return { text: needsTeammate("ask_bot"), isError: true };
     const r = await api(`/api/internal/ask-bot`, {
       method: "POST",
       body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, toBotId, message, depth: DEPTH }),
@@ -889,7 +1044,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       const amount = waitedSeconds < 60 ? waitedSeconds : Math.round(waitedSeconds / 60);
       const unit = waitedSeconds < 60 ? "second" : "minute";
       return {
-        text: `${r.toBotName ?? "That bot"} is still working after ${amount} ${unit}${amount === 1 ? "" : "s"}: the ask was converted to a delegation so the reply is not lost. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use ${callable("check_delegation")} in a later turn only if the user asks for status.`,
+        text: `${r.toBotName ?? "That bot"} is still working after ${amount} ${unit}${amount === 1 ? "" : "s"}: the ask was converted to a delegation so the reply is not lost. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use ${murageToolOnThisServer("check_delegation")} in a later turn only if the user asks for status.`,
       };
     }
     if (r.busy) {
@@ -899,7 +1054,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       if (taskId) {
         delegationTaskIdsThisTurn.add(taskId);
         return {
-          text: `${r.toBotName ?? "That bot"} is busy right now, so your message was queued as a delegation instead: it runs after your current turn ends. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use ${callable("check_delegation")} in a later turn only if the user asks for status.`,
+          text: `${r.toBotName ?? "That bot"} is busy right now, so your message was queued as a delegation instead: it runs after your current turn ends. Task id: ${taskId}. Finish your turn now; the result will be delivered to this conversation automatically. Use ${murageToolOnThisServer("check_delegation")} in a later turn only if the user asks for status.`,
         };
       }
       return { text: `That bot is busy right now: try again after it finishes.` };
@@ -908,10 +1063,10 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     return { text: `${r.botName ?? "Bot"} replied:\n${r.text ?? "(no reply)"}` };
   }
   if (name === "delegate_bot") {
-    const toBotId = String(args.bot_id ?? "").trim();
+    const toBotId = teammateSelector(args);
     const message = String(args.message ?? "").trim();
     const reason = typeof args.reason === "string" ? args.reason.trim() : "";
-    if (!toBotId || !message) return { text: authored("delegate_bot needs bot_id and message."), isError: true };
+    if (!toBotId || !message) return { text: needsTeammate("delegate_bot"), isError: true };
     const body: Record<string, unknown> = {
       fromBotId: BOT_ID,
       fromThreadId: THREAD_ID,
@@ -936,7 +1091,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
   if (name === "check_delegation" || name === "wait_delegation") {
     const taskId = String(args.task_id ?? "").trim();
     if (!/^[\w-]{4,64}$/.test(taskId)) {
-      return { text: `${callable(name)} needs the "task_id" that ${callable("delegate_bot")} returned, e.g. {"task_id":"1f0c2f4e-..."}.`, isError: true };
+      return { text: `${name} needs the "task_id" that ${murageToolOnThisServer("delegate_bot")} returned, e.g. {"task_id":"1f0c2f4e-..."}.`, isError: true };
     }
     if (delegationTaskIdsThisTurn.has(taskId)) {
       return {
@@ -978,7 +1133,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const section = String(args.section ?? "").trim();
     const lead = args.lead === true;
     if (!botName || !role || !instructions) {
-      return { text: authored("create_bot needs name, role, and instructions."), isError: true };
+      return { text: `${murageToolOnThisServer("create_bot")} needs name, role, and instructions.`, isError: true };
     }
     if (createdThisTurn >= MAX_CREATED_PER_TURN) {
       return { text: `You can create at most ${MAX_CREATED_PER_TURN} bots in one turn. Use the team you have before adding more.`, isError: true };
@@ -1000,14 +1155,20 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const mode = r.auto === true
       ? "Auto mode (inherited from you; computer off, destructive and sensitive actions still ask)"
       : "Ask mode (the user approves each action)";
+    const changes = Array.isArray(r.engineChanges) ? r.engineChanges.filter((line: unknown): line is string => typeof line === "string") : [];
     return {
-      text: `Created @${r.name ?? botName} in ${r.section ?? "General"} [id: ${r.id}], ${mode}. Assign work with ${callable("delegate_bot")}.`,
+      text: `Created @${r.name ?? botName} in ${r.section ?? "General"} [id: ${r.id}], ${mode}. Assign work with ${murageToolOnThisServer("delegate_bot")}.${changes.length ? `\nIts engine differs from yours: ${changes.join(" ")}` : ""}`,
     };
+  }
+  if (name === "request_browser_connection") {
+    const reason = typeof args.reason === "string" ? args.reason.trim().slice(0, 240) : "";
+    await api("/api/internal/request-browser-connection", { method: "POST", body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, reason }) });
+    return { text: "An optional browser setup card is shown in this conversation. End this turn. The owner can set up their browser or decline, and Murage will continue the original task after their decision and connection check. No browser access has been granted by this request." };
   }
   if (name === "request_credential") {
     const credentialId = args.credential_id;
     if (!isCredentialTargetId(credentialId)) {
-      return { text: authored("request_credential needs a supported credential_id."), isError: true };
+      return { text: `${murageToolOnThisServer("request_credential")} needs a supported credential_id.`, isError: true };
     }
     const reason = typeof args.reason === "string" ? args.reason.trim().slice(0, 240) : "";
     const r = await api("/api/internal/request-credential", {
@@ -1048,7 +1209,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const { fields: routine, error: scheduleError } = routineFields(args);
     if (scheduleError) return { text: scheduleError, isError: true };
     if (!routine.name || !routine.instructions || !routine.schedule) {
-      return { text: authored("propose_routine needs name, instructions, and schedule."), isError: true };
+      return { text: `${murageToolOnThisServer("propose_routine")} needs name, instructions, and schedule.`, isError: true };
     }
     if (args.watch !== undefined) {
       if (!jsonRecord(args.watch) || Object.keys(args.watch).some(key => !["relative_path", "expires_at", "max_checks"].includes(key))) return { text: "A file watch needs only relative_path, expires_at and max_checks.", isError: true };
@@ -1072,7 +1233,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const routineId = String(args.routine_id ?? "").trim();
     const action = routineAction(args.action);
     if (!routineId || !action) {
-      return { text: authored("propose_routine_action needs a routine_id and supported action."), isError: true };
+      return { text: `${murageToolOnThisServer("propose_routine_action")} needs a routine_id and supported action.`, isError: true };
     }
     const body: Json = {
       fromBotId: BOT_ID,
@@ -1099,13 +1260,22 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     });
     return confirmationResult(r, `${action.replace("_", " ")} on routine ${routineId}`);
   }
+  if (name === "propose_outcome") {
+    const note = typeof args.note === "string" ? args.note.trim().slice(0, 140) : "";
+    const r = await api("/api/internal/outcome-proposals", {
+      method: "POST",
+      body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, note: note || undefined }),
+    });
+    if (r.created === false) return { text: "The owner has already been asked about this conversation, so nothing new was shown. Carry on, and do not ask again." };
+    return { text: "The owner now sees a short card asking whether this closed (Won, Lost or Not yet). Nothing is recorded until they tap, so do not say the result is confirmed. Carry on with the conversation." };
+  }
   if (name === "skills_list") {
     const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID });
     const r = await api(`/api/internal/skills?${query.toString()}`);
     const skills = Array.isArray(r.skills) ? r.skills : [];
     const staged = Array.isArray(r.staged) ? r.staged : [];
     if (!skills.length && !staged.length) {
-      return { text: authored("This bot has no imported skills and nothing staged. Use skill_manage action=\"create\" to stage one for the user to confirm.") };
+      return { text: `This bot has no imported skills and nothing staged. Use ${murageToolOnThisServer("skill_manage")} action="create" to stage one for the user to confirm.` };
     }
     const live = skills.length
       ? skills.map((skill) => {
@@ -1131,19 +1301,19 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
   }
   if (name === "skill_manage") {
     if (args.action !== "create" && args.action !== "update") {
-      return { text: authored('skill_manage action must be "create" or "update".'), isError: true };
+      return { text: 'skill_manage action must be "create" or "update".', isError: true };
     }
     const skillMd = typeof args.skill_md === "string" ? args.skill_md : "";
     if (!skillMd.trim()) {
-      return { text: authored('skill_manage needs skill_md: the full SKILL.md including YAML frontmatter.'), isError: true };
+      return { text: 'skill_manage needs skill_md: the full SKILL.md including YAML frontmatter.', isError: true };
     }
     const source = typeof args.source === "string" ? args.source.trim() : "";
     if (!source) {
-      return { text: authored('skill_manage needs source: the URL, folder, or "conversation" used to author the skill.'), isError: true };
+      return { text: 'skill_manage needs source: the URL, folder, or "conversation" used to author the skill.', isError: true };
     }
     const skillName = typeof args.skill_name === "string" ? args.skill_name.trim() : "";
     if (args.action === "update" && !skillName) {
-      return { text: authored("skill_manage needs skill_name for an update. Copy the exact name from skills_list."), isError: true };
+      return { text: `${murageToolOnThisServer("skill_manage")} needs skill_name for an update. Copy the exact name from ${murageToolOnThisServer("skills_list")}.`, isError: true };
     }
     const r = await api("/api/internal/skills/stage", {
       method: "POST",
@@ -1178,7 +1348,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const r = await api(`/api/internal/tool-result?id=${encodeURIComponent(args.id)}&offset=${args.offset ?? 0}`, { signal: AbortSignal.timeout(3_000) });
     const text = String(r.text ?? "");
     return { text: `${text}\n\n[${Number(r.nextOffset) < Number(r.length)
-      ? `Read more with ${callable("tool_result_read")} id "${args.id}" and offset ${r.nextOffset}.`
+      ? `Read more with ${murageToolOnThisServer("tool_result_read")} id "${args.id}" and offset ${r.nextOffset}.`
       : `End of retained result.${r.truncated ? " The original tail exceeded the storage limit and was omitted." : ""}`}]` };
   }
   return { text: `Unknown tool: ${name}`, isError: true };
@@ -1194,7 +1364,7 @@ async function handle(msg: Json) {
       ok(id, {
         protocolVersion: (params.protocolVersion as string) ?? "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "opengrokbot-agents", version: "0.1.0" },
+        serverInfo: { name: "murage-agents", version: "0.1.0" },
       });
       return;
     case "notifications/initialized":

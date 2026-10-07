@@ -3,7 +3,7 @@ name: legal-cease-and-desist
 description: "Draft a cease-and-desist letter for trademark, copyright, IP misuse, defamation, breach of contract or unpaid debt, choosing tone deliberately (professional, firm, litigation-threat) and assembling the evidence section, the specific demand and the response deadline. Use when the user needs a formal written demand that a behaviour stop. Do NOT use for a platform takedown of hosted content (use legal-dmca) or for drafting the agreement being breached (use sentry-contracts-and-terms). Template only — a letter that threatens litigation can create liability of its own, so have an attorney review high-stakes versions before sending."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "cease-and-desist demand-letter legal smb"
   category: "legal"

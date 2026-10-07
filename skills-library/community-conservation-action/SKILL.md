@@ -6,7 +6,7 @@ description: |
   Do NOT use for lobbying or political campaign strategy, large-scale nonprofit management, environmental policy analysis (use environmental-policy-researcher), individual personal sustainability actions (use other sustainability skills), or corporate sustainability programs.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sustainability civic-engagement planning step-by-step"
   category: "sustainability"

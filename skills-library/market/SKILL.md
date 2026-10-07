@@ -1,13 +1,12 @@
 ---
 name: market
 description: "Entry point for marketing work against a URL, product or topic: clears the URL-safety and untrusted-content gates that any page-fetching marketing task needs, runs a sixty-second homepage snapshot inline, then routes to the right specialist skill for the depth the request actually needs. Use when a marketing request arrives broadly — 'look at my site', 'why isn't this converting', 'what should we be doing' — and the right instrument is not yet obvious. Do NOT use when the job is already named: go straight to market-audit for a full five-dimension site audit, market-landing for one page's conversion teardown, marketing-funnel-diagnosis for stage-by-stage drop-off, or mira-brand-foundation for identity work. Not for sales prospecting (use sales-prospect) or engineering work."
-license: MIT
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "orchestrator marketing audit cro routing smb"
   category: "market"
-  attribution: "Wayland Business Suite (Original), port of zubair-trabzada/ai-marketing-claude"
 ---
 
 # Marketing router

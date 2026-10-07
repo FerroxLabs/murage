@@ -1,7 +1,9 @@
 ---
 name: rebuild-from-screenshot
 description: Reproduce a chart from a screenshot — read the user's pasted image, diff against the live chart, then set symbol/indicators/drawings to match. Use when the user pastes a chart image and says "recreate this" or "set up my chart like this".
-license: MIT
+license: Apache-2.0
+metadata:
+  author: Ferrox Labs
 ---
 
 # Rebuild From Screenshot

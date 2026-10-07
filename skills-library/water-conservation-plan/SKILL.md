@@ -6,7 +6,7 @@ description: |
   Do NOT use for commercial or agricultural water management, water treatment or purification systems, drought emergency response, or irrigation system design for large landscapes.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sustainability checklist planning guide"
   category: "sustainability"

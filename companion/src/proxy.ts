@@ -12,6 +12,7 @@
 // harness as itself, from the machine the harness is already willing to
 // serve. Nothing upstream has to change, or even know this exists.
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 
 import {
   countsAgainstSignIn,
@@ -25,7 +26,8 @@ import {
   MAX_COMPANION_ENDPOINTS,
   type CompanionEndpoint,
 } from "./endpoints.ts";
-import { denyReason, isCloudDesktopJoin, isRoutineWrite, launchProofHeaders } from "./routes.ts";
+import { approvalDeviceHeaders, hasLaunchCredential, denyReason, deviceProofHeaders, doorForwardHeaders, isCloudDesktopJoin, isRoutineWrite, isStreamTicket } from "./routes.ts";
+import { STREAM_UPGRADE_PATH, forwardStreamUpgrade, rejectUpgrade } from "./stream-upgrade.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
 /** What the forwarding handler needs from the process around it. */
@@ -36,6 +38,8 @@ export interface ProxyOptions {
   companionToken?: string;
   /** Does this bearer token belong to a paired device? */
   authenticate: (token: string | undefined) => { id?: string; cloudDesktopAccess: boolean } | null;
+  /** SEC-006: the approval identity of a paired device, for the harness. */
+  approvalIdentity?: (deviceId: string) => { id: string; cls: "app" | "browser"; key?: string } | null;
   /** Redeem a pairing code. Handled here and never forwarded: the harness
    * has no such route and no idea devices exist — pairing is the sidecar's
    * own concern, and the one thing a device does before it has a token. */
@@ -43,6 +47,7 @@ export interface ProxyOptions {
     code: string,
     deviceName: unknown,
     pairRequestId?: unknown,
+    clientIp?: string,
   ) => { token: string; device: unknown } | { error: string; reason?: string };
   /** What the phone should call this computer in its connection list. */
   serverName: () => string;
@@ -331,8 +336,11 @@ export function createProxyHandler(options: ProxyOptions) {
     // The computer owner enables this capability per device, off by default.
     if (isCloudDesktopJoin(method, path) && !device?.cloudDesktopAccess) {
       return sendJson(res, 403, {
-        error: "Cloud desktop access is off for this phone. Turn it on in Murage → Settings → Phone.",
+        error: "Cloud desktop access is off for this phone. Turn it on in Murage → Settings → Phone and other devices.",
       });
+    }
+    if (isStreamTicket(method, path) && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
+      return sendJson(res, 503, { error: "calls require Murage and its companion to be started together by the desktop app or murage start" });
     }
     if (isCloudDesktopJoin(method, path) && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
       return sendJson(res, 503, { error: "cloud desktop access requires Murage and its companion to be started together by the desktop app or murage start" });
@@ -376,6 +384,7 @@ export function createProxyHandler(options: ProxyOptions) {
             String(body.credential ?? body.code ?? ""),
             body.deviceName,
             body.pairRequestId,
+            client,
           );
           if ("error" in result) {
             // `full` and `save-failed` mean the credential was RIGHT and this
@@ -439,7 +448,16 @@ export function createProxyHandler(options: ProxyOptions) {
           method,
           headers: {
             ...forwardHeaders(req, body),
-            ...launchProofHeaders(method, path, options.companionToken),
+            // The owner phone's proof: the shared routes plus the reads that
+            // carry a shared bot's rows, which the browser door never sends.
+            ...deviceProofHeaders(method, path, options.companionToken),
+            // Not owner proof: tells the harness this came through the door (audit C5).
+            ...doorForwardHeaders(options.companionToken),
+            // SEC-006: which device is answering, from the registry, beside the launch proof only.
+            ...(hasLaunchCredential(options.companionToken) && device?.id && options.approvalIdentity ? approvalDeviceHeaders(method, path, options.approvalIdentity(device.id)) : {}),
+            // the streaming ticket is bound to this device; forwardHeaders is an
+            // allowlist, so a client's own copy of the header never passes
+            ...(isStreamTicket(method, path) && device?.id ? { "x-murage-stream-principal": `companion:${device.id}:bearer` } : {}),
           },
         },
         (harness) => {
@@ -748,5 +766,35 @@ export function createProxyHandler(options: ProxyOptions) {
     }
 
     forward(null);
+  };
+}
+
+/** The streaming-voice websocket on the device door (paired native clients):
+ *  the door's own rules, a bearer and no Origin, tracked like a live stream. */
+export function createDeviceStreamUpgrade(options: ProxyOptions) {
+  const slots = new Map<string, number>();
+  return (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
+    // Node takes its own error listener off an upgrade socket
+    socket.on("error", () => socket.destroy());
+    const path = (req.url ?? "/").split("?")[0];
+    if (path !== STREAM_UPGRADE_PATH) return void socket.destroy();
+    if (req.headers.origin) return rejectUpgrade(socket, 403, "forbidden: cross-origin request");
+    const token = bearerToken(req.headers.authorization);
+    const device = options.authenticate(token);
+    if (!device?.id) return rejectUpgrade(socket, 401, "unauthorized");
+    if (!options.companionToken || !/^[a-f0-9]{64}$/.test(options.companionToken)) {
+      return rejectUpgrade(socket, 503, "calls require Murage and its companion to be started together by the desktop app or murage start");
+    }
+    const deviceId = device.id;
+    const replace = new URL(req.url ?? "/", "http://door").searchParams.get("replace") === "1";
+    forwardStreamUpgrade(req, socket, head, {
+      harnessPort: options.harnessPort,
+      companionToken: options.companionToken,
+      principal: `companion:${deviceId}:bearer`,
+      slots,
+      maxOpen: replace ? 2 : 1,
+      onOpen: (disconnect) => options.connected?.(deviceId, disconnect) ?? (() => {}),
+      live: () => options.authenticate(token) !== null,
+    });
   };
 }

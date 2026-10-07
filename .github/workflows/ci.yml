@@ -120,6 +120,11 @@ jobs:
       - name: Build the server bundle that packaged-layout tests import
         run: pnpm build:server
       - run: pnpm test:electron
+      # Murage for Chrome build and registration scripts. Windows registration
+      # has its own tests in electron/browser-extension-windows.node-test.mjs.
+      - name: Murage for Chrome script tests
+        if: matrix.os != 'windows-latest'
+        run: pnpm test:browser-extension-scripts
       - run: pnpm test:packaged-server
       - name: Probe upstream Electron Windows sandbox regression
         if: matrix.os == 'windows-latest'
@@ -149,7 +154,9 @@ jobs:
         # ordinary CI uses all three bounded shards.
         vitest_shard: ${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Windows runners are the slowest per shard: a 20-minute cap cancelled
+    # shard 3 mid-run (CI 36317693740) before any failure text was printed.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 35 || 20 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
@@ -235,19 +242,28 @@ jobs:
           MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch
           HUMAN_SHARD: ${{ matrix.human_shard }}/6
         run: pnpm test:human --shard="$HUMAN_SHARD"
+      - name: Run the human specs that need a harness of their own
+        # Runs even when the seeded specs failed, so one red step does not hide the other.
+        if: ${{ !cancelled() }}
+        env:
+          MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch
+          HUMAN_SHARD: ${{ matrix.human_shard }}/6
+        run: node scripts/run-isolated-human-specs.mjs --shard="$HUMAN_SHARD"
       - name: Upload human spec traces on failure
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: murage-human-spec-report-${{ matrix.human_shard }}
-          path: ${{ runner.temp }}/murage-e2e-scratch/human-results
+          path: |
+            ${{ runner.temp }}/murage-e2e-scratch/human-results
+            ${{ runner.temp }}/murage-e2e-scratch/isolated-results
           if-no-files-found: ignore
           retention-days: 7
 
   required:
     if: ${{ always() && !inputs.windows_only && !inputs.vitest_file && !inputs.human_files }}
     name: required CI completion
-    needs: [quality, vitest, human, control-plane, package-linux]
+    needs: [quality, vitest, human, control-plane, mobile, package-linux]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -258,12 +274,14 @@ jobs:
           VITEST: ${{ needs.vitest.result }}
           HUMAN: ${{ needs.human.result }}
           CONTROL_PLANE: ${{ needs.control-plane.result }}
+          MOBILE: ${{ needs.mobile.result }}
           PACKAGE_LINUX: ${{ needs.package-linux.result }}
         run: |
           test "$QUALITY" = success
           test "$VITEST" = success
           test "$HUMAN" = success
           test "$CONTROL_PLANE" = success
+          test "$MOBILE" = success
           test "$PACKAGE_LINUX" = success
 
   human-confirmation:
@@ -317,13 +335,22 @@ jobs:
         run: |
           human_paths=()
           while IFS= read -r human_path; do human_paths+=("$human_path"); done <<< "$HUMAN_FILES"
-          pnpm exec playwright test "${human_paths[@]}" --retries=0 --trace=on
+          # The seeded config ignores the specs that need a harness of their
+          # own; they run on their own configs, or they would silently drop out.
+          shared_paths=()
+          while IFS= read -r shared_path; do [ -n "$shared_path" ] && shared_paths+=("$shared_path"); done < <(node scripts/run-isolated-human-specs.mjs --shared "${human_paths[@]}")
+          status=0
+          if [ ${#shared_paths[@]} -gt 0 ]; then pnpm exec playwright test "${shared_paths[@]}" --retries=0 --trace=on || status=1; fi
+          node scripts/run-isolated-human-specs.mjs "${human_paths[@]}" -- --retries=0 --trace=on || status=1
+          exit $status
       - name: Upload human screenshots and traces
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: murage-scoped-human-confirmation
-          path: ${{ runner.temp }}/murage-e2e-scratch/human-results
+          path: |
+            ${{ runner.temp }}/murage-e2e-scratch/human-results
+            ${{ runner.temp }}/murage-e2e-scratch/isolated-results
           if-no-files-found: warn
           retention-days: 7
 
@@ -345,6 +372,34 @@ jobs:
       - run: pnpm control-plane:check
       - run: pnpm control-plane:test
       - run: pnpm control-plane:dry-run
+
+  mobile:
+    if: ${{ !inputs.windows_only && !inputs.human_files }}
+    name: phone app shell contracts (Ubuntu)
+    # apps/mobile is a standalone package with its own lockfile, outside the
+    # workspace. Its Vitest suite pins what the iOS and Android shells agree
+    # on (the shared fixtures, the channel scripts, the source guards) and the
+    # launcher; nothing else runs it. No native builds: Xcode and Gradle stay
+    # off CI, and the fixture oracles also run in the root suite.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/mobile/pnpm-lock.yaml
+      - name: Install the phone app package on its own
+        working-directory: apps/mobile
+        run: pnpm install --frozen-lockfile --ignore-workspace
+      - working-directory: apps/mobile
+        run: pnpm typecheck
+      - working-directory: apps/mobile
+        run: pnpm vitest run
 
   package-linux:
     if: ${{ !inputs.windows_only && !inputs.human_files }}

@@ -146,6 +146,18 @@ describe("task list rendering", () => {
     expect(html).not.toContain(">12:06 AM<");
   });
 
+  // Upstream #1854: today's work reads as how long ago; the hover keeps the
+  // full date and time.
+  it("says how long ago for today's work and keeps the full time on hover", () => {
+    const html = render();
+    expect(html).toMatch(/<time dateTime="2026-09-19T13:00:00.000Z" title="Created Sep 19, 2026, 9:00\s?AM">6 hr ago<\/time>/);
+    expect(html).not.toContain(">9:00 AM<");
+    const fresh = render({ tasks: [{ threadId: "chat", title: "Plan the launch", createdAt: now - 4 * 60_000 }] });
+    expect(fresh).toContain(">4 min ago</time>");
+    // yesterday keeps its clock time under its own header
+    expect(html).toContain(">8:00 AM</time>");
+  });
+
   it("names the token unit and keeps the split in the hover detail", () => {
     const html = render();
     expect(html).toContain("674k tokens");

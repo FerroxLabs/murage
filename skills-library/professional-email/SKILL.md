@@ -9,7 +9,7 @@ description: |
   `newsletter-writing`), or rejection letters (use `rejection-letter`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "email writing business-writing"
   category: "writing"

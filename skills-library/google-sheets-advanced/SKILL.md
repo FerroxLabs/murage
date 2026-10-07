@@ -6,7 +6,7 @@ description: |
   Do NOT use for general spreadsheet formulas that work in both Excel and Sheets (use excel-lookup-formulas), data cleaning (use spreadsheet-data-cleaning), or full Apps Script programming (software-development scope).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "spreadsheets automation template"
   category: "data-analysis"

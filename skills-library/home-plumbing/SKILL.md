@@ -4,7 +4,7 @@ description: |
   Comprehensive DIY home plumbing guide covering common repairs for leaky faucets, running toilets, and clogged drains, pipe types and their uses, essential tools, shutoff valve location, guidelines for when to call a professional, water heater basics, and winterization procedures. Includes important safety warnings. Use when the user asks about home plumbing or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "home-maintenance guide step-by-step"
   category: "hobbies-crafts"

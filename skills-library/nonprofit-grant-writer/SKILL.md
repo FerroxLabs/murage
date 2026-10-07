@@ -4,7 +4,7 @@ description: |
   Guide to nonprofit and foundation grant writing including prospect research, letters of inquiry, full proposals, budgets, reporting, and funder relationship building. Focused on private foundations, community foundations, and corporate giving programs. Use when the user asks about nonprofit grant writer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "writing strategy planning"
   category: "business-strategy"

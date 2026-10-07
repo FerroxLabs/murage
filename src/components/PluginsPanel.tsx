@@ -1,44 +1,44 @@
-// Connected apps marketplace, backed by Composio Sessions. Catalog comes
-// from /api/connectors/catalog — the full toolkit list with logos when a
-// Composio API key is configured, a curated set otherwise. Icons resolve
-// logo → favicon → monogram.
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Loader2, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
+import { cachedConnectorStatus, cachedConnectorStatusAuthoritative, inventoryApps, preloadConnectedApps, pendingConnectedApps, isCredentialStoreUnreadable, rememberConnectedApps, type ConnectorStatus } from "@/lib/connected-apps-preload";
+export { preloadConnectedApps, pendingConnectedApps, isCredentialStoreUnreadable, type ConnectorStatus, type ConnectorInventory } from "@/lib/connected-apps-preload";
+// Connected apps marketplace, backed by Composio Sessions. The catalog is
+// 1,500+ apps (server/app-catalog.ts): first paint is the featured apps
+// from the copy on disk, typing searches the whole catalog, and "All apps"
+// is a windowed, paged list. Icons resolve logo → favicon → monogram.
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft, Check, Loader2, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { readCachedInventory, writeCachedInventory } from "@/lib/connected-apps-cache";
-import { McpServersPanel } from "./McpServersPanel";
+// The MCP servers tab is desktop-only and heavy (the paste parser rides with it),
+// so it loads when the tab is opened, not with the first paint.
+const McpServersPanel = lazy(() => import("./McpServersPanel").then((module) => ({ default: module.McpServersPanel })));
 import {
   APPS_CLAIM,
-  COMPOSIO_KEY_FIELD_SELECTOR,
   ConnectedAppsLock,
   connectedAppsLockState,
   FLUX_KEY_FIELD_SELECTOR,
   focusSettingsField,
+  OwnKeyRetiredLine,
+  showOwnKeyRetiredLine,
 } from "./ConnectedAppsLock";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { t } from "@/lib/i18n";
 import { openExternalPage } from "@/lib/open-external";
+import {
+  appCountLabel,
+  appsClaimFor,
+  catalogNotice,
+  connectedCards,
+  isConnection,
+  matchesSearch,
+  NEEDS_OWN_SIGN_IN_SHORT,
+  type AppCard,
+  type CatalogFallbackReason,
+} from "@/lib/app-catalog";
+import { VirtualRows } from "./VirtualRows";
+import { returnFocus } from "@/lib/return-focus";
 
-interface ToolkitCard {
-  slug: string;
-  label: string;
-  blurb: string;
-  logo: string | null;
-  noAuth?: boolean;
-  domain: string | null;
-}
-
-export interface ConnectorStatus {
-  connected: boolean;
-  pending?: boolean;
-  status?: string;
-  accounts?: Array<{
-    id: string;
-    alias?: string;
-    status: string;
-  }>;
-}
+type ToolkitCard = AppCard;
 
 /**
  * What the Connected tab's count says, and the line under it.
@@ -48,18 +48,20 @@ export interface ConnectorStatus {
  * said 12 while a bot, asked, listed the 11 apps it could use (0.1.60 Linux
  * customer pass). The count is now the apps a bot can use; an app whose only
  * account is expired, failed or half connected is told apart in words.
+ *
+ * It counts the inventory, never the loaded cards: in 0.1.60 an app missing
+ * from the loaded list (six of the owner's thirteen, with the curated list
+ * showing) was left out of both the count and the tab (0.1.61 L17 Part B).
  */
 export function connectedTabSummary(
-  cards: ReadonlyArray<{ slug: string }> | null,
   status: Record<string, ConnectorStatus>,
 ): { ready: number; notReady: number; note: string } {
-  const apps = cards ? new Set(cards.map((card) => card.slug)) : null;
   let ready = 0;
   let notReady = 0;
   for (const [slug, service] of Object.entries(status)) {
-    if (/composio/i.test(slug) || (apps && !apps.has(slug))) continue;
+    if (!isConnection(slug, service)) continue;
     if (service.connected) ready++;
-    else if (service.accounts?.length) notReady++;
+    else notReady++;
   }
   const note = notReady === 0
     ? ""
@@ -69,81 +71,43 @@ export function connectedTabSummary(
   return { ready, notReady, note };
 }
 
-// The panel is a modal and unmounts whenever it closes. Keep the last known
-// account inventory at module scope so reopening never flashes every service
-// as disconnected while a fresh secure status check runs in the background.
-let cachedConnectorStatus: Record<string, ConnectorStatus> | null = null;
-let cachedConnectorStatusAt = 0;
-let cachedConnectorStatusAuthoritative = true;
-let connectorStatusRequest: Promise<ConnectorInventory> | null = null;
-/** true after the last inventory answer said credentials.bin could not be
- * read this launch. Config then cannot vouch for which keys exist, so the
- * lock stands down and the panel shows what it remembers, as it always did. */
-let credentialStoreUnreadable = false;
-const CONNECTOR_STATUS_CACHE_MS = 30_000;
+/** How often, and how many times, the panel asks again while the server
+ * checks its copy of the catalog: 80 seconds, past the 45-second walk. */
+export const CATALOG_POLL_MS = 4_000;
+export const CATALOG_POLLS = 20;
 /** How long the panel keeps asking while the connection backend comes up. */
 const BACKEND_WAIT_MS = 1_500;
 const BACKEND_WAIT_TRIES = 10;
+/** Asking again for the checked list while the server refreshes behind a remembered one. */
+/** How often connected apps that cannot be reached are asked again. */
+const RECOVERY_POLL_MS = 20_000;
+const REVALIDATE_POLLS = 8;
+/** Five seconds a try for ten minutes: at least the sign-in link's whole life. */
+const PANEL_SIGN_IN_POLLS = 120;
+const REVALIDATE_POLL_MS = 2_500;
 
-export interface ConnectorInventory {
-  services: Record<string, ConnectorStatus>;
-  /** false when the server could not read the credential store: the list is
-   * then "we do not know", and nothing may be cleared on the strength of it */
-  authoritative: boolean;
-  /** false when the server answered before its connection backend was
-   * ready (the first moments after a launch or an update). Its empty list
-   * means "not yet", never "nothing is connected". */
-  backendReady?: boolean;
+/** What GET /api/connectors/catalog answers about the catalog itself. */
+export interface CatalogAnswer {
+  source: "api" | "cache" | "curated";
+  reason?: CatalogFallbackReason;
+  detail?: { loaded: number; total: number | null };
+  total: number | null;
+  revalidating: boolean;
+  allApps: boolean;
 }
 
-/** Warm the account inventory once the app server is ready. Concurrent panel
- * opens share the same request, and recent data survives modal unmounts. */
-export function preloadConnectedApps(force = false): Promise<ConnectorInventory> {
-  if (!force && cachedConnectorStatus !== null && Date.now() - cachedConnectorStatusAt < CONNECTOR_STATUS_CACHE_MS) {
-    return Promise.resolve({
-      services: cachedConnectorStatus,
-      authoritative: cachedConnectorStatusAuthoritative,
-    });
-  }
-  if (connectorStatusRequest) return connectorStatusRequest;
-  connectorStatusRequest = api("/api/connectors/connected")
-    .then((response) => {
-      const services: Record<string, ConnectorStatus> = response.services ?? {};
-      // An unreadable credential store tells us nothing about what is
-      // connected. Keep the last inventory we were sure about instead.
-      if (response.credentialStore === "unavailable") {
-        credentialStoreUnreadable = true;
-        return { services: readCachedInventory()?.services ?? {}, authoritative: false };
-      }
-      credentialStoreUnreadable = false;
-      // Not ready yet: remembered accounts, if any, stand; nothing is cached
-      // on the strength of an answer that does not know.
-      if (response.configured === false) {
-        return { services: readCachedInventory()?.services ?? {}, authoritative: false, backendReady: false };
-      }
-      cachedConnectorStatus = services;
-      cachedConnectorStatusAt = Date.now();
-      cachedConnectorStatusAuthoritative = true;
-      writeCachedInventory(services, Date.now());
-      return { services, authoritative: true };
-    })
-    .catch(() => ({ services: readCachedInventory()?.services ?? {}, authoritative: false }))
-    .finally(() => {
-      connectorStatusRequest = null;
-    });
-  return connectorStatusRequest;
-}
-
-/** The inventory request already in flight, if any — the app warms one on
- * connect. The locked panel awaits THIS rather than starting its own, so it
- * learns whether the credential store was readable without sending a single
- * connector request of its own. */
-export function pendingConnectedApps(): Promise<ConnectorInventory> | null {
-  return connectorStatusRequest;
-}
-
-export function isCredentialStoreUnreadable(): boolean {
-  return credentialStoreUnreadable;
+export function catalogAnswerFrom(response: Record<string, unknown> | null | undefined): CatalogAnswer {
+  const source = response?.source === "api" || response?.source === "cache" ? response.source : "curated";
+  const detail = response?.detail as CatalogAnswer["detail"] | undefined;
+  return {
+    source,
+    ...(typeof response?.reason === "string" ? { reason: response.reason as CatalogFallbackReason } : {}),
+    ...(detail && typeof detail.loaded === "number" ? { detail } : {}),
+    total: typeof response?.total === "number" ? response.total : null,
+    revalidating: response?.revalidating === true,
+    // An older harness never sent it: All apps needs the new routes.
+    allApps: response?.allApps === true,
+  };
 }
 
 export function disconnectAccountConfirmation(
@@ -217,7 +181,7 @@ export function migrationFromClaim(
   return migration;
 }
 
-export type ConnectedAppsNoticeAction = "enable-flux" | "own-key" | "open-settings" | "billing" | "claim" | "keep-legacy";
+export type ConnectedAppsNoticeAction = "enable-flux" | "open-settings" | "billing" | "claim" | "keep-legacy" | "retry" | "reconnect";
 export type ConnectedAppsNotice =
   | { kind: "consent"; body: string; actions: Array<{ id: ConnectedAppsNoticeAction; label: string }> }
   | { kind: "line"; tone: "warning" | "muted"; text: string; action?: { id: ConnectedAppsNoticeAction; label: string } };
@@ -237,6 +201,9 @@ function tokenErrorNotice(code: string | undefined): ConnectedAppsNotice | null 
   if (!code) return null;
   if (code === "flux_key_budget_exhausted") {
     return { kind: "line", tone: "warning", text: t("connectedApps.flux.tokenBudget"), action: { id: "billing", label: t("connectedApps.flux.tokenBudgetButton") } };
+  }
+  if (code === "token_taken_over") {
+    return { kind: "line", tone: "warning", text: t("connectedApps.flux.takenOver"), action: { id: "reconnect", label: t("connectedApps.flux.reconnect") } };
   }
   if (code === "flux_key_blocked") return { kind: "line", tone: "warning", text: t("connectedApps.flux.tokenBlocked") };
   if (code === "flux_key_expired" || code === "flux_key_invalid" || code === "composio_no_account") {
@@ -266,7 +233,7 @@ function conflictText(code: string | undefined, date: string | null, installatio
 export function connectedAppsNotices(input: {
   configured: boolean;
   stale: boolean;
-  mode: "managed" | "self-hosted" | "unavailable";
+  mode?: "managed" | "unavailable";
   fields: ConnectorPanelFields;
   consentDismissed?: boolean;
   now?: number;
@@ -274,7 +241,7 @@ export function connectedAppsNotices(input: {
    * defaults, which read as the old Murage service, so nothing is said. */
   fieldsKnown?: boolean;
 }): ConnectedAppsNotice[] {
-  const { configured, stale, mode, fields } = input;
+  const { configured, stale, fields } = input;
   if (input.fieldsKnown === false) return [];
   const now = input.now ?? Date.now();
   const migration = fields.migration;
@@ -288,7 +255,7 @@ export function connectedAppsNotices(input: {
       // No FluxRouter broker in this build at all: every dev run, and any
       // release where the URL constant is still empty. Offering to "enable
       // FluxRouter" here would point at a door this build does not have.
-      notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.notInBuild"), action: { id: "own-key", label: t("connectedApps.flux.openSettings") } });
+      notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.notInBuild") });
     } else if (!fields.fluxConfigured) {
       // No FluxRouter key and no key of the person's own: the panel is
       // locked (ConnectedAppsLock) and never reaches these notices, because
@@ -297,12 +264,10 @@ export function connectedAppsNotices(input: {
       notices.push(tokenNotice);
     } else {
       if (migration.state === "legacy-retired") notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.legacyRetired") });
-      notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.unreachable") });
+      notices.push({ kind: "line", tone: "warning", text: t("connectedApps.flux.unreachable"), action: { id: "retry", label: t("connectedApps.flux.retry") } });
     }
     return notices;
   }
-  if (mode === "self-hosted") return notices;
-
   if (migration.state === "claimed" && migration.at && now - Date.parse(migration.at) < CLAIMED_NOTICE_MS) {
     notices.push({ kind: "line", tone: "muted", text: t("connectedApps.flux.claimed") });
   }
@@ -358,6 +323,55 @@ export function connectedAppsNotices(input: {
 }
 
 export type ConnectorInventoryPhase = "loading" | "ready" | "error";
+
+/** The panel's own poll for a sign-in ran out while the app was still pending:
+ * end the wait as an expired link (the row already says "Authorization
+ * expired. Try again.") instead of stopping silently on a spinner. */
+export function expirePendingSignIn(
+  status: Record<string, ConnectorStatus>,
+  slug: string,
+): Record<string, ConnectorStatus> {
+  const current = status[slug];
+  if (!current || current.connected || !current.pending) return status;
+  return { ...status, [slug]: { ...current, pending: false, status: "EXPIRED" } };
+}
+
+/** The inventory without one disconnected account, as soon as the server says
+ * it is gone, so a remembered "connected" never outlives it (the copy kept
+ * for the next launch is rewritten from this). */
+export function withoutAccount(
+  status: Record<string, ConnectorStatus>,
+  slug: string,
+  accountId: string,
+): Record<string, ConnectorStatus> {
+  const current = status[slug];
+  if (!current) return status;
+  const accounts = (current.accounts ?? []).filter((account) => account.id !== accountId);
+  const active = accounts.find((account) => /^active$/i.test(account.status));
+  const pending = accounts.find((account) => /^(initiated|initializing|pending)$/i.test(account.status));
+  if (!accounts.length) {
+    const { [slug]: _gone, ...rest } = status;
+    return rest;
+  }
+  return {
+    ...status,
+    [slug]: { connected: Boolean(active), pending: Boolean(pending), status: (active ?? pending ?? accounts[0]).status, accounts },
+  };
+}
+
+/** A remembered inventory, from this window or from disk, is usable: the
+ * panel opens ready (and quietly refreshes) rather than "Checking…" with
+ * every action disabled until the broker answers. */
+export function initialInventoryPhase(moduleCache: unknown | null, remembered: unknown | null): ConnectorInventoryPhase {
+  return moduleCache !== null || remembered !== null ? "ready" : "loading";
+}
+
+/** Where the phase lands after an inventory answer. An answer that does not
+ * know (an unreadable store, a broker that has not answered) only blocks the
+ * panel when there is nothing remembered to show. */
+export function inventoryPhaseAfterAnswer(input: { authoritative: boolean; hasRemembered: boolean }): ConnectorInventoryPhase {
+  return input.authoritative || input.hasRemembered ? "ready" : "error";
+}
 
 /** What the primary connector button does. A pending authorization continues
  * with its retained URL or only re-checks status; every other click, for the
@@ -478,11 +492,21 @@ export function PluginsPanel() {
   const dialogRef = useRef<HTMLDivElement>(null);
   // Which half of the dialog is showing: the Composio marketplace, or the
   // person's own MCP commands. Two different things behind one door.
-  const [surface, setSurface] = useState<"apps" | "mcp">("apps");
+  // Settings > Connected apps can ask for the MCP half directly.
+  const [surface, setSurface] = useState<"apps" | "mcp">(() => (state.pluginsSurface === "mcp" && desktop === true ? "mcp" : "apps"));
+  // Featured apps: the curated set plus the most used, from the copy on disk.
+  // Nothing is carried over from an earlier open: the backend may have
+  // changed since, and the server's held copy answers in milliseconds.
   const [cards, setCards] = useState<ToolkitCard[] | null>(null);
-  const [source, setSource] = useState<"api" | "curated">("curated");
+  const [catalog, setCatalog] = useState<CatalogAnswer | null>(null);
+  const [knownApps, setKnownApps] = useState<Record<string, ToolkitCard>>(() => inventoryApps);
+  const [searchResults, setSearchResults] = useState<{ query: string; items: ToolkitCard[]; total: number; loading: boolean; partial?: boolean; failed?: boolean }>({ query: "", items: [], total: 0, loading: false });
+  const [browseAll, setBrowseAll] = useState(false);
+  const [allApps, setAllApps] = useState<{ items: ToolkitCard[]; next: string | null; total: number | null; loading: boolean; done: boolean; failed?: boolean }>({ items: [], next: null, total: null, loading: false, done: false });
+  const [twoColumns, setTwoColumns] = useState(() => typeof matchMedia === "function" && matchMedia("(min-width: 768px)").matches);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [configured, setConfigured] = useState(true);
-  const [mode, setMode] = useState<"managed" | "self-hosted" | "unavailable">("unavailable");
+  const [mode, setMode] = useState<"managed" | "unavailable">("unavailable");
   // Which broker holds these apps, and where this install is in the move from
   // Murage's own service to FluxRouter. Every connector response carries it.
   const [panelFields, setPanelFields] = useState<ConnectorPanelFields>(EMPTY_CONNECTOR_PANEL_FIELDS);
@@ -507,8 +531,14 @@ export function PluginsPanel() {
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [inventoryPhase, setInventoryPhase] = useState<ConnectorInventoryPhase>(
-    cachedConnectorStatus === null ? "loading" : "ready",
+    () => initialInventoryPhase(cachedConnectorStatus, readCachedInventory()),
   );
+  /** the server answered from what it last knew and is refreshing it */
+  const [revalidating, setRevalidating] = useState(false);
+  const revalidateTimer = useRef<{ tries: number; timer?: ReturnType<typeof setTimeout> }>({ tries: 0 });
+  useEffect(() => () => clearTimeout(revalidateTimer.current.timer), []);
+  const statusRef = useRef(status);
+  statusRef.current = status;
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"marketplace" | "connected">("marketplace");
@@ -564,13 +594,14 @@ export function PluginsPanel() {
   }, []);
 
   const backendWait = useRef<{ tries: number; timer?: ReturnType<typeof setTimeout> }>({ tries: 0 });
-  const refreshConnectedStatusRef = useRef<((force?: boolean) => Promise<Record<string, ConnectorStatus>>) | null>(null);
+  const refreshConnectedStatusRef = useRef<((force?: boolean, serverForce?: boolean) => Promise<Record<string, ConnectorStatus>>) | null>(null);
   useEffect(() => () => clearTimeout(backendWait.current.timer), []);
-  const refreshConnectedStatus = useCallback((force = false): Promise<Record<string, ConnectorStatus>> => {
+  const refreshConnectedStatus = useCallback((force = false, serverForce = force): Promise<Record<string, ConnectorStatus>> => {
     const requestGenerations = new Map(statusGenerations.current);
     setRefreshing(true);
-    return preloadConnectedApps(force)
-      .then(({ services, authoritative, backendReady }) => {
+    return preloadConnectedApps(force, serverForce)
+      .then(({ services, authoritative, backendReady, apps, revalidating: stillRefreshing }) => {
+        if (apps) setKnownApps((current) => ({ ...current, ...apps }));
         clearTimeout(backendWait.current.timer);
         if (backendReady === false && backendWait.current.tries < BACKEND_WAIT_TRIES) {
           // Asked too early, just after a launch or an update: keep saying
@@ -583,7 +614,22 @@ export function PluginsPanel() {
         }
         if (backendReady !== false) backendWait.current.tries = 0;
         setStale(!authoritative);
-        setInventoryPhase(authoritative ? "ready" : "error");
+        setInventoryPhase(inventoryPhaseAfterAnswer({
+          authoritative,
+          hasRemembered: Object.keys(statusRef.current).length > 0 || readCachedInventory() !== null,
+        }));
+        // The server's last-known list is on screen; ask again shortly for
+        // the checked one instead of leaving the panel to guess.
+        clearTimeout(revalidateTimer.current.timer);
+        setRevalidating(stillRefreshing === true);
+        if (stillRefreshing === true && revalidateTimer.current.tries < REVALIDATE_POLLS) {
+          revalidateTimer.current.tries += 1;
+          revalidateTimer.current.timer = setTimeout(() => {
+            void refreshConnectedStatusRef.current?.(true, false);
+          }, REVALIDATE_POLL_MS);
+        } else if (stillRefreshing !== true) {
+          revalidateTimer.current.tries = 0;
+        }
         setStatus((current) => mergeCompleteConnectorStatus(
           current,
           services,
@@ -640,18 +686,27 @@ export function PluginsPanel() {
     focusSettingsField(FLUX_KEY_FIELD_SELECTOR);
   }, [dispatch]);
 
-  /** The lock's secondary way in: the person's own Composio key, under
-   * Tools & Connections, cursor in that field. */
-  const addOwnKey = useCallback(() => {
-    dispatch({ type: "togglePlugins", open: false });
-    dispatch({ type: "toggleAppSettings", open: true, section: "connections" });
-    focusSettingsField(COMPOSIO_KEY_FIELD_SELECTOR);
-  }, [dispatch]);
-
   /** What each notice's button does. Moving connected apps is the only one
    * that changes anything, and it runs in the main process (it holds the
    * credentials); the rest just open the right settings section. */
+  const loadCatalogRef = useRef<((retry?: boolean) => Promise<void>) | null>(null);
   const runNoticeAction = useCallback((action: ConnectedAppsNoticeAction) => {
+    if (action === "reconnect") {
+      // The one manual mint: another computer took over, and nothing here
+      // retries by itself. Mint first, then end this computer's old token.
+      const reconnect = window.muragebox?.reconnectConnectedApps;
+      if (!reconnect) return;
+      setError(null);
+      void reconnect()
+        .then(() => Promise.all([loadCatalogRef.current?.(true), loadConnectionInventory(true)]))
+        .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+      return;
+    }
+    if (action === "retry") {
+      void loadCatalogRef.current?.(true);
+      void loadConnectionInventory(true);
+      return;
+    }
     if (action === "billing") {
       window.open(FLUXROUTER_BILLING_URL, "_blank", "noopener,noreferrer");
       return;
@@ -675,18 +730,76 @@ export function PluginsPanel() {
       return;
     }
     dispatch({ type: "togglePlugins", open: false });
-    // "enable-flux" lands on Models, where FluxRouter lives; "own-key" and
-    // "open-settings" open settings as they always have.
-    dispatch(action === "enable-flux"
-      ? { type: "toggleAppSettings", open: true, section: "models" }
-      : { type: "toggleAppSettings", open: true });
+    // "enable-flux" lands on Models, where FluxRouter lives; "open-settings"
+    // lands on Connected apps. They used to open whichever section was open
+    // last.
+    dispatch({ type: "toggleAppSettings", open: true, section: action === "enable-flux" ? "models" : "connections" });
   }, [dispatch, loadConnectionInventory]);
+
+  const catalogRetry = useRef<{ tries: number; timer?: ReturnType<typeof setTimeout> }>({ tries: 0 });
+  // Only the newest catalog request may paint, and only while mounted.
+  const catalogRequest = useRef(0);
+  const catalogAnswered = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  /** Ask for the catalog; `retry` is the notice's Retry button. */
+  const loadCatalog = useCallback((retry = false): Promise<void> => {
+    clearTimeout(catalogRetry.current.timer);
+    if (retry) catalogRetry.current.tries = 0;
+    const request = ++catalogRequest.current;
+    return api(`/api/connectors/catalog${retry ? "?retry=1" : ""}`)
+      .then((r) => {
+        if (!mounted.current || request !== catalogRequest.current) return;
+        catalogAnswered.current = true;
+        const answer = catalogAnswerFrom(r);
+        setCards(r.cards ?? []);
+        setCatalog(answer);
+        setConfigured(Boolean(r.configured));
+        setMode(r.mode ?? "unavailable");
+        setPanelFields(connectorPanelFieldsFrom(r));
+        setPanelFieldsKnown(true);
+        // Still walking, or a stale copy being checked: ask again shortly.
+        // The server's walk may take up to 45 seconds: keep asking past it.
+        if (answer.revalidating && catalogRetry.current.tries < CATALOG_POLLS) {
+          catalogRetry.current.tries++;
+          catalogRetry.current.timer = setTimeout(() => void loadCatalog(), CATALOG_POLL_MS);
+        }
+      })
+      .catch((e) => {
+        if (mounted.current && request === catalogRequest.current) setError(e instanceof Error ? e.message : String(e));
+      });
+  }, []);
+
+  loadCatalogRef.current = loadCatalog;
+
+  // Connected apps that cannot be reached are asked again without anyone
+  // pressing anything: when the network returns, when the window wakes, and
+  // every 20 seconds while the line is up.
+  useEffect(() => {
+    if (lockState !== "unlocked" || configured) return;
+    const again = () => {
+      void loadCatalogRef.current?.();
+      void refreshConnectedStatusRef.current?.(true, false);
+    };
+    const wake = () => { if (document.visibilityState !== "hidden") again(); };
+    window.addEventListener("online", again);
+    document.addEventListener("visibilitychange", wake);
+    const timer = setInterval(again, RECOVERY_POLL_MS);
+    return () => {
+      window.removeEventListener("online", again);
+      document.removeEventListener("visibilitychange", wake);
+      clearInterval(timer);
+    };
+  }, [lockState, configured]);
 
   useEffect(() => {
     if (inventoryPhase !== "ready") return;
-    cachedConnectorStatus = status;
-    cachedConnectorStatusAt = Date.now();
-    cachedConnectorStatusAuthoritative = !stale;
+    rememberConnectedApps(status, !stale);
   }, [inventoryPhase, stale, status]);
 
   // Locked, or not yet known: no catalog, no inventory. The only thing the
@@ -708,27 +821,117 @@ export function PluginsPanel() {
     if (lockState !== "unlocked") return;
     let alive = true;
     void loadConnectionInventory();
-    api("/api/connectors/catalog")
+    // First paint: whatever the server holds on disk, before any readiness
+    // probe; then the checked answer, asked again while it revalidates.
+    const firstRequest = catalogRequest.current;
+    api("/api/connectors/catalog/cached")
       .then((r) => {
-        if (!alive) return;
+        // only while the checked answer has not arrived
+        if (!alive || !r?.held || catalogRequest.current !== firstRequest || catalogAnswered.current) return;
         setCards(r.cards ?? []);
-        setSource(r.source ?? "curated");
-        setConfigured(Boolean(r.configured));
-        setMode(r.mode ?? "unavailable");
-        setPanelFields(connectorPanelFieldsFrom(r));
-        setPanelFieldsKnown(true);
+        setCatalog({ ...catalogAnswerFrom(r), allApps: false });
       })
-      .catch((e) => {
-        if (!alive) return;
-        setError(e.message);
-      });
+      .catch(() => {});
+    void loadCatalog();
     return () => {
       alive = false;
+      clearTimeout(catalogRetry.current.timer);
     };
-  }, [lockState, loadConnectionInventory]);
+  }, [lockState, loadConnectionInventory, loadCatalog]);
 
   useEffect(() => {
-    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (typeof matchMedia !== "function") return;
+    const query = matchMedia("(min-width: 768px)");
+    const change = () => setTwoColumns(query.matches);
+    query.addEventListener?.("change", change);
+    return () => query.removeEventListener?.("change", change);
+  }, []);
+
+  // Typing searches the whole catalog (the service, or the copy on this
+  // computer when the service does not search), after a short pause.
+  const query = search.trim();
+  const searchAgain = `${catalog?.source ?? ""}:${catalog?.total ?? ""}`;
+  useEffect(() => {
+    if (lockState !== "unlocked" || tab !== "marketplace" || !query) {
+      setSearchResults((current) => current.query || current.loading ? { query: "", items: [], total: 0, loading: false } : current);
+      return;
+    }
+    let alive = true;
+    setSearchResults((current) => ({ ...current, query, loading: true }));
+    const timer = setTimeout(() => {
+      api(`/api/connectors/catalog/search?q=${encodeURIComponent(query)}`)
+        .then((r) => {
+          if (!alive) return;
+          const items: ToolkitCard[] = Array.isArray(r?.items) ? r.items : [];
+          // A search over the featured apps only (the full list is still
+          // loading, or the service could not answer) says so.
+          setSearchResults({ query, items, total: typeof r?.total === "number" ? r.total : items.length, loading: false, partial: r?.source === "curated" || typeof r?.reason === "string" });
+          setKnownApps((current) => ({ ...current, ...Object.fromEntries(items.map((item) => [item.slug, item])) }));
+        })
+        .catch(() => {
+          if (alive) setSearchResults({ query, items: [], total: 0, loading: false, failed: true });
+        });
+    }, 220);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+    // asked again when the catalog itself changes (a walk finished, a Retry)
+  }, [lockState, tab, query, searchAgain]);
+
+  // One page request at a time, decided outside any state updater (an
+  // updater may run twice in development and must not send requests).
+  const allAppsRef = useRef(allApps);
+  allAppsRef.current = allApps;
+  const allAppsLoading = useRef(false);
+  const loadMoreApps = useCallback(() => {
+    const current = allAppsRef.current;
+    if (allAppsLoading.current || current.done) return;
+    allAppsLoading.current = true;
+    setAllApps((latest) => ({ ...latest, loading: true }));
+    const cursor = current.next;
+    api(`/api/connectors/catalog/page?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)
+      .then((r) => {
+        const items: ToolkitCard[] = Array.isArray(r?.items) ? r.items : [];
+        if (r?.source === "curated") {
+          // Not the whole catalog yet: show why, never a short list as "all".
+          setAllApps((latest) => ({ ...latest, loading: false, done: true, failed: true }));
+          return;
+        }
+        setAllApps((latest) => {
+          const held = new Set(latest.items.map((item) => item.slug));
+          // A cursor that did not move ends the list rather than looping.
+          const next = typeof r?.nextCursor === "string" && r.nextCursor !== cursor ? r.nextCursor : null;
+          return {
+            items: [...latest.items, ...items.filter((item) => !held.has(item.slug))],
+            next,
+            total: typeof r?.total === "number" ? r.total : latest.total,
+            loading: false,
+            done: next === null,
+          };
+        });
+      })
+      .catch((cause) => {
+        // Stop asking on every scroll; "Featured" then "Browse all" asks again.
+        setAllApps((latest) => ({ ...latest, loading: false, done: true, failed: true }));
+        setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        allAppsLoading.current = false;
+      });
+  }, []);
+
+  // A finished walk or a Retry starts All apps again from the top.
+  useEffect(() => {
+    setAllApps((current) => current.failed ? { items: [], next: null, total: null, loading: false, done: false } : current);
+  }, [searchAgain]);
+
+  useEffect(() => {
+    if (browseAll && !allApps.items.length && !allApps.done) loadMoreApps();
+  }, [browseAll, allApps.items.length, allApps.done, loadMoreApps]);
+
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = dialogRef.current;
     const focusable = () =>
       Array.from(
@@ -770,7 +973,7 @@ export function PluginsPanel() {
     window.addEventListener("keydown", onKeyDown);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      returnFocus?.focus();
+      returnFocus(opener);
     };
   }, [dispatch]);
 
@@ -804,9 +1007,20 @@ export function PluginsPanel() {
     const timer = setInterval(() => {
       void refreshStatus([slug]).then((services) => {
         const state = services[slug];
-        if (++tries >= 24 || (state?.connected && !state.pending) || (state?.status && /^(expired|failed)$/i.test(state.status))) {
+        const ended = (state?.connected && !state.pending) || (state?.status && /^(expired|failed)$/i.test(state.status));
+        if (++tries >= PANEL_SIGN_IN_POLLS || ended) {
           clearInterval(timer);
           pollTimers.current.delete(slug);
+          // Out of budget with the sign-in still unfinished: say so.
+          if (!ended) {
+            setStatus((current) => expirePendingSignIn(current, slug));
+            setPendingUrls((current) => {
+              if (!current[slug]) return current;
+              const next = { ...current };
+              delete next[slug];
+              return next;
+            });
+          }
         }
       });
     }, 5000);
@@ -864,237 +1078,35 @@ export function PluginsPanel() {
     if (desktop !== true) return;
     setBusySlug(slug);
     api(`/api/connectors/${slug}/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" })
-      .then(() => refreshStatus([slug]))
+      .then(() => {
+        const next = withoutAccount(statusRef.current, slug, accountId);
+        writeCachedInventory(next, Date.now());
+        setStatus(next);
+        return refreshStatus([slug]);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setBusySlug(null));
   };
 
-  const matching = (cards ?? []).filter(
-    (c) => !search || `${c.label} ${c.slug} ${c.blurb}`.toLowerCase().includes(search.toLowerCase()),
-  );
-  const visible = matching.filter((card) =>
-    tab === "marketplace" || status[card.slug]?.connected || Boolean(status[card.slug]?.accounts?.length)
-  );
-  const connectedSummary = connectedTabSummary(cards, status);
+  // Marketplace: featured apps, or the whole catalog's matches while typing
+  // (featured matches show at once while the search is on its way). The
+  // Connected tab is built from the inventory, never from loaded cards.
+  const featuredMatches = (cards ?? []).filter((card) => matchesSearch(card, query));
+  const visible = tab === "connected"
+    ? connectedCards(status, [knownApps, cards, allApps.items, searchResults.items]).filter((card) => matchesSearch(card, query))
+    : query
+      ? (searchResults.query === query && !searchResults.loading ? searchResults.items : featuredMatches)
+      : cards ?? [];
+  const browsing = tab === "marketplace" && browseAll && !query && catalog?.allApps === true;
+  const columns = twoColumns ? 2 : 1;
+  const connectedSummary = connectedTabSummary(status);
   const connectedCount = connectedSummary.ready;
+  const countLabel = appCountLabel(catalog?.total);
+  const notice = catalogNotice({ source: catalog?.source, reason: catalog?.reason, detail: catalog?.detail });
   const connectedEmptyCopy = connectedInventoryCopy(inventoryPhase);
   const close = () => dispatch({ type: "togglePlugins", open: false });
 
-  return (
-    <div
-      className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
-      onMouseDown={(event) => event.target === event.currentTarget && close()}
-    >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="plugins-title"
-        tabIndex={-1}
-        className="animate-pop-in flex h-[min(780px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[1040px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50"
-      >
-        <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
-          <div>
-            <h2 id="plugins-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Connected apps</h2>
-            <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? `One Flux Router key connects ${APPS_CLAIM}. You can add your own MCP tools too.` : "View connected apps. Manage connections and MCP tools in the desktop app."}</p>
-          </div>
-          <div className="flex items-center gap-1">
-            {surface === "apps" && lockState === "unlocked" && (
-              <button
-                onClick={() => void loadConnectionInventory(true)}
-                disabled={refreshing}
-                className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
-                title="Refresh connection status"
-              >
-                <RefreshCw size={17} className={cn(refreshing && "animate-spin")} />
-              </button>
-            )}
-            <button
-              onClick={close}
-              aria-label="Close connected apps"
-              className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"
-            >
-              <X size={21} />
-            </button>
-          </div>
-        </header>
-
-        <div className="border-b border-hairline/40 px-6 sm:px-8">
-          <div className="flex gap-6" role="tablist" aria-label="Connected apps and MCP servers">
-            {(desktop === true ? ["apps", "mcp"] as const : ["apps"] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                role="tab"
-                aria-selected={surface === item}
-                onClick={() => setSurface(item)}
-                className={cn(
-                  "border-b-2 px-0.5 pb-3 pt-1 text-[13.5px] font-medium transition-colors",
-                  surface === item ? "border-accent text-ink" : "border-transparent text-ink-secondary hover:text-ink",
-                )}
-              >
-                {item === "apps" ? "Connected apps" : "MCP servers"}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {desktop === true && surface === "mcp" ? <McpServersPanel /> : lockState === "unknown" ? (
-          <div className="flex flex-1 items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
-            <Loader2 size={14} className="animate-spin" /> {t("connectedApps.lock.loading")}
-          </div>
-        ) : locked ? (
-          <ConnectedAppsLock onAddFluxKey={addFluxKey} onOwnKey={addOwnKey} retired={state.config?.composio?.migration?.state === "legacy-retired"} />
-        ) : <>
-
-        {stale && (
-          // Say which of the two things is true. Silence here is what makes a
-          // remembered list indistinguishable from a confirmed one.
-          <div className="mx-6 mb-1 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning sm:mx-8">
-            <TriangleAlert size={14} className="mt-px shrink-0" />
-            <span>
-              Showing the previous account inventory; connection status could not be checked just now.
-              Refresh connection status before adding another account.
-            </span>
-          </div>
-        )}
-
-        <div className="flex flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-          <div className="flex w-fit rounded-xl bg-raised/70 p-1" role="tablist" aria-label="Connected apps view">
-            <button
-              role="tab"
-              aria-selected={tab === "marketplace"}
-              onClick={() => setTab("marketplace")}
-              className={cn(
-                "rounded-lg px-4 py-2 text-[13.5px] transition-colors",
-                tab === "marketplace" ? "bg-card text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
-              )}
-            >
-              Marketplace
-            </button>
-            <button
-              role="tab"
-              aria-selected={tab === "connected"}
-              onClick={() => setTab("connected")}
-              className={cn(
-                "rounded-lg px-4 py-2 text-[13.5px] transition-colors",
-                tab === "connected" ? "bg-card text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
-              )}
-            >
-              Connected{connectedCount > 0 ? ` ${connectedCount}` : ""}
-            </button>
-          </div>
-          <label className="flex h-11 w-full items-center gap-2.5 rounded-xl bg-raised/70 px-3.5 sm:w-[320px]">
-            <Search size={17} className="shrink-0 text-ink-secondary" />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search apps"
-              aria-label="Search apps"
-              className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
-            />
-          </label>
-        </div>
-
-        {/* Two notices about the same fact is one too many: the stale banner
-            above already explains this launch, and "configure your own
-            connection service" is advice for someone who never set one up. */}
-        {/* "Temporarily unavailable" was a lie for the most common way to see
-            this. The managed broker's credentials only arrive from
-            electron/main.mjs when `app.isPackaged`, so EVERY dev run and every
-            `node server/index.ts` lands here permanently — and the copy sent
-            people hunting for an outage that did not exist. It says what is
-            actually true now, and stays true for a packaged user whose broker
-            really is down. */}
-        {/* WHICH Composio account this is talking to, said out loud, and — for
-            an install whose apps still live on Murage's own service — where
-            they are in the move to FluxRouter. There are several possible
-            accounts, they hold different connections, and the app used to
-            switch between them in silence: connecting apps in dev on your own
-            key and then running the release used to empty the list, because
-            the accounts are on the far side of a different project under a
-            different user id and nothing said so.
-
-            Every branch comes from `connectedAppsNotices`, which is pure and
-            takes only what the server reported, so the copy for each state is
-            tested without a renderer. */}
-        {configured && mode === "self-hosted" && (
-          <div className="mx-6 mb-1 text-[12px] text-ink-secondary sm:mx-8">
-            Connected with your own key. These apps stay with your key.
-          </div>
-        )}
-        {notices.map((notice, index) => {
-          if (notice.kind === "consent") {
-            return (
-              <div key={`consent-${index}`} className="mx-6 mb-1 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-[13px] text-ink sm:mx-8">
-                <div>{notice.body}</div>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
-                  {notice.actions.map((action) => (
-                    <button
-                      key={action.id}
-                      disabled={claiming && action.id === "claim"}
-                      className="font-medium underline underline-offset-2 disabled:opacity-60"
-                      onClick={() => runNoticeAction(action.id)}
-                    >
-                      {action.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          }
-          return (
-            <div
-              key={`line-${index}`}
-              className={cn(
-                "mx-6 mb-1 text-[12px] sm:mx-8",
-                notice.tone === "warning" ? "rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning" : "text-ink-secondary",
-              )}
-            >
-              {notice.text}
-              {notice.action && (
-                <>
-                  {" "}
-                  <button className="font-medium underline underline-offset-2" onClick={() => runNoticeAction(notice.action!.id)}>
-                    {notice.action.label}
-                  </button>
-                </>
-              )}
-            </div>
-          );
-        })}
-        {configured && source === "curated" && mode === "self-hosted" && (
-          <div className="mx-6 mb-1 text-[12px] text-ink-secondary sm:mx-8">
-            Showing featured apps.{" "}
-            <button
-              className="underline underline-offset-2 hover:text-ink"
-              onClick={() => {
-                close();
-                dispatch({ type: "toggleAppSettings", open: true });
-              }}
-            >
-              Update your connected apps key
-            </button>{" "}
-            for the full catalog.
-          </div>
-        )}
-        {error && <div role="alert" className="mx-6 mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger sm:mx-8">{error}</div>}
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-5 sm:px-8">
-          {cards === null ? (
-            <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
-              <Loader2 size={14} className="animate-spin" /> Loading catalog…
-            </div>
-          ) : (
-            <div>
-              <div className="mb-3 text-[12px] font-medium text-ink-secondary">
-                {tab === "connected" ? "Your connections" : search ? "Search results" : "Available apps"}
-              </div>
-              {tab === "connected" && connectedSummary.note && (
-                <p role="status" className="mb-3 text-[12.5px] text-ink-secondary">{connectedSummary.note}</p>
-              )}
-              <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
-              {visible.map((card) => {
+  const appRow = (card: ToolkitCard) => {
               const serviceStatus = status[card.slug];
               const pending = serviceStatus?.pending;
               const failed = serviceStatus?.status && /^(expired|failed)$/i.test(serviceStatus.status);
@@ -1126,6 +1138,11 @@ export function PluginsPanel() {
                               : "Authorization expired. Try again."
                             : card.blurb}
                       </div>
+                      {card.signIn === "own" && !accounts.length && !pending && (
+                        <div className="mt-0.5 truncate text-[11.5px] text-ink-secondary" title="Connecting opens a page where you enter them.">
+                          {NEEDS_OWN_SIGN_IN_SHORT}
+                        </div>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -1255,11 +1272,288 @@ export function PluginsPanel() {
                   )}
                 </div>
               );
-              })}
+  };
+
+  return (
+    <div
+      className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
+      onMouseDown={(event) => event.target === event.currentTarget && close()}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="plugins-title"
+        tabIndex={-1}
+        className="animate-pop-in flex h-[min(780px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[1040px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50"
+      >
+        <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
+          <div>
+            <h2 id="plugins-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Connected apps</h2>
+            <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? `One Flux Router key connects ${appsClaimFor(catalog?.total, APPS_CLAIM)}. You can add your own MCP tools too.` : "View connected apps. Manage connections and MCP tools in the desktop app."}</p>
+          </div>
+          <div className="flex items-center gap-1">
+            {surface === "apps" && lockState === "unlocked" && (
+              <button
+                onClick={() => void loadConnectionInventory(true)}
+                disabled={refreshing}
+                className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
+                title="Refresh connection status"
+              >
+                <RefreshCw size={17} className={cn((refreshing || revalidating) && "animate-spin")} />
+              </button>
+            )}
+            <button
+              onClick={close}
+              aria-label="Close connected apps"
+              className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"
+            >
+              <X size={21} />
+            </button>
+          </div>
+        </header>
+
+        <div className="border-b border-hairline/40 px-6 sm:px-8">
+          <div className="flex gap-6" role="tablist" aria-label="Connected apps and MCP servers">
+            {(desktop === true ? ["apps", "mcp"] as const : ["apps"] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={surface === item}
+                onClick={() => setSurface(item)}
+                className={cn(
+                  "border-b-2 px-0.5 pb-3 pt-1 text-[13.5px] font-medium transition-colors",
+                  surface === item ? "border-accent text-ink" : "border-transparent text-ink-secondary hover:text-ink",
+                )}
+              >
+                {item === "apps" ? "Connected apps" : "MCP servers"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {surface !== "mcp" && showOwnKeyRetiredLine(state.config, { anyConnected: state.config?.composio?.broker === "flux" && Object.values(status).some((entry) => entry.connected) }) && <OwnKeyRetiredLine />}
+        {desktop === true && surface === "mcp" ? (
+          <Suspense fallback={<div className="flex flex-1 items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary"><Loader2 size={14} className="animate-spin" /> {t("mcp.panel.loading")}</div>}>
+            <McpServersPanel />
+          </Suspense>
+        ) : lockState === "unknown" ? (
+          <div className="flex flex-1 items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
+            <Loader2 size={14} className="animate-spin" /> {t("connectedApps.lock.loading")}
+          </div>
+        ) : locked ? (
+          <ConnectedAppsLock onAddFluxKey={addFluxKey} retired={state.config?.composio?.migration?.state === "legacy-retired"} />
+        ) : <>
+
+        {stale && (
+          // Say which of the two things is true. Silence here is what makes a
+          // remembered list indistinguishable from a confirmed one.
+          <div className="mx-6 mb-1 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning sm:mx-8">
+            <TriangleAlert size={14} className="mt-px shrink-0" />
+            <span>
+              Showing the previous account inventory; connection status could not be checked just now.
+              Refresh connection status before adding another account.
+            </span>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+          <div className="flex w-fit rounded-xl bg-raised/70 p-1" role="tablist" aria-label="Connected apps view">
+            <button
+              role="tab"
+              aria-selected={tab === "marketplace"}
+              onClick={() => setTab("marketplace")}
+              className={cn(
+                "rounded-lg px-4 py-2 text-[13.5px] transition-colors",
+                tab === "marketplace" ? "bg-card text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
+              )}
+            >
+              Marketplace
+            </button>
+            <button
+              role="tab"
+              aria-selected={tab === "connected"}
+              onClick={() => setTab("connected")}
+              className={cn(
+                "rounded-lg px-4 py-2 text-[13.5px] transition-colors",
+                tab === "connected" ? "bg-card text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
+              )}
+            >
+              Connected{connectedCount > 0 ? ` ${connectedCount}` : ""}
+            </button>
+          </div>
+          <label className="flex h-11 w-full items-center gap-2.5 rounded-xl bg-raised/70 px-3.5 sm:w-[320px]">
+            <Search size={17} className="shrink-0 text-ink-secondary" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search apps"
+              aria-label="Search apps"
+              className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
+            />
+          </label>
+        </div>
+
+        {/* Two notices about the same fact is one too many: the stale banner
+            above already explains this launch, and "configure your own
+            connection service" is advice for someone who never set one up. */}
+        {/* "Temporarily unavailable" was a lie for the most common way to see
+            this. The managed broker's credentials only arrive from
+            electron/main.mjs when `app.isPackaged`, so EVERY dev run and every
+            `node server/index.ts` lands here permanently — and the copy sent
+            people hunting for an outage that did not exist. It says what is
+            actually true now, and stays true for a packaged user whose broker
+            really is down. */}
+        {/* WHICH Composio account this is talking to, said out loud, and — for
+            an install whose apps still live on Murage's own service — where
+            they are in the move to FluxRouter. There are several possible
+            accounts, they hold different connections, and the app used to
+            switch between them in silence: connecting apps in dev on your own
+            key and then running the release used to empty the list, because
+            the accounts are on the far side of a different project under a
+            different user id and nothing said so.
+
+            Every branch comes from `connectedAppsNotices`, which is pure and
+            takes only what the server reported, so the copy for each state is
+            tested without a renderer. */}
+        {notices.map((notice, index) => {
+          if (notice.kind === "consent") {
+            return (
+              <div key={`consent-${index}`} className="mx-6 mb-1 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-[13px] text-ink sm:mx-8">
+                <div>{notice.body}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  {notice.actions.map((action) => (
+                    <button
+                      key={action.id}
+                      disabled={claiming && action.id === "claim"}
+                      className="font-medium underline underline-offset-2 disabled:opacity-60"
+                      onClick={() => runNoticeAction(action.id)}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div
+              key={`line-${index}`}
+              className={cn(
+                "mx-6 mb-1 text-[12px] sm:mx-8",
+                notice.tone === "warning" ? "rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning" : "text-ink-secondary",
+              )}
+            >
+              {notice.text}
+              {notice.action && (
+                <>
+                  {" "}
+                  <button className="font-medium underline underline-offset-2" onClick={() => runNoticeAction(notice.action!.id)}>
+                    {notice.action.label}
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
+        {/* Why this is not the whole catalog, in every mode, with Retry
+            (0.1.61 L17 Part A). The managed path used to fall back to the
+            featured apps without a word. */}
+        {notice && (
+          <div
+            role="status"
+            className={cn(
+              "mx-6 mb-1 flex flex-wrap items-center gap-x-2 text-[12px] sm:mx-8",
+              notice.tone === "warning" ? "rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning" : "text-ink-secondary",
+            )}
+          >
+            <span>{notice.text}</span>
+            {notice.retry && (
+              <button type="button" className="font-medium underline underline-offset-2" onClick={() => void loadCatalog(true)}>
+                Retry
+              </button>
+            )}
+          </div>
+        )}
+        {error && <div role="alert" className="mx-6 mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger sm:mx-8">{error}</div>}
+
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-5 sm:px-8">
+          {cards === null && tab === "marketplace" ? (
+            <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
+              <Loader2 size={14} className="animate-spin" /> Loading catalog…
+            </div>
+          ) : browsing ? (
+            <div>
+              <div className="mb-3 flex items-center gap-3 text-[12px] font-medium text-ink-secondary">
+                <button type="button" onClick={() => { setBrowseAll(false); if (allApps.failed) setAllApps({ items: [], next: null, total: null, loading: false, done: false }); }} className="flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-raised hover:text-ink">
+                  <ArrowLeft size={13} /> Featured
+                </button>
+                <span>All apps{allApps.total ? ` (${allApps.total.toLocaleString("en-US")})` : ""}</span>
+              </div>
+              {allApps.failed && (
+                <div role="status" className="mb-3 flex flex-wrap items-center gap-x-2 rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning">
+                  <span>The full list of apps is not available yet.</span>
+                  <button
+                    type="button"
+                    className="font-medium underline underline-offset-2"
+                    onClick={() => {
+                      setAllApps({ items: [], next: null, total: null, loading: false, done: false });
+                      void loadCatalog(true);
+                    }}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+              <VirtualRows
+                count={Math.ceil(Math.max(allApps.items.length, allApps.done ? 0 : allApps.items.length + 1) / columns)}
+                scrollRef={scrollRef}
+                onRange={(_first, last) => {
+                  if (!allApps.done && last * columns >= allApps.items.length - 40) loadMoreApps();
+                }}
+                renderRow={(line) => (
+                  <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
+                    {Array.from({ length: columns }, (_unused, column) => {
+                      const card = allApps.items[line * columns + column];
+                      if (card) return <div key={card.slug}>{appRow(card)}</div>;
+                      return allApps.done ? null : (
+                        <div key={`loading-${column}`} className="flex min-h-[88px] items-center gap-2 border-b border-hairline/35 px-1 py-4 text-[12.5px] text-ink-secondary">
+                          <Loader2 size={13} className="animate-spin" /> Loading apps…
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              />
+            </div>
+          ) : (
+            <div>
+              <div className="mb-3 flex items-center justify-between gap-3 text-[12px] font-medium text-ink-secondary">
+                <span>
+                  {tab === "connected" ? "Your connections" : query ? (searchResults.loading ? "Searching all apps…" : `Search results${searchResults.total > visible.length ? ` (${searchResults.total.toLocaleString("en-US")})` : ""}`) : "Featured apps"}
+                </span>
+                {tab === "marketplace" && !query && catalog?.allApps && (
+                  <button type="button" onClick={() => setBrowseAll(true)} className="rounded-md px-1.5 py-1 text-accent hover:bg-raised">
+                    Browse all {countLabel ?? "apps"}
+                  </button>
+                )}
+              </div>
+              {tab === "marketplace" && query && !searchResults.loading && (searchResults.partial || searchResults.failed) && (
+                <p role="status" className="mb-3 text-[12.5px] text-ink-secondary">
+                  {searchResults.failed ? "Search could not reach the full list of apps." : "Searching featured apps only while the full list loads."}{" "}
+                  <button type="button" className="font-medium underline underline-offset-2" onClick={() => void loadCatalog(true)}>Retry</button>
+                </p>
+              )}
+              {tab === "connected" && connectedSummary.note && (
+                <p role="status" className="mb-3 text-[12.5px] text-ink-secondary">{connectedSummary.note}</p>
+              )}
+              <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
+                {visible.map((card) => <div key={card.slug}>{appRow(card)}</div>)}
               </div>
             </div>
           )}
-          {cards !== null && visible.length === 0 && (
+          {!browsing && (cards !== null || tab === "connected") && visible.length === 0 && !(query && searchResults.loading) && (
             <div className="flex min-h-56 flex-col items-center justify-center text-center">
               <div className="text-[14px] font-medium text-ink">
                 {tab === "connected" ? connectedEmptyCopy.title : "No apps found"}

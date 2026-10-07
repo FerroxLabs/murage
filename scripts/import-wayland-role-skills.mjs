@@ -33,7 +33,7 @@ for (const role of readdirSync(SRC).sort()) {
     const description = para.replace(/\s+/g, " ").trim().slice(0, 300);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "SKILL.md"),
-      `---\nname: ${id}\ndescription: ${yaml(description)}\nmetadata:\n  author: wayland\n  version: "1.0.0"\n  category: ${yaml(role)}\n---\n\n${body}\n`);
+      `---\nname: ${id}\ndescription: ${yaml(description)}\nlicense: Apache-2.0\nmetadata:\n  author: Ferrox Labs\n  version: "1.0.0"\n  category: ${yaml(role)}\n---\n\n${body}\n`);
     writeFileSync(join(dir, "manifest.json"), JSON.stringify({
       id, name: heading, version: "1.0.0", description,
       defaultEnabled: false,

@@ -6,7 +6,7 @@ description: |
   Do NOT use for business-to-business disputes, product liability lawsuits, class action participation, or specific legal advice on a pending consumer matter.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy contracts guide research"
   category: "legal-civic"

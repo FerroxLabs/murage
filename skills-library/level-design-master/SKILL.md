@@ -4,7 +4,7 @@ description: |
   Comprehensive level design expertise covering flow theory application, pacing and intensity curves, environmental storytelling, spatial composition, player guidance without hand-holding, playtesting methodology, iterative blockout workflow, and the craft of building spaces that teach, challenge, and delight players. Use when the user asks about level design master or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design design guide"
   category: "game-development"

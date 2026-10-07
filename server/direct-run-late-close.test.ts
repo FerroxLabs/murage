@@ -45,12 +45,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
-import { loopbackFetch } from "./testing/conversation-proof.ts";
-
-/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
- * credential (the server below is started with it), without the desktop proof. */
-const TEST_COMPANION_TOKEN = "c".repeat(64);
-const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
@@ -138,7 +132,9 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
           // once, and its close is asynchronous by nature).
           claude: {
             driver: "claudeAgent",
-            environment: { FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: stopDump, FAKE_CLAUDE_FINISH_GATE_DIR: finishGateDir, FAKE_CLAUDE_SIGTERM_DELAY_MS: "1500" },
+            // a finished turn's process stays warm and takes the next one:
+            // it dumps every turn so the follow-up is seen there too
+            environment: { FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: stopDump, FAKE_CLAUDE_DUMP_EACH_TURN: "1", FAKE_CLAUDE_FINISH_GATE_DIR: finishGateDir, FAKE_CLAUDE_SIGTERM_DELAY_MS: "1500" },
             config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
           },
           // Shape 2: the first launch of every turn dies before reading its
@@ -159,7 +155,6 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
         HOME: home,
         USERPROFILE: home,
         MURAGE_PORT: String(port),
-        MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
         FAKE_TELEGRAM_DIR: telegramDir,
@@ -181,6 +176,10 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
     await removeTempDir(home);
   });
 
+  /** The late close is staged with FAKE_CLAUDE_SIGTERM_DELAY_MS, a child that
+   * lingers after SIGTERM. On Windows a stop is TerminateProcess: the child is
+   * gone at once, so there is no late close to stage (0.1.61 Windows VM). */
+  const lateCloseCannotBeStaged = process.platform === "win32";
   /** Send, wait for the fake to launch (its dump), Stop, wait for idle:
    * the stopped child is now closing (FAKE_CLAUDE_SIGTERM_DELAY_MS) while
    * the thread already reads idle — the window every shape below stands in. */
@@ -217,7 +216,7 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
     await expect.poll(() => busy(bot.id), { timeout: 15_000 }).toBe(false);
   };
 
-  it("runs the edited message sent right after Stop, while the stopped engine's child is still closing (fresh session)", async () => {
+  it.skipIf(lateCloseCannotBeStaged)("runs the edited message sent right after Stop, while the stopped engine's child is still closing (fresh session)", async () => {
     const bot = await makeBot("claude", "Stop then edit");
     try {
       const stopped = await stopMidTurn(bot, "hold this");
@@ -233,7 +232,7 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
     }
   }, 90_000);
 
-  it("runs the next message sent right after Stop, while the stopped engine's child is still closing (resumed session)", async () => {
+  it.skipIf(lateCloseCannotBeStaged)("runs the next message sent right after Stop, while the stopped engine's child is still closing (resumed session)", async () => {
     // Memory off pins the resumed path: the dispatch keeps the session
     // cursor and never resets, so the Claude driver itself meets the
     // still-closing child (the same technique as folder-trust-api (7)).

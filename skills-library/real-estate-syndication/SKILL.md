@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of real estate syndication or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance investing budgeting checklist guide analysis performing-arts tax-planning"
   category: "personal-finance"

@@ -8,12 +8,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
-import { loopbackFetch } from "./testing/conversation-proof.ts";
-
-/** Conversation routes answer only to a proven caller. A bare call in this file is the paired phone's
- * credential (the server below is started with it), without the desktop proof. */
-const TEST_COMPANION_TOKEN = "c".repeat(64);
-const fetch = loopbackFetch(TEST_COMPANION_TOKEN);
 
 // A goal waits for a busy teammate, but not forever, and it survives one
 // transient provider failure. This server runs with a short wait cap so the
@@ -91,7 +85,6 @@ beforeAll(async () => {
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(port),
-      MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
       MURAGE_WEBHOOK_PORT: String(port + 1),
       MURAGE_STATIC_DIR: staticDir,
       // seconds, not minutes: the point of this file is the cap firing
@@ -167,7 +160,6 @@ describe("goal wait cap and transient retry", () => {
         USERPROFILE: fixtureHome,
         MURAGE_DATA_DIR: fixtureData,
         MURAGE_PORT: String(fixturePort),
-        MURAGE_COMPANION_TOKEN: TEST_COMPANION_TOKEN,
         MURAGE_WEBHOOK_PORT: String(fixturePort + 1),
         MURAGE_GOAL_WAIT_MAX_MS: configuredWait,
         VITEST: "true",

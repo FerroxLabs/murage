@@ -3,6 +3,8 @@ export type MemoryRecordState = "candidate" | "active" | "superseded" | "archive
 export interface MemoryRecord {
   id: string; version: number; scopeId: string; kind: string; text: string;
   assertion: "owner-statement" | "tool-observation" | "assistant-inference" | "unverified-import";
+  /** Owner review explanation, never a new prompt surface. */
+  reviewReason?: string;
   state: MemoryRecordState; ownerPinned: boolean; validFrom: number; validTo: number | null;
 }
 export interface MemoryEvidenceHandle { sourceId: string; revision: number; startByte: number; endByte: number }

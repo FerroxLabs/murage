@@ -3,7 +3,7 @@ name: hr-handbook
 description: "Draft employee handbook sections — the policies law requires at the user's headcount (EEO, anti-harassment, ADA accommodation, FMLA, lactation, voting and jury and military leave, pay transparency, whistleblower, at-will plus the handbook-is-not-a-contract disclaimer, NLRA §7 carve-outs) and the standard-but-optional perks. Use when the user is writing or refreshing the handbook. Do NOT use for one employee's leave eligibility (use hr-leave-of-absence), one accommodation request (use hr-accommodation-request) or a termination (use hr-termination-letter). Templates only — have employment counsel review for the user's states before publishing."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "handbook policy hr people-ops smb"
   category: "hr"

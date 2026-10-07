@@ -1,8 +1,9 @@
 ---
 name: beacon-email-sequences
-description: "**Mode skill.** Default-enabled on the Channels specialist."
+description: "Design an email program, from a welcome series to a sales sequence or newsletter. Decide what to send, in what order, to whom and how to measure it."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "beacon"
 ---
@@ -13,7 +14,7 @@ metadata:
 
 ## When to use
 
-Use when the user needs to design an email program — welcome sequence, nurture flow, sales sequence, lifecycle program, newsletter cadence — and needs structure for what to send, in what order, to whom, with what stage assignment. Use when the brief mentions email funnel, autoresponder, drip campaign, or newsletter strategy.
+Use when the user needs to design an email program, welcome sequence, nurture flow, sales sequence, lifecycle program, newsletter cadence, and needs structure for what to send, in what order, to whom, with what stage assignment. Use when the brief mentions email funnel, autoresponder, drip campaign, or newsletter strategy.
 
 Trigger phrases:
 
@@ -28,10 +29,10 @@ If Copy has voice constraints in `TEAM_MEMORY.md`, read them before specifying s
 
 **1. Assign the sequence a stage.** Each sequence has one job; do not mix.
 
-- *Think-stage welcome sequence:* the new subscriber knows the problem and is evaluating you. Goal: build authority and trust over 4-7 emails, no hard sell.
-- *Do-stage sales sequence:* the subscriber is warm and offer-aware. Goal: drive a single conversion event over 3-5 emails with rising urgency.
-- *Care-stage lifecycle:* the subscriber is a customer. Goal: onboarding, retention, expansion. Triggered by behavior (purchase, milestone, inactivity).
-- *Cross-stage newsletter:* recurring broadcast that holds the relationship. Goal: maintain mental availability between purchase decisions.
+- *Consideration-stage welcome sequence:* the new subscriber knows the problem and is evaluating you. Goal: build authority and trust over 4-7 emails, no hard sell.
+- *Buying-stage sales sequence:* the subscriber is warm and offer-aware. Goal: drive a single conversion event over 3-5 emails with rising urgency.
+- *Retention-stage lifecycle:* the subscriber is a customer. Goal: onboarding, retention, expansion. Triggered by behavior (purchase, milestone, inactivity).
+- *Standing newsletter:* recurring broadcast that holds the relationship. Goal: maintain mental availability between purchase decisions.
 
 **2. Design the sequence structure.** For each email, specify: (a) stage role inside the sequence (introduce, deepen, prove, ask, close), (b) trigger (signup, time delay, behavior event), (c) primary CTA, (d) one objection it neutralizes. Hand the structural brief to Copy; do not draft email bodies yourself.
 
@@ -41,9 +42,9 @@ If Copy has voice constraints in `TEAM_MEMORY.md`, read them before specifying s
 - *Behavior-based:* triggered by site events, click history, purchase, inactivity. Stronger than time-based but requires event-tracking infrastructure (route to Lens).
 - *Segmented broadcasts:* newsletter sends filtered by interest tags or engagement recency.
 
-**4. Cadence and list hygiene.** Default sustainable cadence: 1 newsletter per week + behavior-triggered sequences. Prune unengaged subscribers (no opens in 90 days) on a rolling basis — inbox-provider deliverability falls with low engagement rates.
+**4. Cadence and list hygiene.** Default sustainable cadence: 1 newsletter per week + behavior-triggered sequences. Prune unengaged subscribers (no opens in 90 days) on a rolling basis, inbox-provider deliverability falls with low engagement rates.
 
-**5. Define measurement by stage.** Think-stage welcome: open rate, click rate, sequence-completion rate. Do-stage sales: conversion rate per email, sequence-revenue, unsubscribe rate (acceptable spike). Care-stage lifecycle: feature-adoption rate, time-to-second-purchase, churn-rescue rate. Newsletter: long-run open rate trend, click-through to the one weekly CTA.
+**5. Define measurement by stage.** consideration-stage welcome: open rate, click rate, sequence-completion rate. buying-stage sales: conversion rate per email, sequence-revenue, unsubscribe rate (acceptable spike). retention-stage lifecycle: feature-adoption rate, time-to-second-purchase, churn-rescue rate. Newsletter: long-run open rate trend, click-through to the one weekly CTA.
 
 ## Decision rules
 
@@ -69,4 +70,4 @@ If Copy has voice constraints in `TEAM_MEMORY.md`, read them before specifying s
 > *7-email sequence: welcome, story, pitch, social proof, urgency, last call, follow-up.*
 
 **After** (stage-separated, sequence-architected):
-> *Two sequences, not one. (1) Think-stage welcome flow — 4 emails over 7 days: introduce the problem framing, share one customer story (no offer), deliver one useful framework, invite to a low-commitment next step. Exits to newsletter. (2) Do-stage sales sequence — triggered by [behavior event], 4 emails over 5 days: offer reveal + objection 1, proof + objection 2, scarcity setup, last-call. One CTA per email. Route subject lines and bodies to Copy with stage tags. Lens spec the event tracking.*
+> *Two sequences, not one. (1) consideration-stage welcome flow, 4 emails over 7 days: introduce the problem framing, share one customer story (no offer), deliver one useful framework, invite to a low-commitment next step. Exits to newsletter. (2) buying-stage sales sequence, triggered by [behavior event], 4 emails over 5 days: offer reveal + objection 1, proof + objection 2, scarcity setup, last-call. One CTA per email. Route subject lines and bodies to Copy with stage tags. Lens spec the event tracking.*

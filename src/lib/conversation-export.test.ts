@@ -3,7 +3,7 @@ import { conversationExportFilename, downloadConversation } from "./conversation
 import { resetNativeShellForTest } from "./native-shell";
 
 const auth = vi.hoisted(() => ({ ensure: vi.fn(), headers: vi.fn(() => ({ "x-murage-surface-secret": "synthetic-proof" })) }));
-vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopSurfaceHeaders: auth.headers }));
+vi.mock("@/lib/live-events", () => ({ ensureDesktopSurfaceSecret: auth.ensure, desktopSurfaceHeaders: auth.headers, desktopResourceUrl: (url: unknown) => url }));
 let link: { href: string; download: string; click: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> };
 let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {

@@ -6,7 +6,7 @@ description: |
   Do NOT use for commercial interior design, architectural modifications, renovation budgeting (use renovation-budget instead), or choosing specific furniture products.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design planning budgeting"
   category: "home-household"

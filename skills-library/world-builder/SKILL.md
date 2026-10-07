@@ -4,7 +4,7 @@ description: |
   Comprehensive setting creation system for fantasy, science fiction, and historical fiction, covering geography, culture, magic systems, technology, politics, economics, religion, history, consistency tracking, and the iceberg principle of world-building. Use when the user asks about world builder or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing game-design"
   category: "writing"

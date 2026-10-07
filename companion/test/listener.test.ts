@@ -35,7 +35,7 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
-const { refreshTailnetName, tailnetName, tailnetSelfAddress } = await import("../src/listener.ts");
+const { refreshTailnetName, tailnetLogin, tailnetName, tailnetSelfAddress } = await import("../src/listener.ts");
 
 /** A `tailscale status --json` body carrying one MagicDNS name, trailing dot
  * and all — the shape the real CLI emits. */
@@ -156,5 +156,62 @@ describe("the address Tailscale reports for this node", () => {
     });
     await refreshTailnetName();
     expect(tailnetSelfAddress()).toBeNull();
+  });
+});
+
+// ── the Tailscale account this computer is signed in to ──────────────────
+//
+// The phone has to be signed in to the same account, and "the same account
+// as your computer" is advice nobody can follow without being told which one.
+// `status --json` already names it: `User[String(Self.UserID)].LoginName`. It
+// is shown on the person's own screen and never written to a log.
+describe("the account this computer is signed in to", () => {
+  const signedIn = (user: Record<string, unknown>, userId: unknown = 12345) =>
+    JSON.stringify({
+      Self: { DNSName: "macbook.tail1234.ts.net.", TailscaleIPs: ["100.64.0.10"], UserID: userId },
+      User: { "12345": user, "999": { LoginName: "someone.else@example.com" } },
+    });
+
+  it("reads the Self user's login out of the same status the name came from", async () => {
+    respond = async () => ({ stdout: signedIn({ ID: 12345, LoginName: "sean@example.com", DisplayName: "Sean" }) });
+    await refreshTailnetName();
+    expect(tailnetLogin()).toBe("sean@example.com");
+    expect(attempted).toHaveLength(1);
+  });
+
+  it("is null when the status names no user for this node", async () => {
+    respond = async () => ({ stdout: signedIn({ LoginName: "sean@example.com" }, 777) });
+    await refreshTailnetName();
+    expect(tailnetName()).toBe("macbook.tail1234.ts.net");
+    expect(tailnetLogin()).toBeNull();
+
+    respond = async () => ({ stdout: status("macbook.tail1234.ts.net") });
+    await refreshTailnetName();
+    expect(tailnetLogin()).toBeNull();
+  });
+
+  it("ignores a login that is not a plain non-empty string", async () => {
+    for (const login of ["", "   ", 42, { a: 1 }, "sean@example.com\nforged line", "x".repeat(300)]) {
+      respond = async () => ({ stdout: signedIn({ LoginName: login }) });
+      await refreshTailnetName();
+      expect(tailnetLogin(), String(login)).toBeNull();
+    }
+  });
+
+  it("forgets the login when Tailscale stops answering", async () => {
+    respond = async () => ({ stdout: signedIn({ LoginName: "sean@example.com" }) });
+    await refreshTailnetName();
+    expect(tailnetLogin()).toBe("sean@example.com");
+    respond = async () => ({ error: new Error("not running") });
+    await refreshTailnetName();
+    expect(tailnetLogin()).toBeNull();
+  });
+
+  it("never puts the login in what it reports about each attempt", async () => {
+    respond = async () => ({ stdout: signedIn({ LoginName: "sean@example.com" }) });
+    const outcomes: string[] = [];
+    await refreshTailnetName((cli, outcome) => outcomes.push(`${cli} ${outcome}`));
+    expect(outcomes.length).toBeGreaterThan(0);
+    expect(outcomes.join("\n")).not.toContain("sean@example.com");
   });
 });

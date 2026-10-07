@@ -60,9 +60,8 @@ describe("a chat with bots is a channel, everywhere", () => {
   });
 
   it("keeps Telegram, Slack and Discord under 'Messaging apps', findable by the old word", () => {
-    const settings = read("./SettingsModal.tsx");
-    expect(settings).toContain('label: "Messaging apps"');
-    expect(settings).not.toContain('label: "Channels"');
+    expect(en["settings.section.channels"]).toBe("Messaging apps");
+    expect(Object.entries(en).filter(([key, value]) => key.startsWith("settings.section.") && value === "Channels")).toEqual([]);
     expect(settingsSearchResults("channels")).toContain("channels");
     expect(settingsSearchResults("telegram")).toContain("channels");
   });
@@ -114,9 +113,11 @@ describe("skills are skills, and 'Add a skill' opens them", () => {
 describe("routines are routines", () => {
   it("names the sidebar row and the page after the thing, not the grid", () => {
     const sidebar = read("./Sidebar.tsx");
-    expect(sidebar).toContain(">Routines</span>");
+    // the strip's place (0.1.62), named through the catalog
+    expect(sidebar).toContain('label: t("nav.routines")');
+    expect(en["nav.routines"]).toBe("Routines");
     expect(sidebar).not.toContain(">Calendar</span>");
-    expect(sidebar).toContain('label: "Routines"');
+    expect(Object.values(en)).not.toContain("Calendar");
     expect(read("./RoutineCalendarPage.tsx")).toContain(">Routines</h1>");
   });
 
@@ -148,24 +149,24 @@ describe("connected apps", () => {
   it("says what the key unlocks, in the one claim the product makes", () => {
     // The claim itself lives in ConnectedAppsLock.tsx and is stated once.
     // "500+ apps" is the wording; a count of MODELS is still never given.
-    expect(read("./PluginsPanel.tsx")).toContain("One Flux Router key connects ${APPS_CLAIM}.");
+    expect(read("./PluginsPanel.tsx")).toContain("One Flux Router key connects ${appsClaimFor(catalog?.total, APPS_CLAIM)}.");
     for (const value of Object.values(en)) expect(value).not.toMatch(/\d+\+ (?:more|models)|and \d+\+ more/);
     expect(Object.values(en).filter((value) => /FluxRouter/.test(value))).toEqual([]);
   });
 
   it("points a bot's Access at the panel that actually holds apps", () => {
     const settings = read("./SettingsPanel.tsx");
-    expect(settings).toContain("Connect apps first (Tools → Connected apps), then give this bot access.");
+    expect(settings).toContain("Connect apps first (Apps, in the sidebar), then give this bot access.");
     expect(settings).not.toContain("Connect apps in App Settings");
   });
 });
 
 describe("the copy quick wins", () => {
-  it("does not say Discord is coming soon above a working Discord card", () => {
+  it("does not say Discord or WhatsApp is coming soon above working cards", () => {
     const telegram = read("./TelegramSettings.tsx");
-    expect(telegram).toContain("WhatsApp: coming soon.");
-    expect(telegram).not.toContain("Discord and WhatsApp: coming soon.");
+    expect(telegram).not.toContain("coming soon");
     expect(read("./SettingsModal.tsx")).toContain("<DiscordSettings />");
+    expect(read("./SettingsModal.tsx")).toContain("<WhatsAppSettings />");
   });
 
   it("counts one bot as one bot", () => {

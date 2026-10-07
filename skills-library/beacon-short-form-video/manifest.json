@@ -2,7 +2,7 @@
   "id": "beacon-short-form-video",
   "name": "short-form-video",
   "version": "1.0.0",
-  "description": "As of: 2026-05-16",
+  "description": "Plan short vertical video for TikTok, Reels and Shorts. Decide what each video is for, how to open it, how long it runs and how often to post.",
   "defaultEnabled": false,
   "triggerTerms": [
     "beacon",

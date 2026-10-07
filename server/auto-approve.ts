@@ -311,6 +311,7 @@ export type AutoVerdictSource =
    * folder. Not a grant and not a mode — the action was never the person's
    * to authorize (see the comment on `ownWorkspace` below). */
   | "own-workspace"
+  | "project-work-roots"
   /** The stop line (server/stop-line.ts): deleting outside its folder,
    * paying, or messaging someone new. Full access stops here too. */
   | "stop-line"
@@ -407,6 +408,7 @@ export interface AutoContext {
    * mode raised a card for its own MEMORY.md and another for its own thread
    * file, and an unattended routine simply stopped until someone woke up. */
   ownWorkspace?: boolean;
+  projectWorkRoots?: boolean;
   /** What the stop line (server/stop-line.ts) found, computed by the caller
    * from the engine's structured input and the bot's own folders and
    * recipients. `null` = checked, nothing crosses it; `undefined` = not
@@ -465,7 +467,7 @@ export function autoVerdict(
   // at uses neither: it holds the card, as every other unattended grant does.
   // No limits lifts the stop line for exactly the turns Full access covers;
   // a webhook, routine or someone else's turn is judged as before.
-  const stop = hasNoLimits(bot) && fullAccessCovers(bot, origin) ? null : context?.stopLine ?? null;
+  const stop = origin !== "routine" && hasNoLimits(bot) && fullAccessCovers(bot, origin) ? null : context?.stopLine ?? null;
   const routineGrants = context?.routineLevel === true && !context.unattended && context.scope !== "local-computer"
     ? context.routineAllow ?? []
     : [];
@@ -504,6 +506,9 @@ export function autoVerdict(
   // bot does not normally write `rm -rf` or a `.env` into its own memory) and
   // keeping them in front means this can never become the one rule that lets
   // something the guards were written for through unattended.
+  if (context?.projectWorkRoots === true && !destructive && !sensitive && !context.scope) {
+    return { approve: `auto-approved ${tool} (project work folders)`, source: "project-work-roots" };
+  }
   if (context?.ownWorkspace === true && !destructive && !sensitive && context.scope !== "local-computer") {
     return { approve: `auto-approved ${tool} (own workspace)`, source: "own-workspace" };
   }
@@ -517,8 +522,8 @@ export function autoVerdict(
   const exactKey = context?.exactCommand && !context.scope && isCommandTool(tool) && !isQuestionTool(tool)
     ? exactCommandKey(context.exactCommand)
     : undefined;
-  // A routine's grant matches its command on a later run even when only the
-  // dates and times in it changed (shared/exact-command.ts).
+  // A routine's grant requires the same normalized command, including dates
+  // and times, on the same engine in the same folder.
   const routineExact = exactKey !== undefined && context?.exactCommand
     ? routineGrants.find((granted) => routineExactGrantCovers(granted, context.exactCommand!))
     : undefined;

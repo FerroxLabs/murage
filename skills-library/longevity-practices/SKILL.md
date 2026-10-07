@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of longevity practices or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness nutrition stress-management guide quick-reference analysis research networking"
   category: "health-wellness"

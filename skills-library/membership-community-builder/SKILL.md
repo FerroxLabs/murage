@@ -4,7 +4,7 @@ description: |
   Complete guide to building paid membership communities covering platform selection, tier and pricing design, content strategy, member onboarding, engagement systems, retention optimization, moderation, scaling operations, and transitioning from audience to sustainable community business. Use when the user asks about membership community builder or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing entrepreneurship strategy"
   category: "marketing-sales"

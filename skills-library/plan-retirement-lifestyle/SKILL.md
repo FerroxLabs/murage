@@ -18,7 +18,7 @@ trigger_phrases: >-
   planning what to do in retirement preparing for retirement retirement
   transition plan
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: >-
     retirement-planning habits personal-finance health-wellness step-by-step

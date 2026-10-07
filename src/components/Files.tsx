@@ -20,8 +20,8 @@ export function artifactNativeAction() {
   return typeof bridge?.artifactAction === "function" ? (artifact: Artifact, action: "open" | "reveal") => bridge.artifactAction!(artifact.id, action) : undefined;
 }
 export async function downloadSavedArtifact(artifact: Artifact) {
-  // Artifacts are desktop-authority-only (DESKTOP_AUTHORITY_ROUTES,
-  // server/desktop-policy.ts): the download route answers 404 for anything
+  // Artifacts are desktop-authority-only (server/route-policy.ts, class
+  // desktop): the download route answers 404 for anything
   // that cannot prove the desktop surface, which a phone cannot do on its
   // own. So this never asks native to fetch or save it — only the browser's
   // own download anchor, same as before the phone app existed.
@@ -93,9 +93,26 @@ export function ArtifactCard({ artifact, busy, onPreview, onDownload, onSource, 
   </article>;
 }
 
+/** The bot and conversation a saved file opened by id belongs to, when that
+ * is not the one being browsed; null when it already is. Its preview closes
+ * onto a list where it is (candidate-report-integration). Null too once the
+ * person has moved on (`active` false: back to the list, or a picker
+ * changed), and every bot when the file's bot is gone and cannot be picked
+ * (known bots only: an empty list is one still loading). */
+export function openedArtifactScope(
+  artifact: Pick<Artifact, "botId" | "threadId">,
+  browsed: { botId: string; threadId: string },
+  { bots, active }: { bots: readonly { id: string }[]; active: boolean },
+): { botId: string; threadId: string } | { everyBot: true } | null {
+  if (!active || (artifact.botId === browsed.botId && artifact.threadId === browsed.threadId)) return null;
+  // No bots yet means not loaded yet (a file opened at boot), not gone.
+  if (bots.length && !bots.some(bot => bot.id === artifact.botId)) return { everyBot: true };
+  return { botId: artifact.botId, threadId: artifact.threadId };
+}
+
 export function Files({ bots, initialBotId = "", initialThreadId = "", initialArtifactId, onClose, onSource, onNativeAction, onRevealFolder, onOpenInPane, onShowPane }: {
   bots: FilesBot[]; initialBotId?: string; initialThreadId?: string; initialArtifactId?: string; onClose?: () => void;
-  onSource?: (artifact: Artifact) => void; onNativeAction?: NativeAction;
+  onSource?: (artifact: Artifact) => void | Promise<void>; onNativeAction?: NativeAction;
   onRevealFolder?: (scope: WorkspaceScopeRef) => void;
   /** Open one workspace file beside the chat (F4-T3); absent in a plain browser. */
   onOpenInPane?: WorkspaceOpenInPane;
@@ -113,6 +130,10 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
   const [page, setPage] = useState(0), [revision, setRevision] = useState(0);
   const [result, setResult] = useState<ArtifactPage | null>(null), [preview, setPreview] = useState<ArtifactPreview | null>(null);
   const [focusedPreview, setFocusedPreview] = useState(Boolean(initialArtifactId));
+  // Whether the opened file may still move the pickers when its preview
+  // answers; the person's own choice wins once they make one.
+  const rescopeOpened = useRef(Boolean(initialArtifactId));
+  const botsRef = useRef(bots); botsRef.current = bots;
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [relativePath, setRelativePath] = useState(""), [name, setName] = useState("");
@@ -131,7 +152,13 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
     if (!initialArtifactId) return;
     const controller = new AbortController();
     void api(`/api/artifacts/${encodeURIComponent(initialArtifactId)}/preview`, { signal: controller.signal }).then(value => {
-      if (!controller.signal.aborted) setPreview(value as ArtifactPreview);
+      if (controller.signal.aborted) return;
+      const opened = value as ArtifactPreview;
+      setPreview(opened);
+      const own = openedArtifactScope(opened.artifact, { botId, threadId }, { bots: botsRef.current, active: rescopeOpened.current });
+      rescopeOpened.current = false;
+      if (own && "everyBot" in own) setSavedEveryBot(true);
+      else if (own) { setBotId(own.botId); setThreadId(own.threadId); }
     }).catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "This saved file could not be opened."); });
     return () => controller.abort();
   }, [initialArtifactId]);
@@ -163,7 +190,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
   };
   return <section className="mx-auto h-full w-full max-w-5xl overflow-y-auto bg-panel p-4 text-ink sm:p-6" aria-labelledby="files-title">
     <h1 id="files-title" className="sr-only">Files</h1>
-    {focusedPreview && !preview && <div className="space-y-3"><p role="status" className="text-[13px]">{error ?? "Opening saved version…"}</p><button className={button} onClick={() => setFocusedPreview(false)}>{t("filesWorkspace.savedTitle")}</button></div>}
+    {focusedPreview && !preview && <div className="space-y-3"><p role="status" className="text-[13px]">{error ?? "Opening saved version…"}</p><button className={button} onClick={() => { rescopeOpened.current = false; setFocusedPreview(false); }}>{t("filesWorkspace.savedTitle")}</button></div>}
     {preview && <section ref={previewPanel} role="region" aria-label="File preview" className="mb-5 rounded-xl border border-hairline p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="break-words text-[15px] font-medium">{preview.artifact.name}</h2><div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => void download(preview.artifact)}>Download saved copy</button><button className={button} onClick={() => { setPreview(null); setFocusedPreview(false); }}>Close preview</button></div></div>
       <p className="my-2 text-[12px] text-ink-secondary">{t("filesWorkspace.savedSubtitle")}</p>
       {preview.mode === "html" && <><p className="my-2 text-[12px] text-ink-secondary">Protected preview: scripts, external resources and app access are blocked.</p><iframe title={`Preview ${preview.artifact.name}`} sandbox="" referrerPolicy="no-referrer" srcDoc={artifactPreviewHtml(preview.content ?? "")} className="h-[420px] w-full rounded-lg bg-white" /></>}
@@ -175,8 +202,8 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
     <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-[22px] font-semibold">Files</h2><div className="flex flex-wrap gap-2">{onShowPane && scope && <button className={button} data-pane-action="show" onClick={() => onShowPane(scope)}>{t("workspacePane.showPane")}</button>}<button className={button} disabled={busy} onClick={refresh}>Refresh</button>{onClose && <button className={button} onClick={onClose}>Close Files</button>}</div></header>
     <p className="mt-2 text-[13px] text-ink-secondary">The files in a bot's working folder, and the verified copies Murage has saved. Refresh reloads both. A path mentioned in chat is not automatically a saved file.</p>
     <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-      <label className="text-[12px]">Bot<select className={`${field} mt-1 w-full`} value={botId} onChange={event => { setBotId(event.target.value); setThreadId(""); setPage(0); setSavedEveryBot(false); setNotice(null); }}><option value="">All bots</option>{bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select></label>
-      <label className="text-[12px]">Task<select className={`${field} mt-1 w-full`} value={threadId} disabled={!bot} onChange={event => { setThreadId(event.target.value); setPage(0); setSavedEveryBot(false); setNotice(null); }}><option value="">All tasks</option>{bot?.tasks?.map(task => <option key={task.threadId} value={task.threadId}>{task.title}</option>)}</select></label>
+      <label className="text-[12px]">Bot<select className={`${field} mt-1 w-full`} value={botId} onChange={event => { rescopeOpened.current = false; setBotId(event.target.value); setThreadId(""); setPage(0); setSavedEveryBot(false); setNotice(null); }}><option value="">All bots</option>{bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select></label>
+      <label className="text-[12px]">Task<select className={`${field} mt-1 w-full`} value={threadId} disabled={!bot} onChange={event => { rescopeOpened.current = false; setThreadId(event.target.value); setPage(0); setSavedEveryBot(false); setNotice(null); }}><option value="">All tasks</option>{bot?.tasks?.map(task => <option key={task.threadId} value={task.threadId}>{task.title}</option>)}</select></label>
     </div>
     {notice && <p role="status" className="mt-3 text-[13px] text-ink-secondary">{notice}</p>}
     <WorkspaceFiles scope={scope} scopeLabel={scopeLabel} refreshToken={revision} renderHtml={artifactPreviewHtml} onSaved={savedFromWorkspace} onRevealFolder={onRevealFolder} onOpenInPane={onOpenInPane} />
@@ -195,7 +222,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
           still narrowing it is named here, next to the way out. */}
       <div data-testid="files-saved-filters" className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[12px] text-ink-secondary">
         <p className="min-w-0 break-words">{filterLabels.length ? t("filesWorkspace.activeFilters", { filters: filterLabels.join(" · ") }) : t("filesWorkspace.noFilters")}</p>
-        {filterLabels.length > 0 && <button type="button" className={button} onClick={() => { setSavedEveryBot(true); setKind(""); setSince(""); setUntil(""); setQuery(""); setDraft(""); setPage(0); setNotice(null); }}>{t("filesWorkspace.allSavedFiles")}</button>}
+        {filterLabels.length > 0 && <button type="button" className={button} onClick={() => { rescopeOpened.current = false; setSavedEveryBot(true); setKind(""); setSince(""); setUntil(""); setQuery(""); setDraft(""); setPage(0); setNotice(null); }}>{t("filesWorkspace.allSavedFiles")}</button>}
       </div>
       <details className="my-4 rounded-lg border border-hairline/50 p-3 text-[13px]"><summary className="cursor-pointer font-medium">Save an existing workspace file</summary><p className="mt-2 text-[12px] text-ink-secondary">For engines without automatic registration, enter the exact relative path. Murage verifies the file before saving a copy. Maximum 25 MiB per file and 512 MiB total; files are never automatically removed.</p>
         <form className="mt-3 flex flex-col gap-2" onSubmit={event => { event.preventDefault(); void act(async () => { await api("/api/artifacts/register", { method: "POST", body: JSON.stringify({ botId, threadId: targetThread, relativePath, ...(name.trim() ? { name: name.trim() } : {}) }) }); setRelativePath(""); setName(""); setPage(0); setRevision(value => value + 1); }); }}>
@@ -208,7 +235,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
       {error && <p role="alert" className="my-3 text-[13px] text-danger">{error}</p>}
       {busy && <p role="status" className="my-3 text-[12px] text-ink-secondary">Checking files…</p>}
       {result && !result.items.length && !busy && <p className="py-6 text-[13px] text-ink-secondary">No saved files match these filters.</p>}
-      <div className="space-y-3">{result?.items.map(artifact => <ArtifactCard key={artifact.id} artifact={artifact} busy={busy} onPreview={() => void act(async () => setPreview(await api(`/api/artifacts/${artifact.id}/preview`) as ArtifactPreview))} onDownload={() => void download(artifact)} onSource={onSource ? () => onSource(artifact) : undefined} onNativeAction={onNativeAction} onOpenHere={onOpenInPane ? () => onOpenInPane({ botId: artifact.botId, threadId: artifact.threadId }, artifact.relativePath, "preview") : undefined} />)}</div>
+      <div className="space-y-3">{result?.items.map(artifact => <ArtifactCard key={artifact.id} artifact={artifact} busy={busy} onPreview={() => void act(async () => setPreview(await api(`/api/artifacts/${artifact.id}/preview`) as ArtifactPreview))} onDownload={() => void download(artifact)} onSource={onSource ? () => void act(async () => { await onSource(artifact); }) : undefined} onNativeAction={onNativeAction} onOpenHere={onOpenInPane ? () => onOpenInPane({ botId: artifact.botId, threadId: artifact.threadId }, artifact.relativePath, "preview") : undefined} />)}</div>
       {result && <footer className="mt-4 flex items-center justify-between gap-3"><button className={button} disabled={busy || !page} onClick={() => setPage(value => value - 1)}>Previous</button><span className="text-[12px]">Page {page + 1} · {result.total} files</span><button className={button} disabled={busy || (page + 1) * result.pageSize >= result.total} onClick={() => setPage(value => value + 1)}>Next</button></footer>}
     </section>
     </div>

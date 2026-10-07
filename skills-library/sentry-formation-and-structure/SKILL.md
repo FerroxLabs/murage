@@ -1,8 +1,9 @@
 ---
 name: sentry-formation-and-structure
 description: "This skill explains common entity and ownership patterns. It is education, not legal advice. Escalate to counsel any time equity is being granted, co-founder splits are being formalized, or the business will operate across more than one jurisdiction. Cap-table math routes to the numbers specialist;"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "sentry"
 ---

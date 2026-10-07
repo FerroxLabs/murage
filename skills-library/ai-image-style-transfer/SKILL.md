@@ -6,7 +6,7 @@ description: |
   Do NOT use for basic prompting in a single model (use the model-specific prompting skill), maintaining character consistency (use midjourney-consistency), or translating complete prompts between models (use prompt-translation).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ai-image-generation design analysis"
   category: "design-creative"

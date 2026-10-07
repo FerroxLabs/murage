@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of sales process assessment or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "assessment strategy template automation analysis marketing email"
   category: "business-strategy"

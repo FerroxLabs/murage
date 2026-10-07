@@ -36,6 +36,11 @@ export function resolveProxy(relative: string): string {
 export const SPAWNED_PROXIES = {
   memory: resolveProxy("drivers/memory-proxy"),
   memoryWorker: resolveProxy("memory/worker"),
+  // The WhatsApp bridge child (Baileys socket). Built by its own esbuild call in scripts/bundle-server.mjs, not
+  // listed in ENTRY_POINTS, because that build would inline Baileys; `baileys` and `jimp` stay external.
+  whatsappBridge: resolveProxy("channels/whatsapp/bridge"),
+  // A worker thread, not a process: reads a large import off the main thread.
+  importGuardWorker: resolveProxy("bot-package-guard-worker"),
   computer: resolveProxy("computer-proxy"),
   permission: resolveProxy("permission-proxy"),
   containerMcp: resolveProxy("container-mcp"),
@@ -43,6 +48,7 @@ export const SPAWNED_PROXIES = {
   agents: resolveProxy("drivers/agents-proxy"),
   dweb: resolveProxy("drivers/dweb-proxy"),
   connectors: resolveProxy("connector-proxy"),
+  remoteMcp: resolveProxy("drivers/remote-mcp-proxy"),
   phone: resolveProxy("drivers/phone-proxy"),
   browser: resolveProxy("drivers/browser-proxy"),
   headlessBrowser: resolveProxy("drivers/headless-browser-proxy"),

@@ -4,7 +4,7 @@ description: |
   Membership platform strategy covering tier design, reward fulfillment systems, exclusive content planning, community perks, pricing psychology, milestone goals, creator burnout prevention, and comparison of Patreon alternatives. Use when the user asks about patreon strategist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing entrepreneurship strategy"
   category: "marketing-sales"

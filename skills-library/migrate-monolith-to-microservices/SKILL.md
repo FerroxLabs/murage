@@ -22,7 +22,7 @@ trigger_phrases: >-
   I want to break up my monolith I need to migrate to microservices How do I
   extract services from my monolith I want to decompose my application
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: microservices architecture step-by-step planning
   category: software-project

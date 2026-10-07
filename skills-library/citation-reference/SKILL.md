@@ -6,7 +6,7 @@ description: |
   Do NOT use for literature review writing (use literature-review), paper structure (use research-paper-structure), or general editing (use copy-editing).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "academic-writing writing template"
   category: "writing"

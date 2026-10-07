@@ -4,7 +4,7 @@ description: |
   Brand strategy development including brand identity framework, voice and tone development, positioning statements, visual identity guidelines, brand storytelling, brand architecture, brand auditing, rebranding processes, and cross-channel consistency. Use when the user asks about brand strategist or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "branding marketing strategy"
   category: "marketing-sales"

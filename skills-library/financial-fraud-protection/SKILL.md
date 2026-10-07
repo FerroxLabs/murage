@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of financial fraud protection or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness checklist guide cloud safety emergency-preparedness investing tax-planning"
   category: "health-wellness"

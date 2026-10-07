@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  brokerTokenFingerprint,
   clearFluxComposioBrokerToken,
   ensureFluxComposioBrokerToken,
   fluxKeyFingerprint,
@@ -95,7 +96,10 @@ describe("minting the FluxRouter connected-apps token", () => {
     };
     const next = await ensureFluxComposioBrokerToken(base({ credentials, fetchImpl: impl }));
     expect(next.fluxComposioBrokerToken).toBe(NEXT_TOKEN);
-    expect(calls).toHaveLength(1);
+    // Mint first; then this install's own previous token is revoked (see the
+    // 0.1.62 rules below), so a renewal never leaves a second live token
+    // counting against the account's cap.
+    expect(calls.map((call) => `${call.init.method} ${call.url.replace(FLUX, "")}`)).toEqual(["POST /v1/tokens", "DELETE /v1/tokens/current"]);
   });
 
   it("re-mints and revokes the old token when a different key arrives", async () => {
@@ -245,17 +249,160 @@ describe("who mints, in which build", () => {
     expect(gate).toContain("fluxComposioBrokerUrlValue()");
     expect(gate).toContain("!credentialStoreUnavailable");
 
-    const lifecycle = main.slice(main.indexOf("async function runComposioLifecycle("), main.indexOf("function startComposioLifecycleTimer()"));
+    const lifecycle = main.slice(main.indexOf("async function runComposioLifecyclePass("), main.indexOf("function startComposioLifecycleTimer()"));
     expect(lifecycle).toContain("if (!fluxComposioLifecycleEnabled() || !secureCredentialState)");
     const timer = main.slice(main.indexOf("function startComposioLifecycleTimer()"), main.indexOf("\n}\n", main.indexOf("function startComposioLifecycleTimer()")));
     expect(timer).toContain("!fluxComposioLifecycleEnabled()");
     // Every trigger goes through the gate: boot, the Flux key save, the
     // revoked-token message. The consent button refuses a dev launch outright.
-    expect(main.match(/if \(fluxComposioLifecycleEnabled\(\)\) (?:void )?runComposioLifecycle\(/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
+    expect(main.match(/if \(fluxComposioLifecycleEnabled\(\)\) (?:void )?runComposioLifecycle\(|if \(fluxComposioLifecycleEnabled\(\)\) \{\s+void runComposioLifecycle\(/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
     expect(main).toContain("if (fluxComposioLifecycleEnabled()) {\n    void runComposioLifecycle().catch(() => {});\n    startComposioLifecycleTimer();");
     expect(main).toContain("if (fluxComposioLifecycleEnabled()) {\n      void runComposioLifecycle().catch(() => {});\n      startComposioLifecycleTimer();");
-    expect(main).toContain("if (fluxComposioLifecycleEnabled()) void runComposioLifecycle({ force: true })");
+    // The rejected-token path is gated the same way, and it goes through the
+    // decision (one automatic re-mint, or "another device took over").
+    expect(main).toContain("if (fluxComposioLifecycleEnabled()) {\n          void composioTokenRejections.onRejected(");
+    const reconnect = main.slice(main.indexOf('ipcMain.handle("composio:reconnect"'), main.indexOf("composioTokenRejections.reconnect()"));
+    expect(reconnect).toContain("if (!fluxComposioLifecycleEnabled()) throw new Error(");
     const claim = main.slice(main.indexOf('ipcMain.handle("composio:claim-legacy"'), main.indexOf("runComposioLifecycle({ claim: true })"));
     expect(claim).toContain("if (!app.isPackaged) throw new Error(");
+  });
+});
+
+// 2026-10-01: an install sent POST /composio/v1/tokens every ten minutes with
+// an sk- key Flux never issued, and kept doing it after each 401.
+describe("the connected-apps token needs a real Flux key", () => {
+  for (const [name, value] of [["the base URL", "https://api.fluxrouter.ai/v1"], ["a short value", "abc12345xyz"], ["another provider's key", "sk-0123456789abcdef0123456789abcdef"]]) {
+    it(`does not ask Flux with ${name}`, async () => {
+      const { impl, calls } = fakeFetch({ "/v1/tokens": minted() });
+      const next = await ensureFluxComposioBrokerToken(base({ credentials: {}, fluxKey: value, fetchImpl: impl }));
+      expect(calls).toEqual([]);
+      expect(next.fluxComposioBrokerToken).toBeUndefined();
+    });
+  }
+
+  it("after Flux refuses a key, does not ask again with that key, and asks again once it changes", async () => {
+    const { impl, calls } = fakeFetch({ "/v1/tokens": declined(401, "invalid_api_key") });
+    const first = await ensureFluxComposioBrokerToken(base({ credentials: {}, fetchImpl: impl }));
+    expect(calls).toHaveLength(1);
+    expect(first.fluxComposioTokenError).toBe("invalid_api_key");
+    const second = await ensureFluxComposioBrokerToken(base({ credentials: first, fetchImpl: impl, now: NOW + DAY }));
+    expect(calls).toHaveLength(1);
+    expect(second.fluxComposioTokenError).toBe("invalid_api_key");
+    await ensureFluxComposioBrokerToken(base({ credentials: second, fluxKey: "sk-flux-replacement", fetchImpl: impl }));
+    expect(calls).toHaveLength(2);
+  });
+
+  it("a 401 with no code still counts as a refusal", async () => {
+    const { impl, calls } = fakeFetch({ "/v1/tokens": () => new Response("{}", { status: 401, headers: { "content-type": "application/json" } }) });
+    const first = await ensureFluxComposioBrokerToken(base({ credentials: {}, fetchImpl: impl }));
+    await ensureFluxComposioBrokerToken(base({ credentials: first, fetchImpl: impl }));
+    expect(calls).toHaveLength(1);
+  });
+});
+
+// 0.1.62 (Bug 2): the token-minting rules. Flux confirmed nothing minted or
+// revoked on its side after 2026-10-01 03:11Z, so the churn in the log was
+// this client re-creating sessions and clients. Each rule is one test.
+describe("token minting rules", () => {
+  const held = (over = {}) => ({
+    fluxComposioBrokerToken: TOKEN,
+    fluxComposioBrokerTokenExpiresAt: iso(20 * DAY),
+    fluxComposioBrokerTokenKeyFingerprint: fluxKeyFingerprint(KEY),
+    ...over,
+  });
+  const verbs = (calls) => calls.map((call) => `${call.init.method} ${call.url.replace(FLUX, "")}`);
+
+  it("rule 1: never re-mints while a valid token exists, however often it is asked", async () => {
+    const { impl, calls } = fakeFetch({ "/v1/tokens": minted() });
+    let credentials = held();
+    for (let i = 0; i < 5; i += 1) {
+      credentials = await ensureFluxComposioBrokerToken(base({ credentials: { ...credentials }, fetchImpl: impl }));
+    }
+    expect(credentials.fluxComposioBrokerToken).toBe(TOKEN);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rule 1: ignores a forced re-mint for a token that is no longer the one held", async () => {
+    // Four 401s in one turn name the same dead token; once it has been
+    // replaced the stragglers must not mint again.
+    const { impl, calls } = fakeFetch({ "/v1/tokens": minted() });
+    const next = await ensureFluxComposioBrokerToken(base({
+      credentials: held({ fluxComposioBrokerToken: NEXT_TOKEN }),
+      fetchImpl: impl,
+      force: true,
+      rejectedTokenFingerprint: brokerTokenFingerprint(TOKEN),
+    }));
+    expect(next.fluxComposioBrokerToken).toBe(NEXT_TOKEN);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rule 1: does re-mint for the token that was actually rejected", async () => {
+    const { impl, calls } = fakeFetch({ "/v1/tokens": minted(), "/v1/tokens/current": () => new Response(null, { status: 401 }) });
+    const next = await ensureFluxComposioBrokerToken(base({
+      credentials: held(),
+      fetchImpl: impl,
+      force: true,
+      rejectedTokenFingerprint: brokerTokenFingerprint(TOKEN),
+    }));
+    expect(next.fluxComposioBrokerToken).toBe(NEXT_TOKEN);
+    expect(verbs(calls)[0]).toBe("POST /v1/tokens");
+  });
+
+  it("rule 2: mints first, then revokes this install's own previous token and only that one", async () => {
+    const { impl, calls } = fakeFetch({ "/v1/tokens/current": () => new Response(null, { status: 200 }), "/v1/tokens": minted() });
+    const next = await ensureFluxComposioBrokerToken(base({ credentials: held(), fetchImpl: impl, force: true }));
+    expect(next.fluxComposioBrokerToken).toBe(NEXT_TOKEN);
+    expect(verbs(calls)).toEqual(["POST /v1/tokens", "DELETE /v1/tokens/current"]);
+    // The revoke is made with the OLD token as bearer (that is how Flux names
+    // the token to end); nothing of any other device's is touched.
+    expect(calls[1].init.headers.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("rule 2: never revokes the old token when the mint did not succeed, and keeps it", async () => {
+    const { impl, calls } = fakeFetch({ "/v1/tokens": () => { throw new TypeError("fetch failed"); } });
+    const next = await ensureFluxComposioBrokerToken(base({ credentials: held(), fetchImpl: impl, force: true }));
+    expect(next.fluxComposioBrokerToken).toBe(TOKEN);
+    expect(verbs(calls)).toEqual(["POST /v1/tokens"]);
+  });
+
+  it("rule 2: the app is never tokenless after an offline re-mint", async () => {
+    const { impl } = fakeFetch({ "/v1/tokens": () => { throw new TypeError("fetch failed"); } });
+    const next = await ensureFluxComposioBrokerToken(base({ credentials: held(), fetchImpl: impl, force: true }));
+    expect(next.fluxComposioBrokerToken).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("review F12: with a revoke sink the old token is NOT revoked until the caller has saved the new one", async () => {
+    const { impl, calls } = fakeFetch({ "/v1/tokens": minted(), "/v1/tokens/current": () => new Response(null, { status: 200 }) });
+    const revokeSink = [];
+    const next = await ensureFluxComposioBrokerToken(base({ credentials: held(), fetchImpl: impl, force: true, revokeSink }));
+    expect(next.fluxComposioBrokerToken).toBe(NEXT_TOKEN);
+    expect(verbs(calls)).toEqual(["POST /v1/tokens"]);
+    expect(revokeSink).toEqual([{ fluxBrokerUrl: FLUX, previous: TOKEN, minted: NEXT_TOKEN }]);
+  });
+
+  it("rule 4: a new session or client with the same key reuses the token and mints nothing", async () => {
+    const { impl, calls } = fakeFetch({ "/v1/tokens": minted() });
+    const stored = held();
+    // Two "clients": fresh credential copies, as a re-created session reads them.
+    await ensureFluxComposioBrokerToken(base({ credentials: JSON.parse(JSON.stringify(stored)), fetchImpl: impl }));
+    await ensureFluxComposioBrokerToken(base({ credentials: JSON.parse(JSON.stringify(stored)), fetchImpl: impl, label: "murage-dev-harness" }));
+    expect(calls).toHaveLength(0);
+  });
+
+  it("reports a network failure as transient so the caller can retry soon", async () => {
+    const { impl } = fakeFetch({ "/v1/tokens": () => { throw new TypeError("fetch failed"); } });
+    const transient = vi.fn();
+    await ensureFluxComposioBrokerToken(base({ credentials: {}, fetchImpl: impl, onTransientFailure: transient }));
+    expect(transient).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a 503 as transient but a refusal of the key as not", async () => {
+    const transient = vi.fn();
+    const down = fakeFetch({ "/v1/tokens": declined(503) });
+    await ensureFluxComposioBrokerToken(base({ credentials: {}, fetchImpl: down.impl, onTransientFailure: transient }));
+    expect(transient).toHaveBeenCalledTimes(1);
+    const refused = fakeFetch({ "/v1/tokens": declined(401, "flux_key_invalid") });
+    await ensureFluxComposioBrokerToken(base({ credentials: {}, fetchImpl: refused.impl, onTransientFailure: transient }));
+    expect(transient).toHaveBeenCalledTimes(1);
   });
 });

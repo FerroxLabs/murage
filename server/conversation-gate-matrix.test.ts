@@ -4,11 +4,24 @@ import { readFileSync, rmSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { DESKTOP_ONLY_SENTENCE, routeClass } from "./route-policy.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 
 /** Every conversation route against every kind of caller, at the real harness
  * boundary. Before the gate, a request with no proof was served what a phone
  * sees: every visible transcript, the search index and the live stream, plus
- * sends and interrupts. */
+ * sends and interrupts.
+ *
+ * 0.1.62 shipped this matrix with its own gate (conversation-gate.ts). 1.0.0
+ * carries the same guarantee in route-policy.ts (deny by default, audit C5):
+ * a conversation route answers only the desktop proof, the paired phone's
+ * launch credential or the door's forward header, and every other caller gets
+ * the unknown-route 404. Routes 1.0.0 keeps on the desktop alone (the decision
+ * log, team instructions, calendar calls, routine-run cancel) are stricter
+ * still: the phone and a bot hear the desktop-only sentence, an unproven
+ * caller the 404. The suite's fetch stamps the door header on loopback calls
+ * (testing/setup.ts), so every caller here that is not the door says
+ * `x-test-bare-loopback`. */
 const COMPANION_TOKEN = "c".repeat(64);
 const WRONG_TOKEN = "d".repeat(64);
 let fixture: VerificationServer;
@@ -22,19 +35,22 @@ let botToken = "";
 
 const NO_ROUTE = { error: "no such route" };
 
-type Caller = "none" | "marker-only" | "wrong-desktop-secret" | "wrong-companion-token" | "companion-marker-only" | "bot-token" | "desktop" | "companion";
+type Caller = "none" | "marker-only" | "wrong-desktop-secret" | "wrong-companion-token" | "wrong-door-token" | "companion-marker-only" | "bot-token" | "desktop" | "companion" | "door";
+const BARE = { "x-test-bare-loopback": "1" };
 const callers = (): Record<Caller, Record<string, string>> => ({
-  none: {},
-  "marker-only": { "x-murage-surface": "desktop" },
-  "wrong-desktop-secret": { "x-murage-surface": "desktop", "x-murage-surface-secret": "f".repeat(64) },
-  "wrong-companion-token": { "x-murage-companion": "1", "x-murage-companion-token": WRONG_TOKEN },
-  "companion-marker-only": { "x-murage-companion": "1" },
-  "bot-token": { authorization: `Bearer ${botToken}` },
-  desktop: { "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSecret },
-  companion: { "x-murage-companion": "1", "x-murage-companion-token": COMPANION_TOKEN },
+  none: { ...BARE },
+  "marker-only": { ...BARE, "x-murage-surface": "desktop" },
+  "wrong-desktop-secret": { ...BARE, "x-murage-surface": "desktop", "x-murage-surface-secret": "f".repeat(64) },
+  "wrong-companion-token": { ...BARE, "x-murage-companion": "1", "x-murage-companion-token": WRONG_TOKEN },
+  "wrong-door-token": { "x-murage-door-token": WRONG_TOKEN },
+  "companion-marker-only": { ...BARE, "x-murage-companion": "1" },
+  "bot-token": { ...BARE, authorization: `Bearer ${botToken}` },
+  desktop: { ...BARE, "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSecret },
+  companion: { ...BARE, "x-murage-companion": "1", "x-murage-companion-token": COMPANION_TOKEN },
+  door: { "x-murage-door-token": COMPANION_TOKEN },
 });
-const DENIED: Caller[] = ["none", "marker-only", "wrong-desktop-secret", "wrong-companion-token", "companion-marker-only", "bot-token"];
-const ADMITTED: Caller[] = ["desktop", "companion"];
+const UNPROVEN: Caller[] = ["none", "marker-only", "wrong-desktop-secret", "wrong-companion-token", "wrong-door-token", "companion-marker-only", "bot-token"];
+const DESKTOP_ONLY = { error: DESKTOP_ONLY_SENTENCE };
 
 async function call(method: string, path: string, headers: Record<string, string>, body?: unknown) {
   const controller = new AbortController();
@@ -72,7 +88,11 @@ beforeAll(async () => {
   rmSync(fixture.fixtureDumpPath, { force: true });
   expect((await desktopCall("POST", `/api/bots/${botId}/messages`, { text: "__fixture_hold_authority__", threadId })).status).toBe(202);
   for (const deadline = Date.now() + 15_000; !botToken && Date.now() < deadline;) {
-    try { botToken = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN; }
+    try {
+      const dump = withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))) as { mcpConfig?: { mcpServers?: Record<string, { env?: Record<string, string> }> } };
+      botToken = Object.values(dump.mcpConfig?.mcpServers ?? {}).map(server => server.env?.MURAGE_COMMS_TOKEN).find(Boolean) ?? "";
+      if (!botToken) throw new Error("not yet");
+    }
     catch { await new Promise((resolve) => setTimeout(resolve, 150)); }
   }
   expect(botToken).toMatch(/^[a-f0-9]{48}$/);
@@ -107,13 +127,28 @@ const ROUTES: Array<[string, string, () => string, unknown?]> = [
 
 describe("conversation routes by caller", () => {
   describe.each(ROUTES)("%s %s", (method, _label, path, body) => {
-    it.each(DENIED)("answers a caller with %s as an unknown route", async (who) => {
+    const pathOnly = () => path().split("?")[0]!;
+    it.each(UNPROVEN)("answers a caller with %s as an unknown route", async (who) => {
       const result = await call(method, path(), callers()[who], body);
       expect(result.status).toBe(404);
       expect(result.body).toEqual(NO_ROUTE);
     });
-    it.each(ADMITTED)("lets the %s through", async (who) => {
+    it("lets the desktop through", async () => {
+      const result = await call(method, path(), callers().desktop, body);
+      expect(result.body).not.toEqual(NO_ROUTE);
+      expect([200, 201, 202, 400, 404, 409]).toContain(result.status);
+      if (method === "GET") expect(result.status).toBe(200);
+    });
+    it.each(["companion", "door"] as const)("lets the %s through where the phone may act, and nowhere else", async (who) => {
       const result = await call(method, path(), callers()[who], body);
+      const klass = routeClass(method, pathOnly());
+      // the door's forward header proves only where a request came from: a
+      // route kept for the owner's proof answers it as an unknown route; the
+      // paired phone hears that the route needs the desktop app
+      if (klass === "desktop" || (klass === "companion" && who === "door")) {
+        expect([result.status, result.body]).toEqual(who === "companion" ? [403, DESKTOP_ONLY] : [404, NO_ROUTE]);
+        return;
+      }
       expect(result.body).not.toEqual(NO_ROUTE);
       expect([200, 201, 202, 400, 404, 409]).toContain(result.status);
       if (method === "GET") expect(result.status).toBe(200);
@@ -122,13 +157,13 @@ describe("conversation routes by caller", () => {
 
   it("takes the desktop proof in the query form the event stream needs", async () => {
     const query = `surface=desktop&surfaceSecret=${desktopSecret}`;
-    expect((await call("GET", `/api/events?${query}`, {})).status).toBe(200);
-    expect((await call("GET", `/api/events?surface=desktop&surfaceSecret=${"f".repeat(64)}`, {})).status).toBe(404);
-    expect((await call("GET", "/api/events?surface=desktop", {})).status).toBe(404);
+    expect((await call("GET", `/api/events?${query}`, BARE)).status).toBe(200);
+    expect((await call("GET", `/api/events?surface=desktop&surfaceSecret=${"f".repeat(64)}`, BARE)).status).toBe(404);
+    expect((await call("GET", "/api/events?surface=desktop", BARE)).status).toBe(404);
   });
 
   it("does not let a bot's capability token read or steer a conversation, and still serves the bot its own routes", async () => {
-    const token = { authorization: `Bearer ${botToken}`, "content-type": "application/json" };
+    const token = { ...BARE, authorization: `Bearer ${botToken}`, "content-type": "application/json" };
     for (const [method, path, body] of [
       ["GET", "/api/bots", undefined], ["GET", `/api/threads/${threadId}/messages`, undefined], ["GET", "/api/search?q=a", undefined],
       ["POST", `/api/bots/${botId}/messages`, { text: "from a bot shell" }], ["POST", `/api/bots/${botId}/interrupt`, {}],
@@ -162,7 +197,8 @@ describe("conversation routes by caller", () => {
   });
 
   it("leaves routes outside the conversation family alone", async () => {
-    expect((await call("GET", "/api/health", {})).status).toBe(200);
-    expect((await call("GET", "/api/instances", {})).body).not.toEqual(NO_ROUTE);
+    expect((await call("GET", "/api/health", BARE)).status).toBe(200);
+    // the engine list is a conversation route in 1.0.0: the door reads it, nobody else
+    expect((await call("GET", "/api/instances", callers().door)).body).not.toEqual(NO_ROUTE);
   });
 });

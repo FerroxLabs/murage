@@ -108,4 +108,13 @@ describe("one Thinking at a time", () => {
     expect(spoken).toContain(">Answering<");
     expect(spoken).toContain("tabular-nums");
   });
+
+  it("leaves the sheen room for descenders, so Thinking never reads Thinkinq (0.1.60 final 3)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    const rule = /\.thinking-shimmer \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toContain("background-clip: text;");
+    expect(rule).toMatch(/padding-block: 0\.2em;/);
+    expect(rule).toMatch(/margin-block: -0\.2em;/);
+  });
 });

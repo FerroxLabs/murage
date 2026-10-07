@@ -14,8 +14,8 @@ test.beforeAll(async () => {
     load(id){
       if(id.endsWith("/src/styles.css"))return readFileSync(id,"utf8").replace('@import "tailwindcss";','@import "tailwindcss" source(none);\n@source "./components";');
       if(id==="\0avatar-store")return `const empty=[];export const visibleMessages=()=>empty;export const useStore=()=>({state:{config:{}},dispatch:()=>{}});export const api=async()=>({});`;
-      if(id==="\0avatar-call")return `export const useOnCall=()=>"portrait-bot";export const currentCall=()=>"portrait-bot";export const deferCallCleanup=()=>{};export const endCall=()=>{};export const startCall=()=>{};`;
-      if(id==="\0avatar-tts")return `export const speaker={isSpeaking:()=>false,speak:async()=>{},stop:()=>{}};`;
+      if(id==="\0avatar-call")return `export const useOnCall=()=>"portrait-bot";export const currentCall=()=>"portrait-bot";export const deferCallCleanup=()=>{};export const requestCall=()=>{};export const takeCallRequest=()=>false;export const useCallRequest=()=>null;export const endCall=()=>{};export const startCall=()=>{};`;
+      if(id==="\0avatar-tts")return `export const speaker={isSpeaking:()=>false,speak:async()=>{},stop:()=>{}};export const onClipElement=()=>()=>{};`;
       if(id==="\0avatar-speech")return `export const useSpeech=()=>({caption:"",error:null});`;
       if(id==="\0avatar-push")return `export const usePushToTalk=()=>false;`;
       if(id!=="\0avatar-entry")return;
@@ -31,9 +31,10 @@ test("call overlay honors a stored portrait/crops and retains animated mascot fa
   await page.route('**/api/attachments/portrait.png',route=>route.fulfill({contentType:'image/png',body:Buffer.from(png,'base64')}));
   await page.route('**/api/attachments/missing.png',route=>route.fulfill({status:404,body:'missing fixture'}));
   await page.goto(`${origin}/__call`);await expect(page.locator('button[aria-label="Hang up"]')).toBeVisible();
-  await expect(page.getByTestId('call-waiting-ring')).toBeVisible();
-  await expect(page.getByTestId('call-waiting-ring')).toHaveCSS('animation-duration','3s');
-  await page.emulateMedia({reducedMotion:'reduce'});await expect(page.getByTestId('call-waiting-ring')).toHaveCSS('animation-name','none');
+  // the aura's shimmer is the waiting indicator (call-aura-review.md M6): animated, and a single static paint under reduced motion
+  const aura=page.locator('canvas[data-call-aura]');
+  await expect(aura).toHaveAttribute('data-aura-mode','animated');
+  await page.emulateMedia({reducedMotion:'reduce'});await expect(aura).toHaveAttribute('data-aura-mode','static');
   await page.emulateMedia({reducedMotion:'no-preference'});
   await page.evaluate(()=>document.documentElement.dataset.skin='light');
   const portrait=page.getByRole('img',{name:'Ada avatar',exact:true});

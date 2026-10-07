@@ -19,7 +19,7 @@ trigger_phrases: >-
   emergency fund financial safety net saving for unexpected expenses I have no
   savings
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: savings personal-finance budgeting step-by-step planning
   category: life-event

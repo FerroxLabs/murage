@@ -4,7 +4,7 @@ description: |
   Guide for planning a career break including financial runway calculation, employer negotiation strategies, health insurance bridge options, sabbatical project planning for travel, study, or creative pursuits, re-entry strategy, and building a sabbatical portfolio. Use when the user asks about career sabbatical or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events planning career"
   category: "family-relationships"

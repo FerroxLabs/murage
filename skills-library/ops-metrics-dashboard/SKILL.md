@@ -12,7 +12,7 @@ description: |
   frameworks (use metrics-framework).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "analysis planning report template"
   category: "business-strategy"

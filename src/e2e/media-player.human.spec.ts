@@ -79,7 +79,7 @@ const FILES = [
   { path: `${ROOT}/outputs/notes.txt`, name: "notes.txt" },
   // a real file of a playable type, but not this conversation's: the resolver
   // must refuse it at the first question and the chip must stay a chip
-  { path: "/Users/sean/Music/private.mp3", name: "private.mp3" },
+  { path: "/Users/alex/Music/private.mp3", name: "private.mp3" },
 ];
 const MARKDOWN = [
   `The take is at [take](${ROOT}/outputs/broken.wav).`,
@@ -389,7 +389,11 @@ test("a file that will not decode is reported once, not asked about again and ag
   await open(page);
   // broken.wav's bytes fail in the decoder; its capability is live and the
   // failure is the bytes' own, so the card must not go back to the harness.
+  // Count from the moment it says so: before that its first lookup may still
+  // be in flight, which is not an ask "again".
+  await expect(page.locator('[data-media-player-state="unplayable"]').filter({ hasText: "broken.wav" })).toHaveCount(1);
   const asked = resolved.filter(item => item === "outputs/broken.wav").length;
+  expect(asked).toBeGreaterThan(0);
   await page.waitForTimeout(1_000);
   expect(resolved.filter(item => item === "outputs/broken.wav").length).toBe(asked);
   await expect(page.locator('[data-media-player-state="unplayable"]').filter({ hasText: "broken.wav" })).toHaveCount(1);

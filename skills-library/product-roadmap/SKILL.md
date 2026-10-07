@@ -5,7 +5,7 @@ description: |
   Do NOT use for project timelines with Gantt charts, sprint planning (use user-story-writing), strategic business roadmaps (use strategic-roadmap), or prioritization scoring (use prioritization-framework).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "planning strategy agile project-management template"
   category: "business-strategy"

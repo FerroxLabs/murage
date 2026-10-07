@@ -262,15 +262,16 @@ type SkillRecordingPayload = {
         input(serial: string, payload: AndroidDeviceInput): Promise<void>;
       };
       /** Start native dictation. Call mode supplies endpointMs so silence
-       * finalizes a turn; composer dictation omits it and remains manual. */
-      speechStart(options?: { endpointMs?: number; fed?: boolean; hints?: string[] }): Promise<void>;
+       * finalizes a turn (endpointLongMs applies when the last word sounds
+       * unfinished); composer dictation omits it and remains manual. */
+      speechStart(options?: { endpointMs?: number; endpointLongMs?: number; fed?: boolean; hints?: string[] }): Promise<void>;
       /** Call mode: echo-cancelled microphone audio (16 kHz mono s16le) for a fed session. */
       speechFeed?(bytes: Uint8Array): void;
       speechStop(): Promise<void>;
       /** Finish capture and emit the recognizer's final transcript. */
       speechFinish?(): Promise<void>;
       onSpeechTranscript(
-        cb: (line: { partial?: boolean; text?: string; error?: string }) => void,
+        cb: (line: { partial?: boolean; text?: string; error?: string; longEndpoint?: boolean }) => void,
       ): () => void;
       onSpeechEnd(cb: (info: { code: number | null; reason?: string }) => void): () => void;
       skillRecorder?: {
@@ -360,6 +361,9 @@ type SkillRecordingPayload = {
         close(contextId?: string): Promise<boolean>;
         onState(cb: (state: DesktopWorkspaceState) => void): () => void;
       };
+      /** A yes-or-no question anchored to the Murage window; resolves true
+       * only when the person picks the action button. */
+      confirm?(message: string, confirmLabel?: string): Promise<boolean>;
       /** Native folder picker; resolves null when the user cancels. */
       pickFolder?(current?: string): Promise<string | null>;
       /** Writes the redacted diagnostics report to a user-chosen file;
@@ -384,10 +388,35 @@ type SkillRecordingPayload = {
       /** Save a provider credential through Electron's OS-backed store. */
       mutateProviderConnection?(input: import("../../shared/provider-connections").ProviderConnectionMutation): Promise<{ connections: import("../../shared/provider-connections").PublicProviderConnection[]; storage: "encrypted" | "local-config" }>;
       mutateFluxConnection?(input: import("../../shared/flux-connection").FluxConnectionMutation): Promise<import("../../shared/flux-connection").FluxConnectionStatus>;
+      /** Plan sign-in (ChatGPT, Grok). Never returns a token. */
+      modelSignIn?: {
+        status(): Promise<{ providers: import("../../shared/model-signin").SignInProviderStatus[]; ready: boolean }>;
+        start(provider: import("../../shared/provider-connections").SignInPreset): Promise<import("../../shared/model-signin").SignInResult>;
+        startDevice(provider: import("../../shared/provider-connections").SignInPreset): Promise<import("../../shared/model-signin").SignInResult>;
+        cancel(provider: import("../../shared/provider-connections").SignInPreset): Promise<boolean>;
+        submitCode(provider: import("../../shared/provider-connections").SignInPreset, code: string): Promise<boolean>;
+        signOut(provider: import("../../shared/provider-connections").SignInPreset): Promise<import("../../shared/model-signin").SignInResult>;
+      };
+      /** The owner's own MCP servers (MCP-LINK T11). Desktop only; every
+       * result is value-free. See lanes/mcplink/API-T11.md for the sequencing. */
+      mcpServers?: {
+        /** "desktop": save values through this bridge. "local-config": a
+         * development harness keeps values in config.json (send them in the body). */
+        mode(): Promise<"desktop" | "local-config">;
+        /** Call only after the entry exists (POST answered 201, or after a PUT). */
+        saveSecrets(name: string, input: McpSecretsInput): Promise<McpBridgeResult>;
+        signIn(name: string): Promise<McpBridgeResult>;
+        cancelSignIn(name: string): Promise<boolean>;
+        signOut(name: string): Promise<McpSignOutResult>;
+        /** Revokes first when signed in, drops every secret, then deletes the entry. */
+        remove(name: string): Promise<McpRemoveResult>;
+      };
       /** Run the legacy connected-apps claim once (user consent). */
       claimLegacyComposio?(): Promise<{ state: "none" | "offered" | "pending" | "claimed" | "conflict" | "abandoned"; code?: string; installationId?: string; at?: string; confirmPending?: boolean }>;
+      /** Reconnect connected apps here after another computer took over. */
+      reconnectConnectedApps?(): Promise<{ reconnected: boolean }>;
       setCredential?(
-        name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
+        name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
         value: string,
       ): Promise<ConfigStatus>;
       /** In-app auto-update (packaged app only; dormant in dev). onState
@@ -403,6 +432,27 @@ type SkillRecordingPayload = {
     };
   }
 }
+
+/** A value the owner typed for one of their MCP servers. Never read back. */
+export interface McpSecretsInput {
+  /** Link servers: header name to full value ("Bearer abc" for Authorization). */
+  headers?: Record<string, string>;
+  /** Link servers: the full pasted link when it holds a key; same origin as the entry. */
+  url?: string;
+  /** Command servers: environment name to value. */
+  env?: Record<string, string>;
+}
+
+export type McpBridgeError =
+  | "desktop-only" | "storage" | "not-found" | "invalid" | "stale" | "busy" | "headless"
+  | "not-sign-in" | "no-registration" | "refused" | "cancelled" | "denied" | "timeout"
+  | "port" | "browser" | "network" | "token" | "unknown";
+
+/** `message` is a plain sentence ready to show. */
+export type McpBridgeResult = { ok: true } | { ok: false; error: McpBridgeError; message: string };
+export type McpSignOutResult = { ok: true; revoked: boolean; message: string } | { ok: false; error: McpBridgeError; message: string };
+/** `revoked` is null when there was no sign-in to revoke. */
+export type McpRemoveResult = { ok: true; revoked: boolean | null; message: string } | { ok: false; error: McpBridgeError; message: string };
 
 export interface LinuxLocalControlStatus {
   enabled: boolean;
@@ -434,6 +484,7 @@ export interface UpdaterState {
   currentVersion?: string;
   percent?: number;
   message?: string;
+  action?: "download-from-murage";
   /**
    * How the download gets applied. "restart" quits and installs in place;
    * "handoff" copies the install command and opens a terminal so the user

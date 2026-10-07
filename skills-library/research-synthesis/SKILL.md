@@ -6,7 +6,7 @@ description: |
   Do NOT use for qualitative coding of interview data (use qualitative-coding), automated text mining of large corpora (use text-mining-protocol), or designing original research surveys (use survey-design).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research analysis report"
   category: "data-analysis"

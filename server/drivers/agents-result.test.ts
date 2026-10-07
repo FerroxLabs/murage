@@ -24,7 +24,7 @@ describe("boundedAgentResult", () => {
     expect(save).toHaveBeenCalledOnce();
     expect(out.length).toBeLessThan(text.length);
     expect(out.startsWith("b".repeat(TOOL_RESULT_PREVIEW_CHARS))).toBe(true);
-    expect(out).toContain(`tool_result_read with id "${SAVED_ID}"`);
+    expect(out).toContain(`MCP tool "tool_result_read" on this server with id "${SAVED_ID}"`);
     expect(out).toContain(`offset ${TOOL_RESULT_PREVIEW_CHARS}`);
   });
 

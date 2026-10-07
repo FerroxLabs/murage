@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { fullFleet, removeDevice, watchPairing } from "../lib/pair.mjs";
+import { fullFleet, removeDevice, setScriptAccess, watchPairing } from "../lib/pair.mjs";
 
 const token = `murage_pair_${"a".repeat(43)}`;
 const candidates = Array.from({ length: 20 }, (_, i) => ({ id: `d${i}`, name: `Phone ${i}`, createdAt: 1, lastSeenAt: 1 + i }));
@@ -56,4 +56,14 @@ test("fullFleet keeps only well-formed ids; removeDevice uses the control page's
   assert.match((await removeDevice({ port: 1, id: "d0", send: send(500) })).reason, /could not remove/);
   assert.equal((await removeDevice({ port: 1, id: "../etc", send: async () => assert.fail("never sent") })).ok, false);
   assert.match((await removeDevice({ port: 1, id: "d0", send: async () => { throw Error("ECONNREFUSED"); } })).reason, /nothing answered/);
+});
+
+test("script access is switched on and off through the control page, for a well-formed id only (S1b R2)", async () => {
+  const calls = [];
+  const send = status => async (port, method, path) => { calls.push([method, path]); return { status, body: {} }; };
+  assert.deepEqual(await setScriptAccess({ port: 1, id: "d0", allowed: true, send: send(200) }), { ok: true });
+  assert.deepEqual(await setScriptAccess({ port: 1, id: "d0", allowed: false, send: send(200) }), { ok: true });
+  assert.deepEqual(calls, [["POST", "/devices/d0/script-access"], ["DELETE", "/devices/d0/script-access"]]);
+  assert.match((await setScriptAccess({ port: 1, id: "nope", allowed: true, send: send(404) })).reason, /no paired device/);
+  assert.equal((await setScriptAccess({ port: 1, id: "../etc", allowed: true, send: async () => assert.fail("sent") })).ok, false);
 });

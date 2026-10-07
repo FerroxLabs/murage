@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of decentralized storage engineer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "advanced blockchain budgeting javascript api-design cloud automation networking"
   category: "emerging-tech"

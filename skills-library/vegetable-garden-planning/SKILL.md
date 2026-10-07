@@ -6,7 +6,7 @@ description: |
   Do NOT use for ornamental garden design, indoor gardening (use indoor-plant-care), commercial farming, or flower garden planning.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "gardening planning guide"
   category: "home-household"

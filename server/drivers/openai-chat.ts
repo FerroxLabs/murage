@@ -1,3 +1,4 @@
+import { NO_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 import type {
   DriverCreateInput,
   ModelCatalog,
@@ -14,6 +15,7 @@ import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS }
 import { classifyProviderError, isEndpointUnreachable, unreachableEndpointMessage } from "../../shared/provider-error.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
 import { providerDispatcher } from "../provider-dispatcher.ts";
+import { httpTextOnlyTurn } from "./http-text-only.ts";
 import { createTodoBlockFilter, extractTodoBlocks } from "../../shared/todo-block.ts";
 
 export interface OpenAIChatMessage {
@@ -22,6 +24,7 @@ export interface OpenAIChatMessage {
 }
 
 interface Usage {
+  charge?: number;
   input: number;
   output: number;
 }
@@ -58,7 +61,7 @@ interface CompletionJson {
     delta?: ReasoningFields & { content?: unknown };
     finish_reason?: unknown;
   }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; cost_usd?: number; cost?: number };
   error?: unknown;
 }
 
@@ -91,6 +94,8 @@ interface RuntimeOptions<Config> {
   billing?: "metered";
   includeUsageInCompleted?: boolean;
   noBodyError?: string;
+  /** PIP reflection: send response_format json_schema (endpoints that accept it). */
+  jsonSchemaResponse?: boolean;
   retryScale?: number;
   /** A model this runtime serves from a Local models server instead of
    *  apiUrl: that server's endpoint, key and API model id. The request body is
@@ -127,7 +132,7 @@ function addressRefusal(label: string, endpoint: string, code: "https-required" 
 
 /** Why a streamed reply is not a successful completion. `invalid_body`
  * separates "the address answered with something that is not a completion"
- * from `incomplete`, "the stream stopped early" — before, a reverse proxy's
+ * from `incomplete`, "the stream stopped early". Before, a reverse proxy's
  * HTML page and a model that simply said nothing were reported identically
  * (F8). `cancelled` is the user's Stop, which now carries its partial text
  * out of the reader instead of discarding it (F6). */
@@ -158,8 +163,8 @@ class StreamOutcomeError extends Error {
 /** A non-2xx answer from the model server. `data.http_status` is exactly the
  * shape `classifyProviderError` reads, so the reviewed provider copy in
  * shared/provider-error.ts is reachable from this driver too; before, every
- * status took one branch that pasted the provider's raw JSON body — another
- * vendor's branding and URLs included — into the chat bubble (F5). The body is
+ * status took one branch that pasted the provider's raw JSON body, including
+ * another vendor's branding and URLs, into the chat bubble (F5). The body is
  * kept as `details` for the Technical details disclosure. */
 class ProviderHttpError extends Error {
   readonly data: { http_status: number; message: string };
@@ -206,13 +211,25 @@ const wholeCompletionFrom = (body: string, reasoning: boolean | undefined): Comp
   };
 };
 
-/** How much of a non-streamed body is held while judging it. A completion
- * envelope is small; anything larger is not one. */
+/** Maximum diagnostic prefix retained when judging a stream's body. */
 const RAW_BODY_MAX = 64_000;
+export const MAX_SSE_LINE_BYTES = 1024 * 1024;
+export const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+const REPLY_TOO_LARGE = "The model server sent a reply too large to read, so Murage kept what arrived before it.";
+
+/** Keep only a bounded prefix, including when text contains multibyte letters. */
+export function appendBounded(body: string, chunk: string, max: number): string {
+  if (body.length >= max) return body;
+  const remaining = Math.max(0, max - Buffer.byteLength(body, "utf8"));
+  if (!remaining) return body;
+  const bytes = Buffer.from(chunk.slice(0, remaining), "utf8");
+  return body + new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes.subarray(0, remaining), { stream: true });
+}
 
 const usageFrom = (usage: CompletionJson["usage"]): Usage | null =>
   usage
-    ? { input: usage.prompt_tokens ?? 0, output: usage.completion_tokens ?? 0 }
+    ? { input: usage.prompt_tokens ?? 0, output: usage.completion_tokens ?? 0,
+      ...(Number.isFinite(usage.cost_usd ?? usage.cost) && (usage.cost_usd ?? usage.cost)! >= 0 ? { charge: usage.cost_usd ?? usage.cost } : {}) }
     : null;
 
 const asError = (value: unknown): Error =>
@@ -318,6 +335,53 @@ const readUnlessAborted = <T>(
   });
 };
 
+/** Decoding can widen bytes (an invalid byte becomes a three byte mark), so a
+ * truncated body is trimmed again by its decoded size. */
+function clipBytes(text: string, max: number, truncate: boolean): string {
+  if (!truncate || Buffer.byteLength(text, "utf8") <= max) return text;
+  return Buffer.from(text, "utf8").subarray(0, max).toString("utf8");
+}
+
+/** Read only the permitted bytes, with the request's abort covering the body. */
+async function readBoundedBody(
+  response: Response,
+  signal: AbortSignal,
+  max: number,
+  truncate = false,
+  onChunk?: () => void,
+): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let body = "";
+  let bytes = 0;
+  try {
+    for (;;) {
+      const result = await readUnlessAborted(reader, signal);
+      if (result.done) return clipBytes(body + decoder.decode(), max, truncate);
+      onChunk?.();
+      const remaining = max - bytes;
+      if (result.value.byteLength > remaining && !truncate) {
+        const error: Error & { details?: string } = new Error(REPLY_TOO_LARGE);
+        error.details = `Response body exceeded ${max} bytes`;
+        throw error;
+      }
+      const accepted = result.value.subarray(0, remaining);
+      body += decoder.decode(accepted, { stream: true });
+      bytes += accepted.byteLength;
+      if (truncate && bytes === max) return clipBytes(body, max, truncate);
+    }
+  } finally {
+    void reader.cancel().catch(() => {});
+  }
+}
+
+/** Deadline for a non-streamed helper call when the engine sets no idle budget
+ * of its own: the wait for the first byte, then the gap between chunks. */
+const GENERATE_IDLE_MS = 120_000;
+/** Redirects one provider request may follow, each re-checked as a new request. */
+const MAX_PROVIDER_REDIRECTS = 3;
+
 /** Shared runtime for the three providers that speak OpenAI chat completions. */
 export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>): ProviderInstance {
   const { input } = options;
@@ -335,6 +399,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     createdAt: new Date().toISOString(),
   });
 
+  /** A submission-fence refusal raised before a request write. */
+  class SubmissionRefused extends Error {
+    readonly refusal: unknown;
+    constructor(refusal: unknown) { super("the submission was refused before it was sent"); this.refusal = refusal; }
+  }
+
   const complete = async (
     messages: OpenAIChatMessage[],
     model: string,
@@ -342,6 +412,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     signal?: AbortSignal,
     onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
     providerRoute?: ProviderTurnRoute,
+    /** The turn's submission fence, run right before every request write
+     *  (each redirect hop too) with no await in between. */
+    beforeWrite?: () => void,
   ): Promise<Completion> => {
     const local = providerRoute ? null : options.localEndpoint?.(model) ?? null;
     const endpoint: ChatEndpoint | undefined = local
@@ -349,17 +422,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       : providerRoute;
     if (local) model = local.model;
     const label = endpoint?.preset ?? options.httpErrorLabel;
-    const idle = createIdleBudget(options.timeoutMs);
+    const idle = createIdleBudget(options.timeoutMs ?? (stream ? undefined : GENERATE_IDLE_MS));
     const requestSignal = signal ? AbortSignal.any([signal, idle.signal]) : idle.signal;
     // Whether this request ever heard back from the address. Set the instant
-    // `fetch` resolves — a response object is proof the endpoint answered —
+    // `fetch` resolves, since a response object proves the endpoint answered,
     // and read only by the unreachable-endpoint branch below. It has to be
     // carried out of `completeWithin` explicitly: the error alone cannot say
     // it, because a connect failure and a socket that dies mid-body raise the
     // same errno.
     const reached = { value: false };
     try {
-      return await completeWithin(requestSignal, idle, reached, messages, model, stream, onDelta, endpoint);
+      return await completeWithin(requestSignal, idle, reached, messages, model, stream, onDelta, endpoint, beforeWrite);
     } catch (value) {
       // An idle expiry outside the stream reader (connect, headers, or a
       // non-streamed body) is the provider's timeout failure. The caller's own
@@ -375,21 +448,21 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         timedOut.details = `${label} ${idle.message}`;
         throw timedOut;
       }
-      // F3 — a connect failure is the ONE error on this path that reached the
+      // F3: a connect failure is the ONE error on this path that reached the
       // chat bubble unlabelled. `label` is applied at five places, every one of
       // them after a response exists, so undici's `TypeError("fetch failed")`
       // rethrown here arrived at the transcript as the literal two words
       // "fetch failed": no host, no engine, no next step. It is also the
-      // commonest local-model failure there is — the box is off, or the tailnet
+      // commonest local-model failure there is: the box is off, or the tailnet
       // dropped. Say which address and what to check instead. The Stop path is
       // untouched: an aborted turn is never rewritten.
       //
-      // F11 guard — `reached.value` is the whole distinction. The codes
+      // F11 guard: `reached.value` is the whole distinction. The codes
       // `isEndpointUnreachable` matches (ECONNRESET, EPIPE, UND_ERR_SOCKET,
       // ETIMEDOUT) are raised both by a connection that never opened AND by
       // one that died halfway through a reply, so the error's shape cannot
       // tell them apart. Without this guard a server that streamed half an
-      // answer and then dropped had that answer thrown away — the
+      // answer and then dropped had that answer thrown away because the
       // StreamOutcomeError carrying the partial was replaced by a plain Error,
       // so the turn loop found no `.partial` to keep and no `.stopReason`, and
       // the person was told the endpoint "could not be reached" while its
@@ -416,6 +489,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     stream: boolean,
     onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
     providerRoute?: ChatEndpoint,
+    beforeWrite?: () => void,
   ): Promise<Completion> => {
     const label = providerRoute?.preset ?? options.httpErrorLabel;
     const secret = providerRoute?.apiKey ?? options.apiKey;
@@ -427,28 +501,67 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     // metadata endpoint (DNS rebinding, a changed record) gets no key.
     // https URLs answer from the shared rule without any lookup, so every
     // hosted provider route pays nothing for this.
-    const endpoint = `${providerRoute?.baseUrl ?? options.apiUrl}/chat/completions`;
-    const reach = await checkLocalServerUrl(endpoint);
-    if (!reach.ok) throw new Error(addressRefusal(label, endpoint, reach.code));
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
-      body: JSON.stringify(options.requestBody(model, messages, stream)),
-      signal: requestSignal,
-      // No transport clock of its own (server/provider-dispatcher.ts).
-      dispatcher: providerDispatcher(endpoint),
-    } as RequestInit);
+    const firstEndpoint = `${providerRoute?.baseUrl ?? options.apiUrl}/chat/completions`;
+    const requestBody = JSON.stringify(options.requestBody(model, messages, stream));
+    // Redirects are followed by hand so every hop is held to the same address
+    // rule as the first URL, and the key never leaves the origin it was
+    // configured for.
+    let endpoint = firstEndpoint;
+    let response!: Response;
+    for (let redirects = 0; ; redirects++) {
+      let target: URL;
+      try {
+        target = new URL(endpoint);
+      } catch {
+        throw new Error(addressRefusal(label, endpoint, "unresolved-address"));
+      }
+      if (target.protocol !== "http:" && target.protocol !== "https:") {
+        throw new Error(`${label} pointed Murage to an address that is not http or https, so the request stopped.`);
+      }
+      const reach = await checkLocalServerUrl(endpoint);
+      if (!reach.ok) throw new Error(addressRefusal(label, endpoint, reach.code));
+      const sameOrigin = target.origin === new URL(firstEndpoint).origin;
+      if (beforeWrite) {
+        try { beforeWrite(); } catch (refusal) { throw new SubmissionRefused(refusal); }
+      }
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          ...(sameOrigin ? { authorization: `Bearer ${secret}` } : {}),
+          "content-type": "application/json",
+        },
+        body: requestBody,
+        signal: requestSignal,
+        redirect: "manual",
+        // No transport clock of its own (server/provider-dispatcher.ts).
+        dispatcher: providerDispatcher(endpoint),
+      } as RequestInit);
+      const location = response.headers.get("location");
+      if (![301, 302, 307, 308].includes(response.status) || !location) break;
+      void response.body?.cancel().catch(() => {});
+      if (redirects >= MAX_PROVIDER_REDIRECTS) {
+        reached.value = true;
+        throw new Error(
+          `${label} redirected the request more than ${MAX_PROVIDER_REDIRECTS} times, so Murage stopped. Check the server address in settings.`,
+        );
+      }
+      try {
+        endpoint = new URL(location, endpoint).toString();
+      } catch {
+        throw new Error(addressRefusal(label, location, "unresolved-address"));
+      }
+    }
     // Headers are back: something is listening at that address. Everything
     // after this point is a server that answered, however badly.
     reached.value = true;
     if (!response.ok) {
-      const rawBody = await response.text().catch(() => "");
+      const rawBody = await readBoundedBody(response, requestSignal, RAW_BODY_MAX, true).catch(() => "");
       const body = redact(rawBody);
       throw new ProviderHttpError(response.status, body.slice(0, 200), label);
     }
 
     if (!stream) {
-      const json = ((await response.json()) ?? {}) as CompletionJson;
+      const json = (JSON.parse(await readBoundedBody(response, requestSignal, MAX_RESPONSE_BYTES, false, idle.renew)) ?? {}) as CompletionJson;
       const errorDetail = inBandErrorDetail(json);
       if (errorDetail !== null) throw new Error(redact(`${label} error: ${errorDetail}`).slice(0, 300));
       const choice = json.choices?.[0];
@@ -538,6 +651,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let lineBytes = 0;
+    let responseBytes = 0;
     try {
       readLoop: for (;;) {
         let result: Awaited<ReturnType<typeof reader.read>>;
@@ -561,26 +676,42 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           // A final frame can arrive without its trailing newline. Flush the
           // decoder and fold what is left before judging the stream.
           const tail = decoder.decode();
-          if (body.length < RAW_BODY_MAX) body += tail;
+          body = appendBounded(body, tail, RAW_BODY_MAX);
           buffer += tail;
           if (buffer) consumeLine(buffer, true);
           buffer = "";
           break;
         }
-        const chunk = decoder.decode(result.value, { stream: true });
-        // Kept only so a body that is not a stream at all can be recognised
-        // (F8). Bounded: a real stream never needs to be held whole.
-        if (body.length < RAW_BODY_MAX) body += chunk;
-        buffer += chunk;
-        let newline: number;
-        while ((newline = buffer.indexOf("\n")) !== -1) {
-          const line = buffer.slice(0, newline);
-          buffer = buffer.slice(newline + 1);
-          if (consumeLine(line)) break readLoop;
+        responseBytes += result.value.byteLength;
+        if (responseBytes > MAX_RESPONSE_BYTES) {
+          throw failure(REPLY_TOO_LARGE, `response exceeded ${MAX_RESPONSE_BYTES} bytes`, "incomplete");
+        }
+        // Check each line before decoding or appending it. A chunk may hold
+        // many short lines, so its total size is not the line size.
+        let offset = 0;
+        while (offset < result.value.byteLength) {
+          const newline = result.value.indexOf(10, offset);
+          const end = newline === -1 ? result.value.byteLength : newline;
+          const nextLineBytes = lineBytes + end - offset;
+          if (nextLineBytes > MAX_SSE_LINE_BYTES) {
+            throw failure(REPLY_TOO_LARGE, `stream line exceeded ${MAX_SSE_LINE_BYTES} bytes`, "incomplete");
+          }
+          const next = newline === -1 ? end : end + 1;
+          const chunk = decoder.decode(result.value.subarray(offset, next), { stream: true });
+          body = appendBounded(body, chunk, RAW_BODY_MAX);
+          buffer += newline === -1 ? chunk : chunk.slice(0, -1);
+          lineBytes = nextLineBytes;
+          offset = next;
+          if (newline !== -1) {
+            const line = buffer;
+            buffer = "";
+            lineBytes = 0;
+            if (consumeLine(line)) break readLoop;
+          }
         }
       }
     } finally {
-      await reader.cancel().catch(() => {});
+      void reader.cancel().catch(() => {});
     }
     // A dropped frame may have carried reply text, so the output is uncertain.
     if (unreadableFrames > 0) {
@@ -621,12 +752,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     ...(turn.system ? [{ role: "system" as const, content: turn.system }] : []),
     ...(turn.transcript ?? []).map((message) => ({
       role: message.role,
-      content: message.text,
+      content: message.header ? `${message.header}\n\n${message.text}` : message.text,
     })),
     { role: "user", content: turn.text },
   ];
 
   const sendTurn = async (turn: SendTurnInput) => {
+    turn = renderMurageTurn(turn, NO_TOOL_SURFACE, {});
     if (turn.providerRoute) validateProviderTurnRoute(options.driverKind, turn.providerRoute);
     const local = turn.providerRoute ? null : options.localEndpoint?.(turn.model || options.models().default) ?? null;
     if (!turn.providerRoute?.apiKey && !options.apiKey && !local) throw new Error(options.missingKeyError);
@@ -677,7 +809,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             const out = todo.push(delta);
             emitPlans(out.plans);
             emitAnswerDelta(out.text);
-          }, turn.providerRoute);
+          }, turn.providerRoute, turn.beforeSubmit);
           const rest = todo.flush();
           emitPlans(rest.plans);
           emitAnswerDelta(rest.text);
@@ -717,12 +849,21 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             ok: true,
             stopReason: null,
             cost: null,
+            ...(completion.usage?.charge !== undefined ? { charge: completion.usage.charge } : {}),
           };
           emit(options.includeUsageInCompleted && completion.usage
             ? { ...completed, usage: completion.usage }
             : completed);
           return;
         } catch (value) {
+          // The submission fence refused this attempt (the first send or a
+          // retry resend): nothing was written. Stop retrying and settle the
+          // turn failed; the harness re-runs it on a reset session.
+          if (value instanceof SubmissionRefused) {
+            active.delete(turn.threadId);
+            emit({ ...base(turn.threadId, turnId), type: "turn.completed", ok: false, stopReason: "submission_refused", cost: null });
+            return;
+          }
           const error = asError(value);
           const outcome = error instanceof StreamOutcomeError ? error : null;
           // A Stop now arrives wrapped so its partial text survives (F6); it
@@ -746,7 +887,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             });
             const outcome = await interruptibleDelay(delayMs * options.retryScale, abort.signal).promise;
             if (outcome === "elapsed" && !abort.signal.aborted) continue;
-            // Stopped during the backoff: the user's Stop, not a failure —
+            // Stopped during the backoff: the user's Stop, not a failure,
             // the shared cancelled state every driver uses (STOP1).
             active.delete(turn.threadId);
             emit({ ...base(turn.threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
@@ -813,7 +954,20 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       : { state: "unavailable", reason: options.unavailableReason },
     adapter: {
       provider: options.driverKind,
-      capabilities: { sessionModelSwitch: "in-session" },
+      mcpToolSurface: NO_TOOL_SURFACE,
+      capabilities: { sessionModelSwitch: "in-session", textOnlyTurn: true },
+      // PIP reflection: no tools field, max_tokens, optional json-schema response, capped body.
+      textOnlyTurn: async (turn) => {
+        // The same route rules as an ordinary turn: the route is validated, and its model (not the turn's) is what is sent.
+        if (turn.providerRoute) validateProviderTurnRoute(options.driverKind, turn.providerRoute);
+        const local = turn.providerRoute ? null : options.localEndpoint?.(turn.model) ?? null;
+        const target = local ?? turn.providerRoute ?? { baseUrl: options.apiUrl, apiKey: options.apiKey };
+        const model = local ? local.model : (turn.providerRoute?.model || turn.model);
+        return httpTextOnlyTurn({ ...turn, model }, {
+          baseUrl: target.baseUrl, apiKey: target.apiKey, jsonSchemaResponse: options.jsonSchemaResponse,
+          buildBody: (m, messages) => options.requestBody(m, messages, false),
+        });
+      },
       sendTurn,
       interruptTurn: async (threadId) => active.get(threadId)?.abort(),
       respondToRequest: async () => "unavailable" as const,

@@ -6,7 +6,7 @@ description: |
   Do NOT use for designing an online course (use `online-course-design`), for standalone study planning (use `study-plan`), or for book summarization (use `book-summary`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "study-skills step-by-step guide teaching"
   category: "education"

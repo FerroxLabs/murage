@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.61 room privacy fix, gap 3 (Astra audit finding 1): a room turn started by
+// 0.1.61, gap 3 (Astra audit finding 1): a room turn started by
 // words nobody proved are the owner's hands work to a teammate. The
 // teammate's delegated turn answers that same chain, so its recall carries
 // none of its own memory either. The owner's own message still does.
@@ -74,14 +74,20 @@ posixOnly("a handoff from a room turn nobody proved is the owner's", () => {
       await expect.poll(async () => { const state = await groupState(room.id); return !state.working && !state.busyBotId; }, { timeout: 30000 }).toBe(true);
       return prompts().slice(before).join("\n");
     };
-    // 0.1.62: words nobody proved no longer reach a room over loopback at all.
-    // The conversation gate answers 404, as for an unknown route, and no turn
-    // starts, so neither bot is handed anything to delegate.
-    const before = prompts().length;
-    expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Ember, hand this to Maple." }, false)).status).toBe(404);
+    // 0.1.62: a bare loopback caller (no desktop proof, no phone credential,
+    // no door header) is not even heard: the 404 an unknown route gets, and
+    // no turn starts, so neither bot is handed anything to delegate.
+    const bare = prompts().length;
+    const refused = await fetch(`${fixture.info.url}/api/groups/${room.id}/messages`, { method: "POST", headers: { "content-type": "application/json", "x-test-bare-loopback": "1" }, body: JSON.stringify({ text: "Ember, hand this to Maple." }) });
+    expect([refused.status, await refused.json()]).toEqual([404, { error: "no such route" }]);
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    expect(prompts().length).toBe(before);
+    expect(prompts().length).toBe(bare);
     expect((await groupState(room.id)).working).toBeFalsy();
+    // Words the door forwarded but nobody proved are the owner's still reach
+    // the room, and the handoff they start carries no memory.
+    const unproven = await handoff("Ember, hand this to Maple.", false);
+    expect(unproven).toContain("delegated task");
+    expect(unproven).not.toContain("VAULT-5521");
     const owner = await handoff("Ember, hand this to Maple again.", true);
     expect(owner).toContain("VAULT-5521");
   }, 120000);

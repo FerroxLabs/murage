@@ -4,7 +4,7 @@ description: |
   Guide to birdwatching including binocular selection, field guide usage, identification by sight and sound, habitat awareness, eBird recording, photography, backyard birding, and life list management. Use when the user asks about birdwatching guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide step-by-step hiking"
   category: "hobbies-crafts"

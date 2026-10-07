@@ -1,8 +1,9 @@
 ---
 name: research-jtbd-interviews
 description: "The user wants to understand why people buy, or you're looking at a persona that smells made-up. Load this whenever someone asks for \"the audience,\" \"the avatar,\" or \"the customer.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "research"
 ---

@@ -18,10 +18,11 @@
 //     features, with every file it creates at the root recorded as it
 //     happens (so a temp file that is renamed away still counts), then a
 //     real backup inventory of that folder. It sees names built at runtime.
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { classifyDataDirEntry, DATA_DIR_ENTRIES, DATA_DIR_PATTERNS, DATA_DIR_RESTORABLE } from "./data-dir-inventory.ts";
+import { BROWSER_EXTENSION_FILES, classifyDataDirEntry, DATA_DIR_ENTRIES, DATA_DIR_PATTERNS, DATA_DIR_RESTORABLE } from "./data-dir-inventory.ts";
+import { scanDataDirWrites, unclassifiedStaticWrites } from "./testing/data-dir-guard.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -29,12 +30,10 @@ const ROOT = join(import.meta.dirname, "..");
 // 1. Static scan
 // ---------------------------------------------------------------------------
 
-/** Identifiers that name Murage's data folder itself. */
-const DATA_ROOTS = new Set(["DATA_DIR", "dataDir", "this.dataDir", "deps.dataDir", "options.dataDir", "opts.dataDir", "config.dataDir", "this.options.dataDir", "input.dataDir", "args.dataDir", "desktopDataDir"]);
-
 /** A scan hit that is not the Murage data folder: file -> joined name -> why. */
 const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
   "server/user-chrome.ts": { DevToolsActivePort: "Chrome's own user-data folder, read only" },
+  "server/env-path.ts": { shims: "mise's own data folder (MISE_DATA_DIR), read for PATH only" },
   "server/engine-history-deletion.ts": {
     projects: "another engine's history folder (Qwen, Cursor)",
     storage: "another engine's history folder",
@@ -43,63 +42,15 @@ const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
   "server/memory/settings.ts": { "<<part>>": "path parts inside DATA_DIR/memory-model, checked by memoryModelPath" },
   "server/procedure-bundles.ts": { "<<part>>": "path parts inside DATA_DIR/skill-state/<bot>" },
   "server/index.ts": { "<<relative>>": "relative paths inside DATA_DIR/workspaces" },
-  "server/database.ts": { "<<MEMORY_PRE_V2_SNAPSHOT>>": "messages.pre-memory-v2.db, from memory/schema.ts" },
+  "electron/memory-upgrade-status.mjs": { "<<name>>": "deletes only memory-upgrade-status.json and its memory-upgrade-status.json.<pid>.tmp (both classified), matched by name before removal" },
+  "server/database.ts": { "<<MEMORY_PRE_V2_SNAPSHOT>>": "messages.pre-memory-v2.db, from memory/schema.ts", "<<MEMORY_PRE_V4_SNAPSHOT>>": "messages.pre-memory-v4.db, from memory/schema.ts", "<<MEMORY_PRE_V3_SNAPSHOT>>": "messages.pre-memory-v3.db, from memory/schema.ts" },
 };
-
-type Hit = { file: string; name: string };
-function sourceFiles(): string[] {
-  const files: string[] = [];
-  const walk = (dir: string) => {
-    for (const name of readdirSync(dir)) {
-      const path = join(dir, name);
-      if (name === "node_modules" || name === "vendor" || name === "testing" || name.startsWith("dist")) continue;
-      if (statSync(path).isDirectory()) walk(path);
-      else if (/\.(?:ts|tsx|mts|mjs|cjs|js)$/.test(name) && !/\.(?:test|node-test|spec|fixture)\.|\.d\.m?ts$/.test(name)) files.push(path);
-    }
-  };
-  // companion/ keeps its own folder (~/.murage-companion, companion/src/state.ts).
-  for (const dir of ["server", "electron", "shared"]) walk(join(ROOT, dir));
-  return files;
-}
-
-/** Top-level names joined under the data folder, as written in the source. */
-export function scanDataDirWrites(files = sourceFiles()): Hit[] {
-  const hits: Hit[] = [];
-  for (const path of files) {
-    const source = readFileSync(path, "utf8");
-    const file = relative(ROOT, path).split("\\").join("/");
-    const constants = new Map<string, string>();
-    for (const match of source.matchAll(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::\s*string)?\s*=\s*(["'`])([^"'`\n]*)\2/g)) constants.set(match[1], match[3]);
-    const roots = new Set(DATA_ROOTS);
-    // A parameter or field that defaults to the data folder is the data folder.
-    for (const match of source.matchAll(/([A-Za-z_$][\w$.]*)\s*(?::\s*string)?\s*(?:=|\?\?=?)\s*DATA_DIR\b/g)) roots.add(match[1]);
-    for (const match of source.matchAll(/([A-Za-z_$][\w$.]*)\s*\?\?\s*DATA_DIR\b/g)) roots.add(match[1]);
-    if (/\bDATA_DIR\b/.test(source)) { roots.add("this.dir"); roots.add("this.root"); }
-    for (const match of source.matchAll(/\b(?:join|resolve)\(\s*([\w$.]+)\s*,\s*(?:(["'`])([^"'`\n]*)\2|([A-Za-z_$][\w$]*)\s*[,)])/g)) {
-      if (!roots.has(match[1])) continue;
-      const literal = match[3] ?? constants.get(match[4]) ?? `<<${match[4]}>>`;
-      hits.push({ file, name: literal.split("/")[0] });
-    }
-  }
-  return hits;
-}
-
-/** A concrete name for a hit whose source has a variable part. */
-function sample(name: string): string {
-  if (name.endsWith("-") && name.startsWith(".")) return `${name}a1B2c3`; // mkdtemp prefix
-  return name.replace(/\$\{[^}]*\}/g, "x1");
-}
 
 describe("every top-level name Murage writes is classified for backup", () => {
   it("static scan: every name joined under the data folder in source", () => {
-    const unknown: string[] = [];
     const stale: string[] = [];
     const hits = scanDataDirWrites();
-    for (const { file, name } of hits) {
-      if (NOT_THE_DATA_FOLDER[file]?.[name]) continue;
-      if (name.startsWith("<<")) { unknown.push(`${file}: a name built from ${name.slice(2, -2)}; classify it or explain it in NOT_THE_DATA_FOLDER`); continue; }
-      if (!classifyDataDirEntry(sample(name))) unknown.push(`${file}: ${name}`);
-    }
+    const unknown = unclassifiedStaticWrites(hits, NOT_THE_DATA_FOLDER);
     for (const [file, names] of Object.entries(NOT_THE_DATA_FOLDER)) for (const name of Object.keys(names)) {
       if (!hits.some(hit => hit.file === file && hit.name === name)) stale.push(`${file}: ${name}`);
     }
@@ -107,7 +58,7 @@ describe("every top-level name Murage writes is classified for backup", () => {
     expect(unknown).toEqual([]);
     expect(stale).toEqual([]);
     // The scan must keep finding the writers it was built against.
-    for (const name of ["about-me.md", "decisions.ndjson", "whats-new.json", "house-rules.md", "skill-collection", "stop-line", "telegram", "browser-engine-key", "queued-messages.json", "setup.json", "engine-commands.json", "announcements.json", "restored-connections.json", "image-reference-packs"]) {
+    for (const name of ["about-me.md", "decisions.ndjson", "whats-new.json", "house-rules.md", "skill-collection", "stop-line", "telegram", "whatsapp", "browser-engine-key", "queued-messages.json", "setup.json", "engine-commands.json", "announcements.json", "restored-connections.json", "connected-apps-catalog.json", "image-reference-packs"]) {
       expect(hits.map(hit => hit.name)).toContain(name);
     }
   });
@@ -135,15 +86,45 @@ describe("every top-level name Murage writes is classified for backup", () => {
     }
   });
 
+  it("keeps the connected-apps catalog cache out of every backup (0.1.61, plan 4.3)", () => {
+    // Public app names and logo links, fetched again when stale: never
+    // backed up, never restored, and it must not stop a backup either.
+    expect(classifyDataDirEntry("connected-apps-catalog.json")).toMatchObject({ backup: "excluded" });
+    expect(classifyDataDirEntry("connected-apps-catalog.json")?.why).toMatch(/not restored/);
+    expect(DATA_DIR_RESTORABLE).not.toContain("connected-apps-catalog.json");
+  });
+
   it("reference-pack images are owner work the restorable stage copies", () => {
     expect(scanDataDirWrites([join(ROOT, "server", "image-library.ts")])).toContainEqual({ file: "server/image-library.ts", name: "image-reference-packs" });
     expect(classifyDataDirEntry("image-reference-packs")).toMatchObject({ backup: "owner-folder" });
     expect(DATA_DIR_RESTORABLE).toContain("image-reference-packs");
   });
 
+  it("excludes reflection scratch while preserving its durable database", () => {
+    expect(classifyDataDirEntry("pip-tmp")).toMatchObject({ backup: "excluded" });
+    expect(DATA_DIR_RESTORABLE).not.toContain("pip-tmp");
+    expect(classifyDataDirEntry("messages.db")).toMatchObject({ backup: "database" });
+  });
+
   it("the scan sees a name held in a constant under a DATA_DIR default parameter", () => {
     const hits = scanDataDirWrites([join(ROOT, "server", "about-me.ts")]);
     expect(hits).toContainEqual({ file: "server/about-me.ts", name: "about-me.md" });
+  });
+
+  // Murage for Chrome writes several files in one folder (plan 4.3). The
+  // folder is excluded as a credential; each name inside it is listed with
+  // its reason so a new extension file is looked at, not swept in unseen.
+  it("every file Murage for Chrome writes in its folder is listed and left out of a backup", () => {
+    expect(classifyDataDirEntry("browser-extension")).toMatchObject({ backup: "excluded", why: expect.stringContaining("Credential") });
+    const found = new Set<string>();
+    const index = readFileSync(join(ROOT, "server", "index.ts"), "utf8");
+    for (const match of index.matchAll(/join\(\s*DATA_DIR\s*,\s*"browser-extension"\s*,\s*"([^"]+)"/g)) found.add(match[1]);
+    const integration = readFileSync(join(ROOT, "server", "browser-extension-integration.ts"), "utf8");
+    expect(integration).toMatch(/const directory = join\(this\.options\.dataDir, "browser-extension"\)/);
+    for (const match of integration.matchAll(/join\(\s*directory\s*,\s*"([^"]+)"/g)) found.add(match[1]);
+    for (const match of integration.matchAll(/join\(\s*this\.options\.dataDir\s*,\s*"browser-extension"\s*,\s*"([^"]+)"/g)) found.add(match[1]);
+    expect([...found].sort()).toEqual(Object.keys(BROWSER_EXTENSION_FILES).sort());
+    for (const why of Object.values(BROWSER_EXTENSION_FILES)) expect(why.length).toBeGreaterThan(20);
   });
 
   it("each pattern's example is a real instance of it", () => {
@@ -166,4 +147,18 @@ describe("every top-level name Murage writes is classified for backup", () => {
     const names = [...list!.matchAll(/L"([^"]+)"/g)].map(match => match[1]);
     expect(DATA_DIR_RESTORABLE.filter(name => !names.includes(name))).toEqual([]);
   });
+});
+
+it("keeps what a bot learned from prospects on this computer: learning-local is never in a backup",()=>{
+ expect(classifyDataDirEntry("learning-local")).toMatchObject({backup:"excluded"});
+ expect(DATA_DIR_RESTORABLE).not.toContain("learning-local");
+ expect(DATA_DIR_ENTRIES["learning-local"]?.why).not.toMatch(/—|\b(safe|safely|safety|unsafe)\b|composio/i);
+});
+
+it("excludes the pre-v4 memory snapshot from archives",()=>{
+ expect(classifyDataDirEntry("messages.pre-memory-v4.db")).toMatchObject({backup:"excluded"});
+});
+
+it("leaves the memory upgrade's note and unfinished copies out of archives",()=>{
+ for(const name of["memory-upgrade-status.json","messages.pre-memory-v3.db.partial","messages.pre-memory-v4.db.partial","memory-upgrade-status.json.4242.tmp","messages.pre-memory-v3.db.partial-journal","messages.pre-memory-v3.db.partial-wal"])expect(classifyDataDirEntry(name)).toMatchObject({backup:"excluded"});
 });

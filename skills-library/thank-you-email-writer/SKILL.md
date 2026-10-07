@@ -11,7 +11,7 @@ description: |
   recruiter-outreach), or networking messages (use networking-message-writer).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "interview-prep career email writing template"
   category: "career-development"

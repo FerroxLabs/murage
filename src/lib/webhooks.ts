@@ -17,6 +17,9 @@ export interface WebhookTrigger {
   verifiedAt?: number;
   verificationSample?: WebhookVerificationSample;
   eventTypes?: string[];
+  /** Unfinished runs this webhook may hold before new deliveries get 429.
+   * Absent means the default (3). */
+  maxPendingRuns?: number;
 }
 
 export interface WebhookTriggerInput {
@@ -27,6 +30,8 @@ export interface WebhookTriggerInput {
   enabled?: boolean;
   verificationPending?: boolean;
   eventTypes?: string[];
+  /** 1 to 50; `null` goes back to the default. */
+  maxPendingRuns?: number | null;
 }
 
 export interface WebhookVerificationSample {
@@ -73,4 +78,19 @@ export function webhookActivationDefaults(
     enabled: webhook?.enabled ?? true,
     verificationPending: webhook?.verificationPending ?? false,
   };
+}
+
+/** Matches the server's DEFAULT_MAX_PENDING_RUNS and MAX_PENDING_RUNS_LIMIT. */
+export const WEBHOOK_DEFAULT_MAX_PENDING_RUNS = 3;
+export const WEBHOOK_MAX_PENDING_RUNS_LIMIT = 50;
+
+/** The "Unfinished tasks at once" field: blank means the default (`null`),
+ * a whole number 1 to 50 is that limit, and anything else is `undefined` so
+ * the editor can say what is wrong instead of sending it. */
+export function webhookMaxPendingRunsInput(text: string): number | null | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const value = Number(trimmed);
+  return value >= 1 && value <= WEBHOOK_MAX_PENDING_RUNS_LIMIT ? value : undefined;
 }

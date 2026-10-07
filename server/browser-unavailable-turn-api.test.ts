@@ -236,3 +236,16 @@ it("lets a room member's turn go on without the browser when the check times out
   expect(notes.map((m) => [m.tool.name, m.from?.botId])).toEqual([[`${BROWSER_UNAVAILABLE_PREFIX} agent-browser command timed out`, bot.id]]);
   expect(versionSpawns()).toBe(before + 1);
 }, 60_000);
+
+it("a bot set to the owner's browser gets a short hint instead of browser tools when Murage for Chrome is not connected", async () => {
+  setEngine("ok");
+  const bot = await createBot("Owner browser not connected fixture");
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: true, browserTransport: "extension" })).status).toBe(200);
+  const captured = await runTurn(bot, "check my signed-in dashboard");
+  expect(captured.mcpConfig?.mcpServers?.browser).toBeUndefined();
+  expect(captured.systemPrompt).not.toContain(UNIFIED_BROWSER_SYSTEM_PROMPT.trim().slice(0, 60));
+  expect(captured.systemPrompt).toContain("Murage for Chrome");
+  expect(captured.systemPrompt).toContain("request_browser_connection");
+  expect((await activities(bot.threadId, "error:")).map((m) => m.tool.name)).toEqual([]);
+}, 60_000);
+

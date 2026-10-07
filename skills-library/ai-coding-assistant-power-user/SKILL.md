@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of ai coding assistant power user or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ai-ml template advanced typescript api-design testing automation performing-arts"
   category: "ai-machine-learning"

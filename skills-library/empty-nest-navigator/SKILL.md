@@ -4,7 +4,7 @@ description: |
   Comprehensive guide for the empty nest transition covering emotional processing, identity rediscovery beyond parenting, relationship rekindling with partners, finding new purpose and pursuits, maintaining healthy connections with adult children, and creating a fulfilling next chapter. Use when the user asks about empty nest navigator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events parenting relationships"
   category: "family-relationships"

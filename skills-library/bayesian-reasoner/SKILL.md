@@ -4,7 +4,7 @@ description: |
   Practical Bayesian thinking covering Bayesian updating, base rates, prior probabilities, likelihood ratios, prediction calibration, overcoming base rate neglect, Superforecasting principles from Philip Tetlock, and everyday applications of probabilistic reasoning. Use when the user asks about bayesian reasoner or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decision-making analysis strategy frameworks"
   category: "productivity"

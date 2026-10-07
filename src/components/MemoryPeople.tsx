@@ -2,7 +2,7 @@ import { useState } from "react";
 import { memoryButtonClass, memoryInputClass } from "./MemoryReview";
 
 export interface VerifiedHumanOrigin {
-  platform: "slack" | "discord" | "telegram";
+  platform: "slack" | "discord" | "telegram" | "whatsapp";
   connectionId: string;
   authorityId: string;
   userId: string;
@@ -30,9 +30,10 @@ export interface ShareableAudience { id: string; kind: string; label: string }
 export function verifiedAccountLabel(origin: VerifiedHumanOrigin) {
   return `${origin.platform[0].toUpperCase()}${origin.platform.slice(1)} account · user ID ${origin.userId} · authority ${origin.authorityId}`;
 }
+const isGroup = (binding: HumanBinding) => binding.origin.platform === "whatsapp" && binding.origin.userId.endsWith("@g.us");
 export function linkedPersonChoices(bindings: HumanBinding[], ownerPersonId: string, currentBindingId: string) {
   const seen = new Set<string>();
-  return bindings.filter(binding => binding.active && binding.id !== currentBindingId && binding.personId && binding.personId !== ownerPersonId && !seen.has(binding.personId) && (seen.add(binding.personId), true))
+  return bindings.filter(binding => binding.active && !isGroup(binding) && binding.id !== currentBindingId && binding.personId && binding.personId !== ownerPersonId && !seen.has(binding.personId) && (seen.add(binding.personId), true))
     .map(binding => ({ personId: binding.personId!, label: verifiedAccountLabel(binding.origin) }));
 }
 
@@ -44,7 +45,7 @@ export function shareAudienceLabel(audience: ShareableAudience) {
 /** One row per separate person with a current verified account. Granted audiences come only from server read-back. */
 export function personShareRows(people: HumanBindingsStatus, audiences: ShareableAudience[]) {
   const accounts = new Map<string, string[]>();
-  for (const binding of people.bindings) if (binding.active && binding.personId && binding.personId !== people.ownerPersonId)
+  for (const binding of people.bindings) if (binding.active && !isGroup(binding) && binding.personId && binding.personId !== people.ownerPersonId)
     accounts.set(binding.personId, [...accounts.get(binding.personId) ?? [], verifiedAccountLabel(binding.origin)]);
   return [...accounts].map(([personId, labels]) => {
     const granted = new Set((people.shares ?? []).filter(share => share.personId === personId && share.granted).map(share => share.scopeId));
@@ -104,12 +105,12 @@ export function MemoryPeople({ people, audiences, disabled, onLink, onShare, onR
         const choicesForBinding = linkedPersonChoices(people.bindings, people.ownerPersonId, binding.id);
         const selectedPersonId = choices[binding.id] ?? "";
         const isBusy = Boolean(busy) || disabled || !binding.active;
-        const state = !binding.active ? "Inactive connection" : binding.personId === people.ownerPersonId ? "Workspace owner" : binding.personId ? "Separate person" : "Needs an owner decision";
+        const state = isGroup(binding) ? "Group conversation memory" : !binding.active ? "Inactive connection" : binding.personId === people.ownerPersonId ? "Workspace owner" : binding.personId ? "Separate person" : "Needs an owner decision";
         return <div key={`${binding.id}:${binding.revision}`} className="space-y-2 rounded-lg border border-hairline/40 p-3" role="group" aria-label={verifiedAccountLabel(binding.origin)}>
           <p className="break-words text-[13px]">{verifiedAccountLabel(binding.origin)}</p>
           <p className="text-[12px] text-ink-secondary">{state}</p>
-          {binding.active && <div className="flex flex-wrap gap-2">
-            <button type="button" className={memoryButtonClass} disabled={isBusy} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "owner" })}>This is my account</button>
+          {binding.active && !isGroup(binding) && <div className="flex flex-wrap gap-2">
+            {!(binding.origin.platform === "whatsapp" && binding.origin.userId !== binding.origin.authorityId) && <button type="button" className={memoryButtonClass} disabled={isBusy} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "owner" })}>This is my account</button>}
             <button type="button" className={memoryButtonClass} disabled={isBusy} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "person" })}>Separate person</button>
             {choicesForBinding.length > 0 && <div className="flex min-h-10 items-center gap-2 text-[13px]"><label>Same person as<select aria-label={`Existing account for ${verifiedAccountLabel(binding.origin)}`} className="ml-2 min-h-10 rounded-md border border-hairline bg-inset px-2 text-[13px]" value={selectedPersonId} disabled={isBusy} onChange={event => setChoices(previous => ({ ...previous, [binding.id]: event.target.value }))}><option value="">Choose verified account</option>{choicesForBinding.map(choice => <option key={choice.personId} value={choice.personId}>{choice.label}</option>)}</select></label><button type="button" className={memoryButtonClass} disabled={isBusy || !selectedPersonId} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "person", personId: selectedPersonId })}>Link accounts</button></div>}
             {binding.personId && <button type="button" className={memoryButtonClass} disabled={isBusy} onClick={() => void change({ bindingId: binding.id, expectedRevision: binding.revision, as: "unlink" })}>Unlink</button>}

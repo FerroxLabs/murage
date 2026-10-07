@@ -4,7 +4,7 @@ description: |
   Cross-platform personal brand development covering authority building, content pillar strategy, visual consistency, bio optimization, speaking opportunities, media kit creation, and reputation management for professionals and creators. Use when the user asks about personal brand architect or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "branding marketing strategy"
   category: "marketing-sales"

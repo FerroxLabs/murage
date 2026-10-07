@@ -17,7 +17,7 @@ interface Options {
   file: string; transport: Pick<TelegramTransport, "getUpdates" | "sendMessage"> & Partial<Pick<TelegramTransport, "answerCallbackQuery" | "settleApprovalMessage" | "editQuestionMessage" | "sendAudio">>; botIdentityId: string; targetBotId: string;
   approvals?: TelegramApprovalActions;
   isCurrentTarget?: () => boolean;
-  onVerifiedSender?: (senderId:string)=>void;
+  onVerifiedSender?: (senderId:string,display?:{name?:string;username?:string})=>void;
   enqueue: (input: { deliveryId: string; prompt: string; senderId: string }) => { id: string };
   runResult: (id: string) => { status: string; output?: string; error?: string } | null;
   /** Voice notes the run made (server/voice/voice-notes.ts), each handed out
@@ -165,10 +165,11 @@ export class TelegramChannel {
           state.records = records;
           state.records.push({ updateId: update.updateId, deliveryId: this.deliveryId(update.updateId), prompt: "", state: "accepted", response: "Telegram is paired with Murage. Before chatting, link this channel account in Murage Settings → Memory. Then send your message again." });
         });
-        this.options.onVerifiedSender?.(message.senderId);
+        this.options.onVerifiedSender?.(message.senderId,{name:message.senderName,username:message.senderUsername});
         continue;
       }
       if (message && this.state.binding?.senderId === message.senderId && this.state.binding.chatId === message.chatId && !this.state.records.some(record => record.updateId === update.updateId)) {
+        if (message.senderName || message.senderUsername) this.options.onVerifiedSender?.(message.senderId,{name:message.senderName,username:message.senderUsername});
         // The owner tapped "Reply with text" on a question: this message is
         // that answer (0.1.52 ASK3), never a new prompt for the bot.
         if (this.approvals && await this.approvals.captureText(message, this.state.binding, active, signal)) {

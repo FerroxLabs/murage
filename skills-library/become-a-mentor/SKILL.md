@@ -20,7 +20,7 @@ trigger_phrases: >-
   mentoring guide for professionals start a mentoring practice help others in my
   field give back through mentoring
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: teaching strategy career step-by-step planning
   category: career

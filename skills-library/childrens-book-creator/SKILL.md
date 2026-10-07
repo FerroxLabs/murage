@@ -4,7 +4,7 @@ description: |
   Complete guide to creating children's books across all age categories, from board books through young adult, covering age-appropriate writing, illustration briefs, page count conventions, readability levels, themes by age, and submission guidelines. Use when the user asks about childrens book creator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing teaching"
   category: "writing"

@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of code health scorecard or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "assessment best-practices template guide api-design testing cleaning investing"
   category: "software-engineering"

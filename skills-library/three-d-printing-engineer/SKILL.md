@@ -4,7 +4,7 @@ description: |
   Advanced 3D printing engineering covering FDM and SLA/resin technologies, slicer optimization, material science for printing, design-for-additive-manufacturing principles, multi-material and functional prints, troubleshooting systematic methodology, and production-quality printing workflows. Use when the user asks about three d printing engineer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide step-by-step guide"
   category: "hobbies-crafts"

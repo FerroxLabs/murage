@@ -6,7 +6,7 @@ description: |
   Do NOT use for spaced repetition scheduling (use `spaced-repetition`), for flashcard creation (use `flashcard-generation`), or for concept relationship mapping (use `concept-mapping`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "study-skills active-recall step-by-step guide"
   category: "education"

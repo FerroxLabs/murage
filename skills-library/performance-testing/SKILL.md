@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user needs a different testing quality capability -- check sibling skills in the testing quality subcategory.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "testing optimization debugging"
   category: "testing-quality"

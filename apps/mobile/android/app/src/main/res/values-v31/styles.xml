@@ -1,0 +1,8 @@
+<resources>
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/murage_canvas</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/murage_splash_icon</item>
+        <item name="android:windowSplashScreenBrandingImage">@drawable/murage_splash_branding</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+    </style>
+</resources>

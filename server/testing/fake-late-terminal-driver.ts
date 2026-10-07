@@ -31,6 +31,13 @@
 //                            integration's env as JSON (the turn's comms token
 //                            and thread), so a test can act as that turn on
 //                            /api/internal while the session gate holds it.
+//   FAKE_LATE_HANDBACK       "1": sendTurn returns the turn id first and the
+//                            prompt is submitted later, once the session gate
+//                            exists (the ACP and Codex shape). The submission
+//                            fence runs right before that write; refused, the
+//                            turn settles failed (stopReason
+//                            "submission_refused") with nothing written. Each
+//                            write that happens appends {prompt: true, turnId}.
 // An uninterrupted turn replies "Hello from late" and completes on its own.
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import type {
@@ -96,6 +103,28 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
             const skillAuthoring = turn.integrations?.agents?.env.MURAGE_SKILL_AUTHORING_ENABLED === "1";
             if (dump) appendFileSync(dump, `${JSON.stringify({ turnId, threadId: turn.threadId, skillAuthoring })}\n`);
             if (agentsEnvPath && turn.integrations?.agents) writeFileSync(agentsEnvPath, JSON.stringify(turn.integrations.agents.env));
+            if (input.environment.FAKE_LATE_HANDBACK === "1") {
+              const entry = { turnId, interrupted: false };
+              active.set(turn.threadId, entry);
+              emit({ type: "turn.started", threadId: turn.threadId, turnId });
+              void (async () => {
+                if (sessionGate && !existsSync(sessionGate)) {
+                  writeFileSync(`${sessionGate}.waiting`, turnId);
+                  await waitForFile(sessionGate, 25);
+                }
+                if (entry.interrupted || active.get(turn.threadId) !== entry) return;
+                try { turn.beforeSubmit?.(); } catch {
+                  active.delete(turn.threadId);
+                  emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
+                  return;
+                }
+                if (dump) appendFileSync(dump, `${JSON.stringify({ prompt: true, turnId, threadId: turn.threadId })}\n`);
+                emit({ type: "item.completed", itemType: "assistant_text", text: "Hello from late", threadId: turn.threadId, turnId });
+                active.delete(turn.threadId);
+                emit({ type: "turn.completed", ok: true, threadId: turn.threadId, turnId });
+              })();
+              return { turnId };
+            }
             if (sessionGate && !existsSync(sessionGate)) {
               writeFileSync(`${sessionGate}.waiting`, turnId);
               await waitForFile(sessionGate, 25);

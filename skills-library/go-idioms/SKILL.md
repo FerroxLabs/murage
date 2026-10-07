@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Go project setup (use `go-project-setup`), Go concurrency (use `go-concurrency-patterns`), Go error handling (use `go-error-handling`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "go best-practices clean-code"
   category: "software-engineering"

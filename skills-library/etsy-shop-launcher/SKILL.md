@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of etsy shop launcher or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy entrepreneurship budgeting guide testing analysis research competitive-programming"
   category: "business-strategy"

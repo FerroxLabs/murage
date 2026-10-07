@@ -6,7 +6,7 @@ description: |
   Do NOT use for screenplay format (use screenplay-scene), full scene writing beyond dialogue (use scene-writing), or character profiles (use character-development).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing design"
   category: "writing"

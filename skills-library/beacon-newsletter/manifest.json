@@ -1,12 +1,16 @@
 {
   "id": "beacon-newsletter",
   "name": "newsletter",
-  "version": "1.0.0",
-  "description": "**When to use.** When the user runs (or wants to run) a recurring newsletter as an owned-audience asset, distinct from triggered email sequences.",
+  "version": "1.1.0",
+  "description": "Plan a recurring newsletter that keeps your audience engaged between purchases. Set a cadence, one repeating format and one call to action per send.",
   "defaultEnabled": false,
   "triggerTerms": [
-    "beacon",
-    "newsletter"
+    "newsletter",
+    "email newsletter",
+    "newsletter ideas",
+    "email list",
+    "open rates",
+    "substack"
   ],
   "requiredCapabilities": []
 }

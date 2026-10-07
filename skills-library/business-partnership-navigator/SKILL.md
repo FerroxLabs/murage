@@ -4,7 +4,7 @@ description: |
   Complete framework for selecting business partners, structuring equity splits, drafting operating agreements, defining roles and decision rights, resolving conflicts, planning exits, and protecting the business and the relationship through every stage. Use when the user asks about business partnership navigator or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning contracts"
   category: "business-strategy"

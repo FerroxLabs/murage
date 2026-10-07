@@ -13,6 +13,7 @@ import {
   previewMessageId,
   rowPreview,
   sortVoices,
+  markAssigned,
   typeAhead,
   voiceAccent,
   type VoiceFilter,
@@ -22,11 +23,20 @@ const all = [...FLUX_VOICES, ...XAI_VOICES];
 const none: VoiceFilter = { query: "", gender: "all", accent: "all" };
 
 describe("the voice list", () => {
-  it("lists every voice once, alphabetical by the name Murage shows", () => {
-    const sorted = sortVoices(all);
+  it("lists every voice once, Grok voices first, each group alphabetical by the name Murage shows", () => {
+    const sorted = sortVoices([...FLUX_VOICES, ...XAI_VOICES]);
     expect(sorted).toHaveLength(41);
-    expect(sorted.map((v) => v.label)).toEqual([...all.map((v) => v.label)].sort((a, b) => a.localeCompare(b)));
+    const byName = (list: typeof all) => list.map((v) => v.label).sort((a, b) => a.localeCompare(b));
+    expect(sorted.slice(0, 28).map((v) => v.label)).toEqual(byName(XAI_VOICES));
+    expect(sorted.slice(28).map((v) => v.label)).toEqual(byName(FLUX_VOICES));
     expect(sorted[0]!.label).toBe("Adrian");
+  });
+
+  it("marks the voice a bot was given, and only that one", () => {
+    const marked = markAssigned(sortVoices(all), "eve");
+    expect(marked.filter((v) => v.description?.startsWith("Default"))).toHaveLength(1);
+    expect(marked.find((v) => v.id === "eve")!.description).toBe("Default. Energetic, friendly, British");
+    expect(markAssigned(all, undefined)).toBe(all);
   });
 
   it("reads the accent from the end of the description, or takes one a list supplies", () => {

@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { Keyboard, X } from "lucide-react";
 import { filterShortcuts, shortcutKeys, shortcutPlatformIsMac } from "@/lib/keyboard-shortcuts";
+import { returnFocus } from "@/lib/return-focus";
 
 export function KeyboardShortcutsDialog({ open, onClose, returnFocusRef }: {
   open: boolean; onClose: () => void; returnFocusRef?: { current: HTMLElement | null };
@@ -13,7 +14,7 @@ export function KeyboardShortcutsDialog({ open, onClose, returnFocusRef }: {
     if (!open || !dialog.current) return;
     const element = dialog.current, previous = document.activeElement;
     setQuery(""); element.showModal(); input.current?.focus();
-    return () => { element.close(); const target = returnFocusRef?.current ?? previous; if (target instanceof HTMLElement && target.isConnected) target.focus(); };
+    return () => { element.close(); returnFocus(returnFocusRef?.current ?? previous); };
   }, [open, returnFocusRef]);
   if (!open) return null;
   const groups = filterShortcuts(query, mac);

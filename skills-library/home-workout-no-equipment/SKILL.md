@@ -6,7 +6,7 @@ description: |
   Do NOT use for weight training programs (use beginner-strength-training), HIIT-specific sessions (use hiit-workout-design), or yoga routines (use yoga-routine-builder).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "fitness workout-planning beginner-friendly"
   category: "health-wellness"

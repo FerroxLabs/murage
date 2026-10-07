@@ -7,8 +7,7 @@
 import { spawn } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { join, resolve } from "node:path";
 
 import type { ModelCatalog } from "../../contracts.ts";
 import { writeFileAtomic } from "../../atomic.ts";
@@ -21,6 +20,14 @@ import { decodeInjectId, hostApiKey, INJECT_SEP, localHost, mergeLocalInject } f
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { LocalHost } from "../local-inject.ts";
 import { displayConfigPath, NativeConfigRefusal } from "../native-config-file.ts";
+import {
+  DEFAULT_HERMES_PROFILE,
+  hermesConfigDefault,
+  hermesHome,
+  hermesProfileOf,
+  hermesProfileOwnsIdentity,
+  isHermesProfileName,
+} from "../../hermes-profiles.ts";
 
 const EMPTY: ModelCatalog = { default: "", options: [] };
 
@@ -40,8 +47,32 @@ export function bindHermesScreenshotCompat(
   env[HERMES_OPENMAUS_SCREENSHOT_COMPAT_MODEL] = inject.model;
 }
 
-function hermesHome(env: Record<string, string | undefined>): string {
-  return env.HERMES_HOME || join(env.HOME || env.USERPROFILE || homedir(), ".hermes");
+type HermesProfileConfig = { profile?: string; profileOrigin?: "sticky" } | undefined;
+
+/** Set beside HERMES_HOME when Murage made that home for one turn (the Flux
+ * home, a provider-connection home). Named explicitly: inferring it from
+ * "the home is under the data dir" also caught an owner's own Hermes root
+ * kept there, and started a pinned profile as `default` (audit round 1,
+ * Astra 3). */
+export const HERMES_ROUTED_HOME_ENV = "MURAGE_HERMES_ROUTED_HOME";
+
+export function markHermesRoutedHome(env: Record<string, string | undefined>): void {
+  if (env.HERMES_HOME) env[HERMES_ROUTED_HOME_ENV] = resolve(env.HERMES_HOME);
+}
+
+/** True when HERMES_HOME is the home Murage marked for this turn. `-p <name>`
+ * must not be passed then: Hermes would look for `<that home>/profiles/<name>`. */
+function murageRoutedHome(env: Record<string, string | undefined> | undefined): boolean {
+  const home = env?.HERMES_HOME;
+  const marked = env?.[HERMES_ROUTED_HOME_ENV];
+  return !!home && !!marked && resolve(home) === marked;
+}
+
+/** argv for a Hermes child: every spawn names its profile, so a sticky
+ * `hermes profile use` in a terminal can never change which agent answers. */
+export function hermesSpawnArgs(config: HermesProfileConfig, env?: Record<string, string | undefined>): string[] {
+  const profile = murageRoutedHome(env) ? DEFAULT_HERMES_PROFILE : hermesProfileOf(config);
+  return ["-p", profile, "acp"];
 }
 
 const DRIVER_KIND = "hermesAgent";
@@ -126,6 +157,7 @@ export function applyHermesFluxHome(
   env: Record<string, string | undefined>,
   model: string | null | undefined,
   key: string | null,
+  config?: HermesProfileConfig,
 ): string | null {
   const tier = fluxModelId(model);
   if (!tier) return null;
@@ -138,12 +170,18 @@ export function applyHermesFluxHome(
   // choice is between running the wrong persona and saying so; this codebase
   // already treats "answered OK but ran something else" as the worse outcome
   // (core.ts:645-651).
-  if (env.HERMES_PROFILE) {
+  //
+  // The check keys on the pinned profile, the selector Hermes actually
+  // honours. HERMES_PROFILE was the old key and Hermes never reads it to pick
+  // a home. A profile pinned on upgrade from the sticky default is exempt: on
+  // Flux turns it ran this scoped home before 0.1.61 too (O12).
+  if (hermesProfileOwnsIdentity(config)) {
     throw new Error(
-      "Hermes cannot route Flux Router while HERMES_PROFILE is set: the profile persona lives in the native Hermes home, which Flux routing replaces. Unset HERMES_PROFILE for this bot, or pick a native model.",
+      `This bot runs the Hermes profile "${hermesProfileOf(config)}", whose persona and sign-ins live in that profile. Flux Router would replace it, so pick one of the profile's own models.`,
     );
   }
   env.HERMES_HOME = materializeFluxHermesHome(env, key, tier);
+  markHermesRoutedHome(env);
   return tier;
 }
 
@@ -203,15 +241,24 @@ export function removeHermesLocalHost(
   return "removed";
 }
 
-/** Register an OpenAI-compatible host so ACP can `session/set_model custom:host:model`. */
+/** Register an OpenAI-compatible host so ACP can `session/set_model custom:host:model`.
+ *
+ * Only in the `default` profile. A named profile's config.yaml belongs to that
+ * profile (design Q3): Murage does not write into it, and says so. */
 export function ensureHermesInjectProvider(
   modelId: string,
   env: Record<string, string | undefined> = process.env,
+  profile: string = DEFAULT_HERMES_PROFILE,
 ): string {
   const inject = decodeInjectId(modelId);
   if (!inject) return modelId;
   const host = localHost(inject.host);
   if (!host) return modelId;
+  if (profile !== DEFAULT_HERMES_PROFILE) {
+    throw new Error(
+      `This bot runs the Hermes profile "${profile}". Murage does not change that profile's settings, so add ${host.id} to it in Hermes (hermes -p ${profile} model), then pick the profile's model here.`,
+    );
+  }
 
   const dir = hermesHome(env);
   mkdirSync(dir, { recursive: true });
@@ -273,51 +320,6 @@ const HERMES_HOSTED_PROVIDER_KEYS = [
 
 const HERMES_LOCAL_CONFIG_PROVIDERS = new Set(["custom", "lmstudio", "ollama", "vllm", "llamacpp"]);
 
-function yamlString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-/**
- * Read the model/provider forms accepted by Hermes' `_normalize_root_model_keys`:
- * a scalar `model`, or a mapping whose id is `default`, `model`, or `name`.
- * Those id fields may themselves be `{ provider, model/default }` mappings.
- * An explicit outer provider wins, except `auto`, where the nested provider is
- * the more specific routing choice. Root-level `provider` is Hermes' legacy
- * fallback. YAML parsing also handles quotes and trailing comments correctly.
- */
-function hermesConfigDefault(text: string): { model: string; provider: string } | null {
-  let raw: unknown;
-  try {
-    raw = parseYaml(text);
-  } catch {
-    return null;
-  }
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const config = raw as Record<string, unknown>;
-  const rootProvider = yamlString(config.provider);
-  if (typeof config.model === "string") {
-    const model = config.model.trim();
-    return model ? { model, provider: rootProvider } : null;
-  }
-  if (!config.model || typeof config.model !== "object" || Array.isArray(config.model)) return null;
-
-  const modelConfig = config.model as Record<string, unknown>;
-  const outerProvider = yamlString(modelConfig.provider) || rootProvider;
-  for (const key of ["default", "model", "name"] as const) {
-    const candidate = modelConfig[key];
-    const scalar = yamlString(candidate);
-    if (scalar) return { model: scalar, provider: outerProvider };
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
-    const nested = candidate as Record<string, unknown>;
-    const nestedModel = yamlString(nested.model) || yamlString(nested.default);
-    if (!nestedModel) continue;
-    const nestedProvider = yamlString(nested.provider);
-    const provider = !outerProvider || outerProvider === "auto" ? nestedProvider || outerProvider : outerProvider;
-    return { model: nestedModel, provider };
-  }
-  return null;
-}
-
 /** Detect whether Hermes has a hosted provider configured.
  *
  * Hermes supports multiple auth methods:
@@ -339,8 +341,9 @@ function hermesConfigDefault(text: string): { model: string; provider: string } 
  */
 export function hermesConfiguredModel(
   env: Record<string, string | undefined> = process.env,
+  profile: string = DEFAULT_HERMES_PROFILE,
 ): { id: string; label: string; custom: true } | null {
-  const dir = hermesHome(env);
+  const dir = hermesHome(env, profile);
   let secrets = "";
   try {
     secrets = readFileSync(join(dir, ".env"), "utf8");
@@ -358,6 +361,12 @@ export function hermesConfiguredModel(
     configuredDefault = hermesConfigDefault(readFileSync(join(dir, "config.yaml"), "utf8"));
   } catch {
     /* config may not exist or may be unreadable */
+  }
+
+  // A named profile's own config.yaml model IS the bot's model: Murage injects
+  // nothing into a profile, so there is no local catalog to defer to.
+  if (profile !== DEFAULT_HERMES_PROFILE && configuredDefault) {
+    return { id: HERMES_CONFIG_MODEL_ID, label: `${configuredDefault.model} (Hermes profile ${profile})`, custom: true as const };
   }
 
   const configuredProvider = configuredDefault?.provider.toLowerCase() ?? "";
@@ -397,11 +406,14 @@ export function hermesConfiguredModel(
 async function fetchHermesAcpModels(
   cli: string,
   env: Record<string, string | undefined>,
+  profile: string,
 ): Promise<{ id: string; label: string; custom: true }[]> {
   return await new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(cli, ["acp"], { stdio: ["pipe", "pipe", "ignore"], env: env as NodeJS.ProcessEnv });
+      // The probe asks the same profile the turns will run, or the picker
+      // would list another agent's catalog.
+      child = spawn(cli, ["-p", profile, "acp"], { stdio: ["pipe", "pipe", "ignore"], env: env as NodeJS.ProcessEnv });
     } catch {
       return resolve([]);
     }
@@ -515,13 +527,16 @@ async function fetchHermesAcpModels(
 
 async function resolveModels(
   env: Record<string, string | undefined>,
-  config?: { cli?: string },
+  config?: { cli?: string; profile?: string; profileOrigin?: "sticky" },
 ): Promise<ModelCatalog> {
-  const catalog = await mergeLocalInject(EMPTY, env);
-  const configured = hermesConfiguredModel(env);
+  const profile = hermesProfileOf(config);
+  // Local hosts are written into `default`'s config.yaml only (design Q3), so
+  // a named profile is not offered them.
+  const catalog = profile === DEFAULT_HERMES_PROFILE ? await mergeLocalInject(EMPTY, env) : EMPTY;
+  const configured = hermesConfiguredModel(env, profile);
   // Only probe when a hosted provider is configured; a local-only install has
   // nothing to gain from the spawn.
-  const remote = configured ? await fetchHermesAcpModels(config?.cli || "hermes", env) : [];
+  const remote = configured ? await fetchHermesAcpModels(config?.cli || "hermes", env, profile) : [];
   const seen = new Set<string>();
   const options = [...(configured ? [configured] : []), ...remote, ...catalog.options].filter((o) => {
     if (seen.has(o.id)) return false;
@@ -538,6 +553,9 @@ async function resolveModels(
   // Deliberately AFTER the default is settled, so an existing Hermes install
   // keeps its own configured default and only a Hermes with nothing at all
   // falls through to flux-auto.
+  // A profile that owns its identity refuses Flux (applyHermesFluxHome), so
+  // it is not offered Flux rows it could never run.
+  if (hermesProfileOwnsIdentity(config)) return { default: options[0]?.id ?? "", options };
   return mergeFluxCatalog({ default: options[0]?.id ?? "", options }, DRIVER_KIND, process.env, { custom: true });
 }
 
@@ -575,18 +593,23 @@ const support: AcpSupport = {
    * scoped config.yaml. `spawnArgs` passes no `-m` either — hermes' ACP mode
    * ignores it — so nothing can override that choice.
    */
-  resolveTurnModel: (model, env) => {
+  decodeExtra: (raw) => ({
+    ...(isHermesProfileName(raw.profile) ? { profile: raw.profile } : {}),
+    ...(raw.profileOrigin === "sticky" ? { profileOrigin: "sticky" as const } : {}),
+  }),
+  boundProfile: (config) => (hermesProfileOwnsIdentity(config) ? hermesProfileOf(config) : null),
+  resolveTurnModel: (model, env, config) => {
     // Never inherit a broad or stale compatibility grant from the parent.
     // Only this Murage driver binds one concrete local model; Hermes still
     // requires the exact read-only screenshot MCP tool before activation.
     bindHermesScreenshotCompat(env, model);
     if (!model) return model;
-    const routed = applyHermesFluxHome(env, model, fluxKey());
+    const routed = applyHermesFluxHome(env, model, fluxKey(), config);
     if (routed) return routed;
     // A Flux id with no key degrades to native. It must still not reach
     // `ensureHermesInjectProvider`, which writes the user's real config.yaml.
     if (fluxModelId(model)) return model;
-    ensureHermesInjectProvider(model, env);
+    ensureHermesInjectProvider(model, env, hermesProfileOf(config));
     return model;
   },
   defaultCli: "hermes",
@@ -601,7 +624,7 @@ const support: AcpSupport = {
     docsUrl: "https://hermes-agent.nousresearch.com/docs/getting-started/quickstart",
     signInCommand: "hermes setup",
   },
-  spawnArgs: () => ["acp"],
+  spawnArgs: (config, _turn, ctx) => hermesSpawnArgs(config, ctx?.env),
   transformEnv: (env) => {
     // A leftover OPENAI_API_KEY makes Hermes auto-resolve to OpenRouter and
     // send no Authorization header. ACP also reloads ~/.hermes/.env, so the

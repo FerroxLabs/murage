@@ -18,8 +18,8 @@
 // capability-list description. The house form is name / description / license /
 // metadata, and the description is the trigger — so each one is authored here
 // to say what the skill does, when to reach for it, and which sibling to use
-// instead. Upstream lineage is preserved under metadata.attribution because
-// several of these are MIT and Apache-2.0 ports.
+// instead. Upstream lineage is preserved under metadata.attribution, except for the
+// OWN_WORK skills.
 //
 // Usage: node scripts/import-wayland-business-skills.mjs [--src <dir>] [--out <dir>] [--dry-run]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -38,6 +38,9 @@ const SRC = flag("--src", process.env.WAYLAND_BUNDLED_EXTENSIONS_DIR ?? "");
 if (!SRC) throw new Error("--src <bundled-extensions directory> (or WAYLAND_BUNDLED_EXTENSIONS_DIR) is required");
 const OUT = flag("--out", join(repoRoot, "skills-library"));
 const dryRun = argv.includes("--dry-run");
+
+/** Owner ruling 2026-10-02: Ferrox Labs' own work, Apache-2.0, no upstream attribution line. */
+const OWN_WORK = new Set(["commerce-ugc-prompts", "content-about-page", "content-haro-reply", "market-audit", "market-landing", "market", "sales-contacts", "sales-icp", "sales-prospect", "sales-qualify"]);
 
 /** Hand-authored in skills-library/; this script must not overwrite them. */
 const ORCHESTRATORS = new Set(["legal", "hr", "market", "support"]);
@@ -195,28 +198,28 @@ const SKILLS = {
 
   "sales-prospect": {
     title: "Prospect analysis",
-    license: "MIT",
+    license: "Apache-2.0",
     tags: "sales prospecting osint bant meddic smb",
     description:
       "Run a five-dimension workup on a target company from its URL using public sources only — company research, opportunity qualification, decision-maker mapping, competitive positioning and ICP fit — then aggregate a weighted prospect score, a prioritised action plan and a jurisdiction-gated first email (CAN-SPAM, CASL, GDPR and UWG §7 aware; refuses pure cold outreach to DE, AT and CH). Use when a whole account needs to be assessed before anyone reaches out. Do NOT use for a single BANT/MEDDIC pass on a lead already in play (use sales-qualify), for mapping named people only (use sales-contacts), or for deciding who to sell to at all (use sales-icp).",
   },
   "sales-qualify": {
     title: "Lead qualification",
-    license: "MIT",
+    license: "Apache-2.0",
     tags: "sales qualification bant meddic scoring smb",
     description:
       "Qualify one lead against BANT (budget, authority, need, timeline) and MEDDIC (metrics, economic buyer, decision criteria, decision process, identified pain, champion) using public signals only, producing an opportunity quality score out of 100, an A-to-D grade and the recommended approach. Use when a lead is in the pipeline and the question is whether it is real. Do NOT use for the full five-dimension account workup (use sales-prospect), for mapping the buying committee (use sales-contacts) or for running the call itself (use sales-discovery-call).",
   },
   "sales-contacts": {
     title: "Buying committee map",
-    license: "MIT",
+    license: "Apache-2.0",
     tags: "sales contacts buying-committee multi-threading smb",
     description:
       "Map the buying committee at a target company from public sources only, classify each person by buying role (economic buyer, champion, technical evaluator, end user, blocker, coach), find a genuine personalisation anchor per contact with no invented mutual connections, and propose a multi-threading sequence. Use when a deal is single-threaded and needs more of the account involved. Do NOT use for scoring whether the opportunity is real (use sales-qualify), for the full account workup (use sales-prospect) or for handling pushback once conversations start (use sales-objection-handling).",
   },
   "sales-icp": {
     title: "Ideal customer profile",
-    license: "MIT",
+    license: "Apache-2.0",
     tags: "sales icp personas targeting smb",
     description:
       "Build an ideal customer profile across firmographic, technographic, behavioural, pain-point, budget and channel dimensions, plus the negative ICP, a 100-point scoring rubric, buyer personas, a prospecting playbook and a first-outreach draft that inherits the jurisdiction gates. Use when the user is selling to everyone and closing no one, or when a new segment needs defining. Do NOT use for evaluating one named account (use sales-qualify or sales-prospect) or for the pricing and packaging that follows from the segment (use forge's pricing work).",
@@ -224,14 +227,14 @@ const SKILLS = {
 
   "market-audit": {
     title: "Marketing audit",
-    license: "MIT",
+    license: "Apache-2.0",
     tags: "marketing audit scoring cro seo smb",
     description:
       "Run a five-dimension marketing audit on a business URL — content and messaging, conversion, SEO, competitive position, and brand and strategy — scored in parallel and aggregated into a weighted overall score with a prioritised action plan. Use when the user wants to know what is wrong with their marketing as a whole. Do NOT use for a single page's conversion teardown (use market-landing), for brand identity and visual system work (use mira-brand-foundation) or for a funnel-stage drop-off diagnosis (use marketing-funnel-diagnosis).",
   },
   "market-landing": {
     title: "Landing page teardown",
-    license: "MIT",
+    license: "Apache-2.0",
     tags: "marketing landing-page cro conversion smb",
     description:
       "Run a section-by-section conversion teardown of one landing page — hero, value proposition, social proof, features, objection handling, CTA and footer — plus form, mobile and page-speed audits, ending in prioritised fixes split into quick wins, strategic and long-term, with A/B test hypotheses. Use when one page has traffic and is not converting. Do NOT use for a whole-site marketing audit (use market-audit), for the copy voice and awareness-stage decisions behind it (use copy-awareness-stages) or for the visual system it should sit inside (use mira-visual-system).",
@@ -239,14 +242,14 @@ const SKILLS = {
 
   "content-about-page": {
     title: "About page",
-    license: "MIT",
+    license: "Apache-2.0",
     tags: "content personal-brand about-page storytelling direct-response",
     description:
       "Build a long-form About page that converts — not a bio in paragraphs, but a direct-response asset that opens on the reader's problem, tells the story of discovery, proves the path with results, and closes on an explicit next step, delivered as a section brief plus paste-ready copy. Use when an About page reads like a résumé or a career history, or when building one from scratch for a founder, coach or consultant. Do NOT use for a short bio or speaker blurb, for a sales page (use copywriter), or for the underlying positioning work (use personal-brand-strategy).",
   },
   "content-haro-reply": {
     title: "Journalist source reply",
-    license: "MIT",
+    license: "Apache-2.0",
     tags: "content earned-media haro pr expert-source",
     description:
       "Write a HARO, Qwoted or SourceBottle expert-source reply that gets quoted instead of skimmed — a credentialed one-liner that answers why this source for this query, three to five tight bullets with specifics and a contrarian angle, and a closing pull quote written to be lifted verbatim. Use when a journalist query has landed, the user genuinely has the expertise, and there is a short reply window. Do NOT use for a press release or a cold pitch to a journalist with no query (use content-brief for the underlying angle) or for long-form thought leadership (use copywriter).",
@@ -254,7 +257,7 @@ const SKILLS = {
 
   "commerce-ugc-prompts": {
     title: "UGC and review prompts",
-    license: "MIT",
+    license: "Apache-2.0",
     tags: "ecommerce ugc review-prompt photo-review anti-incentive",
     description:
       "Ask for reviews, photos and video at the moment the customer is most likely to say yes — prompt timing by product category (consumable, durable, cosmetic, apparel), template copy per channel, an incentive structure that stays inside platform anti-incentive rules, and the photo and video CTA. Use when a store has orders but almost no reviews. Do NOT use for responding to reviews already left, for the storefront and merchandising build (use vault-storefront-foundation), or for marketplace listing operations (use vault-marketplace-ops).",
@@ -316,11 +319,13 @@ for (const [id, meta] of Object.entries(SKILLS)) {
     `description: ${yaml(meta.description)}`,
     `license: ${meta.license}`,
     "metadata:",
-    "  author: wayland",
+    // Ferrox Labs' own work (owner ruling 2026-10-02), including the former MIT ones.
+    "  author: Ferrox Labs",
     '  version: "1.0.0"',
     `  tags: ${yaml(meta.tags)}`,
     `  category: ${yaml(id.split("-")[0])}`,
-    `  attribution: ${yaml(upstream)}`,
+    // No upstream credit for the ten Ferrox Labs ruled its own work.
+    ...(OWN_WORK.has(id) ? [] : [`  attribution: ${yaml(upstream)}`]),
     "---",
   ].join("\n");
 

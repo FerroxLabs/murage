@@ -1,126 +1,64 @@
-// A project API key (ak_…) creates/reuses one Composio Session. That
-// Session owns connection state, auth links and the MCP endpoint.
-import { saveConfig, type AppConfig } from "./config.ts";
+// Connected apps run through the Flux Router broker (and, for installs that
+// still hold a Worker identity, the legacy broker until it is claimed). No key
+// a person typed in is ever read here: a stored own key stays on disk, unused.
+import type { AppConfig } from "./config.ts";
 import { devFluxTokenApplies, devFluxTokenInFlight, ensureDevFluxBrokerToken, readDevFluxTokenDocument, resetDevFluxTokenState } from "./flux-composio-dev-token.ts";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { z } from "zod";
+import { brokerTokenFingerprint } from "../electron/flux-composio-token.mjs";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
-
-const DEFAULT_BACKEND_ORIGIN = "https://backend.composio.dev";
-
-function apiBase() {
-  return (process.env.MURAGE_COMPOSIO_API ?? `${DEFAULT_BACKEND_ORIGIN}/api/v3.1`).replace(/\/$/, "");
-}
-
-function toolkitBase() {
-  return (process.env.MURAGE_COMPOSIO_TOOLKITS_API ?? `${DEFAULT_BACKEND_ORIGIN}/api/v3`).replace(/\/$/, "");
-}
-
-const sessionResponseSchema = z.object({
-  session_id: z.string().min(1),
-  mcp: z.object({ type: z.enum(["http", "sse"]), url: z.string().min(1) }),
-  config: z.object({
-    user_id: z.string().optional(),
-    multi_account: z.object({
-      enable: z.boolean().optional(),
-      max_accounts_per_toolkit: z.number().optional(),
-      require_explicit_selection: z.boolean().optional(),
-    }).optional(),
-    /** toolkit slug → the project's own auth config the Session uses for it */
-    auth_configs: z.record(z.string(), z.string()).optional(),
-  }).optional(),
-});
-type SessionResponse = z.infer<typeof sessionResponseSchema>;
-
-// A project's own auth configs (bring-your-own OAuth app, API-key toolkits
-// such as twitter that Composio does not manage). A Session only uses one
-// when it was created with the config's id under `auth_configs`.
-const authConfigItemSchema = z.object({
-  id: z.string().optional(),
-  status: z.string().nullable().optional(),
-  is_composio_managed: z.boolean().optional(),
-  is_enabled_for_tool_router: z.boolean().nullable().optional(),
-  last_updated_at: z.string().nullable().optional(),
-  toolkit: z.object({ slug: z.string().optional() }).optional(),
-});
-const authConfigsPageSchema = z.object({
-  items: z.array(authConfigItemSchema).optional(),
-  next_cursor: z.string().nullable().optional(),
-});
-/** toolkit slug (lowercase) → auth config id */
-type AuthConfigMap = Record<string, string>;
-const MAX_AUTH_CONFIG_PAGES = 20;
+import {
+  clearInventory,
+  forgetInventoryMemory,
+  hasInventory,
+  invalidateInventory,
+  rekeyInventory,
+  inventoryVersion,
+  peekInventory,
+  readInventory,
+  type InventoryRead,
+  type InventoryReadOptions,
+  type InventoryServices,
+} from "./connected-inventory.ts";
+import { catalogApp, loadCatalog, type CatalogApp, type CatalogBackend, type CatalogView } from "./app-catalog.ts";
 
 export interface ConnectedAccountSummary {
   id: string;
   alias?: string;
   status: string;
+  /** Why the provider ended a sign-in, and when it began: kept so a card can
+   * say "expired" or "refused" instead of the provider's status word. */
+  statusReason?: string;
+  createdAt?: string;
 }
 
 export interface ConnectorServiceState {
   connected: boolean;
   pending: boolean;
   status: string;
+  statusReason?: string;
+  createdAt?: string;
   accounts: ConnectedAccountSummary[];
 }
-
-interface AccountLinkRequest {
-  toolkit: string;
-  alias?: string;
-}
-
-const connectedAccountResponseSchema = z.object({
-  id: z.string().optional(),
-  alias: z.string().nullable().optional(),
-  status: z.string().optional(),
-  updated_at: z.string().optional(),
-  toolkit: z.object({ slug: z.string().optional() }).optional(),
-});
-type ConnectedAccountResponse = z.infer<typeof connectedAccountResponseSchema>;
-
-const connectedAccountsPageSchema = z.object({
-  items: z.array(connectedAccountResponseSchema),
-  next_cursor: z.string().nullable().optional(),
-});
-
-const toolkitItemSchema = z.object({
-  slug: z.string().optional(),
-  is_no_auth: z.boolean().optional(),
-  connected_account: z.object({ id: z.string().optional(), status: z.string().optional() }).nullable().optional(),
-});
-type ToolkitItem = z.infer<typeof toolkitItemSchema>;
-const toolkitPageSchema = z.object({
-  items: z.array(toolkitItemSchema).optional(),
-  next_cursor: z.string().nullable().optional(),
-});
 
 const connectorServiceSchema = z.object({
   connected: z.boolean(),
   pending: z.boolean().optional(),
   status: z.string().optional(),
-  accounts: z.array(z.object({ id: z.string(), alias: z.string().optional(), status: z.string() })).optional(),
+  statusReason: z.string().optional(),
+  createdAt: z.string().optional(),
+  accounts: z.array(z.object({
+    id: z.string(),
+    alias: z.string().optional(),
+    status: z.string(),
+    statusReason: z.string().optional(),
+    createdAt: z.string().optional(),
+  })).optional(),
 });
 const connectorServicesResponseSchema = z.object({ services: z.record(z.string(), connectorServiceSchema).optional() });
 const removalResponseSchema = z.object({ removed: z.number() });
 const authUrlResponseSchema = z.object({ url: z.string().optional() });
-const linkResponseSchema = z.object({ redirect_url: z.string().optional() });
 
-const MULTI_ACCOUNT_CONFIG = {
-  enable: true,
-  max_accounts_per_toolkit: 5,
-  require_explicit_selection: true,
-} as const;
-
-interface SessionCreateRequest {
-  user_id: string;
-  manage_connections: { enable: boolean; enable_wait_for_connections: boolean; enable_connection_removal: boolean };
-  multi_account: typeof MULTI_ACCOUNT_CONFIG;
-  /** toolkit slug → the project's own auth config id; named only when the
-   * project has its own configs, since a Session cannot be edited afterwards
-   * and an empty map would pin "no custom auth" for the Session's lifetime */
-  auth_configs?: AuthConfigMap;
-}
-const MAX_CONNECTED_ACCOUNT_PAGES = 100;
 const ACCOUNT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const printableAliasSchema = z.string().min(1).max(64).refine((value) => {
   for (const character of value) {
@@ -209,7 +147,44 @@ function normalizeManagedBrokerUrl(value: string): string {
   return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
 }
 
+/** The credentials the cache's owner depends on, as a string that changes
+ * whenever any of them does. Never logged or stored. */
+/** Set when a broker rejected the token this process held: the replacement
+ * that follows is the same install's re-mint, so the remembered list moves to
+ * the new owner instead of being dropped (a rejection is not an owner change). */
+let tokenRejectedAwaitingReplacement = false;
+
+/** Called after the managed credentials changed. */
+function credentialsChanged(): void {
+  if (tokenRejectedAwaitingReplacement && inventoryOwner({} as AppConfig) !== null) {
+    tokenRejectedAwaitingReplacement = false;
+    toolResponseCache.clear();
+    rekeyInventory(inventoryOwner({} as AppConfig));
+    return;
+  }
+  tokenRejectedAwaitingReplacement = false;
+  clearInventoryAndToolCache();
+}
+
+function managedCredentialMark(): string {
+  return JSON.stringify([managedBrokerAccess?.token ?? null, managedFluxAccess?.token ?? null]);
+}
+
+let applyingBrokerMessage = false;
+
 export function applyManagedBrokerMessage(message: unknown): boolean {
+  const before = managedCredentialMark();
+  applyingBrokerMessage = true;
+  try {
+    return applyManagedBrokerMessageInner(message);
+  } finally {
+    applyingBrokerMessage = false;
+    // A new or removed token is a new owner: the old owner's list goes.
+    if (managedCredentialMark() !== before) credentialsChanged();
+  }
+}
+
+function applyManagedBrokerMessageInner(message: unknown): boolean {
   const parsed = managedBrokerMessageSchema.safeParse(message);
   if (
     !parsed.success ||
@@ -244,6 +219,16 @@ export function applyManagedBrokerMessage(message: unknown): boolean {
 /** The Flux broker as the desktop shell sent it: its URL whenever the broker
  * is turned on for this build, and the token once one has been minted. */
 export function setFluxBrokerAccess(access: unknown, url: string): void {
+  const before = managedCredentialMark();
+  const nested = applyingBrokerMessage;
+  try {
+    setFluxBrokerAccessInner(access, url);
+  } finally {
+    if (!nested && managedCredentialMark() !== before) credentialsChanged();
+  }
+}
+
+function setFluxBrokerAccessInner(access: unknown, url: string): void {
   const normalized = url ? normalizeManagedBrokerUrl(url) : "";
   if (access === null || access === undefined) {
     managedFluxBrokerUrl = normalized;
@@ -272,10 +257,23 @@ export function resetManagedBrokerState(): void {
   fluxReadinessProbe = null;
   fluxAccountStatus = null;
   devTokenRemintDue = false;
+  devTokenRejectedFingerprint = undefined;
+  tokenRejectedAwaitingReplacement = false;
   resetDevFluxTokenState();
+  clearInventoryAndToolCache();
 }
 
 export function setManagedBrokerAccess(access: unknown): void {
+  const before = managedCredentialMark();
+  const nested = applyingBrokerMessage;
+  try {
+    setManagedBrokerAccessInner(access);
+  } finally {
+    if (!nested && managedCredentialMark() !== before) credentialsChanged();
+  }
+}
+
+function setManagedBrokerAccessInner(access: unknown): void {
   if (access === null) {
     managedBrokerAccess = null;
     return;
@@ -365,6 +363,7 @@ function fluxBrokerCandidate(): { url: string; token: string } | null {
 /** The Flux broker, only while its health probe says it is ready. */
 function fluxBrokerAccess(): BrokerAccess | null {
   const candidate = fluxBrokerCandidate();
+  if (candidate) healReadiness(candidate.url);
   if (!candidate || !fluxReadiness || fluxReadiness.url !== candidate.url || !fluxReadiness.ready) return null;
   return { ...candidate, kind: "flux" };
 }
@@ -402,6 +401,29 @@ function tokenError(): string | undefined {
 const FLUX_READY_TTL_MS = 5 * 60_000;
 const FLUX_NOT_READY_TTL_MS = 20_000;
 const FLUX_PROBE_TIMEOUT_MS = 5_000;
+/** How long a turn's connector MOUNT waits on a readiness probe another request
+ * already started. Without the wait, the turn read the not-yet-updated cache,
+ * mounted no Composio, and its first connector call failed with "tools never
+ * loaded". Bounded so a slow or hung broker can never hang a turn. */
+export const FLUX_MOUNT_WAIT_CAP_MS = 5_000;
+let mountWaitCapMs = FLUX_MOUNT_WAIT_CAP_MS;
+/** Test hook: shrink (or, with no argument, restore) the mount wait cap. */
+export function setMountWaitCapMsForTests(ms?: number): void {
+  mountWaitCapMs = ms ?? FLUX_MOUNT_WAIT_CAP_MS;
+}
+
+/** Wait for `promise`, but never longer than `ms`; resolves either way. */
+async function settleWithin(promise: Promise<void>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise.catch(() => {}),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, ms); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 let fluxReadiness: { url: string; ready: boolean; at: number } | null = null;
 let fluxReadinessProbe: { url: string; promise: Promise<void> } | null = null;
 
@@ -417,13 +439,29 @@ async function probeFluxReadiness(url: string): Promise<void> {
   if (fluxBrokerCandidate()?.url === url) fluxReadiness = { url, ready, at: Date.now() };
 }
 
+/** Readiness must never be trusted past its lifetime by a reader that does
+ * not probe. Every synchronous read of it checks the age, and a stale or
+ * missing answer starts a background probe (one at a time, never awaited). The
+ * negative answer is the one that matters: with it, an outage that has ended
+ * is noticed one negative TTL later by whichever reader asks next, with no
+ * restart and nothing pressed. */
+function healReadiness(url: string): void {
+  const cached = fluxReadiness;
+  const ttl = cached && cached.url === url ? (cached.ready ? FLUX_READY_TTL_MS : FLUX_NOT_READY_TTL_MS) : 0;
+  if (cached && cached.url === url && Date.now() - cached.at < ttl) return;
+  if (fluxReadinessProbe && fluxReadinessProbe.url === url) return;
+    void primeBrokerReadiness({ turn: true }).catch(() => {});
+}
+
 /** Refresh the Flux broker's readiness when the cache is stale.
  *
  * One probe at a time. A route awaits it (bounded by the 5-second probe
  * timeout). A turn passes `{ turn: true }` and never waits on a probe that is
  * already running, so an offline laptop adds the probe to at most one turn
- * per negative TTL. */
-export async function primeBrokerReadiness(options: { turn?: boolean } = {}): Promise<void> {
+ * per negative TTL. A connector MOUNT passes `{ turn: true, mount: true }`: it
+ * joins a probe already running (the same promise, so no second probe) for at
+ * most FLUX_MOUNT_WAIT_CAP_MS, then proceeds with whatever state exists. */
+export async function primeBrokerReadiness(options: { turn?: boolean; mount?: boolean; waitMs?: number } = {}): Promise<void> {
   await primeDevFluxToken(options);
   const candidate = fluxBrokerCandidate();
   if (!candidate) return;
@@ -433,6 +471,7 @@ export async function primeBrokerReadiness(options: { turn?: boolean } = {}): Pr
     if (Date.now() - cached.at < ttl) return;
   }
   if (fluxReadinessProbe && fluxReadinessProbe.url === candidate.url) {
+    if (options.turn && options.mount) return settleWithin(fluxReadinessProbe.promise, options.waitMs ?? mountWaitCapMs);
     if (options.turn) return;
     return fluxReadinessProbe.promise;
   }
@@ -456,19 +495,28 @@ export function invalidateBrokerReadiness(): void {
 // answer marks a forced re-mint for the next prime, the way the packaged app
 // re-mints on the `murage:flux-composio-token-rejected` message.
 let devTokenRemintDue = false;
+let devTokenRejectedFingerprint: string | undefined;
 async function primeDevFluxToken(options: { turn?: boolean }): Promise<void> {
   const url = fluxBrokerUrl();
   if (!devFluxTokenEligible(url)) return;
   if (options.turn && devFluxTokenInFlight()) return;
   const force = devTokenRemintDue;
+  const rejectedTokenFingerprint = devTokenRejectedFingerprint;
   devTokenRemintDue = false;
+  devTokenRejectedFingerprint = undefined;
   const before = readDevFluxTokenDocument().fluxComposioBrokerToken;
-  const next = await ensureDevFluxBrokerToken({ fluxBrokerUrl: url, force, log: (line) => console.error(`[composio] ${line}`) });
+  const next = await ensureDevFluxBrokerToken({ fluxBrokerUrl: url, force, rejectedTokenFingerprint, log: (line) => console.error(`[composio] ${line}`) });
   // A new token is a new credential: probe readiness for it afresh.
-  if (next.fluxComposioBrokerToken !== before) fluxReadiness = null;
+  if (next.fluxComposioBrokerToken !== before) {
+    fluxReadiness = null;
+    credentialsChanged();
+  }
 }
 
-type BrokerEvent = { type: "murage:flux-composio-token-rejected" };
+/** `tokenFingerprint` names the token that was rejected (never the token), so
+ * the desktop can tell the one held now from one already replaced; `code` is
+ * what Flux said (revoked, or another device took over). */
+type BrokerEvent = { type: "murage:flux-composio-token-rejected"; tokenFingerprint: string; code: string };
 let brokerEventSink: ((event: BrokerEvent) => void) | null = null;
 /** Where broker events go: the desktop main process, over the private port. */
 export function setBrokerEventSink(sink: ((event: BrokerEvent) => void) | null): void {
@@ -501,6 +549,12 @@ async function responseCode(response: Response): Promise<string | undefined> {
 export const BROKER_UNAVAILABLE =
   "Connected apps need Flux Router. Connect Flux Router and 500+ apps come with it, Gmail, Slack, Notion and GitHub among them. Your own connected-apps key works too, if you have one.";
 
+/** What a connector call says while connected apps cannot be reached at the
+ * moment (a dropped connection, the service restarting) and a sign-in exists.
+ * It is not "not set up": nothing needs fixing, and the model must not say so. */
+export const BROKER_UNREACHABLE =
+  "Connected apps can't be reached right now. This is usually brief. Try again in a minute.";
+
 /** What a connector call says when the Murage Worker has retired. The model
  * reads it as the tool's answer, so it names the way out rather than a code. */
 export const LEGACY_BROKER_RETIRED =
@@ -513,15 +567,34 @@ export const LEGACY_DAILY_LIMIT =
   "Connected apps have reached today's limit on Murage's original service, so this request did not run. The limit resets at 00:00 UTC and does not apply once your apps run through Flux Router.";
 
 /** React to what a broker's answer says about the broker itself. */
-async function observeBrokerResponse(broker: BrokerAccess, response: Response): Promise<void> {
+async function observeBrokerResponse(broker: BrokerAccess, response: Response, options: { sessionScoped?: boolean } = {}): Promise<void> {
   if (broker.kind === "flux") {
+    if (response.status === 404 && options.sessionScoped) {
+      // A 404 to a request that named an MCP session says that session is
+      // gone (the Streamable HTTP rule), not that the broker is dark.
+      return;
+    }
     if (response.status === 404 || response.status === 503) {
       // 404 is how the Flux broker answers while it is dark.
       invalidateBrokerReadiness();
-    } else if (response.status === 401 && (await responseCode(response)) === "broker_token_revoked") {
+    } else if (response.status === 401) {
+      // EVERY 401 on a Flux data route says this token no longer works, whatever
+      // Flux calls the reason: a revocation, an expiry, another device's mint
+      // pushing it out. The desktop decides (one forced re-mint, then "another
+      // device took over"); known codes are only a fast path.
+      const code = (await responseCode(response)) ?? "unknown";
       invalidateBrokerReadiness();
-      if (devFluxTokenEligible(broker.url)) devTokenRemintDue = true;
-      brokerEventSink?.({ type: "murage:flux-composio-token-rejected" });
+      // Keep what is remembered (stale, so it refreshes) and the file: the
+      // panel still opens at once. Only the tool answers go.
+      toolResponseCache.clear();
+      invalidateInventory(inventoryOwner({} as AppConfig));
+      tokenRejectedAwaitingReplacement = true;
+      const tokenFingerprint = brokerTokenFingerprint(broker.token);
+      if (devFluxTokenEligible(broker.url)) {
+        devTokenRemintDue = true;
+        devTokenRejectedFingerprint = tokenFingerprint;
+      }
+      brokerEventSink?.({ type: "murage:flux-composio-token-rejected", tokenFingerprint, code });
     }
     return;
   }
@@ -599,8 +672,7 @@ function jsonRpcFailure(payload: JsonValue, text: string): JsonValue | null {
  * Nothing here depends on whether the build is packaged, so dev and packaged
  * resolve the same broker for the same credentials; the Composio identity
  * itself is chosen by the broker from the account, never by this process. */
-function activeBroker(cfg: AppConfig): BrokerAccess | null {
-  if (cfg.composio?.apiKey) return null;
+function activeBroker(_cfg: AppConfig): BrokerAccess | null {
   const legacy = legacyBrokerAccess();
   const flux = fluxBrokerAccess();
   const claim = legacyClaim().state;
@@ -638,7 +710,6 @@ export function connectorMigration(cfg: AppConfig): ConnectorMigration {
   const base: ConnectorMigration = { state: "none", legacyUntil: until };
   if (kind) base.accountKind = kind;
   if (declined) base.tokenError = declined;
-  if (cfg.composio?.apiKey) return base;
   const claim = legacyClaim();
   if (claim.installationId) base.installationId = claim.installationId;
   if (claim.at) base.at = claim.at;
@@ -675,11 +746,30 @@ export async function refreshFluxAccountStatus(cfg: AppConfig): Promise<void> {
   }
 }
 
+/** Refresh the allowance line without letting it hold up a route: waits at
+ * most `waitMs`, and the refresh finishes behind the answer. */
+export async function refreshFluxAccountStatusBriefly(cfg: AppConfig, waitMs = 1_500): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([refreshFluxAccountStatus(cfg), new Promise<void>((resolve) => { timer = setTimeout(resolve, waitMs); })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function freeRunsRemainingToday(cfg: AppConfig): number | null {
   const broker = activeBroker(cfg);
   const cached = fluxAccountStatus;
   if (broker?.kind !== "flux" || !cached || cached.url !== broker.url || cached.token !== broker.token) return null;
   return cached.freeRunsRemainingToday;
+}
+
+/** This person once saved a key of their own. It is kept on disk, untouched
+ * and unused; the panel only needs to know it exists so it can say, once and
+ * quietly, that connected apps now run through Flux Router. The desktop shell
+ * sets the env flag when its secure store holds one. */
+function ownKeyRetired(cfg: AppConfig): boolean {
+  return Boolean(cfg.composio?.apiKey) || process.env.MURAGE_CONNECTED_APPS_OWN_KEY_RETIRED === "1";
 }
 
 /** The connected-apps facts every panel response carries. `fluxConfigured`
@@ -691,6 +781,7 @@ export function connectorPanelFields(cfg: AppConfig, fluxIsConfigured: boolean) 
     fluxConfigured: fluxIsConfigured,
     fluxBrokerEnabled: fluxBrokerEnabled(),
     freeRunsRemainingToday: freeRunsRemainingToday(cfg),
+    ownKeyRetired: ownKeyRetired(cfg),
   };
 }
 
@@ -701,9 +792,7 @@ function backendFingerprint(kind: string, endpoint: string, credential: string):
 }
 function selectedBackendIdentity(cfg: AppConfig, catalog = false): string | null {
   const broker = activeBroker(cfg);
-  if (broker) return backendFingerprint(catalog ? "managed-catalog" : "managed", broker.url, broker.token);
-  const key = cfg.composio?.apiKey;
-  return key ? backendFingerprint(catalog ? "project-catalog" : "project", catalog ? toolkitBase() : apiBase(), key) : null;
+  return broker ? backendFingerprint(catalog ? "managed-catalog" : "managed", broker.url, broker.token) : null;
 }
 const transportSessionBackends = new Map<string, string>();
 function rememberTransportSession(id: string, identity: string) {
@@ -712,9 +801,16 @@ function rememberTransportSession(id: string, identity: string) {
   while (transportSessionBackends.size > 512) transportSessionBackends.delete(transportSessionBackends.keys().next().value!);
 }
 
-export function connectionMode(cfg: AppConfig): "managed" | "self-hosted" | "unavailable" {
-  if (activeBroker(cfg)) return "managed";
-  return cfg.composio?.apiKey ? "self-hosted" : "unavailable";
+export { forgetInventoryMemory };
+
+export function connectionMode(cfg: AppConfig): "managed" | "unavailable" {
+  return activeBroker(cfg) ? "managed" : "unavailable";
+}
+
+/** A Flux sign-in exists (a token this install holds) but the broker is not
+ * answering. Distinct from "nothing is set up". */
+function fluxSignedInButUnreachable(cfg: AppConfig): boolean {
+  return fluxBrokerCandidate() !== null && fluxBrokerAccess() === null && activeBroker(cfg) === null;
 }
 
 export function configured(cfg: AppConfig): boolean {
@@ -726,9 +822,32 @@ export function configured(cfg: AppConfig): boolean {
  * so one failed probe cannot leave every later turn without connected apps:
  * configured() alone reads the cache, and nothing re-probed it once it said
  * no, until the app restarted or someone opened Connected apps. */
-export async function turnConnectedAppsReady(cfg: AppConfig): Promise<boolean> {
-  await primeBrokerReadiness({ turn: true });
+export async function turnConnectedAppsReady(
+  cfg: AppConfig,
+  options: { expectConnectors?: boolean; waitMs?: number } = {},
+): Promise<boolean> {
+  // A bot that has connected apps enabled EXPECTS them. Without that, a probe
+  // still running at launch was skipped (a turn never waits on one), the cache
+  // still said "not ready", and the turn believed it had no connectors and
+  // reported ready at once: its first connector call then failed with "no
+  // matching deferred tools". An expecting turn joins the probe, bounded.
+  await primeBrokerReadiness(options.expectConnectors
+    ? { turn: true, mount: true, ...(options.waitMs === undefined ? {} : { waitMs: options.waitMs }) }
+    : { turn: true });
   return configured(cfg);
+}
+
+/** Whether this workspace has connected apps it should be able to reach: a
+ * sign-in or key exists even if the broker has not answered yet. */
+export function connectedAppsExpected(cfg: AppConfig): boolean {
+  return configured(cfg) || fluxBrokerCandidate() !== null || devFluxTokenEligible(fluxBrokerUrl());
+}
+
+/** The startup gate for scheduled runs: nothing to wait for when no connected
+ * apps are expected; otherwise the broker must have answered ready. */
+export async function connectedAppsStartupSettled(cfg: AppConfig, waitMs?: number): Promise<boolean> {
+  if (!connectedAppsExpected(cfg)) return true;
+  return turnConnectedAppsReady(cfg, { expectConnectors: true, ...(waitMs === undefined ? {} : { waitMs }) });
 }
 
 /** Three answers, not two. The desktop shell sets MURAGE_CREDENTIAL_STORE to
@@ -762,7 +881,7 @@ export function connectorAvailability(
  * the right default and is not being changed here — but it is also the most
  * common reason an assistant has no connectors, and the one where the
  * assistant can name both the cause and the single switch that fixes it. */
-export type ConnectorAccess = "mounted" | "package-off" | "bot-off" | "unconfigured" | "engine";
+export type ConnectorAccess = "mounted" | "package-off" | "bot-off" | "unconfigured" | "unreachable" | "engine";
 
 /** Precedence when several causes hold at once: the per-bot switch first.
  * It is the fact about THIS assistant, it is true regardless of what the
@@ -783,7 +902,7 @@ export function connectorAccess(input: {
 }): ConnectorAccess {
   if (input.mounted) return "mounted";
   if (input.botComposio === false) return input.installedFromPackage ? "package-off" : "bot-off";
-  if (!configured(input.cfg)) return "unconfigured";
+  if (!configured(input.cfg)) return fluxSignedInButUnreachable(input.cfg) ? "unreachable" : "unconfigured";
   if (!input.engineMountsConnectors) return "engine";
   // Every gate passed and nothing mounted. `mcpIntegration` only returns
   // null while unconfigured, so this is defensive rather than reachable —
@@ -806,7 +925,9 @@ export function connectorSystemPrompt(access: ConnectorAccess): string {
     case "bot-off":
       return " You have no connected-app tools this turn because connected apps are switched off for you specifically (a per-bot setting the user controls). The workspace's connections may exist and be perfectly healthy. If the user asks for work in a connected service, say that your access to connected apps is switched off for you and that they can turn it on in your settings; never tell them the service is disconnected.";
     case "unconfigured":
-      return " You have no connected-app tools this turn because this workspace has no connected-apps service set up: connected apps run through FluxRouter, and this workspace has neither FluxRouter nor its own connected-apps key, so no bot here can reach connected apps. If the user asks for work in a connected service, say that connected apps are not set up in this workspace yet and point them at the Connections settings; do not claim a particular service failed or is disconnected.";
+      return " You have no connected-app tools this turn because this workspace has no connected-apps service set up: connected apps run through FluxRouter, and this workspace has not connected FluxRouter yet, so no bot here can reach connected apps. If the user asks for work in a connected service, say that connected apps are not set up in this workspace yet and point them at the Flux Router key in Models settings; do not claim a particular service failed or is disconnected.";
+    case "unreachable":
+      return " You have no connected-app tools this turn because connected apps can't be reached right now. Connected apps are already working for this workspace and nothing is wrong with the user's connections; the service is briefly unreachable, usually for under a minute. If the user asks for work in a connected service, say that connected apps can't be reached right now, that this is usually brief, and that you can try again in a minute. Never tell them connected apps need to be set up or reconnected, and do not claim a particular service failed or is disconnected.";
     case "engine":
       return " You have no connected-app tools this turn because the engine you are running on cannot mount connector tools. The workspace's connections may exist and be perfectly healthy, and another engine would reach them. If the user asks for work in a connected service, say that this bot's current engine cannot use connected apps and that switching its model/engine would; never tell them the service is disconnected.";
   }
@@ -840,7 +961,7 @@ export function requiredAppsSystemPrompt(
  * broker owner's money on behalf of someone holding their own key. */
 async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): Promise<Response> {
   const broker = activeBroker(cfg);
-  if (!broker) throw new Error(BROKER_UNAVAILABLE);
+  if (!broker) throw new Error(fluxSignedInButUnreachable(cfg) ? BROKER_UNREACHABLE : BROKER_UNAVAILABLE);
   const headers = new Headers(init?.headers);
   // Only ever the broker token. The Flux API key reaches engines and must
   // never be what unlocks the user's connected apps.
@@ -855,12 +976,6 @@ async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): 
   // an install that was moved elsewhere — is learned in exactly one place.
   await observeBrokerResponse(broker, response);
   return response;
-}
-
-function projectHeaders(apiKey: string, json = false) {
-  const headers = new Headers({ "x-api-key": apiKey });
-  if (json) headers.set("content-type", "application/json");
-  return headers;
 }
 
 async function responseError(res: Response, fallback: string) {
@@ -903,33 +1018,6 @@ function trustedAuthUrl(value: string | undefined, slug: string): string {
   return url.toString();
 }
 
-function parseSessionResponse(session: SessionResponse): SessionResponse {
-  const mcp = new URL(session.mcp.url);
-  if (mcp.protocol !== "https:" || (mcp.hostname !== "composio.dev" && !mcp.hostname.endsWith(".composio.dev"))) {
-    throw new Error("Composio returned an untrusted Session MCP URL");
-  }
-  return { ...session, mcp: { ...session.mcp, url: mcp.toString() } };
-}
-
-function supportsMultiAccount(session: SessionResponse): boolean {
-  // Only `enable` gates reuse. The cap and selection flags are what we ASK
-  // for at creation; if Composio clamps or omits them in the echo, recreating
-  // the Session would post the same config and get the same echo back — a
-  // strict equality check here can only manufacture a recreate-per-request
-  // loop, never fix anything.
-  return session.config?.multi_account?.enable === true;
-}
-
-/** Session ids this boot already tried to upgrade once. If the fresh Session
- *  STILL doesn't echo multi-account, Composio isn't granting it — run with
- *  what we have (single-account behavior) instead of recreating a Session and
- *  rewriting config.json on every request. */
-const multiAccountUpgradeAttempted = new Set<string>();
-/** Session id + auth-config map pairs this boot already created a Session
- *  for. Same idea: if Composio does not echo `auth_configs`, recreating the
- *  Session on every check would loop without changing anything. */
-const authConfigUpgradeAttempted = new Set<string>();
-
 function inputError(message: string, status = 400) {
   return Object.assign(new Error(message), { status });
 }
@@ -949,188 +1037,15 @@ function validAccountId(value: string | undefined): value is string {
   return Boolean(value && ACCOUNT_ID.test(value));
 }
 
-async function getProjectSession(apiKey: string, sessionId: string): Promise<SessionResponse | null> {
-  const res = await fetch(`${apiBase()}/tool_router/session/${encodeURIComponent(sessionId)}`, {
-    headers: projectHeaders(apiKey),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(await responseError(res, `Composio session: HTTP ${res.status}`));
-  return parseSessionResponse(sessionResponseSchema.parse(await res.json()));
-}
-
-/** The project's own (non-Composio-managed) auth configs, one per toolkit.
- *  Disabled configs and ones switched off for Sessions are skipped; when a
- *  toolkit has several, the most recently updated wins. Ordinary Session
- *  preparation treats a denied list as "none"; an explicit auth retry surfaces
- *  the denial so it cannot replace a usable Session with an incomplete one. */
-export async function listCustomAuthConfigs(apiKey: string): Promise<AuthConfigMap> {
-  const chosen = new Map<string, { id: string; updated: string }>();
-  let cursor: string | undefined;
-  for (let page = 0; page < MAX_AUTH_CONFIG_PAGES; page++) {
-    const params = new URLSearchParams({ is_composio_managed: "false", limit: "100" });
-    if (cursor) params.set("cursor", cursor);
-    const res = await fetch(`${apiBase()}/auth_configs?${params}`, {
-      headers: projectHeaders(apiKey),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) throw new Error(await responseError(res, `Composio auth configs: HTTP ${res.status}`));
-    const body = authConfigsPageSchema.parse(await res.json());
-    for (const item of body.items ?? []) {
-      const slug = item.toolkit?.slug?.toLowerCase();
-      if (!slug || !item.id || item.is_composio_managed === true) continue;
-      if (item.is_enabled_for_tool_router === false) continue;
-      if (item.status && /^(disabled|inactive|expired|deleted)$/i.test(item.status)) continue;
-      const updated = item.last_updated_at ?? "";
-      const current = chosen.get(slug);
-      if (!current || updated > current.updated) chosen.set(slug, { id: item.id, updated });
-    }
-    const next = body.next_cursor ?? undefined;
-    if (!next || next === cursor) break;
-    cursor = next;
-  }
-  return Object.fromEntries([...chosen].sort(([a], [b]) => a.localeCompare(b)).map(([slug, { id }]) => [slug, id]));
-}
-
-/** True when the Session already routes every wanted toolkit through the
- *  project's own auth config. Extra configs on the Session are fine; a
- *  missing or different one means the Session predates the config. */
-function sessionCoversAuthConfigs(session: SessionResponse, wanted: AuthConfigMap): boolean {
-  const have = session.config?.auth_configs ?? {};
-  const haveLower = Object.fromEntries(Object.entries(have).map(([slug, id]) => [slug.toLowerCase(), id]));
-  return Object.entries(wanted).every(([slug, id]) => haveLower[slug] === id);
-}
-
-function authConfigsKey(sessionId: string, wanted: AuthConfigMap): string {
-  return `${sessionId}:${JSON.stringify(wanted)}`;
-}
-
-/** Validate a project key and return one reusable Session for this install. */
-export async function prepareProjectSession(
-  apiKey: string,
-  current?: { apiKey?: string; userId?: string; sessionId?: string },
-  knownAuthConfigs?: AuthConfigMap,
-): Promise<{ apiKey: string; userId: string; sessionId: string }> {
-  const trimmed = apiKey.trim();
-  if (!trimmed) throw new Error("Enter a Composio project API key");
-  if (!trimmed.startsWith("ak_")) throw new Error("Composio project API keys start with ak_");
-
-  // The project's own auth configs must be named at creation — a Session
-  // cannot be edited later — so they are read before deciding whether the
-  // current Session is still the right one (issue #509: a twitter auth
-  // config created after the Session existed was never used).
-  const authConfigs = knownAuthConfigs
-    ?? await listCustomAuthConfigs(trimmed).catch((): AuthConfigMap => ({}));
-  let priorUserId = current?.userId;
-  if (trimmed === current?.apiKey && current.sessionId) {
-    const existing = await getProjectSession(trimmed, current.sessionId);
-    if (
-      existing
-      && supportsMultiAccount(existing)
-      && (sessionCoversAuthConfigs(existing, authConfigs)
-        || authConfigUpgradeAttempted.has(authConfigsKey(existing.session_id, authConfigs)))
-    ) {
-      return {
-        apiKey: trimmed,
-        userId: existing.config?.user_id ?? current.userId ?? `murage_${randomUUID()}`,
-        sessionId: existing.session_id,
-      };
-    }
-    // Connections belong to the Composio user, not the Session. Recreate old
-    // single-account Sessions with the same user ID so every existing grant is
-    // retained while the new Session opts into explicit multi-account routing.
-    priorUserId = existing?.config?.user_id ?? priorUserId;
-  }
-
-  const userId = priorUserId ?? `murage_${randomUUID()}`;
-  const sessionRequest: SessionCreateRequest = {
-    user_id: userId,
-    manage_connections: {
-      enable: true,
-      enable_wait_for_connections: true,
-      enable_connection_removal: true,
-    },
-    multi_account: MULTI_ACCOUNT_CONFIG,
-  };
-  if (Object.keys(authConfigs).length) sessionRequest.auth_configs = authConfigs;
-  const res = await fetch(`${apiBase()}/tool_router/session`, {
-    method: "POST",
-    headers: projectHeaders(trimmed, true),
-    body: JSON.stringify(sessionRequest),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) throw new Error(await responseError(res, `Composio rejected this key (HTTP ${res.status})`));
-  const session = parseSessionResponse(sessionResponseSchema.parse(await res.json()));
-  // If Composio does not echo the configs back, a later check would ask for
-  // the same creation again — remember this attempt so it happens once.
-  authConfigUpgradeAttempted.add(authConfigsKey(session.session_id, authConfigs));
-  return { apiKey: trimmed, userId, sessionId: session.session_id };
-}
-
-async function ensureProjectSession(cfg: AppConfig): Promise<SessionResponse> {
-  const composio = cfg.composio;
-  if (!composio?.apiKey) throw new Error("No Composio project key configured");
-  const key = composio.apiKey, endpoint = apiBase();
-  const assertCurrent = () => {
-    if (cfg.composio !== composio || composio.apiKey !== key || apiBase() !== endpoint) throw new Error("Connected-app configuration changed; retry the request");
-  };
-  if (composio.sessionId) {
-    const existing = await getProjectSession(key, composio.sessionId);
-    assertCurrent();
-    if (existing && (supportsMultiAccount(existing) || multiAccountUpgradeAttempted.has(existing.session_id))) {
-      return existing;
-    }
-  }
-  // A missing/deleted session is recreated and its non-secret identifiers are
-  // persisted so an edited config/env setup does not recreate it every launch.
-  const prepared = await prepareProjectSession(key, composio);
-  assertCurrent();
-  multiAccountUpgradeAttempted.add(prepared.sessionId);
-  composio.userId = prepared.userId;
-  composio.sessionId = prepared.sessionId;
-  saveConfig({ composio: { userId: prepared.userId, sessionId: prepared.sessionId } });
-  const created = await getProjectSession(key, prepared.sessionId);
-  assertCurrent();
-  if (!created) throw new Error("Composio Session disappeared after creation");
-  return created;
-}
-
-/** Replace the current Session with a freshly created one — the only way to
- *  pick up an auth config the user added after the Session was made. The
- *  Composio user id is kept, so every existing connection survives. */
-async function recreateProjectSession(
-  cfg: AppConfig,
-  userId: string,
-  authConfigs: AuthConfigMap,
-): Promise<SessionResponse> {
-  const composio = cfg.composio;
-  if (!composio?.apiKey) throw new Error("No Composio project key configured");
-  const prepared = await prepareProjectSession(
-    composio.apiKey,
-    { apiKey: composio.apiKey, userId },
-    authConfigs,
-  );
-  multiAccountUpgradeAttempted.add(prepared.sessionId);
-  composio.userId = prepared.userId;
-  composio.sessionId = prepared.sessionId;
-  saveConfig({ composio: { userId: prepared.userId, sessionId: prepared.sessionId } });
-  const created = await getProjectSession(composio.apiKey, prepared.sessionId);
-  if (!created) throw new Error("Composio Session disappeared after creation");
-  return created;
-}
-
-/** Composio's wording when a toolkit has no managed auth and the Session was
- *  not told which of the project's own auth configs to use. */
-const NEEDS_AUTH_CONFIG = /does not manage auth|auth[_ ]?config/i;
-
 export async function mcpIntegration(
   cfg: AppConfig,
   context: IntegrationContext,
 ): Promise<ComposioMcpIntegration | null> {
-  // The turn's own readiness refresh. `{ turn: true }` never waits on a probe
-  // that is already running, so an offline laptop adds the 5-second probe to
-  // at most one turn per negative TTL instead of every turn.
-  await primeBrokerReadiness({ turn: true });
+  // The turn's own readiness refresh. A mount must not skip a probe another
+  // request already started (the turn would run with no connected apps), so it
+  // joins that probe, bounded by FLUX_MOUNT_WAIT_CAP_MS: an offline laptop's
+  // probe is shared, never repeated, and a hung broker cannot hang the turn.
+  await primeBrokerReadiness({ turn: true, mount: true });
   if (!configured(cfg)) return null;
   return {
     command: process.execPath,
@@ -1150,18 +1065,70 @@ export async function mcpIntegration(
   };
 }
 
+// Tool search and schemas answer the same thing for the same arguments until
+// the user's connections change, and each costs a Flux round trip then a
+// Composio one. Cached per owner and per inventory version (any connect or
+// disconnect bumps it), briefly. Executing a tool, or asking to connect one,
+// is never cached; neither is an error.
+const TOOLS_LIST_TTL_MS = 10 * 60_000;
+const TOOL_SEARCH_TTL_MS = 2 * 60_000;
+const TOOL_SCHEMA_TTL_MS = 5 * 60_000;
+const TOOL_CACHE_MAX = 200;
+const toolResponseCache = new Map<string, { at: number; ttlMs: number; body: Record<string, JsonValue> }>();
+
+function stableJson(value: JsonValue): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, JsonValue>)[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function toolCachePolicy(payload: JsonValue): { key: string; ttlMs: number } | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const message = payload as { id?: JsonValue; method?: JsonValue; params?: JsonValue };
+  if (message.id === undefined || message.id === null) return null;
+  if (message.method === "tools/list") return { key: "tools/list", ttlMs: TOOLS_LIST_TTL_MS };
+  if (message.method !== "tools/call" || !message.params || typeof message.params !== "object" || Array.isArray(message.params)) return null;
+  const params = message.params as { name?: JsonValue; arguments?: JsonValue };
+  if (params.name === "COMPOSIO_SEARCH_TOOLS") return { key: `search:${stableJson(params.arguments ?? null)}`, ttlMs: TOOL_SEARCH_TTL_MS };
+  if (params.name === "COMPOSIO_GET_TOOL_SCHEMAS") return { key: `schemas:${stableJson(params.arguments ?? null)}`, ttlMs: TOOL_SCHEMA_TTL_MS };
+  return null;
+}
+
+function rememberToolResponse(key: string, ttlMs: number, contentType: string | null, bytes: Uint8Array): void {
+  if (!contentType?.includes("application/json")) return;
+  try {
+    const body = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, JsonValue>;
+    if (!body || typeof body !== "object" || Array.isArray(body) || body.error !== undefined || body.result === undefined) return;
+    const result = body.result;
+    if (result && typeof result === "object" && !Array.isArray(result) && (result as { isError?: JsonValue }).isError === true) return;
+    const { id: _id, ...rest } = body;
+    toolResponseCache.delete(key);
+    toolResponseCache.set(key, { at: Date.now(), ttlMs, body: rest });
+    while (toolResponseCache.size > TOOL_CACHE_MAX) toolResponseCache.delete(toolResponseCache.keys().next().value!);
+  } catch {
+    // not JSON-RPC; leave it uncached
+  }
+}
+
 export async function relayMcp(
   cfg: AppConfig,
   payload: JsonValue,
   transportSessionId?: string,
   beforeDispatch?: () => void,
 ): Promise<{ status: number; bytes: Uint8Array; contentType: string; transportSessionId?: string }> {
+  // Every call re-checks readiness the way a turn start does (never waiting
+  // on a probe already running), so a 503 earlier in this turn, which clears
+  // it, is repaired here instead of failing every later call in the turn.
+  await primeBrokerReadiness({ turn: true });
   const broker = activeBroker(cfg);
-  const selectedIdentity = selectedBackendIdentity(cfg);
-  const projectKey = cfg.composio?.apiKey;
-  let projectSessionId: string | undefined;
+  // The "did the configuration change under this call" check compares which
+  // credential owns the call, not whether the broker is answering: a 503 that
+  // clears readiness mid-call must not read as a configuration change.
+  const selectedIdentity = inventoryOwner(cfg);
   const assertCurrent = () => {
-    if (selectedBackendIdentity(cfg) !== selectedIdentity || (projectSessionId !== undefined && cfg.composio?.sessionId !== projectSessionId)) throw new Error("Connected-app configuration changed; retry the request");
+    if (inventoryOwner(cfg) !== selectedIdentity) throw new Error("Connected-app configuration changed; retry the request");
   };
   let url: string;
   let identity: string;
@@ -1174,28 +1141,66 @@ export async function relayMcp(
     headers.set("authorization", `Bearer ${broker.token}`);
     identity = backendFingerprint("managed-mcp", url, broker.token);
   } else {
-    if (!projectKey) throw new Error(BROKER_UNAVAILABLE);
-    const session = await ensureProjectSession(cfg);
-    projectSessionId = session.session_id;
-    assertCurrent();
-    url = session.mcp.url;
-    headers.set("x-api-key", projectKey);
-    identity = backendFingerprint("project-mcp", url, projectKey);
+    if (fluxSignedInButUnreachable(cfg)) {
+      // Say it as the tool's own answer, in plain words, so the model relays
+      // "briefly unreachable" rather than an error.
+      const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
+      if (answer !== null) return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json" };
+    }
+    throw new Error(fluxSignedInButUnreachable(cfg) ? BROKER_UNREACHABLE : BROKER_UNAVAILABLE);
+  }
+  const cachePolicy = toolCachePolicy(payload);
+  const cacheKey = cachePolicy ? `${identity}|${inventoryVersion(inventoryOwner(cfg))}|${cachePolicy.key}` : null;
+  if (cacheKey) {
+    const held = toolResponseCache.get(cacheKey);
+    if (held && Date.now() - held.at < held.ttlMs) {
+      const id = (payload as { id?: JsonValue }).id;
+      return {
+        status: 200,
+        bytes: new TextEncoder().encode(JSON.stringify({ ...held.body, id })),
+        contentType: "application/json",
+      };
+    }
+    if (held) toolResponseCache.delete(cacheKey);
   }
   const forwarded = transportSessionId && transportSessionBackends.get(transportSessionId) === identity ? transportSessionId : undefined;
   if (forwarded) headers.set("mcp-session-id", forwarded);
   beforeDispatch?.();
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(10 * 60_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10 * 60_000),
+    });
+  } catch (error) {
+    // A dropped connection reads as a plain sentence, and readiness is
+    // re-checked one negative TTL later by whoever asks next.
+    if (broker?.kind === "flux" && error instanceof TypeError) {
+      invalidateBrokerReadiness();
+      const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
+      if (answer !== null) return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json" };
+    }
+    throw error;
+  }
   if (broker) {
     // The hot path learns what the broker says about itself exactly as the
     // panel routes do: a retired Worker must stop being chosen here too.
-    await observeBrokerResponse(broker, response);
-    const plain = response.ok ? null : plainBrokerAnswer(cfg, broker, response.status, await responseCode(response));
+    await observeBrokerResponse(broker, response, { sessionScoped: forwarded !== undefined });
+    if (broker.kind === "flux" && response.status === 404 && forwarded !== undefined) {
+      // The session is gone: forget it so nothing forwards it again, and let
+      // the caller (the stdio bridge) open a new one and retry.
+      transportSessionBackends.delete(forwarded);
+      await response.body?.cancel().catch(() => {});
+      return {
+        status: 404,
+        bytes: new TextEncoder().encode(JSON.stringify({ error: "session_gone" })),
+        contentType: "application/json",
+      };
+    }
+    const unreachable = broker.kind === "flux" && (response.status === 503 || response.status === 404);
+    const plain = response.ok ? null : unreachable ? BROKER_UNREACHABLE : plainBrokerAnswer(cfg, broker, response.status, await responseCode(response));
     const answer = plain === null ? null : jsonRpcFailure(payload, plain);
     if (answer !== null) {
       await response.body?.cancel().catch(() => {});
@@ -1207,6 +1212,7 @@ export async function relayMcp(
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("Connected-app response exceeded 20 MB");
   assertCurrent();
+  if (cacheKey && cachePolicy && response.status === 200) rememberToolResponse(cacheKey, cachePolicy.ttlMs, response.headers.get("content-type"), bytes);
   if (forwarded) rememberTransportSession(forwarded, identity);
   const nextSession = response.headers.get("mcp-session-id") ?? undefined;
   if (nextSession) rememberTransportSession(nextSession, identity);
@@ -1218,144 +1224,89 @@ export async function relayMcp(
   };
 }
 
-async function listConnectedAccounts(
-  apiKey: string,
-  userId: string,
-  slugs: string[],
-): Promise<ConnectedAccountResponse[]> {
-  const accounts: ConnectedAccountResponse[] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-
-  // Five accounts per toolkit can exceed one provider page when a user has
-  // many apps. Follow Composio's cursor instead of silently dropping entries.
-  for (let page = 0; page < MAX_CONNECTED_ACCOUNT_PAGES; page += 1) {
-    const params = new URLSearchParams({
-      limit: "50",
-      user_ids: userId,
-      order_by: "updated_at",
-      order_direction: "desc",
-    });
-    if (slugs.length) params.set("toolkit_slugs", slugs.join(","));
-    if (cursor) params.set("cursor", cursor);
-    const response = await fetch(`${apiBase()}/connected_accounts?${params}`, {
-      headers: projectHeaders(apiKey),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) throw new Error(await responseError(response, `Composio accounts: HTTP ${response.status}`));
-    const body = connectedAccountsPageSchema.parse(await response.json());
-    accounts.push(...body.items);
-    const next = body.next_cursor || undefined;
-    if (!next || seenCursors.has(next)) return accounts;
-    seenCursors.add(next);
-    cursor = next;
-  }
-  throw new Error("Composio account inventory exceeded the page limit");
+/** Who owns the remembered inventory: the credential identity that would be
+ * asked, whether or not the broker is answering right now. A hash, never a
+ * credential; null when nothing is configured at all. */
+function inventoryOwner(_cfg: AppConfig): string | null {
+  // The same choice `activeBroker` makes between the two managed identities,
+  // minus the broker's current readiness: an outage must not flip the owner
+  // (and so drop the remembered list) just when it matters most. Only a
+  // definitive change (the claim, the Worker's retirement, a new token) does.
+  const flux = fluxBrokerCandidate();
+  const legacy = legacyBrokerAccess();
+  const claim = legacyClaim().state;
+  const legacyIdentityLive = legacy !== null && (claim === "none" || claim === "offered" || claim === "pending");
+  const access = flux && !legacyIdentityLive ? flux : legacy ?? flux ?? workerBrokerCredential();
+  return access ? backendFingerprint("inventory-managed", access.url, access.token) : null;
 }
 
-async function listSessionToolkits(
-  apiKey: string,
-  sessionId: string,
-): Promise<ToolkitItem[]> {
-  const toolkits: ToolkitItem[] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-  for (let page = 0; page < MAX_CONNECTED_ACCOUNT_PAGES; page += 1) {
-    // The unfiltered endpoint contains the entire Composio marketplace and is
-    // cursor-paginated in 50-item pages. The Connected tab only needs the
-    // user's connected toolkits, so avoid scanning hundreds of unrelated apps.
-    const params = new URLSearchParams({ limit: "50", is_connected: "true" });
-    if (cursor) params.set("cursor", cursor);
-    const response = await fetch(
-      `${apiBase()}/tool_router/session/${encodeURIComponent(sessionId)}/toolkits?${params}`,
-      { headers: projectHeaders(apiKey), signal: AbortSignal.timeout(15_000) },
-    );
-    if (!response.ok) await throwStatusFailure(response, "own key inventory");
-    const body = toolkitPageSchema.parse(await response.json());
-    toolkits.push(...(body.items ?? []));
-    const next = body.next_cursor || undefined;
-    if (!next || seenCursors.has(next)) return toolkits;
-    seenCursors.add(next);
-    cursor = next;
-  }
-  throw new Error("Composio toolkit inventory exceeded the page limit");
-}
-
-function summarizeAccounts(accounts: ConnectedAccountResponse[], slugs: string[]) {
-  const requested = new Set(slugs.map((slug) => slug.toLowerCase()));
-  const bySlug = new Map<string, Array<ConnectedAccountSummary & { updatedAt: string }>>();
-  for (const account of accounts) {
-    const slug = account.toolkit?.slug?.toLowerCase();
-    if (!slug || (requested.size && !requested.has(slug)) || !validAccountId(account.id)) continue;
-    const alias = account.alias?.trim() ?? "";
-    const summary: ConnectedAccountSummary & { updatedAt: string } = {
-      id: account.id,
-      status: account.status || "UNKNOWN",
-      updatedAt: account.updated_at ?? "",
-    };
-    if (printableAliasSchema.safeParse(alias).success) summary.alias = alias;
-    const list = bySlug.get(slug) ?? [];
-    list.push(summary);
-    bySlug.set(slug, list);
-  }
-  for (const list of bySlug.values()) list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  return bySlug;
-}
-
-function publicAccount({ id, alias, status }: ConnectedAccountSummary): ConnectedAccountSummary {
-  const account: ConnectedAccountSummary = { id, status };
-  if (alias) account.alias = alias;
-  return account;
-}
-
-function serviceStateFromAccounts(
-  accounts: ConnectedAccountSummary[],
-): ConnectorServiceState {
-  const active = accounts.find((account) => /^active$/i.test(account.status));
-  const pending = accounts.find((account) => /^(initiated|initializing|pending)$/i.test(account.status));
-  const selected = active ?? pending ?? accounts[0];
-  return {
-    connected: Boolean(active),
-    pending: Boolean(pending),
-    status: selected?.status ?? "not_connected",
-    accounts: accounts.map(publicAccount),
+function loadInventory(cfg: AppConfig, owner: string): () => Promise<InventoryServices> {
+  return async () => {
+    // A background refresh re-checks the broker first, so an outage that has
+    // ended is noticed without anyone opening a panel.
+    await primeBrokerReadiness({ turn: true });
+    const services = await fetchConnectedServices(cfg);
+    // The key or token may have changed while this was in flight: what came
+    // back belongs to whoever owns the call NOW, so it is not this owner's.
+    if (inventoryOwner(cfg) !== owner) throw new Error("Connected-app configuration changed; retry the request");
+    return services;
   };
 }
 
-function allServiceStates(
-  accountsBySlug: ReadonlyMap<string, ConnectedAccountSummary[]>,
-  toolkits: ToolkitItem[],
-): Record<string, ConnectorServiceState> {
-  const services = new Map(
-    [...accountsBySlug].map(([slug, accounts]) => [slug, serviceStateFromAccounts(accounts)]),
-  );
-  for (const toolkit of toolkits) {
-    const slug = toolkit.slug?.toLowerCase();
-    const selected = toolkit.connected_account;
-    const selectedId = validAccountId(selected?.id) ? selected.id : undefined;
-    if (!slug || (!toolkit.is_no_auth && !selectedId)) continue;
-    const existingAccounts = accountsBySlug.get(slug) ?? [];
-    const accounts = [...existingAccounts];
-    if (selectedId && !accounts.some((account) => account.id === selectedId)) {
-      accounts.push({ id: selectedId, status: selected?.status ?? "ACTIVE" });
-    }
-    const accountState = serviceStateFromAccounts(accounts);
-    const status = toolkit.is_no_auth ? "ACTIVE" : selected?.status ?? accountState.status;
-    services.set(slug, {
-      connected: toolkit.is_no_auth === true || accountState.connected || /^active$/i.test(status),
-      pending: accountState.pending || /^(initiated|initializing|pending)$/i.test(status),
-      status,
-      accounts: accountState.accounts,
-    });
-  }
-  return Object.fromEntries(services);
+/** The remembered inventory, answered at once when there is one (stale ones
+ * refresh behind it). With nothing remembered it waits up to `waitMs` and then
+ * answers `services: null, revalidating: true`. */
+export async function connectedInventory(cfg: AppConfig, options: InventoryReadOptions = {}): Promise<InventoryRead> {
+  const owner = inventoryOwner(cfg);
+  if (!owner) throw new Error(BROKER_UNAVAILABLE);
+  return readInventory(owner, loadInventory(cfg, owner), { waitMs: 3_000, ...options });
+}
+
+export type PanelInventory =
+  | { kind: "unavailable"; availability: ConnectorAvailability }
+  | { kind: "ok"; read: InventoryRead };
+
+/** What `GET /api/connectors/connected` answers with. A remembered list is
+ * served without waiting on a readiness probe (so a cached open makes no
+ * broker call before its first paint) and refreshes behind it; only a first
+ * ever open, or the panel's own Retry (`force`), waits, and then for at most
+ * three seconds. */
+export async function connectedPanelInventory(cfg: AppConfig, options: { force?: boolean } = {}): Promise<PanelInventory> {
+  const owner = inventoryOwner(cfg);
+  const remembered = owner !== null && hasInventory(owner);
+  if (!remembered || options.force) await primeBrokerReadiness();
+  const availability = connectorAvailability(cfg);
+  if (!remembered && availability !== "configured") return { kind: "unavailable", availability };
+  return { kind: "ok", read: await connectedInventory(cfg, { force: options.force }) };
+}
+
+/** The inventory for a view or a count: one shared, single-flight read. Waits
+ * only when nothing is remembered (or `fresh` is set). */
+export async function connectedServices(cfg: AppConfig, options: { fresh?: boolean } = {}): Promise<Record<string, ConnectorServiceState>> {
+  const owner = inventoryOwner(cfg);
+  if (!owner) throw new Error(BROKER_UNAVAILABLE);
+  const read = await readInventory(owner, loadInventory(cfg, owner), { fresh: options.fresh });
+  return read.services ?? {};
+}
+
+/** Something this app did may have changed the list: refetch it. `drop` for a
+ * removal, so a disconnected app is never shown as connected again. */
+function invalidateConnected(cfg: AppConfig, options: { drop?: boolean } = {}): void {
+  const owner = inventoryOwner(cfg);
+  invalidateInventory(owner, options);
+}
+
+function clearInventoryAndToolCache(): void {
+  clearInventory();
+  toolResponseCache.clear();
 }
 
 /**
  * Enumerate the user's complete connected-account inventory without depending
- * on marketplace ordering or catalog pagination.
+ * on marketplace ordering or catalog pagination. Always a broker round trip;
+ * the cached readers below are what views use.
  */
-export async function connectedServices(cfg: AppConfig): Promise<Record<string, ConnectorServiceState>> {
+async function fetchConnectedServices(cfg: AppConfig): Promise<Record<string, ConnectorServiceState>> {
   if (activeBroker(cfg)) {
     const response = await brokerRequest(cfg, "/v1/connectors/connected");
     if (!response.ok) await throwStatusFailure(response, "managed inventory");
@@ -1366,371 +1317,162 @@ export async function connectedServices(cfg: AppConfig): Promise<Record<string, 
         pending: state.pending ?? false,
         status: state.status ?? (state.connected ? "ACTIVE" : "not_connected"),
         accounts: state.accounts ?? [],
+        ...(state.statusReason ? { statusReason: state.statusReason } : {}),
+        ...(state.createdAt ? { createdAt: state.createdAt } : {}),
       }]),
     );
   }
-  if (!cfg.composio?.apiKey) throw new Error(BROKER_UNAVAILABLE);
-  const session = await ensureProjectSession(cfg);
-  const userId = session.config?.user_id ?? cfg.composio.userId;
-  if (!userId) throw new Error("Composio Session returned no user ID");
-  const [toolkits, accounts] = await Promise.all([
-    listSessionToolkits(cfg.composio.apiKey, session.session_id),
-    // Scoped project keys can grant Session reads without granting the raw
-    // connected-account list. The Session still proves which selected/no-auth
-    // toolkits belong to this installation, so retain that safe fallback.
-    listConnectedAccounts(cfg.composio.apiKey, userId, []).catch(() => []),
-  ]);
-  return allServiceStates(summarizeAccounts(accounts, []), toolkits);
+  throw new Error(BROKER_UNAVAILABLE);
 }
 
 export async function connectionStatus(cfg: AppConfig, slugs: string[]) {
-  if (activeBroker(cfg) || !cfg.composio?.apiKey) {
-    const response = await brokerRequest(cfg, `/v1/connectors?${new URLSearchParams({ services: slugs.join(",") })}`);
-    if (!response.ok) await throwStatusFailure(response, "managed");
-    const body = connectorServicesResponseSchema.parse(await response.json());
-    return body.services ?? {};
-  }
-  const session = await ensureProjectSession(cfg);
-  const params = new URLSearchParams({ limit: "50" });
-  if (slugs.length) params.set("toolkits", slugs.join(","));
-  const userId = session.config?.user_id ?? cfg.composio.userId;
-  const [res, accounts] = await Promise.all([
-    fetch(`${apiBase()}/tool_router/session/${encodeURIComponent(session.session_id)}/toolkits?${params}`, {
-      headers: projectHeaders(cfg.composio.apiKey),
-      signal: AbortSignal.timeout(15_000),
-    }),
-    // Session toolkits only include an account once it is usable. Read the
-    // account lifecycle too so the UI can distinguish an OAuth flow that is
-    // still waiting in the browser from one that expired or failed. Scoped
-    // keys may omit connected-account read permission, so this is additive:
-    // the normal session result remains the fallback.
-    userId
-      ? listConnectedAccounts(cfg.composio.apiKey, userId, slugs).catch(() => [])
-      : Promise.resolve([]),
-  ]);
-  if (!res.ok) await throwStatusFailure(res, "own key");
-  const body = toolkitPageSchema.parse(await res.json());
-  const bySlug = new Map((body.items ?? []).map((item) => [item.slug?.toLowerCase(), item]));
-  const accountsBySlug = summarizeAccounts(accounts, slugs);
-  return Object.fromEntries(
-    slugs.map((slug) => {
-      const item = bySlug.get(slug.toLowerCase());
-      const serviceAccounts = accountsBySlug.get(slug.toLowerCase()) ?? [];
-      // Mirror allServiceStates: a scoped key can be denied the raw account
-      // list while the Session still names its selected account. Synthesize
-      // that account here too, so a status poll never wipes the row the
-      // inventory paths render (merge replaces a slug's state wholesale).
-      const selected = item?.connected_account;
-      const selectedId = validAccountId(selected?.id) ? selected.id : undefined;
-      const withSelected = selectedId && !serviceAccounts.some((account) => account.id === selectedId)
-        ? [...serviceAccounts, { id: selectedId, status: selected?.status ?? "ACTIVE" }]
-        : serviceAccounts;
-      const accountState = serviceStateFromAccounts(withSelected);
-      const state = item?.connected_account?.status
-        ?? (item?.is_no_auth ? "ACTIVE" : accountState.status);
-      return [slug, {
-        connected: item?.is_no_auth === true || accountState.connected || /^active$/i.test(state),
-        pending: accountState.pending || /^(initiated|initializing|pending)$/i.test(state),
-        status: state,
-        accounts: accountState.accounts,
-      }];
-    }),
-  );
+  const owner = inventoryOwner(cfg);
+  const key = `${owner}|${[...slugs].sort().join(",")}`;
+  const running = statusFlights.get(key);
+  if (running) return running;
+  const flight = fetchConnectionStatus(cfg, slugs).then((states) => {
+    // A poll that sees a sign-in finish, fail or expire changes the list:
+    // refetch it rather than trusting a remembered "pending".
+    if (owner && statesDiffer(owner, states)) invalidateInventory(owner);
+    return states;
+  }).finally(() => { statusFlights.delete(key); });
+  statusFlights.set(key, flight);
+  return flight;
+}
+type StatusStates = Record<string, z.infer<typeof connectorServiceSchema>>;
+const statusFlights = new Map<string, Promise<StatusStates>>();
+
+function statesDiffer(owner: string, states: StatusStates): boolean {
+  const remembered = peekInventory(owner);
+  if (!remembered) return false;
+  return Object.entries(states).some(([slug, state]) => {
+    const before = remembered[slug];
+    if (!before) return state.connected || (state.pending ?? false);
+    return before.connected !== state.connected || (before.pending ?? false) !== (state.pending ?? false);
+  });
+}
+
+async function fetchConnectionStatus(cfg: AppConfig, slugs: string[]): Promise<StatusStates> {
+  const response = await brokerRequest(cfg, `/v1/connectors?${new URLSearchParams({ services: slugs.join(",") })}`);
+  if (!response.ok) await throwStatusFailure(response, "managed");
+  const body = connectorServicesResponseSchema.parse(await response.json());
+  return body.services ?? {};
 }
 
 /** Backward-compatible service disconnect: removes the Session-selected account. */
 export async function removeService(cfg: AppConfig, slug: string) {
-  if (activeBroker(cfg) || !cfg.composio?.apiKey) {
-    const response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}`, { method: "DELETE" });
-    if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
-    return removalResponseSchema.parse(await response.json());
-  }
-  const session = await ensureProjectSession(cfg);
-  const params = new URLSearchParams({ limit: "50", toolkits: slug });
-  const list = await fetch(
-    `${apiBase()}/tool_router/session/${encodeURIComponent(session.session_id)}/toolkits?${params}`,
-    { headers: projectHeaders(cfg.composio.apiKey), signal: AbortSignal.timeout(15_000) },
-  );
-  if (!list.ok) throw new Error(await responseError(list, `Composio toolkits: HTTP ${list.status}`));
-  const body = toolkitPageSchema.parse(await list.json());
-  const id = body.items?.find((item) => item.slug?.toLowerCase() === slug.toLowerCase())?.connected_account?.id;
-  if (!id) return { removed: 0 };
-  const removed = await fetch(
-    `${apiBase()}/connected_accounts/${encodeURIComponent(id)}?revoke_on_delete=true`,
-    { method: "DELETE", headers: projectHeaders(cfg.composio.apiKey), signal: AbortSignal.timeout(30_000) },
-  );
-  if (!removed.ok) throw new Error(await responseError(removed, `Composio disconnect: HTTP ${removed.status}`));
-  return { removed: 1 };
+  const response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}`, { method: "DELETE" });
+  if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
+  const answer = removalResponseSchema.parse(await response.json());
+  invalidateConnected(cfg, { drop: true });
+  return answer;
 }
 
 /** Disconnect exactly one account after proving it belongs to this user/toolkit. */
 export async function removeAccount(cfg: AppConfig, slug: string, accountId: string) {
   if (!validAccountId(accountId)) throw inputError("Invalid connected-account ID");
-  if (activeBroker(cfg) || !cfg.composio?.apiKey) {
-    const response = await brokerRequest(
-      cfg,
-      `/v1/connectors/${encodeURIComponent(slug)}/accounts/${encodeURIComponent(accountId)}`,
-      { method: "DELETE" },
-    );
-    if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
-    return removalResponseSchema.parse(await response.json());
+  const response = await brokerRequest(
+    cfg,
+    `/v1/connectors/${encodeURIComponent(slug)}/accounts/${encodeURIComponent(accountId)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
+  const answer = removalResponseSchema.parse(await response.json());
+  invalidateConnected(cfg, { drop: true });
+  return answer;
+}
+
+/** An attempt that ended without connecting. Only these are ever cleared: a
+ * disabled (INACTIVE) connection is a real one the person may want back. */
+const DEAD_ATTEMPT = /^(failed|expired)$/i;
+
+/** Remove the attempts for `slug` labelled `alias` that are no longer usable
+ * (failed or expired). Returns whether any was removed. Never throws. */
+async function clearDeadAttempts(cfg: AppConfig, slug: string, alias: string): Promise<boolean> {
+  try {
+    const services = await connectedServices(cfg, { fresh: true });
+    const dead = (services[slug]?.accounts ?? []).filter((account) =>
+      validAccountId(account.id)
+      && account.alias?.trim().toLowerCase() === alias.toLowerCase()
+      && DEAD_ATTEMPT.test(account.status));
+    let removed = false;
+    for (const account of dead) {
+      const response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}/accounts/${encodeURIComponent(account.id)}`, { method: "DELETE" });
+      if (response.ok) removed = true;
+    }
+    if (removed) invalidateConnected(cfg, { drop: true });
+    return removed;
+  } catch {
+    return false;
   }
-  const session = await ensureProjectSession(cfg);
-  const userId = session.config?.user_id ?? cfg.composio.userId;
-  if (!userId) throw new Error("Composio Session has no user ID");
-  const accounts = await listConnectedAccounts(cfg.composio.apiKey, userId, [slug]);
-  const owned = accounts.some((account) =>
-    account.id === accountId && account.toolkit?.slug?.toLowerCase() === slug.toLowerCase()
-  );
-  if (!owned) return { removed: 0 };
-  const removed = await fetch(
-    `${apiBase()}/connected_accounts/${encodeURIComponent(accountId)}?revoke_on_delete=true`,
-    { method: "DELETE", headers: projectHeaders(cfg.composio.apiKey), signal: AbortSignal.timeout(30_000) },
-  );
-  if (!removed.ok) throw new Error(await responseError(removed, `Composio disconnect: HTTP ${removed.status}`));
-  return { removed: 1 };
 }
 
 /** Mint a browser auth link for one service. Returns { url } or throws. */
 export async function authorizeService(cfg: AppConfig, slug: string, requestedAlias?: string | null) {
   const alias = normalizeAccountAlias(requestedAlias);
-  if (activeBroker(cfg) || !cfg.composio?.apiKey) {
-    const request: RequestInit = { method: "POST" };
-    if (alias) request.body = JSON.stringify({ alias });
-    const response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}/authorize`, request);
-    if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
-    const body = authUrlResponseSchema.parse(await response.json());
-    return { url: trustedAuthUrl(body.url, slug) };
+  const request: RequestInit = { method: "POST" };
+  if (alias) request.body = JSON.stringify({ alias });
+  let response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}/authorize`, request);
+  if (response.status === 409 && alias && await clearDeadAttempts(cfg, slug, alias)) {
+    // The broker counts a failed or expired attempt as a label in use. It
+    // was dead, so it is gone now: try the same label once more.
+    response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}/authorize`, request);
   }
-  const session = await ensureProjectSession(cfg);
-  const userId = session.config?.user_id ?? cfg.composio.userId;
-  if (!userId) throw new Error("Composio Session has no user ID");
-  // A scoped key may be denied account listing — authorization must still
-  // work (it always did pre-multi-account), so the alias guardrails degrade
-  // to first-account behavior, the same fallback every inventory path takes.
-  const accounts = await listConnectedAccounts(cfg.composio.apiKey, userId, [slug]).catch(() => []);
-  const serviceAccounts = accounts.filter((account) => account.toolkit?.slug?.toLowerCase() === slug.toLowerCase());
-  const usableAccounts = serviceAccounts.filter((account) => /^(active|initiated|initializing|pending)$/i.test(account.status ?? ""));
-  if (usableAccounts.length >= MULTI_ACCOUNT_CONFIG.max_accounts_per_toolkit) {
-    throw inputError(`${slug} already has the maximum of ${MULTI_ACCOUNT_CONFIG.max_accounts_per_toolkit} accounts`, 409);
-  }
-  if (usableAccounts.length > 0 && !alias) {
-    throw inputError("Add an account alias so the existing connection is not replaced");
-  }
-  if (alias && serviceAccounts.some((account) => account.alias?.trim().toLowerCase() === alias.toLowerCase())) {
-    throw inputError(`Account alias "${alias}" is already in use for ${slug}`, 409);
-  }
-  const linkRequest: AccountLinkRequest = { toolkit: slug };
-  if (alias) linkRequest.alias = alias;
-  const apiKey = cfg.composio.apiKey;
-  const link = (sessionId: string) =>
-    fetch(`${apiBase()}/tool_router/session/${encodeURIComponent(sessionId)}/link`, {
-      method: "POST",
-      headers: projectHeaders(apiKey, true),
-      body: JSON.stringify(linkRequest),
-      signal: AbortSignal.timeout(30_000),
-    });
-  let res = await link(session.session_id);
-  if (!res.ok) {
-    const message = await responseError(res, `Composio authorization: HTTP ${res.status}`);
-    if (!NEEDS_AUTH_CONFIG.test(message)) throw new Error(message);
-    // The toolkit needs one of the project's own auth configs. The Session
-    // names those only at creation, so an auth config the user created after
-    // the Session existed is invisible to it: rebuild the Session once and
-    // retry. If the project has no config for this toolkit, say what to do
-    // instead of echoing Composio's "auth_config_override" hint.
-    const slugLower = slug.toLowerCase();
-    const authConfigs = await listCustomAuthConfigs(apiKey);
-    const covered = Object.keys(authConfigs).some((key) => key.toLowerCase() === slugLower);
-    if (!covered) {
-      throw inputError(
-        `${slug} has no Composio-managed sign-in. In your Composio project, create an auth config for "${slug}" `
-          + "(Auth Configs → Create) with your own app credentials, then click Connect again.",
-      );
-    }
-    const fresh = await recreateProjectSession(cfg, userId, authConfigs);
-    res = await link(fresh.session_id);
-    if (!res.ok) throw new Error(await responseError(res, `Composio authorization: HTTP ${res.status}`));
-  }
-  const body = linkResponseSchema.parse(await res.json());
-  return { url: trustedAuthUrl(body.redirect_url, slug) };
+  if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
+  const body = authUrlResponseSchema.parse(await response.json());
+  const url = trustedAuthUrl(body.url, slug);
+  invalidateConnected(cfg);
+  return { url };
 }
 
 // ── marketplace catalog ────────────────────────────────────────────────
-export interface ToolkitCard {
-  slug: string;
-  label: string;
-  blurb: string;
-  logo: string | null;
-  /** Toolkits such as public search need no user authorization. */
-  noAuth?: boolean;
-  /** used for the client-side favicon fallback when logo is null/broken */
-  domain: string | null;
+// The catalog itself lives in app-catalog.ts; this file only says which
+// backend it is read from, so the broker choice stays in one place.
+export type ToolkitCard = CatalogApp;
+export { CURATED_SLUGS, type CatalogFallbackReason } from "./app-catalog.ts";
+
+/** Where the catalog is read from right now; null when there is nowhere. */
+export function catalogBackend(cfg: AppConfig): CatalogBackend | null {
+  const identity = selectedBackendIdentity(cfg, true);
+  if (!identity) return null;
+  const current = () => selectedBackendIdentity(cfg, true);
+  const broker = activeBroker(cfg);
+  if (broker) {
+    return {
+      kind: "broker",
+      identity,
+      // the same catalog whichever token fetched it
+      cacheKey: backendFingerprint("managed-catalog-cache", broker.url, ""),
+      current,
+      request: (query, signal) => brokerRequest(cfg, `/v1/catalog${query.size ? `?${query}` : ""}`, { signal }),
+    };
+  }
+  return null;
 }
 
-// Curated fallback — the services agentcal's connectors page ships plus the
-// long marketplace tail. Logos resolve client-side:
-// logo → favicon(domain) → monogram.
-const CURATED: ToolkitCard[] = [
-  { slug: "slack", label: "Slack", blurb: "Post updates and read channels", domain: "slack.com", logo: null },
-  { slug: "github", label: "GitHub", blurb: "Issues, pull requests, and code", domain: "github.com", logo: null },
-  { slug: "gmail", label: "Gmail", blurb: "Read and send email", domain: "gmail.com", logo: null },
-  { slug: "googlecalendar", label: "Google Calendar", blurb: "Read and create events", domain: "calendar.google.com", logo: null },
-  { slug: "googlesheets", label: "Google Sheets", blurb: "Read and update spreadsheets", domain: "sheets.google.com", logo: null },
-  { slug: "googledocs", label: "Google Docs", blurb: "Read and write documents", domain: "docs.google.com", logo: null },
-  { slug: "googledrive", label: "Google Drive", blurb: "Browse and manage files", domain: "drive.google.com", logo: null },
-  { slug: "notion", label: "Notion", blurb: "Pages and databases", domain: "notion.so", logo: null },
-  { slug: "linear", label: "Linear", blurb: "Issues and project tracking", domain: "linear.app", logo: null },
-  { slug: "sentry", label: "Sentry", blurb: "Errors and alerts", domain: "sentry.io", logo: null },
-  { slug: "posthog", label: "PostHog", blurb: "Analytics, feature flags, experiments", domain: "posthog.com", logo: null },
-  { slug: "discord", label: "Discord", blurb: "Messages and channels", domain: "discord.com", logo: null },
-  { slug: "x", label: "X (Twitter)", blurb: "Post and read on X", domain: "x.com", logo: null },
-  { slug: "reddit", label: "Reddit", blurb: "Browse and post", domain: "reddit.com", logo: null },
-  { slug: "zapier", label: "Zapier", blurb: "Connect 9,000+ apps", domain: "zapier.com", logo: null },
-  { slug: "hubspot", label: "HubSpot", blurb: "CRM search & updates", domain: "hubspot.com", logo: null },
-  { slug: "salesforce", label: "Salesforce", blurb: "CRM records and reports", domain: "salesforce.com", logo: null },
-  { slug: "jira", label: "Jira", blurb: "Issues and sprints", domain: "atlassian.com", logo: null },
-  { slug: "asana", label: "Asana", blurb: "Tasks and projects", domain: "asana.com", logo: null },
-  { slug: "trello", label: "Trello", blurb: "Boards and cards", domain: "trello.com", logo: null },
-  { slug: "dropbox", label: "Dropbox", blurb: "Files and folders", domain: "dropbox.com", logo: null },
-  { slug: "airtable", label: "Airtable", blurb: "Bases and records", domain: "airtable.com", logo: null },
-  { slug: "figma", label: "Figma", blurb: "Files and comments", domain: "figma.com", logo: null },
-  { slug: "stripe", label: "Stripe", blurb: "Payments and customers", domain: "stripe.com", logo: null },
-];
-
-// The connection service's own toolkits (its search, its helpers) are
-// plumbing, not apps, and product copy never names the service.
-const SERVICE_NAME = /composio/i;
-
-let toolkitCache: { at: number; cards: ToolkitCard[]; identity: string } | null = null;
-let toolkitRequestGeneration = 0;
-const MAX_CATALOG_PAGES = 20;
-const MAX_CATALOG_ITEMS = 10_000;
+/** Which catalog the copy on disk belongs to, known before the broker's
+ * readiness is: the broker in use, else the Flux broker this build names,
+ * else the Murage Worker. Never a credential. */
+export function catalogCacheTarget(cfg: AppConfig): { cacheKey: string; identity: string } | null {
+  const ready = catalogBackend(cfg);
+  if (ready) return { cacheKey: ready.cacheKey, identity: ready.identity };
+  const url = fluxBrokerUrl() || legacyBrokerAccess()?.url || "";
+  return url ? { cacheKey: backendFingerprint("managed-catalog-cache", url, ""), identity: "" } : null;
+}
 
 /**
- * Marketplace catalog. Tries the v3 toolkits API (official names,
- * descriptions, logos — cached 10 min); falls back to the curated list.
+ * The whole catalog (every card held), or the curated set with the reason it
+ * fell back. Waits for a walk when nothing is held yet; `waitMs` bounds that.
  */
-export async function listToolkits(cfg: AppConfig, options: { signal?: AbortSignal } = {}): Promise<{ cards: ToolkitCard[]; source: "api" | "curated" }> {
-  const generation = ++toolkitRequestGeneration;
-  const identity = selectedBackendIdentity(cfg, true);
-  if (options.signal?.aborted) return { cards: CURATED, source: "curated" };
-  if (identity && toolkitCache?.identity === identity && Date.now() - toolkitCache.at < 10 * 60_000) {
-    return { cards: toolkitCache.cards, source: "api" };
-  }
-  const backendKey = activeBroker(cfg) ? undefined : cfg.composio?.apiKey;
-  if (backendKey || activeBroker(cfg)) {
-    // One budget for the whole catalog, rather than multiplying latency by
-    // the page ceiling. Cancellation/identity changes never publish old data.
-    const deadline = AbortSignal.timeout(15_000);
-    const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
-    const cardsBySlug = new Map<string, ToolkitCard>();
-    const seenCursors = new Set<string>();
-    let cursor: string | undefined;
-    let itemCount = 0;
-    let complete = false;
-    // What the service says about its own catalog (upstream #1615,
-    // 59f14174). A walk can end "cleanly", with no cursor, on page 1 of 4,
-    // or keep minting fresh cursors for the same page. Neither may pass for
-    // the whole catalog, and the refusal says how much did arrive.
-    let lastReportedPage: number | undefined;
-    let reportedTotalPages: number | undefined;
-    let reportedTotalItems: number | undefined;
-    let stop = "limit";
-    for (let page = 0; page < MAX_CATALOG_PAGES && itemCount < MAX_CATALOG_ITEMS; page += 1) {
-      if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
-      try {
-        const params = new URLSearchParams({ limit: "500", sort_by: "usage" });
-        if (cursor) params.set("cursor", cursor);
-        const res = backendKey
-          ? await fetch(`${toolkitBase()}/toolkits?${params}`, { headers: { "x-api-key": backendKey }, signal })
-          : await brokerRequest(cfg, cursor ? `/v1/catalog?${new URLSearchParams({ cursor })}` : "/v1/catalog", { signal });
-        if (!res.ok) { stop = "http-error"; break; }
-        const json: any = await res.json();
-        if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
-        const items = json.items ?? json.data ?? [];
-        if (!Array.isArray(items)) { stop = "bad-page"; break; }
-        const boundedItems = items.slice(0, MAX_CATALOG_ITEMS - itemCount);
-        itemCount += boundedItems.length;
-        for (const t of boundedItems) {
-          if (!t || typeof t !== "object") continue;
-          const slug = String(t.slug ?? t.key ?? t.name ?? "").trim().toLowerCase();
-          // the connection service's own toolkit is plumbing, not an app
-          const label = String(t.name ?? t.slug ?? "");
-          if (!slug || SERVICE_NAME.test(slug) || SERVICE_NAME.test(label) || cardsBySlug.has(slug)) continue;
-          const blurb = String(t.meta?.description ?? t.description ?? "");
-          cardsBySlug.set(slug, {
-            slug,
-            label,
-            // product copy never names the connection service, even in an
-            // app's own description
-            blurb: SERVICE_NAME.test(blurb) ? "" : blurb.slice(0, 90),
-            logo: t.meta?.logo ?? t.logo ?? null,
-            noAuth: t.no_auth === true,
-            domain: null,
-          });
-        }
-        const totalItems = Number(json.total_items);
-        if (Number.isSafeInteger(totalItems) && totalItems > 0) reportedTotalItems = totalItems;
-        const totalPages = Number(json.total_pages);
-        if (Number.isSafeInteger(totalPages) && totalPages > 0) reportedTotalPages = totalPages;
-        const reportedPage = Number(json.current_page);
-        if (Number.isSafeInteger(reportedPage)) {
-          // A page that does not advance is a replay behind a fresh cursor.
-          if (lastReportedPage !== undefined && reportedPage <= lastReportedPage) { stop = "page-stuck"; break; }
-          lastReportedPage = reportedPage;
-        }
-        const next = typeof json.next_cursor === "string" ? json.next_cursor.trim() : "";
-        const lastPage = lastReportedPage !== undefined && reportedTotalPages !== undefined && lastReportedPage >= reportedTotalPages;
-        if (!next || lastPage) {
-          const pagesShort = lastReportedPage !== undefined && reportedTotalPages !== undefined && lastReportedPage < reportedTotalPages;
-          // Raw records, not unique cards: a catalog that lists one app
-          // twice is complete, and failing closed on it would empty the page.
-          const itemsShort = reportedTotalItems !== undefined && itemCount < reportedTotalItems;
-          complete = boundedItems.length === items.length && !pagesShort && !itemsShort;
-          stop = complete ? "end" : "ended-short";
-          break;
-        }
-        if (!/^[A-Za-z0-9+/_=-]{1,256}$/.test(next) || seenCursors.has(next)) { stop = "cursor-repeated"; break; }
-        seenCursors.add(next);
-        cursor = next;
-      } catch {
-        // Fail below without leaking upstream details or presenting a partial
-        // catalog as complete. First-page failures retain the curated fallback.
-        stop = "network";
-        break;
-      }
-    }
-    if (signal.aborted || selectedBackendIdentity(cfg, true) !== identity) return { cards: CURATED, source: "curated" };
-    if (!complete && cardsBySlug.size) {
-      // Still fails closed: a partial catalog is never served or cached. Only
-      // counts are reported, never upstream text.
-      const loaded = cardsBySlug.size.toLocaleString("en-US");
-      const of = reportedTotalItems !== undefined && reportedTotalItems > cardsBySlug.size ? ` of ${reportedTotalItems.toLocaleString("en-US")}` : "";
-      console.warn(`[connectors] app catalog paging stopped early (${stop}) after ${loaded}${of} apps`);
-      throw new Error(`The app catalog could not be loaded completely. Please retry. Loaded ${loaded}${of} apps.`);
-    }
-    if (cardsBySlug.size) {
-      const cards = [...cardsBySlug.values()];
-      if (complete && identity && generation === toolkitRequestGeneration) toolkitCache = { at: Date.now(), cards, identity };
-      return { cards, source: "api" };
-    }
-  }
-  return { cards: CURATED, source: "curated" };
+export async function listToolkits(
+  cfg: AppConfig,
+  options: { signal?: AbortSignal; waitMs?: number; force?: boolean } = {},
+): Promise<CatalogView> {
+  return loadCatalog(catalogBackend(cfg), options);
 }
 
+/** The card for one slug. Never walks the whole catalog: a bot asking to
+ * connect an app must not wait on 1,500 cards. */
 export async function toolkitCard(cfg: AppConfig, slug: string): Promise<ToolkitCard> {
-  const normalized = slug.toLowerCase();
-  const { cards } = await listToolkits(cfg);
-  return cards.find((card) => card.slug.toLowerCase() === normalized)
-    ?? CURATED.find((card) => card.slug === normalized)
-    ?? {
-      slug: normalized,
-      label: normalized.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
-      blurb: "Connect this app so your bot can continue",
-      logo: null,
-      domain: null,
-    };
+  return catalogApp(catalogBackend(cfg), slug);
 }
-
-export const CURATED_SLUGS = CURATED.map((c) => c.slug);

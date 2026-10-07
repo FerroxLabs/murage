@@ -18,7 +18,7 @@
 // drivers/ nested; import.meta.url still resolves to the same location, so
 // that lookup is unaffected.
 import { build } from "esbuild";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -48,6 +48,7 @@ const ENTRY_POINTS = [
   "windows-backup-resources.ts",
   "installation-windows-backup-transport.ts",
   "memory/worker.ts",
+  "bot-package-guard-worker.ts",
   "memory/restore.ts",
   "drivers/memory-proxy.ts",
   "index.ts",
@@ -64,6 +65,7 @@ const ENTRY_POINTS = [
   "permission-proxy.ts",
   "connector-proxy.ts",
   "drivers/agents-proxy.ts",
+  "drivers/remote-mcp-proxy.ts",
   "drivers/dweb-proxy.ts",
   "drivers/phone-proxy.ts",
   "drivers/browser-proxy.ts",
@@ -88,6 +90,30 @@ await build({
   plugins: [yamlEsmPlugin],
   external: ["@huggingface/transformers"],
 });
+
+// The WhatsApp bridge runs as its own forked process and imports Baileys, which is an ESM package
+// ("type":"module") with a wasm dependency and must not be inlined. It gets its own ESM build with `baileys`
+// and `jimp` external (the mcp-server build below is the pattern); it is deliberately NOT in ENTRY_POINTS,
+// whose build has only @huggingface/transformers external and would inline Baileys. The staged runtime below
+// ships the installed packages under dist-server/node_modules and records this bundle's sha256
+// (WHATSAPP-DESIGN.md 0a W1.1, 1.3).
+const WHATSAPP_ENTRY_POINTS = ["channels/whatsapp/bridge.ts", "channels/whatsapp/bridge-host.ts"].filter((entry) => existsSync(join(server, entry)));
+if (WHATSAPP_ENTRY_POINTS.length > 0) {
+  await build({
+    entryPoints: WHATSAPP_ENTRY_POINTS.map((entry) => join(server, entry)),
+    bundle: true,
+    platform: "node",
+    target: "node20",
+    format: "esm",
+    outbase: server,
+    outdir: join(root, "dist-server"),
+    banner: { js: 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
+    allowOverwrite: true,
+    logLevel: "info",
+    external: ["baileys", "jimp"],
+  });
+}
+await import("./stage-whatsapp-runtime.mjs");
 
 copyFileSync(join(root,"shared","memory-model-manifest.json"),join(root,"dist-server","memory-model-manifest.json"));
 await import("./stage-memory-runtime.mjs");
@@ -132,3 +158,7 @@ mkdirSync(dirname(piMcpExtDest), { recursive: true });
 copyFileSync(piMcpExtSrc, piMcpExtDest);
 // pi-permission-gate.ts rides along the same way: pi loads it with `-e`.
 copyFileSync(join(server, "drivers", "pi-permission-gate.ts"), join(root, "dist-server", "drivers", "pi-permission-gate.ts"));
+
+// PowerShell owns Windows reflection jobs in both launch and restart recovery.
+mkdirSync(join(root, "dist-server", "memory"), { recursive: true });
+copyFileSync(join(server, "memory", "pip-job-supervisor.ps1"), join(root, "dist-server", "memory", "pip-job-supervisor.ps1"));

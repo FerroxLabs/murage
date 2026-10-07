@@ -10,7 +10,7 @@ description: |
   (use pantry-staples-system), or food safety storage rules (use food-storage-safety).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "meal-planning cooking planning"
   category: "home-household"

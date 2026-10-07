@@ -5,7 +5,7 @@ description: |
   Do NOT use for sales pitch decks (use sales-pitch-deck), fundraising financial narratives (use fundraising-narrative), or brand positioning (use brand-positioning).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning presentation branding"
   category: "business-strategy"

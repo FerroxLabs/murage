@@ -93,14 +93,18 @@ export const WORKSPACE_REVISION_SETTLE_MS = 5_000;
 export const VOLUME_CLOCK_RETRY_MS = 60_000;
 const DIGEST_CACHE_MAX = 20_000;
 /** Date.now() is whole milliseconds; a stamp is sub-millisecond. A stamp
- * taken just before the clock was read may sit up to one unit past it. */
-const PROBE_CLOCK_SLACK_MS = 2;
+ * taken just before the clock was read may sit up to one unit past it. On
+ * Windows NTFS stamps read ahead of Date.now() by up to ~2.2 ms (measured on
+ * the 0.1.61 Windows VM), so the probe allowed there is one system tick. */
+const PROBE_CLOCK_SLACK_MS = process.platform === "win32" ? 16 : 2;
 /** How far the probe pushes mtime into the past: well past any tick. */
 const PROBE_MTIME_BACK_MS = 10_000;
-/** Linux stamps come from the coarse kernel clock (up to 10 ms a tick), so a
- * utimes inside the tick of the write cannot move ctime past it. The probe
- * waits this long and tries again, a bounded number of times. */
-const PROBE_TICK_WAIT_MS = 15;
+/** Linux stamps come from the coarse kernel clock (up to 10 ms a tick), and
+ * Windows from its system tick (15.6 ms), so a utimes inside the tick of the
+ * write cannot move ctime past it. The probe waits a little over one tick
+ * and tries again, a bounded number of times. At 15 ms a Windows probe could
+ * wait a whole tick short and wrongly give up the fast path (0.1.61 VM). */
+const PROBE_TICK_WAIT_MS = 20;
 const PROBE_TICK_ATTEMPTS = 4;
 
 /** Same fields as the artifact store's source fingerprint. */

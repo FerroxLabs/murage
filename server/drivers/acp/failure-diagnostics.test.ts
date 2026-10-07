@@ -40,3 +40,28 @@ describe("Fuigo observation fences", () => {
     expect(observations.kind()).toBeUndefined();
   });
 });
+
+// Fuigo stamps its events with its own process clock. On Windows two
+// processes' Date.now() can disagree by up to a system tick, so an event sent
+// right after the prompt read a few ms "before" it, or "after now", and its
+// failure category was dropped (acp.test.ts, 2 in 8 on the Windows VM).
+describe("Fuigo event stamps across process clocks", () => {
+  it("accepts an event stamped within one clock tick of the prompt start or of now", () => {
+    for (const offset of [-15, +15]) {
+      const observations = createFuigoFailureObservations();
+      const started = Date.now();
+      const message = notification();
+      message.params._meta.agentTimestampMs = offset < 0 ? started + offset : Date.now() + offset;
+      observations.observe(message, { ...context(), promptStartedAt: started });
+      expect(observations.kind(), `offset ${offset}`).toBe("api");
+    }
+  });
+  it("still refuses an event from well before the prompt or well in the future", () => {
+    for (const stamp of [Date.now() - 60_000, Date.now() + 60_000]) {
+      const observations = createFuigoFailureObservations();
+      const message = notification(); message.params._meta.agentTimestampMs = stamp;
+      observations.observe(message, { ...context(), promptStartedAt: Date.now() - 10 });
+      expect(observations.kind()).toBeUndefined();
+    }
+  });
+});

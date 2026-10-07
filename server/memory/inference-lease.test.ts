@@ -46,14 +46,13 @@ it("one lease owns the existing slot for the whole cycle and refuses overlapping
   }finally{release();await held;}
   expect(calls).toBe(1);expect((await extractCandidates("source",async()=>"[]",signal())).status).toBe("complete");
 });
-it("quota, cancellation, and USD pricing refusals are typed not-started outcomes with no provider call",async()=>{
+it("quota and cancellation refusals are typed not-started outcomes with no provider call",async()=>{
   const provider=vi.fn(async()=>"[]");
   await withMemoryInferenceLease(async lease=>{
     expect(await lease.request(provider,"Source",2001,signal(),messages())).toEqual({status:"notStarted",reason:"invalid-input"});
     const cancelled=new AbortController();cancelled.abort();expect(await lease.request(provider,"Source",100,cancelled.signal,messages())).toEqual({status:"notStarted",reason:"cancelled"});
-    updateMemoryLearning(database(),{dailyCostUsd:1},readMemoryLearning(database()).revision);
-    expect(await lease.request(provider,"Source",100,signal(),messages())).toEqual({status:"notStarted",reason:"cost-estimate-unavailable"});
-    updateMemoryLearning(database(),{dailyCostUsd:null,callsPerMinute:0},readMemoryLearning(database()).revision);
+    expect(()=>updateMemoryLearning(database(),{dailyCostUsd:1},readMemoryLearning(database()).revision)).toThrow();
+    updateMemoryLearning(database(),{callsPerMinute:0},readMemoryLearning(database()).revision);
     expect(await lease.request(provider,"Source",100,signal(),messages())).toEqual({status:"notStarted",reason:"budget-exhausted"});
   });expect(provider).not.toHaveBeenCalled();
   expect(database().prepare("SELECT 1 FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()).toBeUndefined();
@@ -65,7 +64,8 @@ it("reflection uses the same durable quota and frozen framed messages with its s
     supplied[0]!.content="Mutated after submission";return work;
   });
   expect(result).toMatchObject({status:"complete",value:{status:"complete",text:"reflection"}});expect(seen.maximum).toBe(8000);expect(seen.dispatch.purpose).toBe("reflection");expect(seen.dispatch.messages[0].content).toBe("Classify source assertions");expect(Object.isFrozen(seen.dispatch.messages)).toBe(true);
-  const row=database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()!;const budget=JSON.parse(String(row.intent));expect(budget.output).toBe(8000);expect(budget.input).toBe(Buffer.byteLength(JSON.stringify(seen.dispatch.messages)));expect(budget.calls).toBe(1);
+  // V2 reserves estimated tokens for the exact frozen messages, not bytes.
+  const row=database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()!;const budget=JSON.parse(String(row.intent));expect(budget.output).toBe(8000);expect(budget.input).toBe(Math.ceil(Buffer.byteLength(JSON.stringify(seen.dispatch.messages))/3.5));expect(budget.calls).toBe(1);
 });
 it("network failures remain thrown and a released lease cannot start another request",async()=>{
   let retained!:MemoryInferenceLease;

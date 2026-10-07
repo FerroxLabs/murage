@@ -6,7 +6,7 @@ description: |
   Do NOT use for family therapy sessions, crisis intervention, or workplace meeting facilitation.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events relationships template"
   category: "family-relationships"

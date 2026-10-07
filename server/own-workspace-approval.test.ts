@@ -205,10 +205,12 @@ describe("escape attempts — every one of these must still ask", () => {
   it("a Windows drive-letter or UNC spelling", () => {
     expect(asks([`C:\\Users\\Ada\\data\\workspaces\\${BOT}\\MEMORY.md`])).toBe(false);
     expect(asks([`\\\\server\\share\\workspaces\\${BOT}\\MEMORY.md`])).toBe(false);
-    // The real managed path behind the Windows "no normalization" prefix.
-    // On Windows this names the bot's own MEMORY.md (no escape); making it
-    // ask anyway is scheduled for 0.1.61; until then this runs off Windows.
-    if (process.platform !== "win32") expect(asks([`\\\\?\\${join(botDir, "MEMORY.md")}`])).toBe(false);
+    // The real managed path behind the Windows "no normalization" and device
+    // prefixes. On Windows these name the bot's own MEMORY.md, but no engine
+    // writes its own bookkeeping that way, so they ask anyway (G14).
+    expect(asks([`\\\\?\\${join(botDir, "MEMORY.md")}`])).toBe(false);
+    expect(asks([`\\\\.\\${join(botDir, "MEMORY.md")}`])).toBe(false);
+    expect(asks([`//?/${join(botDir, "MEMORY.md")}`])).toBe(false);
   });
 
   it("a tool that is not one of the engine's own file tools", () => {

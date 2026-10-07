@@ -6,7 +6,7 @@ description: |
   Do NOT use for commercial tenancies, landlord-side guidance, legal advice on specific disputes, or lease review before signing (use lease-agreement-reviewer instead).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "legal-literacy tenant-rights guide checklist"
   category: "legal-civic"

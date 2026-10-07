@@ -212,6 +212,8 @@ test("pin, unpin and delete still work from the grouped list", async ({ page }) 
   const row = list.getByRole("button", { name: /^From Sable/ }).locator("xpath=..");
   await row.hover();
   await row.getByRole("button", { name: "Delete task", exact: true }).click();
+  // Since 0.1.60 the row asks first and says what goes (10963286).
+  await list.getByRole("group", { name: /^Delete From Sable.*\?$/ }).getByRole("button", { name: "Delete", exact: true }).click();
   await expect(list.getByRole("button", { name: /^From Sable/ })).toHaveCount(0);
   const state = await (await fetch(`${fixture.info.url}/api/bots?messages=0`, { headers: await desktopHeaders() })).json();
   const tasks = state.bots.find((bot: any) => bot.id === ids.bot).tasks;

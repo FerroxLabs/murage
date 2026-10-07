@@ -1,0 +1,68 @@
+<!doctype html>
+<!-- Copyright 2026 Ferrox Labs. SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- CONTENT BLOCK: Edit the title, description and page copy below. Keep field names, IDs and form attributes together when changing them. -->
+  <title>Start your next project</title>
+  <meta name="description" content="Share your idea with the project team.">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<main id="main">
+  <p class="eyebrow">Your project name</p>
+  <h1>Make room for your next idea</h1>
+  <p>Turn the project you have in mind into a clear next step. Tell us what you would like to create.</p>
+  <h2>What we can explore together</h2>
+  <ul><li>A clear direction for your project</li><li>Practical ideas that fit your goals</li><li>A next step you can put into action</li></ul>
+  <section class="card" aria-labelledby="contact-heading">
+    <h2 id="contact-heading">Start a conversation</h2>
+    <p>Share your email so our team can reply about your project.</p>
+    <form name="project-enquiry" method="POST" action="thank-you.html" data-netlify="true" netlify-honeypot="bot-field">
+  <input type="hidden" name="form-name" value="project-enquiry">
+  <p hidden><label>Leave this field empty <input name="bot-field" autocomplete="off" tabindex="-1"></label></p>
+      <label for="name">Your name (optional)</label><input id="name" name="name" autocomplete="name" maxlength="100">
+      <label for="email">Email address (required)</label><input id="email" name="email" type="email" autocomplete="email" required aria-describedby="privacy">
+      <label for="message">What would you like to create? (optional)</label><textarea id="message" name="message" rows="4" maxlength="2000"></textarea>
+      <label class="choice"><input type="checkbox" name="contact-consent" value="yes" required>I agree to be contacted about this enquiry (required).</label>
+      <p id="privacy">Your enquiry is stored with Netlify Forms for the project team to read and reply.</p>
+      <button type="submit">Send my enquiry</button>
+    </form>
+  </section>
+  <footer><p>Your project name</p></footer>
+</main>
+<!-- END CONTENT BLOCK. Appearance and behaviour follow. -->
+<style>
+  :root { color-scheme: light; font-family: system-ui, sans-serif; color: #182c29; background: #f4f7f4; line-height: 1.6; }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  main { width: min(100% - 2rem, 56rem); margin: 2rem auto; }
+  h1, h2, h3, legend { line-height: 1.2; overflow-wrap: anywhere; }
+  h1 { font-size: clamp(2rem, 7vw, 3.5rem); max-width: 20ch; }
+  h2 { font-size: 1.6rem; }
+  p { max-width: 65ch; }
+  a { color: #135e50; text-underline-offset: .2em; }
+  .eyebrow { font-weight: 700; letter-spacing: .06em; }
+  .card, fieldset { background: #fff; border: 1px solid #687b73; border-radius: 1rem; padding: 1.25rem; margin: 1.5rem 0; min-width: 0; }
+  legend { font-size: 1.25rem; font-weight: 700; padding: .25rem; }
+  label { display: block; margin: .8rem 0; }
+  input, select, textarea, button { font: inherit; }
+  input:not([type=radio]):not([type=checkbox]):not([type=hidden]), select, textarea { display: block; width: 100%; min-height: 2.75rem; border: 1px solid #687b73; border-radius: .35rem; padding: .65rem; color: #182c29; background: #fff; }
+  input[type=radio], input[type=checkbox] { width: 1.25rem; height: 1.25rem; vertical-align: middle; margin: .3rem .5rem .3rem 0; accent-color: #135e50; flex-shrink: 0; }
+  .choice { display: flex; align-items: center; min-height: 2.75rem; padding: .4rem; gap: .25rem; }
+  button, .button { display: inline-block; min-height: 2.75rem; padding: .7rem 1.2rem; border: 2px solid #135e50; border-radius: .5rem; background: #135e50; color: #fff; font-weight: 700; text-decoration: none; cursor: pointer; }
+  .secondary { background: #fff; color: #135e50; }
+  :focus-visible { outline: 3px solid #843e0d; outline-offset: 4px; }
+  .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1.5rem 0; }
+  .grid { display: grid; gap: 1rem; }
+  .grid .card { margin: 0; }
+  .skip { position: absolute; top: .5rem; left: .5rem; transform: translateY(-200%); background: #fff; padding: .5rem; z-index: 1; }
+  .skip:focus { transform: none; }
+  [hidden] { display: none !important; }
+  footer { margin-top: 3rem; border-top: 1px solid #687b73; padding-top: 1rem; }
+  @media (min-width: 42rem) { main { margin: 4rem auto; } .grid { grid-template-columns: repeat(3, 1fr); } .card, fieldset { padding: 1.75rem; } }
+</style>
+
+</body>
+</html>

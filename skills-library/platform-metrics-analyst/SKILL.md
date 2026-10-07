@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of platform metrics analyst or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "devops cloud template guide sql api-design testing automation"
   category: "devops-cloud"

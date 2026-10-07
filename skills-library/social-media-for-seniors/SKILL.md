@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of social media for seniors or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching study-skills stress-management guide beginner-friendly quick-reference planning safety"
   category: "education"

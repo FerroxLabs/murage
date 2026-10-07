@@ -6,7 +6,7 @@ description: |
   Do NOT use for interpreting specific lab values, diagnosing conditions from results, or making treatment recommendations based on lab numbers.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "nutrition teaching guide"
   category: "health-wellness"

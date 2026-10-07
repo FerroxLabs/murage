@@ -4,7 +4,7 @@ description: |
   Complete music production guidance from DAW selection through distribution. Covers arrangement, recording, mixing (EQ, compression, reverb, panning), mastering chain, sample libraries, MIDI workflow, collaboration with artists, and releasing music on streaming platforms. Use when the user asks about music producer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design guide"
   category: "design-creative"

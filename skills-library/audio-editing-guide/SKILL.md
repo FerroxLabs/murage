@@ -11,7 +11,7 @@ description: |
   podcast-interview-guide), or voiceover script writing (use voiceover-script).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "podcast checklist template"
   category: "design-creative"

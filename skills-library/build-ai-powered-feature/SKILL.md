@@ -21,7 +21,7 @@ trigger_phrases: >-
   I want to add AI to my product I need to build an AI feature How do I
   integrate an LLM into my app I want to add machine learning to my application
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: step-by-step planning
   category: software-project

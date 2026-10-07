@@ -185,18 +185,66 @@ export function createScrollback(deps: ScrollbackDeps) {
   return { loadOlder, loadThrough };
 }
 
-/** What a call should still read out: messages after the newest one it has
- * already heard (or found on screen when it started). A page of scrollback
- * prepended mid-call is history, not news, and must not be recited — the
- * held transcript only ever grows at the front through such a page, since
- * every live message is appended. */
-export function unheardMessages<T extends { id: string }>(messages: readonly T[], heard: ReadonlySet<string>): T[] {
-  let newestHeard = -1;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    if (heard.has(messages[index]!.id)) {
-      newestHeard = index;
+/** What a call should still read out: every message it has not heard that
+ * reached the client after the oldest one it has (the transcript it found on
+ * screen when it started, plus what it heard since). Position is taken in
+ * `arrival` order, the thread's held rows as they reached the client: a page
+ * of scrollback prepended mid-call lands in front of everything, so it is
+ * history, not news, and is never recited, while a live message is always
+ * added behind what the client already held. In the transcript a live
+ * message can still sit anywhere: text a Fuigo hosted tool row interrupted
+ * is saved in front of that row once its response completes (Store
+ * insertMessageBefore), even in front of the oldest row a phone's one-row
+ * boot page held. That text is news too; whether a later reply was already
+ * said is the caller's choice (see heardReplyAfter). Without `arrival` the
+ * transcript order stands in for it. */
+export function unheardMessages<T extends { id: string }>(
+  messages: readonly T[],
+  heard: ReadonlySet<string>,
+  arrival: readonly { id: string }[] = messages,
+): T[] {
+  let oldestHeard = -1;
+  for (let index = 0; index < arrival.length; index++) {
+    if (heard.has(arrival[index]!.id)) {
+      oldestHeard = index;
       break;
     }
   }
-  return messages.slice(newestHeard + 1).filter((message) => !heard.has(message.id));
+  const live = new Set<string>();
+  for (let index = oldestHeard + 1; index < arrival.length; index++) live.add(arrival[index]!.id);
+  return messages.filter((message) => live.has(message.id) && !heard.has(message.id));
+}
+
+/** What a call counts as already heard when it starts: every row on screen
+ * and every other row the thread already holds. A lead-in saved in front of a
+ * row the client has not loaded is held but not yet on screen; loading the
+ * older page mid-call joins it to the transcript at a storage position after
+ * the rows the call heard, so without this it would be recited as news. Only
+ * rows that reach the client live during the call may be narrated. */
+export function callStartHeard(visible: readonly { id: string }[], held: readonly { id: string }[]): Set<string> {
+  const heard = new Set<string>();
+  for (const message of visible) heard.add(message.id);
+  for (const message of held) heard.add(message.id);
+  return heard;
+}
+
+/** True when a message the call already heard, and that `isReply` accepts,
+ * sits after `message` in the transcript. A call says only the newest reply
+ * of a burst; text saved in front of an answer that was already spoken is
+ * the lead-in to that answer, and reading it out afterwards would put the
+ * conversation out of order. With no later reply heard, the inserted text is
+ * the only answer the person gets, so it is said. */
+export function heardReplyAfter<T extends { id: string }>(
+  messages: readonly T[],
+  heard: ReadonlySet<string>,
+  message: T,
+  isReply: (candidate: T) => boolean,
+): boolean {
+  const index = messages.findIndex((candidate) => candidate.id === message.id);
+  if (index < 0) return false;
+  for (let later = index + 1; later < messages.length; later++) {
+    const candidate = messages[later]!;
+    if (heard.has(candidate.id) && isReply(candidate)) return true;
+  }
+  return false;
 }

@@ -71,9 +71,22 @@ test("edit and save the house rules, switch them off, and reset to the default",
   expect((await rules()).isDefault).toBe(true);
   await page.screenshot({ path: info.outputPath("house-rules-dark.png"), fullPage: true });
 
-  // Add a section at the top with the "/" menu.
-  await box.locator("h1").first().click();
-  await page.keyboard.press("End");
+  // Add a section at the top with the "/" menu. The caret must really sit at
+  // the end of the title first: a click that lands while the editor is still
+  // taking focus leaves the caret at the start of the document (seen on CI,
+  // the new section then went in above the title).
+  await expect(async () => {
+    await box.locator("h1").first().click();
+    await page.keyboard.press("End");
+    expect(await page.evaluate(() => {
+      const selection = getSelection()!;
+      const node = selection.anchorNode;
+      const title = (node?.nodeType === Node.ELEMENT_NODE ? node as Element : node?.parentElement)?.closest("h1");
+      if (!title || !selection.isCollapsed) return false;
+      const rest = document.createRange(); rest.setStart(node!, selection.anchorOffset); rest.setEndAfter(title);
+      return rest.toString() === "";
+    })).toBe(true);
+  }).toPass({ timeout: 10_000 });
   await page.keyboard.press("Enter");
   await page.keyboard.type("/");
   await page.getByRole("listbox", { name: "Insert a block" }).getByRole("option", { name: /^Heading 2/ }).click();

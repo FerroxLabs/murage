@@ -4,7 +4,7 @@ description: |
   Complete guide to creating a game in 48 hours covering the most common scoping mistakes, tool selection (Unity, Godot, Pico-8), team roles and communication, time management, idea generation from themes, polish priorities, submission best practices, and post-jam development paths. Use when the user asks about game jam guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design guide step-by-step"
   category: "game-development"

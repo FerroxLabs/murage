@@ -43,7 +43,7 @@ function routeVia(part: "host" | "lookup", presets: ProviderPreset[]): VoiceEndp
   const saved = presets.filter((p) => keyFor(p));
   return voiceEndpoint(part, {
     list: () => saved.map((p) => ({ id: p, preset: p, label: p, enabled: true })),
-    resolve: (id) => ({ baseUrl: PROVIDER_PRESETS[id as ProviderPreset].baseUrl, key: keyFor(id as ProviderPreset), preset: id as ProviderPreset, label: id }),
+    resolve: (id) => ({ baseUrl: PROVIDER_PRESETS[id as keyof typeof PROVIDER_PRESETS].baseUrl, key: keyFor(id as ProviderPreset), preset: id as ProviderPreset, label: id }),
   });
 }
 const NOW = Date.now();

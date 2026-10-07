@@ -1,8 +1,9 @@
 ---
 name: beacon-linkedin
-description: "As of: 2026-05-16"
+description: "Plan LinkedIn for B2B reach and personal brands. Choose between a personal profile and a company page, set the post mix and rhythm, and decide what to measure."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "beacon"
 ---
@@ -22,24 +23,24 @@ Trigger phrases:
 - "What should I post on LinkedIn?"
 - "How do I get leads from LinkedIn?"
 - "Help me build a personal brand on LinkedIn."
-- "Company page vs. personal profile — which works?"
+- "Company page vs. personal profile, which works?"
 
 ## Procedure
 
 **1. Pick personal profile or company page (or both).** As of 2026-05-16, personal profiles structurally out-perform company pages on organic reach. If the brief is B2B inbound or personal brand, lead with personal profiles. Use company pages for employee-advocacy amplification and ad-account anchoring, not as the primary content surface.
 
-**2. Assign LinkedIn a stage.** Most B2B uses serve Think (problem framing, comparison, category education) and Care (customer stories, retention signals to existing buyers). See-stage works for category-defining executives; Do-stage typically lives in DMs and ads, not in feed posts.
+**2. Assign LinkedIn a stage.** Most B2B uses serve Consideration (problem framing, comparison, category education) and Retention (customer stories, retention signals to existing buyers). awareness-stage works for category-defining executives; buying-stage typically lives in DMs and ads, not in feed posts.
 
 **3. Build the post mix.**
 
-- *Think-stage text post (most common):* hook line, narrative middle, takeaway, single CTA. 1,200-1,800 characters typically optimal as of 2026-05-16 for in-feed dwell time.
-- *Think-stage carousel (PDF document):* 8-12 slides, framework or process content, optimized for saves.
-- *Care-stage story post:* customer transformation, lesson learned, post-mortem on a public failure.
+- *Consideration-stage text post (most common):* hook line, narrative middle, takeaway, single CTA. 1,200-1,800 characters typically optimal as of 2026-05-16 for in-feed dwell time.
+- *Consideration-stage carousel (PDF document):* 8-12 slides, framework or process content, optimized for saves.
+- *Retention-stage story post:* customer transformation, lesson learned, post-mortem on a public failure.
 - *Lightweight engagement:* polls (low-frequency, high-visibility), comments on others' posts (compounds your distribution).
 
-**4. Cadence and dwell mechanics.** A sustainable B2B posting cadence is 3-5 posts per week per profile. The platform rewards in-feed dwell time more than vanity engagement — long posts that earn read-through outperform short posts with high likes. Spec hook lines that earn the "see more" click; bury the punchline.
+**4. Cadence and dwell mechanics.** A sustainable B2B posting cadence is 3-5 posts per week per profile. The platform rewards in-feed dwell time more than vanity engagement, long posts that earn read-through outperform short posts with high likes. Spec hook lines that earn the "see more" click; bury the punchline.
 
-**5. Measurement by stage.** Think-stage: impressions among target titles, comment-to-impression ratio, profile views from non-followers, DM-initiation rate. Care-stage: re-share by existing customers, employee-advocacy amplification. Treat connection growth as a lagging signal, not a goal.
+**5. Measurement by stage.** consideration-stage: impressions among target titles, comment-to-impression ratio, profile views from non-followers, DM-initiation rate. retention-stage: re-share by existing customers, employee-advocacy amplification. Treat connection growth as a lagging signal, not a goal.
 
 **6. Hand to Copy for the words.** You spec the format constraints (hook line, length range, CTA placement, comment-call mechanic). Copy writes the post.
 
@@ -56,7 +57,7 @@ Trigger phrases:
 - Posting press releases or company news on a personal profile. The audience came for a person; corporate voice repels them.
 - Reciprocity pods and engagement-pod games. The platform detects and suppresses pod patterns over time; the long-run cost exceeds the short-run lift.
 - Quoting AI productivity hacks every day with no business outcome attached. Generic hot-take content underperforms specific operator content.
-- Treating LinkedIn as a Do-stage channel for cold offers. Cold pitches in DMs to first-degree connections damage the long-run inbound relationship.
+- Treating LinkedIn as a buying-stage channel for cold offers. Cold pitches in DMs to first-degree connections damage the long-run inbound relationship.
 - Cadence over substance. Three substantive posts per week outperforms seven low-effort posts.
 
 ## Before / after
@@ -64,7 +65,7 @@ Trigger phrases:
 **Brief:** "Help me get more B2B leads from LinkedIn."
 
 **Before** (vague, no stage):
-> *Post daily — mix of thought leadership and product updates.*
+> *Post daily, mix of thought leadership and product updates.*
 
 **After** (stage-anchored, 2026-05-16):
-> *Surface: personal profile (founder), not company page. Stage: Think (problem framing for [ICP]) + Care (customer transformation stories). Mix: 3 Think text posts/week (1,200-1,800 chars, hook earns the "see more" click, no out-links), 1 PDF carousel/week (8-slide framework, save-optimized), 1 customer-story post/week. Push interested readers to DM via comment-trigger CTA, not landing-page link. Measure: impressions among target titles, comment-to-impression ratio, DM-initiation rate. Brand sets voice; Copy writes posts.*
+> *Surface: personal profile (founder), not company page. Stage: Consideration (problem framing for [ICP]) + Retention (customer transformation stories). Mix: 3 Consideration text posts/week (1,200-1,800 chars, hook earns the "see more" click, no out-links), 1 PDF carousel/week (8-slide framework, save-optimized), 1 customer-story post/week. Push interested readers to DM via comment-trigger CTA, not landing-page link. Measure: impressions among target titles, comment-to-impression ratio, DM-initiation rate. Brand sets voice; Copy writes posts.*

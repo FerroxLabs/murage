@@ -6,7 +6,7 @@ description: |
   Do NOT use for wireframing individual screens (use wireframe-specification), defining interaction animations (use prototype-spec), or business process mapping (use a business skill).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design planning analysis"
   category: "design-creative"

@@ -23,8 +23,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { conversationProofHeaders } from "./testing/conversation-proof.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -47,7 +47,6 @@ let acpDump: string;
 let telegramDir: string;
 let stderr = "";
 
-const COMPANION_TOKEN = "c".repeat(64);
 const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
     method,
@@ -56,8 +55,7 @@ const request = async (method: string, path: string, body?: unknown, headers: Re
   });
   return { status: res.status, body: await res.json().catch(() => null) };
 };
-// the paired phone's door: conversation routes need the companion credential
-const api = (method: string, path: string, body?: unknown) => request(method, path, body, conversationProofHeaders(path, COMPANION_TOKEN));
+const api = (method: string, path: string, body?: unknown) => request(method, path, body);
 const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
 const botState = async (botId: string) => (await desktopApi("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === botId);
 const taskState = async (botId: string, threadId: string) => (await botState(botId)).tasks.find((task: any) => task.threadId === threadId);
@@ -117,7 +115,7 @@ async function heldTurn(bot: { id: string }, threadId: string): Promise<Record<s
   expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "set things up" })).status).toBe(202);
   const dump = await poll(async () => {
     try {
-      return JSON.parse(readFileSync(holderDump, "utf8"));
+      return withTurnSecrets(JSON.parse(readFileSync(holderDump, "utf8")));
     } catch {
       return null;
     }
@@ -210,7 +208,6 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
         HOME: home,
         USERPROFILE: home,
         MURAGE_PORT: String(port),
-        MURAGE_COMPANION_TOKEN: COMPANION_TOKEN,
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
         MURAGE_MODEL_PROVIDER_CONNECTIONS: "",
@@ -358,7 +355,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
       expect((await taskState(bot.id, routineThread!)).fullAccess).toBe(true);
       const routineDump = await poll(async () => {
         try {
-          return JSON.parse(readFileSync(holderDump, "utf8"));
+          return withTurnSecrets(JSON.parse(readFileSync(holderDump, "utf8")));
         } catch {
           return null;
         }
@@ -383,7 +380,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
       expect((await taskState(hooked.id, threadId!)).fullAccess).toBe(true);
       const dump = await poll(async () => {
         try {
-          return JSON.parse(readFileSync(holderDump, "utf8"));
+          return withTurnSecrets(JSON.parse(readFileSync(holderDump, "utf8")));
         } catch {
           return null;
         }

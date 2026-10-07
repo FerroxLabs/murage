@@ -6,7 +6,7 @@ description: |
   Do NOT use for full design system tokens (use design-system-foundations), color palette design (use color-palette-design), or brand identity strategy (use brand-identity-brief).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design template branding"
   category: "design-creative"

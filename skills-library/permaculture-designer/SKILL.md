@@ -4,7 +4,7 @@ description: |
   Guide to permaculture design including core principles, zone planning, food forests, companion planting, water management, soil building, seasonal planning, and community garden design. Use when the user asks about permaculture designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "gardening sustainability guide"
   category: "hobbies-crafts"

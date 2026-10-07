@@ -10,7 +10,7 @@ description: |
   without the OKR structure (use ops-metrics-dashboard).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy planning goal-setting"
   category: "business-strategy"

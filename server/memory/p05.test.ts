@@ -48,6 +48,15 @@ it("does not resurrect deleted records when an old backup is restored",async()=>
     } finally{restored.close();}
   } finally{rmSync(root,{recursive:true,force:true});}
 });
+it("restore proceeds when the destination memory database is damaged, and says the ledger was unreadable",()=>{
+  const root=mkdtempSync(join(tmpdir(),"murage-p05-damaged-"));
+  try {
+    const destination=join(root,"destination"),candidate=join(root,"candidate");mkdirSync(destination);mkdirSync(candidate);
+    writeFileSync(join(destination,"messages.db"),Buffer.from("this is not a sqlite database at all, just damaged bytes".repeat(40)));
+    const receipt=mergeDestinationMemoryDeletions(destination,candidate);
+    expect(receipt).toEqual({merged:0,history:"destination-ledger-unreadable"});
+  } finally{rmSync(root,{recursive:true,force:true});}
+});
 it("specific revision forgetting preserves the corrected current source",()=>{
   const {work,id}=seed();
   updateMessage("thread",{id:"source",at:2,role:"user",kind:"text",text:"corrected current source"});

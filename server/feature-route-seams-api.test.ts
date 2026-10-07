@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 
 // Isolated HTTP server with the fake Claude engine only. Proves the 0.1.52 K0
 // route prefixes and hooks are wired through server/index.ts with the same
@@ -17,7 +18,7 @@ const call = async (method: string, path: string, headers: Record<string, string
   let parsed: any; try { parsed = text ? JSON.parse(text) : undefined; } catch { parsed = text; }
   return { status: response.status, text, body: parsed };
 };
-const dump = () => { try { return JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")); } catch { return null; } };
+const dump = () => { try { return withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))); } catch { return null; } };
 
 beforeAll(async () => {
   fixture = await launchVerificationServer({}, undefined, { instrumentationSource: "process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';" });

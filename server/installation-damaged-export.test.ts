@@ -117,14 +117,17 @@ it("preserves a used bot folder: hard links, colon names and node_modules do not
   writeFileSync(join(desk, "a.js"), "shared\n");
   const { linkSync } = await import("node:fs");
   linkSync(join(desk, "a.js"), join(desk, "b.js"));
-  writeFileSync(join(desk, "log 10:30.txt"), "timestamped\n");
-  f.put("workspaces/CON", "device name");
+  // A colon or a device name cannot be a Windows file name (a write there
+  // makes an alternate data stream, or reaches the device).
+  const colon = process.platform !== "win32";
+  if (colon) writeFileSync(join(desk, "log 10:30.txt"), "timestamped\n");
+  if (colon) f.put("workspaces/CON", "device name");
   const result = await writeInstallationDamagedExport(f.data, f.target);
   const paths = result.manifest.files.map(file => file.path);
   expect(paths).toEqual(expect.arrayContaining(["workspaces/bot/a.js", "workspaces/bot/b.js"]));
   expect(result.manifest.omitted).toEqual(expect.arrayContaining([
     { path: "workspaces/bot/site/node_modules", reason: "Rebuildable dependency or cache folder left in place" },
-    { path: "workspaces/bot/log 10:30.txt", reason: "Name another system can't hold; left in place" },
-    { path: "workspaces/CON", reason: "Name another system can't hold; left in place" },
+    ...(colon ? [{ path: "workspaces/bot/log 10:30.txt", reason: "Name another system can't hold; left in place" }] : []),
+    ...(colon ? [{ path: "workspaces/CON", reason: "Name another system can't hold; left in place" }] : []),
   ]));
 });

@@ -6,7 +6,7 @@ description: |
   Do NOT use for funnel conversion analysis (use funnel-analysis), customer segmentation by attributes (use segmentation-design), or A/B test design comparing two groups (use ab-test-design).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "statistics analysis data-science"
   category: "data-analysis"

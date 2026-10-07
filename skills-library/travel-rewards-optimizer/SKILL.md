@@ -13,7 +13,7 @@ description: |
   or travel budgeting (use budget-travel-planner).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "travel planning personal-finance research"
   category: "travel-experiences"

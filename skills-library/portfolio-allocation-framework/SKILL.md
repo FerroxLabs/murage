@@ -12,7 +12,7 @@ description: |
   (use investment-account-types). Never prescribes specific allocation percentages.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "investing personal-finance analysis retirement-planning"
   category: "personal-finance"

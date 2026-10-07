@@ -1,13 +1,16 @@
 import { track } from "@/lib/analytics";
+import { closedComposerLine } from "@/lib/shared-teams";
+import { dictationDisabledNote, isDictationDisabled } from "@/lib/dictation-notes";
 import { FOCUS_COMPOSER_EVENT } from "./useTrayIntents";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Square, Target, Terminal, Users, X } from "lucide-react";
+import { useWarmIntent } from "@/hooks/use-warm-intent";
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { compactPlaceholder } from "@/lib/composer-placeholder";
 import { enterSends } from "@/lib/composer-enter";
-import { useCoarsePointer, useNarrowViewport } from "@/lib/media-query";
+import { COARSE_POINTER_QUERY, useCoarsePointer, useNarrowViewport } from "@/lib/media-query";
 import { newSendId } from "@/lib/send-id";
 import { openIntakeCard, replyToIntake } from "@/lib/onboarding-intake";
 import {
@@ -49,6 +52,8 @@ import {
   clipboardImageFiles,
   composeMessage,
   composerShouldRefocus,
+  composerTakesFocusOnOpen,
+  replyTargetTakesFocus,
   isLongPaste,
   pasteAttachment,
   type Attachment,
@@ -67,6 +72,16 @@ import { autoNeedsLocalComputerWarning, localAutoHostPlatform } from "@/lib/loca
 import { ReplyQuote } from "./ReplyQuote";
 import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
+import {
+  applyCleanupResult,
+  cleanupEnabled,
+  dictatedPortion,
+  finishThenStop,
+  requestCleanup,
+  undoCleanup,
+  undoOffered,
+  type CleanupUndo,
+} from "@/lib/dictation-cleanup";
 import { AudioAttachmentIntake } from "./AudioAttachmentIntake";
 import { ComposerSendNotice, type ComposerSendNoticeState } from "./ComposerSendNotice";
 import { fluxBridge, readFluxStatus, saveFluxKey } from "@/lib/flux-key-paste";
@@ -177,6 +192,7 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
           current={current}
           desktop={desktop}
           engineCannotAsk={engineCannotAsk(engine?.driverKind) ? engine!.displayName : undefined}
+          engineOwnApprovals={engine?.capabilities?.runsOnOwnTools === true ? engine.displayName : undefined}
           scope={routine ? { routine: routine.name } : {}}
           onPick={(mode) => {
             onSetMode(mode);
@@ -211,7 +227,9 @@ export function Composer({
   /** New rooms keep the composer inert until their setup is saved or skipped. */
   locked?: boolean;
 }) {
-  const locked = setupLocked || Boolean(bot?.awaitingThreadSnapshot);
+  // A closed work thread is kept for reading (SPEC-X 10.1): nothing to send.
+  const closedWork = !group && bot ? closedComposerLine(bot) : null;
+  const locked = setupLocked || Boolean(bot?.awaitingThreadSnapshot) || closedWork !== null;
   const { state, dispatch, refreshAfterKey } = useStore();
   const { capabilities } = useDesktopCapabilities();
   // Unified target: a 1:1 bot thread or a room. In a room the @ picker
@@ -279,6 +297,7 @@ export function Composer({
     if (uploadsPending) return;
     setSendNotice((prev) => (prev?.kind === "upload-pending" ? null : prev));
   }, [uploadsPending]);
+  useWarmIntent(bot?.id, threadId, text);
   const editText = useCallback(
     (next: string) => {
       markDraftEdited(draftId);
@@ -377,10 +396,50 @@ export function Composer({
       input.setSelectionRange(at, at);
     });
   }, []);
+  // The composer is keyed by thread, so mounting means a thread was just
+  // opened: put the caret at the end of its draft so the person can type
+  // without clicking the box first. Touch screens are skipped, because
+  // focusing there opens the keyboard over the conversation.
+  useEffect(() => {
+    if (globalThis.matchMedia?.(COARSE_POINTER_QUERY).matches) return;
+    const frame = requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input || input.disabled || !composerTakesFocusOnOpen(document.activeElement, input)) return;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  // Choosing a message to reply to means typing the reply comes next, so the
+  // caret follows the new target the same way it does when a thread opens
+  // (same touch and dialog guards). A reply restored with the thread is the
+  // open effect's; the ref starts on it so the two never both run.
+  const replyToId = replyTo?.id ?? null;
+  const focusedReplyRef = useRef(replyToId);
+  useEffect(() => {
+    const previous = focusedReplyRef.current;
+    focusedReplyRef.current = replyToId;
+    if (!replyTargetTakesFocus(previous, replyToId)) return;
+    if (globalThis.matchMedia?.(COARSE_POINTER_QUERY).matches) return;
+    const frame = requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input || input.disabled || !composerTakesFocusOnOpen(document.activeElement, input)) return;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [replyToId]);
   const mentionListRef = useRef<HTMLDivElement>(null);
   const commandListRef = useRef<HTMLDivElement>(null);
   // what was typed before the mic went on — partials append after it
   const baseText = useRef("");
+  // Clean up dictation: the box as it was before clean-up replaced it, so one
+  // tap puts the raw words back. Offered only while the box still holds what
+  // clean-up wrote (undoOffered), so it never overwrites later typing.
+  const [cleanupUndo, setCleanupUndo] = useState<CleanupUndo | null>(null);
+  const textRef = useRef("");
+  textRef.current = text;
+  const wasRecording = useRef(false);
 
   // image paste is offered only when every bot that will actually answer
   // can open one. sendGroup routes to mentions, else the room default —
@@ -872,7 +931,9 @@ export function Composer({
         setSpeechError(
           reason === "helper-stop-pending"
             ? "The previous dictation session is still closing. Try again in a moment."
-            : "Dictation needs Microphone + Speech Recognition access. Turn it on in System Settings → Privacy & Security.",
+            : isDictationDisabled(reason)
+              ? dictationDisabledNote()
+              : "Dictation needs Microphone + Speech Recognition access. Turn it on in System Settings → Privacy & Security.",
         );
       }
     });
@@ -884,19 +945,80 @@ export function Composer({
     };
   }, [recording, editText]);
 
+  // When native dictation stops, tidy what it added and replace the box with
+  // the result. Any failure leaves the raw words where they are. Skipped if the
+  // person typed, sent or switched draft while the request was out.
+  useEffect(() => {
+    const was = wasRecording.current;
+    wasRecording.current = recording;
+    if (!was || recording || !cleanupEnabled()) return;
+    const atStop = textRef.current;
+    const base = baseText.current;
+    const said = dictatedPortion(base, atStop);
+    if (!said) return;
+    void requestCleanup(said, { botId: bot?.id, groupId: group?.id }).then((result) => {
+      // read at the moment the answer lands: typing, sending or switching
+      // draft meanwhile keeps what the person did
+      const applied = applyCleanupResult({ atStop, base, current: textRef.current, result });
+      if (!applied) return;
+      setCleanupUndo(applied.undo);
+      editText(applied.next);
+    });
+  }, [recording, bot?.id, group?.id, editText]);
+
+  // Stop dictating without dropping the last words: ask the helper to finish,
+  // keep the transcript listener attached until it reports the end (or 1.5 s),
+  // and only then flip `recording`, which runs the clean-up on the full text.
+  const finishing = useRef<(() => void) | null>(null);
+  const stopDictation = useCallback(() => {
+    const bridge = window.muragebox;
+    if (finishing.current) return;
+    if (!bridge?.speechFinish) return setRecording(false);
+    finishing.current = finishThenStop({
+      finish: () => bridge.speechFinish!(),
+      onEnd: (cb) => bridge.onSpeechEnd(() => cb()),
+      done: () => {
+        finishing.current = null;
+        setRecording(false);
+      },
+    });
+  }, []);
+  useEffect(() => {
+    if (!recording && finishing.current) {
+      finishing.current();
+      finishing.current = null;
+    }
+  }, [recording]);
+
   const toggleMic = () => {
     if (!capabilities.dictation.available || !window.muragebox) {
       setSpeechError("Dictation isn't available in this build.");
       return;
     }
+    if (recording) return stopDictation();
     baseText.current = text.trim();
-    setRecording((r) => !r);
+    setRecording(true);
   };
 
   return (
     <div data-composer className="pointer-events-none relative px-5 pb-3">
       {/* No fill or hairline on this wrapper — those were the black frame
           in the pill's top corners. The dock overlays the transcript. */}
+      {cleanupUndo && undoOffered(cleanupUndo, text) && (
+        <div className="pointer-events-auto mb-2 flex w-full items-center gap-2 rounded-lg border border-hairline/60 bg-raised px-3 py-2 text-[12px] text-ink-secondary">
+          <span className="min-w-0 flex-1">Dictation cleaned up.</span>
+          <button
+            type="button"
+            onClick={() => {
+              editText(undoCleanup(cleanupUndo));
+              setCleanupUndo(null);
+            }}
+            className="shrink-0 rounded px-2 py-1 font-medium text-ink hover:bg-raised-hover"
+          >
+            Undo clean-up
+          </button>
+        </div>
+      )}
       {speechError && (
         <div className="pointer-events-auto mb-2 w-full rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
           {speechError}
@@ -1032,9 +1154,10 @@ export function Composer({
         {/* An approval takes over the composer: you answer it before you
             can type again, so a waiting bot is impossible to miss. */}
         {approval && (
-          <div className="mb-2 overflow-hidden rounded-2xl border border-accent/40 bg-card">
+          <div className="mb-2 flex max-h-[70dvh] flex-col overflow-hidden rounded-2xl border border-accent/40 bg-card">
             <PendingApprovalPanel pending={approval} count={approvals.length} index={0} />
             <PendingApprovalActions
+              key={approval.requestId}
               pending={approval}
               threadId={threadId}
               bot={approvalBot}
@@ -1208,12 +1331,14 @@ export function Composer({
               e.preventDefault();
               send();
             }
-            if (e.key === "Escape" && recording) setRecording(false);
+            if (e.key === "Escape" && recording) stopDictation();
           }}
           disabled={Boolean(approval) || locked}
           aria-busy={bot?.awaitingThreadSnapshot || undefined}
           placeholder={((placeholder: { lead: string; hint?: string }) => compactPlaceholder(placeholder.lead, placeholder.hint, narrowPlaceholder))(
-            bot?.awaitingThreadSnapshot
+            closedWork
+              ? { lead: closedWork }
+              : bot?.awaitingThreadSnapshot
               ? { lead: "Loading replacement conversation…" }
               : setupLocked
               ? { lead: "Finish channel setup to start chatting" }
@@ -1341,11 +1466,15 @@ export function Composer({
               nativeDictation: capabilities.dictation.available,
               fluxConfigured: Boolean(state.config?.flux?.configured),
             })}
-            onTranscript={(said) => {
+            cleanup={cleanupEnabled() ? { botId: bot?.id, groupId: group?.id } : undefined}
+            onTranscript={(said, raw) => {
               // trimEnd, not trim: the utterance joins the draft with one
               // space, and nothing the person typed is discarded.
               const before = text.trimEnd();
-              editText(before ? `${before} ${said}` : said);
+              const next = before ? `${before} ${said}` : said;
+              // The server tidied it: remember the spoken words for one-step undo.
+              setCleanupUndo(raw ? { raw: before ? `${before} ${raw}` : raw, cleaned: next } : null);
+              editText(next);
             }}
             onNote={setSpeechError}
           />

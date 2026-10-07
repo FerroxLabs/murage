@@ -2,7 +2,7 @@
   "id": "lens-north-star-and-experiments",
   "name": "north-star-and-experiments",
   "version": "1.0.0",
-  "description": "As of: 2026-05-16",
+  "description": "Choose the one metric your team steers by and break it into inputs you can move. Then set up A/B tests with a hypothesis, sample size and stopping rule.",
   "defaultEnabled": false,
   "triggerTerms": [
     "lens",

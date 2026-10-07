@@ -6,7 +6,7 @@ description: |
   Do NOT use for single workout design, beginner programs (use beginner-strength-training), or sport-specific conditioning (use sports-specific-conditioning).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "fitness workout-planning advanced"
   category: "health-wellness"

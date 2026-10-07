@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -26,7 +27,7 @@ describe("durable webhook run admission", () => {
     expect(f.emit).not.toHaveBeenCalled(); expect(f.createTask).not.toHaveBeenCalled(); expect(f.startTurn).not.toHaveBeenCalled();
     rmdirSync(f.file);
     const admitted = f.manager.enqueueWebhook(delivery);
-    expect(JSON.parse(readFileSync(f.file, "utf8")).runs.map((run: { id: string }) => run.id)).toEqual([admitted.id]);
+    expect(readRoutinesWithRuns(f.file).runs.map((run: { id: string }) => run.id)).toEqual([admitted.id]);
     expect(f.manager.listRuns()).toHaveLength(1);
     expect(f.emit).toHaveBeenCalledTimes(1);
   });
@@ -48,7 +49,7 @@ describe("durable webhook run admission", () => {
     const f = fixture(); const first = f.manager.enqueueWebhook(delivery);
     const second = f.manager.enqueueWebhook({ ...delivery, webhookId: "hook-b" });
     expect(second.id).not.toBe(first.id); expect(f.manager.listRuns()).toHaveLength(2);
-    const disk = JSON.parse(readFileSync(f.file, "utf8"));
+    const disk = readRoutinesWithRuns(f.file);
     disk.runs[0].triggerSource = "schedule";
     writeFileSync(f.file, JSON.stringify(disk));
     const restarted = new RoutineManager(f.options);

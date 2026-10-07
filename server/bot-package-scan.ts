@@ -8,8 +8,22 @@ export interface BotPackageFinding {
   /** UTF-16 text offset and one-based line; zero for an uninspected file. */
   offset: number;
   line: number;
+  /** Import guard findings only (bot-package-guard.ts). Skill Guard's plain
+   * wording, the package field that matched ("agents[0].description"), the
+   * matching text (at most 120 characters, secrets removed) and the Skill
+   * Guard category. Absent on the older secret and path findings. */
+  message?: string;
+  field?: string;
+  evidence?: string;
+  category?: string;
 }
-export interface BotPackageScanResult { blocked: boolean; reviewRequired: boolean; findings: BotPackageFinding[]; truncated: boolean }
+export interface BotPackageScanResult {
+  blocked: boolean; reviewRequired: boolean; findings: BotPackageFinding[]; truncated: boolean;
+  /** Why a blocked result has no findings to read: the package is over the
+   * size the check reads ("too-large"), or the check could not finish
+   * ("unavailable", always retryable). */
+  state?: "too-large" | "unavailable";
+}
 const MAX_FINDINGS = 1000;
 // Deliberately bounded token lengths and no nested repetition. These are
 // indicators for export review, never a malware-free or secret-free guarantee.
@@ -24,6 +38,18 @@ const RULES = [
   { rule: "environment-lookup", severity: "review", pattern: /(?:\bprocess\.env(?:\.[A-Za-z_][A-Za-z0-9_]{0,127}|\[)|\bos\.(?:environ|getenv)\b|\$\{?[A-Z_][A-Z0-9_]{1,127}\}?|\$env:[A-Za-z_][A-Za-z0-9_]{0,127})/g },
 ] as const;
 
+/** Replace anything the secret rules would block, so a finding can quote text
+ * without repeating a key or token. */
+export function redactSecrets(text: string): string {
+  let out = text;
+  for (const { severity, pattern } of RULES) {
+    if (severity !== "block") continue;
+    pattern.lastIndex = 0;
+    out = out.replace(pattern, "[removed]");
+  }
+  return out;
+}
+
 function safePath(path: string, index: number): string {
   try {
     normalizeBotPackagePath(path);
@@ -35,7 +61,7 @@ function safePath(path: string, index: number): string {
 /** Scan only explicitly selected in-memory payloads. No I/O or execution.
  * Warnings require user review. Binary/unscanned content fails closed until
  * a separate, explicit binary review policy is supplied by the caller. */
-export function scanBotPackageContents(files: readonly BotPackageScanFile[]): BotPackageScanResult {
+export function scanBotPackageContents(files: readonly BotPackageScanFile[], onProgress?: (fraction: number) => void): BotPackageScanResult {
   const result: BotPackageScanResult = { blocked: false, reviewRequired: false, findings: [], truncated: false };
   const add = (path: string, rule: string, severity: "block" | "review", offset = 0, line = 0) => {
     if (severity === "block") result.blocked = true;
@@ -47,7 +73,11 @@ export function scanBotPackageContents(files: readonly BotPackageScanFile[]): Bo
     add("package", "file-count-limit", "block"); result.truncated = true; return result;
   }
   let totalBytes = 0;
+  const sizeOf = (file: BotPackageScanFile) => (typeof file.content === "string" ? file.content.length : file.content.byteLength);
+  const allBytes = onProgress ? Math.max(1, files.reduce((sum, file) => sum + sizeOf(file), 0)) : 1;
+  let readBytes = 0;
   for (const [index, file] of files.entries()) {
+    if (onProgress) { onProgress(readBytes / allBytes); readBytes += sizeOf(file); }
     const path = safePath(file.path, index);
     const size = typeof file.content === "string" ? Buffer.byteLength(file.content, "utf8") : file.content.byteLength;
     totalBytes += size;

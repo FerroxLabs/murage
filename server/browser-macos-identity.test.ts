@@ -52,7 +52,9 @@ beforeEach(() => {
   mock.bytes.set(`${directory}/${spec.engine.executable}`, images.get("engine")!);
   mock.bytes.set(`${directory}/${spec.chrome.executable}`, images.get("chrome")!);
 });
-describe("arm64 packaged browser identity", () => {
+// The macOS app is only ever verified on macOS; the fixture spells POSIX
+// paths, which a Windows host would join with backslashes.
+describe.skipIf(process.platform === "win32")("arm64 packaged browser identity", () => {
   for (const image of ["engine", "chrome"] as const) it(`${image}: permits only signing-size changes, rejects payload/tail/offset changes`, () => {
     const bytes = images.get(image)!, p = MAC_BROWSER_PAYLOADS[image];
     expect(verifyMacBrowserImage(bytes, image)).toBe(true);

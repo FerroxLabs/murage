@@ -4,7 +4,7 @@ description: |
   Expert guidance for rental property investment analysis including key metrics (cap rate, cash-on-cash return, the 1% rule), financing options for investment properties, property management strategies, tenant screening best practices, lease agreement essentials, maintenance budgeting, and strategies for scaling a rental portfolio. Use when the user asks about rental property investor or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "personal-finance investing planning"
   category: "personal-finance"

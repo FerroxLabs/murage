@@ -1,9 +1,15 @@
 // ⌘K switcher: bots and rooms from local state, transcript hits from
-// /api/search. Self-contained — owns its open state and its global chord,
-// so App.tsx only mounts it.
+// /api/search, and (0.1.62) the Settings pages whose words match, so
+// "images" jumps straight to Settings > Images. Self-contained — owns its
+// open state and its global chord, so App.tsx only mounts it. The sidebar's
+// search field opens it through lib/app-events.ts.
 import { useEffect, useRef, useState } from "react";
-import { Bot as BotIcon, MessageSquare, Search, Users } from "lucide-react";
-import { api, useStore, type Bot, type Group } from "@/state/store";
+import { Bot as BotIcon, MessageSquare, Search, Settings as SettingsIcon, Users } from "lucide-react";
+import { api, useStore, type AppSettingsSection, type Bot, type Group } from "@/state/store";
+import { OPEN_PALETTE_EVENT } from "@/lib/app-events";
+import { SETTINGS_SECTIONS, sectionsForSurface, settingsGroupLabel, settingsSectionLabel } from "@/lib/settings-sections";
+import { useDesktopSurface } from "@/lib/use-surface";
+import { t } from "@/lib/i18n";
 import { rankByName } from "@/lib/palette-rank";
 import { cn } from "@/lib/cn";
 import type { SearchHit } from "@/lib/search-hit";
@@ -12,11 +18,19 @@ import { landOnSearchHit } from "@/lib/focus-message";
 type PaletteEntry =
   | { kind: "bot"; bot: Bot }
   | { kind: "room"; group: Group }
-  | { kind: "message"; hit: SearchHit };
+  | { kind: "message"; hit: SearchHit }
+  | { kind: "setting"; section: AppSettingsSection };
+
+/** At most this many Settings pages, after the bots and channels. */
+const SETTINGS_LIMIT = 4;
 
 export function CommandPalette({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
   const { state, dispatch } = useStore();
+  const desktop = useDesktopSurface();
   const [open, setOpen] = useState(false);
+  // The Settings words load with the first open, not with the first paint.
+  const [settingsSearch, setSettingsSearch] = useState<typeof import("@/lib/settings-search") | null>(null);
+  const handedQuery = useRef("");
   const [query, setQuery] = useState("");
   const [messageHits, setMessageHits] = useState<SearchHit[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -32,14 +46,33 @@ export function CommandPalette({ onOpenChange }: { onOpenChange?: (open: boolean
         setOpen((o) => !o);
       }
     };
+    const openFromSidebar = (event: Event) => {
+      const query = (event as CustomEvent<{ query?: unknown } | undefined>).detail?.query;
+      handedQuery.current = typeof query === "string" ? query.slice(0, 200) : "";
+      setOpen(true);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener(OPEN_PALETTE_EVENT, openFromSidebar);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(OPEN_PALETTE_EVENT, openFromSidebar);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!open || settingsSearch) return;
+    let live = true;
+    import("@/lib/settings-search").then((module) => live && setSettingsSearch(module)).catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [open, settingsSearch]);
 
   // fresh palette every open; stale queries from last time would flash
   useEffect(() => {
     if (!open) return;
-    setQuery("");
+    setQuery(handedQuery.current);
+    handedQuery.current = "";
     setMessageHits([]);
     setCursor(0);
   }, [open]);
@@ -83,9 +116,14 @@ export function CommandPalette({ onOpenChange }: { onOpenChange?: (open: boolean
 
   const bots = rankByName(state.bots.filter((b) => !b.hidden), q);
   const rooms = rankByName(state.groups, q);
+  // Settings answer a typed query only; an empty palette is the switcher.
+  const settings = q && settingsSearch
+    ? sectionsForSurface(SETTINGS_SECTIONS, desktop).filter((entry) => settingsSearch.settingsSectionMatches(entry, q)).slice(0, SETTINGS_LIMIT)
+    : [];
   const entries: PaletteEntry[] = [
     ...bots.map((bot): PaletteEntry => ({ kind: "bot", bot })),
     ...rooms.map((group): PaletteEntry => ({ kind: "room", group })),
+    ...settings.map((entry): PaletteEntry => ({ kind: "setting", section: entry.id })),
     // message hits only make sense for a typed query; empty = switcher mode
     ...(q ? messageHits.map((hit): PaletteEntry => ({ kind: "message", hit })) : []),
   ];
@@ -93,7 +131,9 @@ export function CommandPalette({ onOpenChange }: { onOpenChange?: (open: boolean
   const selected = entries.length ? Math.min(cursor, entries.length - 1) : 0;
 
   const activate = async (entry: PaletteEntry) => {
-    if (entry.kind === "message") {
+    if (entry.kind === "setting") {
+      dispatch({ type: "toggleAppSettings", open: true, section: entry.section });
+    } else if (entry.kind === "message") {
       const hit = entry.hit;
       try {
         await landOnSearchHit(hit, state, dispatch);
@@ -127,7 +167,8 @@ export function CommandPalette({ onOpenChange }: { onOpenChange?: (open: boolean
 
   // flat cursor across sections; each row needs its absolute index
   const roomOffset = bots.length;
-  const messageOffset = bots.length + rooms.length;
+  const settingOffset = bots.length + rooms.length;
+  const messageOffset = bots.length + rooms.length + settings.length;
 
   const row = (key: string, index: number, onPick: () => void, children: React.ReactNode, twoLine = false) => (
     <button
@@ -149,7 +190,7 @@ export function CommandPalette({ onOpenChange }: { onOpenChange?: (open: boolean
 
   return (
     <div
-      className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-start justify-center bg-black/50 p-6 pt-[calc(0.14*var(--vvh,100dvh))]"
+      className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-start justify-center bg-black/50 p-6 pt-[calc(0.14*var(--vvh,100dvh))]"
       onMouseDown={(e) => e.target === e.currentTarget && setOpen(false)}
       onKeyDown={onKeyDown}
     >
@@ -165,7 +206,7 @@ export function CommandPalette({ onOpenChange }: { onOpenChange?: (open: boolean
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search bots, channels, messages…"
+            placeholder={t("palette.placeholder")}
             className="w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
           />
           <kbd className="shrink-0 rounded-md border border-hairline/40 px-1.5 py-0.5 text-[11px] text-ink-secondary">
@@ -210,6 +251,23 @@ export function CommandPalette({ onOpenChange }: { onOpenChange?: (open: boolean
               <>
                 <Users size={16} className="shrink-0 text-ink-secondary" />
                 <span className="truncate text-[14px] text-ink">{group.name}</span>
+              </>,
+            ),
+          )}
+          {settings.length > 0 && (
+            <div className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
+              {t("settings.title")}
+            </div>
+          )}
+          {settings.map((entry, i) =>
+            row(
+              `setting:${entry.id}`,
+              settingOffset + i,
+              () => void activate({ kind: "setting", section: entry.id }),
+              <>
+                <SettingsIcon size={16} className="shrink-0 text-ink-secondary" />
+                <span className="truncate text-[14px] text-ink">{settingsSectionLabel(entry.id)}</span>
+                <span className="min-w-0 truncate text-[12.5px] text-ink-secondary">{settingsGroupLabel(entry.group)}</span>
               </>,
             ),
           )}

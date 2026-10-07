@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of dyslexia toolkit or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness mental-wellness stress-management quick-reference testing accessibility time-management parenting"
   category: "health-wellness"

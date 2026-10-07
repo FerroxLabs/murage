@@ -5,6 +5,7 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { delimiter, join } from "node:path";
 import { homedir } from "node:os";
+import { murageToolOnThisServer } from "../murage-tool-surface.ts";
 
 type Json = Record<string, unknown>;
 type Device = { serial: string; state: string; model: string; connection: "usb" | "network" | "emulator" };
@@ -228,15 +229,17 @@ function nodeLines(nodes: UiNode[]) {
   }).join("\n") || "No accessible Android UI text is visible.";
 }
 
+// Sibling tools in these descriptions are named on this server: the list
+// cannot know the caller's engine or the name it mounted the phone under.
 export const TOOLS = [
   { name: "status", description: "Check physical USB Android devices and USB-debugging authorization before any Android phone task.", inputSchema: { type: "object", properties: {} } },
   { name: "read_screen", description: "Read visible text, accessibility labels, resource ids, and pixel bounds from the connected Android screen. Use after every action to verify the result.", inputSchema: { type: "object", properties: { serial: { type: "string" } } } },
   { name: "screenshot", description: "Capture the connected Android screen when accessibility text is insufficient. Returns a PNG image.", inputSchema: { type: "object", properties: { serial: { type: "string" } } } },
-  { name: "list_apps", description: "List installed launchable Android package names, optionally filtered by a human app name. Prefer open_app first.", inputSchema: { type: "object", properties: { query: { type: "string" }, serial: { type: "string" } } } },
+  { name: "list_apps", description: `List installed launchable Android package names, optionally filtered by a human app name. Prefer ${murageToolOnThisServer("open_app")} first.`, inputSchema: { type: "object", properties: { query: { type: "string" }, serial: { type: "string" } } } },
   { name: "open_app", description: "Open an installed Android app directly by its human name, such as Uber or Skyscanner. Do not scan the app drawer first.", inputSchema: { type: "object", properties: { name: { type: "string" }, serial: { type: "string" } }, required: ["name"] } },
-  { name: "tap_text", description: "Tap visible Android text or an accessibility label, then use read_screen to verify.", inputSchema: { type: "object", properties: { text: { type: "string" }, exact: { type: "boolean" }, index: { type: "integer", minimum: 0 }, serial: { type: "string" } }, required: ["text"] } },
-  { name: "tap", description: "Tap Android screen pixel coordinates obtained from read_screen or screenshot.", inputSchema: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, serial: { type: "string" } }, required: ["x", "y"] } },
-  { name: "swipe", description: "Swipe the Android screen in a direction, then use read_screen to verify.", inputSchema: { type: "object", properties: { direction: { type: "string", enum: ["up", "down", "left", "right"] }, serial: { type: "string" } }, required: ["direction"] } },
+  { name: "tap_text", description: `Tap visible Android text or an accessibility label, then use ${murageToolOnThisServer("read_screen")} to verify.`, inputSchema: { type: "object", properties: { text: { type: "string" }, exact: { type: "boolean" }, index: { type: "integer", minimum: 0 }, serial: { type: "string" } }, required: ["text"] } },
+  { name: "tap", description: `Tap Android screen pixel coordinates obtained from ${murageToolOnThisServer("read_screen")} or ${murageToolOnThisServer("screenshot")}.`, inputSchema: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, serial: { type: "string" } }, required: ["x", "y"] } },
+  { name: "swipe", description: `Swipe the Android screen in a direction, then use ${murageToolOnThisServer("read_screen")} to verify.`, inputSchema: { type: "object", properties: { direction: { type: "string", enum: ["up", "down", "left", "right"] }, serial: { type: "string" } }, required: ["direction"] } },
   { name: "type_text", description: "Type basic ASCII text into the focused Android field. Never enter passwords, payment details, or one-time codes.", inputSchema: { type: "object", properties: { text: { type: "string", maxLength: 256 }, serial: { type: "string" } }, required: ["text"] } },
   { name: "press", description: "Press an Android navigation or keyboard key.", inputSchema: { type: "object", properties: { key: { type: "string", enum: Object.keys(KEYCODES) }, serial: { type: "string" } }, required: ["key"] } },
 ] as const;

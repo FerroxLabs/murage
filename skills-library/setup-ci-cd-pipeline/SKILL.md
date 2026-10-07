@@ -14,7 +14,7 @@ type: workflow
 skills: ci-cd-pipeline-design github-actions docker-engineer deployment-strategies monitoring-alerting
 trigger_phrases: setup ci cd pipeline create deployment pipeline automate builds and deploys continuous integration setup
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: devops ci-cd automation cloud step-by-step
   category: software-project

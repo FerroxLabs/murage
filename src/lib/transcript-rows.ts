@@ -26,9 +26,12 @@ export interface ScrollAnchor {
   offset: number;
 }
 
-interface AnchorRow {
+interface AnchorBox {
+  getBoundingClientRect(): { top: number; height?: number };
+}
+interface AnchorRow extends AnchorBox {
   dataset: { row?: string };
-  getBoundingClientRect(): { top: number };
+  querySelector?(selector: string): AnchorBox | null;
 }
 export interface AnchorScroller {
   scrollTop: number;
@@ -37,20 +40,50 @@ export interface AnchorScroller {
 }
 
 const rowsOf = (scroller: AnchorScroller) => Array.from(scroller.querySelectorAll(ROW_SELECTOR));
+/** The day separator a row may open with (ChatView DaySeparator). It belongs
+ * to whichever row is the first of its day, so it leaves a row when an older
+ * page of the same day lands above it. */
+export const DAY_SEPARATOR_ATTRIBUTE = "data-day-separator";
+/** Other chrome a row may open with that depends on the row above it: a
+ * room's speaker label shows only where a turn starts, so it leaves a row
+ * when an older message from the same speaker lands above. */
+export const ROW_CHROME_ATTRIBUTE = "data-row-chrome";
+/** Where a row's content starts: below its day separator and speaker label,
+ * if it has them. The anchor holds the message still, not chrome that is
+ * about to move. A row skipped by content-visibility may have no box for its
+ * content yet; its own top is then used. */
+const anchorTop = (row: AnchorRow) => {
+  const rect = row.querySelector?.(`:scope > :not([${DAY_SEPARATOR_ATTRIBUTE}], [${ROW_CHROME_ATTRIBUTE}])`)?.getBoundingClientRect();
+  return rect && rect.height !== 0 ? rect.top : row.getBoundingClientRect().top;
+};
 
 export function captureRowAnchor(scroller: AnchorScroller, key: string, edge: "first" | "last"): ScrollAnchor | null {
   const rows = rowsOf(scroller);
   const row = edge === "first" ? rows[0] : rows[rows.length - 1];
   const id = row?.dataset.row;
   if (!row || !id) return null;
-  return { key, id, offset: row.getBoundingClientRect().top - scroller.getBoundingClientRect().top };
+  return { key, id, offset: anchorTop(row) - scroller.getBoundingClientRect().top };
+}
+
+/** The anchor for something that grows one row while the reader is looking
+ * elsewhere (a chip under an older reply): the first row that reaches into the
+ * viewport, so restoring it holds what the reader sees where it is. */
+export function captureViewportAnchor(scroller: AnchorScroller, key: string): ScrollAnchor | null {
+  const top = scroller.getBoundingClientRect().top;
+  const row = rowsOf(scroller).find((candidate) => {
+    const rect = candidate.getBoundingClientRect();
+    return rect.top + (rect.height ?? 0) > top;
+  });
+  const id = row?.dataset.row;
+  if (!row || !id) return null;
+  return { key, id, offset: anchorTop(row) - top };
 }
 
 /** False when the row is no longer mounted; scrollTop is then left alone. */
 export function restoreRowAnchor(scroller: AnchorScroller, anchor: ScrollAnchor): boolean {
   const row = rowsOf(scroller).find((candidate) => candidate.dataset.row === anchor.id);
   if (!row) return false;
-  scroller.scrollTop += row.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchor.offset;
+  scroller.scrollTop += anchorTop(row) - scroller.getBoundingClientRect().top - anchor.offset;
   return true;
 }
 

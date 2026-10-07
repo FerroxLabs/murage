@@ -4,7 +4,7 @@ description: |
   Comprehensive immigration guidance covering visa types overview, application processes, documentation requirements, settlement planning, cultural adjustment, language resources, community finding, and legal requirements for those navigating immigration. Use when the user asks about immigration guide or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "family-events planning guide checklist"
   category: "family-relationships"

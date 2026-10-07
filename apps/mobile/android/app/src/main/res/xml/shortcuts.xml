@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Decision 12: until Plan 4 adds the web menu item. A static shortcut
+     launches with NEW_TASK|CLEAR_TASK, so the launcher starts fresh and
+     LaunchPolicy sees ACTION_SWITCH and stays on the list. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="switch"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_switch_short"
+        android:shortcutLongLabel="@string/shortcut_switch_long">
+        <intent
+            android:action="com.murage.mobile.SWITCH"
+            android:targetPackage="com.murage.mobile"
+            android:targetClass="com.murage.mobile.MainActivity" />
+    </shortcut>
+</shortcuts>

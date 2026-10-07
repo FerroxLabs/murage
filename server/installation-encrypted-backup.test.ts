@@ -7,13 +7,13 @@ import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { assertRestoreReviewed } from "../electron/restore-review.mjs";
 import { inspectEncryptedInstallationBackup,writeEncryptedInstallationBackup,restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { installationRecoveryCommand } from "./installation-recovery-command.ts";
-import { backupFixture,testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture,testAgeKeys,rawAgeHost } from "./testing/backup-fixture.ts";
 import * as encryption from "./installation-backup-encryption.ts";
 import { MemoryIndex } from "./memory/index.ts";
 import { MemoryEligibility } from "./memory/eligibility.ts";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 const selection={scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"} as const;
-it("captures raw fidelity and safe recovery in one encrypted file, then restores a separate paused installation",async()=>{
+it.skipIf(!rawAgeHost)("captures raw fidelity and safe recovery in one encrypted file, then restores a separate paused installation",async()=>{
   const f=backupFixture(),keys=testAgeKeys();
   const channel=join(f.data,"channels","slack");mkdirSync(channel,{recursive:true});
   const connection=JSON.stringify({version:1,chosen:{teamId:"TEAM",appId:"APP",ownerUserId:"OWNER",chiefBotId:"bot"},identity:{teamId:"TEAM",userId:"UBOT",botId:"BOT"},enabled:true,paused:false,binding:{connectionId:"fixture-connection",teamId:"TEAM",appId:"APP",botUserId:"UBOT",botId:"BOT",ownerUserId:"OWNER",dmId:"DOWNER",chiefBotId:"bot"},pairing:null});
@@ -56,7 +56,7 @@ it("captures raw fidelity and safe recovery in one encrypted file, then restores
     expect(readdirSync(f.parent).filter(name=>name.startsWith(".murage-encrypted"))).toEqual([]);
   }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 },20000);
-it("keeps only the encrypted output, never plaintext, when an owned tool close cannot be confirmed",async()=>{
+it.skipIf(!rawAgeHost)("keeps only the encrypted output, never plaintext, when an owned tool close cannot be confirmed",async()=>{
   const f=backupFixture(),keys=testAgeKeys();
   const mocked=vi.spyOn(encryption,"encryptBackupStream").mockImplementationOnce(async(_tool,_recipient,input)=>{input.on("error",()=>{});throw new InstallationSnapshotError("AGE_PROCESS_CLOSE_UNCONFIRMED");});
   try{
@@ -69,7 +69,7 @@ it("keeps only the encrypted output, never plaintext, when an owned tool close c
     expect(existsSync(join(f.parent,"backup.age"))).toBe(false);
   }finally{mocked.mockRestore();f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });
-it("a failed capture leaves nothing in the backup folder",async()=>{
+it.skipIf(!rawAgeHost)("a failed capture leaves nothing in the backup folder",async()=>{
   const f=backupFixture(),keys=testAgeKeys();
   const before=new Set(readdirSync(f.parent));
   const mocked=vi.spyOn(encryption,"encryptBackupStream").mockImplementationOnce(async(_tool,_recipient,input)=>{input.on("error",()=>{});throw new InstallationSnapshotError("AGE_PROCESS_FAILED");});
@@ -81,7 +81,7 @@ it("a failed capture leaves nothing in the backup folder",async()=>{
     expect(readdirSync(f.parent).filter(name=>!before.has(name))).toEqual([]);
   }finally{mocked.mockRestore();f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });
-it.each(["existing","live","quota","cancel","vm"])("refuses %s without publishing or changing originals",async kind=>{
+it.skipIf(!rawAgeHost).each(["existing","live","quota","cancel","vm"])("refuses %s without publishing or changing originals",async kind=>{
   const f=backupFixture(),keys=testAgeKeys(),archive=join(f.parent,"backup.age"),before=readFileSync(join(f.data,"config.json"));
   let lease:ReturnType<typeof acquireDataDirLease>|undefined;const abort=new AbortController();
   try{
@@ -95,7 +95,7 @@ it.each(["existing","live","quota","cancel","vm"])("refuses %s without publishin
     expect(readdirSync(f.parent).filter(name=>name.startsWith(".murage-encrypted"))).toEqual([]);
   }finally{lease?.release();f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 });
-it("new encrypted CLI requires an explicit policy and hash-bound separate restore",async()=>{
+it.skipIf(!rawAgeHost)("new encrypted CLI requires an explicit policy and hash-bound separate restore",async()=>{
   const f=backupFixture(),keys=testAgeKeys();try{
     const archive=join(f.parent,"cli.age");
     const saved=await installationRecoveryCommand(["backup-encrypted","--data-dir",f.data,"--output",archive,"--age-tool",keys.ageExecutable,"--recipient",keys.recipient,"--credential-policy",selection.credentialPolicy],{readIdentity:async()=>keys.identity});
@@ -106,7 +106,7 @@ it("new encrypted CLI requires an explicit policy and hash-bound separate restor
   }finally{f.db.close();rmSync(f.parent,{recursive:true,force:true});}
 },20000);
 
-it("headless encrypted roundtrip retains WAL-visible memories, pauses authority and rebuilds recall without stale projection",async()=>{
+it.skipIf(!rawAgeHost)("headless encrypted roundtrip retains WAL-visible memories, pauses authority and rebuilds recall without stale projection",async()=>{
   const f=backupFixture(),keys=testAgeKeys(),index=new MemoryIndex(join(f.data,"memory-index.db"));
   rmSync(join(f.data,"config.json"));
   for(const name of ["door-identity","folder-trust.json","skill-index.db"])writeFileSync(join(f.data,name),"synthetic authority or cache");

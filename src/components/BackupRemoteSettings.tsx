@@ -32,6 +32,8 @@ export type DestinationKind="s3"|"sftp";
 /** Shown while Murage checks its backup tool after starting, most visibly on
  * the first launch after an install or update. */
 export const REMOTE_CHECKING="Getting ready. Murage checks its backup tool after it starts.";
+/** The "needs a supported build" note is only true once the host has settled; while it starts the page says it is checking. */
+export function showsRemoteUnavailable(status:{supported:boolean;checking?:boolean}|null):boolean{return !!status&&!status.supported&&status.checking!==true;}
 const labels:Record<string,string>={unconfigured:"No off-site destination saved","password-required":"Choose the off-site password file",disconnected:"Destination saved, not connected",connected:"Off-site storage connected",blocked:"Off-site copies are off",initializing:"Off-site setup needs review","needs-review":"Off-site copy needs review",unavailable:"Off-site copies are unavailable in this app"};
 export interface RetentionDraft {keepLast:string;keepDaily:string;keepWeekly:string;keepMonthly:string}
 const retentionFields=[["keepLast","Keep latest copies"],["keepDaily","Keep daily copies"],["keepWeekly","Keep weekly copies"],["keepMonthly","Keep monthly copies"]] as const;
@@ -197,7 +199,7 @@ export function OffsiteStatus({r}:{r:RemoteController}){
  return <>
   <p role="status" className="text-[13px] font-medium text-ink">{status?(status.checking?REMOTE_CHECKING:labels[status.state]):bridge?"Checking the off-site copy…":"Off-site copies are unavailable in this window"}</p>
   {status?.blocked&&<p role="alert" className="break-words text-[13px] text-warning">{DATA_FOLDER_SHARED_TEXT} Folder: {status.blocked.folder}. On Linux or macOS, for example: chmod go-w "{status.blocked.folder}"</p>}
-  {status&&!status.supported&&<p className="text-[13px] text-ink-secondary">Off-site copies need a supported desktop build with its verified backup tool. Backups on this computer are separate.</p>}
+  {showsRemoteUnavailable(status)&&<p className="text-[13px] text-ink-secondary">Off-site copies need a supported desktop build with its verified backup tool. Backups on this computer are separate.</p>}
   {status?.pending&&<p role="status" className="text-[13px] text-ink-secondary">Off-site work is in progress. Refresh after it finishes.</p>}
   {stale&&<p role="alert" className="text-[13px] text-warning">Status needs a refresh. Connection and upload actions are locked.</p>}
   <RemoteMessages r={r} area="offsite"/>

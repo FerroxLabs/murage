@@ -144,4 +144,50 @@ describe("internal turn capabilities", () => {
     registry.revokeAll();
     expect(registry.isActive(third.claim)).toBe(false);
   });
+
+  it("mints, resolves and revokes the mcp kind like the others: only with the turn, and gone with its generation", () => {
+    const registry = new InternalCapabilities();
+    registry.begin("bot", "thread", "generation");
+    const { token, claim } = mint(registry, "thread", "generation", "mcp");
+    expect(claim.kind).toBe("mcp");
+    expect(registry.resolve(`Bearer ${token}`)).toBe(claim);
+    expect(registry.isActive(claim)).toBe(true);
+    // a token for a generation that is not the turn's current one cannot be minted
+    expect(() => registry.mint({ botId: "bot", threadId: "thread", generation: "other", kind: "mcp", depth: 0, skillAuthoring: false })).toThrow();
+    expect(() => registry.mint({ botId: "bot", threadId: "thread", generation: "generation", kind: "bogus" as never, depth: 0, skillAuthoring: false })).toThrow();
+    registry.revokeGeneration("thread", "generation");
+    expect(registry.resolve(`Bearer ${token}`)).toBeNull();
+    expect(registry.isActive(claim)).toBe(false);
+  });
+
+  it("a warm process's turn-N token stops working at settle and stays dead during turn N+1", () => {
+    const registry = new InternalCapabilities();
+    registry.begin("bot", "thread", "turn-1");
+    const first = mint(registry, "thread", "turn-1");
+    expect(registry.resolve(`Bearer ${first.token}`)).toBe(first.claim);
+    // settle: the harness revokes the generation (index.ts revokeInternalGeneration)
+    registry.revokeGeneration("thread", "turn-1");
+    expect(registry.resolve(`Bearer ${first.token}`)).toBeNull();
+    expect(registry.isActive(first.claim)).toBe(false);
+    // turn N+1 on the same thread, same process: a new generation, a new token
+    registry.begin("bot", "thread", "turn-2");
+    const second = mint(registry, "thread", "turn-2");
+    expect(second.token).not.toBe(first.token);
+    expect(registry.resolve(`Bearer ${first.token}`)).toBeNull();
+    expect(registry.resolve(`Bearer ${second.token}`)).toBe(second.claim);
+    // a token minted without settling is also replaced when the next turn begins
+    registry.begin("bot", "thread", "turn-3");
+    expect(registry.resolve(`Bearer ${second.token}`)).toBeNull();
+  });
+
+  it("binds a token to its thread: another thread's generation cannot mint or reuse it", () => {
+    const registry = new InternalCapabilities();
+    registry.begin("bot", "thread-a", "gen-a");
+    registry.begin("bot", "thread-b", "gen-b");
+    const a = mint(registry, "thread-a", "gen-a");
+    expect(a.claim.threadId).toBe("thread-a");
+    expect(() => registry.mint({ ...a.claim, threadId: "thread-b" })).toThrow();
+    registry.revokeGeneration("thread-b", "gen-b");
+    expect(registry.resolve(`Bearer ${a.token}`)).toBe(a.claim);
+  });
 });

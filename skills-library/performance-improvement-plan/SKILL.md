@@ -5,7 +5,7 @@ description: |
   Do NOT use for regular performance reviews (use performance-review), coaching conversations, or termination documentation.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "template planning strategy guide checklist"
   category: "business-strategy"

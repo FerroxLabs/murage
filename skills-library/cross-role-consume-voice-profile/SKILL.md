@@ -1,8 +1,9 @@
 ---
 name: cross-role-consume-voice-profile
 description: "**Cross-role mode skill.** Loadable by any specialist drafting in the user's own voice — sales copy, course modules, pitch narrative, brand-voice rules, long-form essays, the user's newsletter or author voice."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "cross-role"
 ---

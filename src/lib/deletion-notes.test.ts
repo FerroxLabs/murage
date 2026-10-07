@@ -12,6 +12,13 @@ describe("deletion notes", () => {
     expect(deletionConsequenceLines(null)).toEqual([BACKUPS_LINE]);
   });
 
+  it("names how many messages go, so a long conversation is never deleted without saying so", () => {
+    expect(deletionConsequenceLines(0, 1240)).toEqual(["That is 1,240 messages.", BACKUPS_LINE]);
+    expect(deletionConsequenceLines(2, 1)).toEqual(["That is 1 message and 2 saved files.", BACKUPS_LINE]);
+    expect(deletionConsequenceLines(1, 0)).toEqual(["This also deletes 1 saved file.", BACKUPS_LINE]);
+    expect(deletionConsequenceLines(null, null)).toEqual([BACKUPS_LINE]);
+  });
+
   it("lists leftovers in plain words and never shows raw paths", () => {
     expect(deletionNote({ leftovers: [] })).toBeNull();
     expect(deletionNote(undefined)).toBeNull();

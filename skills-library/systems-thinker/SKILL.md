@@ -4,7 +4,7 @@ description: |
   Understanding complex systems through feedback loops (reinforcing and balancing), stocks and flows, Donella Meadows' 12 leverage points, causal loop diagrams, systems archetypes (tragedy of the commons, fixes that fail, shifting the burden), modeling tools, and application to organizational and real-world systems. Use when the user asks about systems thinker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy decision-making analysis frameworks"
   category: "productivity"

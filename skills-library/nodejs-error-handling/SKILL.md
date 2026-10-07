@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about JavaScript idioms (use `javascript-idioms`), Node.js async patterns (use `nodejs-async-patterns`), general error handling concepts (use language-specific skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "javascript backend debugging"
   category: "software-engineering"

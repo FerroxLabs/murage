@@ -20,7 +20,7 @@ trigger_phrases: >-
   a tabletop game create an RPG rulebook design a role-playing game TTRPG from
   scratch
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: tabletop-rpg game-design content-marketing step-by-step planning
   category: creative-project

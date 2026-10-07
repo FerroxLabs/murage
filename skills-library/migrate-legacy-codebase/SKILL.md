@@ -14,7 +14,7 @@ type: workflow
 skills: tech-debt-assessment refactoring-patterns integration-testing-patterns deployment-strategies
 trigger_phrases: migrate legacy codebase modernize legacy system upgrade old codebase refactor legacy code
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: architecture refactoring testing devops step-by-step
   category: software-project

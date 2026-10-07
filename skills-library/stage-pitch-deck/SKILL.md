@@ -1,8 +1,9 @@
 ---
 name: stage-pitch-deck
 description: "**Mode skill.** Default-enabled on the Stage specialist."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "stage"
 ---

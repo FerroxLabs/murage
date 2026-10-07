@@ -6,7 +6,7 @@ description: |
   Do NOT use for proofreading academic text (use proofreading), writing a paper from scratch (use research-paper-structure), or responding to peer review comments (use peer-review-response).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "editing academic-writing research"
   category: "writing"

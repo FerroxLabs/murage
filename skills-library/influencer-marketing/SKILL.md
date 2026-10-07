@@ -4,7 +4,7 @@ description: |
   Influencer marketing strategy advisor covering outreach campaigns, contract negotiation, ROI measurement, micro vs macro influencer selection, platform-specific tactics, content collaboration frameworks, compliance requirements, relationship management, and building scalable influencer programs that drive measurable business results. Use when the user asks about influencer marketing or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing social-media strategy"
   category: "marketing-sales"

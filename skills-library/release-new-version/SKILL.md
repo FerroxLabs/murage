@@ -14,7 +14,7 @@ type: workflow
 skills: release-management conventional-commits deployment-strategies monitoring-alerting
 trigger_phrases: release new version ship a release cut a release deploy new version version bump
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: devops ci-cd planning step-by-step
   category: software-project

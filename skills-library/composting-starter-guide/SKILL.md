@@ -6,7 +6,7 @@ description: |
   Do NOT use for large-scale or commercial composting, biogas or methane digester systems, municipal composting program design, or using compost as fertilizer in a garden plan (use gardening skills).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "composting sustainability step-by-step guide"
   category: "sustainability"

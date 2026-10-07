@@ -71,7 +71,7 @@ export interface ImageModelCapabilities {
   delivery: { stream: boolean; streamEdits: boolean; jobs: boolean; keepaliveSeconds?: number };
   /** Seconds a 1024x1024 render takes, per quality, when known. */
   expectedSeconds?: Record<string, number>;
-  /** Flux edits stop at the router after about 90 seconds today. */
+  /** Cloudflare in front of Flux stops waiting for an edit after about 100 seconds. */
   editTimeoutSeconds?: number;
   source: "catalogue" | "built-in";
 }
@@ -374,7 +374,7 @@ export const FLUX_LEGACY_IDS: Readonly<Record<string, { base: string; quality: s
   ...Object.entries(family.sizeAliases ?? {}).flatMap(([size, byQuality]) => Object.entries(byQuality).map(([quality, id]) => [id, { base: family.id, quality, size }] as const)),
 ]));
 const FLUX_GPT_BASE = { maxPromptChars: 32_000, formats: ["png" as ImageFormat], maxReferences: 4, maxReferenceBytes: IMAGE_REFERENCE_BYTES_DEFAULT, maxReferenceBytesTotal: IMAGE_REFERENCE_TOTAL_DEFAULT,
-  supports: { ...NO_SUPPORTS, edit: true }, delivery: { stream: true, streamEdits: false, jobs: false }, editTimeoutSeconds: 90, qualityMode: "alias" as const, defaultSize: "1024x1024" };
+  supports: { ...NO_SUPPORTS, edit: true }, delivery: { stream: true, streamEdits: false, jobs: false }, editTimeoutSeconds: 100, qualityMode: "alias" as const, defaultSize: "1024x1024" };
 function fluxFamily(family: FluxFamily): ImageModelCapabilities {
   const sizes = ["1024x1024", ...Object.keys(family.sizeAliases ?? {})];
   return finish({ ...FLUX_GPT_BASE, sizeRule: { kind: "list", sizes }, qualities: family.qualities, defaultQuality: family.defaultQuality, qualityAliases: family.aliases,

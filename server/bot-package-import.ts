@@ -4,7 +4,8 @@ import { lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { dirname, join } from "node:path";
 import { readBotPackageArchive } from "./bot-package-archive.ts";
 import { createBotPackageExportPreview, MAX_BOT_PACKAGE_ENTRIES, MAX_BOT_PACKAGE_EXPANDED_BYTES, normalizeBotPackagePath, parseBotPackageManifest, type BotPackageSelection } from "./bot-package-manifest.ts";
-import { scanBotPackageContents } from "./bot-package-scan.ts";
+import { ImportScanCancelled, scanBotPackageForImportAsync } from "./bot-package-guard-runner.ts";
+import { verifyOfficialPackage } from "./package-signature.ts";
 import { packageAgentAsMember } from "./bot-package.ts";
 import { importedMemberProfile } from "./team-manifest.ts";
 import { isSkillName, parseSkillMd } from "./skills.ts";
@@ -29,7 +30,7 @@ function canonical(value: unknown): string {
   }
   return JSON.stringify(value) ?? "null";
 }
-function readContents(contents: BotPackageContents, signal?: AbortSignal): Intake {
+async function readContents(contents: BotPackageContents, signal?: AbortSignal, scanId?: string): Promise<Intake> {
   if (signal?.aborted) fail("PACKAGE_IMPORT_CANCELLED");
   const manifest = parseBotPackageManifest(contents.manifest);
   if (contents.payloads.size + 1 > MAX_BOT_PACKAGE_ENTRIES || contents.payloads.size !== manifest.entries.length) fail("PACKAGE_CONTENT_ENTRY_MISMATCH");
@@ -49,8 +50,11 @@ function readContents(contents: BotPackageContents, signal?: AbortSignal): Intak
     actualEntries.push({ path: entry.path, bytes: bytes.length, sha256: digest });
     payloads.set(entry.path, Buffer.from(bytes));
   }
-  const scan = scanBotPackageContents([{ path: "manifest.json", content: encoded }, ...[...payloads].map(([path, content]) => ({ path, content }))]);
-  return { manifest, payloads, scan, sha256: hash(canonical({ format: "murage.package.contents-digest", version: 1, manifest, entries: actualEntries })) };
+  let scan: Awaited<ReturnType<typeof scanBotPackageForImportAsync>>;
+  try { scan = await scanBotPackageForImportAsync([{ path: "manifest.json", content: encoded }, ...[...payloads].map(([path, content]) => ({ path, content }))], { signal, scanId }); }
+  catch (error) { if (error instanceof ImportScanCancelled) fail("PACKAGE_IMPORT_CANCELLED"); throw error; }
+  const official = verifyOfficialPackage(contents.manifest);
+  return { manifest, payloads, scan, official, sha256: hash(canonical({ format: "murage.package.contents-digest", version: 1, manifest, entries: actualEntries })) };
 }
 function selectionSnapshot(selection: BotPackageSelection): BotPackageSelection {
   if (!selection || typeof selection !== "object") fail("EXPLICIT_SELECTION_REQUIRED");
@@ -90,21 +94,24 @@ function inspect(intake: Intake, selection: BotPackageSelection, existingBots: r
     : undefined;
   const comparison = selected && !intake.scan.blocked
     ? comparePackageImport(selected, baselineOwner?.packageImportReceipt?.baseline, previous.length > 0) : undefined;
-  const reviewHash = hash(JSON.stringify({ version: 2, archiveSha256: intake.sha256, selection, scan: intake.scan, summary, missingDependencies: chosen.missingDependencies, comparison }));
-  return { archiveSha256: intake.sha256, reviewHash, selectionHash: packageImportSelectionHash(selection), scan: intake.scan, summary, missingDependencies: chosen.missingDependencies, comparison, selected };
+  // The Official mark is only ever the result of a verified signature; the
+  // review hash binds it so a changed answer needs a fresh review.
+  const official = { official: intake.official.official, ...(intake.official.keyId ? { keyId: intake.official.keyId } : {}) };
+  const reviewHash = hash(JSON.stringify({ version: 3, archiveSha256: intake.sha256, selection, scan: intake.scan, official, summary, missingDependencies: chosen.missingDependencies, comparison }));
+  return { archiveSha256: intake.sha256, reviewHash, selectionHash: packageImportSelectionHash(selection), scan: intake.scan, official, summary, missingDependencies: chosen.missingDependencies, comparison, selected };
 }
 
 /** No payload text in preview; review binds archive bytes and selection. */
-export async function previewBotPackageImport(archivePath: string, options: { selection: BotPackageSelection; existingBots?: readonly ImportHistoryBot[]; signal?: AbortSignal }) {
+export async function previewBotPackageImport(archivePath: string, options: { selection: BotPackageSelection; existingBots?: readonly ImportHistoryBot[]; signal?: AbortSignal; scanId?: string }) {
   const selection = selectionSnapshot(options.selection);
-  const intake = await readBotPackageArchive(archivePath, { signal: options.signal });
+  const intake = await readBotPackageArchive(archivePath, { signal: options.signal, scanId: options.scanId });
   const { selected: _selected, ...preview } = inspect(intake, selection, options.existingBots);
   return preview;
 }
 
-export async function previewBotPackageContents(contents: BotPackageContents, options: { selection: BotPackageSelection; existingBots?: readonly ImportHistoryBot[]; signal?: AbortSignal }) {
+export async function previewBotPackageContents(contents: BotPackageContents, options: { selection: BotPackageSelection; existingBots?: readonly ImportHistoryBot[]; signal?: AbortSignal; scanId?: string }) {
   const selection = selectionSnapshot(options.selection);
-  const intake = readContents(contents, options.signal);
+  const intake = await readContents(contents, options.signal, options.scanId);
   const { selected: _selected, ...preview } = inspect(intake, selection, options.existingBots);
   return preview;
 }
@@ -163,10 +170,15 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
     }
     const playbooks = (pkg.playbooks ?? []).filter((playbook) => agent.playbooks?.includes(playbook.key));
     const bot: BotRecord = {
-      id, threadId, ...profile, notifications: false, unread: false,
+      // Imported bots notify like bots you create: an approval that never reaches
+      // the phone silently blocks the bot (2026-10-06, owner decision).
+      id, threadId, ...profile, notifications: true, unread: false,
       modelSelection: structuredClone(options.modelSelection), resumeCursors: {}, createdAt: at,
       tasks: [{ threadId, title: "New task", createdAt: at, resumeCursors: {} }],
-      composio: false, computer: "off", browser: false, autoApprove: false, chiefOfStaff: false,
+      // An imported bot always starts at Ask, whatever the file said (the
+      // format has no such field). Raising the level is the owner's own
+      // later action in the bot's settings.
+      composio: false, computer: "off", browser: false, autoApprove: false, fullAccess: false, noLimits: false, chiefOfStaff: false,
       section: teamSection(agent.team),
       ...(playbooks.length ? { playbooks: structuredClone(playbooks) } : {}),
       installedPackage: { id: pkg.id, name: pkg.name, release: pkg.release, requiredApps: pkg.requirements.apps.map((app) => ({ ...app })),
@@ -217,7 +229,9 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
     if (!botId) fail("MISSING_ROUTINE_OWNER");
     result.routines.push({
       id: freshId(), name: routine.name, prompt: routine.prompt, target: "bot", botId,
-      runOn: routine.runOn, enabled: false, schedule: structuredClone(routine.schedule),
+      // Paused, and at Ask: a routine does not inherit the level the owner
+      // later gives the bot unless the owner raises the routine itself.
+      runOn: routine.runOn, enabled: false, permissionMode: "ask", schedule: structuredClone(routine.schedule),
       durationMinutes: routine.durationMinutes,
       ...(routine.timeoutMinutes === undefined ? {} : { timeoutMinutes: routine.timeoutMinutes }),
       nextRunAt: null, createdAt: at, updatedAt: at,
@@ -233,7 +247,7 @@ interface ImportOptions {
   dataDir: string; selection: BotPackageSelection;
   expectedArchiveSha256: string; expectedReviewHash: string; acknowledgeWarnings?: boolean;
   existingBots: readonly ImportHistoryBot[]; modelSelection: ModelSelection;
-  atomicCommit: BotPackageAtomicCommit; signal?: AbortSignal;
+  atomicCommit: BotPackageAtomicCommit; signal?: AbortSignal; scanId?: string;
 }
 async function importIntake(options: ImportOptions, load: () => Promise<Intake>) {
   const selection = selectionSnapshot(options.selection);
@@ -264,9 +278,9 @@ async function importIntake(options: ImportOptions, load: () => Promise<Intake>)
 }
 
 export async function importBotPackageArchive(options: ImportOptions & { archivePath: string }) {
-  return importIntake(options, () => readBotPackageArchive(options.archivePath, { signal: options.signal }));
+  return importIntake(options, () => readBotPackageArchive(options.archivePath, { signal: options.signal, scanId: options.scanId }));
 }
 
 export async function importBotPackageContents(options: ImportOptions & { contents: BotPackageContents }) {
-  return importIntake(options, async () => readContents(options.contents, options.signal));
+  return importIntake(options, () => readContents(options.contents, options.signal, options.scanId));
 }

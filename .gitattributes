@@ -1,3 +1,8 @@
+# Every text file is checked out with LF on every OS. Tests hash corpus bytes,
+# slice sources on "\n" and embed shipped files; a CRLF checkout on Windows
+# changed all of them. Binary files are detected and left alone.
+* text=auto eol=lf
+
 # Vite's SSR evaluator rejects this imported hashbang script with CRLF.
 /scripts/build-local-catalog.mjs text eol=lf
 # The catalog regression compares these bytes with the generator's LF output.
@@ -9,3 +14,5 @@
 # Backup tooling validates these upstream license bytes by exact SHA-256.
 /third_party/age/LICENSE -text
 /third_party/restic/LICENSE -text
+# Upstream license kept byte for byte, CRLF as published.
+/third_party/playwright-injected/LICENSE -text

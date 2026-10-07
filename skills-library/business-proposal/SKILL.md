@@ -9,7 +9,7 @@ description: |
   or RFP responses (use `rfp-response`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "proposal writing business-writing"
   category: "writing"

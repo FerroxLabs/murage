@@ -4,7 +4,7 @@ description: |
   Strategic thinking frameworks including scenario planning, game theory basics (Nash equilibrium, prisoner's dilemma), long-term thinking, second and third-order effects analysis, strategic frameworks (Blue Ocean Strategy, Wardley Maps), decision journals, pre-mortem analysis, and competitive strategy. Use when the user asks about strategic thinker or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy decision-making analysis frameworks"
   category: "productivity"

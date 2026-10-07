@@ -6,7 +6,7 @@ description: |
   Do NOT use for business strategic scenario planning (use business strategy skills), risk registers for projects (use risk-assessment), or simple pros and cons comparisons (use pro-con-analysis).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decision-making planning analysis"
   category: "productivity"

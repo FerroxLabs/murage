@@ -10,7 +10,7 @@ import { writeBotIdentity } from "./memory/identity.ts";
 import { hydrateMemoryRecord } from "./memory/bundle.ts";
 import { searchMemory } from "./memory/search.ts";
 import { getOrCreateChannel, mirrorExchange } from "./comms-visibility.ts";
-import { observeVerifiedHuman, ownerChannelUserIds, threadHumanChannelUserId, linkHumanBinding, resolveHumanBinding, humanTask, threadHumanPrincipal, revokeHumanConnection, shareHumanScope, assertHumanPrincipal, bindHumanThread, resolveHumanDelivery, humanBindingStatus } from "./human-principals.ts";
+import { knownHumanNames, observeVerifiedHuman, ownerChannelUserIds, threadHumanChannelUserId, linkHumanBinding, resolveHumanBinding, humanTask, threadHumanPrincipal, revokeHumanConnection, shareHumanScope, assertHumanPrincipal, bindHumanThread, resolveHumanDelivery, humanBindingStatus } from "./human-principals.ts";
 
 beforeEach(()=>{closeDatabase();rmSync(DATA_DIR,{recursive:true,force:true});mkdirSync(DATA_DIR,{recursive:true});});
 const fresh=()=>new Store(()=>({instanceId:"fixture",model:"fixture"}));
@@ -105,4 +105,23 @@ it("names the owner's own channel accounts and a channel thread's human for the 
   expect(threadHumanChannelUserId(bot.threadId)).toBeUndefined();
   const task=humanTask(store,bot.id,principal)!;
   expect(threadHumanChannelUserId(task.threadId)).toBe("UPERSON");
+});
+
+it("projects the active room principal's read-only reason before a send", async () => {
+  const { groupReadOnlyState, CONTACT_ROOM_READ_ONLY_REASON } = await import("./group-read-only.ts");
+  const store = fresh(), bot = store.createBot(), peer = store.createBot();
+  const owner = store.createGroup("Owner", [bot.id, peer.id]);
+  expect(groupReadOnlyState(owner.threadId)).toEqual({});
+  const task = humanTask(store, bot.id, person())!;
+  const room = getOrCreateChannel(store, bot, peer, task.threadId);
+  expect(groupReadOnlyState(room.threadId)).toEqual({ readOnlyReason: CONTACT_ROOM_READ_ONLY_REASON });
+  expect(CONTACT_ROOM_READ_ONLY_REASON).toBe("This is a channel person’s delegated conversation. Start an owner room to send a message.");
+});
+it("fix round 4: the sender's display name and username are kept on the binding without a new revision, and read back as known names",()=>{
+  const id=observeVerifiedHuman({platform:"telegram",authorityId:"123",connectionId:"123",userId:"456"},{name:"Jane Smith",username:"janes"});
+  expect(knownHumanNames()).toEqual(expect.arrayContaining(["Jane Smith","Jane","Smith","janes"]));
+  expect(observeVerifiedHuman({platform:"telegram",authorityId:"123",connectionId:"123",userId:"456"},{name:"Jane S",username:"janes"})).toBe(id);
+  expect(knownHumanNames()).toContain("Jane S");
+  expect(humanBindingStatus(ownerMemoryTicket()).bindings[0].revision).toBe(1);
+  expect(knownHumanNames()).not.toContain("Smith");
 });

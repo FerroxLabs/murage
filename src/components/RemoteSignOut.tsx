@@ -47,7 +47,7 @@ export function RemoteSignOutCard() {
   return (
     <Card
       title="This device"
-      subtitle="Removes this device from your computer. To use Murage here again, scan the code in Settings → Phone on the computer."
+      subtitle="Removes this device from your computer. To use Murage here again, scan the code in Settings → Phone and other devices on the computer."
     >
       {confirming ? (
         <div className="flex flex-wrap items-center gap-2">

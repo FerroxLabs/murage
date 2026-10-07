@@ -1,5 +1,29 @@
 {
   "title": "Features",
   "icon": "Sparkles",
-  "pages": ["index", "bots-and-tasks", "new-bot-and-team", "chat-and-teams", "approvals-and-inspector", "automation", "inbox", "skills", "what-shapes-a-bot", "house-rules-and-about-me", "engine-commands", "attachments-and-search", "voice-and-memory", "whats-new-and-tray"]
+  "pages": [
+    "index",
+    "bots-and-tasks",
+    "new-bot-and-team",
+    "chat-and-teams",
+    "projects",
+    "bots-working-together",
+    "bot-tools",
+    "approvals-and-inspector",
+    "automation",
+    "inbox",
+    "skills",
+    "mcp-servers",
+    "what-shapes-a-bot",
+    "house-rules-and-about-me",
+    "engine-commands",
+    "attachments-and-search",
+    "voice-and-memory",
+    "whats-new-and-tray",
+    "browser-extension",
+    "memory-and-learning",
+    "messaging-apps",
+    "settings-guide",
+    "if-something-isnt-possible"
+  ]
 }

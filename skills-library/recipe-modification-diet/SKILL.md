@@ -6,7 +6,7 @@ description: |
   Do NOT use for clinical dietary management, allergy severity assessment, or creating new recipes from scratch.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "nutrition cooking guide"
   category: "health-wellness"

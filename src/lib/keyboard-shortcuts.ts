@@ -1,11 +1,14 @@
 // Display-only reference inspired by upstream #946; no global key listener.
 // Each entry corresponds to the named handler in the current Murage source.
+import { t } from "@/lib/i18n";
 export interface Shortcut { id: string; description: string; keys: string[]; context: string }
 export interface ShortcutGroup { title: string; items: Shortcut[] }
 export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   { title: "Navigation", items: [
     { id: "palette", description: "Search and switch conversations", keys: ["Mod", "K"], context: "Command palette" },
     { id: "new-bot", description: "Create a new bot", keys: ["Mod", "N"], context: "App-wide" },
+    // 0.1.62: the gear's shortcut, as on every Mac app (App.tsx).
+    { id: "settings", get description() { return t("shortcuts.settings"); }, keys: ["Mod", ","], context: "App-wide" },
     { id: "jump-bot", description: "Jump to bot 1–9", keys: ["Mod", "1–9"], context: "Visible roster order" },
     { id: "find", description: "Find in the current conversation", keys: ["Mod", "F"], context: "Bot or channel" },
     { id: "close", description: "Close the focused dialog or search", keys: ["Escape"], context: "Dialog, palette or find bar" },
@@ -21,15 +24,9 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     { id: "reorder", description: "Move a sidebar section", keys: ["Alt", "↑ / ↓"], context: "Focused, movable section heading" },
   ] },
 ];
-export function shortcutPlatformIsMac(): boolean {
-  if (typeof window !== "undefined" && window.muragebox?.platform) return window.muragebox.platform === "darwin";
-  return typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
-}
-/** A Mod chord as a tooltip writes it: `⌘F` / `⌘⇧Z` on a Mac, `Ctrl+F` /
- * `Ctrl+Shift+Z` everywhere else. */
-export function modShortcut(key: string, { shift = false, mac = shortcutPlatformIsMac() }: { shift?: boolean; mac?: boolean } = {}): string {
-  return mac ? `⌘${shift ? "⇧" : ""}${key}` : `Ctrl+${shift ? "Shift+" : ""}${key}`;
-}
+// The two helpers every tooltip uses live in mod-shortcut.ts, so the list
+// above loads with the Keyboard shortcuts dialog, not with the first paint.
+export { modShortcut, shortcutPlatformIsMac } from "./mod-shortcut";
 export function shortcutKeys(item: Shortcut, mac: boolean): string[] {
   return item.keys.map(key => key === "Mod" ? mac ? "⌘" : "Ctrl" : key === "Alt" && mac ? "Option" : key === "Escape" ? "Esc" : key === "Enter" && mac ? "Return" : key);
 }

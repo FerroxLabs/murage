@@ -1,5 +1,13 @@
+import { partitionOfScopeKey, executionStore, homeThread } from "../execution-audience.ts";
+import { teamLabel } from "../team-identities.ts";
+import { learningReviewReason } from "./automatic-learning.ts";
+import { learningHistory,changeLearningEvent } from "./learning-history.ts";
+import type { LearningConnection } from "./extractor-connections.ts";
 import { humanBindingStatus, linkHumanBinding, shareHumanScope } from "../human-principals.ts";
-import { identityReadSchema, identityWriteSchema, readBotIdentity, writeBotIdentity } from "./identity.ts";
+import { continuityReadSchema, deleteBotIdentity, rejectGenericForgetOfPip, identityDeleteSchema, identityReadSchema, identityWriteSchema, readBotIdentity, readContinuity, writeBotIdentity } from "./identity.ts";
+import { isPipKind } from "./pip-kinds.ts";
+import { confirmPipProposal, dismissPipProposal, keepPipRecord, listProposals, pipDisputes } from "./pip-lived.ts";
+import { reflectionStatus, retryReflection, setReflectExcluded } from "./pip-reflect.ts";
 import { supportsNativeMemoryModel } from "./embeddings.ts";
 import { archiveMemoryRecord, restoreArchivedMemoryRecord, memoryRetentionStatus } from "./retention.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -14,7 +22,7 @@ import { SERVER_ROOT } from "../proxy-paths.ts";
 import { database, transaction } from "../database.ts";
 import { requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemoryScope, readCorrectionTarget } from "./authority.ts";
 import { forgetMemory, memoryDeletionStatus } from "./forget.ts";
-import { ensureScope, type MemoryRoster } from "./policy.ts";
+import { backgroundMemoryScopes, ensureScope, type MemoryRoster } from "./policy.ts";
 import { memoryState } from "./repository.ts";
 import { previewMemoryImport, commitMemoryImport, availableMemoryNotebooks, memoryNotebookLinks, stopTrackingMemoryNotebook, migrateDetectedMemoryNotebooks } from "./import.ts";
 import { ownerMemoryList } from "./owner-list.ts";
@@ -24,11 +32,15 @@ import { memoryLearningPatchSchema, readMemoryLearning, updateMemoryLearning } f
 import type { MemoryEvolutionRuntime } from "./evolution-runtime.ts";
 import type { ProcedureEvaluatorBridge } from "./procedure-evaluator.ts";
 import { memoryHealth } from "./health.ts";
+import { forgetParkedThreads } from "./park.ts";
+import { revokeAllDisclosures } from "./revocation.ts";
 
 const SETTINGS="memory-owner-settings";
 type Configuration={excludedThreadIds:string[];extractorInstanceId:string|null};
 interface Extractor {instanceId:string;label:string;eligible:boolean;reason?:string}
 export interface MemoryOwnerOptions {
+  learningConnection?:()=>LearningConnection;
+  learningDefaultOn?:()=>boolean;
   evolution?:MemoryEvolutionRuntime;
   procedureEvolution?:ProcedureEvaluatorBridge;
   humanBindingChanged?:(bindingId:string)=>Promise<void>;
@@ -40,6 +52,10 @@ export interface MemoryOwnerOptions {
 const id=z.string().min(1).max(180),version=z.number().int().positive();
 const subject={subjectType:z.enum(["bot","room"]),subjectId:id};
 const actions=z.discriminatedUnion("action",[
+  z.object({action:z.literal("learning-history"),botId:id.optional(),cursor:id.optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
+  z.object({action:z.literal("learning-undo"),eventId:id}).strict(),
+  z.object({action:z.literal("learning-keep"),eventId:id}).strict(),
+  z.object({action:z.literal("learning-bot"),botId:id,enabled:z.boolean(),learningRevision:z.number().int().nonnegative()}).strict(),
   z.object({action:z.literal("evolution-authorize")}).strict(),
   z.object({action:z.literal("evolution-authorize-classification")}).strict(),
   z.object({action:z.literal("procedure-evaluation-preview"),reviewId:id}).strict(),
@@ -48,7 +64,14 @@ const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("evolution-retry"),jobId:id}).strict(),
   z.object({action:z.literal("evolution-history")}).strict(),
   z.object({action:z.literal("evolution-rollback"),expectedRevision:id,targetRevision:id}).strict(),
-  identityReadSchema, identityWriteSchema,
+  identityReadSchema, identityWriteSchema, identityDeleteSchema, continuityReadSchema,
+  z.object({action:z.literal("pip-proposals"),botId:id}).strict(),
+  z.object({action:z.literal("pip-proposal-confirm"),botId:id,id,expectedVersion:z.number().int().positive()}).strict(),
+  z.object({action:z.literal("pip-proposal-dismiss"),botId:id,id,expectedVersion:z.number().int().positive()}).strict(),
+  z.object({action:z.literal("pip-keep"),botId:id,targetId:id,generation:z.number().int().nonnegative(),counterVersion:z.number().int().positive()}).strict(),
+  z.object({action:z.literal("pip-reflect-status"),botId:id}).strict(),
+  z.object({action:z.literal("pip-reflect-retry"),botId:id}).strict(),
+  z.object({action:z.literal("pip-reflect-exclude"),botId:id,threadId:id,excluded:z.boolean()}).strict(),
   z.object({action:z.literal("humans")}).strict(),
   z.object({action:z.literal("human-share"),personId:id,scopeId:id,granted:z.boolean()}).strict(),
   z.object({action:z.literal("human-link"),bindingId:id,expectedRevision:z.number().int().positive(),as:z.enum(["owner","person","unlink"]),personId:id.optional()}).strict(),
@@ -61,7 +84,7 @@ const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("archive"),id,version}).strict(),
   z.object({action:z.literal("restore-archive"),id,version}).strict(),
   z.object({action:z.literal("pin"),id,version,pinned:z.boolean()}).strict(),
-  z.object({action:z.literal("correct"),id,version,text:z.string().min(1).max(4096)}).strict(),
+  z.object({action:z.literal("correct"),id,version,text:z.string().min(1).max(4096),correctionPin:z.enum(["transfer","unpin"]).optional()}).strict(),
   z.object({action:z.literal("promote"),id,version,scopeId:id}).strict(),
   z.object({action:z.literal("forget"),kind:z.enum(["source","record"]),id,revision:z.number().int().nonnegative().optional()}).strict(),
   z.object({action:z.literal("bind"),scopeId:id,...subject}).strict(),
@@ -84,13 +107,21 @@ function configuration():Configuration {
   return row?JSON.parse(String(row.intent)):{excludedThreadIds:[],extractorInstanceId:null};
 }
 function record(row:Record<string,unknown>):MemoryRecord {
-  return {id:String(row.id),version:Number(row.version),scopeId:String(row.scope_id),kind:String(row.kind),text:String(row.text),assertion:row.assertion as MemoryRecord["assertion"],state:row.state as MemoryRecord["state"],ownerPinned:row.owner_pinned===1,validFrom:Number(row.valid_from),validTo:row.valid_to===null?null:Number(row.valid_to)};
+  const basis=row.state==="candidate"?database().prepare("SELECT confidence_basis FROM memory_record_details WHERE record_id=? AND record_version=?").get(String(row.id),Number(row.version))?.confidence_basis:null;
+  const reviewReason=typeof basis==="string"?(basis.includes(" ")?basis:learningReviewReason(basis)):undefined;
+  return {...(reviewReason?{reviewReason}:{}),id:String(row.id),version:Number(row.version),scopeId:String(row.scope_id),kind:String(row.kind),text:String(row.text),assertion:row.assertion as MemoryRecord["assertion"],state:row.state as MemoryRecord["state"],ownerPinned:row.owner_pinned===1,validFrom:Number(row.valid_from),validTo:row.valid_to===null?null:Number(row.valid_to)};
 }
 function getRecord(id:string,version:number){
   const row=database().prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(id,version);
   if(!row)throw new Error("MEMORY_NOT_FOUND");return record(row);
 }
+function isPipRecord(id:string):boolean{
+  const row=database().prepare("SELECT kind FROM memory_records WHERE id=? LIMIT 1").get(id);
+  return Boolean(row)&&isPipKind(row!.kind);
+}
 function reindex(id:string,version:number){
+  // Continuity rows never enter the shared recall index.
+  if(isPipRecord(id))return;
   database().prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL) ON CONFLICT(record_id,record_version,index_generation) DO UPDATE SET lexical_status='pending',embedding_status='pending',error=NULL").run(id,version);
   database().exec("UPDATE memory_meta SET data_revision=data_revision+1");
 }
@@ -142,6 +173,12 @@ function validSubject(roster:MemoryRoster,type:"bot"|"room",id:string){
   if(!(type==="bot"?roster.bots:roster.groups).some(subject=>subject.id===id))throw new Error("MEMORY_SUBJECT_UNKNOWN");
 }
 function scopes(roster:MemoryRoster){return database().prepare("SELECT id,kind,owner_key FROM memory_scopes ORDER BY kind,owner_key").all().map(row=>{
+  const part=partitionOfScopeKey(String(row.kind),String(row.owner_key));
+  if(part?.botId && part.partition.kind!=="home") {
+    const p=part.partition;
+    const label=p.kind==="general"?"Notes for every team":p.kind==="team"?`Notes for ${teamLabel(p.teamId) ?? "deleted team"}`:p.kind==="project"||p.kind==="room"?`Notes for ${(roster.groups.find(g=>g.id===p.groupId) as {name?:string}|undefined)?.name ?? p.groupId}`:"Notes";
+    return {id:String(row.id),kind:String(row.kind),ownerKey:String(row.owner_key),label};
+  }
   const named=(row.kind==="bot"?roster.bots:roster.groups).find(item=>item.id===row.owner_key) as {name?:string}|undefined;
   return {id:String(row.id),kind:String(row.kind),ownerKey:String(row.owner_key),label:named?.name||String(row.owner_key)||"General"};
 });}
@@ -204,9 +241,29 @@ export function memoryOwnerStatus(ticket:object,roster:MemoryRoster,options:Memo
   const oldest=db.prepare("SELECT min(v.created_at) AS at FROM memory_jobs j JOIN memory_source_versions v ON v.source_id=j.source_id AND v.revision=j.source_revision WHERE j.status IN ('pending','partial','leased','deferred','failed')").get();backlog.oldestQueuedAt=oldest?.at===null?null:Number(oldest?.at??0);
   const day=new Date().toISOString().slice(0,10),budgetRow=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(`extract-budget:${day}`),budget=budgetRow?JSON.parse(String(budgetRow.intent)):{};
   const runtime=options.runtimeStatus?.();
-  const learning=readMemoryLearning(db);
-  return {...memoryState(),learning,evolution:options.evolution?.status()??null,classificationEvolution:options.evolution?.status("classification")??null,procedureEvolution:options.procedureEvolution?.status(ticket)??null,health:memoryHealth(configuration().extractorInstanceId),retention:memoryRetentionStatus(),configuration:configuration(),scopes:scopes(roster),records:counts,backlog,model:modelStatus(),extractors:options.extractors?.()??[],
-    cost:{day,inputReserved:budget.input??0,outputReserved:budget.output??0,callsThisMinute:budget.minute===Math.floor(Date.now()/60000)?budget.calls??0:0,inputLimit:learning.inputLimit,outputLimit:learning.outputLimit,callsPerMinuteLimit:learning.callsPerMinute},deletion:memoryDeletionStatus(),workerError:runtime?.error??null,runtime:runtime??null};
+  const {revision,...settings}=readMemoryLearning(db);
+  const resolved=options.learningConnection?.();
+  const connection=resolved?{instanceId:resolved.instanceId,label:resolved.label,source:resolved.source,reason:resolved.reason,suggestion:resolved.suggestion}:{instanceId:configuration().extractorInstanceId,label:"No connection",source:"none" as const};
+  const learning={settings,revision,connection,defaultOn:options.learningDefaultOn?.()??false,allowance:{day,callsThisMinute:budget.minute===Math.floor(Date.now()/60000)?budget.calls??0:0,inputUsed:budget.input??0,inputLimit:settings.dailyInputTokens,outputUsed:budget.output??0,outputLimit:settings.dailyOutputTokens,usedPercent:Math.min(100,Math.round(100*Math.max(settings.dailyInputTokens?(budget.input??0)/settings.dailyInputTokens:1,settings.dailyOutputTokens?(budget.output??0)/settings.dailyOutputTokens:1)))}};
+  return {...memoryState(),learning,evolution:options.evolution?.status()??null,classificationEvolution:options.evolution?.status("classification")??null,procedureEvolution:options.procedureEvolution?.status(ticket)??null,health:memoryHealth(resolved?(resolved.extractor?resolved.instanceId:null):configuration().extractorInstanceId),retention:memoryRetentionStatus(),configuration:configuration(),scopes:scopes(roster),records:counts,backlog,model:modelStatus(),extractors:options.extractors?.()??[],
+    deletion:memoryDeletionStatus(),workerError:runtime?.error??null,runtime:runtime??null};
+}
+
+/** Owner edit/restore failures are displayed directly by MemorySettings. */
+function plainMemoryEditError<T>(action:()=>T):T{
+  try{return action();}catch(error){
+    const messages:Record<string,string>={
+      MEMORY_SOURCE_UNAVAILABLE:"The source for this memory is no longer available.",
+      MEMORY_EVIDENCE_UNAVAILABLE:"The evidence for this memory is no longer available.",
+      MEMORY_VERSION_CONFLICT:"This memory changed. Refresh and try again.",
+      MEMORY_IDENTITY_WRITE_REQUIRED:"Use identity settings to change this memory.",
+      MEMORY_CORRECTION_SCOPE_MISMATCH:"This correction and the current memory have different audiences.",
+      MEMORY_CORRECTION_PIN_CHOICE_REQUIRED:"Choose whether to transfer or remove the current memory’s pin.",
+      MEMORY_CORRECTION_PIN_CHANGED:"The current memory’s pin changed. Review it and try again.",
+    };
+    if(error instanceof Error && messages[error.message])error.message=messages[error.message];
+    throw error;
+  }
 }
 
 export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,roster:MemoryRoster,options:MemoryOwnerOptions={}){
@@ -215,6 +272,13 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   if(path!=="/api/memory/action")throw Object.assign(new Error("MEMORY_ROUTE_UNAVAILABLE"),{status:404});
   const parsed=actions.safeParse(body);if(!parsed.success)throw Object.assign(new Error("INVALID_MEMORY_ARGUMENTS"),{status:400});
   const input=parsed.data,db=database();
+  if(input.action==="learning-history")return learningHistory(db,roster,input);
+  if(input.action==="learning-undo"||input.action==="learning-keep")return transaction(()=>changeLearningEvent(db,input.eventId,input.action==="learning-undo"?"undo":"keep"));
+  if(input.action==="learning-bot"){
+    validSubject(roster,"bot",input.botId);
+    transaction(()=>{const current=readMemoryLearning(db),paused=new Set(current.botsPaused);if(input.enabled)paused.delete(input.botId);else paused.add(input.botId);updateMemoryLearning(db,{botsPaused:[...paused]},input.learningRevision);});
+    return memoryOwnerStatus(ticket,roster,options);
+  }
   if(input.action.startsWith("evolution-")){
     if(!options.evolution)throw Error("MEMORY_EVOLUTION_RUNTIME_UNAVAILABLE");
     if(input.action==="evolution-authorize")return options.evolution.authorize(ticket);
@@ -235,12 +299,32 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   if(input.action==="humans")return humanBindingStatus(ticket);
   if(input.action==="human-share")return shareHumanScope(ticket,input);
   if(input.action==="human-link"){const result=linkHumanBinding(ticket,input);await options.humanBindingChanged?.(input.bindingId);return result;}
-  if(input.action==="correct"||input.action==="promote"){
+  if(input.action==="promote"){
     const details=db.prepare("SELECT partition FROM memory_record_details WHERE record_id=? AND record_version=?").get(input.id,input.version);
     if(details?.partition==="identity")throw new Error("MEMORY_IDENTITY_WRITE_REQUIRED");
   }
+  // Owner-authored continuity changes only through its own actions (PIP): the
+  // generic record controls would bump installation revisions, skip the
+  // per-kind cap, or hand its text to another dispatch path.
+  if(("id" in input)&&("version" in input)&&["review-as-skill","archive","restore-archive","approve","correct"].includes(input.action)&&isPipRecord(String(input.id)))
+    throw new Error(input.action==="review-as-skill"?"MEMORY_IDENTITY_PIP_NOT_SKILL":"MEMORY_IDENTITY_PIP_USE_CONTINUITY");
+  if(input.action==="forget")rejectGenericForgetOfPip(ticket,input);
   if(input.action==="identity-read")return readBotIdentity(ticket,input.botId,roster,input.cursor);
   if(input.action==="identity-write")return writeBotIdentity(ticket,input,roster);
+  if(input.action==="identity-delete")return deleteBotIdentity(ticket,input,roster);
+  if(input.action==="continuity-read")return readContinuity(ticket,input.botId,roster);
+  if(input.action==="pip-proposals")return {proposals:listProposals(ticket,input.botId,roster),counters:pipDisputes(ticket,input.botId,roster)};
+  if(input.action==="pip-proposal-confirm")return confirmPipProposal(ticket,input,roster);
+  if(input.action==="pip-proposal-dismiss")return dismissPipProposal(ticket,input,roster);
+  if(input.action==="pip-keep")return keepPipRecord(ticket,input,roster);
+  if(input.action==="pip-reflect-exclude"){
+    requireMemoryOwner(ticket);
+    const bot=roster.bots.find(b=>b.id===input.botId);
+    if(!bot||![bot.threadId,...(bot.tasks??[]).map(t=>t.threadId)].includes(input.threadId))throw new Error("MEMORY_SUBJECT_UNKNOWN");
+    setReflectExcluded(input.botId,input.threadId,input.excluded);return {ok:true};
+  }
+  if(input.action==="pip-reflect-status"){requireMemoryOwner(ticket);return reflectionStatus(input.botId);}
+  if(input.action==="pip-reflect-retry"){requireMemoryOwner(ticket);retryReflection(input.botId);return {ok:true};}
   if(input.action==="list"){
     const {rows,...result}=ownerMemoryList(input,roster);
     return {...result,records:rows.map(record)};
@@ -262,16 +346,18 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
     const allowed=db.prepare(`SELECT id FROM memory_scopes WHERE
       (kind='bot' AND owner_key=?) OR (kind='conversation' AND owner_key=?) OR (kind='team' AND owner_key=?)
       UNION SELECT scope_id AS id FROM memory_scope_bindings WHERE subject_type='bot' AND subject_id=? AND state='granted'`).all(bot.id,bot.threadId,bot.section?.trim()||"",bot.id);
+    const liveBot=executionStore()?.bot(bot.id);
+    if(liveBot?.partitionedAt!==undefined && !backgroundMemoryScopes(bot.id,homeThread(liveBot).threadId,roster).includes(current.scopeId))throw new Error("MEMORY_SKILL_AUDIENCE_DENIED");
     if(!allowed.some(scope=>scope.id===current.scopeId))throw new Error("MEMORY_SKILL_AUDIENCE_DENIED");
     const review=prepareMemorySkillReview(ticket,bot.id,input.id,input.version);
     try {return {workflow:"learn",...await options.startSkillReview(review),source:review.source,record:review.record};}
     catch(error){db.prepare("UPDATE memory_scope_bindings SET state='revoked' WHERE id=?").run(review.source.replace("learn:memory-review:","memory-skill-review:"));throw error;}
   }
   if(input.action==="archive"){archiveMemoryRecord(ticket,input.id,input.version);return {record:getRecord(input.id,input.version)};}
-  if(input.action==="restore-archive"){restoreArchivedMemoryRecord(ticket,input.id,input.version);return {record:getRecord(input.id,input.version)};}
+  if(input.action==="restore-archive"){plainMemoryEditError(()=>restoreArchivedMemoryRecord(ticket,input.id,input.version));return {record:getRecord(input.id,input.version)};}
   if(input.action==="approve"){approveMemory(ticket,input.id,input.version,input.correctionPin?{correctionPin:input.correctionPin}:{});reindex(input.id,input.version);return {record:getRecord(input.id,input.version)};}
   if(input.action==="pin"){pinMemory(ticket,input.id,input.version,input.pinned);return {record:getRecord(input.id,input.version)};}
-  if(input.action==="correct"){const next=correctMemory(ticket,input.id,input.version,input.text);reindex(input.id,next);return {record:getRecord(input.id,next)};}
+  if(input.action==="correct"){const next=plainMemoryEditError(()=>correctMemory(ticket,input.id,input.version,input.text,{correctionPin:input.correctionPin}));reindex(input.id,next);return {record:getRecord(input.id,next)};}
   if(input.action==="promote"){
     return transaction(()=>{const original=getRecord(input.id,input.version);if(original.state!=="active"&&original.state!=="candidate")throw new Error("MEMORY_VERSION_CONFLICT");
       if(!db.prepare("SELECT 1 FROM memory_scopes WHERE id=?").get(input.scopeId))throw new Error("MEMORY_SCOPE_UNKNOWN");
@@ -298,9 +384,10 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
       if(input.learning)updateMemoryLearning(db,input.learning,input.learningRevision);
       db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','owner-settings',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent").run(SETTINGS,scope,JSON.stringify(updated));
       if(input.mode)db.prepare("UPDATE memory_meta SET mode=?").run(input.mode);
-      db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1,data_revision=data_revision+1");db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE state!='revoked'").run();
+      db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1,data_revision=data_revision+1");revokeAllDisclosures(db,"memory-settings");
       db.prepare("UPDATE memory_sources SET state='retired' WHERE thread_id IN (SELECT value FROM json_each(?)) AND state='active'").run(JSON.stringify(updated.excludedThreadIds));
       db.prepare("UPDATE memory_jobs SET status='cancelled',lease_generation=lease_generation+1 WHERE source_id IN (SELECT id FROM memory_sources WHERE thread_id IN (SELECT value FROM json_each(?))) AND status NOT IN ('complete','cancelled')").run(JSON.stringify(updated.excludedThreadIds));
+      forgetParkedThreads(db,updated.excludedThreadIds);
     });return memoryOwnerStatus(ticket,roster,options);
   }
   if(input.action==="import-preview")return previewMemoryImport(ticket,input.selections,roster);

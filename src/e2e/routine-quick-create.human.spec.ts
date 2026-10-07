@@ -15,6 +15,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { openSidebar } from "./fixtures.ts";
+import { openSidebarPlace } from "./sidebar-nav";
 
 interface VerificationServer { info: { url: string; dataDir: string }; close(): Promise<void> }
 type LaunchVerificationServer = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<VerificationServer>;
@@ -62,8 +63,7 @@ test("the quick form repeats, and saving says what it saved and goes there", asy
 
   // One name for it, in the sidebar and on the page it opens.
   const sidebar = await openSidebar(page);
-  await sidebar.locator("[data-sidebar-more-trigger]").click();
-  await sidebar.getByRole("menuitem", { name: "Routines", exact: true }).click();
+  await openSidebarPlace(sidebar, "routines");
   await expect(page.getByRole("heading", { name: "Routines", exact: true })).toBeVisible();
   await expect(sidebar.getByRole("menuitem", { name: "Calendar", exact: true })).toHaveCount(0);
 

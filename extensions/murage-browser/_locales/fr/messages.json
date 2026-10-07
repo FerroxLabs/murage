@@ -1,0 +1,421 @@
+{
+  "extName": {
+    "message": "Murage for Chrome"
+  },
+  "extDescription": {
+    "message": "Partage des onglets choisis avec tes bots Murage et garde la main avec Pause et Arrêter."
+  },
+  "groupTitle": {
+    "message": "Murage"
+  },
+  "groupTitleBot": {
+    "message": "Murage · $BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "groupSuffixPaused": {
+    "message": " · en pause"
+  },
+  "groupSuffixStopped": {
+    "message": " · arrêté"
+  },
+  "groupSuffixYourTurn": {
+    "message": " · à toi"
+  },
+  "groupSuffixFull": {
+    "message": " · complet"
+  },
+  "groupSuffixWorking": {
+    "message": " · en cours"
+  },
+  "groupSuffixDone": {
+    "message": " · terminé"
+  },
+  "overlayWorking": {
+    "message": "$BOT$ travaille",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPause": {
+    "message": "Pause"
+  },
+  "overlayStop": {
+    "message": "Arrêter"
+  },
+  "overlayWaiting": {
+    "message": "En attente de ta réponse dans Murage"
+  },
+  "overlayFull": {
+    "message": "Entièrement permissif"
+  },
+  "overlayAria": {
+    "message": "$BOT$ utilise cet onglet. Mets-le en pause ou arrête-le ici.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayPointer": {
+    "message": "$BOT$",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHeader": {
+    "message": "Murage for Chrome"
+  },
+  "spConnected": {
+    "message": "Connecté à Murage"
+  },
+  "spNotConnected": {
+    "message": "Murage n'est pas connecté"
+  },
+  "spBotLine": {
+    "message": "$BOT$ dans « $CONVERSATION$ »",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      },
+      "conversation": {
+        "content": "$2"
+      }
+    }
+  },
+  "spStateWorking": {
+    "message": "En cours"
+  },
+  "spStateWaiting": {
+    "message": "En attente de toi"
+  },
+  "spStatePaused": {
+    "message": "En pause"
+  },
+  "spStateStopped": {
+    "message": "Arrêté"
+  },
+  "spStateYourTurn": {
+    "message": "À toi"
+  },
+  "spModeStep": {
+    "message": "Demande à chaque étape"
+  },
+  "spModeTask": {
+    "message": "Demande une fois par tâche"
+  },
+  "spModeFull": {
+    "message": "Entièrement permissif"
+  },
+  "btnPause": {
+    "message": "Pause"
+  },
+  "btnStop": {
+    "message": "Arrêter"
+  },
+  "btnResume": {
+    "message": "Reprendre"
+  },
+  "btnEndTask": {
+    "message": "Terminer la tâche"
+  },
+  "btnContinue": {
+    "message": "Continuer"
+  },
+  "btnShare": {
+    "message": "Partager cet onglet"
+  },
+  "btnUnshare": {
+    "message": "Ne plus partager"
+  },
+  "spTaskTitle": {
+    "message": "Cette tâche"
+  },
+  "spAllowedForTask": {
+    "message": "Autorisé pour cette tâche :"
+  },
+  "spRevoke": {
+    "message": "Révoquer"
+  },
+  "spActivityTitle": {
+    "message": "Ce que $BOT$ a fait",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spActivityEmpty": {
+    "message": "Rien pour l'instant."
+  },
+  "spSitesTitle": {
+    "message": "Sites que $BOT$ peut utiliser",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spSiteAlways": {
+    "message": "Toujours"
+  },
+  "spSiteNever": {
+    "message": "Jamais"
+  },
+  "spSiteAsks": {
+    "message": "Demande à chaque étape"
+  },
+  "spShareTitle": {
+    "message": "Partager cet onglet avec $BOT$ ?",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spShare": {
+    "message": "Partager"
+  },
+  "spNotNow": {
+    "message": "Pas maintenant"
+  },
+  "spUnshareTitle": {
+    "message": "Ne plus partager cet onglet avec $BOT$ ?",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshare": {
+    "message": "Ne plus partager"
+  },
+  "spKeep": {
+    "message": "Garder"
+  },
+  "spDebugNote": {
+    "message": "Pendant que $BOT$ travaille, Chrome affiche une barre indiquant que Murage for Chrome a commencé à déboguer ce navigateur. C'est Chrome qui te prévient qu'une extension peut agir dans tes onglets. Appuyer sur Annuler dans cette barre met $BOT$ en pause.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUpdateWaiting": {
+    "message": "Murage for Chrome se mettra à jour quand $BOT$ aura terminé cette étape.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spOldExtension": {
+    "message": "Mets à jour Murage for Chrome pour obtenir les nouvelles commandes."
+  },
+  "spOldApp": {
+    "message": "Mets à jour Murage sur cet ordinateur pour utiliser cette version de Murage for Chrome."
+  },
+  "spShortcutHint": {
+    "message": "Pause au clavier : $SHORTCUT$",
+    "placeholders": {
+      "shortcut": {
+        "content": "$1"
+      }
+    }
+  },
+  "spYourTurn": {
+    "message": "À toi : $LINE$",
+    "placeholders": {
+      "line": {
+        "content": "$1"
+      }
+    }
+  },
+  "spFullOn": {
+    "message": "Le mode Entièrement permissif est activé."
+  },
+  "spTurnOff": {
+    "message": "Désactiver"
+  },
+  "spModeTitle": {
+    "message": "Mode d'approbation"
+  },
+  "spHintStep": {
+    "message": "$BOT$ demande avant chaque action qui modifie un site.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintTask": {
+    "message": "Une carte par site, puis $BOT$ mène la tâche à bien.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spHintFull": {
+    "message": "Pas de carte pour les actions ordinaires. Ce que toi seul peux faire te revient toujours."
+  },
+  "spRevokeAria": {
+    "message": "Révoquer l'accès à $SITE$",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spUnshareAria": {
+    "message": "Ne plus partager $SITE$",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "spNewTab": {
+    "message": "Nouvel onglet"
+  },
+  "spSharedTitle": {
+    "message": "Onglets partagés"
+  },
+  "spNoTabs": {
+    "message": "Aucun onglet partagé."
+  },
+  "spNoSites": {
+    "message": "Aucun site pour le moment."
+  },
+  "spShareHint": {
+    "message": "Seuls les onglets partagés ici appartiennent à ce bot. Déplacer un onglet dans son groupe ne le partage pas."
+  },
+  "spSetupTitle": {
+    "message": "Se connecter à Murage"
+  },
+  "spSetupBody": {
+    "message": "Ouvre Murage sur cet ordinateur et active le compagnon de navigateur dans les réglages du navigateur."
+  },
+  "spCheckConnection": {
+    "message": "Vérifier la connexion"
+  },
+  "spProfile": {
+    "message": "Profil Chrome : $PROFILE$",
+    "placeholders": {
+      "profile": {
+        "content": "$1"
+      }
+    }
+  },
+  "spBodyWorking": {
+    "message": "Travaille dans les onglets partagés."
+  },
+  "spBodyPaused": {
+    "message": "Les onglets restent privés jusqu'à la reprise."
+  },
+  "spBodyStopped": {
+    "message": "Cette tâche a été arrêtée. Demande au bot de recommencer dans une nouvelle conversation."
+  },
+  "spBodyReconnect": {
+    "message": "En attente de la reconnexion de ce bot par Murage."
+  },
+  "spErrHostOffline": {
+    "message": "Ouvre Murage, puis vérifie à nouveau la connexion."
+  },
+  "spErrSiteDenied": {
+    "message": "Murage t’a demandé d’autoriser ce site. Autorise-le là-bas, puis appuie de nouveau sur Partager."
+  },
+  "spErrHumanHandover": {
+    "message": "Ce site doit être utilisé directement par toi."
+  },
+  "spErrBindingInactive": {
+    "message": "Reprends ce bot dans Murage avant de partager des onglets."
+  },
+  "spErrTabOwned": {
+    "message": "Un autre bot possède déjà cet onglet."
+  },
+  "spErrUnknownBinding": {
+    "message": "Lance d'abord une tâche de navigateur dans Murage."
+  },
+  "spErrBindingStopped": {
+    "message": "Cette tâche a été arrêtée. Demande au bot de recommencer dans une nouvelle conversation."
+  },
+  "spErrGeneric": {
+    "message": "L'action du navigateur n'a pas pu aboutir. Vérifie la connexion et réessaie."
+  },
+  "spHeaderBrand": {
+    "message": "Murage"
+  },
+  "spHeaderSuffix": {
+    "message": "pour Chrome"
+  },
+  "spTaskAccess": {
+    "message": "Accès de la tâche"
+  },
+  "overlayYourTurn": {
+    "message": "À toi : $BOT$ t'attend",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "overlayStopTask": {
+    "message": "Arrêter la tâche"
+  },
+  "cmdPauseDescription": {
+    "message": "Mettre Murage for Chrome en pause"
+  },
+  "spSwitchTitle": {
+    "message": "Bots"
+  },
+  "spBodyYourTurn": {
+    "message": "Fais cette étape toi-même dans le navigateur, puis laisse ton bot continuer."
+  },
+  "spPending": {
+    "message": "Un instant"
+  },
+  "spPhaseStarting": {
+    "message": "Ton bot démarre"
+  },
+  "spPhaseConnecting": {
+    "message": "Connexion des outils du navigateur"
+  },
+  "spPhaseReading": {
+    "message": "Lecture de cette page"
+  },
+  "spPhaseWaiting": {
+    "message": "En attente de toi"
+  },
+  "btnNewTask": {
+    "message": "Démarrer une nouvelle tâche"
+  },
+  "spRecoveryReshare": {
+    "message": "Murage for Chrome est reparti de zéro. Partage à nouveau tes onglets pour continuer."
+  },
+  "spErrHandoffUseContinue": {
+    "message": "Ton bot t'attend. Appuie sur Continuer quand tu as terminé l'étape."
+  },
+  "spErrNotHandoff": {
+    "message": "Ton bot ne t'attend pas pour le moment, il n'y a donc rien à poursuivre."
+  },
+  "spErrIncognitoDenied": {
+    "message": "Murage for Chrome ne fonctionne pas dans les fenêtres privées. Ouvre le site dans une fenêtre normale, puis partage-le."
+  },
+  "spErrPersistenceFailed": {
+    "message": "Chrome n'a pas pu enregistrer tes modifications. Réessaie dans un instant."
+  },
+  "spErrUpdateRequired": {
+    "message": "Ce profil a été enregistré par une version plus récente de Murage for Chrome. Mets à jour l'extension pour continuer."
+  },
+  "spErrStorageUnavailable": {
+    "message": "Le stockage de Chrome n'a pas pu être lu. Redémarre Chrome, puis partage à nouveau tes onglets."
+  }
+}

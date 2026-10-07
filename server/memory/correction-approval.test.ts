@@ -208,3 +208,175 @@ describe("ordinary candidate approval", () => {
     expect(f.current().map(record => record.id).sort()).toEqual([saved.candidateId, f.target].sort());
   });
 });
+
+it("editing a held correction atomically replaces its original target",async()=>{
+ const f=fixture(),candidate=await f.propose("r6-edit");
+ await f.act({action:"correct",id:candidate,version:1,text:"The deploy window is Friday"});
+ expect(f.row(f.target).state).toBe("superseded");
+ expect(f.row(candidate,2)).toMatchObject({state:"active",text:"The deploy window is Friday"});
+ expect(f.current()).toEqual([{id:candidate,version:2,text:"The deploy window is Friday"}]);
+});
+it.each(["transfer","unpin"])("editing a pinned correction requires and honors %s",async correctionPin=>{
+ const f=fixture();f.pin();const candidate=await f.propose("r6-pin");
+ await expect(f.act({action:"correct",id:candidate,version:1,text:"Friday"})).rejects.toThrow("Choose whether to transfer or remove the current memory’s pin.");
+ expect(f.row(f.target).state).toBe("active");expect(f.row(candidate).state).toBe("candidate");
+ await f.act({action:"correct",id:candidate,version:1,text:"Friday",correctionPin});
+ expect(f.row(f.target).state).toBe("superseded");expect(f.row(candidate,2)).toMatchObject({state:"active",owner_pinned:correctionPin==="transfer"?1:0});
+});
+
+it("editing a correction refuses a changed exact target without partial writes",async()=>{
+ const f=fixture(),candidate=await f.propose("r6-stale-edit");
+ correctMemory(f.owner,f.target,1,"The deploy window is Wednesday");
+ await expect(f.act({action:"correct",id:candidate,version:1,text:"Friday"})).rejects.toThrow("The memory this corrects has changed. Forget this proposal or approve a fresh one.");
+ expect(f.row(candidate).state).toBe("candidate");expect(f.row(candidate,2)).toBeUndefined();
+ expect(f.row(f.target,2).state).toBe("active");
+});
+
+it("refuses editing a superseded target beside its active successor",async()=>{
+ const f=fixture(),candidate=await f.propose("r7-replaced");
+ await f.act({action:"approve",id:candidate,version:1});
+ await expect(f.act({action:"correct",id:f.target,version:1,text:"Friday"})).rejects.toThrow("This was replaced; edit the current version.");
+ expect(f.row(f.target,2)).toBeUndefined();expect(f.current().map(r=>r.id)).toEqual([candidate]);
+});
+it("editing a held correction with an archived target returns a plain refusal",async()=>{
+ const f=fixture(),candidate=await f.propose("r7-archived");
+ archiveMemoryRecord(f.owner,f.target,1);
+ await expect(f.act({action:"correct",id:candidate,version:1,text:"Friday"})).rejects.toThrow("The memory this corrects has changed. Forget this proposal or approve a fresh one.");
+ expect(f.row(candidate,2)).toBeUndefined();expect(f.row(candidate).state).toBe("candidate");
+});
+it.each(["current","changed","pinned","edit-archived"])("restore after automatic correction Undo handles a %s target atomically",async state=>{
+ const f=fixture(),db=database();
+ db.prepare("UPDATE memory_source_versions SET payload=json_set(payload,'$.origin.kind','attended') WHERE source_id=?").run(f.evidence[0].sourceId);
+ const extractor=Object.assign(async()=>"[]",{ground:async()=>'{"supported":true}'});
+ const {candidateId:candidate}=await memoryAgentRoute("/api/internal/memory/propose-correction",{id:f.target,version:1,replacement:"The deploy window is Tuesday",evidence:f.evidence,idempotencyKey:"r7-undo"},f.access(),f.bridge,undefined,extractor) as {candidateId:string};
+ expect(f.row(candidate).state).toBe("active");
+ const event=db.prepare("SELECT id FROM memory_learning_events WHERE record_id=? AND kind='superseded'").get(candidate)!;
+ await f.act({action:"learning-undo",eventId:event.id});
+ expect(f.row(f.target).state).toBe("active");expect(f.row(candidate).state).toBe("archived");
+ if(state==="changed")correctMemory(f.owner,f.target,1,"Wednesday");
+ if(state==="pinned")f.pin();
+ if(state==="edit-archived"){
+  await expect(f.act({action:"correct",id:candidate,version:1,text:"Friday"})).rejects.toThrow("Restore this memory before editing it.");
+  expect(f.row(candidate,2)).toBeUndefined();expect(f.current().map(r=>r.id)).toEqual([f.target]);
+ }else if(state==="current"){
+  await f.act({action:"restore-archive",id:candidate,version:1});
+  expect(f.row(f.target).state).toBe("superseded");expect(f.current().map(r=>r.id)).toEqual([candidate]);
+ }else{
+  await expect(f.act({action:"restore-archive",id:candidate,version:1})).rejects.toThrow(state==="changed"?"The memory this corrects has changed.":"Unpin the current memory before restoring this correction.");
+  expect(f.row(candidate).state).toBe("archived");expect(f.current().map(r=>r.id)).toEqual([f.target]);
+ }
+});
+
+it("editing a retained proposal whose target is deleted returns the plain stale refusal",async()=>{
+ const f=fixture(),candidate=await f.propose("r7-deleted-target");
+ // Exercise the held-proposal boundary; normal forgetting also deletes descendants.
+ database().prepare("UPDATE memory_records SET state='deleted' WHERE id=?").run(f.target);
+ await expect(f.act({action:"correct",id:candidate,version:1,text:"Friday"})).rejects.toThrow("The memory this corrects has changed. Forget this proposal or approve a fresh one.");
+ expect(f.row(candidate,2)).toBeUndefined();expect(f.row(candidate).state).toBe("candidate");
+});
+
+ it("restores an archived owner edit at its latest version",async()=>{
+  const f=fixture();
+  await f.act({action:"correct",id:f.target,version:1,text:"Wednesday"});
+  await f.act({action:"archive",id:f.target,version:2});
+  await f.act({action:"restore-archive",id:f.target,version:2});
+  expect(f.current()).toEqual([{id:f.target,version:2,text:"Wednesday"}]);
+ });
+ it("restores an archived approved correction while its target stays superseded",async()=>{
+  const f=fixture(),candidate=await f.propose("r9-approved");
+  await f.act({action:"approve",id:candidate,version:1});
+  await f.act({action:"archive",id:candidate,version:1});
+  await f.act({action:"restore-archive",id:candidate,version:1});
+  expect(f.row(f.target).state).toBe("superseded");expect(f.current().map(r=>r.id)).toEqual([candidate]);
+ });
+ it("refuses restore when another correction is active for the superseded target",async()=>{
+  const f=fixture(),first=await f.propose("r9-first"),second=await f.propose("r9-second");
+  await f.act({action:"approve",id:first,version:1});
+  // Retained archived competing proposal exercises restore without an Undo revival.
+  database().prepare("UPDATE memory_records SET state='archived' WHERE id=?").run(second);
+  await expect(f.act({action:"restore-archive",id:second,version:1})).rejects.toThrow("The memory this corrects has changed.");
+  expect(f.current().map(r=>r.id)).toEqual([first]);
+ });
+ it.each(["correct","restore-archive"].flatMap(action=>["identity","audience"].map(reason=>({action,reason}))))("$action uses a plain $reason refusal",async ({action,reason})=>{
+  const f=fixture(),candidate=await f.propose("r9-copy");
+  if(action==="restore-archive")database().prepare("UPDATE memory_records SET state='archived' WHERE id=?").run(candidate);
+  const body={action,id:candidate,version:1,...(action==="correct"?{text:"Friday"}:{})};
+  if(reason==="identity"){
+  database().prepare("UPDATE memory_record_details SET partition='identity' WHERE record_id=?").run(f.target);
+  await expect(f.act(body)).rejects.toThrow("Use identity settings to change this memory.");
+  }else{
+  database().prepare("UPDATE memory_records SET scope_id=? WHERE id=?").run(ensureScope("bot","other"),f.target);
+  await expect(f.act(body)).rejects.toThrow("This correction and the current memory have different audiences.");
+  }
+  expect(f.row(candidate,2)).toBeUndefined();expect(f.row(f.target).state).toBe("active");
+ });
+ it("editing a held correction describes a stale pin choice plainly",async()=>{
+  const f=fixture(),candidate=await f.propose("r9-pin-copy");
+  await expect(f.act({action:"correct",id:candidate,version:1,text:"Friday",correctionPin:"transfer"})).rejects.toThrow("The current memory’s pin changed. Review it and try again.");
+  expect(f.row(candidate,2)).toBeUndefined();expect(f.row(f.target).state).toBe("active");
+ });
+
+
+describe("Round 10 restore ancestry and plain errors",()=>{
+ it.each([1,2])("refuses a competing restore after %i owner edits of a correction",async edits=>{
+  const f=fixture(),db=database();
+  db.prepare("UPDATE memory_source_versions SET payload=json_set(payload,'$.origin.kind','attended') WHERE source_id=?").run(f.evidence[0].sourceId);
+  const extractor=Object.assign(async()=>"[]",{ground:async()=>'{"supported":true}'});
+  const {candidateId:first}=await memoryAgentRoute("/api/internal/memory/propose-correction",{id:f.target,version:1,replacement:"The deploy window is Tuesday",evidence:f.evidence,idempotencyKey:"r10-undo"},f.access(),f.bridge,undefined,extractor) as {candidateId:string};
+  expect(f.row(first).state).toBe("active");expect(f.row(f.target).state).toBe("superseded");
+  const event=db.prepare("SELECT id FROM memory_learning_events WHERE record_id=? AND kind='superseded'").get(first)!;
+  await f.act({action:"learning-undo",eventId:event.id});
+  expect(f.row(first).state).toBe("archived");expect(f.row(f.target).state).toBe("active");
+  const second=await f.propose("r10-second");
+  await f.act({action:"approve",id:second,version:1});
+  for(let version=1;version<=edits;version++)await f.act({action:"correct",id:second,version,text:"Friday"});
+  const version=edits+1;
+  await f.act({action:"archive",id:second,version});
+  // Unopposed restoration must remain possible for an edited correction.
+  await f.act({action:"restore-archive",id:second,version});
+  expect(f.current()).toEqual([{id:second,version,text:"Friday"}]);
+  await f.act({action:"archive",id:second,version});
+  await f.act({action:"restore-archive",id:first,version:1});
+  expect(f.current().map(r=>r.id)).toEqual([first]);
+  await expect(f.act({action:"restore-archive",id:second,version})).rejects.toThrow("The memory this corrects has changed.");
+  expect(f.row(second,version).state).toBe("archived");
+  expect(f.current().map(r=>r.id)).toEqual([first]);
+ });
+ it.each([
+  {action:"restore-archive",reason:"source",message:"The source for this memory is no longer available."},
+  {action:"restore-archive",reason:"evidence",message:"The evidence for this memory is no longer available."},
+  {action:"correct",reason:"evidence",message:"The evidence for this memory is no longer available."},
+  {action:"restore-archive",reason:"version",message:"This memory changed. Refresh and try again."},
+  {action:"correct",reason:"version",message:"This memory changed. Refresh and try again."},
+ ])("$action describes unavailable $reason plainly",async ({action,reason,message})=>{
+  const f=fixture(),candidate=await f.propose("r10-copy"),db=database();
+  if(action==="restore-archive")db.prepare("UPDATE memory_records SET state='archived' WHERE id=?").run(candidate);
+  if(reason==="source")db.prepare("UPDATE memory_sources SET state='retired' WHERE id=?").run(f.evidence[0].sourceId);
+  if(reason==="evidence")db.prepare("DELETE FROM memory_evidence WHERE record_id=?").run(candidate);
+  const before=f.row(candidate);
+  await expect(f.act({action,id:candidate,version:reason==="version"?2:1,...(action==="correct"?{text:"Friday"}:{})})).rejects.toThrow(message);
+  expect(f.row(candidate)).toEqual(before);expect(f.row(candidate,2)).toBeUndefined();
+  expect(f.row(f.target).state).toBe("active");
+ });
+});
+
+
+describe("Round 12 unavailable correction originals",()=>{
+ it.each([0,1].flatMap(edits=>["tombstone","deleted"].map(unavailable=>({edits,unavailable}))))("restores a retained correction with $edits owner edits and a $unavailable original",async({edits,unavailable})=>{
+  const f=fixture(),candidate=await f.propose("r12-unavailable"),db=database();
+  await f.act({action:"approve",id:candidate,version:1});
+  if(edits)await f.act({action:"correct",id:candidate,version:1,text:"Friday"});
+  const version=edits+1;
+  // Retained-correction boundary: real Forget and conversation deletion also
+  // delete descendants. Inject only the original's unavailable state here.
+  if(unavailable==="tombstone")db.prepare("INSERT INTO memory_tombstones VALUES('r12-forgotten','record',?,NULL,NULL,1,'owner-forget',1)").run(f.target);
+  else db.prepare("UPDATE memory_records SET state='deleted' WHERE id=?").run(f.target);
+  const original=f.row(f.target);
+  await f.act({action:"archive",id:candidate,version});
+  expect(f.current()).toEqual([]);
+  await f.act({action:"restore-archive",id:candidate,version});
+  expect(f.current()).toEqual([{id:candidate,version,text:edits?"Friday":"The deploy window is Thursday"}]);
+  expect(f.row(f.target)).toEqual(original);
+  expect(db.prepare("SELECT count(*) AS n FROM memory_records WHERE state='active'").get()?.n).toBe(1);
+ });
+});

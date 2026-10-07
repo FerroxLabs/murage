@@ -6,7 +6,7 @@ description: |
   Do NOT use for general learning path creation (use `learning-path`), for skill gap assessment (use `skill-gap-analysis`), or for coaching (not an education skill).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "teaching step-by-step guide"
   category: "education"

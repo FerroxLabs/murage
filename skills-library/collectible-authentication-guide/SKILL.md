@@ -6,7 +6,7 @@ description: |
   Do NOT use for determining the monetary value of collectibles (use collection-valuation-guide), cataloguing and inventory management (use collection-inventory-builder), forensic analysis or legal evidence examination, or authentication of fine art for museum or institutional purposes.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "research guide checklist analysis"
   category: "hobbies-crafts"

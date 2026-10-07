@@ -29,6 +29,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/testing/safe-wipe.mjs": "the helper itself: rmSync/rm run only after assertSafeToWipe admits the path",
   "server/testing/cleanup.ts": "removeTempDir calls assertSafeToWipe before its rmSync retry loop",
   "scripts/safe-wipe.sh": "the shell helper itself: rm -rf runs only after the same checks pass",
+  "server/testing/index-harness.ts": "'rm -rf /tmp/…' are card subtitles in fixture messages the index suites seed; nothing executes them, and teardown uses removeTempDir",
   "server/testing/fake-codex-app-server.ts": "'rm -rf scratch' is a string the fake engine sends as an approval request; nothing executes it",
   "installer/test/systemd.test.mjs": "asserts the exact `rm -r <staging dir>` text setup prints for the operator; the file's own fixture teardown uses safeWipeSync",
   "server/container-computer.ts": "rm -rf \"$source\" inside a generated shell script that runs in the sandbox container against its own copy",
@@ -44,6 +45,26 @@ const ALLOWLIST: Record<string, string> = {
   "scripts/b22-linux-pilot.node-test.mjs": "asserts the printed plan omits `rm -rf` when removeData is false; the file's own fixture teardown uses safeWipeSync",
   "scripts/prepare-backup-age.mjs": "build-only: removes the mkdtemp download/extract scratch under os.tmpdir()",
   "scripts/prepare-windows-backup-tools.mjs": "build-only: removes the mkdtemp download/extract scratch under os.tmpdir()",
+  // Murage for Chrome tests and proof scripts (lane chrome): each removes
+  // only the mkdtemp fixture root, profile or output folder it created.
+  "electron/browser-extension-host.node-test.mjs": "the finally clause removes the test's own mkdtemp root",
+  "electron/browser-extension-registration.node-test.mjs": "the finally clause removes the test's own mkdtemp root",
+  "electron/model-signin.node-test.mjs": "the finally clause removes the fake HOME the test made with mkdtempSync(tmpdir(), \"murage-signin-home-\") and restores the real HOME first",
+  "scripts/browser-extension-host-registration.node-test.mjs": "each finally clause removes that test's own mkdtemp root",
+  "scripts/prepare-browser-extension.node-test.mjs": "each finally clause removes that test's own mkdtemp output or scratch directory",
+  "scripts/prove-browser-extension-approval.mjs": "removes the browser profile inside its own mkdtemp run folder",
+  "scripts/prove-browser-extension-native.mjs": "removes the mkdtemp profile, fixture home, temp and state folders it created",
+  "scripts/prove-browser-extension-phone.mjs": "removes its own mkdtemp companion registry folder",
+  "scripts/prove-browser-extension.mjs": "removes the mkdtemp browser profile it created",
+  // apps/mobile is its own package (no dependency on server/ or scripts/).
+  // Every recursive delete a Mac-side apps/mobile script makes now routes
+  // through scripts/safe-wipe.sh (build-web-dist.sh, door.sh, run-host.sh,
+  // stop-host.sh, android-e2e.sh, ios-e2e.sh). The two entries below are the
+  // ones the preferred fix does not fit, same as data-safety.md documents
+  // for a remote-host command or a test that owns its temp dir.
+  "apps/mobile/scripts/android-remote.sh": "rm -rf runs inside an ssh command string on build-host, never on this machine: only $QLANE/gradle-home and fixed build-output subdirectories of the build host build lane /root/mb-mobile/plan3b, never a Murage data directory",
+  "apps/mobile/src/android-cap-path.test.ts": "line 37's afterEach removes only the mkdtempSync(os.tmpdir(), 'mm-cap-path-') roots this file itself created and tracked in `dirs`; line 51 is a test-data string ('a semicolon' case) asserting cap_path REJECTS an injected `rm -rf`, not a delete that runs",
+  "apps/mobile/src/e2e-host-safety.test.ts": "every rmSync is this file's own fixture teardown: root/outside are mkdtempSync(os.tmpdir(), ...) directories the test created, data is the mkdtempSync('/tmp/murage-e2e-data-test-') directory hostEnv() created, and host.lock is the mkdirSync(file(\"host.lock\")) this test made under its own copied `host` tree",
   // Production runtime. These delete paths the app itself owns (mkdtemp
   // scratch, staging, per-skill or per-bot subdirectories under DATA_DIR)
   // and are covered by their own unit tests; routing the app through a test
@@ -71,9 +92,17 @@ const ALLOWLIST: Record<string, string> = {
   "server/installation-restore.ts": "removes an unpublished restore candidate and its inspection directory; never the installation root",
   "server/installation-state-snapshot.ts": "removes the unpublished snapshot stage",
   "server/package-import-transaction.ts": "removes the import transaction directory and empty parents it created",
+  "server/memory/evolution-forgetting.ts": "removes only DATA_DIR/learning-local/<bot> after the bot id passes SAFE_SEGMENT (no dots or slashes) for \"forget this learning data\", and corpus* temporary folders directly inside a SAFE_SEGMENT bot folder there after a day; never learning-local itself, DATA_DIR or a parent",
   "server/provider-routing.ts": "cleanup of the mkdtemp provider home a routing probe created",
   "server/skills.ts": "removes skill directories, legacy links and staging under DATA_DIR/skills that the store owns",
   "server/store.ts": "removes a deleted bot's workspace and skill-state subdirectories under DATA_DIR",
+  "electron/compile-cache.mjs": "pruneStaleCaches removes sibling cache directories of other app versions inside the app's own <userData>/compile-cache root, never the kept one or the root itself",
+  "server/channels/whatsapp/core/auth-store.ts": "wipeAuthDir removes the children of the WhatsApp auth directory after lstat proves it is a real directory (a symlinked directory is refused); never the directory itself or a parent",
+  "server/channels/whatsapp/wipe.ts": "removes only the fixed WhatsApp paths of one connection (whatsapp/auth, whatsapp/media/<id>, <id>.-prefixed journals, channels/whatsapp/<id>) under DATA_DIR after assertInside rejects any escape or symlink ancestor; the connection id matches [a-zA-Z0-9-]{1,100}; never DATA_DIR or a parent",
+  "server/drivers/turn-credentials.ts": "dispose removes the murage-cred- mkdtemp directory createTurnCredentialStore made, held in a const never reassigned",
+  "server/fuigo-turn-logs.ts": "removes <home>/logs of a finished turn (a symlink is unlinked, never followed) and kept turn-log directories directly inside the turn-log root it owns; never the home or the root",
+  "server/memory/pip-transport.ts": "removeTempRoot refuses any path that is not strictly inside the reflection temp base, then removes that one run directory",
+  "apps/mobile/e2e/freshauth/run.mjs": "cleanup removes only the realpath'd mkdtempSync(tmpdir(), 'murage-p7-') root this run made, and only when it is still under tmpdir; apps/mobile has no dependency on server/testing",
   "server/tts/system-voices.ts": "removes the mkdtemp directory a voice probe created",
 };
 
@@ -81,7 +110,7 @@ const ALLOWLIST: Record<string, string> = {
  *  os.tmpdir(), MURAGE_DATA_DIR is deleted before any import, and
  *  installSafeWipeGuard() makes every recursive fs delete refuse the
  *  account's real ~/.murage, any home, the checkout and live leases. */
-const VITEST_INCLUDE = [/^server\/.*\.test\.ts$/, /^electron\/.*\.test\.mjs$/, /^src\/.*\.test\.ts$/, /^shared\/.*\.test\.ts$/, /^companion\/.*\.test\.ts$/, /^scripts\/.*\.test\.mjs$/];
+const VITEST_INCLUDE = [/^server\/.*\.test\.ts$/, /^electron\/.*\.test\.mjs$/, /^src\/.*\.test\.ts$/, /^shared\/.*\.test\.ts$/, /^companion\/.*\.test\.ts$/, /^scripts\/.*\.test\.mjs$/, /^tools\/.*\.test\.ts$/];
 
 const tracked = (): string[] => execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
   .split("\0").filter(Boolean);
@@ -180,9 +209,9 @@ describe("data safety: recursive deletes", () => {
   });
 
   it("the runtime guard is installed for vitest and for node --test", () => {
-    expect(readFileSync(join(ROOT, "server/testing/setup.ts"), "utf8")).toMatch(/^installSafeWipeGuard\(\);/m);
+    expect(readFileSync(join(ROOT, "server/testing/setup.ts"), "utf8")).toMatch(/^installSafeWipeGuard\(\{ protect: /m);
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
     expect(pkg.scripts["test:electron"]).toContain("--import ./server/testing/safe-wipe-preload.mjs");
-    expect(readFileSync(join(ROOT, "server/testing/safe-wipe-preload.mjs"), "utf8")).toMatch(/installSafeWipeGuard\(\)/);
+    expect(readFileSync(join(ROOT, "server/testing/safe-wipe-preload.mjs"), "utf8")).toMatch(/^installSafeWipeGuard\(\{ protect: /m);
   });
 });

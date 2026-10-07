@@ -38,7 +38,7 @@
             "required": ["label", "target"],
             "properties": {
               "label": { "type": "string", "minLength": 1, "maxLength": 30 },
-              "target": { "enum": ["settings-general", "settings-models", "settings-connections", "settings-skills", "settings-house-rules", "settings-backups", "check-for-updates"] }
+              "target": { "enum": ["settings-general", "settings-models", "settings-connections", "settings-skills", "settings-house-rules", "settings-backups", "check-for-updates", "settings-images", "settings-web-search", "settings-voice", "settings-help"] }
             }
           },
           "appVersions": { "type": "string", "maxLength": 100 },

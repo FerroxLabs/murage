@@ -19,3 +19,12 @@ allowBuilds:
 onlyBuiltDependencies:
   - electron
   - esbuild
+# Baileys declares `sharp` as a non-optional peer, but only touches it for image
+# thumbnails and falls back to jimp (pure JS). Mark it optional so pnpm's
+# auto-install-peers does not pull in a native, per-arch binary. See
+# lanes/whatsapp-oauth/WHATSAPP-DESIGN.md section 1.3.
+packageExtensions:
+  baileys@7.0.0-rc14:
+    peerDependenciesMeta:
+      sharp:
+        optional: true

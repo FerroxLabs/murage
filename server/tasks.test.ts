@@ -30,6 +30,15 @@ afterEach(async () => {
 });
 
 describe("tasks", () => {
+  it("creates one project desk per bot and project without switching the active task", async () => {
+    const { store } = await freshStore();
+    const bot = store.createBot(), active = bot.threadId;
+    const first = store.ensureProjectDesk(bot.id, "project-one", "Payments")!;
+    expect(store.ensureProjectDesk(bot.id, "project-one", "Payments")?.threadId).toBe(first.threadId);
+    expect(first).toMatchObject({ title: "Payments work", channelProjectDesk: { groupId: "project-one" } });
+    expect(bot.threadId).toBe(active);
+    expect(store.ensureProjectDesk(bot.id, "project-two", "Notes")?.threadId).not.toBe(first.threadId);
+  });
   it("gives every new bot one task pointing at its thread", async () => {
     const { store, UNTITLED_TASK } = await freshStore();
     const bot = store.createBot();

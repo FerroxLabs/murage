@@ -6,7 +6,7 @@ description: |
   Do NOT use for Midjourney prompting (use midjourney-prompting), DALL-E prompting (use dalle-prompting), or translating prompts between models (use prompt-translation).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "ai-image-generation design template"
   category: "design-creative"

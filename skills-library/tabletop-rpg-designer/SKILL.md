@@ -4,7 +4,7 @@ description: |
   Complete tabletop RPG design guide covering core resolution mechanics, character creation systems, combat design, skill systems, setting integration, character advancement, GM tools, one-page RPG format, playtest feedback collection, and publishing on DriveThruRPG and itch.io. Use when the user asks about tabletop rpg designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "game-design tabletop-rpg guide"
   category: "game-development"

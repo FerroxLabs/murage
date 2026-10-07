@@ -13,7 +13,7 @@ description: |
   student visa processes, or citizenship applications.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "travel research checklist planning"
   category: "travel-experiences"

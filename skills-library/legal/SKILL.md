@@ -3,7 +3,7 @@ name: legal
 description: "Entry point for business legal-document work: reads the request, collects the jurisdiction and party facts every binding document needs, then either hands off to the matching drafting skill or drafts inline against a required-clause checklist for NDAs, terms of service, privacy policies, service contracts, employment agreements, refund policies and equity grants. Use when the user asks for a legal document and it is not yet clear which one they need. Do NOT use when the document type is already known — go straight to legal-contractor, legal-eula, legal-dmca, legal-cease-and-desist or legal-gdpr. Templates only, never legal advice: every output requires review by an attorney licensed in the user's jurisdiction."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "orchestrator legal contracts smb business"
   category: "legal"

@@ -9,7 +9,7 @@ description: |
   reports (use `business-report`), or board narratives (use `board-update-narrative`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "writing business-writing report"
   category: "writing"

@@ -10,7 +10,7 @@ description: |
   (use mission-vision-writing).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing branding strategy planning"
   category: "marketing-sales"

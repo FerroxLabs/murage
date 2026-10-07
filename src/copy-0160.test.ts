@@ -25,7 +25,7 @@ describe("0.1.60 copy flags", () => {
 
   it("Settings, Engines says a Box key is missing without an em dash", () => {
     const box = source("../server/drivers/boxagent.ts");
-    expect(box).toContain('"No Box key yet. Add one in App Settings → Tools & Connections."');
+    expect(box).toContain('"No Box key yet. Add one in App Settings → Computer & browser."');
   });
 
   it("the error screen never says safe", () => {

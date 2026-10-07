@@ -114,7 +114,7 @@ export class LazyBoundary extends Component<
     if (this.props.inline) return <div role="alert">{button}</div>;
     const { onDismiss } = this.props;
     return (
-      <div role="alert" className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-2 bg-black/20">
+      <div role="alert" className="overlay-inset fixed inset-0 z-50 flex flex-col items-center justify-center gap-2 bg-black/20">
         {button}
         {onDismiss && (
           <button type="button" onClick={onDismiss} className="min-h-11 rounded-xl px-4 text-[13px] text-white/80 hover:text-white">
@@ -143,6 +143,6 @@ export class LazyBoundary extends Component<
       </div>
     );
     if (inline) return <div role="alert">{body}</div>;
-    return <div role="alert" className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">{body}</div>;
+    return <div role="alert" className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/20">{body}</div>;
   }
 }

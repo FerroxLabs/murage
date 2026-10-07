@@ -4,7 +4,7 @@ description: |
   Complete guide for handmade and artisan sellers covering Etsy optimization, craft fair strategy, pricing formulas for handmade goods, product photography, shipping logistics, inventory management, scaling production, and wholesale opportunities. Use when the user asks about handmade seller or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy marketing"
   category: "business-strategy"

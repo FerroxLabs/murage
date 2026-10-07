@@ -9,7 +9,7 @@ description: |
   `user-guide`), or changelogs (use `changelog-writing`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "technical-writing documentation guide"
   category: "writing"

@@ -279,7 +279,8 @@ describe("against the shipped catalogue and skill index", () => {
     // `car-buying-guide` in the top five for this exact sentence. Narrowing to
     // the matched profile's declared skills cannot reach it.
     expect(skillIds(chosen)).not.toContain("car-buying-guide");
-    expect(await searchSkills("I want help with trading stocks and options", 5)).toEqual(
+    // (Top eight, not top five: the wave-1 procedure skills rank ahead of it now.)
+    expect(await searchSkills("I want help with trading stocks and options", 8)).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "car-buying-guide" })]),
     );
   });
@@ -374,10 +375,19 @@ describe("vague input, and the one sentence the card prints on itself", () => {
     // live income asset in 7 days" — which reaches the gate only through the
     // prefix `invoices`→`invoice` and is the textbook top-ranked stranger. The
     // right answer is the receivables SKILL, offered as something to learn.
+    //
+    // UPDATED for bot library wave 1, which ships profiles that ARE about this
+    // (Get Paid, Collections, Invoicing). The better answer is now one of them,
+    // offered as a profile; the skill fallback is only reached when none passes
+    // the gate. What must stay true is that it is never the stranger.
     const answer = await suggest("chasing invoices");
     expect(answer.profile, JSON.stringify(answer)).not.toBe("ignition");
-    expect(answer.skills.length, JSON.stringify(answer)).toBeGreaterThan(0);
-    expect(answer.skills.join(" ")).toMatch(/invoic|receivable|billing|payment/);
+    if (answer.profile) {
+      expect(["get-paid", "collections", "invoicing", "coin"], JSON.stringify(answer)).toContain(answer.profile);
+    } else {
+      expect(answer.skills.length, JSON.stringify(answer)).toBeGreaterThan(0);
+      expect(answer.skills.join(" ")).toMatch(/invoic|receivable|billing|payment/);
+    }
   });
 
   it("still stems the one plural it ever stemmed", async () => {
@@ -509,24 +519,38 @@ describe("the queries a fix must not break", () => {
     // lives only in finance-receivables' manifest prose, which is exactly the
     // corpus this change stops reading — so it is written into coin's curated
     // list by hand. Deleting it there turns this red.
-    expect((await classify("chasing invoices")).strong).toEqual(["coin"]);
-    expect((await classify("figure out my runway and burn rate")).strong).toEqual(["coin"]);
+    //
+    // Wave 1 added profiles whose literal subject is invoices, so `coin` is no
+    // longer the ONLY strong answer (the card caps its tier at three, so read
+    // the uncapped set). It must still be among them.
+    const invoices = await classifyAll("chasing invoices");
+    expect(invoices).toEqual(expect.arrayContaining(["coin", "get-paid", "collections"]));
+    expect(invoices).not.toContain("ignition");
+    // `cash-watch` (wave 1) is the runway profile, so it joins `coin` here.
+    expect((await classify("figure out my runway and burn rate")).strong).toEqual(["coin", "cash-watch"]);
   });
 
   it("answers ordinary business sentences with the profile they are about", async () => {
     const table: Array<[string, string]> = [
       ["I need help with SEO for my website", "beacon"],
-      ["write a newsletter for my subscribers", "copy"],
+      // Wave 1 added three newsletter profiles; the growth one names subscribers.
+      ["write a newsletter for my subscribers", "newsletter-growth"],
       ["our customers keep churning", "customer-success-org"],
       ["cold outreach emails to prospects", "cold-pitch-bench"],
-      ["hire and onboard new staff", "slate"],
+      // Wave 1's New Hire Onboarding is exactly this sentence; slate is still a hiring answer.
+      ["hire and onboard new staff", "new-hire-onboarding"],
       ["price my saas product", "forge"],
       ["write a course curriculum for students", "spark"],
       ["analyse my competitors", "research"],
-      ["legal contract review for a freelancer", "sentry"],
+      // Wave 1's Contract Drafts is about contracts; sentry stays in the strong set.
+      ["legal contract review for a freelancer", "contract-drafts"],
       ["build a pitch deck for investors", "pitch-deck-creator"],
       ["I keep procrastinating and cannot focus", "advisor"],
-      ["design a landing page that converts", "ignition"],
+      // Wave 1's Landing Pages is exactly this; ignition stays in the strong set.
+      ["design a landing page that converts", "landing-pages"],
+      // Wave 1 added a profile that is actually about this: it was founder-setup
+      // before, when no profile here shipped podcast work.
+      ["I want to set up a podcast", "podcast-and-video"],
     ];
     for (const [query, expected] of table) {
       const { strong } = await classify(query);
@@ -543,7 +567,6 @@ describe("the queries a fix must not break", () => {
       ["the dog ate my homework", "was explainer"],
       ["my car needs a new clutch", "was quiet-money-council/editorial-newsroom/writer"],
       ["remind me to water the plants", "was cohort-ops-control-tower (weak)"],
-      ["I want to set up a podcast", "was founder-setup — no profile here ships podcast skills"],
     ];
     for (const [query, before] of table) {
       const answer = await classify(query);
@@ -572,6 +595,7 @@ describe("the queries a fix must not break", () => {
       "book-nonfiction-architect",
       "book-production",
       "book-publisher",
+      "book-publishing-house",
       "book-story-architect",
       "info-product-launch",
     ]);

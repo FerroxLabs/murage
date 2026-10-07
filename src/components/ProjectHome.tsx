@@ -5,6 +5,7 @@
 // the channel's own transcript, with the same bots, the same instructions
 // and the same folder it always had. This page only answers the two
 // questions a channel could not: what are we doing, and where are we up to.
+import { t } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { Users } from "lucide-react";
 
@@ -12,9 +13,8 @@ import { useStore, type Bot, type Group } from "@/state/store";
 import {
   CHANNEL_PROJECT_GOAL_MAX,
   CHANNEL_PROJECT_STATUSES,
-  CHANNEL_PROJECT_STATUS_LABELS,
 } from "../../shared/project";
-import { PROJECT_STATUS_NOTES, projectTimingLine } from "@/lib/channel-surface";
+import { channelProjectStatusLabel, channelProjectStatusNote, projectTimingLine } from "@/lib/channel-surface";
 import { BotAvatar } from "./Avatar";
 import { cn } from "@/lib/cn";
 
@@ -57,12 +57,12 @@ export function ProjectHome({
       <div className="mx-auto flex w-full max-w-[640px] flex-col gap-4">
         <section aria-labelledby="project-goal-heading" className="rounded-2xl border border-hairline/40 bg-panel/60 p-5">
           <h2 id="project-goal-heading" className="text-[13px] font-semibold uppercase tracking-wide text-ink-secondary">
-            What this is for
+            {t("projects.home.goalHeading")}
           </h2>
           {editing ? (
             <>
               <label className="sr-only" htmlFor="project-goal-editor">
-                What this project is for
+                {t("projects.home.goalEditor")}
               </label>
               <textarea
                 id="project-goal-editor"
@@ -75,7 +75,7 @@ export function ProjectHome({
               />
               <div className="mt-3 flex gap-2">
                 <button type="button" onClick={saveGoal} disabled={!draft.trim()} className={PRIMARY}>
-                  Save
+                  {t("projects.home.save")}
                 </button>
                 <button
                   type="button"
@@ -85,7 +85,7 @@ export function ProjectHome({
                   }}
                   className={BUTTON}
                 >
-                  Cancel
+                  {t("projects.common.cancel")}
                 </button>
               </div>
             </>
@@ -93,7 +93,7 @@ export function ProjectHome({
             <>
               <p className="mt-2 whitespace-pre-wrap break-words text-[17px] leading-relaxed text-ink">{project.goal}</p>
               <button type="button" onClick={() => setEditing(true)} className={cn(BUTTON, "mt-3")}>
-                Change this
+                {t("projects.home.change")}
               </button>
             </>
           )}
@@ -101,10 +101,10 @@ export function ProjectHome({
 
         <section aria-labelledby="project-status-heading" className="rounded-2xl border border-hairline/40 bg-panel/60 p-5">
           <h2 id="project-status-heading" className="text-[13px] font-semibold uppercase tracking-wide text-ink-secondary">
-            How it is going
+            {t("projects.home.statusHeading")}
           </h2>
-          <p className="mt-2 text-[17px] font-medium text-ink">{CHANNEL_PROJECT_STATUS_LABELS[project.status]}</p>
-          <p className="mt-0.5 text-[13.5px] text-ink-secondary">{PROJECT_STATUS_NOTES[project.status]}</p>
+          <p className="mt-2 text-[17px] font-medium text-ink">{channelProjectStatusLabel(project.status)}</p>
+          <p className="mt-0.5 text-[13.5px] text-ink-secondary">{channelProjectStatusNote(project.status)}</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {CHANNEL_PROJECT_STATUSES.filter((status) => status !== project.status).map((status) => (
               <button
@@ -113,7 +113,7 @@ export function ProjectHome({
                 onClick={() => dispatch({ type: "patchGroup", groupId: group.id, patch: { channelProject: { status } } })}
                 className={BUTTON}
               >
-                {CHANNEL_PROJECT_STATUS_LABELS[status]}
+                {channelProjectStatusLabel(status)}
               </button>
             ))}
           </div>
@@ -122,7 +122,7 @@ export function ProjectHome({
 
         <section aria-labelledby="project-team-heading" className="rounded-2xl border border-hairline/40 bg-panel/60 p-5">
           <h2 id="project-team-heading" className="text-[13px] font-semibold uppercase tracking-wide text-ink-secondary">
-            Who is on it
+            {t("projects.home.teamHeading")}
           </h2>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {members.map((bot) => (
@@ -134,10 +134,10 @@ export function ProjectHome({
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <button type="button" onClick={onOpenChat} className={PRIMARY}>
-              Open the chat
+              {t("projects.home.openChat")}
             </button>
             <button type="button" onClick={onOpenDetails} className={cn(BUTTON, "flex items-center gap-1.5")}>
-              <Users size={14} /> Members, files and instructions
+              <Users size={14} /> {t("projects.home.details")}
             </button>
           </div>
         </section>

@@ -1,8 +1,9 @@
 ---
 name: copy-lens-clarity
 description: "**Lens mode.** Source authority: Ali Abdaal's teaching-simplicity discipline and the Feynman explanation method — if you cannot explain it simply, you do not understand it yet."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "copy"
 ---

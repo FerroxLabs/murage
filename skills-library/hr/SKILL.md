@@ -3,7 +3,7 @@ name: hr
 description: "Entry point for people-operations work at the two-to-twenty-employee stage: collects the jurisdiction, headcount and classification facts that decide which employment rules apply, then routes or works inline — job descriptions, interview loops, onboarding, reviews, 1-on-1s, offer letters, comp bands and performance plans. Use when a people question arrives without a document attached to it. Do NOT use when the task is already named — go straight to hr-handbook, hr-termination-letter, hr-offboard, hr-leave-of-absence, hr-accommodation-request or hr-rif — or when the work is role and hiring design (use slate-role-design). Templates only, never employment-law advice: outputs need review by HR counsel."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "orchestrator hr people-ops employment smb"
   category: "hr"

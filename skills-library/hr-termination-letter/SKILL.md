@@ -3,7 +3,7 @@ name: hr-termination-letter
 description: "Draft an involuntary termination letter — performance, RIF, policy violation or at-will — with state-specific final-pay timing, COBRA or state mini-COBRA notice, and an OWBPA and ADEA-compliant separation-agreement variant when the employee is 40 or over. Use when one person is being terminated and the letter has to be right. Do NOT use for a group layoff's WARN and disparate-impact analysis (use hr-rif) or for the checklist of what happens after the conversation (use hr-offboard). Templates only — have employment counsel review before delivery."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "termination separation hr people-ops smb"
   category: "hr"

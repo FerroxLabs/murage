@@ -19,6 +19,16 @@ describe("trayQuickAnswer", () => {
     expect(trayQuickAnswer(card({ tool: "Bash", subtitle: "cat .env" }))).toBe(false);
     expect(trayQuickAnswer(card({ tool: "Bash", subtitle: "git reset --hard" }))).toBe(false);
   });
+  it("judges the one-line summary, not the JSON subtitle (a newline hides rm -rf)", () => {
+    for (const command of ["echo hi\nrm -rf ~/work", "ls\ngit push --force origin main"]) {
+      expect(trayQuickAnswer(card({ tool: "Bash", subtitle: JSON.stringify({ command }), summary: command }))).toBe(false);
+    }
+    expect(trayQuickAnswer(card({ tool: "Bash", subtitle: '{"command":"ls"}', summary: "ls" }))).toBe(true);
+  });
+  it("never offers a one-tap answer on a card whose tool input was cut", () => {
+    expect(trayQuickAnswer(card({ toolInputTruncated: true }))).toBe(false);
+    expect(trayQuickAnswer(card({ toolInputTruncated: true, summary: "ls" }))).toBe(false);
+  });
   it("keeps questions, proposals, local-computer control, long or settled cards on the full card", () => {
     expect(trayQuickAnswer(card({ tool: undefined, questions: [{ question: "Which?", options: [] }] as never }))).toBe(false);
     expect(trayQuickAnswer(card({ approvalScope: "local-computer" }))).toBe(false);

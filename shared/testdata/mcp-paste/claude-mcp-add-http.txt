@@ -1,0 +1,2 @@
+claude mcp add --transport http github https://api.githubcopilot.com/mcp/ \
+  --header "Authorization: Bearer YOUR_GITHUB_PAT"

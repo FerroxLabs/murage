@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about TypeScript types (use `typescript-type-patterns`), Node.js setup (use `nodejs-project-setup`), or testing (use `javascript-testing-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "javascript best-practices clean-code"
   category: "software-engineering"

@@ -56,7 +56,7 @@ it("reports current v2 sources as captured before their real capture job is publ
   // current source only, rather than count both historical revisions.
   capture(id, "Current evidence");
 
-  expect(database().prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({ schema_version: 2 });
+  expect(database().prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({ schema_version: 6 });
   expect(memoryHealth("extractor")).toMatchObject({
     captured: { sources: 1 },
     processed: { sources: 0, lastAt: null },

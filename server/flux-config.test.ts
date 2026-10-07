@@ -51,8 +51,8 @@ describe("fluxKey", () => {
   });
 
   it("prefers config over the passed env — config first, then env fallback", () => {
-    writeFileSync(CONFIG_PATH, JSON.stringify({ flux: { apiKey: "from-config" } }));
-    expect(fluxKey({ FLUX_API_KEY: "from-env" })).toBe("from-config");
+    writeFileSync(CONFIG_PATH, JSON.stringify({ flux: { apiKey: "sk-flux-from-config" } }));
+    expect(fluxKey({ FLUX_API_KEY: "sk-flux-from-env" })).toBe("sk-flux-from-config");
   });
 
   it("falls back to FLUX_API_KEY from the env when config has none", () => {
@@ -62,10 +62,10 @@ describe("fluxKey", () => {
   it("defaults to process.env, which loadConfig also lets win over the file", () => {
     // the desktop shell hands secrets in as env from its OS-encrypted store,
     // leaving the file without them — env must beat a leftover plaintext value
-    writeFileSync(CONFIG_PATH, JSON.stringify({ flux: { apiKey: "file-flux" } }));
-    process.env.FLUX_API_KEY = "env-flux";
-    expect(loadConfig().flux).toEqual({ apiKey: "env-flux" });
-    expect(fluxKey()).toBe("env-flux");
+    writeFileSync(CONFIG_PATH, JSON.stringify({ flux: { apiKey: "sk-flux-file" } }));
+    process.env.FLUX_API_KEY = "sk-flux-env";
+    expect(loadConfig().flux).toEqual({ apiKey: "sk-flux-env" });
+    expect(fluxKey()).toBe("sk-flux-env");
   });
 
   it("treats a blank or whitespace-only value as absent, and trims a real one", () => {
@@ -182,10 +182,12 @@ describe("fluxKey() never returns another provider's key", () => {
     writeFileSync(CONFIG_PATH, JSON.stringify({ flux: { apiKey: ` ${key} ` } }));
     expect(fluxKey()).toBeNull();
   });
-  it("keeps a Flux key and an opaque legacy key", () => {
+  it("keeps a Flux key and drops an opaque value, which Flux would only refuse", () => {
     process.env.FLUX_API_KEY = FLUX_KEY;
     expect(fluxKey()).toBe(FLUX_KEY);
+    // Every key Flux issues is sk-flux- (2026-10-01: opaque values in the
+    // Flux slot reached Flux as bearers and were refused every minute).
     process.env.FLUX_API_KEY = "opaque-legacy-workspace-key";
-    expect(fluxKey()).toBe("opaque-legacy-workspace-key");
+    expect(fluxKey()).toBeNull();
   });
 });

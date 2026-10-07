@@ -156,7 +156,8 @@ it("requires explicit ambiguous-content review and refuses oversized SOUL withou
   expect(atomicCommit).not.toHaveBeenCalled();
   await importBotPackageArchive({ ...warning.options, acknowledgeWarnings: true, atomicCommit });
   expect(atomicCommit).toHaveBeenCalledTimes(1);
-  const oversized = await fixture("x".repeat(4001));
+  // Plain words: a long unbroken run of one letter now earns a look from the import guard first.
+  const oversized = await fixture("Plain words for the bot. ".repeat(161));
   atomicCommit.mockClear();
   await expect(importBotPackageArchive({ ...oversized.options, atomicCommit })).rejects.toMatchObject({ code: "SOUL_INSTRUCTIONS_EXCEED_PROFILE_LIMIT" });
   expect(atomicCommit).not.toHaveBeenCalled();
@@ -174,4 +175,23 @@ it("removes all private staging when atomic commit fails, preserving the input a
   expect(existsSync(staged!)).toBe(false);
   expect(readFileSync(f.options.archivePath)).toEqual(original);
   expect(readdirSync(f.root)).toEqual(["bundle.zip"]);
+});
+
+it("package imports refuse project desks and every project table", async () => {
+  const f = await fixture();
+  const { PROJECT_TABLE_NAMES } = await import("./project-tables.ts");
+  const payloads = new Map([...f.payloads].map(([path, content]) => [path, Buffer.from(content)]));
+  for (const field of ["channelProjectDesk", ...PROJECT_TABLE_NAMES]) {
+    const manifest = structuredClone(f.manifest) as any;
+    manifest.definition.package.agents[0][field] = [{ group_id: "foreign" }];
+    await expect(previewBotPackageContents({ manifest, payloads }, { selection: f.options.selection })).rejects.toThrow("Unsupported package definition field");
+  }
+});
+
+it("team member imports ignore project desk and table fields", async () => {
+  const { importedMemberProfile } = await import("./team-manifest.ts");
+  const { PROJECT_TABLE_NAMES } = await import("./project-tables.ts");
+  const member = { key: "one", name: "One", appearance: { color: "green" }, channelProjectDesk: { groupId: "foreign" }, ...Object.fromEntries(PROJECT_TABLE_NAMES.map(table => [table, [{ group_id: "foreign" }]])) };
+  const profile = importedMemberProfile(member as never, new Set());
+  expect(profile).toEqual({ name: "One", title: undefined, description: undefined, color: "green" });
 });

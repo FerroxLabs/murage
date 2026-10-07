@@ -5,6 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openSidebar } from "./fixtures.ts";
+import { accountMenuTrigger, chooseFromAccountMenu } from "./sidebar-nav";
 
 let fixture: { info: { url: string; dataDir: string }; close(): Promise<void> }, vite: ViteDevServer, origin: string;
 test.beforeAll(async () => {
@@ -21,8 +22,7 @@ for (const skin of ["light", "dark"]) test("integrated Tools shortcut search and
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(skin => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", skin); }, skin);
   await page.goto(origin); const sidebar = await openSidebar(page);
-  const trigger = sidebar.getByRole("button", { name: /^Tools/ }); await trigger.click();
-  await sidebar.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
+  const trigger = accountMenuTrigger(sidebar); await chooseFromAccountMenu(sidebar, "Keyboard shortcuts");
   const dialog = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true }); await expect(dialog).toBeVisible();
   const search = dialog.getByRole("textbox", { name: "Search shortcuts" }); await expect(search).toBeFocused(); await search.fill("Search and switch conversations");
   await expect(dialog.getByRole("term")).toHaveText(["Search and switch conversationsCommand palette"]);

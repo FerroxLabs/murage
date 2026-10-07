@@ -11,9 +11,9 @@ describe("settings search", () => {
     }
   });
 
-  it("finds the app version under General, where the Updates row shows it", () => {
-    for (const query of ["version", "app version", "about", "About"]) {
-      expect(settingsSearchResults(query), query).toContain("general");
+  it("finds the app version under Help & updates, where the Updates row shows it", () => {
+    for (const query of ["version", "app version", "about", "About", "updates", "what's new", "diagnostics"]) {
+      expect(settingsSearchResults(query), query).toContain("about");
     }
   });
 
@@ -34,3 +34,5 @@ describe("Settings → General → Updates", () => {
     expect(updatesSubtitle({ status: "idle" })).toBe("You're on the latest version we know of.");
   });
 });
+
+it("finds Memory using learning and history words",()=>{for(const query of ["learning","learned","remember","forget","facts","notes","what it knows","history","review"])expect(settingsSearchResults(query)).toContain("memory");});

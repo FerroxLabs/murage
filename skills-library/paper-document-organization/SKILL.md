@@ -10,7 +10,7 @@ description: |
   document management, or general decluttering (use decluttering-method).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "decluttering checklist legal-literacy"
   category: "home-household"

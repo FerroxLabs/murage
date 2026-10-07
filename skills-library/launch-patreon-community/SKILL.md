@@ -20,7 +20,7 @@ trigger_phrases: >-
   tiers Patreon growth strategy build a paid community membership platform
   launch monetize my audience with Patreon
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: content-marketing networking email-marketing step-by-step planning
   category: creative-project

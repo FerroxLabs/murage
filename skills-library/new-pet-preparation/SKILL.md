@@ -6,7 +6,7 @@ description: |
   Do NOT use for training protocols (use dog-training-fundamentals), ongoing health monitoring (use pet-health-monitoring), nutrition planning (use pet-nutrition-guide), or exotic pet care.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "pet-care checklist planning"
   category: "home-household"

@@ -1,0 +1,84 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "murage-push-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "874fe1689a53e6f56ff74816a9f23b26",
+  "workers_dev": true,
+  // Ferrox Labs Cloudflare account, workers.dev. No custom-domain route
+  // (ruling: this deploys on workers.dev, not push.murage.ai). Plan 3b D1
+  // fills database_id with the real id; until then this file only
+  // type-checks and dry-runs.
+  "vars": {
+    "APPLE_TEAM_ID": "PX6SP9GPWJ",
+    "APNS_KEY_ID": "DFHV7X5VH2",
+    "IOS_BUNDLE_ID": "com.murage.mobile",
+    "ANDROID_PACKAGE": "com.murage.mobile",
+    // Approval statements only (src/index.ts). Comma separated, each exactly as
+    // Play Integrity returns appIntegrity.certificateSha256Digest: the SHA-256
+    // of the signing certificate as unpadded base64url (not hex, no colons).
+    // Empty means fail closed: ANDROID_RELEASE_CERT_SHA256 is our release
+    // signing cert; with it empty no Android install gets a statement.
+    "ANDROID_RELEASE_CERT_SHA256": "",
+    // The tester list must hold only digests of private-keystore certificates,
+    // never the Android default debug key or any shared key.
+    // Private upload key CN=Murage, O=Ferrox Labs (RSA 4096; Sean and MurageMain
+    // approved 2026-10-03). Signs sideloaded tester APKs; not a debug key.
+    "ANDROID_TESTER_CERT_SHA256": "4c4KDPY8TmdhgRuYogb4mkEL62x3X8spiePVdaHTkys",
+    "GLOBAL_DAILY_CAP": "100000",
+    "RELAY_PAUSED": "0"
+  },
+  // APPLE_TEAM_ID is the one team id: App Attest and the APNs JWT issuer.
+  // Secrets, uploaded with `wrangler secret bulk <file.json>` (a file written
+  // under umask 077 and deleted after; RELAY.md) and never written here.
+  // Not `wrangler secret put` on stdin: it stored APNS_KEY empty on
+  // 2026-09-27. The secrets:
+  // APNS_KEY (the .p8 PEM; sandbox-only for now, so only development
+  // registrations deliver), FCM_SERVICE_ACCOUNT (JSON),
+  // PLAY_INTEGRITY_SERVICE_ACCOUNT (defaults to FCM's) and
+  // ANDROID_DEBUG_CERT_SHA256 (comma separated), IP_HASH_KEY (random HMAC key).
+  // Without IP_HASH_KEY a random isolate key is used: counters are per-isolate.
+  // IP digests rotate every two UTC days. None is required: a missing
+  // platform secret disables only that platform and the Worker still starts
+  // (src/index.ts). No "secrets" block: an empty one was removed as a
+  // precaution on 2026-09-27 (the proven fault was an empty APNS_KEY upload;
+  // see docs/mobile/phase3/RELAY.md, Secrets).
+  "d1_databases": [{ "binding": "DB", "database_name": "murage-push-relay", "database_id": "671f9ae8-0c93-4da6-8221-a8eaa2a6758d", "migrations_dir": "migrations" }],
+  // Edge limits (src/relay.ts edgeScope), per keyed IP digest (an IPv6 /64 is one
+  // client), spent before any D1 read so a flood costs no D1 work; over one
+  // the relay answers 429 {"error":"rate_limited"}. The D1 limits in
+  // src/limits.ts still apply behind them. Counters are per Cloudflare
+  // location and approximate, so treat these as a ceiling, not a quota.
+  // EDGE_OPEN_LIMIT: POST /v1/challenges, /v1/devices, /v1/publishers/redeem,
+  // and any request whose bearer is missing or malformed. A phone enrols with
+  // two calls and a host redeems once per workspace, so 20 a minute is ten
+  // times a busy pairing session.
+  // EDGE_BEARER_LIMIT: every well-formed bearer, before D1 looks it up (only
+  // D1 can tell a real token from a guessed one). A host publishes at most
+  // 500 events a binding a day; 120 a minute (2 a second) stays far above any
+  // real host or phone and caps a guesser at 2 lookups a second per IP.
+  // namespace_id is any positive integer unique in the account; changing it
+  // starts fresh counters. Change a limit here and deploy (RELAY.md).
+  "ratelimits": [
+    { "name": "EDGE_OPEN_LIMIT", "namespace_id": "73001", "simple": { "limit": 20, "period": 60 } },
+    { "name": "EDGE_BEARER_LIMIT", "namespace_id": "73002", "simple": { "limit": 120, "period": 60 } }
+  ],
+  // Outage cost: while APNs or FCM is unreachable, each cron minute retries
+  // up to 20 queued events (plus 5 per admission), about 2 D1 row writes
+  // each, so roughly 60k writes a day from cron alone. The queue cap
+  // (LIMITS.pendingTotal, 10,000, and 50 per binding) bounds how much can
+  // wait; the kill switch (RELAY_PAUSED or relay_settings paused=1) stops it.
+  "triggers": { "crons": ["* * * * *"] },
+  // Errors only. Wrangler 4.125.0 has no errors-only sampling or request-field
+  // filters, so: invocation logs off (they carry request headers, the client
+  // IP among them), traces off, every remaining line kept. The code's only
+  // console calls are console.error with fixed fields and allowlisted codes,
+  // never request bodies, tokens or client addresses (test/privacy.test.ts).
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": { "enabled": true, "invocation_logs": false, "head_sampling_rate": 1 },
+    "traces": { "enabled": false }
+  }
+}

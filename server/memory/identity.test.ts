@@ -5,7 +5,7 @@ import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
-import { writeBotIdentity, readBotIdentity, type IdentityWrite } from "./identity.ts";
+import { writeBotIdentity, deleteBotIdentity, readBotIdentity, type IdentityWrite } from "./identity.ts";
 import { buildMemoryBundle, assertMemoryBundle, hydrateMemoryRecord, MEMORY_FRAME_TOKENS } from "./bundle.ts";
 import { forgetMemory } from "./forget.ts";
 import { memoryOwnerRoute } from "./settings.ts";
@@ -36,15 +36,17 @@ it("requires owner authority and validates fictional canon, byte limits and fixe
 it("versions atomically, fences stale writes, preserves prior versions and revokes prepared bundles",async()=>{
   const first=writeBotIdentity(ticket,input(),roster),ctx=access();
   const bundle=await buildMemoryBundle("",ctx,bridge);
-  const second=writeBotIdentity(ticket,input({expectedVersion:1,text:"Finish the fictional lighthouse story tomorrow."}),roster);
+  const second=writeBotIdentity(ticket,input({expectedVersion:1,expectedId:first.id,text:"Finish the fictional lighthouse story tomorrow."}),roster);
   expect(second).toMatchObject({id:first.id,version:2});
-  expect(()=>assertMemoryBundle(bundle,ctx)).toThrow("MEMORY_CONTEXT_REVOKED");
-  expect(()=>writeBotIdentity(ticket,input({expectedVersion:1}),roster)).toThrow("MEMORY_VERSION_CONFLICT");
+  // The brief is a PIP kind: an edit revokes the disclosures that carried it, and the prepared bundle's old version is gone.
+  expect(()=>assertMemoryBundle(bundle,ctx)).toThrow(/MEMORY_CONTEXT_REVOKED|MEMORY_RECORD_UNAVAILABLE/);
+  expect(()=>writeBotIdentity(ticket,input({expectedVersion:1,expectedId:first.id}),roster)).toThrow("MEMORY_VERSION_CONFLICT");
   expect(database().prepare("SELECT version,state FROM memory_records WHERE id=? ORDER BY version").all(first.id)).toEqual([{version:1,state:"superseded"},{version:2,state:"active"}]);
 });
 it("does not resurrect a forgotten key even with the latest expected version",()=>{
   const first=writeBotIdentity(ticket,input(),roster);forgetMemory(ticket,{kind:"record",id:first.id});
-  expect(()=>writeBotIdentity(ticket,input({expectedVersion:1}),roster)).toThrow("MEMORY_RECORD_UNAVAILABLE");
+  // The brief takes the next generation after a delete (like the relation), so a stale window is a version conflict.
+  expect(()=>writeBotIdentity(ticket,input({expectedVersion:1}),roster)).toThrow("MEMORY_VERSION_CONFLICT");
   expect(readBotIdentity(ticket,"moss",roster).records).toHaveLength(0);
 });
 it("retains brief across database restart and new task while excluding other bots and rooms",async()=>{
@@ -91,10 +93,50 @@ it("provides strict owner-only write/read routes",async()=>{
 
 it("prevents generic correction and promotion from bypassing identity bounds or private canon",async()=>{
   const saved=writeBotIdentity(ticket,input(),roster);
-  for(const action of [
-    {action:"correct",id:saved.id,version:1,text:"New unbounded identity text"},
-    {action:"promote",id:saved.id,version:1,scopeId:saved.scopeId},
-  ])await expect(memoryOwnerRoute("/api/memory/action",action,ticket,roster)).rejects.toThrow("MEMORY_IDENTITY_WRITE_REQUIRED");
+  // Owner-route correction maps the identity refusal to a plain sentence.
+  await expect(memoryOwnerRoute("/api/memory/action",{action:"correct",id:saved.id,version:1,text:"New unbounded identity text"},ticket,roster)).rejects.toThrow("MEMORY_IDENTITY_PIP_USE_CONTINUITY");
+  await expect(memoryOwnerRoute("/api/memory/action",{action:"promote",id:saved.id,version:1,scopeId:saved.scopeId},ticket,roster)).rejects.toThrow("MEMORY_IDENTITY_WRITE_REQUIRED");
   expect(readBotIdentity(ticket,"moss",roster).records).toHaveLength(1);
   expect(readBotIdentity(ticket,"moss",roster).records[0]).toMatchObject({version:1,text:input().text});
+});
+
+// INT2 pass-3: a re-created relation is a new generation whose version restarts at 1; stale windows must conflict.
+const rel=(patch:Partial<IdentityWrite>={})=>input({kind:"relation",key:"owner",basis:"owner-fact",text:"Short answers.",...patch});
+const delRel=(expectedVersion:number,expectedId?:string)=>({action:"identity-delete" as const,botId:"moss",kind:"relation" as const,key:"owner",expectedVersion,...(expectedId?{expectedId}:{})});
+it("fences relation writes and deletes by record id: a stale window cannot touch a re-created relation",()=>{
+  const gen0=writeBotIdentity(ticket,rel(),roster);                       // window A sees gen0 v1
+  deleteBotIdentity(ticket,delRel(1,gen0.id),roster);                      // window B deletes ...
+  const gen1=writeBotIdentity(ticket,rel({text:"Fresh start."}),roster);   // ... and re-creates: gen1 v1
+  expect(gen1.id).not.toBe(gen0.id);expect(gen1.version).toBe(1);
+  expect(()=>writeBotIdentity(ticket,rel({expectedVersion:1,expectedId:gen0.id,text:"stale overwrite"}),roster)).toThrow("MEMORY_VERSION_CONFLICT");
+  expect(()=>deleteBotIdentity(ticket,delRel(1,gen0.id),roster)).toThrow("MEMORY_VERSION_CONFLICT");
+  // a relation edit that names a version but no id is not accepted either
+  expect(()=>writeBotIdentity(ticket,rel({expectedVersion:1,text:"no id"}),roster)).toThrow("MEMORY_VERSION_CONFLICT");
+  expect(()=>deleteBotIdentity(ticket,delRel(1),roster)).toThrow("MEMORY_VERSION_CONFLICT");
+  expect(readBotIdentity(ticket,"moss",roster).records.filter(r=>r.kind==="relation")).toMatchObject([{id:gen1.id,text:"Fresh start.",version:1}]);
+  // the current generation edits and deletes normally
+  expect(writeBotIdentity(ticket,rel({expectedVersion:1,expectedId:gen1.id,text:"Edited."}),roster).version).toBe(2);
+  expect(deleteBotIdentity(ticket,delRel(2,gen1.id),roster)).toEqual({id:gen1.id,deleted:true});
+});
+it("fences brief writes and deletes by record id too: a stale window cannot touch a re-created brief",()=>{
+  const del=(expectedVersion:number,expectedId?:string)=>({action:"identity-delete" as const,botId:"moss",kind:"continuity-brief" as const,key:"core",expectedVersion,...(expectedId?{expectedId}:{})});
+  const gen0=writeBotIdentity(ticket,input(),roster);
+  deleteBotIdentity(ticket,del(1,gen0.id),roster);
+  const gen1=writeBotIdentity(ticket,input({text:"Fresh brief."}),roster);
+  expect(gen1.id).not.toBe(gen0.id);expect(gen1.version).toBe(1);
+  expect(()=>writeBotIdentity(ticket,input({expectedVersion:1,expectedId:gen0.id,text:"stale overwrite"}),roster)).toThrow("MEMORY_VERSION_CONFLICT");
+  expect(()=>deleteBotIdentity(ticket,del(1,gen0.id),roster)).toThrow("MEMORY_VERSION_CONFLICT");
+  // naming a version without an id is not accepted for a brief any more
+  expect(()=>writeBotIdentity(ticket,input({expectedVersion:1,text:"no id"}),roster)).toThrow("MEMORY_VERSION_CONFLICT");
+  expect(()=>deleteBotIdentity(ticket,del(1),roster)).toThrow("MEMORY_VERSION_CONFLICT");
+  expect(readBotIdentity(ticket,"moss",roster).records.filter(r=>r.kind==="continuity-brief")).toMatchObject([{id:gen1.id,text:"Fresh brief.",version:1}]);
+  expect(writeBotIdentity(ticket,input({expectedVersion:1,expectedId:gen1.id,text:"Edited brief."}),roster).version).toBe(2);
+  expect(deleteBotIdentity(ticket,del(2,gen1.id),roster)).toEqual({id:gen1.id,deleted:true});
+});
+it("commitments and traits keep working with or without an id; a wrong id still conflicts",()=>{
+  const c=writeBotIdentity(ticket,input({kind:"commitment",key:"fridays",basis:"owner-fact",text:"Check in."}),roster);
+  expect(writeBotIdentity(ticket,input({kind:"commitment",key:"fridays",basis:"owner-fact",expectedVersion:1,text:"Check in weekly."}),roster).version).toBe(2);
+  expect(writeBotIdentity(ticket,input({kind:"commitment",key:"fridays",basis:"owner-fact",expectedVersion:2,expectedId:c.id,text:"Check in daily."}),roster).version).toBe(3);
+  expect(()=>writeBotIdentity(ticket,input({kind:"commitment",key:"fridays",basis:"owner-fact",expectedVersion:3,expectedId:"identity:other",text:"x"}),roster)).toThrow("MEMORY_VERSION_CONFLICT");
+  expect(deleteBotIdentity(ticket,{action:"identity-delete",botId:"moss",kind:"commitment",key:"fridays",expectedVersion:3},roster).deleted).toBe(true);
 });

@@ -349,4 +349,79 @@ describe("Pi MCP extension registration", () => {
     ).rejects.toThrow("remote failure");
     await handlers.get("session_shutdown")?.();
   });
+
+  it("asks before every call to a server with scope custom, and a deny blocks the call (MCP-LINK T9)", async () => {
+    const script = fakeMcpScript(`
+      let buffer = "";
+      process.stdin.setEncoding("utf8");
+      const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: {} } } });
+          else if (msg.method === "tools/list") send({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "run_workflow", inputSchema: { type: "object", properties: {} } }] } });
+          else if (msg.method === "tools/call") send({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: "ran it" }] } });
+        }
+      });
+    `);
+    const dir = tempDir();
+    const config = join(dir, "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: { comfy: { command: process.execPath, args: [script], scope: "custom" } } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+
+    const tools: RegisteredTool[] = [];
+    const handlers = new Map<string, ShutdownHandler>();
+    await extension({
+      registerTool(tool) { tools.push(tool); },
+      on(event, handler) { handlers.set(event, handler); },
+    });
+    expect(tools).toHaveLength(1);
+
+    const asked: string[] = [];
+    const deny = await tools[0].execute("call-1", {}, undefined, undefined, { ui: { confirm: async (title: string) => { asked.push(title); return false; } } });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain("run_workflow");
+    expect(deny).toMatchObject({ content: [{ type: "text", text: "Blocked by the user." }] });
+
+    const allow = await tools[0].execute("call-2", {}, undefined, undefined, { ui: { confirm: async (title: string) => { asked.push(title); return true; } } });
+    expect(asked).toHaveLength(2);
+    expect(allow).toMatchObject({ content: [{ type: "text", text: "ran it" }] });
+    await handlers.get("session_shutdown")?.();
+  });
+
+  it("does not ask for a server without a scope", async () => {
+    const script = fakeMcpScript(`
+      let buffer = "";
+      process.stdin.setEncoding("utf8");
+      const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: {} } } });
+          else if (msg.method === "tools/list") send({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "go", inputSchema: { type: "object", properties: {} } }] } });
+          else if (msg.method === "tools/call") send({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: "went" }] } });
+        }
+      });
+    `);
+    const dir = tempDir();
+    const config = join(dir, "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: { plain: { command: process.execPath, args: [script] } } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+    const tools: RegisteredTool[] = [];
+    const handlers = new Map<string, ShutdownHandler>();
+    await extension({ registerTool(tool) { tools.push(tool); }, on(event, handler) { handlers.set(event, handler); } });
+    let asked = 0;
+    await expect(tools[0].execute("c", {}, undefined, undefined, { ui: { confirm: async () => { asked += 1; return false; } } }))
+      .resolves.toMatchObject({ content: [{ type: "text", text: "went" }] });
+    expect(asked).toBe(0);
+    await handlers.get("session_shutdown")?.();
+  });
 });

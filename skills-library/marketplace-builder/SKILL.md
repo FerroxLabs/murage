@@ -4,7 +4,7 @@ description: |
   Two-sided marketplace strategy advisor covering the chicken-and-egg problem, supply and demand acquisition, trust and safety systems, liquidity dynamics, pricing models, network effects, marketplace metrics, platform governance, and scaling strategies for building successful platforms that connect buyers and sellers. Use when the user asks about marketplace builder or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "entrepreneurship strategy planning"
   category: "business-strategy"

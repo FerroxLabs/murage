@@ -97,8 +97,8 @@ describe("ImageSettingsView", () => {
     expect(html).toContain("Creates images only. Flux Router offers image generation only. It has no reference-edit contract.");
     expect(html).not.toContain("Creates and edits");
     expect(html).not.toContain("Choose an available model before enabling image requests.");
-    expect(html).toMatch(/<input type="checkbox" [^>]*checked=""/);
-    expect(html).not.toMatch(/<input type="checkbox" [^>]*disabled=""/);
+    expect((/<button[^>]*role="switch"[^>]*>/.exec(html)?.[0] ?? "")).toContain('aria-checked="true"');
+    expect((/<button[^>]*role="switch"[^>]*>/.exec(html)?.[0] ?? "")).not.toContain('disabled=""');
   });
   it("shows the xAI edit contract without a quality setting", () => {
     const html = render(snapshot("xai", "xai", [xai], "grok-imagine-image-2.0", null));
@@ -136,7 +136,7 @@ describe("ImageSettingsView", () => {
     const html = render({ ...snapshot("openrouter", "openrouter", [vector, openRouterOther], null), enabled: false });
     expect(html).not.toContain("data-image-capability");
     expect(html).toContain("Choose an available model before enabling image requests.");
-    expect(html).toMatch(/<input type="checkbox" [^>]*disabled=""/);
+    expect((/<button[^>]*role="switch"[^>]*>/.exec(html)?.[0] ?? "")).toContain('disabled=""');
   });
   it("names a saved model that is no longer in the catalog as unavailable", () => {
     const html = render(snapshot("openai", "openai", [openai], "gpt-image-9"));
@@ -155,7 +155,7 @@ describe("ImageSettingsView", () => {
     const html = render({ enabled: false, connections: [], selected: null, catalog: null });
     expect(html).not.toContain("data-image-capability");
     expect(html).not.toMatch(/Creates and edits images\.|Creates images only\.|Editing is unavailable with this model\.|This model cannot generate images here\./);
-    expect(html).toMatch(/<input type="checkbox" [^>]*disabled=""/);
+    expect((/<button[^>]*role="switch"[^>]*>/.exec(html)?.[0] ?? "")).toContain('disabled=""');
     expect(html).toMatch(/<button type="button"[^>]*>Refresh connections<\/button>/);
     expect(html).not.toMatch(/<button type="button"[^>]*disabled=""[^>]*>Refresh connections/);
   });
@@ -178,7 +178,8 @@ describe("model checks and the library (image generation v2 A.2, A.6, A.8)", () 
     const html = renderToStaticMarkup(createElement(ImageSettingsView, { snapshot: snapshot("openai", "openai", [openai], "gpt-image-2"), busy: null, error: "", notice: "", onChange: () => {}, onRefresh: () => {}, onProbe: () => {} }));
     expect(html).toContain("Check this model now");
     expect(html).toContain("Check the default model once a day");
-    expect(html).not.toMatch(/checked=""[^>]*>\s*<span>Check the default model/);
+    // a switch, off by default (any single on/off setting is a Switch)
+    expect(html).toMatch(/<span id="image-settings-daily">Check the default model[^]*?role="switch" aria-checked="false"/);
     expect(html).toContain("Saved prompt blocks and reference packs");
     const older = renderToStaticMarkup(createElement(ImageSettingsView, { snapshot: snapshot("openai", "openai", [openai], "gpt-image-2"), busy: null, error: "", notice: "", onChange: () => {}, onRefresh: () => {} }));
     expect(older).not.toContain("Check this model now");

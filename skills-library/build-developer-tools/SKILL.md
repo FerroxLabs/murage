@@ -21,7 +21,7 @@ trigger_phrases: >-
   I want to build a CLI tool I need to create an SDK How do I build developer
   tools I want to improve developer experience
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: documentation step-by-step planning
   category: software-project

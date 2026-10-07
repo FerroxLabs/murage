@@ -378,6 +378,19 @@ describe("the sidecar in front of an unmodified harness", () => {
     expect(smuggled.status).toBe(400);
   });
 
+  it("saves the shared sidebar order through the same route, but never as the first upload", async () => {
+    // The order is the computer's, the same on every device. A phone's drag
+    // saves it; only the desktop may upload its first arrangement, because a
+    // phone's first load would only ever carry the default order.
+    const first = await device("POST", "/api/sidebar-sections", { body: { order: ["builtin:pinned"], initial: true } });
+    expect(first.status).toBe(403);
+    const dragged = await device("POST", "/api/sidebar-sections", { body: { order: ["section:Mobile", "builtin:pinned"] } });
+    expect(dragged.status).toBe(200);
+    expect(dragged.body.order.slice(0, 2)).toEqual(["section:Mobile", "builtin:pinned"]);
+    const listed = await device("GET", "/api/bots");
+    expect(listed.body.sidebarSectionOrder.slice(0, 2)).toEqual(["section:Mobile", "builtin:pinned"]);
+  });
+
   it("cannot create a permanent always-allow grant from the companion surface", async () => {
     const { body } = await device("GET", "/api/bots");
     const bot = body.bots[0];
@@ -736,7 +749,6 @@ describe("pairing, end to end", () => {
     const paired = createServer(
       createProxyHandler({
         harnessPort: HARNESS_PORT,
-        // the harness answers conversation routes only to a door that carries the launch credential
         companionToken: LAUNCH_TOKEN,
         authenticate: (t) => registry.authenticate(t ?? undefined),
         redeem: (code, deviceName, pairRequestId) => registry.redeem(code, deviceName, pairRequestId),

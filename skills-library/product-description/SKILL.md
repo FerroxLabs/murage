@@ -10,7 +10,7 @@ description: |
   paid-ad-copy), or full marketing campaign (use campaign-planning).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "marketing marketing-copy writing template"
   category: "marketing-sales"

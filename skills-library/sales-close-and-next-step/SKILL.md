@@ -1,8 +1,9 @@
 ---
 name: sales-close-and-next-step
 description: "You're in sales mode and a conversation is ending — call winding down, email thread needing a reply, meeting at \"so what's next.\" Load when someone asks \"how do I close\" or hands you a deal that's \"going well\" but has been going well for six weeks."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "sales"
 ---

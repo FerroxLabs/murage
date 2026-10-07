@@ -53,9 +53,9 @@ it("reconsiders initially missing resources on fresh boot without minting a new 
   const f=fixture();f.available(false);const id=f.runtime.authorize(ownerMemoryTicket()).job!.id;await f.runtime.run(id,signal());closeDatabase();
   const resumed=createMemoryEvolutionRuntime(f.options);expect(resumed.pending()).toBe(id);expect(resumed.status().job!.id).toBe(id);
 });
-it("refuses USD caps without a trusted reflection ceiling before any worker or model invocation",async()=>{
-  const f=fixture();database().exec("UPDATE memory_learning_config SET settings=json_set(settings,'$.dailyCostUsd',1),revision=revision+1");const id=f.runtime.authorize(ownerMemoryTicket()).job!.id;await f.runtime.run(id,signal());
-  expect(f.runtime.status().job).toMatchObject({status:"waiting",started:false,reason:"GEPA_COST_AUTHORITY_REQUIRED"});expect(f.options.worker).not.toHaveBeenCalled();expect(f.extractor).not.toHaveBeenCalled();
+it("rejects the retired ceiling before changing the learning configuration",async()=>{
+ const {updateMemoryLearning}=await import("./learning-policy.ts");fixture();
+ expect(()=>updateMemoryLearning(database(),{dailyCostUsd:1},0)).toThrow();
 });
 it("requires explicit retry for a started uncertain evaluation and blocks changed runtime identity",async()=>{
   const f=fixture();f.options.evaluate=vi.fn(async()=>{throw Error("GEPA_CALL_UNCERTAIN");});const id=f.runtime.authorize(ownerMemoryTicket()).job!.id;await f.runtime.run(id,signal());
@@ -84,4 +84,9 @@ it("keeps recall and classification authorization and status separate while usin
   const authorized=f.runtime.authorize(ticket,"classification");expect(f.runtime.status().authorized).toBe(true);expect(f.runtime.status("classification").authorized).toBe(true);
   await f.runtime.run(authorized.job!.id,signal());expect(f.runtime.status("classification").job).toMatchObject({status:"complete",decision:"accepted"});expect(f.runtime.status().corpus.id).toBe("memory-recall-groups");expect(f.runtime.status().job!.status).toBe("pending");
   expect(readMemoryEvolutionPolicy().retrieval).toEqual(original.retrieval);expect(readMemoryEvolutionPolicy().extraction.classificationGuidance).toBe("Use exact explicit source labels.");
+});
+
+
+it("omits monetary accounting from an authorized evolution status",()=>{
+ const f=fixture();f.runtime.authorize(ownerMemoryTicket());expect(f.runtime.status().job).not.toHaveProperty("costKnown");expect(f.runtime.status().job).not.toHaveProperty("actualCostUsd");
 });

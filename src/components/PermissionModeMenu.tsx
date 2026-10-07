@@ -25,6 +25,9 @@ export const PERMISSION_MODES: ReadonlyArray<{ mode: PermissionMode; label: stri
  *  connected apps, rather than let them act with nobody asked. */
 const ENGINES_THAT_CANNOT_ASK = new Set(["antigravityAgent"]);
 export const engineCannotAsk = (driverKind: string | undefined): boolean => Boolean(driverKind && ENGINES_THAT_CANNOT_ASK.has(driverKind));
+/** An engine that brings its own tools and approvals (OpenClaw): Murage's
+ *  levels are not what decide what it runs. Said as what it is. */
+const ownApprovalsNote = (engine: string) => `${engine} runs on its own tools and approvals, so these levels do not change what it does. Set its approvals in ${engine} itself.`;
 const cannotAskNote = (engine: string) => t("permissionMenu.cannotAsk", { engine });
 
 export const PermissionModeIcon = ({ mode, size, className }: { mode: PermissionMode; size: number; className: string }) =>
@@ -39,6 +42,7 @@ export function PermissionModeMenu({
   desktop,
   onPick,
   engineCannotAsk: cannotAskEngine,
+  engineOwnApprovals,
   scope,
 }: {
   botName: string;
@@ -48,6 +52,8 @@ export function PermissionModeMenu({
   scope?: { routine?: string };
   /** The engine's name when it cannot ask before acting (engineCannotAsk). */
   engineCannotAsk?: string;
+  /** The engine's name when it runs on its own tools and approvals. */
+  engineOwnApprovals?: string;
   current: PermissionMode;
   /** useDesktopSurface(): false on a phone or the browser door */
   desktop: boolean | undefined;
@@ -69,6 +75,7 @@ export function PermissionModeMenu({
           </div>
         )}
       </div>
+      {engineOwnApprovals && <div className="border-b border-hairline/20 px-4 py-2 text-[13px] text-warning">{ownApprovalsNote(engineOwnApprovals)}</div>}
       <div className="flex flex-col py-1">
         {PERMISSION_MODES.map((entry) => {
           const unavailable = desktop === false && isDesktopOnlyMode(entry.mode);

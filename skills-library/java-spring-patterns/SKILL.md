@@ -6,7 +6,7 @@ description: |
   Do NOT use when the user asks about Java project setup (use `java-project-setup`), Java testing (use `java-testing-patterns`), Java concurrency (use `java-concurrency-patterns`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "java backend frameworks"
   category: "software-engineering"

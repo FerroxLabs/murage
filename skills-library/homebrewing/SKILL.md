@@ -4,7 +4,7 @@ description: |
   Guide to homebrewing beer including equipment setup, extract and all-grain methods, recipe design, sanitation, fermentation management, packaging, style guidelines, troubleshooting, and water chemistry. Use when the user asks about homebrewing or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "guide step-by-step cooking"
   category: "hobbies-crafts"

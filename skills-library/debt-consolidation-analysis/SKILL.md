@@ -6,7 +6,7 @@ description: |
   Do NOT use for debt payoff sequencing (use debt-snowball-planner or debt-avalanche-planner), comparing new loan offers (use loan-comparison), or business debt restructuring.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "debt-management personal-finance analysis budgeting"
   category: "personal-finance"

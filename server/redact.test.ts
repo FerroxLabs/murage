@@ -527,3 +527,33 @@ describe("redactSecretsInText's linear rules match the rules they replaced", () 
     }
   });
 });
+
+describe("JWT rule never hides a URL host", () => {
+  const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijk123456";
+  it("keeps a crafted host and userinfo visible", () => {
+    const host = "https://eyJaaaaaaaa.bbbbbbbb.cccccccc.attacker.io/x";
+    expect(redactSecretsInText(host)).toBe(host);
+    const info = "https://eyJaaaaaaaa.bbbbbbbb.cccccccc@attacker.io/x";
+    expect(redactSecretsInText(info)).toBe(info);
+  });
+  it("still masks a real JWT in a header", () => {
+    const out = redactSecretsInText(`curl -H "X-Token: ${jwt}" https://a.test`);
+    expect(out).not.toContain(jwt);
+  });
+});
+
+describe("redactSecrets name masking with a length floor", () => {
+  it("floor mode keeps short non-secret values visible, still masks password/authorization/cookie", async () => {
+    const { redactSecretsForCard } = await import("./redact.ts");
+    const out = redactSecretsForCard({ token: "USDC", secret_name: "db", password: "pw", authorization: "x", cookie: "a=b", api_token: "abcdefgh12345" }) as Record<string, string>;
+    expect(out.token).toBe("USDC");
+    expect(out.secret_name).toBe("db");
+    expect(out.password).not.toBe("pw");
+    expect(out.authorization).not.toBe("x");
+    expect(out.cookie).not.toBe("a=b");
+    expect(out.api_token).not.toContain("abcdefgh12345");
+  });
+  it("redactSecrets itself is unchanged for short values", () => {
+    expect((redactSecrets({ token: "USDC" }) as any).token).not.toBe("USDC");
+  });
+});

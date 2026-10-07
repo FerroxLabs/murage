@@ -6,7 +6,7 @@ description: |
   Do NOT use for academic literature reviews (use `literature-search`), for note taking during reading (use `cornell-notes`), or for annotated bibliographies (use `annotated-bibliography`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "study-skills note-taking research step-by-step"
   category: "education"

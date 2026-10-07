@@ -6,7 +6,7 @@ description: |
   Do NOT use for intermediate or advanced programming (use intermediate-strength-training or training-program-periodization), injury rehabilitation, or sport-specific conditioning (use sports-specific-conditioning).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "fitness workout-planning beginner-friendly"
   category: "health-wellness"

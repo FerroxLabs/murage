@@ -14,7 +14,7 @@ type: workflow
 skills: code-review-patterns devsecops-engineer performance-profiling technical-documentation
 trigger_phrases: conduct code review review pull request thorough code review structured review process
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: testing security optimization step-by-step
   category: software-project

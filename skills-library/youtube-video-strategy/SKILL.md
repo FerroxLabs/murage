@@ -11,7 +11,7 @@ description: |
   vertical video (use short-form-video-planning).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "video-production planning template"
   category: "design-creative"

@@ -1,8 +1,9 @@
 ---
 name: coin-pricing-math
 description: "The pricing specialist has picked a price or is choosing between candidates, and the question is whether the number clears the margin floor — or what margin floor is required to keep the business alive. Load when you hear \"does this price work,\" \"what gross margin do we need,\" \"what happens if we cu"
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "coin"
 ---

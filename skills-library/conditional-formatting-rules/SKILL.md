@@ -6,7 +6,7 @@ description: |
   Do NOT use for chart color selection (use color-in-data), data validation rules (use data-validation-setup), or general spreadsheet formulas (use excel-lookup-formulas).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "spreadsheets data-visualization template"
   category: "data-analysis"

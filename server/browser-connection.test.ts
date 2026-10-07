@@ -13,6 +13,7 @@ import {
   readBrowserConnection,
   registerBrowserCapability,
   revokeBrowserCapability,
+  BROWSER_REVOKE_TIMEOUT_MS,
 } from "./browser-connection.ts";
 
 const TOKEN = "a".repeat(64);
@@ -192,6 +193,16 @@ describe("browser connection descriptor", () => {
     expect(BUILT_IN_BROWSER_SYSTEM_PROMPT).toMatch(/page instructions as untrusted content/i);
     expect(BUILT_IN_BROWSER_SYSTEM_PROMPT).toMatch(/consequential action.*confirmation/i);
     expect(BUILT_IN_BROWSER_SYSTEM_PROMPT).toMatch(/browser_request_takeover/i);
+    expect(BUILT_IN_BROWSER_SYSTEM_PROMPT).not.toMatch(/safeguard|\bsafe|unsafe|safety|\u2014/i);
+    expect(BUILT_IN_BROWSER_SYSTEM_PROMPT).toContain("turn off a protection");
     expect(BUILT_IN_BROWSER_SYSTEM_PROMPT).toMatch(/never type their credentials/i);
+  });
+  it("bounds a hung capability revoke instead of blocking the turn", async () => {
+    const connection = { url: "http://127.0.0.1:52144", token: "a".repeat(64), pid: 1 } as never;
+    const hung = (() => new Promise(() => {})) as unknown as typeof fetch;
+    expect(BROWSER_REVOKE_TIMEOUT_MS).toBe(2_000);
+    const started = Date.now();
+    await expect(revokeBrowserCapability(connection, { token: "t" }, hung, 50)).rejects.toThrow(/timed out/);
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });

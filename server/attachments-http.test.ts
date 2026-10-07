@@ -68,7 +68,16 @@ it("answers ?w= with a smaller WebP, the original when it is already small, and 
     };
     const wide = png(2000, 40);
     const wideName = await upload(wide);
-    const thumb = await fetch(`${session.info.url}/api/attachments/${wideName}?w=320`);
+    // The year-long cache is the desktop's. An unmarked or paired caller is a
+    // remote surface and revalidates every time (S1b), so hiding a conversation
+    // takes effect on its next view.
+    const secret = (await (await fetch(`${session.info.url}/api/desktop-secret`)).json() as { secret: string }).secret;
+    const desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret };
+    const remote = await fetch(`${session.info.url}/api/attachments/${wideName}?w=320`);
+    expect(remote.status).toBe(200);
+    expect(remote.headers.get("cache-control")).toBe("private, no-cache");
+    await remote.arrayBuffer();
+    const thumb = await fetch(`${session.info.url}/api/attachments/${wideName}?w=320`, { headers: desktop });
     expect(thumb.status).toBe(200);
     expect(thumb.headers.get("content-type")).toBe("image/webp");
     expect(thumb.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");

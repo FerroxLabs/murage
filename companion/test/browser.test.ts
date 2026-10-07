@@ -10,7 +10,8 @@
 // the device door, and the forwarding here is the same shape.
 import { createServer, request, type IncomingMessage, type Server } from "node:http";
 import { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import WebSocket, { WebSocketServer } from "ws";
 
 import {
   browserBindHost,
@@ -20,6 +21,7 @@ import {
   clearedCookie,
   cookieName,
   createBrowserHandler,
+  createBrowserStreamUpgrade,
   forwardedHeaders,
   forwardedPath,
   hostOf,
@@ -50,7 +52,7 @@ let streamRes: { end: () => void } | null = null;
 let door: Server;
 let doorPort = 0;
 
-const DEVICE = { id: "dev_1", name: "Sean's iPhone", cloudDesktopAccess: false };
+const DEVICE = { id: "dev_1", name: "Sean's iPhone", cloudDesktopAccess: false, scriptAccess: false };
 
 /** A device store with one paired device, one pairing credential, and one
  * live session. Structural, so the whole world is four fields. */
@@ -91,6 +93,7 @@ const devices: BrowserDeviceStore = {
     return { value: next, expiresAt: renewed.expiresAt };
   },
   signOutDevice: () => null,
+  issuePushTokens: () => null, pushBinding: () => null, approvalIdentity: () => null, authenticatePush: () => null,
 };
 
 const identity: BoundIdentity = {
@@ -1035,5 +1038,145 @@ describe("the door a person actually taps", () => {
         identity as never,
       ),
     ).toMatchObject({ status: 403, error: "forbidden: unexpected host" });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// The streaming-voice websocket on this door
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The one upgrade path, behind the same origin gate and cookie session as
+// every request. The harness here is fake, so what is asserted is what it
+// received: the principal the door resolved, the launch proof, and no Origin.
+describe("stream upgrade", () => {
+  const proof = "c".repeat(64);
+  let upgradeDoor: Server;
+  let upgradePort = 0;
+  const wss = new WebSocketServer({ noServer: true });
+  let upgraded: IncomingMessage | null = null;
+  let upgradeCount = 0;
+
+  beforeAll(async () => {
+    harness.on("upgrade", (req, socket, head) => {
+      upgradeCount += 1;
+      upgraded = req;
+      wss.handleUpgrade(req, socket, head, (ws) => ws.on("message", (d) => ws.send(d)));
+    });
+    upgradeDoor = createServer(createBrowserHandler({ harnessPort, companionToken: proof, identity: () => currentIdentity, devices, connected: tracker.open }));
+    upgradeDoor.on("upgrade", createBrowserStreamUpgrade({ harnessPort, companionToken: proof, identity: () => currentIdentity, devices, connected: tracker.open }));
+    await new Promise<void>((r) => upgradeDoor.listen(0, "127.0.0.1", r));
+    upgradePort = (upgradeDoor.address() as AddressInfo).port;
+  });
+  afterAll(async () => {
+    upgradeDoor.closeAllConnections?.();
+    await new Promise<void>((r) => upgradeDoor.close(() => r()));
+    wss.close();
+  });
+
+  const hostName = () => `macbook.tailexample.ts.net:${upgradePort}`;
+  const connect = (query: string, headers: Record<string, string>, origin = `http://${hostName()}`) =>
+    new WebSocket(`ws://127.0.0.1:${upgradePort}/api/voice/stream?${query}`, {
+      origin,
+      headers: { host: hostName(), "sec-fetch-site": "same-origin", ...headers },
+    });
+  const refusal = (ws: WebSocket) => new Promise<string>((r) => ws.once("error", (e) => r(String(e))));
+  const signedInCookie = async () => {
+    const answer = await knock("POST", "/session", write(), JSON.stringify({ credential: redeemable }));
+    const set = String(answer.headers["set-cookie"]?.[0] ?? "");
+    return { cookie: `${cookieName("http")}=${set.slice(set.indexOf("=") + 1, set.indexOf(";"))}`, sessionId: [...sessions.values()].at(-1)!.id };
+  };
+
+  it("refuses a foreign Origin at the gate, before anything reaches the harness, and logs no ticket", async () => {
+    const before = upgradeCount;
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previous = process.env.MURAGE_DOOR_DIAGNOSE;
+    process.env.MURAGE_DOOR_DIAGNOSE = "1";
+    try {
+      const { cookie } = await signedInCookie();
+      const ws = connect("ticket=SECRETTICKET&keyterms=Sable", { cookie }, "https://evil.example");
+      expect(await refusal(ws)).toMatch(/403/);
+      const logged = spy.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(logged).toContain("[door-refused]");
+      expect(logged).toContain("ticket=redacted");
+      expect(logged).not.toContain("SECRETTICKET");
+      expect(logged).not.toContain("Sable");
+    } finally {
+      if (previous === undefined) delete process.env.MURAGE_DOOR_DIAGNOSE;
+      else process.env.MURAGE_DOOR_DIAGNOSE = previous;
+      spy.mockRestore();
+    }
+    expect(upgradeCount).toBe(before);
+  });
+
+  it("answers 401 without a valid session cookie", async () => {
+    const before = upgradeCount;
+    expect(await refusal(connect("ticket=t", {}))).toMatch(/401/);
+    expect(await refusal(connect("ticket=t", { cookie: `${cookieName("http")}=nope` }))).toMatch(/401/);
+    expect(upgradeCount).toBe(before);
+  });
+
+  it("answers 503 when the door was not started with its launch proof", async () => {
+    const bare = createServer();
+    bare.on("upgrade", createBrowserStreamUpgrade({ harnessPort, identity: () => currentIdentity, devices }));
+    await new Promise<void>((r) => bare.listen(0, "127.0.0.1", r));
+    const port = (bare.address() as AddressInfo).port;
+    const { cookie } = await signedInCookie();
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/voice/stream?ticket=t`, { headers: { host: `macbook.tailexample.ts.net:${port}`, cookie } });
+    expect(await refusal(ws)).toMatch(/503/);
+    await new Promise<void>((r) => bare.close(() => r()));
+  });
+
+  it("reaches the harness signed in, stamped with device and session, never the cookie or Origin", async () => {
+    const { cookie, sessionId } = await signedInCookie();
+    const ws = connect("ticket=t1", { cookie });
+    await new Promise<void>((r) => ws.once("open", () => r()));
+    expect(upgraded?.headers["x-murage-stream-principal"]).toBe(`companion:${DEVICE.id}:${sessionId}`);
+    expect(upgraded?.headers["x-murage-companion-token"]).toBe(proof);
+    expect(upgraded?.headers.cookie).toBeUndefined();
+    expect(upgraded?.headers.origin).toBeUndefined();
+    expect(upgraded?.headers.host).toMatch(/^127\.0\.0\.1:\d+$/);
+    ws.close();
+  });
+
+  it("ends the forwarded socket when the session ends", async () => {
+    const { cookie, sessionId } = await signedInCookie();
+    const ws = connect("ticket=t2", { cookie });
+    await new Promise<void>((r) => ws.once("open", () => r()));
+    const closed = new Promise<void>((r) => ws.once("close", () => r()));
+    // what index.ts wires to devices.onSessionEnded
+    expect(tracker.disconnectSession(sessionId)).toBeTruthy();
+    await closed;
+  });
+
+  it("ends the forwarded socket when the device is revoked", async () => {
+    const { cookie } = await signedInCookie();
+    const ws = connect("ticket=t3", { cookie });
+    await new Promise<void>((r) => ws.once("open", () => r()));
+    const closed = new Promise<void>((r) => ws.once("close", () => r()));
+    expect(tracker.disconnect(DEVICE.id)).toBe(true);
+    await closed;
+  });
+
+  it("ignores any other path", async () => {
+    const { cookie } = await signedInCookie();
+    const ws = new WebSocket(`ws://127.0.0.1:${upgradePort}/api/events`, { headers: { host: hostName(), cookie } });
+    expect(await refusal(ws)).toMatch(/socket hang up|ECONNRESET/);
+  });
+
+  it("stamps the principal on the ticket POST from the resolved session, and never takes a client's", async () => {
+    const { cookie, sessionId } = await signedInCookie();
+    const answer = await new Promise<Answer>((resolve, reject) => {
+      const req = request(
+        { hostname: "127.0.0.1", port: upgradePort, path: "/api/voice/stream/ticket", method: "POST",
+          headers: { host: hostName(), "sec-fetch-site": "same-origin", origin: `http://${hostName()}`, "content-type": "application/json", "x-murage-stream-principal": "desktop", cookie } },
+        (res) => { res.resume(); res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: "" })); },
+      );
+      req.on("error", reject);
+      req.end("{}");
+    });
+    expect(answer.status).toBe(200);
+    expect(seen?.url).toBe("/api/voice/stream/ticket");
+    expect(seen?.headers["x-murage-stream-principal"]).toBe(`companion:${DEVICE.id}:${sessionId}`);
+    expect(seen?.headers["x-murage-companion-token"]).toBe(proof);
   });
 });

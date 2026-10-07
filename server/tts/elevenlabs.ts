@@ -10,6 +10,7 @@
 // client already splits text into utterances and fetches the next while the
 // current one plays, which gets the same perceived latency with far fewer
 // moving parts — and no socket to leak when a turn is interrupted.
+import { RateLimitedError, retryAfterMs } from "./rate-limit.ts";
 const API = process.env.MURAGE_ELEVENLABS_API || "https://api.elevenlabs.io/v1";
 const MODEL = "eleven_flash_v2_5";
 // 64kbps mono is indistinguishable for speech and a third of the bytes
@@ -26,9 +27,18 @@ export interface Voice {
   provider?: "openai" | "grok";
 }
 
+/** How long the service took, for the voice diagnostics: the harness's own
+ *  wait for the response headers, and the gateway's `x-flux-ttfb-ms` when the
+ *  service is Flux. Times only. */
+export interface ClipTiming {
+  headersMs: number;
+  fluxTtfbMs?: number;
+}
+
 export interface Audio {
   bytes: Uint8Array;
   mime: string;
+  timing?: ClipTiming;
 }
 
 /** Audio handed on as the service makes it, so playback can start before
@@ -37,6 +47,7 @@ export interface Audio {
 export interface StreamedAudio {
   stream: ReadableStream<Uint8Array>;
   mime: string;
+  timing?: ClipTiming;
 }
 
 export type Clip = Audio | StreamedAudio;
@@ -126,6 +137,7 @@ export async function synthesizeClip(text: string, voiceId: string, key: string,
     body: JSON.stringify({ text, model_id: MODEL }),
     signal: AbortSignal.timeout(60_000),
   });
+  if (res.status === 429) throw new RateLimitedError(message(429, "speaking", await safeJson(res)), retryAfterMs(res.headers.get("retry-after")));
   if (!res.ok) throw new Error(message(res.status, "speaking", await safeJson(res)));
   return clipFrom(res, "audio/mpeg", streamed);
 }

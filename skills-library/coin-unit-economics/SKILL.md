@@ -1,8 +1,9 @@
 ---
 name: coin-unit-economics
 description: "The user is asking whether the *product* makes money — not whether the month did. Load when you hear \"is this customer profitable,\" \"what's our CAC,\" \"what's the LTV,\" \"how long until a customer pays back,\" or \"should we spend more on acquisition.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "coin"
 ---

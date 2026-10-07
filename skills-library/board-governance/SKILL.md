@@ -4,7 +4,7 @@ description: |
   Guide to nonprofit board governance including roles and responsibilities, meeting facilitation, fiduciary duties, committee structure, board recruitment, evaluation, and succession planning. Use when the user asks about board governance or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "strategy planning guide"
   category: "business-strategy"

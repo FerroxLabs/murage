@@ -3,7 +3,7 @@ name: legal-gdpr
 description: "Produce a GDPR data-processing assessment, an Article 28 controller-to-processor DPA, or a sub-processor disclosure — covering lawful basis, transfer mechanism (SCCs and the transfer impact assessment), DPIA triggers, retention, and the data-subject-rights workflow. Use when the user handles EU or UK personal data, or a customer has sent a DPA to sign. Do NOT use for the product's licence terms (use legal-eula) or for general IP and compliance posture (use sentry-ip-and-compliance). Templates only — have a privacy attorney review before signing anything."
 license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "gdpr dpa privacy legal smb"
   category: "legal"

@@ -81,3 +81,12 @@ it("wakes marked unread when its time comes", async () => {
   expect(await snoozes()).toEqual([]);
   await expect.poll(async () => (await task(ids.quiet)).unread).toBe(true);
 });
+
+it("a snooze until new activity ends when the bot answers", async () => {
+  await call(`/api/bots/${ids.bot}/tasks/${ids.quiet}`, { method: "PATCH", body: JSON.stringify({ unread: false }) });
+  expect((await call(`/api/thread-snoozes/${ids.quiet}`, { method: "PUT", body: JSON.stringify({ untilActivity: true }) })).body.snoozes)
+    .toEqual([{ threadId: ids.quiet, until: expect.any(Number), untilActivity: true }]);
+  await call(`/api/bots/${ids.bot}/messages`, { method: "POST", body: JSON.stringify({ threadId: ids.quiet, text: "Anything new?" }) });
+  await expect.poll(async () => (await snoozes()).length, { timeout: 25_000 }).toBe(0);
+  await expect.poll(async () => (await task(ids.quiet)).unread, { timeout: 25_000 }).toBe(true);
+}, 40_000);

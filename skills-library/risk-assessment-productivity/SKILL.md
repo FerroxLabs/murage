@@ -6,7 +6,7 @@ description: |
   Do NOT use for business strategic risk analysis (use business strategy skills), financial risk assessment (use personal-finance skills), or decision-making between options (use premortem-analysis or weighted-decision-matrix).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "project-management analysis planning"
   category: "productivity"

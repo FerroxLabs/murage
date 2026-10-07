@@ -21,7 +21,7 @@ trigger_phrases: >-
   flip houses buy fix and sell a property renovate to sell investment property
   renovation
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: 1.0.0
   tags: home-buying step-by-step planning
   category: cross-domain

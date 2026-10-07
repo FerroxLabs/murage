@@ -23,7 +23,7 @@ export function RoutineProblemsList({ runs, bots, onClose, onOpen, onMarkAllSeen
 }) {
   const problems = unseenRoutineProblems(runs);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div role="dialog" aria-modal="true" aria-label="Routine problems" className="w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-hairline/40 px-5 py-4">
           <div className="min-w-0"><div className="text-[16px] font-semibold text-ink">Routine problems</div><div className="mt-0.5 text-[11.5px] text-ink-secondary">Failed and missed runs you have not opened yet.</div></div>

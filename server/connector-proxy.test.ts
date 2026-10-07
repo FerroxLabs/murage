@@ -279,4 +279,67 @@ describe("connector MCP bridge", () => {
     expect(reply.id, "answered id 12 with id 999's frame").toBe(12);
     expect(JSON.stringify(reply)).toMatch(/unreadable/i);
   });
+
+  it("opens a new upstream session and retries once when the old one is gone", async () => {
+    // After a network drop the upstream forgets the session and answers 404 to
+    // the id the bridge kept. The bridge used to keep forwarding it for the
+    // rest of its life; now it drops it, initializes again, and retries.
+    const seen: Array<{ method: unknown; session: string | undefined; id: unknown }> = [];
+    let sessions = 0;
+    const harness = await listen((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        const message = JSON.parse(body);
+        const session = request.headers["mcp-session-id"] as string | undefined;
+        seen.push({ method: message.method, session, id: message.id });
+        if (message.method === "initialize") {
+          sessions += 1;
+          response.writeHead(200, { "content-type": "application/json", "mcp-session-id": `s${sessions}` });
+          return response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }));
+        }
+        if (message.method === "tools/call" && session === "s1") {
+          response.writeHead(404, { "content-type": "application/json" });
+          return response.end(JSON.stringify({ error: "session_gone" }));
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "done" }] } }));
+      });
+    });
+    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } })}\n`);
+    await nextJson(lines);
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "COMPOSIO_SEARCH_TOOLS", arguments: {} } })}\n`);
+    const reply = await nextJson(lines);
+    expect(reply.id).toBe(2);
+    expect(reply.result.content[0].text).toBe("done");
+    const calls = seen.filter((entry) => entry.method === "tools/call");
+    expect(calls.map((entry) => entry.session)).toEqual(["s1", "s2"]);
+    expect(seen.filter((entry) => entry.method === "initialize").map((entry) => entry.session)).toEqual([undefined, undefined]);
+  });
+
+  it("retries a gone session only once, so a broken upstream cannot loop", async () => {
+    let calls = 0;
+    const harness = await listen((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        const message = JSON.parse(body);
+        if (message.method === "initialize") {
+          response.writeHead(200, { "content-type": "application/json", "mcp-session-id": "sx" });
+          return response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }));
+        }
+        if (message.method === "tools/call") calls += 1;
+        response.writeHead(message.method === "tools/call" ? 404 : 200, { "content-type": "application/json" });
+        response.end("{}");
+      });
+    });
+    const lines = start({ MURAGE_CONNECTOR_UPSTREAM_URL: harness });
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
+    await nextJson(lines);
+    child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "X", arguments: {} } })}\n`);
+    const reply = await nextJson(lines);
+    expect(reply.id).toBe(2);
+    expect(calls).toBe(2);
+  });
 });

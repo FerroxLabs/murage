@@ -6,7 +6,7 @@ description: |
   Do NOT use for comparing specific insurance policies or providers (this requires licensed professional evaluation), health insurance enrollment help, or business insurance needs.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "insurance personal-finance analysis planning"
   category: "personal-finance"

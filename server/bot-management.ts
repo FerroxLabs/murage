@@ -1,3 +1,5 @@
+import { assertHomeMove } from "./team-identities.ts";
+import { threadPartition, isHomePartition } from "./execution-audience.ts";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ModelSelection } from "./contracts.ts";
@@ -44,6 +46,7 @@ export function organizationRevision(store: Store, sender: BotRecord) {
 }
 
 interface ManagementOptions {
+  threadId?: string;
   pendingWork: (bot: BotRecord) => boolean;
   validateSelection: (input: unknown, bot: BotRecord) => ModelSelection;
   validateLeader: (selection: ModelSelection) => void;
@@ -51,12 +54,18 @@ interface ManagementOptions {
 }
 
 export function manageBot(store: Store, sender: BotRecord, input: unknown, options: ManagementOptions) {
+  if (options.threadId && sender.partitionedAt !== undefined && !isHomePartition(threadPartition(sender, options.threadId))) return fail(`Manage bots from ${sender.name}'s own team.`);
   if (sender.hidden) return fail("This bot is archived and cannot manage the organization.");
   const parsed = requestSchema.safeParse(input);
   if (!parsed.success) return fail("Invalid bot-management request. Security settings cannot be changed here.", 400);
   const request = parsed.data;
   const target = store.bot(request.botId);
   if (!target || !mayInspectBot(sender, target)) return fail("That bot is not in your permitted organization.", 404);
+  if (target.partitionedAt !== undefined) {
+    if (request.action === "move") assertHomeMove(target, request.section);
+    if (request.action === "get") return { bot: { id: undefined, name: target.name, busy: Boolean(target.busy) } };
+    return fail(`Only you can manage ${target.name}.`);
+  }
   const organization = organizationRevision(store, sender);
   if (request.action === "get") return { bot: managedBotProfile(target), organizationRevision: organization };
   if (!sender.chiefOfStaff || sender.hidden || isWorkspaceChief(target)

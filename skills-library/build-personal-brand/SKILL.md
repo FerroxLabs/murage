@@ -12,7 +12,7 @@ description: |
   launch-art-portfolio workflow).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "linkedin career branding content-marketing step-by-step planning"
   category: "career"

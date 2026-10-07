@@ -115,7 +115,7 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
 
   return createPortal(
     <div
-      className="fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
+      className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
       onMouseDown={(event) => event.target === event.currentTarget && requestClose()}
     >
       <div

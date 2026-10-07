@@ -6,7 +6,7 @@ description: |
   Do NOT use for commercial-scale composting, vermicomposting (worm bin) specifics, or municipal composting programs.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "gardening composting sustainability"
   category: "home-household"

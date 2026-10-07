@@ -6,7 +6,7 @@ description: |
   Do NOT use for running-specific training plans (use running-training-plan), HIIT workout design (use hiit-workout-design), or heart rate monitoring for medical purposes.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "fitness running workout-planning"
   category: "health-wellness"

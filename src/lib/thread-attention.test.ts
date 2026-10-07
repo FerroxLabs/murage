@@ -38,4 +38,16 @@ describe("shared snooze and question state", () => {
     expect(api).toHaveBeenLastCalledWith("/api/thread-snoozes/a%20b", { method: "DELETE" });
     expect(peekThreadAttention().snoozes.size).toBe(0);
   });
+
+  it("snoozes until new activity and remembers which snoozes wait for it", async () => {
+    const { peekThreadAttention } = await import("./thread-attention");
+    const api = vi.fn(async () => ({ snoozes: [{ threadId: "a", until: 1_000_000 + 30 * 86_400_000, untilActivity: true as const }, { threadId: "b", until: 1_010_000 }] }));
+    await changeThreadSnooze(api, "a", "activity");
+    expect(api).toHaveBeenCalledWith("/api/thread-snoozes/a", { method: "PUT", body: JSON.stringify({ untilActivity: true }) });
+    expect([...peekThreadAttention().snoozes.keys()]).toEqual(["a", "b"]);
+    expect([...peekThreadAttention().untilActivity]).toEqual(["a"]);
+    // A snooze that turns into a timed one is republished even at the same time.
+    setThreadSnoozes([{ threadId: "a", until: 1_000_000 + 30 * 86_400_000 }, { threadId: "b", until: 1_010_000 }]);
+    expect(peekThreadAttention().untilActivity.size).toBe(0);
+  });
 });

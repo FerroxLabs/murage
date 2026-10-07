@@ -4,7 +4,7 @@ description: |
   Comprehensive typography guide covering font classification and pairing, typographic hierarchy, readability and legibility principles, responsive typography, variable fonts, type in branding, web typography implementation, and developing a professional eye for type. Use when the user asks about typography master or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design guide"
   category: "creative-arts"

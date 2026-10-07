@@ -168,7 +168,7 @@ async function main(){
     await page.screenshot({path:join(out,"models-settings.png"),fullPage:true});
     await settings.getByRole("button",{name:"Engines",exact:true}).click();
     await expect(settings.getByText("Your engines",{exact:true})).toBeVisible();
-    await settings.getByRole("button",{name:"Tools & Connections",exact:true}).click();
+    await settings.getByRole("button",{name:"Images",exact:true}).click();
     await settings.getByRole("heading",{name:"Image generation",exact:true}).scrollIntoViewIfNeeded();
     await expect(settings.getByRole("heading",{name:"Image generation",exact:true})).toBeVisible();
     await page.screenshot({path:join(out,"image-settings.png"),fullPage:true});

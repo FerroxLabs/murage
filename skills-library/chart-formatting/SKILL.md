@@ -6,7 +6,7 @@ description: |
   Do NOT use for selecting the chart type (use chart-type-selector), choosing a color palette (use color-in-data), or designing a full dashboard (use dashboard-design).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "data-visualization design template"
   category: "data-analysis"

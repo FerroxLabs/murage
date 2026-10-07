@@ -30,7 +30,7 @@ const USAGE = { input: 313_000, output: 1_300, cachedInput: 300_000, costUsd: 0.
 /** Bank a settled turn onto the trader fixture's open task, in the answer the
  *  renderer reads, so the chip has something to say. */
 const withBankedUsage = async (page: Page) => {
-  await page.route("**/api/bots", async (route) => {
+  await page.route((url) => url.pathname === "/api/bots", async (route) => {
     if (route.request().method() !== "GET") return route.continue();
     const response = await route.fetch();
     const body = await response.json().catch(() => null);
@@ -139,7 +139,9 @@ test.describe("the token chip's popover", () => {
 
   test("the chip's own click still opens Bot settings", async ({ app }) => {
     await chip(app).click();
-    await expect(app.getByText("Skills", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+    // Bot settings is a dialog of sections now; the first "Skills" in the page
+    // is the phone-width section <option>, hidden at this width.
+    await expect(app.getByRole("dialog", { name: "Bot settings" })).toBeVisible({ timeout: 15_000 });
   });
 
   test("fits the viewport at 1440x900, folded, and at 390x844", async ({ app }) => {
@@ -189,7 +191,7 @@ test.describe("the token chip's popover", () => {
 test.describe("a bot that is mid-turn", () => {
   test("says the figures are the last settled turn's", async ({ app }, testInfo) => {
     test.skip(testInfo.project.name !== "desktop", "one width is enough for a copy assertion");
-    await app.route("**/api/bots", async (route) => {
+    await app.route((url) => url.pathname === "/api/bots", async (route) => {
       if (route.request().method() !== "GET") return route.continue();
       const response = await route.fetch();
       const body = await response.json().catch(() => null);
@@ -221,7 +223,7 @@ test.describe("a bot that is mid-turn", () => {
 test.describe("an engine that reports neither a cache nor a cost", () => {
   test("says so, instead of rendering a two-line stub", async ({ app }, testInfo) => {
     test.skip(testInfo.project.name !== "desktop", "one width is enough for a copy assertion");
-    await app.route("**/api/bots", async (route) => {
+    await app.route((url) => url.pathname === "/api/bots", async (route) => {
       if (route.request().method() !== "GET") return route.continue();
       const response = await route.fetch();
       const body = await response.json().catch(() => null);

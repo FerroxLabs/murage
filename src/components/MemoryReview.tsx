@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { MemoryRecord } from "../../shared/memory";
+import { managedInContinuity } from "@/lib/continuity";
 import { t } from "../lib/i18n";
 
 export interface MemoryAudience { id: string; kind: string; ownerKey: string; label: string }
@@ -52,6 +53,7 @@ export function MemoryReview({ inspection, audiences, busy, onAction, onClose }:
     <p className="text-[12px] text-ink-secondary">{audience} · Record: {record.state} · Version {record.version} · {record.assertion.replaceAll("-", " ")} · <time dateTime={new Date(record.validFrom).toISOString()}>{new Date(record.validFrom).toLocaleString()}</time></p>
     {record.assertion === "unverified-import" && <p className="text-[12px] text-ink-secondary">Imported notebook text is reference material. Active means saved for recall, not verified instructions or a change to workspace capture settings.</p>}
     <p className="whitespace-pre-wrap break-words text-[13px]" data-testid="memory-record-text">{record.text}</p>
+    {record.state === "candidate" && record.reviewReason && <p className="text-[12px] text-ink-secondary">{record.reviewReason}</p>}
     <div className="space-y-2">
       <h4 className="text-[13px] font-medium">Sources</h4>
       {!evidence.length && <p className="text-[12px] text-ink-secondary">No linked source excerpts.</p>}
@@ -83,9 +85,9 @@ export function MemoryReview({ inspection, audiences, busy, onAction, onClose }:
       </div>}
       <div className="flex flex-wrap gap-2">
         {record.state === "candidate" && <button className={memoryButtonClass} disabled={!approval} onClick={() => { if (approval) void onAction(approval, proposal ? t("memoryCorrection.approved") : "Candidate approved."); }}>{proposal ? t("memoryCorrection.approve") : "Approve candidate"}</button>}
-        {active && <button className={memoryButtonClass} onClick={() => void onAction({ action: "pin", id: record.id, version: record.version, pinned: !record.ownerPinned }, record.ownerPinned ? "Memory unpinned." : "Memory pinned.")}>{record.ownerPinned ? "Unpin memory" : "Pin memory"}</button>}
+        {!managedInContinuity(record.kind) && active && <button className={memoryButtonClass} onClick={() => void onAction({ action: "pin", id: record.id, version: record.version, pinned: !record.ownerPinned }, record.ownerPinned ? "Memory unpinned." : "Memory pinned.")}>{record.ownerPinned ? "Unpin memory" : "Pin memory"}</button>}
       </div>
-      {active && <>
+      {!managedInContinuity(record.kind) && active && <>
         <form className="space-y-2" onSubmit={event => { event.preventDefault(); void onAction({ action: "review-as-skill", id: record.id, version: record.version, botId: skillBot }, "Skill review requested in the selected bot's conversation. Any proposed skill still needs your approval."); }}>
           <label className="block space-y-1 text-[13px]">Bot to review this skill<select className={memoryInputClass} value={skillBot} onChange={event => setSkillBot(event.target.value)}><option value="">Choose an authorized bot</option>{audiences.filter(item => item.kind === "bot").map(item => <option key={item.id} value={item.ownerKey}>{item.label}</option>)}</select></label>
           <p className="text-[12px] text-ink-secondary">Starts the existing /learn workflow with this exact memory version as its source. The selected bot must already have access, and the review runs on that bot's model. No skill is activated by this action.</p>
@@ -101,9 +103,10 @@ export function MemoryReview({ inspection, audiences, busy, onAction, onClose }:
           <button className={memoryButtonClass} disabled={!destination}>Share memory</button>
         </form>
       </>}
-      {active && !record.ownerPinned && <button className={memoryButtonClass} onClick={() => void onAction({ action: "archive", id: record.id, version: record.version }, "Memory archived. Its sources remain available for historical recall.")}>Archive memory</button>}
-      {record.state === "archived" && <button className={memoryButtonClass} onClick={() => void onAction({ action: "restore-archive", id: record.id, version: record.version }, "Memory restored to current recall.")}>Restore to current recall</button>}
-      {record.state !== "deleted" && <div className="space-y-2 border-t border-hairline/40 pt-3">
+      {managedInContinuity(record.kind) && <p className="text-[12px] text-ink-secondary">Managed in Continuity. Edit or remove this in the bot's Memory settings.</p>}
+      {!managedInContinuity(record.kind) && active && !record.ownerPinned && <button className={memoryButtonClass} onClick={() => void onAction({ action: "archive", id: record.id, version: record.version }, "Memory archived. Its sources remain available for historical recall.")}>Archive memory</button>}
+      {!managedInContinuity(record.kind) && record.state === "archived" && <button className={memoryButtonClass} onClick={() => void onAction({ action: "restore-archive", id: record.id, version: record.version }, "Memory restored to current recall.")}>Restore to current recall</button>}
+      {!managedInContinuity(record.kind) && record.state !== "deleted" && <div className="space-y-2 border-t border-hairline/40 pt-3">
         <p className="text-[12px] text-ink-secondary">Forgetting removes this memory and invalidates dependent recall. Text already sent to an external provider cannot be withdrawn.</p>
         <label className="flex min-h-10 items-center gap-2 text-[13px]"><input type="checkbox" checked={confirmForget} onChange={event => setConfirmForget(event.target.checked)} />Confirm forgetting this memory</label>
         <button className={`${memoryButtonClass} text-danger`} disabled={!confirmForget} onClick={() => void onAction({ action: "forget", kind: "record", id: record.id, revision: record.version }, "Memory forgotten. Dependent recall has been invalidated.")}>Forget memory</button>

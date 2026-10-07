@@ -6,7 +6,7 @@ description: |
   Do NOT use for wireframing static layouts (use wireframe-specification), mapping user flows without animation detail (use user-flow-mapping), or building coded prototypes.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design planning template"
   category: "design-creative"

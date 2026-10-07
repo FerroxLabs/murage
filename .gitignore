@@ -42,6 +42,7 @@ docs/plans/**
 !.env.example
 *.p12
 *.pem
+!cloudflare/push-relay/certs/apple-app-attest-root.pem
 
 # Playwright human specs: the scratch data dir is .murage-scratch (above),
 # these are the runner's own artefacts
@@ -67,3 +68,8 @@ HANDOFF*.md
 *-EXECUTION.md
 docs/plans/**
 !docs/plans/0153-RELEASE-NOTES.md
+
+# Browser extension build and isolated qualification output.
+/dist-browser-extension/
+/artifacts/browser-extension/
+/.test-tmp/

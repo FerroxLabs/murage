@@ -30,8 +30,8 @@ export const B34_EXTRACTOR_INSTRUMENTATION = [
 ].join("\n");
 
 /** Room for every turn's extraction and grounding. The defaults are 6 calls per minute and a
- * 20000 daily output reservation (learning-policy.ts:12-13), and each call reserves 2000 (extract.ts:81,86). */
-const OPEN_BUDGET = Object.freeze({ callsPerMinute: 60, inputLimit: 10_000_000, outputLimit: 2_000_000 });
+ * 60000 daily output allowance; extraction reserves 2000 and grounding 64. */
+const OPEN_BUDGET = Object.freeze({ callsPerMinute: 60, dailyInputTokens: 10_000_000, dailyOutputTokens: 2_000_000 });
 const OWNER_FACT_LINE = "(the owner said; fact)";
 const BUDGET_LIMITED_REASON = "A configured token or call limit prevents synthesis.";
 
@@ -147,7 +147,7 @@ async function selectExtractor(ctx: B34AdapterContext, learning: Record<string, 
   await ctx.setup(checkName, "POST", "/api/memory/action", { action: "configure", extractorInstanceId: B34_EXTRACTOR_INSTANCE_ID, learning, learningRevision }, 200, response => {
     const body = response.body;
     const ok = body?.configuration?.extractorInstanceId === B34_EXTRACTOR_INSTANCE_ID && body?.health?.synthesis?.state === expectedState
-      && Object.entries(learning).every(([key, value]) => body?.learning?.[key] === value);
+      && Object.entries(learning).every(([key, value]) => body?.learning?.settings?.[key] === value);
     return { ok, note: `synthesis ${String(body?.health?.synthesis?.state ?? "missing")}` };
   });
 }
@@ -198,7 +198,7 @@ async function stallDetail(ctx: B34AdapterContext, botId: string, threadId: stri
       ["bl", () => `${code(status.backlog?.pending)}/${code(status.backlog?.leased)}/${code(status.backlog?.deferred)}/${code(status.backlog?.failed)}`],
       ["sy", () => code(status.health?.synthesis?.state)],
       ["x", () => flag(status.configuration?.extractorInstanceId === B34_EXTRACTOR_INSTANCE_ID)],
-      ["c", () => code(status.cost?.callsThisMinute)],
+      ["c", () => code(status.learning?.allowance?.callsThisMinute)],
       ["lr", () => code(status.learning?.revision)],
     ];
     for (const [key, read] of reads) await part(key, read);
@@ -310,16 +310,12 @@ async function runQ03(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q03"
   await ctx.until("Q03 current and superseded projections indexed", () =>
     lexicalStatus(ctx, current) === "indexed" && lexicalStatus(ctx, stale) === "indexed" ? true : undefined, 45_000);
 
-  // 4. A failed turn on another bot whose assistant text the extractor proposes as an observation.
+  // 4. D1 refuses assistant sources before consolidation. Prove no intent, extraction or learned fact.
   await ctx.send(failing, B34_Q03.failedTurnMessage, false, failing.threadId);
   const claim = await waitSource(ctx, "Q03 failed-turn assistant text captured", failing.threadId, B34_Q03.failedTurnReply, false);
-  await consolidated(ctx, "Q03 failed-turn assistant text consolidated", claim, failing.id);
+  await ctx.until("Q03 failed-turn assistant capture complete", () => captureComplete(ctx, claim) ? true : undefined, 45_000);
   const settledFailed = Boolean(claim.turnId && one(ctx, "SELECT 1 AS ok FROM memory_sources WHERE kind='turn' AND thread_id=? AND turn_id=? AND outcome='failed'", claim.threadId, claim.turnId));
-  const failedRecords = recordsCiting(ctx, claim.id);
-  const failedExtractions = requests(ledger(ctx), "extract", "q03-failed-claim").filter(entry => entry.sourceSha256 === b34Sha256(B34_Q03.failedTurnReply)).length;
-  ctx.check("failed-turn-claim-proposed-and-refused", settledFailed && failedExtractions > 0 && failedRecords.some(record => record.kind === "fact" && record.state === "candidate")
-    && !failedRecords.some(record => ["fact", "procedure", "character-canon"].includes(record.kind) && record.state === "active"),
-  `turn failed ${settledFailed}; ${failedExtractions} extraction requests; ${failedRecords.filter(record => record.state === "candidate").length} candidates`);
+
 
   // 5. A different task asks a question that names neither the answer nor an opaque reference.
   const reuseDump = await ctx.send(learner, B34_Q03.question, false, reuseTask);
@@ -328,6 +324,13 @@ async function runQ03(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q03"
     `${lines.length} frame lines`);
   ctx.check("stale-fact-withheld-from-other-task", lines.length > 0 && !`${content(reuseDump)}\n${system(reuseDump)}`.includes(B34_Q03.staleCanary),
     `${lines.length} frame lines`);
+  ctx.check("failed-turn-claim-withheld-from-other-task", !`${content(reuseDump)}\n${system(reuseDump)}`.includes(B34_Q03.failedTurnReply), "No failed-turn claim in the reuse task");
+  // Recheck after another task ran, so a late callback cannot hide a derived record.
+  const failedRecords = recordsCiting(ctx, claim.id);
+  const failedExtractions = requests(ledger(ctx), "extract", "q03-failed-claim").filter(entry => entry.sourceSha256 === b34Sha256(B34_Q03.failedTurnReply)).length;
+  ctx.check("failed-turn-claim-refused-at-learnable-gate", settledFailed && !intentFor(ctx, claim.id) && failedExtractions === 0
+    && failedRecords.every(record => record.kind === "source"),
+  `turn failed ${settledFailed}; ${failedExtractions} extraction requests; ${failedRecords.filter(record => record.state === "candidate").length} candidates`);
   const personaAfter = await personaOf(ctx, learner.id);
   const imprint = `Personality: ${personalityImprint(personaBefore)}`;
   const identityRecords = Number(one(ctx, "SELECT count(*) AS n FROM memory_record_details WHERE partition='identity'")?.n ?? -1);
@@ -372,9 +375,9 @@ async function runQ13(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q13"
   const text = sourceText(ctx, source);
   ctx.check("owner-statement-carries-no-canary", typeof text === "string" && !text.includes(B34_Q13.canary), "1 owner source");
   const exhaustedRequests = ledger(ctx).filter(entry => entry.family === "extract" || entry.family === "ground").length;
-  ctx.check("no-extractor-call-while-exhausted", exhaustedRequests === 0 && whileDeferred?.cost?.callsThisMinute === 0, `${exhaustedRequests} extractor requests`);
+  ctx.check("no-extractor-call-while-exhausted", exhaustedRequests === 0 && whileDeferred?.learning?.allowance?.callsThisMinute === 0, `${exhaustedRequests} extractor requests`);
   ctx.check("health-reports-budget-limited", whileDeferred?.health?.synthesis?.state === "budget-limited" && whileDeferred?.health?.synthesis?.reason === BUDGET_LIMITED_REASON
-    && whileDeferred?.learning?.callsPerMinute === 0 && whileDeferred?.configuration?.extractorInstanceId === B34_EXTRACTOR_INSTANCE_ID,
+    && whileDeferred?.learning?.settings?.callsPerMinute === 0 && whileDeferred?.configuration?.extractorInstanceId === B34_EXTRACTOR_INSTANCE_ID,
   `synthesis ${String(whileDeferred?.health?.synthesis?.state ?? "missing")}`);
 
   // A question in another task while the budget is exhausted.
@@ -391,7 +394,7 @@ async function runQ13(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q13"
   const learningRevision = Number((await memoryStatus(ctx))?.learning?.revision);
   if (!Number.isSafeInteger(learningRevision)) throw new Error("memory status carried no learning revision");
   await ctx.setup("restored-budget-configured", "POST", "/api/memory/action", { action: "configure", learning: { callsPerMinute: OPEN_BUDGET.callsPerMinute }, learningRevision }, 200, response => ({
-    ok: response.body?.learning?.callsPerMinute === OPEN_BUDGET.callsPerMinute && response.body?.health?.synthesis?.state === "configured"
+    ok: response.body?.learning?.settings?.callsPerMinute === OPEN_BUDGET.callsPerMinute && response.body?.health?.synthesis?.state === "configured"
       && response.body?.configuration?.extractorInstanceId === B34_EXTRACTOR_INSTANCE_ID,
     note: `synthesis ${String(response.body?.health?.synthesis?.state ?? "missing")}`,
   }));
@@ -422,10 +425,10 @@ async function runQ13(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q13"
     `${extractions.length} extraction and ${groundings.length} grounding requests for the deferred source`);
   const status = await memoryStatus(ctx);
   // The product's daily reservation ledger is keyed by UTC day (extract.ts:75,82); compare only within one day.
-  if (utcDay() === day && status?.cost?.day === day) {
+  if (utcDay() === day && status?.learning?.allowance?.day === day) {
     const billable = final.filter(entry => entry.family === "extract" || entry.family === "ground");
-    const input = billable.reduce((sum, entry) => sum + Number(entry.inputBytes ?? 0), 0), output = billable.reduce((sum, entry) => sum + Number(entry.maxTokens ?? 0), 0);
-    ctx.check("reservations-match-extractor-requests", status.cost.inputReserved === input && status.cost.outputReserved === output, `${billable.length} billable requests`);
+    const input = billable.reduce((sum, entry) => sum + Math.ceil(Number(entry.inputBytes ?? 0)/3.5), 0), output = billable.reduce((sum, entry) => sum + Number(entry.maxTokens ?? 0), 0);
+    ctx.check("reservations-match-extractor-requests", status.learning.allowance.inputUsed === input && status.learning.allowance.outputUsed === output, `${billable.length} billable requests`);
   }
   checkExtractorBounds(ctx);
 

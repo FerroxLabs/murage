@@ -142,10 +142,12 @@ function MediaHeader({ asset, duration }: { asset: MediaAsset; duration: number 
   const meta = [mediaSourceLabel(asset.source), formatMediaBytes(asset.bytes), formatMediaDuration(duration)].filter(Boolean) as string[];
   const Icon = asset.kind === "video" ? FileVideo : FileAudio;
   return (
-    <span className="flex min-w-0 items-center gap-1.5">
+    // On a phone the source, size and length take their own line rather than
+    // squeezing the file's name down to nothing.
+    <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
       <Icon size={13} className="shrink-0" aria-hidden="true" />
-      <span className="min-w-0 flex-1 truncate text-ink" title={asset.name}>{asset.name}</span>
-      <span className="shrink-0 text-[11px] text-ink-secondary/80">{meta.join(" · ")}</span>
+      <span className="min-w-0 max-w-[calc(100%-1.25rem)] truncate text-ink" title={asset.name}>{asset.name}</span>
+      <span className="min-w-0 text-[11px] text-ink-secondary/80">{meta.join(" · ")}</span>
     </span>
   );
 }

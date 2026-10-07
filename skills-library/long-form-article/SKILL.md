@@ -9,7 +9,7 @@ description: |
   white papers (use `white-paper-writing`).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "blog-post writing content-marketing"
   category: "writing"

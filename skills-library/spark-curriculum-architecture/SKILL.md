@@ -1,8 +1,9 @@
 ---
 name: spark-curriculum-architecture
 description: "The user wants a course, book, workshop, paid cohort, or any structured information product. Load whenever you hear \"I want to teach,\" \"I'm writing a book on,\" \"what should be in the curriculum,\" or \"help me outline this.\""
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "spark"
 ---
@@ -48,7 +49,7 @@ Output: a numbered map with three columns — module title, cognitive level, ass
 
 - **No transformation, no curriculum.** Refuse the brief until the four-slot sentence is written.
 - **Assessment before content. Always.** Lessons exist to enable assessments; assessments do not exist to test lessons.
-- **Three enduring understandings caps a six-to-eight-week course.** More than that is a multi-course program; route packaging to Forge.
+- **Three enduring understandings caps a six-to-eight-week course.** More than that is a multi-course program; route packaging to whoever owns pricing and packaging.
 - **A module without a performance task or decision artifact is a chapter, not a lesson.** Books have chapters. Courses have lessons. Don't ship a course made of chapters.
 - **First apply-level moment lands in the first 25% of the arc.** Otherwise the arc is front-loaded with theory and the learner will leave.
 

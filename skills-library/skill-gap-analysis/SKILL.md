@@ -10,7 +10,7 @@ description: |
   (use resume-bullet-writer), or academic learning plans (use study-plan-generator).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "career analysis goal-setting planning"
   category: "career-development"

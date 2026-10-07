@@ -6,7 +6,7 @@ description: |
   Do NOT use for commercial or industrial waste management, hazardous waste disposal procedures, composting setup details (use composting-starter-guide), or municipal waste policy analysis.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "waste-reduction sustainability checklist planning"
   category: "sustainability"

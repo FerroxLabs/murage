@@ -1,0 +1,65 @@
+---
+title: Telegram, Slack and Discord
+description: Set up Telegram, Slack or Discord to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.
+icon: MessageCircle
+---
+
+## What messaging apps do
+
+Messaging apps let you message your Chief of Staff from Telegram, Slack or Discord. Set them up in **Settings → Messaging apps**. Murage must be running to receive messages. Approvals that matter stay in Murage.
+
+## What you need first
+
+Each connection pairs with your Chief of Staff, so pick one first. Every connection is private to you: only the owner account you name can pair and send messages. Tokens are stored encrypted on this computer and are never shown again.
+
+## Telegram: set up
+
+1. Open BotFather in Telegram, send /newbot and follow the prompts. Copy the bot token.
+2. In **Settings → Messaging apps → Telegram**, paste the token and press Save token.
+3. Press Pair with Chief to get a code. Send /pair followed by the code to your new bot in a private Telegram chat.
+
+When it says Connected, message your bot to talk to your Chief. Messages share the Chief's current conversation. Owner-only buttons let you allow once or deny pending actions. Use Revoke to disconnect, or Replace token to move to a new token for the same bot.
+
+## Slack: set up
+
+Use a private Slack app with Socket Mode on. The app-level token needs connections:write. The bot token needs im:history and chat:write, with the message.im event on. Add files:write if you want voice notes sent here.
+
+1. Save credentials: paste the App-level token and the Bot token.
+2. Choose your workspace and owner: enter the Workspace ID, App ID and your Owner member ID, then Save workspace details.
+3. Press Pair with Chief and send the code to your Slack app in a direct message from the owner.
+
+## Discord: set up
+
+Create your own application and bot in the Discord Developer Portal. Murage reads only direct messages from the owner you name. Server messages and Discord approval buttons are not supported.
+
+1. Save credentials: paste the bot token.
+2. Choose your application and owner: enter the Application ID and your Owner user ID, then Save application details.
+3. Press Pair with Chief and send the code to your Discord app in a direct message.
+
+Long replies show as a preview, with the full result in Murage. Messages sent while Murage is stopped may not be recovered.
+
+## WhatsApp: set up
+
+Murage links to WhatsApp the way WhatsApp Web does, from this computer, using your own number, by QR or phone code. WhatsApp does not offer this link officially, and it may restrict or remove a number it sees driven by other software, without notice. A spare number on a second SIM or eSIM, set up in the WhatsApp Business app, is the best way to use this; linking your main number is your number to risk. The session and its credentials stay on this computer. Only the linked number is the owner. Chosen contacts can chat after approval. Groups start disabled.
+
+1. In **Settings → Channels → WhatsApp**, read the note, then press Link WhatsApp.
+2. On the phone, open WhatsApp, then Linked devices, then Link a device, and scan the code. If WhatsApp is on the same device as this computer, press Link with a code instead and type the 8 character code it shows.
+3. When the status says Linked, message yourself in WhatsApp to talk to your Chief.
+
+Who can message the bot is your choice. Only me answers in your own chat with yourself. Me and chosen contacts lets people you approve message the bot too: add their numbers, or approve the pairing request a new contact triggers by typing the code they were sent. An approved contact becomes a separate person, never you, and the bot never starts a conversation.
+
+Groups are off until you turn one on. Load your groups, tick the ones to allow, and pick Mention or Every message for each. In a group set to Mention, the bot answers only when someone mentions the linked number, replies to a message the bot sent, or writes the linked number's digits without mentioning anyone else. Everyone in a group, including you, is a guest there: the bot uses only that group's conversation, never personal memory, and never approves anything. You can also choose whether read receipts are sent and whether replies quote the message they answer.
+
+Voice notes you send are turned into text with Murage's transcription (the same one as push-to-talk, with the same hourly limit) and answered like a typed message; the recording is deleted once its transcript is saved. If transcription is not turned on, the bot says so once. Photos go to the bot as attachments, so it can look at them. Documents, videos, stickers, locations and contacts reach the bot as a short placeholder line. Files WhatsApp sent are kept on this computer for seven days and then removed. When the bot makes a voice note, it is sent after the text reply. Murage's voices make mp3 or wav, so it arrives as an audio message with a play button rather than as a voice bubble; only Ogg audio would show as a bubble.
+
+Linking your own number is the way to connect today. WhatsApp's official business route is a later option and is not available yet.
+
+Approvals stay in Murage: typing yes or approve in WhatsApp does not grant anything. Use Unlink to remove the link from this computer. If WhatsApp ends the link or another WhatsApp Web session takes it over, press Relink.
+
+## If a connection stops
+
+The status line under each heading says what is happening, such as Connected to Chief, Waiting for your message, Pairing code expired or Connection needs attention. Use Refresh status, Retry connection, or Revoke connection and pair again. If you change your Chief of Staff, revoke the connection and pair with the new one.
+
+## Voice notes and Full access
+
+A bot can send a voice note to these apps when you ask for one. Messages from these apps run at the bot's normal approval level. Full access applies to them only if you switch on the Full access option for channel messages.

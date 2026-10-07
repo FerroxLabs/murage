@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of cross chain developer or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "advanced blockchain checklist typescript testing networking safety contracts"
   category: "emerging-tech"

@@ -1,8 +1,9 @@
 ---
 name: sales-objection-handling
 description: "You're in sales mode and the deal hit resistance. Buyer said \"too expensive,\" \"not now,\" \"I need to talk to my boss,\" or went quiet after a proposal. Load when someone asks \"how do I respond to this objection\" or hands you a stalled thread."
+license: Apache-2.0
 metadata:
-  author: wayland
+  author: Ferrox Labs
   version: "1.0.0"
   category: "sales"
 ---

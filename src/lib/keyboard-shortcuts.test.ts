@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { SHORTCUT_GROUPS, filterShortcuts, modShortcut, shortcutKeys } from "./keyboard-shortcuts";
 it("lists only the inspected bindings and qualifies context-dependent actions", () => {
   const items = SHORTCUT_GROUPS.flatMap(group => group.items);
-  expect(items.map(item => item.id)).toEqual(["palette", "new-bot", "jump-bot", "find", "close", "send", "newline", "edit", "suggestion", "bulletin", "reorder"]);
+  expect(items.map(item => item.id)).toEqual(["palette", "new-bot", "settings", "jump-bot", "find", "close", "send", "newline", "edit", "suggestion", "bulletin", "reorder"]);
   expect(new Set(items.map(item => item.id)).size).toBe(items.length); expect(items.every(item => item.context)).toBe(true);
   expect(items.some(item => item.keys.includes("?") || item.keys.includes("/"))).toBe(false);
 });

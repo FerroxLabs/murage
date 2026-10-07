@@ -6,7 +6,7 @@ description: |
   Do NOT use for short stories over 1,000 words (use short-story-writing), poetry (use poetry-writing), or writing prompts that need a quick response sketch (use writing-prompt-response).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing design"
   category: "writing"

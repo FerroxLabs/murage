@@ -228,6 +228,20 @@ describe("running the three legs", () => {
     expect(readComposioLegacyClaim(next).state).toBe("pending");
   });
 
+  it("never leaves the install tokenless when the re-mint fails offline", async () => {
+    // remintAfterRevocation used to delete the dead token BEFORE minting, so a
+    // mint that failed offline left the install holding no token at all and
+    // the panel said "not reachable" until the next timer tick.
+    const { impl } = router({
+      "POST legacy/v1/claims": ISSUED,
+      "POST flux/v1/claim": jsonResponse({ error: "no", code: "broker_token_revoked" }, 401),
+      "POST flux/v1/tokens": () => { throw new TypeError("fetch failed"); },
+    });
+    const start = credentials();
+    const next = await claimLegacyComposioInstall({ ...options(impl), credentials: start });
+    expect(next.fluxComposioBrokerToken).toBe(start.fluxComposioBrokerToken);
+  });
+
   it("keeps confirmPending set when the Worker cannot be told yet", async () => {
     // Until the Worker is told, it keeps serving this install. Nothing is
     // lost by waiting; the retry timer carries it.

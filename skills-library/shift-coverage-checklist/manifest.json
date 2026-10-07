@@ -1,0 +1,14 @@
+{
+  "id": "shift-coverage-checklist",
+  "name": "Shift Coverage Checklist",
+  "version": "1.0.0",
+  "description": "Creates and checks a proposed staff rota against supplied coverage requirements, availability, role qualifications, approved absences and hour limits. Separates hard constraints from preferences, reports unfilled shifts and identifies infeasible requests. Use for multi-person shift planning; use calendar-optimizer for individual appointment planning. Publishing a rota or contacting staff needs the owner's approval.",
+  "defaultEnabled": false,
+  "triggerTerms": [
+    "rota",
+    "shifts",
+    "coverage",
+    "staff"
+  ],
+  "requiredCapabilities": []
+}

@@ -6,7 +6,7 @@ description: |
   Do NOT use for policy recommendations or advocacy, carbon footprint calculation (use carbon-footprint-estimator), sustainability action planning (use other sustainability skills), or academic research methodology.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "sustainability guide research teaching"
   category: "sustainability"

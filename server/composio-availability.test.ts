@@ -10,8 +10,8 @@ import type { AppConfig } from "./config.ts";
 const cfg = (over: Partial<AppConfig> = {}): AppConfig => ({ ...over }) as AppConfig;
 
 describe("connectorAvailability", () => {
-  it("is configured when a project key is present", () => {
-    expect(connectorAvailability(cfg({ composio: { apiKey: "ak_live" } }), undefined)).toBe("configured");
+  it("is not configured by an old own key: it is saved, unused", () => {
+    expect(connectorAvailability(cfg({ composio: { apiKey: "ak_live" } }), undefined)).toBe("unconfigured");
   });
 
   it("is unconfigured when there is no key and the store read fine", () => {
@@ -23,10 +23,8 @@ describe("connectorAvailability", () => {
     expect(connectorAvailability(cfg(), "unavailable")).toBe("unreadable");
   });
 
-  it("prefers a working key over a store that failed earlier in the launch", () => {
-    // the key arrived some other way (env, self-hosted config): what the user
-    // can actually do matters more than how the shell felt about it
-    expect(connectorAvailability(cfg({ composio: { apiKey: "ak_live" } }), "unavailable")).toBe("configured");
+  it("does not let an old own key hide an unreadable store", () => {
+    expect(connectorAvailability(cfg({ composio: { apiKey: "ak_live" } }), "unavailable")).toBe("unreadable");
   });
 });
 
@@ -44,6 +42,7 @@ describe("what an unconfigured connectors response carries", () => {
       fluxConfigured: false,
       fluxBrokerEnabled: false,
       freeRunsRemainingToday: null,
+      ownKeyRetired: false,
     });
     // `fluxConfigured` is a boolean the server computes; the key itself never
     // leaves the process.

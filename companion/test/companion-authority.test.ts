@@ -36,6 +36,7 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
     const harnessPort = await listen(harness);
     const devices: BrowserDeviceStore = {
       redeem:()=>({error:"unused"}), openSession:()=>null, closeSession:()=>false, renewSession:()=>null, signOutDevice:()=>null,
+      issuePushTokens: () => null, pushBinding: () => null, approvalIdentity: () => null, authenticatePush: () => null,
       resolveSession:value=>value === "paired-session" ? {
         device:{id:"paired",name:"Fixture",cloudDesktopAccess:capability},session:{expiresAt:Date.now()+60_000},
         sessionId:"paired-session-record",
@@ -73,19 +74,22 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
       expect(seen!["x-murage-companion-token"]).toBe(PRIVATE_TOKEN);
       expect(seen!["x-murage-companion"]).toBe("1");
       expect(await joined.text()).not.toContain(PRIVATE_TOKEN);
+      // SPEC-X 12.3: the fleet and the event stream carry the owner phone's
+      // shared rows, so the device door vouches for them and the browser door
+      // does not. Either way it is the door's own proof, never the client's.
+      const ownerRead = surface === "device" ? PRIVATE_TOKEN : undefined;
       const normal = await fetch(`http://127.0.0.1:${port}/api/bots`,{headers:headers()});
       expect(normal.status).toBe(200);
-      // every forwarded request carries the launch proof, never the client's
-      expect(seen!["x-murage-companion-token"]).toBe(PRIVATE_TOKEN);
+      expect(seen!["x-murage-companion-token"]).toBe(ownerRead);
       expect(await normal.text()).not.toContain(PRIVATE_TOKEN);
       const events = await fetch(`http://127.0.0.1:${port}/api/events`,{headers:headers()});
       expect(events.status).toBe(200);
-      expect(seen!["x-murage-companion-token"]).toBe(PRIVATE_TOKEN);
+      expect(seen!["x-murage-companion-token"]).toBe(ownerRead);
       expect(await events.text()).not.toContain(PRIVATE_TOKEN);
     } finally { await close(door); await close(harness); }
   });
 
-  it("vouches for every request a paired device sends with the launch proof, and never passes a client's own", async () => {
+  it("vouches for a paired device's card answers and own messages with the launch proof, and only for those", async () => {
     const seen: Array<{url?: string; token?: string | string[]}> = [];
     const harness = createServer((req,res) => {
       seen.push({url:req.url,token:req.headers["x-murage-companion-token"]});
@@ -97,6 +101,7 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
     const open = async (companionToken: string | undefined) => {
       const devices: BrowserDeviceStore = {
         redeem:()=>({error:"unused"}),openSession:()=>null,closeSession:()=>false,renewSession:()=>null, signOutDevice:()=>null,
+        issuePushTokens: () => null, pushBinding: () => null, approvalIdentity: () => null, authenticatePush: () => null,
         resolveSession:value=>value === "paired-session" ? {device:{id:"paired",name:"Fixture",cloudDesktopAccess:false},session:{expiresAt:Date.now()+60_000},sessionId:"paired-session-record"} : null,
         sessionDeadline:id=>id === "paired-session-record" ? Date.now()+60_000 : null,
       };
@@ -126,14 +131,9 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
         expect((await launched(path)).status).toBe(200);
         expect(seen.at(-1)).toEqual({url:path,token:PRIVATE_TOKEN});
       }
-      // every other forwarded request carries it too: the harness answers its
-      // conversation routes only to a caller that proves it came through the door
+      // anything else carries no proof
       expect((await launched("/api/bots/bot_1/interrupt")).status).toBe(200);
-      expect(seen.at(-1)).toEqual({url:"/api/bots/bot_1/interrupt",token:PRIVATE_TOKEN});
-      for (const path of ["/api/bots/bot_1/read","/api/bots/bot_1/tasks"]) {
-        expect((await launched(path)).status).toBe(200);
-        expect(seen.at(-1)).toEqual({url:path,token:PRIVATE_TOKEN});
-      }
+      expect(seen.at(-1)).toEqual({url:"/api/bots/bot_1/interrupt",token:undefined});
       // started on its own, the door has nothing to vouch with and never
       // passes a client's proof on; the harness then takes only a decline
       const manual = await open(undefined);
@@ -148,6 +148,7 @@ describe.each(["device","browser"] as const)("%s private join forwarding", surfa
   it("fails join helpfully when independently launched without private proof", async () => {
     const devices: BrowserDeviceStore = {
       redeem:()=>({error:"unused"}),openSession:()=>null,closeSession:()=>false,renewSession:()=>null, signOutDevice:()=>null,
+      issuePushTokens: () => null, pushBinding: () => null, approvalIdentity: () => null, authenticatePush: () => null,
       resolveSession:()=>({device:{id:"paired",name:"Fixture",cloudDesktopAccess:true},session:{expiresAt:Date.now()+60_000},sessionId:"paired-session-record"}),
       sessionDeadline:()=>Date.now()+60_000,
     };

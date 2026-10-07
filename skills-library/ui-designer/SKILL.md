@@ -4,7 +4,7 @@ description: |
   Comprehensive UI design guidance covering design principles (hierarchy, whitespace, consistency), Figma workflow, design systems and component libraries, responsive design, accessibility, developer handoff, and building a portfolio with compelling case studies. Use when the user asks about ui designer or needs help with related topics. Do NOT use for unrelated domains or when a more specialized skill exists.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "design guide"
   category: "creative-arts"

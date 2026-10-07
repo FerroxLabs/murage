@@ -1,8 +1,9 @@
 // Private directory-stage builder for the versioned archive/restore workflow.
 // This is not a portable archive or an activated restored installation.
+import { hermesProfileCarry } from "../shared/hermes-profile-name.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, createReadStream, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync, statSync, writeFileSync, writeSync, type ReadStream, type Stats } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep, isAbsolute } from "node:path";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, MAX_RESTORABLE_PATH_BYTES, type BackupSkipReason } from "../shared/backup-limits.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
@@ -17,7 +18,7 @@ import { classifyDataDirEntry, DATA_DIR_RECORDS } from "./data-dir-inventory.ts"
 // name that list does not know).
 const JSON_COMPONENTS = new Set(DATA_DIR_RECORDS);
 const isProjectedRecord = (path: string) => JSON_COMPONENTS.has(path) || classifyDataDirEntry(path)?.backup === "record";
-const SAFE_CONFIG_FIELDS = ["profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications"] as const;
+const SAFE_CONFIG_FIELDS = ["profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications", "hermesProfilesPinned", "newBots"] as const;
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function fail(code: string, path?: string): never { throw new InstallationSnapshotError(code, path ? { path } : undefined); }
@@ -107,6 +108,7 @@ function projectConfig(value: unknown, omit: (path: string, reason: string) => v
     rooms: { turnTimeoutMinutes: "number" },
     localVm: { mode: "string", maxInstances: "number" },
     features: { browser: "boolean", skillRecorder: "boolean", showToolCalls: "boolean" },
+    newBots: { effort: "string" },
   };
   for (const [name, allowed] of Object.entries(fields)) {
     const raw = value[name];
@@ -119,6 +121,10 @@ function projectConfig(value: unknown, omit: (path: string, reason: string) => v
       copy[key] = member;
     }
     projected[name] = copy;
+  }
+  if (value.hermesProfilesPinned !== undefined) {
+    if (typeof value.hermesProfilesPinned !== "boolean") fail("INVALID_CONFIG_COMPONENT");
+    projected.hermesProfilesPinned = value.hermesProfilesPinned;
   }
   if (value.language !== undefined) {
     if (typeof value.language !== "string") fail("INVALID_CONFIG_COMPONENT");
@@ -146,8 +152,20 @@ function projectConfig(value: unknown, omit: (path: string, reason: string) => v
     const instances: JsonObject = Object.create(null);
     for (const [id, raw] of Object.entries(value.instances)) {
       if (!object(raw) || typeof raw.driver !== "string") fail("INVALID_CONFIG_COMPONENT");
-      instances[id] = { driver: raw.driver, ...(typeof raw.displayName === "string" ? { displayName: raw.displayName } : {}), enabled: false };
-      for (const key of Object.keys(raw)) if (!["driver", "displayName", "enabled"].includes(key)) omit(`config.json/instances/${id}/${key}`, "Execution configuration requires review and credential re-entry");
+      // A Hermes engine keeps the profile it runs, or a restored bot would
+      // answer as a different Hermes agent (0.1.61, hermes-profiles.ts).
+      const hermes = hermesProfileCarry(raw.driver, raw.config);
+      instances[id] = { driver: raw.driver, ...(typeof raw.displayName === "string" ? { displayName: raw.displayName } : {}), enabled: false, ...(hermes ? { config: hermes } : {}) };
+      for (const key of Object.keys(raw)) {
+        if (["driver", "displayName", "enabled"].includes(key)) continue;
+        // The carried profile is not excluded, so only the rest is listed
+        // (audit round 1, Kimi 3).
+        if (key === "config" && hermes && object(raw.config)) {
+          for (const inner of Object.keys(raw.config)) if (!["profile", "profileOrigin"].includes(inner)) omit(`config.json/instances/${id}/config/${inner}`, "Execution configuration requires review and credential re-entry");
+          continue;
+        }
+        omit(`config.json/instances/${id}/${key}`, "Execution configuration requires review and credential re-entry");
+      }
     }
     projected.instances = instances;
   }
@@ -334,6 +352,9 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
         if (items >= maxFiles) { skip(source, "file-limit"); return; }
         let target: string;
         try { target = readlinkSync(absolute); } catch (error) { if (deniedRead(error)) { skip(source, "unreadable"); return; } throw error; }
+        // Windows stores a relative shortcut with "\\"; the backup keeps "/", which
+        // every OS reads, so it restores on a Mac or Linux computer too.
+        if (process.platform === "win32" && !isAbsolute(target) && !/^[\\/]/.test(target)) target = target.replaceAll("\\", "/");
         let type: "file" | "dir" = "file";
         try { if (statSync(absolute).isDirectory()) type = "dir"; } catch { /* A dangling shortcut is kept as one. */ }
         observed.set(absolute, before);

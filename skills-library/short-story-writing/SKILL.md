@@ -6,7 +6,7 @@ description: |
   Do NOT use for flash fiction under 1,000 words (use flash-fiction), novel chapters (use plot-outline for planning), poetry (use poetry-writing), or screenplays (use screenplay-scene).
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "creative-writing writing planning"
   category: "writing"

@@ -6,7 +6,7 @@ description: |
   Do NOT use when the request is outside the scope of brain fitness or requires a different specialized skill.
 license: Apache-2.0
 metadata:
-  author: foundry-skills
+  author: Ferrox Labs
   version: "1.0.0"
   tags: "health-wellness nutrition stress-management checklist guide quick-reference research planning"
   category: "health-wellness"

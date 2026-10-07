@@ -375,16 +375,23 @@ it("fixture folder trust: actual channel host gate is answered only for the cano
     const bots = JSON.parse(readFileSync(join(harness.data, "bots.json"), "utf8"));
     const bot = (Array.isArray(bots) ? bots : bots.bots).find(bot => bot.id === chief.id);
     const task = bot.tasks.find(task => task.threadId === run.threadId);
-    expect(card.card.folderTrust.sources.sort()).toEqual([".agents/skills", ".claude/skills"]);
+    // The Chief links no skills, so Murage's scan names nothing and the card
+    // carries the engine's own description of what it gates.
+    expect(card.card.folderTrust.sources).toEqual(["AGENTS.md / CLAUDE.md"]);
     expect(fixtureFolderTrustProblems(harness, chief.id, run, task, card.card)).toEqual([]);
     expect(fixtureFolderTrustProblems(harness, "other-chief", run, task, card.card)).not.toEqual([]);
-    expect(fixtureFolderTrustProblems(harness, chief.id, run, task, { ...card.card, folderTrust: { ...card.card.folderTrust, sources: ["AGENTS.md"] } })).not.toEqual([]);
+    writeFileSync(join(task.cwd, "AGENTS.md"), "planted\n");
+    expect(fixtureFolderTrustProblems(harness, chief.id, run, task, card.card)).not.toEqual([]);
+    rmSync(join(task.cwd, "AGENTS.md"));
+    expect(fixtureFolderTrustProblems(harness, chief.id, run, task, { ...card.card, folderTrust: { ...card.card.folderTrust, sources: [".agents/skills", "AGENTS.md"] } })).not.toEqual([]);
     expect(fixtureFolderTrustProblems(harness, chief.id, run, task, { ...card.card, folderTrust: { ...card.card.folderTrust, folder: harness.root } })).not.toEqual([]);
     expect(fixtureFolderTrustProblems(harness, chief.id, run, { ...task, alwaysAllow: ["Bash"] }, card.card)).not.toEqual([]);
+    mkdirSync(join(task.cwd, ".agents/skills"), { recursive: true });
     const escaped = join(task.cwd, ".agents/skills/unowned");
     symlinkSync(harness.root, escaped);
     expect(fixtureFolderTrustProblems(harness, chief.id, run, task, card.card)).not.toEqual([]);
     rmSync(escaped);
+    rmSync(join(task.cwd, ".agents"), { recursive: true });
     // Refusal uses the exact captured host request; no POST may occur on wrong-instance authority.
     await expect(handleFixtureReplySetup(harness, "slack", chief.id, before, "other-engine", new Set())).rejects.toBeInstanceOf(LiveStop);
     expect((await messages()).find(message => message.id === card.id).card.answered).toBeUndefined();
@@ -398,7 +405,9 @@ it("fixture folder trust: actual channel host gate is answered only for the cano
     const record = await harness.request("GET", `/api/folder-trust?folder=${encodeURIComponent(realpathSync(task.cwd))}`);
     expect(record.body.record).toMatchObject({ decision: "trust", source: "card" });
     const dump = JSON.parse(readFileSync(join(harness.root, "acp.json"), "utf8"));
-    expect(dump.argv).toContain("--trust");
+    // The engine asked from inside the running turn, so the grant is its
+    // answer there (it applies to the engine from the next start).
+    expect(dump.decision).toEqual({ outcome: "trust" });
     expect(traces.filter(trace => trace.op === "send")).toHaveLength(2);
     const after = JSON.parse(readFileSync(join(harness.data, "bots.json"), "utf8"));
     const afterBot = (Array.isArray(after) ? after : after.bots).find(bot => bot.id === chief.id);

@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Model Context Protocol (MCP) Server for Murage
 // Standard JSON-RPC 2.0 stdio transport for external agent orchestration (Hermes, Claude Desktop, Cursor, etc.).
+import { homedir } from "node:os";
+import { join } from "node:path";
 import readline from "node:readline";
+import { readMcpAccessKey } from "../server/mcp-access.ts";
 
 export function validateBaseUrl(url: string): string {
   const trimmed = url.replace(/\/+$/, "");
@@ -50,77 +53,40 @@ function requestTimeoutMs(): number {
   return Number.isFinite(raw) && raw >= 1_000 && raw <= 120_000 ? Math.floor(raw) : DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
-function isLoopbackUrl(url: string): boolean {
+/** The key the harness keeps in its data folder for this process (audit C5).
+ * Only for a loopback target: it is never sent to a remote origin. An explicit
+ * MURAGE_TOKEN still wins, for a reverse proxy. */
+function localAccessKey(url: string | undefined): string | undefined {
+  // Never while discovering: a probe may be talking to an unrelated local process.
+  if (url?.endsWith("/api/health")) return undefined;
   try {
-    const hostname = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
-    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+    const host = new URL(url ?? MURAGE_BASE_URL).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") return undefined;
   } catch {
-    return false;
+    return undefined;
   }
+  return readMcpAccessKey(process.env.MURAGE_DATA_DIR ?? join(homedir(), ".murage"));
 }
 
-/** Murage's conversation routes: bots, threads, rooms, search and the live stream. */
-const CONVERSATION_ROUTE = /^\/api\/(?:(?:bots|threads|groups)(?:\/|$)|search$|events$)/;
-const NO_PROOF_HINT = " (the conversation routes answer only to the desktop app's per-launch secret or the paired phone; set MURAGE_DESKTOP_SECRET for a development server, see docs/mcp-server.md)";
-
-/** One loopback origin's desktop secret: the operator's `MURAGE_DESKTOP_SECRET`,
- * else the one a development server hands to loopback callers on request
- * (`/api/desktop-secret`, offered only by explicitly opted-in dev and fixture
- * launches). The packaged app offers neither, and the answer is remembered. */
-const desktopSecretByOrigin = new Map<string, string | null>();
-async function desktopSecretFor(origin: string): Promise<string | null> {
-  const configured = process.env.MURAGE_DESKTOP_SECRET?.trim();
-  if (configured) return configured;
-  if (desktopSecretByOrigin.has(origin)) return desktopSecretByOrigin.get(origin)!;
-  let secret: string | null = null;
-  try {
-    const response = await fetch(`${origin}/api/desktop-secret`, { signal: AbortSignal.timeout(Math.min(requestTimeoutMs(), 2_000)) });
-    const body = response.ok ? await response.json() as { secret?: unknown } : null;
-    if (typeof body?.secret === "string" && body.secret) secret = body.secret;
-  } catch {
-    // Not a development server, or not reachable: no proof to send.
-  }
-  desktopSecretByOrigin.set(origin, secret);
-  return secret;
-}
-
-async function requestHeaders(options: RequestInit, url: string): Promise<NonNullable<RequestInit["headers"]>> {
-  const token = process.env.MURAGE_TOKEN?.trim();
+function requestHeaders(options: RequestInit, url?: string): NonNullable<RequestInit["headers"]> {
+  const token = process.env.MURAGE_TOKEN?.trim() || localAccessKey(url);
   const headers = new Headers(options.headers);
   if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
-  if (isLoopbackUrl(url) && CONVERSATION_ROUTE.test(new URL(url).pathname) && !headers.has("x-murage-surface-secret")) {
-    const secret = await desktopSecretFor(new URL(url).origin);
-    if (secret) {
-      headers.set("x-murage-surface", "desktop");
-      headers.set("x-murage-surface-secret", secret);
-    }
-  }
   return headers;
-}
-
-function stripSurface(headers: RequestInit["headers"]): Headers {
-  const next = new Headers(headers);
-  next.delete("x-murage-surface");
-  next.delete("x-murage-surface-secret");
-  return next;
 }
 
 async function fetchJson(url: string, options: RequestInit = {}): Promise<any> {
   const timeout = AbortSignal.timeout(requestTimeoutMs());
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
-  let headers = await requestHeaders(options, url);
-  let response = await fetch(url, { ...options, signal, headers });
-  // A development server that restarted has a new secret: ask again once.
-  if (response.status === 404 && !process.env.MURAGE_DESKTOP_SECRET?.trim() && (headers as Headers).has("x-murage-surface-secret")) {
-    desktopSecretByOrigin.delete(new URL(url).origin);
-    headers = await requestHeaders({ ...options, headers: stripSurface(options.headers) }, url);
-    response = await fetch(url, { ...options, signal, headers });
-  }
+  const response = await fetch(url, {
+    ...options,
+    signal,
+    headers: requestHeaders(options, url),
+  });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    const hint = response.status === 404 && !(headers as Headers).has("x-murage-surface-secret") && CONVERSATION_ROUTE.test(new URL(url).pathname) ? NO_PROOF_HINT : "";
-    throw new Error(`Murage API error (${response.status}): ${text || response.statusText}${hint}`);
+    throw new Error(`Murage API error (${response.status}): ${text || response.statusText}`);
   }
   try {
     return await response.json();

@@ -14,9 +14,10 @@ Object.assign(globalThis, {
 });
 // Only an HTMLElement setting is scrolled to and focused.
 class FakeElement {
-  focused = false; scrolled: unknown = null;
+  focused = false; scrolled: unknown = null; clicked = 0;
   scrollIntoView(options: unknown) { this.scrolled = options; }
   focus() { this.focused = true; }
+  click() { this.clicked += 1; }
 }
 Object.assign(globalThis, { HTMLElement: FakeElement });
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
@@ -148,18 +149,31 @@ describe("where the shortcuts go", () => {
     }
   });
 
-  it("opens Image generation, in view, for blocks, packs and shapes", () => {
-    for (const action of ["blocks", "packs", "shapes"] as const) {
+  it("opens Settings > Images, in view, for shapes", () => {
+    frames.length = 0;
+    elements.clear();
+    const { dispatch, went } = run("shapes");
+    expect(went).toBe(true);
+    expect(dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "images" }]]);
+    // not rendered yet: it waits a frame
+    const heading = new FakeElement();
+    elements.set("image-settings-heading", heading);
+    while (frames.length) frames.shift()!(0);
+    expect(heading.scrolled).toEqual({ block: "start" });
+  });
+
+  it("opens the Images Library tab for saved blocks and reference packs", () => {
+    for (const action of ["blocks", "packs"] as const) {
       frames.length = 0;
       elements.clear();
       const { dispatch, went } = run(action);
       expect(went, action).toBe(true);
-      expect(dispatch.mock.calls, action).toEqual([[{ type: "toggleAppSettings", open: true, section: "connections" }]]);
-      // not rendered yet: it waits a frame
-      const heading = new FakeElement();
-      elements.set("image-settings-heading", heading);
+      expect(dispatch.mock.calls, action).toEqual([[{ type: "toggleAppSettings", open: true, section: "images" }]]);
+      const tab = new FakeElement();
+      elements.set("images-tab-library", tab);
       while (frames.length) frames.shift()!(0);
-      expect(heading.scrolled, action).toEqual({ block: "start" });
+      expect(tab.clicked, action).toBe(1);
+      expect(tab.focused, action).toBe(true);
     }
   });
 
@@ -167,12 +181,12 @@ describe("where the shortcuts go", () => {
     expect(run("gemini").dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "models" }]]);
   });
 
-  it("opens General at the no activity limit, in view and focused, for Work runs to the end", () => {
+  it("opens Bot defaults at the no activity limit, in view and focused, for Work runs to the end", () => {
     frames.length = 0;
     elements.clear();
     const { dispatch, went } = run("longwork");
     expect(went).toBe(true);
-    expect(dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "general" }]]);
+    expect(dispatch.mock.calls).toEqual([[{ type: "toggleAppSettings", open: true, section: "botDefaults" }]]);
     const field = new FakeElement();
     elements.set("room-turn-timeout", field);
     while (frames.length) frames.shift()!(0);
@@ -193,9 +207,11 @@ describe("where the shortcuts go", () => {
   it("goes to the targets the settings really render", () => {
     expect(readFileSync(new URL("./ImageSettings.tsx", import.meta.url), "utf8")).toContain('id="image-settings-heading"');
     expect(readFileSync(new URL("./RoomTurnTimeoutSettings.tsx", import.meta.url), "utf8")).toContain('id="room-turn-timeout"');
+    expect(readFileSync(new URL("./SettingsModal.tsx", import.meta.url), "utf8")).toContain("id={`images-tab-${id}`}");
     const settings = readFileSync(new URL("./SettingsModal.tsx", import.meta.url), "utf8");
-    expect(settings).toMatch(/section === "connections"[\s\S]*?<ImageSettings \/>/);
-    expect(settings).toMatch(/section === "general"[\s\S]*?<RoomTurnTimeoutSettings \/>/);
+    expect(settings).toMatch(/section === "images" && <ImagesSettings \/>/);
+    expect(settings).toMatch(/function ImagesSettings\(\)[\s\S]*?<ImageSettings showLibrary=\{false\} \/>/);
+    expect(settings).toMatch(/section === "botDefaults"[\s\S]*?<RoomTurnTimeoutSettings \/>/);
   });
 
   it("loads the dialog, art included, only when the page opens", () => {
