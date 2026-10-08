@@ -56,6 +56,10 @@ const OLD_RECENT = OLD_CLAIM.replace("CASE WHEN s.scope_id>? THEN 0 ELSE 1 END,s
 
 function oracleSequence(recent?: string[]) {
   const db = database();
+  // The oracle's own writes (one lease per claim, then every row put back) go
+  // in one transaction: as separate commits they cost a disk flush each, about
+  // 20 s of the test on a GitHub Windows runner. Reads see them the same way.
+  db.exec("BEGIN");
   const saved = db.prepare("SELECT id,status,lease_owner,lease_generation,lease_until FROM memory_jobs").all();
   const out: string[] = [];
   let last = "";
@@ -68,6 +72,7 @@ function oracleSequence(recent?: string[]) {
     db.prepare("UPDATE memory_jobs SET status='leased',lease_until=? WHERE id=?").run(NOW + 30000, row.id);
   }
   for (const r of saved) db.prepare("UPDATE memory_jobs SET status=?,lease_owner=?,lease_generation=?,lease_until=? WHERE id=?").run(r.status, r.lease_owner, r.lease_generation, r.lease_until, r.id);
+  db.exec("COMMIT");
   return out;
 }
 function newSequence(recent?: string[]) {
