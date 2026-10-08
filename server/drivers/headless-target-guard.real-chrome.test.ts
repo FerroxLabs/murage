@@ -52,7 +52,15 @@ class EngineLike {
     // what the proxy now does: wait for the guard on the blank target, then send it to the page
     if (guard) note(`guard installed on ${created.result.targetId.slice(0, 6)}: ${await guard.installed(created.result.targetId)}`);
     const ms = performance.now() - t0; // tab creation only: the page load that follows is the same with or without the guard
-    if (guard || blank) { await this.send("Page.navigate", { url }, sessionId); await new Promise((r) => setTimeout(r, 150)); }
+    if (guard || blank) {
+      await this.send("Page.navigate", { url }, sessionId);
+      // the probes read what the page script set: wait for it to have run, not a fixed 150 ms a loaded runner can miss
+      for (let i = 0; i < 200; i++) {
+        const ran = await this.send("Runtime.evaluate", { expression: `location.href === ${JSON.stringify(url)} && typeof window.__wrapped === "string"`, returnByValue: true }, sessionId);
+        if (ran.result?.result?.value === true) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
     return { sessionId, ms };
   }
   close() { this.socket.close(); }
