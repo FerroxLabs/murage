@@ -81,7 +81,9 @@ describe("release.yml GEPA receipts", () => {
   it("bounds notarization at the step, not only the job", () => {
     const notarize = release.jobs.mac.steps.find((step) => String(step.name).startsWith("Notarize"));
     expect(notarize["timeout-minutes"]).toBeGreaterThan(0);
-    expect(notarize.run).toContain("--wait --timeout");
+    // every file is submitted first, then each is waited on with its own bound
+    expect(notarize.run).toContain("notarytool wait");
+    expect(notarize.run).toMatch(/notarytool wait[^\n]*--timeout \d+m/);
   });
 
   it("gives the GEPA-building jobs room for the 45-minute worker build", () => {

@@ -139,7 +139,7 @@ jobs:
     runs-on: macos-14
     # package-mac-qualification.yml needs 90 for ONE architecture plus the
     # GEPA build (45-minute cap inside build-mac.py); this job packages both.
-    timeout-minutes: 120
+    timeout-minutes: 240
     # The server project outgrew Node's default heap on the 7 GB macOS runner
     # (tsc aborted with exit 134 in CI); the build compiles the same project.
     env:
@@ -338,23 +338,32 @@ jobs:
       - name: Notarize all four artifacts
         # A stalled Apple queue used to hold the runner until the JOB timeout;
         # bound each submission and the step so the failure names this step.
-        timeout-minutes: 45
+        # 1.0.0's bundle took Apple over 20 minutes per file, so all four files
+        # are submitted first and then waited on together, with their ids logged.
+        timeout-minutes: 100
         env:
           APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: |
+          set -euo pipefail
           echo "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          trap 'rm -f "$RUNNER_TEMP/notary.p8"' EXIT
+          auth=(--key "$RUNNER_TEMP/notary.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID")
+          files=() ids=()
           for f in release/*.dmg release/*.zip; do
-            out=$(xcrun notarytool submit "$f" \
-              --key "$RUNNER_TEMP/notary.p8" \
-              --key-id "$APPLE_API_KEY_ID" \
-              --issuer "$APPLE_API_ISSUER_ID" \
-              --wait --timeout 20m 2>&1)
-            echo "$out" | tail -2
-            echo "$out" | grep -q "status: Accepted" || { echo "::error::notarization not Accepted for $f"; exit 1; }
+            id=$(xcrun notarytool submit "$f" "${auth[@]}" --output-format json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const id=JSON.parse(s).id;if(!/^[0-9a-f-]{36}$/.test(id??""))process.exit(1);process.stdout.write(id)})')
+            echo "submitted $f as $id"
+            files+=("$f"); ids+=("$id")
           done
-          rm "$RUNNER_TEMP/notary.p8"
+          for i in "${!ids[@]}"; do
+            out=$(xcrun notarytool wait "${ids[$i]}" "${auth[@]}" --timeout 90m 2>&1) || true
+            echo "$out" | tail -2
+            if ! echo "$out" | grep -q "status: Accepted"; then
+              xcrun notarytool log "${ids[$i]}" "${auth[@]}" 2>&1 | tail -40 || true
+              echo "::error::notarization not Accepted for ${files[$i]} (${ids[$i]})"; exit 1
+            fi
+          done
 
       - name: Staple, re-zip, regenerate blockmaps and the feed
         run: |
