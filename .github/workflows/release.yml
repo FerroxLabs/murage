@@ -198,9 +198,12 @@ jobs:
       - name: Package both architectures
         run: |
           set -euo pipefail
-          # Signing opens every file in the bundle; the runner's default open-file limit ran out (EMFILE) on 1.0.0.
-          ulimit -n 65536 || ulimit -n "$(ulimit -Hn)"
-          echo "open-file limit $(ulimit -n)"
+          # Signing opens every file in the bundle; the runner's open-file limits ran out (EMFILE) on 1.0.0.
+          # The shell limit alone was not enough: the kernel's per-process cap applies too.
+          echo "before: kern.maxfiles=$(sysctl -n kern.maxfiles) kern.maxfilesperproc=$(sysctl -n kern.maxfilesperproc) ulimit=$(ulimit -n)"
+          sudo sysctl -w kern.maxfiles=524288 kern.maxfilesperproc=262144 >/dev/null
+          ulimit -n 262144 || ulimit -n "$(ulimit -Hn)"
+          echo "after: kern.maxfiles=$(sysctl -n kern.maxfiles) kern.maxfilesperproc=$(sysctl -n kern.maxfilesperproc) ulimit=$(ulimit -n)"
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["darwin-arm64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           pnpm package:mac \
             "--config.extraMetadata.murageGepaManifests.darwin-arm64=$gepa_hash" \
