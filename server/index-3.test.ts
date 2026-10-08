@@ -571,7 +571,7 @@ describe("harness HTTP API", () => {
         requireAvailableModel: true,
       }, isolatedDesktopHeaders)).body.bot;
       const callOffset = browserNativeEvents.length;
-      expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "keep browser access live" })).status)
+      expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "keep browser access live" }, isolatedDesktopHeaders)).status)
         .toBe(202);
       const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
 
@@ -787,7 +787,7 @@ describe("harness HTTP API", () => {
       expect((await isolatedApi("PATCH", `/api/bots/${idleBot.id}`, { browserProfile: "unused" }, isolatedDesktopHeaders)).status).toBe(200);
 
       const callOffset = browserNativeEvents.length;
-      expect((await isolatedApi("POST", `/api/bots/${activeBot.id}/messages`, { text: "keep browser access live" })).status)
+      expect((await isolatedApi("POST", `/api/bots/${activeBot.id}/messages`, { text: "keep browser access live" }, isolatedDesktopHeaders)).status)
         .toBe(202);
       const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
       // Registration happens before the provider's init frame is persisted.
@@ -909,7 +909,7 @@ describe("harness HTTP API", () => {
       }, isolatedDesktopHeaders)).body.bot;
       createdBotId = bot.id;
       const callOffset = browserNativeEvents.length;
-      expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "do not tear this down" })).status)
+      expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "do not tear this down" }, isolatedDesktopHeaders)).status)
         .toBe(202);
       const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
 

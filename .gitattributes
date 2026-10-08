@@ -16,3 +16,6 @@
 /third_party/restic/LICENSE -text
 # Upstream license kept byte for byte, CRLF as published.
 /third_party/playwright-injected/LICENSE -text
+# Gradle's Windows wrapper is a cmd.exe batch file, generated and kept with
+# CRLF byte for byte (cmd.exe misreads labels in an LF batch file).
+/apps/mobile/android/gradlew.bat -text

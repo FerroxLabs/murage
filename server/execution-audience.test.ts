@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
@@ -33,7 +33,7 @@ it("creates one inactive owner work task without changing policy revision", () =
   const active = iris.threadId, task = store.createSharedWorkTask(iris.id, sales)!;
   expect(store.createSharedWorkTask(iris.id, sales)).toBe(task); expect(iris.threadId).toBe(active);
   expect(database().prepare("SELECT policy_revision FROM memory_meta").get()!.policy_revision).toBe(revision);
-  expect(taskWorkspacePath(DATA_DIR, iris.id, task.threadId)).toBe(partitionRoots(iris, { kind: "team", teamId: sales })[0] + "/threads/" + task.threadId);
+  expect(taskWorkspacePath(DATA_DIR, iris.id, task.threadId)).toBe(join(partitionRoots(iris, { kind: "team", teamId: sales })[0], "threads", task.threadId));
 });
 it.each(["", "Design"])("mixed %s room never becomes home", label => {
   const { store, iris, bob } = fixture(); const room = store.createGroup("mixed", [iris.id, bob.id], false, label);
@@ -90,8 +90,8 @@ it("the four sibling partition folders belong to the workspaces inventory", () =
   const { iris, sales } = fixture();
   for (const partition of [{ kind: "general" }, { kind: "team", teamId: sales }, { kind: "project", groupId: "p" }, { kind: "room", groupId: "g" }] as const) {
     const root = partitionRoots(iris, partition)[0];
-    expect(root.startsWith(DATA_DIR + "/workspaces/" + iris.id + ".")).toBe(true);
-    expect(classifyDataDirEntry(root.slice(DATA_DIR.length + 1).split("/")[0])).toMatchObject({ backup: "owner-folder" });
+    expect(root.startsWith(join(DATA_DIR, "workspaces", iris.id) + ".")).toBe(true);
+    expect(classifyDataDirEntry(root.slice(DATA_DIR.length + 1).split(sep)[0])).toMatchObject({ backup: "owner-folder" });
   }
 });
 

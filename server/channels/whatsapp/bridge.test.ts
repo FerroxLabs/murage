@@ -24,6 +24,9 @@ async function until(condition: () => boolean, label = "condition", limit = 1500
   throw new Error(`timed out waiting for ${label}`);
 }
 
+// Windows has no POSIX permission bits (files are guarded by NTFS ACLs and every mode reads back as 0o666), so the
+// owner-only mode is asserted where it exists.
+const expectOwnerOnly = (path: string): void => { if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600); };
 const KEY = "ab".repeat(32);
 const OTHER_KEY = "cd".repeat(32);
 const SELF_CHAT = "15550001111@s.whatsapp.net";
@@ -393,7 +396,7 @@ describe("inbound journal (design 5.5)", () => {
     await until(() => r.of("inbound").length === 1);
     expect(seen[0]).toContain('"id":"IN1"');
     expect(seen[0]).toContain("hello");
-    expect(statSync(r.ingressFile()).mode & 0o777).toBe(0o600);
+    expectOwnerOnly(r.ingressFile());
     expect(r.of("inbound")[0]).toMatchObject({ seq: 1, envelope: { messageId: "IN1", chatJid: SELF_CHAT, text: "hello", fromMe: true, upsertType: "notify" } });
   });
 
@@ -528,7 +531,7 @@ describe("echo and the outbound journal (design 5.5)", () => {
     expect(onDisk[0]).toContain(ids[0]);
     expect(r.sock().sent).toHaveLength(1);
     expect(r.sock().sent[0]).toMatchObject({ jid: SELF_CHAT, content: { text: "hello *world*" }, options: { messageId: ids[0] } });
-    expect(statSync(r.outboundFile()).mode & 0o777).toBe(0o600);
+    expectOwnerOnly(r.outboundFile());
   });
 
   it("drops the bot's own echo by id, and forwards the owner typing the same words under a new id", async () => {
@@ -770,9 +773,9 @@ describe("media (design 5.6)", () => {
     await until(() => r.of("inbound").length === 1);
     const media = r.of("inbound")[0].envelope.media!;
     expect(media).toMatchObject({ kind: "audio", ptt: true });
-    expect(media.path).toMatch(/media\/c1\/[0-9a-f]{24}\/VN1\.ogg$/);
+    expect(media.path).toMatch(/media[\\/]c1[\\/][0-9a-f]{24}[\\/]VN1\.ogg$/);
     expect(readFileSync(media.path!, "utf8")).toBe("OggS-fake-voice-note");
-    expect(statSync(media.path!).mode & 0o777).toBe(0o600);
+    expectOwnerOnly(media.path!);
   });
 
   it("aborts a download over the 4 MB cap, deletes the partial file and forwards the note without a path", async () => {
