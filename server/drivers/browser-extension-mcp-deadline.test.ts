@@ -3,7 +3,7 @@
 // C2 integration gate: both browser routes must retain { error, code } for
 // executor refusals and uncertain outcomes. index.ts currently drops the code
 // in its final catch; this fixture supplies the required server envelope.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -14,6 +14,7 @@ import { WAITING_TEXT } from "../browser-extension-service.ts";
 import type { ApprovalBus } from "../peer-approval.ts";
 import type { Message } from "../store.ts";
 import { runBrowserExtensionMcp } from "./browser-extension-mcp.ts";
+import { privateTestDirectorySync } from "../testing/private-test-dir.ts";
 
 const config = { endpoint: "http://127.0.0.1:12345/api/browser-extension/mcp", clientId: "fixture_client", token: "a".repeat(43) };
 const cleanup: Array<() => void> = [];
@@ -53,9 +54,9 @@ function clock() {
 }
 
 function cards() {
-  const dir = mkdtempSync(join(tmpdir(), "drv-owner-cards-"));
-  cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
-  const file = join(dir, "approvals.json");
+  const { root, directory } = privateTestDirectorySync(join(tmpdir(), "drv-owner-cards-"));
+  cleanup.push(() => rmSync(root, { recursive: true, force: true }));
+  const file = join(directory, "approvals.json");
   const messages: Message[] = [];
   const store = {
     messagesFor: () => messages,

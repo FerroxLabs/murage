@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BrowserExtensionSites, BrowserExtensionSitesError } from "./browser-extension-sites.ts";
 import { BROWSER_EXTENSION_FILES, classifyDataDirEntry } from "./data-dir-inventory.ts";
+import { makePrivateTestSubdirectory, writePrivateTestFile } from "./testing/private-test-dir.ts";
 
 let dir: string, file: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "sites-")); file = join(dir, "browser-extension", "sites.json"); });
@@ -72,7 +73,7 @@ describe("approved sites store", () => {
     expect(() => new BrowserExtensionSites(file)).toThrow(BrowserExtensionSitesError);
     sites_write({ version: 1, sites: { bot1: { profA: { "https://a.example": { rule: "maybe" } } } } });
     expect(() => new BrowserExtensionSites(file)).toThrow(BrowserExtensionSitesError);
-    writeFileSync(file, "{not json", { mode: 0o600 });
+    writePrivateTestFile(file, "{not json");
     expect(() => new BrowserExtensionSites(file)).toThrow(BrowserExtensionSitesError);
     if (process.platform !== "win32") {
       sites_write({ version: 1, sites: {} });
@@ -98,8 +99,8 @@ describe("approved sites store", () => {
 });
 
 function sites_write(value: unknown, target = file) {
-  mkdirSync(join(target, ".."), { recursive: true, mode: 0o700 });
-  writeFileSync(target, JSON.stringify(value), { mode: 0o600 });
+  makePrivateTestSubdirectory(join(target, ".."));
+  writePrivateTestFile(target, JSON.stringify(value));
 }
 
 describe("Opus gate: owner-facing messages are locale keys", () => {
@@ -116,9 +117,9 @@ describe("Opus gate: owner-facing messages are locale keys", () => {
     grab(() => sites.set("bot1", "profA", "https://x.example", "allow", { lowered: true }));
     grab(() => sites.migrateFromBindings({ version: 2, bindings: [] }));
     grab(() => sites.migrateFromBindings({ bindings: [] }));
-    writeFileSync(file, JSON.stringify({ version: 9, sites: {} }), { mode: 0o600 });
+    writePrivateTestFile(file, JSON.stringify({ version: 9, sites: {} }));
     grab(() => new BrowserExtensionSites(file));
-    writeFileSync(file, "{", { mode: 0o600 });
+    writePrivateTestFile(file, "{");
     grab(() => new BrowserExtensionSites(file));
     expect(seen.length).toBe(10);
     for (const error of seen) {

@@ -320,10 +320,10 @@ describe("scoped CI confirmation", () => {
     const vitest = workflow.jobs.vitest;
     expect(vitest.needs).toBe("quality");
     expect(vitest.name).toContain("Scoped Vitest confirmation");
-    expect(vitest.strategy.matrix.vitest_shard).toBe("${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3]') }}");
+    expect(vitest.strategy.matrix.vitest_shard).toBe("${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3,4,5,6]') }}");
     const full = vitest.steps.find(step => step.name === "Run Vitest shard");
     expect(full.if).toBe("inputs.vitest_file == ''");
-    expect(full.run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/3");
+    expect(full.run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/6");
     expect(full.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE).toBe("${{ matrix.os == 'windows-latest' && '1' || '0' }}");
     const scoped = vitest.steps.find(step => step.name === "Scoped Vitest confirmation");
     expect(scoped.if).toBe("inputs.vitest_file != ''");
@@ -410,7 +410,7 @@ describe("scoped Windows confirmation", () => {
     const ci = load("ci.yml");
     expect(triggers(ci).workflow_dispatch.inputs.windows_only.default).toBe(false);
     for (const job of ["quality", "vitest"]) expect(ci.jobs[job].strategy.matrix.os, job).toBe('${{ fromJSON(inputs.windows_only && \'["windows-latest"]\' || \'["macos-latest","ubuntu-latest","windows-latest"]\') }}');
-    expect(ci.jobs.vitest.steps.find(step => step.name === "Run Vitest shard").run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/3");
+    expect(ci.jobs.vitest.steps.find(step => step.name === "Run Vitest shard").run).toBe("pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/6");
     expect(ci.jobs.quality.steps.some(step => step.run === "pnpm test:electron")).toBe(true);
     expect(ci.jobs['control-plane'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
     expect(ci.jobs['package-linux'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');

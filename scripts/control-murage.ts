@@ -3,7 +3,7 @@
 // external clients. It deliberately owns no second API client or wait loop.
 import { spawn, type ChildProcess } from "node:child_process";
 import { request as httpRequest } from "node:http";
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -360,6 +360,16 @@ export async function launchVerificationServer(
   const dataDir = mkdtempSync(join(tmpdir(), "murage-verify-data-"));
   const home = options.separateHome ? mkdtempSync(join(tmpdir(), "murage-verify-home-")) : dataDir;
   const fixtureTemp = join(dataDir, "tmp");
+  // The browser broker's Unix socket lives in <data>/bx-run when the path fits the 104-byte socket limit, else in
+  // XDG_RUNTIME_DIR or TMPDIR. A macOS fixture data folder sits under the ~48-byte per-user temp folder and its TMPDIR
+  // under that, so neither fits there; a short private runtime folder gives the server the fallback a real Mac has.
+  const runtimeRoot = process.platform !== "win32" && Buffer.byteLength(join(dataDir, "bx-run", "browser-0123456789abcdef.sock")) > 103
+    ? mkdtempSync(join(realpathSync("/tmp"), "mbe-scratch-")) : undefined; // "scratch" admits it to removeTempDir outside tmpdir()
+  const removeFixtureDirs = async () => {
+    await removeTempDir(dataDir);
+    if (home !== dataDir) await removeTempDir(home);
+    if (runtimeRoot) await removeTempDir(runtimeRoot);
+  };
   const fixtureDumpPath = join(dataDir, "fake-claude-dump.json");
   const fixtureFinishGateDir = join(dataDir, "finish-fake");
   mkdirSync(fixtureTemp, { recursive: true });
@@ -397,6 +407,7 @@ export async function launchVerificationServer(
     TMPDIR: fixtureTemp,
     HERMES_HOME: join(home, ".hermes"),
     MURAGE_DATA_DIR: dataDir,
+    ...(runtimeRoot ? { XDG_RUNTIME_DIR: runtimeRoot } : {}),
     MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
     MURAGE_PORT: String(port),
     MURAGE_WEBHOOK_PORT: String(port + 1),
@@ -441,8 +452,7 @@ export async function launchVerificationServer(
     await ready();
   } catch (error) {
     await waitForExit(child, { signal: "SIGTERM" });
-    await removeTempDir(dataDir);
-    if (home !== dataDir) await removeTempDir(home);
+    await removeFixtureDirs();
     throw error;
   }
 
@@ -477,8 +487,7 @@ export async function launchVerificationServer(
       closed = true;
       fixtureDataDirs.delete(url);
       await waitForExit(child, { signal: "SIGTERM" });
-      await removeTempDir(dataDir);
-      if (home !== dataDir) await removeTempDir(home);
+      await removeFixtureDirs();
     },
   };
   return fixture;
