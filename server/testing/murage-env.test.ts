@@ -5,13 +5,17 @@
 // the modules it loads or the children it spawns.
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { childEnv, isAmbientMurageKey, stripMurageEnv } from "./murage-env.mjs";
 
-const ROOT = new URL("../..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 // What setup.ts itself sets after the scrub, on purpose.
 const SET_BY_SETUP = new Set(["MURAGE_ALLOW_DEV_DESKTOP_SECRET", "MURAGE_COMPANION_DIR", "MURAGE_COMPANION_TOKEN", "MURAGE_CONTROL_PORT_OVERRIDE"]);
+
+// A cleared Windows env still needs SystemRoot for node to start; the file URL gives a real drive path for cwd.
+const WIN_BASE: Record<string, string> = process.platform === "win32" ? { SystemRoot: process.env.SystemRoot ?? "C:\\Windows" } : {};
 
 describe("ambient Murage environment", () => {
   it("runtime keys are ambient; keys that steer the test run are not", () => {
@@ -42,7 +46,7 @@ describe("ambient Murage environment", () => {
     const result = spawnSync(process.execPath, ["--import", join(ROOT, "server/testing/safe-wipe-preload.mjs"), "--input-type=module", "-e", probe], {
       cwd: ROOT,
       encoding: "utf8",
-      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", MURAGE_DATA_DIR: "/murage-authz-ambient-probe/data", MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "ambient", MURAGE_BACKUP_TEST_AGE_DIR: "/age" },
+      env: { ...WIN_BASE, PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", MURAGE_DATA_DIR: "/murage-authz-ambient-probe/data", MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "ambient", MURAGE_BACKUP_TEST_AGE_DIR: "/age" },
     });
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ keys: ["MURAGE_BACKUP_TEST_AGE_DIR", "MURAGE_TEST_ENV_SCRUBBED"], refused: true });
@@ -55,7 +59,7 @@ describe("ambient Murage environment", () => {
     const result = spawnSync(process.execPath, ["--import", join(ROOT, "server/testing/safe-wipe-preload.mjs"), "--input-type=module", "-e", "process.stdout.write(process.env.MURAGE_DATA_DIR ?? '')"], {
       cwd: ROOT,
       encoding: "utf8",
-      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", MURAGE_TEST_ENV_SCRUBBED: "1", MURAGE_DATA_DIR: "/tmp/murage-child-data" },
+      env: { ...WIN_BASE, PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", MURAGE_TEST_ENV_SCRUBBED: "1", MURAGE_DATA_DIR: "/tmp/murage-child-data" },
     });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toBe("/tmp/murage-child-data");

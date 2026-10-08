@@ -22,7 +22,7 @@ beforeEach(() => {
   closeDatabase(); fs.rmSync(DATA_DIR, { recursive: true, force: true }); fs.mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster({ bots: bots.map(bot => ({ id: bot.id, threadId: bot.id })), groups: [] });
   now = Date.now();
-  deps = { now: () => now, bootEpoch: { pid: 1, startedAt: 1 }, tmpBase: join(DATA_DIR, "pip-tmp"), bots: () => bots.map(bot => ({ ...bot })), memoryMode: () => "off", resolveRoute: vi.fn(), reaper: { sweep: async () => [] } };
+  deps = { now: () => now, bootEpoch: { pid: 1, startedAt: 1 }, tmpBase: join(DATA_DIR, "pip-tmp"), bots: () => bots.map(bot => ({ ...bot })), memoryMode: () => "off", resolveRoute: vi.fn(), reaper: { platform: "linux", sweep: async () => [] } }; // Windows always keeps orphan dirs (no job name)
 });
 afterEach(() => { vi.restoreAllMocks(); closeDatabase(); });
 

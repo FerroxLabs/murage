@@ -1,13 +1,13 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { PROJECT_TOOL_ROLES } from "../project-tool-routing.ts";
 
 const ECHO = "globalThis.fetch = async (url, init) => Response.json({ url, body: JSON.parse(init.body) });";
 async function rpc(role: string, method = "tools/list", params = {}, fetchStub = ECHO) {
-  const proxy = fileURLToPath(new URL("./agents-proxy.ts", import.meta.url));
+  // a file:// URL, because a bare Windows path is not importable
+  const proxy = new URL("./agents-proxy.ts", import.meta.url).href;
   const script = `${fetchStub} await import(${JSON.stringify(proxy)});`;
   const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
     env: { PATH: process.env.PATH, MURAGE_PROJECT_ROLE: role, MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_BOT_ID: "fixture", MURAGE_THREAD_ID: "desk" }, stdio: ["pipe", "pipe", "pipe"],
