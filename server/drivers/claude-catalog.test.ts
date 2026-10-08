@@ -36,6 +36,13 @@ describe("readClaudeModelCatalog", () => {
       contextWindow: 1_000_000,
     });
     expect(ids.indexOf("claude-sonnet-5-5")).toBe(ids.indexOf("claude-sonnet-5") - 1);
+    // Haiku 5.5 (2026-10-07): the API id, with its 1M window, just above Haiku 4.5.
+    expect(STATIC_CLAUDE_MODELS.options[ids.indexOf("claude-haiku-5-5")]).toEqual({
+      id: "claude-haiku-5-5",
+      label: "Claude Haiku 5.5",
+      contextWindow: 1_000_000,
+    });
+    expect(ids.indexOf("claude-haiku-5-5")).toBe(ids.indexOf("claude-haiku-4-5") - 1);
     expect(STATIC_CLAUDE_MODELS.default).toBe("claude-sonnet-5");
   });
 

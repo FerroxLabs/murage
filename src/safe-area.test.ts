@@ -7,7 +7,7 @@
 // quietly drop one. env() is 0px on the desktop and in the Android shell, so
 // none of this moves anything there.
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -147,7 +147,7 @@ describe("every modal backdrop", () => {
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
       if (statSync(path).isDirectory()) walk(path);
-      else if (name.endsWith(".tsx") && !name.includes(".test.")) files.push(relative(srcDir, path));
+      else if (name.endsWith(".tsx") && !name.includes(".test.")) files.push(relative(srcDir, path).split(sep).join("/")); // "/" on every OS, to match OWN_INSETS
     }
   };
   walk(join(srcDir, "components"));

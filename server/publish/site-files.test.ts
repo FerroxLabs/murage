@@ -22,11 +22,11 @@ it("lists the site files in order and totals their size", () => {
 
 it("leaves out dotfiles, keys, env files, memory and node_modules, and names what it left out", () => {
   put("index.html", "ok");
-  for (const rel of [".env", ".env.local", ".git/config", ".DS_Store", "assets/.hidden", "MEMORY.md", "memory.md", "notes/Memory.md",
+  for (const rel of [".env", ".env.local", ".git/config", ".DS_Store", "assets/.hidden", "MEMORY.md", "docs/memory.md", "notes/Memory.md",
     "server.pem", "id.key", "cert.p12", "cert.pfx", "id_rsa", "id_ed25519.pub", "node_modules/pkg/index.js", "secrets.json", "credentials.json"]) put(rel, "secret");
   const site = listSite(join(base, "site"));
   expect(site.files.map(file => file.rel)).toEqual(["index.html"]);
-  expect(site.skipped.sort()).toEqual([".DS_Store", ".env", ".env.local", ".git", "assets/.hidden", "cert.p12", "cert.pfx", "credentials.json", "id.key", "id_ed25519.pub", "id_rsa", "node_modules", "notes/Memory.md", "MEMORY.md", "memory.md", "secrets.json", "server.pem"].sort());
+  expect(site.skipped.sort()).toEqual([".DS_Store", ".env", ".env.local", ".git", "assets/.hidden", "cert.p12", "cert.pfx", "credentials.json", "id.key", "id_ed25519.pub", "id_rsa", "node_modules", "notes/Memory.md", "MEMORY.md", "docs/memory.md", "secrets.json", "server.pem"].sort());
 });
 
 it("refuses a symlink anywhere in the site, even one that points inside it", () => {

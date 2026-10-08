@@ -18,7 +18,11 @@ import { roomRequest, insertRoomRequest, completeRequest, type RoomRequest } fro
 import { settleSharedWorkOwnerTurn, settleProjectUsage } from "./usage-ledger.ts";
 import { createSharedOwnerUsage, type SharedOwnerEvent } from "./shared-owner-usage.ts";
 import { requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
+// A "restart" re-imports database.ts after vi.resetModules(), so the open handle can live in a newer module
+// instance than the static import. Close both: Windows will not delete a database file that is still open (EPERM).
+async function closeAllDatabases() { closeDatabase(); (await import("./database.ts")).closeDatabase(); }
+async function restartModules() { await closeAllDatabases(); vi.resetModules(); }
+beforeEach(async () => { await closeAllDatabases(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture() {
  const store = new Store(() => ({instanceId:"fixture",model:"fixture"}));
  const iris = store.createBot(); store.patchBot(iris.id,{name:"Iris",section:"Design",sharedWith:{mode:"all",teams:[]}});
@@ -272,14 +276,14 @@ it("a queued shared request keeps its routine ceiling across a restart, and a da
  const plain=f.enqueue(1,"plain-restart");if(!plain.ok)throw Error(plain.code);
  expect(roomRequest(database(),queued.request.id)?.state).toBe("queued");
  // a fresh process: new module graph, same data folder
- closeDatabase();vi.resetModules();
+ await restartModules();
  const fresh=await import("./shared-work.ts");
  expect(fresh.sharedRequestRoutineAuthority(queued.request.id)).toEqual({permissionMode:"auto",triggerSource:"manual"});
  expect(fresh.sharedRequestRoutineAuthority(plain.request.id)).toBeUndefined();
  // a damaged record: every open request is capped at Ask, and the repair is written
  const file=join(DATA_DIR,"shared-routine-authority.json");
  writeFileSync(file,"{not json");
- (await import("./database.ts")).closeDatabase();vi.resetModules();
+ await restartModules();
  const again=await import("./shared-work.ts");
  expect(again.sharedRequestRoutineAuthority(queued.request.id)).toEqual({permissionMode:"ask",triggerSource:"schedule"});
  expect(again.sharedRequestRoutineAuthority(plain.request.id)).toEqual({permissionMode:"ask",triggerSource:"schedule"});
@@ -304,7 +308,7 @@ it("a wake after a restart keeps the Ask ceiling of the routine that started its
  database().prepare("UPDATE room_requests SET state='waiting_bot',dispatched_at=2 WHERE id=?").run(asked.request.id);
  const wake=wakeOf(roomRequest(database(),asked.request.id)!);
  // a fresh process: new module graph, same data folder, nothing in memory
- closeDatabase();vi.resetModules();
+ await restartModules();
  const fresh=await import("./shared-work.ts"),rr=await import("./room-requests.ts"),perms=await import("./routine-permissions.ts"),db=(await import("./database.ts")).database();
  const row=rr.roomRequest(db,wake.id)!;
  const ceiling=fresh.sharedWakeRoutineAuthority(row);
@@ -322,12 +326,12 @@ it("a wake takes the LOWEST ceiling anywhere in its persisted ancestry, and a ro
  if(!mid.ok)throw Error(mid.code);
  database().prepare("UPDATE room_requests SET state='waiting_bot',dispatched_at=3 WHERE id IN (?,?)").run(top.request.id,mid.request.id);
  const wake=wakeOf(roomRequest(database(),mid.request.id)!);
- closeDatabase();vi.resetModules();
+ await restartModules();
  const fresh=await import("./shared-work.ts"),rr=await import("./room-requests.ts"),db=(await import("./database.ts")).database();
  expect(fresh.sharedWakeRoutineAuthority(rr.roomRequest(db,wake.id)!)).toEqual({permissionMode:"ask",triggerSource:"schedule"});
  // a lost record: the ancestor was asked from a routine run thread but its ceiling is gone -> Ask
  const file=join(DATA_DIR,"shared-routine-authority.json");writeFileSync(file,"{}");
- closeDatabase();vi.resetModules();
+ await restartModules();
  const lost=await import("./shared-work.ts"),rr2=await import("./room-requests.ts"),db2=(await import("./database.ts")).database();
  // the recorded provenance survives the lost file (and a failed run): Ask with no live predicate at all
  expect(lost.sharedWakeRoutineAuthority(rr2.roomRequest(db2,wake.id)!)).toEqual({permissionMode:"ask",triggerSource:"schedule"});
@@ -340,14 +344,14 @@ it("control: a wake with no routine anywhere in its ancestry is judged exactly a
  const f=fixture(),plain=f.enqueue(0,"plain-wake");if(!plain.ok)throw Error(plain.code);
  database().prepare("UPDATE room_requests SET state='waiting_bot',dispatched_at=2 WHERE id=?").run(plain.request.id);
  const wake=wakeOf(roomRequest(database(),plain.request.id)!);
- closeDatabase();vi.resetModules();
+ await restartModules();
  const fresh=await import("./shared-work.ts"),rr=await import("./room-requests.ts"),db=(await import("./database.ts")).database();
  expect(fresh.sharedWakeRoutineAuthority(rr.roomRequest(db,wake.id)!,{routineSourceThread:()=>false})).toBeUndefined();
 });
 
 // INT2 pass-3 finding 1: provenance is persisted with the request, independent of run status and of the file.
 async function restartAndWake(wakeId:string,opts:Parameters<typeof import("./shared-work.ts").sharedWakeRoutineAuthority>[1]={},store?:Store){
- closeDatabase();vi.resetModules();
+ await restartModules();
  // the restarted process has its bot store (which says which rows are shared work) before any wake is judged
  if(store)(await import("./execution-audience.ts")).setExecutionStore(store);
  const fresh=await import("./shared-work.ts"),rr=await import("./room-requests.ts"),db=(await import("./database.ts")).database();
@@ -407,7 +411,7 @@ it("restart: a nonroutine chain W1 -> W2 stays unchanged, and a routine chain th
  database().prepare("UPDATE room_requests SET state='waiting_bot',dispatched_at=2 WHERE id IN (?,?)").run(plain.request.id,routine.request.id);
  const w1=wakeOf(roomRequest(database(),plain.request.id)!),w2=wakeOf(roomRequest(database(),w1.id)!,4);
  const r1=wakeOf(roomRequest(database(),routine.request.id)!),r2=wakeOf(roomRequest(database(),r1.id)!,4);
- closeDatabase();vi.resetModules();
+ await restartModules();
  (await import("./execution-audience.ts")).setExecutionStore(f.store);
  const fresh=await import("./shared-work.ts"),rr=await import("./room-requests.ts"),db=(await import("./database.ts")).database();
  for(const id of [w1.id,w2.id])expect(fresh.sharedWakeRoutineAuthority(rr.roomRequest(db,id)!,{routineSourceThread:()=>false})).toBeUndefined();

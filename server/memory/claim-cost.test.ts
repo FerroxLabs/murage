@@ -8,7 +8,10 @@ import * as jobs from "./jobs.ts";
 import { memoryTickGapMs, resetBacklogTrace, traceBacklog, traceSlowStep } from "./claim-trace.ts";
 
 const NOW = 1_000_000;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor?.(); });
+// These tests commit thousands of rows one by one; the default synchronous=FULL makes that fsync-bound
+// (over 20 s on a Windows runner). Durability is not what they check.
+function noFsync() { database().exec("PRAGMA synchronous=OFF"); }
+beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor?.(); noFsync(); });
 afterEach(() => { delete process.env.MURAGE_TURN_TRACE; resetBacklogTrace(); vi.restoreAllMocks(); });
 
 /** Seed `count` capture jobs over `scopes` scopes with a few KB of text each. `mix` adds every
@@ -56,6 +59,10 @@ const OLD_RECENT = OLD_CLAIM.replace("CASE WHEN s.scope_id>? THEN 0 ELSE 1 END,s
 
 function oracleSequence(recent?: string[]) {
   const db = database();
+  // The oracle's own writes (one lease per claim, then every row put back) go
+  // in one transaction: as separate commits they cost a disk flush each, about
+  // 20 s of the test on a GitHub Windows runner. Reads see them the same way.
+  db.exec("BEGIN");
   const saved = db.prepare("SELECT id,status,lease_owner,lease_generation,lease_until FROM memory_jobs").all();
   const out: string[] = [];
   let last = "";
@@ -68,6 +75,7 @@ function oracleSequence(recent?: string[]) {
     db.prepare("UPDATE memory_jobs SET status='leased',lease_until=? WHERE id=?").run(NOW + 30000, row.id);
   }
   for (const r of saved) db.prepare("UPDATE memory_jobs SET status=?,lease_owner=?,lease_generation=?,lease_until=? WHERE id=?").run(r.status, r.lease_owner, r.lease_generation, r.lease_until, r.id);
+  db.exec("COMMIT");
   return out;
 }
 function newSequence(recent?: string[]) {

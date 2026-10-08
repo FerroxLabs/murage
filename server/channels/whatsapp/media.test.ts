@@ -70,3 +70,19 @@ it("rejects linked ancestors and rechecks current image size at attachment admis
   rmSync(image); symlinkSync(path, image);
   expect(whatsappAttachments(f.dir, "conn", "id", [{ path: image, mime: "image/jpeg" }])).toEqual([]);
 });
+
+it("works when the data folder itself is reached through a link, and still refuses a link inside the media tree", () => {
+  // macOS temp and some home folders sit under /var -> /private/var; an owner can also point the data folder at a link.
+  const real = mkdtempSync(join(tmpdir(), "murage-wa-media-real-")); roots.push(real);
+  const holder = mkdtempSync(join(tmpdir(), "murage-wa-media-link-")); roots.push(holder);
+  const dataDir = join(holder, "data"); symlinkSync(real, dataDir);
+  const root = mediaRoot(dataDir, "conn"); mkdirSync(join(root, "chat"), { recursive: true });
+  const photo = join(root, "chat", "a.jpg"); writeFileSync(photo, "xy"); utimesSync(photo, new Date(NOW), new Date(NOW));
+  expect(ownedMediaFile(dataDir, "conn", photo)).toEqual({ path: photo, bytes: 2 });
+  const old = join(root, "chat", "old.jpg"); writeFileSync(old, "x"); utimesSync(old, new Date(NOW - MEDIA_MAX_AGE_MS - 1000), new Date(NOW - MEDIA_MAX_AGE_MS - 1000));
+  expect(sweepMedia({ dataDir, connectionId: "conn", keep: [], nowMs: NOW })).toBe(1);
+  const elsewhere = mkdtempSync(join(tmpdir(), "murage-wa-media-elsewhere-")); roots.push(elsewhere);
+  rmSync(join(real, "whatsapp"), { recursive: true }); symlinkSync(elsewhere, join(real, "whatsapp"));
+  mkdirSync(join(elsewhere, "media", "conn", "chat"), { recursive: true }); writeFileSync(join(elsewhere, "media", "conn", "chat", "b.jpg"), "x");
+  expect(ownedMediaFile(dataDir, "conn", join(root, "chat", "b.jpg"))).toBeNull();
+});

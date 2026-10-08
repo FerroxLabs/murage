@@ -83,11 +83,15 @@ function oneSession(turns: number) {
   const a = access();
   const insert = database().prepare(`INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     VALUES(?,'dax-direct','driver','s1','[]','[]',?,?,?,0,'delivered',?)`);
+  // The fixture rows go in one transaction: as one commit each they cost a
+  // disk flush apiece, past 20 s for 400 on a GitHub Windows runner.
+  database().exec("BEGIN");
   for (let k = 1; k <= turns; k++) {
     const outputs = Array.from({ length: turns - k + 1 }, (_, i) => `m${(k + i) * 2}`);
     // made now: after this data folder's lineage began (memory_lineage_meta.since)
     insert.run(`s-${k}`, JSON.stringify(outputs), a.policyRevision, a.deletionEpoch, Date.now() + k);
   }
+  database().exec("COMMIT");
   const messages = Array.from({ length: turns * 2 }, (_, i) => text(`m${i + 1}`, (i + 1) % 2 ? "user" : "bot"));
   return { a, messages };
 }
@@ -115,7 +119,9 @@ it("a 300-turn tool-heavy session (five outputs a turn) replays and checks recal
   const turns = 300, ids = Array.from({ length: turns * 5 }, () => randomUUID());
   const insert = database().prepare(`INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     VALUES(?,'dax-direct','driver','s1','[]','[]',?,?,?,0,'delivered',?)`);
+  database().exec("BEGIN"); // fixture rows in one commit, as in oneSession
   for (let k = 0; k < turns; k++) insert.run(`t-${k}`, JSON.stringify(ids.slice(k * 5)), a.policyRevision, a.deletionEpoch, k);
+  database().exec("COMMIT");
   const messages = ids.flatMap((id, i) => i % 5 === 4 ? [{ id: `u-${i}`, role: "user", kind: "text", text: "ask" }, { id, role: "bot", kind: "text", text: "answer" }] : [{ id, role: "bot", kind: "tool", text: "" }]);
   const started = performance.now();
   const { replayed } = disclosures.filterDirectReplay("dax-direct", messages, a, NONE);

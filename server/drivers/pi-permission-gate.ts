@@ -45,13 +45,37 @@ interface GateApi {
 const SHELL_TOOLS = new Set(["bash", "powershell"]);
 const FILE_TOOLS = new Set(["edit", "write"]);
 
-function inside(path: string, root: string): boolean {
-  const norm = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "");
-  const target = norm(path), base = norm(root);
-  if (!base) return false;
-  // Relative paths resolve against the working folder.
-  if (!/^([a-zA-Z]:)?\//.test(target)) return !target.split("/").includes("..");
-  return target === base || target.startsWith(`${base}/`);
+/** Absolute, with "." and ".." collapsed; null when ".." climbs past the root.
+ * By hand, not node:path: this file imports nothing (see above). */
+function collapse(path: string): string | null {
+  const [head, ...rest] = path.split("/");
+  const out: string[] = [];
+  for (const part of rest) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") { if (!out.length) return null; out.pop(); } else out.push(part);
+  }
+  return `${head}/${out.join("/")}`;
+}
+
+/** Whether `path` (absolute, or relative to `root`) lands inside `root`.
+ * Collapses ".." in absolute paths too ("/work/../etc/x" is outside), and on
+ * Windows compares case-insensitively and treats a drive-relative path
+ * ("C:notes.txt", resolved against that drive's own current folder) as
+ * outside, so it asks. Anything it can't place asks. */
+export function pathInside(path: string, root: string, platform: string = process.platform): boolean {
+  const win = platform === "win32";
+  const norm = (value: string) => value.replace(/\\/g, "/");
+  const target = norm(path), base = norm(root).replace(/\/+$/, "");
+  if (!base || !target) return false;
+  // Drive-relative ("C:x") and current-drive-root ("/x") paths on Windows
+  // depend on state this gate can't see: ask.
+  if (win && (/^[a-zA-Z]:(?!\/)/.test(target) || /^\/(?!\/)/.test(target))) return false;
+  const absolute = win ? /^([a-zA-Z]:)?\//.test(target) : target.startsWith("/");
+  const t = collapse(absolute ? target : `${base}/${target}`), b = collapse(base);
+  if (t === null || b === null) return false;
+  const [tt, bb] = win ? [t.toLowerCase(), b.toLowerCase()] : [t, b];
+  const root2 = bb.endsWith("/") ? bb : `${bb}/`;
+  return tt === bb || tt === root2.slice(0, -1) || tt.startsWith(root2);
 }
 
 /**
@@ -67,7 +91,7 @@ export function piGateAsks(toolName: string, input: Record<string, unknown>, cwd
   if (SHELL_TOOLS.has(toolName)) return true;
   if (FILE_TOOLS.has(toolName)) {
     const path = typeof input.path === "string" ? input.path : typeof input.file_path === "string" ? input.file_path : "";
-    return !path || !inside(path, cwd);
+    return !path || !pathInside(path, cwd);
   }
   return prefixes.some((prefix) => toolName.startsWith(prefix));
 }
