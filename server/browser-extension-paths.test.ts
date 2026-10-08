@@ -33,11 +33,20 @@ describe("L5: the fallback folder is the user's own, never one another user pre-
   const uid = process.getuid?.() ?? 0;
   const hash = createHash("sha256").update(deep).digest("hex").slice(0, 12);
   const roots: string[] = [];
-  const root = () => { const dir = realpathSync(mkdtempSync(join(tmpdir(), "mbe-l5-"))); roots.push(dir); return dir; };
+  // A short real folder: on macOS tmpdir() alone is about 48 bytes, so a fixture folder inside it leaves no room for a
+  // runtime folder name and a socket name under the 104-byte limit (unlike the user's own TMPDIR, which is the base itself).
+  const root = () => { const dir = realpathSync(mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "mbe-l5-"))); roots.push(dir); return dir; };
   const cleanup = () => { for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true }); };
   it("on macOS uses the per-user TMPDIR, not /tmp", () => {
     const tmp = root();
     try { expect(browserExtensionRuntimeDir({ dataDir: deep, platform: "darwin", env: { TMPDIR: tmp }, uid })).toBe(join(tmp, `murage-mbe-${hash}-${uid}`)); } finally { cleanup(); }
+  });
+  it("fits the real macOS per-user temp folder, a fresh unique name included", () => {
+    const macTmp = "/var/folders/8h/" + "a".repeat(28) + "/T";
+    const dir = browserExtensionRuntimeDir({ dataDir: deep, platform: "darwin", env: { TMPDIR: macTmp }, uid: 501 });
+    expect(dir).toBe(`${macTmp}/mbe-${hash}-501`);
+    expect(Buffer.byteLength(`${dir}/browser-0123456789abcdef.sock`)).toBeLessThanOrEqual(103);
+    expect(Buffer.byteLength(`${macTmp}/mbe-501-01234567/browser-0123456789abcdef.sock`)).toBeLessThanOrEqual(103);
   });
   it("keeps the Unix socket length limit", () => {
     const tmp = root();
@@ -65,9 +74,8 @@ describe("L5: the fallback folder is the user's own, never one another user pre-
   it("fails closed only when no candidate works", () => {
     const tmp = root(); const name = join(tmp, `murage-mbe-${hash}-${uid}`);
     try {
-      mkdirSync(name); chmodSync(name, 0o777);
-      mkdirSync(`${name}-fixed`); chmodSync(`${name}-fixed`, 0o777);
-      expect(() => browserExtensionRuntimeDir({ dataDir: deep, platform: "linux", env: {}, tmp, uid, random: () => "fixed" })).toThrow(/runtime/i);
+      for (const taken of [name, join(tmp, `mbe-${hash}-${uid}`), join(tmp, `mbe-${uid}-fixed`)]) { mkdirSync(taken); chmodSync(taken, 0o777); }
+      expect(() => browserExtensionRuntimeDir({ dataDir: deep, platform: "linux", env: {}, tmp, uid, random: () => "fixed" })).toThrow(/runtime_dir_unavailable/);
     } finally { cleanup(); }
   });
 });
