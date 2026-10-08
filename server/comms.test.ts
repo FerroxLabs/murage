@@ -410,7 +410,9 @@ describe("comms e2e (fake ACP fleet)", () => {
           name: `Gemini Asker ${level}`,
           section,
           modelSelection: { instanceId: "geminiAsker", model: "gemini-3.7-flash-high" },
-          ...(level !== "ask" ? { autoApprove: true } : {}),
+          // A Mac bot's default computer is this one, so Auto on it needs the
+          // one-time warning confirmed (the route answers 400 without it).
+          ...(level !== "ask" ? { autoApprove: true, acknowledgeLocalAuto: true } : {}),
         })).status).toBe(200);
         if (level === "full") {
           const on = await api("PATCH", `/api/bots/${asker.id}/tasks/${asker.threadId}`, { fullAccess: true, acknowledgeFullAccess: true });
@@ -960,7 +962,9 @@ describe("comms e2e (fake ACP fleet)", () => {
       await waitUntil(async () => {
         helperBot = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === helper.id);
         return !helperBot.busy;
-      }, 10_000, "helper stayed busy after its delegated reply");
+        // The helper's child confirms its close asynchronously (Windows kills
+        // it with taskkill); on a loaded runner that took 23s, not under 10s.
+      }, 40_000, "helper stayed busy after its delegated reply");
       // The reload retired the helper's held turn (no turn.completed from the
       // disposed fleet) and the delegated prompt then ran on the new fleet.
       expect(helperBot.messages.some(
@@ -978,7 +982,7 @@ describe("comms e2e (fake ACP fleet)", () => {
         (m: any) => m.kind === "activity" && m.tool?.name?.startsWith("Delegation to @RetiredHelper canceled"),
       )).toBe(false);
     },
-    75_000,
+    120_000,
   );
 
   // ── ask_bot timeout conversion ──────────────────────────────────────

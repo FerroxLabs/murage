@@ -1460,7 +1460,8 @@ describe("Fuigo keeps one engine process per thread, opt-in (upstream #1575, MUR
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
     expect(readFileSync(join(dumps, "spawns.log"), "utf8").split("\n").filter(Boolean)).toHaveLength(2);
   });
-  it("a second turn on the thread reuses the process and hands it the new turn's tokens", async () => {
+  // Windows ignores MURAGE_ACP_POOL (acpPoolingEnabled): each turn there is its own process.
+  it.skipIf(process.platform === "win32")("a second turn on the thread reuses the process and hands it the new turn's tokens", async () => {
     instance = await FuigoAgentDriver.create({
       instanceId: "fuigo-pool",
       displayName: "Fuigo",

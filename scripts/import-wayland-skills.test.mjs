@@ -6,6 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { normalizeFrontmatterAuthor } from "./import-wayland-skills.mjs";
@@ -37,7 +38,7 @@ describe("import-wayland-business-skills author", () => {
     const out = join(root, "out");
     mkdirSync(out);
     // Exits non-zero because the fixture holds only two of the catalogue skills.
-    spawnSync(process.execPath, [new URL("./import-wayland-business-skills.mjs", import.meta.url).pathname, "--src", join(root, "src"), "--out", out], { stdio: "ignore" });
+    spawnSync(process.execPath, [fileURLToPath(new URL("./import-wayland-business-skills.mjs", import.meta.url)), "--src", join(root, "src"), "--out", out], { stdio: "ignore" });
     const apache = readFileSync(join(out, "finance-pl", "SKILL.md"), "utf8").split("---")[1];
     expect(apache).toMatch(/^license: Apache-2\.0$/m);
     expect(apache).toMatch(/^  author: Ferrox Labs$/m);
@@ -51,7 +52,7 @@ describe("import-wayland-business-skills author", () => {
 
 describe("the 21 formerly MIT skills", () => {
   const ids = ["commerce-ugc-prompts", "content-about-page", "content-haro-reply", "market-audit", "market-landing", "market", "sales-contacts", "sales-icp", "sales-prospect", "sales-qualify", "chart-analysis", "learn-from-losses", "morning-prep", "multi-pane-analysis", "multi-symbol-scan", "pine-develop", "porting-pine-versions", "rebuild-from-screenshot", "replay-practice", "strategy-ab-test", "strategy-report"];
-  const library = new URL("../skills-library/", import.meta.url).pathname;
+  const library = fileURLToPath(new URL("../skills-library/", import.meta.url));
   it("are Ferrox Labs' own work under Apache-2.0 with no upstream credit", () => {
     expect(ids).toHaveLength(21);
     for (const id of ids) {

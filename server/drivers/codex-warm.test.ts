@@ -209,8 +209,14 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     expect(JSON.stringify(first.seen.argv)).toContain("MURAGE_CRED_SERVER");
     // empty between turns; owner-only file in an owner-only directory
     expect(JSON.parse(readFileSync(first.cred!.path, "utf8"))).toEqual({});
-    expect(statSync(first.cred!.path).mode & 0o777).toBe(0o600);
-    expect(statSync(dirname(first.cred!.path)).mode & 0o777).toBe(0o700);
+    if (process.platform === "win32") {
+      // no POSIX mode bits on Windows: the file sits in a fresh per-process directory under the per-user temp dir
+      expect(statSync(first.cred!.path).isFile()).toBe(true);
+      expect(dirname(dirname(first.cred!.path)).toLowerCase()).toBe(tmpdir().toLowerCase());
+    } else {
+      expect(statSync(first.cred!.path).mode & 0o777).toBe(0o600);
+      expect(statSync(dirname(first.cred!.path)).mode & 0o777).toBe(0o700);
+    }
   });
 
   it("without a warm identity the token still rides the env and the process is not kept", async () => {
@@ -605,6 +611,10 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
   it("prewarm then send reuses the app-server: no second spawn", async () => {
     await create();
     await goCold("t-pw-reuse");
+    // goCold needed the short window; now the parked engine must outlive the send. The pool
+    // judges the window when its size probe answers, and a real Windows listing (~0.5 s)
+    // outlasts 250 ms, so the engine would be let go as idle first (reason=no-process).
+    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "30000";
     expect(await instance.adapter.prewarm!("t-pw-reuse")).toBe(true);
     await run("t-pw-reuse", "two", base);
     expect(spawns()).toHaveLength(2);
@@ -614,6 +624,10 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
   it("prewarm then a changed warm key recycles the process instead of reusing it", async () => {
     await create();
     await goCold("t-pw-key");
+    // goCold needed the short window; now the parked engine must outlive the send. The pool
+    // judges the window when its size probe answers, and a real Windows listing (~0.5 s)
+    // outlasts 250 ms, so the engine would be let go as idle first (reason=no-process).
+    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "30000";
     expect(await instance.adapter.prewarm!("t-pw-key")).toBe(true);
     await run("t-pw-key", "two", { ...base, routeAsks: true });
     expect(spawns()).toHaveLength(3);

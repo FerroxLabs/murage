@@ -6,17 +6,20 @@ import path from 'node:path';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
 import { BrowserExtensionPolicy } from './browser-extension-policy.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
 
 const A = 'https://fixture.test';
 const B = 'https://other.test';
 const cleanup: string[] = [];
-afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+// A service saves its state in the background; stop each one (and wait for its last save) before its folder is removed.
+const services: { close(): Promise<void> }[] = [];
+afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
 
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 /** M3: an ended task only restarts after a new owner message. */
 let ownerMessage = 1;
 async function fixture(extra: Record<string, unknown> = {}) {
-  const directory = await fs.mkdtemp(path.resolve('.tasks-')); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve('.tasks-')); cleanup.push(directoryRoot);
   const bindings = new Map<string, { generation: number; state: string; tabs: Tab[] }>();
   const calls: BrowserExtensionCommand[] = [];
   const siteAsked: string[] = []; const cards: string[] = []; const ended: { reason: string; taskId: string }[] = [];
@@ -64,7 +67,7 @@ async function fixture(extra: Record<string, unknown> = {}) {
     now: () => clock, onTaskEnded: (info: { reason: string; taskId: string }) => { ended.push({ reason: info.reason, taskId: info.taskId }); },
     ...extra,
   };
-  const service = await createBrowserExtensionService(options as never);
+  const service = await createBrowserExtensionService(options as never); services.push(service);
   const binding = await service.ensureBinding({ botId: 'bot', threadId: 'thread', profileId: 'profile' });
   const id = binding.bindingId;
   const run = (name: string, args: Record<string, unknown> = {}) => service.dispatch(id, name, args, () => true);

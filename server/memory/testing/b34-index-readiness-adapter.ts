@@ -287,10 +287,12 @@ async function runQ06(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q06"
   const recalled = abstainLines.filter(line => line === null || line.kind !== "checkpoint").length;
   ctx.check("abstain-question-gets-no-supporting-line", recalled === 0, `${recalled} recalled evidence lines; ${abstainLines.length - recalled} checkpoint lines`);
 
-  // 6. Isolation: another bot, then a room with the recaller as responder.
+  // 6. Isolation: another bot, then a room both share with the other bot as
+  // responder. Since 0.1.61 lane M a bot recalls its own chats in an owner
+  // room (recall both ways); a teammate never does (recall-journey.test.ts).
   const otherDump = await ctx.send(other, OTHER_BOT_QUESTION);
   ctx.check("other-bot-request-lacks-canary", isolated(otherDump, OTHER_BOT_QUESTION), `${frameLines(dumpContent(otherDump)).length} frame lines`);
-  const room = await ctx.setup("room-created", "POST", "/api/groups", { name: "B34 Q06 room", memberIds: [recaller.id, other.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: recaller.id } } }, 201);
+  const room = await ctx.setup("room-created", "POST", "/api/groups", { name: "B34 Q06 room", memberIds: [recaller.id, other.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: other.id } } }, 201);
   const roomId: unknown = room.body?.group?.id;
   if (typeof roomId !== "string" || !roomId) throw new Error(`setup failed: POST /api/groups HTTP ${room.status}; no room id`);
   await ctx.setup(null, "POST", `/api/groups/${roomId}/messages`, { text: ROOM_QUESTION }, 202);

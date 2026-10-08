@@ -6,15 +6,29 @@ import path from 'node:path';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
 import { TASK_IDLE_MS, TASK_LIMIT_MS } from './browser-extension-service.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
+import { privateTestDirectory, writePrivateTestFile } from "./testing/private-test-dir.ts";
+// Disk-fault injection reaches the writer the product uses on each platform: fs.writeFile of a temp file on
+// macOS and Linux, the native helper's private write on Windows (browser-extension-windows.mjs).
+const windowsWriteFault = vi.hoisted(() => ({ match: null as null | ((file: string) => boolean) }));
+vi.mock('../electron/browser-extension-windows.mjs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../electron/browser-extension-windows.mjs')>();
+  return { ...real, writePrivateWindowsJson: (file: string, value: unknown, options?: unknown) => {
+    if (windowsWriteFault.match?.(String(file))) throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' });
+    return (real.writePrivateWindowsJson as (f: string, v: unknown, o?: unknown) => void)(file, value, options);
+  } };
+});
 
 const A = 'https://fixture.test';
 const B = 'https://other.test';
 const cleanup: string[] = [];
-afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+// Close every service before its folder goes: a save still in flight would recreate state.json mid-removal (ENOTEMPTY on macOS).
+const services: { close(): Promise<void> }[] = [];
+const track = <T extends { close(): Promise<void> }>(service: T): T => { services.push(service); return service; };
+afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true, maxRetries: 5 }); });
 
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 async function fixture(extra: Record<string, unknown> = {}) {
-  const directory = await fs.mkdtemp(path.resolve('.durable-')); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve('.durable-')); cleanup.push(directoryRoot);
   const bindings = new Map<string, { generation: number; state: string; tabs: Tab[] }>();
   const calls: BrowserExtensionCommand[] = [];
   const siteAsked: string[] = []; const cards: string[] = []; const ended: { reason: string; taskId: string }[] = [];
@@ -62,7 +76,7 @@ async function fixture(extra: Record<string, unknown> = {}) {
     now: () => clock, onTaskEnded: (info: { reason: string; taskId: string }) => { ended.push({ reason: info.reason, taskId: info.taskId }); },
     ...extra,
   };
-  const service = await createBrowserExtensionService(options as never);
+  const service = track(await createBrowserExtensionService(options as never));
   const binding = await service.ensureBinding({ botId: 'bot', threadId: 'thread', profileId: 'profile' });
   const id = binding.bindingId;
   const run = (name: string, args: Record<string, unknown> = {}) => service.dispatch(id, name, args, () => true);
@@ -76,7 +90,7 @@ async function fixture(extra: Record<string, unknown> = {}) {
 type F = Awaited<ReturnType<typeof fixture>>;
 
 const stateOf = async (f: F) => JSON.parse(await fs.readFile(f.options.stateFile as string, 'utf8'));
-const restart = (f: F, extra: Record<string, unknown> = {}) => createBrowserExtensionService({ ...f.options, ...extra } as never);
+const restart = async (f: F, extra: Record<string, unknown> = {}) => track(await createBrowserExtensionService({ ...f.options, ...extra } as never));
 const resume = async (f: F, service: Awaited<ReturnType<typeof restart>>) => {
   const b = f.bindings.get(f.id)!; b.state = 'active'; b.generation++;
   await service.handleMessage('profile', { version: 1, type: 'event', bindingId: f.id, generation: b.generation, event: 'resumed', data: {} } as never);
@@ -140,7 +154,7 @@ describe('T22 state.json version 2', () => {
     const f = await fixture();
     const saved = await stateOf(f);
     const v1 = { version: 1, bindings: saved.bindings.map((b: any) => ({ context: b.context, state: b.state, sites: { [A]: 'never' } })) };
-    await fs.writeFile(f.options.stateFile as string, JSON.stringify(v1), { mode: 0o600 });
+    writePrivateTestFile(f.options.stateFile as string, JSON.stringify(v1));
     const restored = await restart(f);
     expect(restored.taskInfo(f.id)).toBeUndefined();
     expect(restored.status().bindings[0].sites).toEqual({ [A]: 'never' });
@@ -156,7 +170,7 @@ describe('T22 state.json version 2', () => {
       { ...good, bindings: [{ ...good.bindings[0], sites: { [A]: 'maybe' } }] },
     ];
     for (const variant of variants) {
-      await fs.writeFile(file, typeof variant === 'string' ? variant : JSON.stringify(variant), { mode: 0o600 });
+      writePrivateTestFile(file, typeof variant === 'string' ? variant : JSON.stringify(variant));
       // C2 (RES-004): a file the service cannot trust is set aside, never read and never guessed at: the service starts with nothing from it.
       const seen: unknown[] = [];
       const started = await restart(f, { onStateRecovered: (info: unknown) => seen.push(info) });
@@ -182,7 +196,7 @@ describe('T22 state.json version 2', () => {
       { ...good, bindings: [{ ...good.bindings[0], taskL1: Array.from({ length: 65 }, (_, i) => `https://s${i}.test`) }] },
     ];
     for (const variant of variants) {
-      await fs.writeFile(file, JSON.stringify(variant), { mode: 0o600 });
+      writePrivateTestFile(file, JSON.stringify(variant));
       const restored = await restart(f);
       expect(restored.taskInfo(f.id), JSON.stringify(variant).slice(0, 120)).toBeUndefined();
       expect(restored.status().bindings[0]).toMatchObject({ taskEnded: true });
@@ -193,7 +207,7 @@ describe('T22 state.json version 2', () => {
     const f = await fixture(); await f.fill();
     await f.service.close(); // let the fire-and-forget save finish first, or it can overwrite the forged file
     const good = await stateOf(f); const file = f.options.stateFile as string;
-    await fs.writeFile(file, JSON.stringify({ ...good, version: 1 }), { mode: 0o600 });
+    writePrivateTestFile(file, JSON.stringify({ ...good, version: 1 }));
     const restored = await restart(f);
     expect(restored.taskInfo(f.id)).toBeUndefined();
   });
@@ -272,11 +286,13 @@ describe('T22 fix: fail closed and I5', () => {
   // Injected disk fault: writes of state.json (its .tmp) fail; `all` also fails the unconfirmed marker.
   const failWrites = (all = false) => {
     const real = fs.writeFile.bind(fs);
-    return vi.spyOn(fs, 'writeFile').mockImplementation(((file: unknown, ...rest: unknown[]) => {
+    const spy = vi.spyOn(fs, 'writeFile').mockImplementation(((file: unknown, ...rest: unknown[]) => {
       const name = String(file);
       if (name.includes('state.json') && (all || name.endsWith('.tmp'))) return Promise.reject(Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }));
       return (real as (...a: unknown[]) => Promise<void>)(file, ...rest);
     }) as never);
+    windowsWriteFault.match = name => name.endsWith('state.json');
+    return { mockRestore: () => { windowsWriteFault.match = null; spy.mockRestore(); } };
   };
   for (const all of [false, true]) {
     it(`a Stop whose state write fails comes back ended after a restart, no grants${all ? ' (marker write fails too)' : ''}`, async () => {

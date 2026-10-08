@@ -204,7 +204,11 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
     const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
     try {
       const policyRevision = () => Number((db.prepare("SELECT policy_revision FROM memory_meta WHERE id=1").get() as { policy_revision: number }).policy_revision);
-      const disclosures = () => db.prepare("SELECT state,policy_revision FROM memory_disclosures WHERE thread_id=? ORDER BY created_at").all(room.threadId) as Array<{ state: string; policy_revision: number }>;
+      // Frames only: the member turn also notes its quoted working context on a
+      // `<frame>:lookup` companion receipt (memory/dispatch.ts noteSources),
+      // checked against its frame below.
+      const disclosures = () => db.prepare("SELECT state,policy_revision FROM memory_disclosures WHERE thread_id=? AND bundle_id NOT LIKE '%:lookup' ORDER BY created_at").all(room.threadId) as Array<{ state: string; policy_revision: number }>;
+      const companionStates = () => db.prepare("SELECT c.state AS companion, f.state AS frame FROM memory_disclosures c JOIN memory_disclosures f ON c.bundle_id=f.bundle_id||':lookup' WHERE c.thread_id=?").all(room.threadId) as Array<{ companion: string; frame: string }>;
       const replies = async () => (await messages(room.threadId)).filter(message => message.role === "bot" && message.kind === "text" && message.text);
       const idle = async () => { const state = await groupState(room.id); return !state.working && !state.busyBotId; };
 
@@ -258,6 +262,8 @@ posixOnly("a turn refused at acceptance releases the workspace writer lease", ()
         { state: "revoked", policy_revision: revisionAtDispatch },
         { state: "delivered", policy_revision: policyRevision() },
       ]);
+      // a companion receipt is revoked and delivered with its frame
+      for (const pair of companionStates()) expect(pair.companion).toBe(pair.frame);
       // and the delivered receipt carries this exact reply as its output.
       const receipt = db.prepare("SELECT state,output_message_ids FROM memory_disclosures WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").get(room.threadId) as { state: string; output_message_ids: string };
       expect(JSON.parse(receipt.output_message_ids)).toContain(reply.id);
