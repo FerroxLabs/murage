@@ -140,6 +140,10 @@ function subpackets(bytes, certification) {
     // 39, and the like) is skipped when it is not marked critical. Document
     // signatures and critical subpackets stay strict.
     if (!known && certification && !(kind & 128)) continue;
+    // gpg 2.5 adds a non-critical notation (20) to every document signature.
+    // A notation nobody asked us to honour carries no trust either way; a
+    // critical one is refused, as is every other unknown subpacket.
+    if (type === 20 && !(kind & 128)) continue;
     if (!known) fail("Unsupported signature subpacket");
     if ((type === 2 && body.length !== 4) || (type === 16 && body.length !== 8)
       || (type === 33 && (body.length !== 21 || body[0] !== 4))) fail("Invalid signature subpacket");

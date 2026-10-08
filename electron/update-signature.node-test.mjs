@@ -203,6 +203,18 @@ test("strict armor, packets, signature type, algorithm, fingerprint, subpackets 
     await rejects(() => verifyLinuxUpdate({ ...f.options, publicKey: badKey }));
   }
 });
+test("a non-critical notation (gpg 2.5 adds one) verifies; a critical notation refuses", async (t) => {
+  const f = await fixture(t);
+  const note = (flag) => {
+    const name = Buffer.from("rev@gnupg.org"), value = Buffer.from("1");
+    const body = Buffer.concat([Buffer.from([0x80, 0, 0, 0]), u16(name.length), u16(value.length), name, value]);
+    return Buffer.concat([Buffer.from([body.length + 1, flag]), body]);
+  };
+  f.assets.signature = signed(f.assets.sums, publisher, { extra: note(20) });
+  await verifyLinuxUpdate(f.options);
+  f.assets.signature = signed(f.assets.sums, publisher, { extra: note(20 | 128) });
+  await rejects(() => verifyLinuxUpdate(f.options));
+});
 test("malformed or duplicate checksum entries and unsupported download sets refuse", async (t) => {
   const f = await fixture(t);
   for (const sums of [Buffer.from("garbage"), Buffer.concat([f.assets.sums, f.assets.sums]), Buffer.from("\xff"), Buffer.from(`${"a".repeat(64)}  ${name}\rgarbage\n`)]) {
