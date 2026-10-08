@@ -135,6 +135,11 @@ function subpackets(bytes, certification) {
     const type = kind & 127;
     const body = part.take(part.remaining);
     const known = [2, 16, 33].includes(type) || (certification && [9, 11, 21, 22, 23, 27, 30, 34].includes(type));
+    // A certification never adds trust (the primary key verifies documents),
+    // so a newer gpg's extra self-certification preference (AEAD ciphersuites,
+    // 39, and the like) is skipped when it is not marked critical. Document
+    // signatures and critical subpackets stay strict.
+    if (!known && certification && !(kind & 128)) continue;
     if (!known) fail("Unsupported signature subpacket");
     if ((type === 2 && body.length !== 4) || (type === 16 && body.length !== 8)
       || (type === 33 && (body.length !== 21 || body[0] !== 4))) fail("Invalid signature subpacket");
