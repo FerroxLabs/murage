@@ -10,7 +10,10 @@ import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensio
 const A = 'https://fixture.test';
 const B = 'https://other.test';
 const cleanup: string[] = [];
-afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+// Close every service before its folder goes: a save still in flight would recreate state.json mid-removal (ENOTEMPTY on macOS).
+const services: { close(): Promise<void> }[] = [];
+const track = <T extends { close(): Promise<void> }>(service: T): T => { services.push(service); return service; };
+afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true, maxRetries: 5 }); });
 
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 async function fixture(extra: Record<string, unknown> = {}) {
@@ -62,7 +65,7 @@ async function fixture(extra: Record<string, unknown> = {}) {
     now: () => clock, onTaskEnded: (info: { reason: string; taskId: string }) => { ended.push({ reason: info.reason, taskId: info.taskId }); },
     ...extra,
   };
-  const service = await createBrowserExtensionService(options as never);
+  const service = track(await createBrowserExtensionService(options as never));
   const binding = await service.ensureBinding({ botId: 'bot', threadId: 'thread', profileId: 'profile' });
   const id = binding.bindingId;
   const run = (name: string, args: Record<string, unknown> = {}) => service.dispatch(id, name, args, () => true);
@@ -76,7 +79,7 @@ async function fixture(extra: Record<string, unknown> = {}) {
 type F = Awaited<ReturnType<typeof fixture>>;
 
 const stateOf = async (f: F) => JSON.parse(await fs.readFile(f.options.stateFile as string, 'utf8'));
-const restart = (f: F, extra: Record<string, unknown> = {}) => createBrowserExtensionService({ ...f.options, ...extra } as never);
+const restart = async (f: F, extra: Record<string, unknown> = {}) => track(await createBrowserExtensionService({ ...f.options, ...extra } as never));
 const resume = async (f: F, service: Awaited<ReturnType<typeof restart>>) => {
   const b = f.bindings.get(f.id)!; b.state = 'active'; b.generation++;
   await service.handleMessage('profile', { version: 1, type: 'event', bindingId: f.id, generation: b.generation, event: 'resumed', data: {} } as never);
