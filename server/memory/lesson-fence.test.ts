@@ -5,7 +5,7 @@
 // budgets and tool mounts are host state that never reads memory_lessons. This is a static import-graph test: none of those modules
 // reaches lessons.ts, lesson-spec.ts or the learned block, directly or through anything they import, and none of them names the table.
 import { readFileSync, existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -31,7 +31,7 @@ function importsOf(file: string): string[] {
  * through the hub or into the memory subsystem, but a lesson module reached at any step (directly, or through another server
  * module such as bot-shapes) is a failure. */
 const HUBS = new Set(["store.ts", "database.ts", "message-db.ts", "config.ts"].map(name => join(SERVER, name)));
-const inMemoryLayer = (file: string) => file.startsWith(join(SERVER, "memory") + "/");
+const inMemoryLayer = (file: string) => file.startsWith(join(SERVER, "memory") + sep);
 function closure(entry: string): Map<string, string> {
   const parent = new Map<string, string>();
   const queue = [entry];

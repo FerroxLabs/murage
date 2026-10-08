@@ -192,9 +192,14 @@ describe("io-budget", () => {
       const base=openFds();
       const release2=instrumentDatabase(second,budget);
       second.exec("INSERT INTO data VALUES(x'00')");
+      // Counted around the release, not against SQLite's own files: SQLite holds
+      // POSIX descriptors on Linux and macOS but Win32 handles on Windows, which
+      // this descriptor scan never sees.
+      const instrumented=openFds();
       release2();release2();
+      expect(openFds()).toBe(instrumented-1);
       second.close();
-      expect(openFds()).toBeLessThanOrEqual(base-1);
+      expect(openFds()).toBeLessThanOrEqual(base);
     }finally{try{second?.close();}catch{/* closed */}try{first.close();}catch{/* closed */}rmSync(root,{recursive:true,force:true});}
   });
 });

@@ -89,6 +89,19 @@ export function privateDesktopHeaders(serverChild: ChildProcess): Record<string,
 export let child: ChildProcess;
 /** stands in for the box provider so config saving never touches the network */
 export let boxStub: Server;
+/** Holds the next `Bearer box_slow` validation open until released, so a test
+ * can act while the server is provably inside the awaited config transaction
+ * (a fixed sleep guessed at that window and lost to load). `entered` resolves
+ * when the stub has received the validation request. */
+let boxSlowHold: { entered: () => void; released: Promise<void> } | undefined;
+export const holdBoxSlowValidation = () => {
+  let release!: () => void;
+  let entered!: () => void;
+  const enteredPromise = new Promise<void>((resolve) => { entered = resolve; });
+  const released = new Promise<void>((resolve) => { release = resolve; });
+  boxSlowHold = { entered, released };
+  return { entered: enteredPromise, release };
+};
 export let boxStubPort = 0;
 export let connectorAliasFixture: { accounts: { id: string; alias: string; status: string; toolkit: { slug: string } }[]; links: { toolkit: string; alias?: string }[]; calls: number } | undefined;
 export let home: string;
@@ -292,7 +305,16 @@ export const startInternalFixtureTurn = async (botId: string, groupId?: string, 
   // ignores it.
   let dump: { pid: number; prompt?: unknown; mcpConfig: { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> } };
   try {
-    dump = await readJsonFileWhenReady(fakeClaudeDump);
+    // The dump file is shared by every turn in this server. Under load a
+    // previous test's bot can launch its engine after the rmSync above and
+    // leave ITS dump here; that is not this turn's launch, so discard it and
+    // keep waiting for the one that names this bot.
+    for (const deadline = Date.now() + 15_000; ; ) {
+      dump = await readJsonFileWhenReady(fakeClaudeDump, Math.max(1_000, deadline - Date.now()));
+      if (dump.mcpConfig.mcpServers.agents?.env.MURAGE_BOT_ID === botId) break;
+      if (Date.now() >= deadline) break;
+      rmSync(fakeClaudeDump, { force: true });
+    }
   } catch (error) {
     // The fixture engine never reported a launch: say what the harness was
     // doing instead of "matcher did not succeed", so a stalled dispatch is
@@ -616,7 +638,10 @@ beforeAll(async () => {
       return res.end(JSON.stringify(operation === "register" ? { ok: true, expiresAt: body.expiresAt } : { ok: true }));
     }
     if (req.headers.authorization === "Bearer box_slow") {
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      const hold = boxSlowHold;
+      boxSlowHold = undefined;
+      if (hold) { hold.entered(); await hold.released; }
+      else await new Promise((resolve) => setTimeout(resolve, 150));
     }
     const ok = req.headers.authorization === "Bearer box_good" || req.headers.authorization === "Bearer box_slow";
     res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });

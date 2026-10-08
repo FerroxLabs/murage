@@ -6,12 +6,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createBrowserExtensionService } from "./browser-extension-service.ts";
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from "../shared/browser-extension-protocol.ts";
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
 const cleanup: string[] = [];
 afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
 
 describe("a dialog answer is not queued behind the blocked command", () => {
   it("Page.handleJavaScriptDialog reaches the extension while an Input command is still pending", async () => {
-    const directory = await fs.mkdtemp(path.resolve(".service-")); cleanup.push(directory); await fs.chmod(directory, 0o700);
+    const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".service-")); cleanup.push(directoryRoot);
     const seen: string[] = []; let releaseInput!: () => void; const inputBlocked = new Promise<void>(resolve => { releaseInput = resolve; });
     const tab = { tabId: 1, navigationEpoch: 1, origin: "https://fixture.test", url: "https://fixture.test/" }; const state = { generation: 1, state: "active" };
     const broker = {

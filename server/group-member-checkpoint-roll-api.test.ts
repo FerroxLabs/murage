@@ -17,6 +17,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { threadCheckpointId } from "./memory/checkpoints.ts";
 
 const FAKE_PI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-pi-cli.ts");
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -62,7 +63,13 @@ posixOnly("a group member's turn survives its own capture rolling the group chec
 
     const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
     try {
-      const checkpoint = () => db.prepare("SELECT r.id,r.version,r.state FROM memory_records r JOIN memory_scopes s ON s.id=r.scope_id WHERE r.kind='checkpoint' AND s.kind='conversation' AND s.owner_key=? ORDER BY r.version DESC LIMIT 1").get(room.threadId) as { id: string; version: number; state: string } | undefined;
+      // Since 0.1.61 lane M (memory/capture-scope.ts) a room's main chat
+      // captures into the room's scope, so the group thread's checkpoint is
+      // threadCheckpointId(<room scope>, <group thread>); a pre-0.1.61 one sits
+      // in the thread's conversation scope. Either is the thread's own
+      // (bundle.ts ownCheckpoints).
+      const checkpointIds = (threadId: string, roomId: string) => JSON.stringify((db.prepare("SELECT id FROM memory_scopes WHERE (kind='conversation' AND owner_key=?) OR (kind='room' AND owner_key=?)").all(threadId, roomId) as Array<{ id: string }>).map(scope => threadCheckpointId(scope.id, threadId)));
+      const checkpoint = () => db.prepare("SELECT id,version,state FROM memory_records WHERE kind='checkpoint' AND id IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC, version DESC LIMIT 1").get(checkpointIds(room.threadId, room.id)) as { id: string; version: number; state: string } | undefined;
       // Only the group thread's captures move its checkpoint; a bot thread's
       // welcome-message capture can still hold a worker lease and is not waited on.
       const pendingJobs = () => Number((db.prepare("SELECT count(*) AS n FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id WHERE s.thread_id=? AND j.status NOT IN ('complete','cancelled','failed')").get(room.threadId) as { n: number }).n);
@@ -83,7 +90,7 @@ posixOnly("a group member's turn survives its own capture rolling the group chec
       const selected = checkpoint()!;
       // The checkpoint the bundle selected is the group thread's own
       // (consolidate.ts keys it by the group thread id), not the member's.
-      expect(selected.id).not.toBe((db.prepare("SELECT r.id FROM memory_records r JOIN memory_scopes s ON s.id=r.scope_id WHERE r.kind='checkpoint' AND s.kind='conversation' AND s.owner_key=?").get(member.threadId) as { id: string } | undefined)?.id);
+      expect(JSON.parse(checkpointIds(member.threadId, room.id))).not.toContain(selected.id);
 
       // The second member turn is held at the provider handshake, after its
       // bundle selected `selected`; its own prompt capture completes

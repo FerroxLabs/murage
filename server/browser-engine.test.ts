@@ -95,9 +95,12 @@ describe("optional browser resolver and installation", () => {
       tick(); writeFileSync(chrome, "tampered Chrome");
       resolveAgentBrowserBinary(options);
       expect(macAdmission).toHaveBeenCalledTimes(4);
-      tick(); chmodSync(chrome, 0o755);
+      // A permission change re-verifies too. Windows chmod only flips the read-only
+      // attribute (0o700 -> 0o755 changes nothing there), so it makes the file read-only.
+      tick(); chmodSync(chrome, process.platform === "win32" ? 0o444 : 0o755);
       resolveAgentBrowserBinary(options);
       expect(macAdmission).toHaveBeenCalledTimes(5);
+      chmodSync(chrome, 0o700); // writable again, so the scratch folder can be removed on Windows
     });
     it("re-verifies when app.asar is rewritten in place at the same size (sealed payload is keyed)", () => {
       const { resources, options } = packaged();
@@ -296,6 +299,9 @@ describe("protected browser state", () => {
     const win = make("win32");
     expect(win.env.AGENT_BROWSER_NO_AUTO_DIALOG).toBe("1");
     expect(win.args).toEqual(["mcp", "--tools", "core,tabs", "--no-webmcp"]);
+    // A real Windows host cannot pose as a POSIX one here: engine storage is checked
+    // for an owner-only mode NTFS does not carry. The macOS and Linux runners cover it.
+    if (process.platform === "win32") return;
     for (const os of ["darwin", "freebsd"]) {
       const spec = make(os);
       expect(spec.env.AGENT_BROWSER_NO_AUTO_DIALOG).toBeUndefined();
@@ -323,6 +329,8 @@ describe("protected browser state", () => {
       expect(win.env.AGENT_BROWSER_NO_AUTO_DIALOG).toBe("1");
       expect(win.env.AGENT_BROWSER_INIT_SCRIPTS).toMatch(/beforeunload-guard\.js$/u);
       expect(readFileSync(win.env.AGENT_BROWSER_INIT_SCRIPTS!, "utf8")).toBe(BEFOREUNLOAD_GUARD_SCRIPT);
+      // As above: the POSIX side needs a POSIX host (owner-only storage mode).
+      if (process.platform === "win32") return;
       const other = withPlatform("darwin", () => agentBrowserIntegration(input()));
       scratch.push(other.env.AGENT_BROWSER_SOCKET_DIR!);
       expect(other.env.AGENT_BROWSER_INIT_SCRIPTS).toBeUndefined();
@@ -350,7 +358,8 @@ describe("protected browser state", () => {
     const input = { dataDir, realmId: "realm", binaryPath: "/fixture/agent-browser", encryptionKey: "a".repeat(64), session: browserSessionId("a", "profile", "realm"), env: { PATH: "/bin", AGENT_BROWSER_PROFILE: "/real/profile", TOKEN: "secret" } };
     const spec = agentBrowserIntegration(input);
     scratch.push(spec.env.AGENT_BROWSER_SOCKET_DIR!);
-    expect(spec.args).toEqual(["mcp", "--tools", "core", "--no-webmcp"]);
+    // Windows also loads the dialog tools (see the win32 test above).
+    expect(spec.args).toEqual(["mcp", "--tools", process.platform === "win32" ? "core,tabs" : "core", "--no-webmcp"]);
     expect(spec.env.HOME).toContain(dataDir);
     expect(spec.env.AGENT_BROWSER_RESTORE).toBe(input.session);
     expect(spec.env.TOKEN).toBeUndefined();

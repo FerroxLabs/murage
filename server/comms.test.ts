@@ -410,7 +410,9 @@ describe("comms e2e (fake ACP fleet)", () => {
           name: `Gemini Asker ${level}`,
           section,
           modelSelection: { instanceId: "geminiAsker", model: "gemini-3.7-flash-high" },
-          ...(level !== "ask" ? { autoApprove: true } : {}),
+          // A Mac bot's default computer is this one, so Auto on it needs the
+          // one-time warning confirmed (the route answers 400 without it).
+          ...(level !== "ask" ? { autoApprove: true, acknowledgeLocalAuto: true } : {}),
         })).status).toBe(200);
         if (level === "full") {
           const on = await api("PATCH", `/api/bots/${asker.id}/tasks/${asker.threadId}`, { fullAccess: true, acknowledgeFullAccess: true });

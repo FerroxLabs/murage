@@ -30,7 +30,10 @@ export function bindMemoryDisclosureSession(bundleId: string, nativeSession: str
 export function deliverMemoryDisclosure(bundleId: string, access: MemoryAccess, nativeSession?: string) {
   assertMemoryDisclosureCurrent(bundleId, access);
   if (nativeSession) bindMemoryDisclosureSession(bundleId,nativeSession);
-  database().prepare("UPDATE memory_disclosures SET state='delivered' WHERE bundle_id=? AND state='prepared'").run(bundleId);
+  // The companion receipt (noteMemoryLookup) takes its frame's state when it
+  // is made; one made before delivery (the quoted working context and project
+  // layers a room turn notes at dispatch) is delivered with its frame.
+  database().prepare("UPDATE memory_disclosures SET state='delivered' WHERE bundle_id IN (?,?) AND state='prepared'").run(bundleId,`${bundleId}:lookup`);
 }
 
 /** The receipt still holds under the dispatch's authority: what delivery
