@@ -89,7 +89,9 @@ export function selectFileWorkspace(dataDir: string, store: Pick<Store, "bots" |
     const room = store.groups.find(item => item.memberIds.includes(botId) && (item.threadId === threadId || item.tasks?.some(t => t.threadId === threadId)));
     const pinned = task ? task.cwd : room?.tasks?.find(t => t.threadId === threadId)?.pinnedCwd ?? room?.pinnedCwd ?? room?.cwd;
     const managedBase = artifactWorkspaceIdentity(join(dataDir, "workspaces"));
-    if (!pinned || artifactWorkspaceIdentity(pinned).startsWith(managedBase + "/")) return { root: managedRoot, managed: true };
+    // Inside the managed tree by path segments: a "/" prefix never matched a
+    // Windows path, so partitioned work there kept a home-folder cwd.
+    if (!pinned || artifactWorkspaceIdentity(pinned).startsWith(managedBase + sep)) return { root: managedRoot, managed: true };
   }
   if (task) {
     if (typeof task.cwd === "string") return selection(task.cwd);
