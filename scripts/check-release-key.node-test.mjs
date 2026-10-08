@@ -24,9 +24,20 @@ function publicArmor({ comment = "Release publisher", uid = "Murage releases", a
   return `-----BEGIN PGP PUBLIC KEY BLOCK-----\nComment: ${comment}\n\n${bytes.toString("base64").match(/.{1,64}/g).join("\n")}\n=${check}\n-----END PGP PUBLIC KEY BLOCK-----\n`;
 }
 
-test("release checker rejects the shipped test key, missing files and malformed keys", async () => {
-  await assert.rejects(() => checkReleaseKey(), /TEST KEY/i);
+// The Murage test key: its private half signs test fixtures, so it must never ship.
+const TEST_KEY = new URL("./fixtures/murage-test-release-key.asc", import.meta.url);
+// The Ferrox Labs release key (Ed25519, 2026-10-08): RELEASE_GPG_PRIVATE_KEY signs with its private half.
+const PUBLISHER_FINGERPRINT = "40870f41fafbf85d3878224479cd291197bf2d09";
+
+test("the shipped key is the Ferrox Labs release key, and the checker passes it", async () => {
+  assert.equal((await checkReleaseKey()).fingerprint, PUBLISHER_FINGERPRINT);
   const result = spawnSync(process.execPath, [fileURLToPath(new URL("./check-release-key.mjs", import.meta.url))], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(PUBLISHER_FINGERPRINT));
+});
+test("release checker rejects the test key, missing files and malformed keys", async () => {
+  await assert.rejects(() => checkReleaseKey(TEST_KEY), /TEST KEY/i);
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL("./check-release-key.mjs", import.meta.url)), fileURLToPath(TEST_KEY)], { encoding: "utf8" });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /TEST KEY/i);
   await assert.rejects(() => checkReleaseKey(new URL("./missing-release-key.asc", import.meta.url)), /ENOENT/);
@@ -62,6 +73,6 @@ test("the test key is refused by fingerprint even with its labels stripped", asy
   const { TEST_KEY_FINGERPRINTS } = await import("./check-release-key.mjs");
   const { parseReleaseKey } = await import("../electron/update-signature.mjs");
   const { readFile } = await import("node:fs/promises");
-  const shipped = parseReleaseKey(await readFile(new URL("../electron/release-key.asc", import.meta.url)));
-  assert.ok(TEST_KEY_FINGERPRINTS.includes(shipped.fingerprint));
+  const testKey = parseReleaseKey(await readFile(TEST_KEY));
+  assert.ok(TEST_KEY_FINGERPRINTS.includes(testKey.fingerprint));
 });

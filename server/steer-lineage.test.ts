@@ -96,7 +96,8 @@ async function runningFuigo(echoMs: number) {
     config: { cli: FAKE_ACP, fullAuto: false },
   });
   await instance.adapter.sendTurn({ threadId: "desk", text: "Count the invoices" });
-  const prompted = () => existsSync(dump) && (JSON.parse(readFileSync(dump, "utf8")) as string[]).includes("session/prompt");
+  // the fake engine rewrites its dump while this polls: a half-written file is "not yet", never a failure
+  const prompted = () => { try { return existsSync(dump) && (JSON.parse(readFileSync(dump, "utf8")) as string[]).includes("session/prompt"); } catch { return false; } };
   for (let i = 0; i < 500 && !prompted(); i++) await new Promise((r) => setTimeout(r, 20));
   expect(prompted()).toBe(true);
   // the running turn's lineage and its engine session (v6 marks every session it saw)

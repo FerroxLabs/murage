@@ -193,9 +193,11 @@ newer than the running app. Murage checks the cached bytes again before restart
 or Debian package handoff. Missing assets or a verification refusal remove the
 download and offer “Download from murage.ai”.
 
-Replace the labelled TEST public key in `electron/release-key.asc` with Sean's
-release-only Ed25519 OpenPGP public key export, including its armor CRC24.
-Confirm its fingerprint with Sean independently of the release host. Use a v4
+`electron/release-key.asc` holds the Ferrox Labs release key (fingerprint
+`40870F41FAFBF85D3878224479CD291197BF2D09`, made 2026-10-08, expires
+2028-10-07). The labelled TEST key lives only in `scripts/fixtures/` for tests.
+A new key means a new export here, confirmed with Sean independently of the
+release host; the signing step refuses a signature the shipped key does not verify. Use a v4
 Ed25519 legacy primary signing key (algorithm 22), signing binary checksum data
 with SHA-256 or SHA-512. The verifier accepts that primary key, without subkeys.
 Only the public export belongs in the repository. Its matching private key and

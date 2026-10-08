@@ -59,7 +59,8 @@ posixOnly("a handoff from a room turn nobody proved is the owner's", () => {
     const room = made.body.group as { id: string; threadId: string };
 
     // An owner pin in Maple's own bot memory.
-    const writer = new DatabaseSync(join(fixture.info.dataDir, "messages.db"));
+    // the live server holds this database too: wait for its write lock instead of failing at once
+    const writer = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { timeout: 5000 });
     try {
       const scope = writer.prepare("SELECT id FROM memory_scopes WHERE kind='bot' AND owner_key=?").get(maple.id) as { id: string } | undefined;
       expect(scope).toBeTruthy();

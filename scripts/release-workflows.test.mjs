@@ -523,6 +523,11 @@ describe("release.yml provenance gates (audit C8)", () => {
     expect(sign.env.GPG_PRIVATE_KEY).toBe("${{ secrets.RELEASE_GPG_PRIVATE_KEY }}");
     expect(sign.run).toContain("--detach-sign");
     expect(sign.run).toContain("SHA256SUMS-ubuntu-x64.txt.asc");
+    // no unsigned Linux release: the app ships the release key and refuses an unsigned update
+    expect(sign.run).toMatch(/RELEASE_GPG_PRIVATE_KEY is not set[^\n]*\n\s*exit 1/);
+    // the signature is checked the way a Linux install checks it: Murage's verifier and the shipped key
+    expect(sign.run).toContain("verifyDetachedSignature");
+    expect(sign.run).toContain("electron/release-key.asc");
     const upload = release.jobs.linux.steps.find(step => step.with?.name === "linux-release");
     expect(upload.with.path).toContain("release/SHA256SUMS-ubuntu-x64.txt.asc");
   });

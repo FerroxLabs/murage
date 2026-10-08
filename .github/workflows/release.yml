@@ -776,17 +776,18 @@ jobs:
         # Audit C8: a checksum file served from the same place as the files it
         # covers proves nothing on its own. Detached GPG signature, made with a
         # key Sean adds as RELEASE_GPG_PRIVATE_KEY (armored private key) and,
-        # if it has one, RELEASE_GPG_PASSPHRASE; see docs/releasing.md. Until
-        # the secret exists the release still builds and says so loudly, and
-        # the assemble gate requires the .asc whenever one was made.
+        # if it has one, RELEASE_GPG_PASSPHRASE; see docs/releasing.md. Murage
+        # ships the matching public key (electron/release-key.asc) and Linux
+        # refuses an update without a good signature, so a release without the
+        # secret, or signed by any other key, stops here.
         env:
           GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
           if [ -z "$GPG_PRIVATE_KEY" ]; then
-            echo "::warning::RELEASE_GPG_PRIVATE_KEY is not set; SHA256SUMS-ubuntu-x64.txt is NOT signed in this run"
-            exit 0
+            echo "::error::RELEASE_GPG_PRIVATE_KEY is not set; Linux updates would refuse this release"
+            exit 1
           fi
           export GNUPGHOME="$(mktemp -d)"
           chmod 700 "$GNUPGHOME"
@@ -795,6 +796,12 @@ jobs:
           gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
             --armor --detach-sign --output release/SHA256SUMS-ubuntu-x64.txt.asc release/SHA256SUMS-ubuntu-x64.txt
           gpg --batch --verify release/SHA256SUMS-ubuntu-x64.txt.asc release/SHA256SUMS-ubuntu-x64.txt
+          # The check a Linux install makes: Murage's own verifier, against the key it ships.
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { verifyDetachedSignature } from "./electron/update-signature.mjs";
+            const fingerprint = verifyDetachedSignature(readFileSync("release/SHA256SUMS-ubuntu-x64.txt"), readFileSync("release/SHA256SUMS-ubuntu-x64.txt.asc", "utf8"), readFileSync("electron/release-key.asc", "utf8"));
+            console.log(`verified against the shipped release key ${fingerprint}`);'
           echo "signed SHA256SUMS-ubuntu-x64.txt"
       - name: Attest build provenance for the Linux packages
         # Audit C8: a signed statement that these exact bytes were built by this
