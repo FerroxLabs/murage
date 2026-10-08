@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { resolve, join } from "node:path";
 import { DATA_DIR } from "./config.ts";
-import { artifactWorkspaceIdentity } from "./artifacts.ts";
+import { artifactWorkspaceIdentity, workspacePathWithin } from "./artifacts.ts";
 import { isHomePartition, partitionRoots, threadPartition } from "./execution-audience.ts";
 import type { BotRecord } from "./store.ts";
 
@@ -13,7 +13,7 @@ export function partitionFileRefusal(bot: BotRecord, threadId: string, paths: re
   const root = artifactWorkspaceIdentity(partitionRoots(bot, isHomePartition(p) ? { kind: "home" } : p, dataDir)[0]);
   const managed = artifactWorkspaceIdentity(join(dataDir, "workspaces"));
   const general = artifactWorkspaceIdentity(join(dataDir, "workspaces", bot.id + ".general"));
-  const inside = (path: string, base: string) => path === base || path.startsWith(base + "/");
+  const inside = workspacePathWithin;
   for (const path of paths) {
     const lexical = resolve(cwd ?? root, path), canonical = artifactWorkspaceIdentity(lexical);
     if (inside(lexical, general) || inside(canonical, general)) return `Only you can change what ${bot.name} knows for every team.`;
