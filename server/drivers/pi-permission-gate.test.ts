@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it } from "vitest";
 
-import piPermissionGate, { PI_GATE_MESSAGE_MAX, piGateAsks, piGateMessage } from "./pi-permission-gate.ts";
+import piPermissionGate, { PI_GATE_MESSAGE_MAX, pathInside, piGateAsks, piGateMessage } from "./pi-permission-gate.ts";
 
 describe("which pi calls wait for Murage", () => {
   const cwd = "/work/project";
@@ -81,5 +81,28 @@ describe("R8-1 the Chief's proposal turn: one tool runs, everything else asks", 
     expect(await handler!({ toolName: "read", input: { path: "/etc/hosts" } }, ctx)).toMatchObject({ block: true });
     expect(await handler!({ toolName: "agents_project_propose", input: {} }, ctx)).toBeUndefined();
     expect(asked).toEqual([JSON.stringify({ tool: "read", input: { path: "/etc/hosts" } })]);
+  });
+});
+
+describe("pathInside: a file edit stays inside the working folder only when it truly lands there", () => {
+  it("collapses .. in absolute paths on every platform", () => {
+    expect(pathInside("/work/project/../../etc/passwd", "/work/project", "linux")).toBe(false);
+    expect(pathInside("/work/project/../project-other/x", "/work/project", "darwin")).toBe(false);
+    expect(pathInside("/work/project/sub/../notes.md", "/work/project", "linux")).toBe(true);
+    expect(pathInside("sub/./a.ts", "/work/project", "linux")).toBe(true);
+    expect(pathInside("sub/../../x", "/work/project", "linux")).toBe(false);
+    expect(pathInside("/work/project", "/work/project/", "linux")).toBe(true);
+  });
+  it("on Windows: backslashes, case, drive-relative and drive-root paths", () => {
+    const cwd = "C:\\Work\\proj";
+    expect(pathInside("C:\\Work\\proj\\a.ts", cwd, "win32")).toBe(true);
+    expect(pathInside("c:/work/PROJ/a.ts", cwd, "win32")).toBe(true);
+    expect(pathInside("src\\a.ts", cwd, "win32")).toBe(true);
+    expect(pathInside("C:\\Work\\proj\\..\\other\\x", cwd, "win32")).toBe(false);
+    expect(pathInside("C:\\Work\\proj-other\\x", cwd, "win32")).toBe(false);
+    expect(pathInside("C:notes.txt", cwd, "win32")).toBe(false);
+    expect(pathInside("D:notes.txt", cwd, "win32")).toBe(false);
+    expect(pathInside("\\Work\\proj\\a.ts", cwd, "win32")).toBe(false);
+    expect(pathInside("D:\\work\\a.ts", cwd, "win32")).toBe(false);
   });
 });

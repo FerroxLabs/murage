@@ -3,7 +3,7 @@
 // C2 integration gate: both browser routes must retain { error, code } for
 // executor refusals and uncertain outcomes. index.ts currently drops the code
 // in its final catch; this fixture supplies the required server envelope.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -14,6 +14,14 @@ import { WAITING_TEXT } from "../browser-extension-service.ts";
 import type { ApprovalBus } from "../peer-approval.ts";
 import type { Message } from "../store.ts";
 import { runBrowserExtensionMcp } from "./browser-extension-mcp.ts";
+
+// The deadline is the subject, not Windows ACLs: on win32 the durable card file goes through the native
+// murage-browser-host helper, which CI does not build. Plain-fs stand-ins keep the persistence real.
+vi.mock("../../electron/browser-extension-windows.mjs", () => ({
+  createPrivateWindowsDirectory: (directory: string) => mkdirSync(directory, { recursive: true }),
+  writePrivateWindowsJson: (file: string, value: unknown) => writeFileSync(file, JSON.stringify(value)),
+  readPrivateWindowsJson: (file: string) => JSON.parse(readFileSync(file, "utf8")),
+}));
 
 const config = { endpoint: "http://127.0.0.1:12345/api/browser-extension/mcp", clientId: "fixture_client", token: "a".repeat(43) };
 const cleanup: Array<() => void> = [];
