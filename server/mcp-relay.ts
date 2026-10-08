@@ -171,8 +171,16 @@ export async function relayMcpCall(ctx: RelayContext): Promise<RelayResult> {
   const message = rewriteInitializeCapabilities(ctx.message);
   const timeoutMs = relayTimeoutFor(message);
 
+  // The bearer the last attempt actually sent. A rejection waits for a token
+  // other than THIS one: re-reading the store after the 401 could already see
+  // the token main pushed for a concurrent call's rejection (an engine sends
+  // notifications/initialized and tools/list together), and then the call
+  // waited out the whole token wait for a second refresh the reactive
+  // cool-down would never start, and ended in a sign-in card.
+  let sent: string | undefined;
   const attempt = async (): Promise<RelayResult | "unauthorized"> => {
     const auth = resolveRequestAuth(ctx.name, ctx.server);
+    sent = auth.bearer;
     if (ctx.server.auth === "header" && auth.missing.length > 0) return failed("needs-key", host);
     if (ctx.server.auth === "oauth" && !auth.bearer) return "unauthorized";
     if (ctx.server.transport === "sse" || (ctx.sessionId && ctx.sseSessions.has(ctx.sessionId))) {
@@ -186,7 +194,7 @@ export async function relayMcpCall(ctx: RelayContext): Promise<RelayResult> {
   if (first !== "unauthorized") return first;
   // The token was rejected (or is missing). Ask the desktop shell for a fresh
   // one, wait for it once, and try once more. Never a loop.
-  const previous = resolveRequestAuth(ctx.name, ctx.server).bearer;
+  const previous = sent;
   if (!ctx.postTokenRejected()) return failed("sign-in-ended", host);
   const renewed = await waitForNewAccessToken(ctx.name, previous, tokenWaitFor(message, ctx.tokenWaitMs, Date.now() - startedAt));
   if (!renewed) return failed("sign-in-ended", host);
