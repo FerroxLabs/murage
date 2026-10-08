@@ -230,6 +230,13 @@ jobs:
           mkdir -p qualification-evidence
           node scripts/whatsapp-inventory.mjs "release/mac/Murage.app/Contents/Resources/server" --check
           cp "release/mac/Murage.app/Contents/Resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-darwin-x64-inventory.json
+          # Rosetta translates the x64 Electron on its first launch, which outran the probe's 30 s
+          # handshake on 1.0.0. Launch it once so the probe measures the bridge, not the translation.
+          for attempt in 1 2; do
+            start=$(date +%s)
+            ELECTRON_RUN_AS_NODE=1 /usr/bin/arch -x86_64 "release/mac/Murage.app/Contents/MacOS/Murage" -e 'process.arch === "x64" || process.exit(3)'
+            echo "x64 Electron warm-up $attempt: $(( $(date +%s) - start )) s"
+          done
           node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/mac/Murage.app/Contents/Resources/server" --runtime "release/mac/Murage.app/Contents/MacOS/Murage" --platform darwin --arch x64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-darwin-x64.json 2> qualification-evidence/whatsapp-darwin-x64-probe.log
 
       # The FINAL packaged build.json, not a pre-build directory (handoff 9):
