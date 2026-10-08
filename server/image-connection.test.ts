@@ -177,8 +177,16 @@ it("the image dispatcher bounds opening a connection and reports that nothing wa
 const bigReference = { bytes: Buffer.concat([png, Buffer.alloc(8 * 1024 * 1024)]), mime: "image/png" as const };
 
 it("an upload that stops moving is ended after the stall limit, said plainly, and never retried", async () => {
-  // Reads the first part of the body, then stops reading: the upload stalls.
-  const fixture = await fixtureServer((req) => { req.once("data", () => req.socket.pause()); });
+  // Reads the first part of the request, then stops reading: the upload stalls.
+  // A raw TCP listener, not an HTTP server: on Windows Node's HTTP server keeps
+  // reading a request whose socket was paused, so the whole body drains and
+  // nothing stalls (measured on Windows with Node 24: 256 MB read past the pause).
+  // One connection is one request here: a retry would open another.
+  const sockets: Socket[] = [];
+  const raw = createNetServer(socket => { sockets.push(socket); socket.once("data", () => socket.pause()); });
+  await new Promise<void>(resolve => raw.listen(0, "127.0.0.1", resolve));
+  cleanups.push(() => { for (const socket of sockets) socket.destroy(); return new Promise<void>(resolve => raw.close(() => resolve())); });
+  const fixture = { port: (raw.address() as { port: number }).port, requests: () => sockets.length };
   const f = service(() => fixture.port, { uploadStallMs: 300 });
   const started = Date.now();
   const error = await f.images.generate(edit, f.hooks(AbortSignal.timeout(8_000)), [bigReference]).then(() => null, (e: unknown) => e as generation.ImageGenerationError);
