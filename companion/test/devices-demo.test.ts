@@ -37,6 +37,11 @@ function demoEnv(code: string | undefined = CODE, flag: string | undefined = "1"
   if (flag === undefined) vi.stubEnv("MURAGE_DEMO_HOST", undefined as unknown as string);
   else vi.stubEnv("MURAGE_DEMO_HOST", flag);
 }
+// Demo mode does not exist on Windows (devices.ts loadDemoCode: file modes and
+// ownership cannot be verified on NTFS, so the marker proves nothing). Tests that
+// need demo mode switched on run on macOS and Linux; the refusals, including
+// "is never available on win32", run everywhere.
+const itDemo = process.platform === "win32" ? it.skip : it;
 const redeem = (r: DeviceRegistry, code: string, ip = "10.0.0.1", name = "Reviewer iPhone") =>
   r.redeem(code, name, undefined, undefined, undefined, undefined, ip);
 
@@ -106,7 +111,7 @@ describe("demo pairing", () => {
     }
   });
 
-  it("pairs, and can be reused, with all three in place; permissions match a normal pairing", () => {
+  itDemo("pairs, and can be reused, with all three in place; permissions match a normal pairing", () => {
     demoEnv();
     mark();
     const r = new DeviceRegistry();
@@ -142,7 +147,7 @@ describe("demo pairing", () => {
     expect("error" in redeem(r, code, "10.1.1.1")).toBe(true);
   });
 
-  it("rate limits attempts per IP, and not other IPs", () => {
+  itDemo("rate limits attempts per IP, and not other IPs", () => {
     demoEnv();
     mark();
     const r = new DeviceRegistry();
@@ -152,7 +157,7 @@ describe("demo pairing", () => {
     expect("error" in redeem(r, CODE, "9.9.9.10")).toBe(false);
   });
 
-  it("has a global failed-attempt budget across addresses, persisted, with normal pairing unaffected", () => {
+  itDemo("has a global failed-attempt budget across addresses, persisted, with normal pairing unaffected", () => {
     demoEnv();
     mark();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -172,7 +177,7 @@ describe("demo pairing", () => {
     expect("error" in redeem(r2, CODE, "10.7.0.1")).toBe(true);
   });
 
-  it("releases the hourly budget after an hour, and enforces the daily cap", () => {
+  itDemo("releases the hourly budget after an hour, and enforces the daily cap", () => {
     demoEnv();
     mark();
     vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -199,7 +204,7 @@ describe("demo pairing", () => {
     }
   });
 
-  it("never opens a normal window with the demo code", () => {
+  itDemo("never opens a normal window with the demo code", () => {
     demoEnv();
     mark();
     const r = new DeviceRegistry();
@@ -209,7 +214,7 @@ describe("demo pairing", () => {
     expect(forced.ints).toHaveLength(0);
   });
 
-  it("never persists or lists a device name that contains the demo code", () => {
+  itDemo("never persists or lists a device name that contains the demo code", () => {
     demoEnv();
     mark();
     vi.spyOn(console, "info").mockImplementation(() => {});
@@ -223,7 +228,7 @@ describe("demo pairing", () => {
     expect(readFileSync(join(DATA_DIR, "devices.json"), "utf8")).not.toContain(CODE);
   });
 
-  it("removes every demo device at startup when demo mode is not active", () => {
+  itDemo("removes every demo device at startup when demo mode is not active", () => {
     demoEnv();
     mark();
     vi.spyOn(console, "info").mockImplementation(() => {});
@@ -257,7 +262,7 @@ describe("demo pairing", () => {
     };
     const normalWorks = (r: DeviceRegistry) => "error" in r.redeem(r.openPairing().code, "N") === false;
 
-    it("treats malformed state as exhausted, logs once, keeps normal pairing, and recovers on a valid file", () => {
+    itDemo("treats malformed state as exhausted, logs once, keeps normal pairing, and recovers on a valid file", () => {
       demoEnv();
       mark();
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -287,7 +292,7 @@ describe("demo pairing", () => {
       expect("error" in redeem(new DeviceRegistry(), CODE)).toBe(true);
     });
 
-    it("drops planted future timestamps so they cannot lock demo out", () => {
+    itDemo("drops planted future timestamps so they cannot lock demo out", () => {
       demoEnv();
       mark();
       const far = Date.now() + 30 * 24 * 3600_000;
@@ -295,7 +300,7 @@ describe("demo pairing", () => {
       expect("error" in redeem(new DeviceRegistry(), CODE)).toBe(false);
     });
 
-    it("drops timestamps older than a day", () => {
+    itDemo("drops timestamps older than a day", () => {
       demoEnv();
       mark();
       const old = Date.now() - 2 * 24 * 3600_000;
@@ -329,7 +334,7 @@ describe("demo pairing", () => {
     expect(r.list()).toHaveLength(0);
   });
 
-  it("purges and announces demo devices when the registry first loads later, after being unreadable", () => {
+  itDemo("purges and announces demo devices when the registry first loads later, after being unreadable", () => {
     demoEnv();
     mark();
     vi.spyOn(console, "info").mockImplementation(() => {});
@@ -356,7 +361,7 @@ describe("demo pairing", () => {
     expect(new DeviceRegistry().list().map((d) => d.id)).toEqual([keep.device.id]);
   });
 
-  it("caps demo devices and frees a slot when one is removed", () => {
+  itDemo("caps demo devices and frees a slot when one is removed", () => {
     demoEnv();
     mark();
     const r = new DeviceRegistry();
@@ -377,12 +382,15 @@ describe("demo pairing", () => {
       expect(demoCodeProblem(bad), bad).not.toBeNull();
     }
     expect(demoCodeProblem(CODE)).toBeNull();
+  });
+
+  itDemo("refuses to start on a demo host whose code is trivial", () => {
     mark();
     demoEnv("123456");
     expect(() => new DeviceRegistry()).toThrow(/demo pairing refused/);
   });
 
-  it("logs each redemption without the code", () => {
+  itDemo("logs each redemption without the code", () => {
     demoEnv();
     mark();
     const info = vi.spyOn(console, "info").mockImplementation(() => {});

@@ -10,6 +10,7 @@ import { DESCRIBE_TARGET_SOURCE } from "./browser-extension-page-scripts.ts";
 import { classifyFloor } from "./browser-floor.ts";
 import { createBrowserExtensionService } from "./browser-extension-service.ts";
 import type { BrowserExtensionCommand, BrowserExtensionHello, BrowserExtensionResponse } from "../shared/browser-extension-protocol.ts";
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
 
 const DOC: ExtensionDocument = { profileId: "p", tabId: 1, frameId: "frame", navigationEpoch: 1, origin: "https://example.test", url: "https://example.test/" };
 const button = (values: string[] = ["x"], extra: object = {}) => ({ display: { tag: "BUTTON", text: "Send" }, bound: { tag: "BUTTON", hidden: [] }, values, editable: false, priv: { href: null, skip: [-1, -1] }, ...extra });
@@ -198,7 +199,7 @@ const cleanup: string[] = [];
 const services: Awaited<ReturnType<typeof createBrowserExtensionService>>[] = [];
 afterEach(async () => { for (const service of services.splice(0)) await service.close(); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
 async function serviceFixture(extra: Record<string, unknown> = {}) {
-  const directory = await fs.mkdtemp(path.resolve(".c1-")); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".c1-")); cleanup.push(directoryRoot);
   const bindings = new Map<string, { generation: number; state: string; tabs: object[] }>();
   const calls: BrowserExtensionCommand[] = []; const order: string[] = [];
   const cards: ExtensionAction[] = []; const handoffs: any[] = [];

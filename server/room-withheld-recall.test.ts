@@ -9,7 +9,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
-import { closeDatabase, database } from "./database.ts";
+import { closeDatabase, database, transaction } from "./database.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
 import { captureSource } from "./memory/capture.ts";
@@ -257,10 +257,14 @@ it("P1: an owner's correction of a pin resting on a withheld reply is delivered"
 it("P1: pins left out do not count toward the pin limit", async () => {
   const { record } = daxRoomReply();
   const a = access("finch", "closing-chat");
-  for (let i = 0; i <= MEMORY_HANDLE_LIMIT; i++) {
-    const id = saveMemoryCandidate(`Rows 83-86, note ${i}.`, [{ sourceId: "message:closing-chat:m-dax", revision: 1, startByte: 0, endByte: Buffer.byteLength(REPLY) }], `k-many-${i}`, a);
-    database().prepare("UPDATE memory_records SET state='active',owner_pinned=1 WHERE id=?").run(id);
-  }
+  // The pins are set up in one transaction (each save nests in it): as one
+  // commit apiece they cost a disk flush each, past 20 s on a GitHub Windows runner.
+  transaction(() => {
+    for (let i = 0; i <= MEMORY_HANDLE_LIMIT; i++) {
+      const id = saveMemoryCandidate(`Rows 83-86, note ${i}.`, [{ sourceId: "message:closing-chat:m-dax", revision: 1, startByte: 0, endByte: Buffer.byteLength(REPLY) }], `k-many-${i}`, a);
+      database().prepare("UPDATE memory_records SET state='active',owner_pinned=1 WHERE id=?").run(id);
+    }
+  });
   await expect(buildMemoryBundle("", access("finch", "closing-chat"), nothing)).rejects.toThrow("MEMORY_PIN_OVERFLOW");
   forget(record);
   const bundle = await buildMemoryBundle("", access("finch", "closing-chat"), nothing);

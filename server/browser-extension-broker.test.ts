@@ -12,18 +12,20 @@ import { once } from 'node:events';
 import { dataDirLeasePaths } from '../electron/data-dir-lease.mjs';
 import { startBrowserExtensionBroker } from './browser-extension-broker.ts';
 import { runNativeHost, readHostConfig, FrameDecoder, encodeFrame } from '../electron/browser-extension-host.mjs';
+import { makePrivateTestSubdirectory, privateTestDirectory, writePrivateTestFile } from './testing/private-test-dir.ts';
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
 async function fixture(capabilities = ['ordered_requests_v1'], onMessage?: (profileId: string, message: unknown) => void) {
-    const stateDir = await fs.mkdtemp(path.join(SHORT_ROOT, 'bex-')); await fs.chmod(stateDir, 0o700);
-  cleanup.push(() => fs.rm(stateDir, { recursive: true, force: true }));
+    const { root: stateRoot, directory: stateDir } = await privateTestDirectory(path.join(SHORT_ROOT, 'bex-'));
+  cleanup.push(() => fs.rm(stateRoot, { recursive: true, force: true }));
   const broker = await startBrowserExtensionBroker({ stateDir, ...(onMessage ? { onMessage: onMessage as never } : {}) }); cleanup.push(() => broker.close());
   const input = new PassThrough(), output = new PassThrough(); const messages: unknown[] = [];
   const decoder = new FrameDecoder(value => messages.push(value)); output.on('data', chunk => decoder.push(chunk));
   const host = runNativeHost({ input, output, config: readHostConfig(broker.configPath) }); cleanup.push(async () => host.stop());
   input.write(encodeFrame({ version: 1, type: 'hello', profileId: 'profile', browser: 'chromium', extensionVersion: '0.1.0', capabilities }));
   if (capabilities.includes('ordered_requests_v1')) await expect.poll(() => broker.profiles().length).toBe(1);
-  else await expect.poll(() => messages.some(value => (value as {type?:string}).type === 'host.error')).toBe(true);
+  // The refusal reaches the host as a closed connection; a Windows named pipe reports that close more slowly than a Unix socket.
+  else await expect.poll(() => messages.some(value => (value as {type?:string}).type === 'host.error'), { timeout: 10_000 }).toBe(true);
   return { broker, input, output, messages, host };
 }
 const command = { version: 1, type: 'command', id: 'request1', bindingId: 'binding', generation: 1, operation: 'status', params: {} } as const;
@@ -89,7 +91,8 @@ describe('native broker real isolated Unix socket', () => {
     const socket = net.createConnection(config.socketPath); cleanup.push(async () => { socket.destroy(); });
     await new Promise<void>(resolve => socket.once('connect', resolve));
     const closed = new Promise(resolve => socket.once('close', resolve));
-    socket.on('data', () => {}); socket.write(encodeFrame({ version: 1, type: 'hello', profileId: 'evil' })); await closed;
+    // The broker drops this client; a Windows pipe may report that as a read error before the close.
+    socket.on('data', () => {}); socket.on('error', () => {}); socket.write(encodeFrame({ version: 1, type: 'hello', profileId: 'evil' })); await closed;
     expect(f.broker.profiles().map(p => p.profileId)).toEqual(['profile']);
   });
 });
@@ -99,7 +102,8 @@ describe('optional stable native config alias', () => {
     const stateDir = await recoveryDir();
     const first = await startBrowserExtensionBroker({ stateDir, configAlias: 'native-host.json' });
     const configPath = first.configPath; const previousSocket = readHostConfig(configPath).socketPath;
-    expect((await fs.stat(configPath)).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode; there the native helper gives the file its owner-only ACL.
+    if (process.platform !== 'win32') expect((await fs.stat(configPath)).mode & 0o777).toBe(0o600);
     await first.close();
     const second = await startBrowserExtensionBroker({ stateDir, configAlias: 'native-host.json' }); cleanup.push(() => second.close());
     expect(second.configPath).toBe(configPath); expect(readHostConfig(configPath).socketPath === previousSocket).toBe(false);
@@ -110,7 +114,8 @@ describe('optional stable native config alias', () => {
     const original = await fs.stat(first.configPath);
     await expect(startBrowserExtensionBroker({ stateDir, configAlias: 'native-host.json' })).rejects.toMatchObject({ code: 'LEASE_BUSY' });
     expect((await fs.stat(first.configPath)).ino).toBe(original.ino);
-    expect((await fs.readdir(stateDir)).length).toBe(3); // unique config, alias and socket only
+    // unique config, alias and socket only; a Windows endpoint is a named pipe, not a file in the folder
+    expect((await fs.readdir(stateDir)).length).toBe(process.platform === 'win32' ? 2 : 3);
   });
   it('does not remove an alias replaced by another owner', async () => {
     const stateDir = await recoveryDir();
@@ -123,7 +128,7 @@ describe('optional stable native config alias', () => {
 async function recoveryDir() {
   const outer = await fs.mkdtemp(path.join(SHORT_ROOT, 'bxr-')); await fs.chmod(outer, 0o700);
   cleanup.push(() => fs.rm(outer, { recursive: true, force: true }));
-  const stateDir = path.join(outer, 'state'); await fs.mkdir(stateDir, { mode: 0o700 }); return stateDir;
+  const stateDir = path.join(outer, 'state'); await makePrivateTestSubdirectory(stateDir); return stateDir;
 }
 async function childBroker(stateDir: string) {
   const child = fork(new URL('./testing/browser-extension-broker-child.ts', import.meta.url), [stateDir], { execArgv: ['--experimental-strip-types'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
@@ -173,7 +178,8 @@ describe('R6 crash recovery boundary (real isolated child processes)', () => {
     }
   });
   it('preserves malformed, symlink, mode, inode, outside endpoint and legacy aliases', async () => {
-    for (const kind of ['malformed','symlink','mode','inode','outside','legacy']) {
+    // 'mode' is a POSIX permission change; a Windows file's protection is its ACL, which 'inode' (a rewritten, unprotected file) covers.
+    for (const kind of ['malformed','symlink',...(process.platform === 'win32' ? [] : ['mode']),'inode','outside','legacy']) {
       const f=await crashedFixture();
       if(kind==='malformed') await fs.writeFile(f.alias,'bad');
       if(kind==='symlink') {await fs.unlink(f.alias);await fs.symlink(path.join(f.stateDir,`browser-${f.config.instance}.json`),f.alias);}
@@ -189,13 +195,14 @@ describe('R6 crash recovery boundary (real isolated child processes)', () => {
   it('preserves live and ambiguous endpoints and requires explicit repair on a later retry', async () => {
     for(const kind of ['live','timeout','permission']) {
       const f=await crashedFixture(); const before=await fs.readFile(f.alias); let listener: net.Server|undefined;
-      if(kind==='live') {await fs.unlink(f.config.socketPath);listener=net.createServer(socket=>socket.on('error',()=>{}));await new Promise<void>(resolve=>listener!.listen(f.config.socketPath,resolve));await fs.chmod(f.config.socketPath,0o600);}
+      // A crashed broker's Unix socket file stays behind and is replaced here; its Windows named pipe ended with the process.
+      if(kind==='live') {if(process.platform!=='win32')await fs.unlink(f.config.socketPath);listener=net.createServer(socket=>socket.on('error',()=>{}));await new Promise<void>(resolve=>listener!.listen(f.config.socketPath,resolve));if(process.platform!=='win32')await fs.chmod(f.config.socketPath,0o600);}
       const mock=kind==='live'?undefined:vi.spyOn(net,'createConnection').mockImplementation((()=>{const socket=new net.Socket();if(kind==='permission')queueMicrotask(()=>socket.emit('error',Object.assign(Error('denied'),{code:'EACCES'})));return socket;}) as typeof net.createConnection);
       try {await expect(startBrowserExtensionBroker({stateDir:f.stateDir,configAlias:'native-host.json'})).rejects.toThrow('browser_helper_repair_required');} finally {mock?.mockRestore();if(listener)await new Promise<void>(resolve=>listener!.close(()=>resolve()));}
       expect((await fs.readFile(f.alias)).equals(before)).toBe(true);
       await expect(startBrowserExtensionBroker({stateDir:f.stateDir,configAlias:'native-host.json'})).rejects.toThrow('browser_helper_repair_required');
     }
-    const missing=await crashedFixture();await fs.unlink(missing.config.socketPath);
+    const missing=await crashedFixture();if(process.platform!=='win32')await fs.unlink(missing.config.socketPath);
     const broker=await startBrowserExtensionBroker({stateDir:missing.stateDir,configAlias:'native-host.json'});cleanup.push(()=>broker.close());expect(readHostConfig(missing.alias).socketPath===missing.config.socketPath).toBe(false);
   });
   it('allows exactly one of two child contenders after a crash', async () => {
@@ -207,7 +214,7 @@ describe('R6 crash recovery boundary (real isolated child processes)', () => {
   });
   it('cleans an injected publication failure, permits retry, and leaves registration artifacts unchanged', async () => {
     const stateDir=await recoveryDir();const files=['launcher','manifest.json','registration-chrome.json'];
-    for(const file of files)await fs.writeFile(path.join(stateDir,file),`fixture-${file}`,{mode:0o600});
+    for(const file of files)writePrivateTestFile(path.join(stateDir,file),`fixture-${file}`);
     const before=await Promise.all(files.map(file=>fs.readFile(path.join(stateDir,file))));
     const mock=vi.spyOn(fs,'link').mockRejectedValueOnce(Object.assign(Error('fixture_failure'),{code:'EIO'}));
     try{await expect(startBrowserExtensionBroker({stateDir,configAlias:'native-host.json'})).rejects.toThrow('fixture_failure');}finally{mock.mockRestore();}
@@ -220,8 +227,8 @@ describe('R6 crash recovery boundary (real isolated child processes)', () => {
 
 describe('Astra 13: a connection that used all its request ids is rotated', () => {
   it('refuses the next request with reconnect_required, drops the connection, and accepts the extension again on a new one', async () => {
-    const stateDir = await fs.mkdtemp(path.join(SHORT_ROOT, 'bex-')); await fs.chmod(stateDir, 0o700);
-    cleanup.push(() => fs.rm(stateDir, { recursive: true, force: true }));
+    const { root: stateRoot, directory: stateDir } = await privateTestDirectory(path.join(SHORT_ROOT, 'bex-'));
+    cleanup.push(() => fs.rm(stateRoot, { recursive: true, force: true }));
     const broker = await startBrowserExtensionBroker({ stateDir, maxRequestsPerConnection: 3 }); cleanup.push(() => broker.close());
     const connect = async () => {
       const input = new PassThrough(), output = new PassThrough(); const messages: unknown[] = [];

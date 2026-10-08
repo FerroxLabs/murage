@@ -30,8 +30,11 @@ it("writes a prospect-derived suggestion under learning-local/<bot>/lessons and 
   expect(kept).toHaveLength(1);
   expect(kept[0]).toMatchObject({ text: "Customers want a price in the first line", prospectDerived: true, evidence: [{ kind: "source", id: "s1" }] });
   const file = join(dataDir, "learning-local", "dax", "lessons", readdirSync(join(dataDir, "learning-local", "dax", "lessons"))[0]!);
-  expect(statSync(file).mode & 0o077).toBe(0);
-  expect(statSync(join(dataDir, "learning-local")).mode & 0o077).toBe(0);
+  // Windows has no POSIX mode bits (stat reports 0o666); owner-only is a POSIX guarantee
+  if (process.platform !== "win32") {
+    expect(statSync(file).mode & 0o077).toBe(0);
+    expect(statSync(join(dataDir, "learning-local")).mode & 0o077).toBe(0);
+  }
   expect(listLearningLocalLessons(dataDir, "nobody")).toEqual([]);
 });
 

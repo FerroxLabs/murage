@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { domFunction } from "./testing/native-dom-fixture.ts";
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
 // Round 10 (blind Astra re-review of round 9, R9-01 to R9-10). Each test reproduces the finding and fails on b58dd9cf.
 // Chrome-dependent proofs (R9-05 genuine overlay, R9-06) are in scripts/browser-corefix10.node-test.mjs (host-pending: the container cannot launch Chrome).
 import fs from "node:fs/promises";
@@ -266,7 +267,7 @@ describe("R9-09 the extension is fenced before the new state is persisted", () =
   const cleanup: string[] = [];
   afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
   it("at the moment of the bind, the state file does not yet hold the new setting", async () => {
-    const directory = await fs.mkdtemp(path.resolve(".corefix10-")); cleanup.push(directory); await fs.chmod(directory, 0o700);
+    const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".corefix10-")); cleanup.push(directoryRoot);
     const stateFile = path.join(directory, "state.json");
     const seen: { operation: string; saved: string | null }[] = [];
     const bindings = new Map<string, any>();
@@ -431,7 +432,7 @@ describe("R10-03 every restrictive route fences the extension before the file is
   const cleanup: string[] = [];
   afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
   async function rig() {
-    const directory = await fs.mkdtemp(path.resolve(".corefix10-")); cleanup.push(directory); await fs.chmod(directory, 0o700);
+    const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".corefix10-")); cleanup.push(directoryRoot);
     const stateFile = path.join(directory, "state.json");
     const seen: { operation: string; saved: string | null; savedState: string | null }[] = [];
     const bindings = new Map<string, any>();

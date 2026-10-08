@@ -9,12 +9,13 @@ import { createBrowserExtensionService } from "./browser-extension-service.ts";
 import { extensionBrowserUnavailablePrompt } from "./browser-extension-prompt.ts";
 import type { BotRecord } from "./store.ts";
 import type { BrowserExtensionCommand, BrowserExtensionHello, BrowserExtensionResponse } from "../shared/browser-extension-protocol.ts";
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
 
 const cleanup: string[] = [];
 afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 async function fixture(profileIds: string[]) {
-  const directory = await fs.mkdtemp(path.resolve(".integration-")); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".integration-")); cleanup.push(directoryRoot);
   let profiles = profileIds; let connected = true; let nextTab = 1;
   const bindings = new Map<string, { generation: number; state: string; tabs: Tab[] }>();
   const hello = (profileId: string): BrowserExtensionHello => ({ version: 1, type: "hello", profileId, browser: "chromium", extensionVersion: "1.0", capabilities: ["scoped_cdp", "durable_stop", "explicit_share", "manual_pause", "engine_cdp_v1", "unexpected_input_pause", "ordered_requests_v1"] });

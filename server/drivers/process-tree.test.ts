@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { setPlatformProcessHooks } from "../platform-process-hooks.ts";
-import { baselineFromListing, descendantBaseline, descendantIdentities, descendantPids, isBrowserPath, parseEtime, settleArgsProbe, untrackedDescendants, untrackedIdentified, walk, type ExemptLayout } from "./process-tree.ts";
+import { baselineFromListing, descendantBaseline, descendantIdentities, descendantPids, isBrowserPath, parseEtime, settleArgsProbe, startedBeforeFromListing, untrackedDescendants, untrackedIdentified, walk, type ExemptLayout } from "./process-tree.ts";
 
 // A stand-in CLI: starts a long-lived "server" child at once, then on a line
 // of stdin the server starts its own child (an npx wrapper's real server) and
@@ -139,7 +139,8 @@ describe("walk with exact exempt layouts", () => {
     expect(found("/Users/x/Library/Caches/ms-playwright/chromium-1140/chrome-mac/Chromium.app/Contents/MacOS/Chromium", { ...layout, realpath: undefined })).toEqual(new Set([3]));
   });
 
-  it("matches the exact layouts under test-injected roots on disk", () => {
+  // isBrowserPath only accepts "/"-rooted POSIX paths (macOS layouts); a Windows drive path can never match
+  it.skipIf(process.platform === "win32")("matches the exact layouts under test-injected roots on disk", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "murage-layout-")));
     try {
       const exe = join(root, "Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
@@ -159,6 +160,20 @@ describe("parseEtime", () => {
     ["00:05", 5], ["12:34", 754], ["01:02:03", 3723], ["1-00:00:00", 86400], ["2-03:04:05", 183845], ["  7:09", 429],
   ])("parses %s", (text, seconds) => expect(parseEtime(text)).toBe(seconds));
   it.each(["", "abc", "5", "1-2", "1:2:3:4"])("rejects %j", (text) => expect(parseEtime(text)).toBeNull());
+});
+
+describe("a wrapped etime from ps", () => {
+  // procps prints a start that lands a tick after its uptime reading as a negative etime wrapped to this
+  const WRAPPED = "441077234-00:18:40";
+  it("is unreadable, not an ancient process", () => {
+    expect(parseEtime(WRAPPED)).toBeNull();
+    expect(parseEtime("3-04:05:06")).toBe(3 * 86_400 + 4 * 3_600 + 5 * 60 + 6);
+  });
+  it("never makes a just-started pid baseline", () => {
+    const now = Date.now();
+    expect(startedBeforeFromListing(`  77 ${WRAPPED}\n  78 00:00\n`, new Set([77, 78]), now, now - 3_600_000)).toEqual(new Set());
+    expect(baselineFromListing(`1 0 ${WRAPPED} root\n77 1 00:00 sleep\n`, 1, now, now - 3_600_000)).toEqual(new Set());
+  });
 });
 
 describe("baselineFromListing", () => {
