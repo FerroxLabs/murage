@@ -573,7 +573,7 @@ describe("harness HTTP API", () => {
       const callOffset = browserNativeEvents.length;
       expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "keep browser access live" })).status)
         .toBe(202);
-      const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
+      const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`).catch((e) => { let d = ""; try { const j = JSON.parse(readFileSync(join(isolatedHome, "fake-claude-dump.json"), "utf8")); d = JSON.stringify({ servers: Object.keys(j.mcpConfig?.mcpServers ?? {}), prompt: JSON.stringify(j.prompt).slice(0, 300), argv: j.argv }); } catch (x) { d = String(x); } throw new Error(`${e.message}\nDIAGDUMP ${d}\nDIAGERR ${isolatedStderr.slice(-4000)}`); });
 
       // Wait for the mounted provider turn before the post-commit cleanup failure.
       const dispatch = await readJsonFileWhenReady<{
@@ -789,7 +789,7 @@ describe("harness HTTP API", () => {
       const callOffset = browserNativeEvents.length;
       expect((await isolatedApi("POST", `/api/bots/${activeBot.id}/messages`, { text: "keep browser access live" })).status)
         .toBe(202);
-      const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
+      const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`).catch((e) => { let d = ""; try { const j = JSON.parse(readFileSync(join(isolatedHome, "fake-claude-dump.json"), "utf8")); d = JSON.stringify({ servers: Object.keys(j.mcpConfig?.mcpServers ?? {}), prompt: JSON.stringify(j.prompt).slice(0, 300), argv: j.argv }); } catch (x) { d = String(x); } throw new Error(`${e.message}\nDIAGDUMP ${d}\nDIAGERR ${isolatedStderr.slice(-4000)}`); });
       // Registration happens before the provider's init frame is persisted.
       // Wait for that final startup write before sabotaging the store;
       // otherwise slower Windows runners can reset the next HTTP request when
@@ -911,7 +911,7 @@ describe("harness HTTP API", () => {
       const callOffset = browserNativeEvents.length;
       expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "do not tear this down" })).status)
         .toBe(202);
-      const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
+      const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`).catch((e) => { let d = ""; try { const j = JSON.parse(readFileSync(join(isolatedHome, "fake-claude-dump.json"), "utf8")); d = JSON.stringify({ servers: Object.keys(j.mcpConfig?.mcpServers ?? {}), prompt: JSON.stringify(j.prompt).slice(0, 300), argv: j.argv }); } catch (x) { d = String(x); } throw new Error(`${e.message}\nDIAGDUMP ${d}\nDIAGERR ${isolatedStderr.slice(-4000)}`); });
 
       // N7 (05cce991): live work refuses deletion outright, with no teardown.
       const refused = await isolatedApi("DELETE", `/api/bots/${bot.id}`, undefined, isolatedDesktopHeaders);

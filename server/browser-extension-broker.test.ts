@@ -12,11 +12,12 @@ import { once } from 'node:events';
 import { dataDirLeasePaths } from '../electron/data-dir-lease.mjs';
 import { startBrowserExtensionBroker } from './browser-extension-broker.ts';
 import { runNativeHost, readHostConfig, FrameDecoder, encodeFrame } from '../electron/browser-extension-host.mjs';
+import { makePrivateTestSubdirectory, privateTestDirectory, writePrivateTestFile } from './testing/private-test-dir.ts';
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
 async function fixture(capabilities = ['ordered_requests_v1'], onMessage?: (profileId: string, message: unknown) => void) {
-    const stateDir = await fs.mkdtemp(path.join(SHORT_ROOT, 'bex-')); await fs.chmod(stateDir, 0o700);
-  cleanup.push(() => fs.rm(stateDir, { recursive: true, force: true }));
+    const { root: stateRoot, directory: stateDir } = await privateTestDirectory(path.join(SHORT_ROOT, 'bex-'));
+  cleanup.push(() => fs.rm(stateRoot, { recursive: true, force: true }));
   const broker = await startBrowserExtensionBroker({ stateDir, ...(onMessage ? { onMessage: onMessage as never } : {}) }); cleanup.push(() => broker.close());
   const input = new PassThrough(), output = new PassThrough(); const messages: unknown[] = [];
   const decoder = new FrameDecoder(value => messages.push(value)); output.on('data', chunk => decoder.push(chunk));
@@ -123,7 +124,7 @@ describe('optional stable native config alias', () => {
 async function recoveryDir() {
   const outer = await fs.mkdtemp(path.join(SHORT_ROOT, 'bxr-')); await fs.chmod(outer, 0o700);
   cleanup.push(() => fs.rm(outer, { recursive: true, force: true }));
-  const stateDir = path.join(outer, 'state'); await fs.mkdir(stateDir, { mode: 0o700 }); return stateDir;
+  const stateDir = path.join(outer, 'state'); await makePrivateTestSubdirectory(stateDir); return stateDir;
 }
 async function childBroker(stateDir: string) {
   const child = fork(new URL('./testing/browser-extension-broker-child.ts', import.meta.url), [stateDir], { execArgv: ['--experimental-strip-types'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
@@ -207,7 +208,7 @@ describe('R6 crash recovery boundary (real isolated child processes)', () => {
   });
   it('cleans an injected publication failure, permits retry, and leaves registration artifacts unchanged', async () => {
     const stateDir=await recoveryDir();const files=['launcher','manifest.json','registration-chrome.json'];
-    for(const file of files)await fs.writeFile(path.join(stateDir,file),`fixture-${file}`,{mode:0o600});
+    for(const file of files)writePrivateTestFile(path.join(stateDir,file),`fixture-${file}`);
     const before=await Promise.all(files.map(file=>fs.readFile(path.join(stateDir,file))));
     const mock=vi.spyOn(fs,'link').mockRejectedValueOnce(Object.assign(Error('fixture_failure'),{code:'EIO'}));
     try{await expect(startBrowserExtensionBroker({stateDir,configAlias:'native-host.json'})).rejects.toThrow('fixture_failure');}finally{mock.mockRestore();}
@@ -220,8 +221,8 @@ describe('R6 crash recovery boundary (real isolated child processes)', () => {
 
 describe('Astra 13: a connection that used all its request ids is rotated', () => {
   it('refuses the next request with reconnect_required, drops the connection, and accepts the extension again on a new one', async () => {
-    const stateDir = await fs.mkdtemp(path.join(SHORT_ROOT, 'bex-')); await fs.chmod(stateDir, 0o700);
-    cleanup.push(() => fs.rm(stateDir, { recursive: true, force: true }));
+    const { root: stateRoot, directory: stateDir } = await privateTestDirectory(path.join(SHORT_ROOT, 'bex-'));
+    cleanup.push(() => fs.rm(stateRoot, { recursive: true, force: true }));
     const broker = await startBrowserExtensionBroker({ stateDir, maxRequestsPerConnection: 3 }); cleanup.push(() => broker.close());
     const connect = async () => {
       const input = new PassThrough(), output = new PassThrough(); const messages: unknown[] = [];

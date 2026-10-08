@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, rmSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { privateTestDirectorySync, writePrivateTestFile } from "./testing/private-test-dir.ts";
 import { join } from "node:path";
 import { BrowserExtensionApprovals, BROWSER_EXTENSION_APPROVAL_TOOL, CARD_LIFETIME_MS, type ApprovalBinding, type ContinuationInfo } from "./browser-extension-approvals.ts";
 import type { ApprovalBus } from "./peer-approval.ts";
@@ -48,7 +49,7 @@ describe("Fable M3, M9, H4: human decision time, long text, push bodies",()=>{
 // T22 / F9: durable cards. The decision time (a person answering in their own time) is separate from the execution time.
 describe("T22 durable cards", () => {
   let dir: string, file: string;
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "approvals-durable-")); file = join(dir, "approvals.json"); });
+  beforeEach(() => { const made = privateTestDirectorySync(join(tmpdir(), "approvals-durable-")); dir = made.root; file = join(made.directory, "approvals.json"); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
   const binding = (over: Partial<ApprovalBinding> = {}): ApprovalBinding => ({ generation: 3, documentEpoch: "1:7:https://example.com", targetDigest: "1".repeat(64), submissionDigest: "2".repeat(64), payloadDigest: "3".repeat(64), actionDigest: "4".repeat(64), ...over });
   type Clock = { t: number };
@@ -193,7 +194,7 @@ describe("T22 durable cards", () => {
   it("a damaged or unknown-version file fails closed: nothing is answerable and every card is dismissed", async () => {
     vi.useFakeTimers(); const f = durable(); const result = f.ask(); await vi.advanceTimersByTimeAsync(1000); await result;
     for (const content of ["{not json", JSON.stringify({ version: 2, records: [] }), JSON.stringify({ version: 1, records: [{ requestId: 5 }] }), "[]"]) {
-      writeFileSync(file, content, { mode: 0o600 });
+      writePrivateTestFile(file, content);
       const again = f.make(); expect(() => again.dismissStale()).not.toThrow();
       expect(again.resolve("thread", f.card().requestId!, "allow")).toBe(false);
       expect(again.consume(query())).toBe(false);
@@ -202,7 +203,7 @@ describe("T22 durable cards", () => {
   });
   it("a record that says allowed but names a card that is not answered allow is not trusted", async () => {
     vi.useFakeTimers(); const f = durable(); const result = f.ask(); await vi.advanceTimersByTimeAsync(1000); await result;
-    const saved = JSON.parse(readFileSync(file, "utf8")); saved.records[0].status = "allowed"; writeFileSync(file, JSON.stringify(saved), { mode: 0o600 });
+    const saved = JSON.parse(readFileSync(file, "utf8")); saved.records[0].status = "allowed"; writePrivateTestFile(file, JSON.stringify(saved));
     expect(f.make().consume(query())).toBe(false);
   });
   it("a continuation that could not start (the bot is busy) is retried by drain, and never twice", async () => {
