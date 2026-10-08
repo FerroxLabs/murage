@@ -4,10 +4,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
 const cleanup: string[] = [];
 afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
 async function fixture(extraOptions: Record<string, unknown> = {}) {
-  const directory = await fs.mkdtemp(path.resolve('.service-')); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve('.service-')); cleanup.push(directoryRoot);
   const stateFile = path.join(directory, 'state.json');
   const bindings = new Map<string, { generation: number; state: string; tabs: {tabId:number;navigationEpoch:number;origin:string;url:string}[] }>();
   const calls: BrowserExtensionCommand[] = []; let nextTab = 1; let connected = true;

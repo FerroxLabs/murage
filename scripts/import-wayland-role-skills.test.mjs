@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 describe("import-wayland-role-skills", () => {
@@ -16,7 +17,7 @@ describe("import-wayland-role-skills", () => {
     writeFileSync(join(root, "src", "skills", "beacon", "demo.md"), "# Demo\n\nDoes a demo thing.\n");
     const out = join(root, "out");
     mkdirSync(out);
-    execFileSync(process.execPath, [new URL("./import-wayland-role-skills.mjs", import.meta.url).pathname, "--source", join(root, "src"), "--out", out], { stdio: "ignore" });
+    execFileSync(process.execPath, [fileURLToPath(new URL("./import-wayland-role-skills.mjs", import.meta.url)), "--source", join(root, "src"), "--out", out], { stdio: "ignore" });
     const text = readFileSync(join(out, "beacon-demo", "SKILL.md"), "utf8");
     const front = text.split("---")[1];
     expect(front).toMatch(/^license: Apache-2\.0$/m);

@@ -8,7 +8,8 @@
 // done. Each engine kind answers with the verdict block in its reply
 // (fake-review.ts); Fuigo also answers through project_review_result. A
 // reviewer that gives no verdict wakes the lead, who decides.
-import { chmodSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,7 +32,11 @@ const withDb = <T>(read: (db: DatabaseSync) => T): T => {
 const REVIEWERS = ["rev-claude", "rev-codex", "rev-fuigo", "rev-fuigo-tool", "rev-grok", "rev-gemini", "rev-pi", "rev-agy"];
 
 beforeAll(async () => {
-  fixtureRoot = mkdtempSync(join(dirname(fileURLToPath(import.meta.url)), ".review-fixtures-"));
+  // Outside the checkout: a data dir inside the repository makes every
+  // workspace sit under its git root, whose AGENTS.md and .claude/skills
+  // Fuigo would read, so Murage rightly asks "Trust this folder?" first and
+  // the Fuigo reviewers wait on the owner (a CI checkout has .git).
+  fixtureRoot = realpathSync.native(mkdtempSync(join(tmpdir(), "review-fixtures-")));
   vi.stubEnv("TMPDIR", fixtureRoot);
   for (const path of [FAKE_ACP, FAKE_CODEX, FAKE_PI, FAKE_AGY]) chmodSync(path, 0o755);
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
@@ -94,7 +99,17 @@ const reviewRows = (cardId: string) => withDb(db => db.prepare("SELECT to_bot_id
 describe.skipIf(process.platform === "win32")("a card in review always ends in a verdict", () => {
   it.each(REVIEWERS)("the %s reviewer's verdict moves the card to done", async (instance) => {
     const { group, card, reviewer } = await goalCard(instance);
-    await expect.poll(async () => (await cardOf(group.id, card.id))?.state, { timeout: 60000, interval: 250 }).toBe("done");
+    try { await expect.poll(async () => (await cardOf(group.id, card.id))?.state, { timeout: 60000, interval: 250 }).toBe("done"); }
+    catch (error) {
+      // what the reviewer's run left: its review request and the server's last lines
+      const log = readFileSync(fixture.info.logPath, "utf8").split("\n").slice(-40).join("\n");
+      const record = (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === reviewer?.id);
+      const threads = [group.threadId, record?.threadId, ...(record?.tasks ?? []).map((task: any) => task.threadId)].filter(Boolean);
+      const shown: string[] = [];
+      for (const threadId of threads) for (const message of (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).body?.messages ?? [])
+        if (message.kind !== "text" || message.role !== "user") shown.push(`${threadId.slice(0, 8)} ${message.role}/${message.kind} ${String(message.tool?.name ?? "").slice(0, 120)} ${String(message.text ?? "").slice(0, 200)} ${JSON.stringify(message.card ? { title: message.card.title, subtitle: message.card.subtitle, tool: message.card.tool, choices: message.card.choices?.map((choice: any) => choice.label ?? choice) } : "").slice(0, 600)}`);
+      throw new Error(`${(error as Error).message}\nreview rows ${JSON.stringify(reviewRows(card.id))}\nmessages:\n${shown.join("\n")}\nserver log tail:\n${log}`);
+    }
     expect(reviewRows(card.id)).toEqual([{ to_bot_id: reviewer!.id, state: "done", outcome_note: "pass" }]);
     const room = (await api("GET", `/api/threads/${group.threadId}/messages`)).body.messages;
     // the room shows the verdict in words, never the block or its nonce

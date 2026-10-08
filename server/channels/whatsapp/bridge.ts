@@ -18,7 +18,7 @@
 // --experimental-strip-types.
 import { createHash } from "node:crypto";
 import { constants as fsConstants, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { AuthStoreError, bufferJSON, parseAuthKey, useEncryptedAuthState, wipeAuthDir, writeFileAtomic, type EncryptedAuthState } from "./core/auth-store.ts";
@@ -261,7 +261,7 @@ export class MediaStore {
   async save(chatJid: string, messageId: string, mime: string | undefined, stream: MediaStream, maxBytes: number): Promise<{ path: string; bytes: number } | null> {
     const target = this.pathFor(chatJid, messageId, mime);
     if (existsSync(target)) { stream.destroy?.(); return containedMediaFile(this.dir, target, maxBytes); }
-    if (!createMediaDirectory(this.dir) || !createMediaDirectory(dirname(target))) { stream.destroy?.(); return null; }
+    if (!createMediaDirectory(this.dir, this.dir) || !createMediaDirectory(this.dir, dirname(target))) { stream.destroy?.(); return null; }
     if (!mediaDirectory(this.dir, join(target, ".."))) { stream.destroy?.(); return null; }
     const budget = Math.min(maxBytes, MEDIA_CONNECTION_MAX_BYTES - this.usedBytes());
     if (budget <= 0) { stream.destroy?.(); return null; }
@@ -293,7 +293,7 @@ export class MediaStore {
   sweep(keepIds: ReadonlySet<string>): number {
     let removed = 0;
     for (const file of this.files()) {
-      const base = file.path.slice(file.path.lastIndexOf("/") + 1);
+      const base = basename(file.path);
       const id = base.replace(/\.part$/, "").replace(/\.[^.]+$/, "");
       if (this.now() - file.mtimeMs < MEDIA_SWEEP_MS || keepIds.has(id)) continue;
       rmSync(file.path, { force: true });

@@ -2,7 +2,7 @@ import { executionStore } from "./execution-audience.ts";
 import { partitionFileRefusal } from "./partition-files.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
-import { basename, dirname, extname, isAbsolute, join, parse, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import type { Artifact, ArtifactKind, ArtifactPage, ArtifactPreview, ArtifactQuery, ArtifactRegistration } from "../shared/artifacts.ts";
@@ -53,6 +53,13 @@ export function artifactWorkspaceIdentity(path: string): string {
     suffix.unshift(basename(current)); current = parent;
   }
   fail(403, "An authorized workspace is required.");
+}
+/** True when `path` is `base` or below it. Uses the platform's own separator
+ * and comparison (Windows paths are case-insensitive), so a partition boundary
+ * holds on every OS: a literal "/" test never matches a Windows path. */
+export function workspacePathWithin(path: string, base: string): boolean {
+  const rel = relative(base, path);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 /** Private setup and memory names. `last` marks the final path segment,
  * where the setup file names apply as well as the private folder names. */

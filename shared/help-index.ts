@@ -473,7 +473,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
     "where": "Settings → Models",
     "url": "https://murage.app/docs/changelog/v1-0-0#engines-and-models-in-1-0-0",
-    "text": "- Fuigo 1.0.22. Send a message while a bot is working and it steers the running turn. A message is never sent twice, and one that didn't land is shown plainly.\n- Use the plan you already pay for. Sign in with your ChatGPT plan, or your Grok plan (an unofficial sign-in), under Settings → Models and your bots can use the models that come with it.\n- Claude and Codex answer faster. Murage keeps the engine ready between turns, so your follow-ups start sooner. It watches free memory, so a smaller machine stays responsive.\n- Claude Sonnet 5.5 is in the model list, and Requesty is a named model connection.\n- Switch with your eyes open.…"
+    "text": "- Fuigo 1.0.22. Send a message while a bot is working and it steers the running turn. A message is never sent twice, and one that didn't land is shown plainly.\n- Use the plan you already pay for. Sign in with your ChatGPT plan, or your Grok plan (an unofficial sign-in), under Settings → Models and your bots can use the models that come with it.\n- Claude and Codex answer faster. Murage keeps the engine ready between turns, so your follow-ups start sooner. It watches free memory, so a smaller machine stays responsive.\n- Claude Sonnet 5.5 and Claude Haiku 5.5 are in the model list, and Requesty is a named model connection.\n- Switch with your eyes open.…"
   },
   {
     "id": "changelog/v1-0-0#connected-apps-and-tools-in-1-0-0",

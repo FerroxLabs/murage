@@ -315,6 +315,30 @@ describe("a 401 on an access token: one report, one wait, one retry", () => {
     expect(authorizations[1]).not.toBe(authorizations[0]);
   });
 
+  it("a token main pushed while this call was in flight is taken at once, with no second refresh", async () => {
+    // Two calls rejected together: the first one's report refreshed, and the
+    // reactive cool-down drops this call's report. It must not wait for a
+    // token newer than the one already pushed (macOS CI, mcp-link step 6).
+    fake = await startFakeRemoteMcp({ auth: "bearer" });
+    setMcpServerSecrets("svc", { origin: fake!.origin, oauth: { accessToken: "at_stale_value_1" } });
+    let reported = 0;
+    const pending = relayMcpCall(context(rpc("tools/list", 1), {
+      server: serverFor({ auth: "oauth" }), tokenWaitMs: 3_000,
+      postTokenRejected: () => { reported += 1; return true; },
+    }));
+    // the stale request is already on its way; main's push for the other call lands now
+    setMcpServerSecrets("svc", { origin: fake!.origin, oauth: { accessToken: fake!.mintAccessToken() } });
+    const started = Date.now();
+    const result = await pending;
+    expect(result).toMatchObject({ ok: true, status: 200 });
+    expect(reported).toBe(1);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    const authorizations = fake.requests.map((request) => request.headers.authorization).filter(Boolean);
+    expect(authorizations).toHaveLength(2);
+    expect(authorizations[0]).toBe("Bearer at_stale_value_1");
+    expect(authorizations[1]).not.toBe(authorizations[0]);
+  });
+
   it("no new token in time, or no desktop shell to ask, is sign-in-ended after a single request", async () => {
     fake = await startFakeRemoteMcp({ auth: "bearer" });
     setMcpServerSecrets("svc", { origin: fake!.origin, oauth: { accessToken: "at_stale_value_1" } });

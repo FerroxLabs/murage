@@ -61,8 +61,10 @@ it("three card desks overlap, then each delivers once and wakes the lead", async
   try {
     const live = db.prepare("SELECT dispatched_at FROM room_requests WHERE group_id=? AND verb='assign' AND state='running' ORDER BY dispatched_at").all(group.id) as Array<{ dispatched_at: number }>;
     expect(live).toHaveLength(3);
-    expect(live[1].dispatched_at - live[0].dispatched_at).toBeGreaterThanOrEqual(2000);
-    expect(live[2].dispatched_at - live[1].dispatched_at).toBeGreaterThanOrEqual(2000);
+    // Admission spaces card starts 2000 ms apart on its own clock reading (work-admission.ts);
+    // dispatched_at is a later reading per card, so each gap may come out a few ms short of it.
+    expect(live[1].dispatched_at - live[0].dispatched_at).toBeGreaterThanOrEqual(2000 - 50);
+    expect(live[2].dispatched_at - live[1].dispatched_at).toBeGreaterThanOrEqual(2000 - 50);
   } finally { db.close(); }
   expect(new Set((await board()).map((card: any) => card.deskThreadId)).size).toBe(3);
   await expect.poll(() => readdirSync(join(fixtureRoot, "accepted")).filter(name => name.endsWith(".accepted")).length, { timeout: 45000 }).toBe(3);
