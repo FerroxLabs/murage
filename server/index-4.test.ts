@@ -376,18 +376,28 @@ describe("resumable event stream", () => {
     const botId = body.bots[0].id;
     const first = await openSse(`${BASE}/api/events`);
     const hello = await first.until((frame) => frame.kind === "hello");
+    let cursorSeq = 0;
     try {
       expect(await first.until((frame) => frame.kind === "ping")).toEqual({ kind: "ping" });
       await nudge(botId);
       const next = await first.until((frame) => frame.kind === "bot" && frame.bot?.id === botId);
-      expect(next.seq).toBe(Number(hello.cursor.split(":")[1]) + 1);
+      // Other broadcasts (inbox changes, another bot's activity) may take
+      // sequence numbers between the hello and our frame on a busy runner,
+      // so the frame is later than the hello, not necessarily the next one.
+      // What a heartbeat must never do is carry or consume a number: it has
+      // no seq (asserted above), and no two numbered frames share one.
+      const helloSeq = Number(hello.cursor.split(":")[1]);
+      expect(next.seq).toBeGreaterThan(helloSeq);
+      const numbered = first.frames.filter((frame) => typeof frame.seq === "number").map((frame) => frame.seq);
+      expect(new Set(numbered).size).toBe(numbered.length);
+      cursorSeq = next.seq;
     } finally {
       first.close();
     }
 
     // Heartbeats describe connection health, not application state. A
     // reconnect from the numbered application frame remains fully resumable.
-    const cursor = `${hello.cursor.split(":")[0]}:${Number(hello.cursor.split(":")[1]) + 1}`;
+    const cursor = `${hello.cursor.split(":")[0]}:${cursorSeq}`;
     const resumed = await openSse(`${BASE}/api/events?since=${encodeURIComponent(cursor)}`);
     try {
       expect((await resumed.until((frame) => frame.kind === "hello")).resumed).toBe(true);
@@ -400,30 +410,50 @@ describe("resumable event stream", () => {
     const { body } = await api("GET", "/api/bots");
     const botId = body.bots[0].id;
 
-    const first = await openSse(`${BASE}/api/events`);
-    const hello = await first.until((f) => f.kind === "hello");
-    await nudge(botId);
-    const seen = await first.until((f) => f.kind === "bot");
-    first.close();
-    // a real client advances its cursor as frames arrive — resume from the
-    // last frame it actually saw, not from where it connected
-    const cursor = `${hello.cursor.split(":")[0]}:${seen.seq}`;
-
-    // ...three things happen while the phone is asleep...
-    await nudge(botId);
-    await nudge(botId);
-    await nudge(botId);
-
-    const resumed = await openSse(`${BASE}/api/events?since=${encodeURIComponent(cursor)}`);
+    // A second client that never disconnects is the ground truth for what was
+    // broadcast while the first was away. Sequence numbers are shared by every
+    // frame kind, so on a busy runner unrelated frames (inbox changes, other
+    // bots) take numbers between our three; "exactly what was missed" is what
+    // the witness saw, not seen.seq + 1..3.
+    const witness = await openSse(`${BASE}/api/events`);
     try {
-      // ...and an old cursor still replays them, in order, without a hydrate
-      const back = await resumed.until((f) => f.kind === "hello");
-      expect(back.resumed).toBe(true);
-      await resumed.until((f) => f.kind === "bot" && f.seq === seen.seq + 3);
-      const replayed = resumed.frames.filter((f) => f.kind === "bot").map((f) => f.seq);
-      expect(replayed).toEqual([seen.seq + 1, seen.seq + 2, seen.seq + 3]);
+      await witness.until((f) => f.kind === "hello");
+      const first = await openSse(`${BASE}/api/events`);
+      const hello = await first.until((f) => f.kind === "hello");
+      await nudge(botId);
+      const seen = await first.until((f) => f.kind === "bot");
+      first.close();
+      // a real client advances its cursor as frames arrive — resume from the
+      // last frame it actually saw, not from where it connected
+      const cursor = `${hello.cursor.split(":")[0]}:${seen.seq}`;
+
+      // ...three things happen while the phone is asleep...
+      const mine = () => witness.frames.filter((f) => f.kind === "bot" && f.bot?.id === botId && f.seq > seen.seq);
+      await nudge(botId);
+      await nudge(botId);
+      await nudge(botId);
+      await witness.until(() => mine().length >= 3);
+      const cutoff = Math.max(...mine().map((f) => f.seq));
+
+      const resumed = await openSse(`${BASE}/api/events?since=${encodeURIComponent(cursor)}`);
+      try {
+        // ...and an old cursor still replays them, in order, without a hydrate
+        const back = await resumed.until((f) => f.kind === "hello");
+        expect(back.resumed).toBe(true);
+        await resumed.until(() => resumed.frames.some((f) => typeof f.seq === "number" && f.seq >= cutoff));
+        const after = (frames: any[]) =>
+          frames.filter((f) => typeof f.seq === "number" && f.seq > seen.seq && f.seq <= cutoff).map((f) => f.seq);
+        const replayed = after(resumed.frames);
+        expect(replayed.length).toBeGreaterThanOrEqual(3);
+        // strictly ascending: in order, nothing twice
+        expect(replayed).toEqual([...new Set(replayed)].sort((a, b) => a - b));
+        // and it is exactly what the live client saw after the same cursor
+        expect(replayed).toEqual(after(witness.frames));
+      } finally {
+        resumed.close();
+      }
     } finally {
-      resumed.close();
+      witness.close();
     }
   });
 

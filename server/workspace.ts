@@ -15,7 +15,7 @@ import { join, relative, sep } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 
 import { DATA_DIR } from "./config.ts";
-import { artifactWorkspaceIdentity } from "./artifacts.ts";
+import { artifactWorkspaceIdentity, workspacePathWithin } from "./artifacts.ts";
 import type { Store } from "./store.ts";
 
 export const WORKSPACES_DIR = join(DATA_DIR, "workspaces");
@@ -89,7 +89,8 @@ export function selectFileWorkspace(dataDir: string, store: Pick<Store, "bots" |
     const room = store.groups.find(item => item.memberIds.includes(botId) && (item.threadId === threadId || item.tasks?.some(t => t.threadId === threadId)));
     const pinned = task ? task.cwd : room?.tasks?.find(t => t.threadId === threadId)?.pinnedCwd ?? room?.pinnedCwd ?? room?.cwd;
     const managedBase = artifactWorkspaceIdentity(join(dataDir, "workspaces"));
-    if (!pinned || artifactWorkspaceIdentity(pinned).startsWith(managedBase + "/")) return { root: managedRoot, managed: true };
+    const pinnedIdentity = pinned ? artifactWorkspaceIdentity(pinned) : undefined;
+    if (!pinnedIdentity || (pinnedIdentity !== managedBase && workspacePathWithin(pinnedIdentity, managedBase))) return { root: managedRoot, managed: true };
   }
   if (task) {
     if (typeof task.cwd === "string") return selection(task.cwd);

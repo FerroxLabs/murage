@@ -16,7 +16,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, dirname } from "node:path";
+import { isAbsolute, join, dirname, resolve } from "node:path";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
 
 import { DATA_DIR, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
@@ -242,6 +242,7 @@ export const STATIC_CLAUDE_MODELS: ModelCatalog = {
     { id: "claude-opus-5", label: "Claude Opus 5" },
     { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", contextWindow: 1_000_000 },
     { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", contextWindow: 1_000_000 },
     { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
   ],
 };
@@ -892,10 +893,19 @@ export function claudeGitRoots(cwd: string): string[] {
   let roots: string[] = [];
   try {
     const [top, common] = execFileSync("git", ["rev-parse", "--show-toplevel", "--git-common-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000, windowsHide: true }).split(/\r?\n/).map((line) => line.trim());
-    if (top) roots.push(top);
+    // git prints forward slashes and long names on Windows while join() of a relative answer keeps
+    // the caller's separators and 8.3 names, so one root could appear twice in two spellings
+    const canonical = (path: string): string => {
+      try {
+        return realpathSync.native(path);
+      } catch {
+        return resolve(path);
+      }
+    };
+    if (top) roots.push(canonical(top));
     if (common) {
       const commonDir = isAbsolute(common) ? common : join(cwd, common);
-      const main = dirname(commonDir);
+      const main = canonical(dirname(commonDir));
       if (/[\\/]\.git$|^\.git$/.test(commonDir) && !roots.includes(main)) roots.push(main);
     }
   } catch {

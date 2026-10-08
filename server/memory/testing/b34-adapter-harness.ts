@@ -28,6 +28,7 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { launchVerificationServer, runControlMurage, type VerificationServer } from "../../../scripts/control-murage.ts";
 import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE } from "../../../shared/memory.ts";
+import { withTurnSecrets } from "../../testing/fixture-dump.ts";
 import type { AdapterArtifacts as MirroredAdapterArtifacts, AdapterRow, Api, B34Adapter, B34AdapterContext, Bot, Check, Dump, SetupVerify } from "./b34-adapter-types.ts";
 
 /** One request the runner would have observed through ctx.send (with its thread) or ctx.dispatched (thread null). */
@@ -132,7 +133,7 @@ export async function runAdapterLikeRunner(adapter: B34Adapter, opts: AdapterHar
     async send(bot, text, hold = false, threadId) {
       rmSync(fixture.fixtureDumpPath, { force: true });
       await ctx.setup(null, "POST", `/api/bots/${bot.id}/messages`, threadId === undefined ? { text } : { threadId, text }, 202);
-      const dump = await ctx.until<Dump>(`fake provider accepted ${text}`, () => { try { return JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")) as Dump; } catch { return undefined; } });
+      const dump = await ctx.until<Dump>(`fake provider accepted ${text}`, () => { try { return withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")) as Dump); } catch { return undefined; } });
       if (!hold) await ctx.settled("bot", bot.id);
       return dump;
     },
@@ -198,7 +199,7 @@ async function runAdapter(row: AdapterRow, adapter: B34Adapter, ctx: HarnessCtx,
     async send(bot, text, hold, threadId) { return record(await ctx.send(bot, text, hold, threadId), threadId ?? bot.threadId); },
     async dispatched(match, timeout = 30_000) {
       return record(await ctx.until<Dump>("fake provider received the adapter turn", () => {
-        try { const dump = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")) as Dump; return JSON.stringify(dump.prompt ?? null).includes(match) ? dump : undefined; } catch { return undefined; }
+        try { const dump = withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")) as Dump); return JSON.stringify(dump.prompt ?? null).includes(match) ? dump : undefined; } catch { return undefined; }
       }, timeout), null);
     },
     async restart() { closeView(); await ctx.restart(); },

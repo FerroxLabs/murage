@@ -14,6 +14,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { threadCheckpointId } from "./memory/checkpoints.ts";
 
 const FAKE_PI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-pi-cli.ts");
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -27,6 +28,14 @@ const messages = async (threadId: string) => (await api("GET", `/api/threads/${t
 const prompts = (): string[] => {
   const file = join(fixture.info.dataDir, "pi-dump.jsonl");
   return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(row => row.prompt).map(row => String(row.message)) : [];
+};
+
+// Alpha's replies as the room transcript serializes them: a reply that
+// answers a message carries its marker first (replies.ts transcriptText),
+// "Alpha: [replying to User: “…”]" then the reply text on the next line.
+const alphaReplies = (prompt: string) => {
+  const lines = prompt.split("\n");
+  return lines.filter((line, index) => line === "Alpha: Hello from pi" || (/^Alpha: \[replying to [^\]]*\]$/.test(line) && lines[index + 1] === "Hello from pi")).length;
 };
 
 posixOnly("a room member reads every teammate reply after a roster change", () => {
@@ -68,7 +77,10 @@ posixOnly("a room member reads every teammate reply after a roster change", () =
         await expect.poll(() => pendingJobs(), { timeout: 20000 }).toBe(0);
       };
 
-      const checkpoint = () => db.prepare("SELECT r.state FROM memory_records r JOIN memory_scopes s ON s.id=r.scope_id WHERE r.kind='checkpoint' AND s.kind='conversation' AND s.owner_key=? ORDER BY r.version DESC LIMIT 1").get(room.threadId) as { state: string } | undefined;
+      // A room's main chat captures into the room's scope (memory/capture-scope.ts,
+      // 0.1.61 lane M); its checkpoint is threadCheckpointId(<room scope>, <thread>).
+      const checkpointIds = () => JSON.stringify((db.prepare("SELECT id FROM memory_scopes WHERE (kind='conversation' AND owner_key=?) OR (kind='room' AND owner_key=?)").all(room.threadId, room.id) as Array<{ id: string }>).map(scope => threadCheckpointId(scope.id, room.threadId)));
+      const checkpoint = () => db.prepare("SELECT state FROM memory_records WHERE kind='checkpoint' AND id IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC, version DESC LIMIT 1").get(checkpointIds()) as { state: string } | undefined;
       const receiptFor = (messageId: string) => db.prepare("SELECT state,record_versions FROM memory_disclosures WHERE thread_id=? AND output_message_ids LIKE ? ORDER BY created_at DESC LIMIT 1").get(room.threadId, `%${messageId}%`) as { state: string; record_versions: string } | undefined;
 
       // Alpha answers twice, each under a memory receipt linked to the reply;
@@ -79,7 +91,7 @@ posixOnly("a room member reads every teammate reply after a roster change", () =
       await expect.poll(() => checkpoint()?.state, { timeout: 20000 }).toBe("active");
       // the version a dispatch of the next turn can select: it cites the
       // owner's first message and not the reply that turn will produce
-      const selectable = db.prepare("SELECT r.id,r.version FROM memory_records r JOIN memory_scopes s ON s.id=r.scope_id WHERE r.kind='checkpoint' AND s.owner_key=? AND r.state='active'").get(room.threadId) as { id: string; version: number };
+      const selectable = db.prepare("SELECT id,version FROM memory_records WHERE kind='checkpoint' AND id IN (SELECT value FROM json_each(?)) AND state='active'").get(checkpointIds()) as { id: string; version: number };
       await send("second question");
       await expect.poll(async () => (await repliesBy(alpha.id)).length, { timeout: 15000 }).toBe(2);
       const [first, second] = await repliesBy(alpha.id);
@@ -105,7 +117,7 @@ posixOnly("a room member reads every teammate reply after a roster change", () =
       await send("@Bravo what do you make of Alpha's answers?");
       await expect.poll(async () => (await repliesBy(bravo.id)).length, { timeout: 15000 }).toBe(1);
       const bravoPrompt = prompts().slice(before).at(-1)!;
-      expect(bravoPrompt.split("\n").filter(line => line === "Alpha: Hello from pi").length).toBe(2);
+      expect(alphaReplies(bravoPrompt)).toBe(2);
       expect(bravoPrompt).not.toContain("Reply withheld");
 
       // The owner forgets their first message. Alpha's second reply used it
@@ -121,7 +133,7 @@ posixOnly("a room member reads every teammate reply after a roster change", () =
       // a visible withheld line, with author and time, where the reply was
       const stamp = new Date(second.at).toISOString().slice(0, 16).replace("T", " ");
       expect(lastPrompt).toContain(`[Reply withheld: it used something you deleted or changed] (Alpha, ${stamp} UTC)`);
-      expect(lastPrompt.split("\n").filter(line => line === "Alpha: Hello from pi").length).toBe(1);
+      expect(alphaReplies(lastPrompt)).toBe(1);
       // the owner's own words are never withheld
       expect(lastPrompt).toContain("User: first question");
       // the owner keeps the reply, marked; the other reply is not marked

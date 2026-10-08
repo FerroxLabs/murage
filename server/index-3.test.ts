@@ -27,9 +27,12 @@ import { z } from "zod";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
-import { BASE, FAKE_CLAUDE_CLI, FIXTURE_ENGINE_OVERRIDES, ROOT, SERVER_DIR, WEBHOOK_BASE, api, boxStubPort, browserFixturePrelude, browserMount, browserNativeEvents, browserRegisterDelayMs, browserRpc, browserSession, desktopApi, expectStoppedTestServerCleanly, fakeClaudeDump, home, privateDesktopHeaders, readJsonFileWhenReady, setBrowserRegisterDelayMs, startInternalFixtureTurn, storedMessageCount, waitForIsolatedServer } from "./testing/index-harness.ts";
+import { BASE, FAKE_CLAUDE_CLI, FIXTURE_ENGINE_OVERRIDES, ROOT, SERVER_DIR, WEBHOOK_BASE, api, boxStubPort, browserFixturePrelude, browserMount, browserNativeEvents, browserRegisterDelayMs, browserRpc, browserSession, desktopApi, expectStoppedTestServerCleanly, fakeClaudeDump, home, privateDesktopHeaders, readJsonFileWhenReady, holdBoxSlowValidation, setBrowserRegisterDelayMs, startInternalFixtureTurn, storedMessageCount, waitForIsolatedServer } from "./testing/index-harness.ts";
 import { browserEngineRefusesHost } from "./testing/index-harness.ts";
 
+/** One spelling for a path on every OS: Windows hands out short (RUNNER~1) and long names and
+ * ignores case, so compare the long, lower-cased form there. */
+const canonicalPath = (path: string) => process.platform === "win32" ? realpathSync.native(path).toLowerCase() : realpathSync(path);
 
 describe("harness HTTP API", () => {
   it("opens one calendar room and posts the scheduled seed to everyone", async () => {
@@ -187,20 +190,20 @@ describe("harness HTTP API", () => {
       routineId = routine.body.routine.id;
       const first = await runOnce();
       const link = (desk: string, name: string) => join(desk, ".agents", "skills", name);
-      expect(realpathSync(link(first.desk, "abstract-writing"))).toBe(realpathSync(join(first.desk, ".murage-procedures", first.bundleId, "skills", "abstract-writing")));
+      expect(canonicalPath(link(first.desk, "abstract-writing"))).toBe(canonicalPath(join(first.desk, ".murage-procedures", first.bundleId, "skills", "abstract-writing")));
 
       expect((await desktopApi("POST", `/api/bots/${bot.id}/skills/library`, { ids: ["academic-writer"] })).status).toBe(201);
       const second = await runOnce();
       expect(second.desk).toBe(first.desk);
       expect(second.bundleId).not.toBe(first.bundleId);
       for (const name of ["abstract-writing", "academic-writer"]) {
-        expect(realpathSync(link(second.desk, name))).toBe(realpathSync(join(second.desk, ".murage-procedures", second.bundleId, "skills", name)));
+        expect(canonicalPath(link(second.desk, name))).toBe(canonicalPath(join(second.desk, ".murage-procedures", second.bundleId, "skills", name)));
       }
 
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}/skills/academic-writer`, { enabled: false })).status).toBe(200);
       const third = await runOnce();
       expect(existsSync(link(third.desk, "academic-writer"))).toBe(false);
-      expect(realpathSync(link(third.desk, "abstract-writing"))).toBe(realpathSync(join(third.desk, ".murage-procedures", third.bundleId, "skills", "abstract-writing")));
+      expect(canonicalPath(link(third.desk, "abstract-writing"))).toBe(canonicalPath(join(third.desk, ".murage-procedures", third.bundleId, "skills", "abstract-writing")));
     } finally {
       if (routineId) await desktopApi("DELETE", `/api/routines/${routineId}`).catch(() => undefined);
       await desktopApi("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);
@@ -571,7 +574,7 @@ describe("harness HTTP API", () => {
         requireAvailableModel: true,
       }, isolatedDesktopHeaders)).body.bot;
       const callOffset = browserNativeEvents.length;
-      expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "keep browser access live" })).status)
+      expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "keep browser access live" }, isolatedDesktopHeaders)).status)
         .toBe(202);
       const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
 
@@ -787,7 +790,7 @@ describe("harness HTTP API", () => {
       expect((await isolatedApi("PATCH", `/api/bots/${idleBot.id}`, { browserProfile: "unused" }, isolatedDesktopHeaders)).status).toBe(200);
 
       const callOffset = browserNativeEvents.length;
-      expect((await isolatedApi("POST", `/api/bots/${activeBot.id}/messages`, { text: "keep browser access live" })).status)
+      expect((await isolatedApi("POST", `/api/bots/${activeBot.id}/messages`, { text: "keep browser access live" }, isolatedDesktopHeaders)).status)
         .toBe(202);
       const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
       // Registration happens before the provider's init frame is persisted.
@@ -909,7 +912,7 @@ describe("harness HTTP API", () => {
       }, isolatedDesktopHeaders)).body.bot;
       createdBotId = bot.id;
       const callOffset = browserNativeEvents.length;
-      expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "do not tear this down" })).status)
+      expect((await isolatedApi("POST", `/api/bots/${bot.id}/messages`, { text: "do not tear this down" }, isolatedDesktopHeaders)).status)
         .toBe(202);
       const mounted = await browserMount(join(isolatedHome, "fake-claude-dump.json"), `http://127.0.0.1:${isolatedPort}`);
 
@@ -1006,11 +1009,18 @@ describe("harness HTTP API", () => {
 
       // Provider validation holds admission, so an idle profile cannot become
       // active during the awaited configuration transaction.
+      // The stub holds the validation open until released, so the claim below
+      // always lands inside the transaction however loaded the machine is.
+      const hold = holdBoxSlowValidation();
       const removing = desktopApi("PATCH", "/api/config", { box: { token: "box_slow" }, browserProfiles: [] });
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      const blocked = await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "start during validation" });
-      expect(blocked.status).toBe(409);
-      expect(blocked.body.error).toMatch(/Engine setup is finishing/i);
+      try {
+        await hold.entered;
+        const blocked = await desktopApi("POST", `/api/bots/${bot.id}/messages`, { text: "start during validation" });
+        expect(blocked.status).toBe(409);
+        expect(blocked.body.error).toMatch(/Engine setup is finishing/i);
+      } finally {
+        hold.release();
+      }
       expect((await removing).status).toBe(200);
       const state = (await api("GET", "/api/bots")).body;
       const idleBot = state.bots.find((candidate: { id: string }) => candidate.id === bot.id);
