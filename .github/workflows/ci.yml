@@ -192,6 +192,13 @@ jobs:
         run: node scripts/prepare-backup-test-fixtures.mjs --tool-directory "$RUNNER_TEMP/backup-test-age" >> "$GITHUB_ENV"
       - name: Build the server bundle that packaged-layout tests import
         run: pnpm build:server
+      - name: Build the Windows browser helper
+        # On Windows the browser broker and service keep their state through the
+        # native ACL helper (electron/browser-extension-windows.mjs) and fail
+        # closed without it. package:win builds it the same way, with the
+        # runner's own MSVC, into dist-native/browser-extension/win32-x64.
+        if: matrix.os == 'windows-latest'
+        run: pnpm build:browser-extension-windows
       - name: Run Vitest shard
         if: inputs.vitest_file == ''
         run: pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/6
@@ -216,15 +223,16 @@ jobs:
     # to an hour in one job and every run hit the cap. Playwright shards by
     # file and project, balanced by test count, not time, and the slow specs
     # cluster; four shards measured 38 minutes on the slowest while specs were
-    # failing and retrying, six keep every shard well inside 30 minutes. Each
-    # shard boots its own harness. `required` sees one aggregate result:
-    # success only if every shard passed.
+    # failing and retrying. Each shard spends about 8 minutes installing and
+    # building before its first spec, and 1.0.0's shard 4 (267 tests) then
+    # needs about 25, so the cap is 45. Each shard boots its own harness.
+    # `required` sees one aggregate result: success only if every shard passed.
     strategy:
       fail-fast: false
       matrix:
         human_shard: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

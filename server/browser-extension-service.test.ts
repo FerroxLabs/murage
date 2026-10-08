@@ -4,10 +4,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
 const cleanup: string[] = [];
-afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+// A service saves its state in the background; stop each one (and wait for its last save) before its folder is removed.
+const services: { close(): Promise<void> }[] = [];
+afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
 async function fixture(extraOptions: Record<string, unknown> = {}) {
-  const directory = await fs.mkdtemp(path.resolve('.service-')); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve('.service-')); cleanup.push(directoryRoot);
   const stateFile = path.join(directory, 'state.json');
   const bindings = new Map<string, { generation: number; state: string; tabs: {tabId:number;navigationEpoch:number;origin:string;url:string}[] }>();
   const calls: BrowserExtensionCommand[] = []; let nextTab = 1; let connected = true;
@@ -49,7 +52,7 @@ async function fixture(extraOptions: Record<string, unknown> = {}) {
         if(!engine.authorize())throw Error('Browser control is no longer authorised.');return{content:[{type:'text',text:'clicked'}]};}
       const method=name==='agent_browser_fill'?'Input.insertText':'Accessibility.getFullAXTree';const params=name==='agent_browser_fill'?{text:args.text}:{};await engine.beforeCommand(document,method,params);await engine.transport.send(method,params,document);return engineReply?engineReply(name) as never:{content:[]};},
   }), broker, workspaceId: 'workspace', stateFile, askSite: async () => consent ? 'allow' as const : 'never' as const, askAction: async (_c: unknown, a: { summary: string }) => { cards.push({ summary: a.summary }); return approve(); }, ...extraOptions };
-  const service = await createBrowserExtensionService(options);
+  const service = await createBrowserExtensionService(options); services.push(service);
   const binding = await service.ensureBinding({ botId: 'bot', threadId: 'thread', profileId: 'profile' });
   return { service, binding, calls, bindings, options, cards, setEngineReply: (fn: typeof engineReply) => { engineReply = fn; }, onCdp: (hook: typeof onCdp) => { onCdp = hook; }, offline: () => { connected = false; }, denySite: () => { consent = false; }, setApproval: (fn: typeof approve) => { approve = fn; } };
 }
@@ -88,7 +91,7 @@ describe('browser extension service using fake broker', () => {
     const f = await fixture(); f.setApproval(async () => { await f.service.stop(f.binding.bindingId); return true; });
     await expect(f.service.dispatch(f.binding.bindingId, 'agent_browser_fill', { selector: 'textarea', text: 'hello' }, () => true)).rejects.toThrow('stale_binding');
     expect(f.calls.some(call => String(call.params.method).startsWith('Input.'))).toBe(false);
-    const restored = await createBrowserExtensionService(f.options);
+    const restored = await createBrowserExtensionService(f.options); services.push(restored);
     expect(restored.status().bindings[0].state).toBe('stopped');
     await expect(restored.dispatch(f.binding.bindingId, 'agent_browser_snapshot', {}, () => true)).rejects.toThrow('binding_inactive');
   });

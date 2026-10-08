@@ -40,10 +40,14 @@ describe("turn credential reader", () => {
 
   it("creates a 0600 file in a 0700 directory, empties it, and unlinks it on dispose", () => {
     const store = createTurnCredentialStore();
-    expect(statSync(store.path).mode & 0o777).toBe(0o600);
-    expect(statSync(dirname(store.path)).mode & 0o777).toBe(0o700);
+    // Windows has no POSIX mode bits; there the guarantee is the per-user temp directory's inherited ACL.
+    const posix = process.platform !== "win32";
+    if (posix) {
+      expect(statSync(store.path).mode & 0o777).toBe(0o600);
+      expect(statSync(dirname(store.path)).mode & 0o777).toBe(0o700);
+    }
     store.write({ a: { MURAGE_MCP_TOKEN: "t" } });
-    expect(statSync(store.path).mode & 0o777).toBe(0o600);
+    if (posix) expect(statSync(store.path).mode & 0o777).toBe(0o600);
     store.clear();
     expect(readFileSync(store.path, "utf8")).toBe("{}");
     store.dispose();

@@ -76,6 +76,19 @@ it("Astra r1 #6: a reply built from the working context rests on the replies it 
   expect(capturedMessageWithheld("chat", "reply-2")).toBe(true);
 });
 
+it("sources noted before acceptance (a room turn's working context) are delivered with the frame", async () => {
+  appendMessage("older", { id: "r-early", role: "bot", kind: "text", text: "Booked the venue.", at: 1 } as Message);
+  const turn = access();
+  const bundle = await buildMemoryBundle("", turn, empty);
+  const receipt = new MemoryDispatchReceipt(bundle, turn, "engine");
+  const working = workingContextBlock(true, { botId: "bot", currentThreadId: "chat", bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older", title: "Venue" }] }], groups: [], routines: [], now: 10 });
+  expect(receipt.noteSources(workingContextSources(working.quoted))).toBe(true);
+  const states = () => database().prepare("SELECT bundle_id,state FROM memory_disclosures ORDER BY created_at").all().map(row => [String(row.bundle_id), String(row.state)]);
+  expect(states()).toEqual([[`${bundle.bundleId}:lookup`, "prepared"], [bundle.bundleId, "prepared"]]);
+  receipt.accepted();
+  expect(states()).toEqual([[`${bundle.bundleId}:lookup`, "delivered"], [bundle.bundleId, "delivered"]]);
+});
+
 it("Astra r1 #9: past the receipt bound a lookup is refused, not handed over unrecorded", async () => {
   const turn = access();
   const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty), turn, "engine");

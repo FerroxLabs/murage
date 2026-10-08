@@ -8,7 +8,7 @@ import { buildRemoteMount } from "../custom-mcp-mounts.ts";
 // These used to be POSIX-only: the fake CLI is a shebang script Windows
 // cannot exec, and the broker is a unix socket. Both now go through
 // resolveCliSpawn / permissionSocketPath, so they run everywhere.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { connect, createServer as createNetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -3256,7 +3256,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
       return argv;
     };
     const auto = await argvOf({ permissionMode: "acceptEdits" }, "t-dir-auto", [grant, "relative/dir", "/does/not/exist-xyz"]);
-    expect(auto.filter((_a, i) => auto[i - 1] === "--add-dir")).toEqual([grant]);
+    expect(auto.filter((_a, i) => auto[i - 1] === "--add-dir")).toEqual([realpathSync(grant)]); // the driver canonicalizes (macOS /var is /private/var)
     expect(await argvOf({ permissionMode: "default" }, "t-dir-ask", [grant])).not.toContain("--add-dir");
     expect(await argvOf({ permissionMode: "acceptEdits" }, "t-dir-none")).not.toContain("--add-dir");
   });

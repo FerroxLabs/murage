@@ -11,6 +11,8 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
+// The warm engine carries per-turn tokens in a credential file; put them back inline as a proxy reads them.
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 
 /** Auto reaches this computer only on macOS (server/local-routing.ts). */
 const AUTO_REACHES_HOST = shouldMountLocalComputer({ requested: undefined, hostPlatform: process.platform, providerSupportsLocal: true });
@@ -67,7 +69,7 @@ const hostCalls = () => {
   const file = `${fixture.info.dataDir}/host-calls.log`;
   return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean).length : 0;
 };
-const dump = () => { try { return JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")); } catch { return null; } };
+const dump = () => { try { return withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))); } catch { return null; } };
 
 const makeBot = async (name: string, patch: Record<string, unknown> = {}) => {
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "verification", model } });

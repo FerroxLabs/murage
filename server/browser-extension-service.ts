@@ -178,7 +178,8 @@ export async function createBrowserExtensionService(options: {
   };
   /** Save the task and its grants soon, without making the caller wait. A failed save leaves the older file, which holds the same or fewer grants. */
   let lastSaveAt = 0;
-  const savedSoon = (force = false) => { void Promise.resolve().then(() => persist(force)).catch(() => {}); };
+  const pendingSaves = new Set<Promise<unknown>>();
+  const savedSoon = (force = false) => { const save: Promise<unknown> = Promise.resolve().then(() => persist(force)).catch(() => {}).finally(() => pendingSaves.delete(save)); pendingSaves.add(save); };
   const profileQueues=new Map<string,{tail:Promise<unknown>;size:number}>();
   const enqueue=<T>(entry:Entry,operation:()=>Promise<T>):Promise<T>=>{
     let queue=profileQueues.get(entry.context.profileId);if(!queue){queue={tail:Promise.resolve(),size:0};profileQueues.set(entry.context.profileId,queue);}
@@ -980,7 +981,9 @@ export async function createBrowserExtensionService(options: {
     },
     async pause(bindingId: string) { await pauseEntry(entryFor(bindingId)); },
     async cancelThread(threadId:string){for(const entry of entries.values())if(entry.context.threadId===threadId){entry.revision++;await entry.executor?.close();entry.executor=undefined;}},
-    async close(){for(const entry of entries.values()){entry.revision++;await entry.executor?.close();entry.executor=undefined;}await saving;},
+    async close(){for(const entry of entries.values()){entry.revision++;await entry.executor?.close();entry.executor=undefined;}
+    // Saves started without a waiter must land before the caller removes the state folder.
+    while(pendingSaves.size)await Promise.all([...pendingSaves]);await saving;},
     async handleMessage(profileId: string, message: BrowserExtensionMessage) {
       // The restarted extension says the last action may have run: pause the task so the owner decides.
       if (message.type === 'response') {

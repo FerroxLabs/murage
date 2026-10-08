@@ -207,7 +207,7 @@ it("release signature gate exempts only exact verified upstream paths and still 
   expect(gate).not.toMatch(/\$rawBackupFiles\.Contains\([^\n]*\$_\.Name/);
   expect(gate.indexOf("if ($LASTEXITCODE -ne 0)")).toBeLessThan(gate.indexOf("$rawBackupFiles ="));
   expect(gate).toContain("$allowed = @('Ferrox Labs, LLC', 'Cloudflare, Inc.')");
-  expect(gate).toContain("@('Murage.exe', 'Murage-*-setup.exe', 'fuigo.exe')");
+  expect(gate).toContain("@('Murage.exe', 'Murage-*-setup.exe', 'fuigo.exe', 'murage-browser-host.exe')");
   const snippet = /\$verifyBackup = @'\n([\s\S]*?)\n'@/.exec(gate)?.[1]; expect(snippet).toBeTruthy();
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const executeNodePart = new AsyncFunction("verifyWindowsBackupTools", "verifyWindowsBrowserSignatures", "process", snippet.replace(/^import .*;\n/gm, ""));

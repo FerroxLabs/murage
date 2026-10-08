@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBrowserExtensionService, handoffContinueText } from "./browser-extension-service.ts";
 import type { BrowserExtensionCommand, BrowserExtensionHello, BrowserExtensionResponse } from "../shared/browser-extension-protocol.ts";
+import { privateTestDirectory, writePrivateTestFile } from "./testing/private-test-dir.ts";
 
 const A = "https://fixture.test";
 const cleanup: string[] = [];
@@ -14,7 +15,7 @@ afterEach(async () => { vi.restoreAllMocks(); for (const service of services.spl
 
 type RuntimeBinding = { generation: number; state: string; tabs: object[]; pausedReason?: string };
 async function world() {
-  const directory = await fs.mkdtemp(path.resolve(".c2-")); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".c2-")); cleanup.push(directoryRoot);
   const bindings = new Map<string, RuntimeBinding>();
   const calls: BrowserExtensionCommand[] = [];
   let nextTab = 1; let guard = false; let pauseFails = 0; let uncertainBind = false;
@@ -120,7 +121,7 @@ describe("C2 RES-003: Stop is final; the owner starts a new task", () => {
 
 describe("C2 RES-004: a damaged state file is set aside, not fatal", () => {
   it("a one-byte { file is quarantined, the service starts clean and the owner hears once", async () => {
-    const w = await world(); await fs.writeFile(w.stateFile, "{", { mode: 0o600 });
+    const w = await world(); writePrivateTestFile(w.stateFile, "{");
     const service = await w.open();
     expect(service.status().bindings).toEqual([]);
     expect(w.recovered).toHaveLength(1); expect(w.recovered[0]).toMatchObject({ kind: "damaged" });
@@ -132,7 +133,7 @@ describe("C2 RES-004: a damaged state file is set aside, not fatal", () => {
     expect(w.recovered).toHaveLength(1); await again.close();
   });
   it("a newer format is kept as it is and the owner is asked to update", async () => {
-    const w = await world(); await fs.writeFile(w.stateFile, JSON.stringify({ version: 99, bindings: [] }), { mode: 0o600 });
+    const w = await world(); writePrivateTestFile(w.stateFile, JSON.stringify({ version: 99, bindings: [] }));
     const service = await w.open();
     expect(w.recovered).toHaveLength(1); expect(w.recovered[0]).toMatchObject({ kind: "newer" });
     const names = await fs.readdir(w.directory);

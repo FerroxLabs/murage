@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { scanBotPackageForImport } from "./bot-package-guard.ts";
 
 // What we ship must pass our own guard. Unsigned for now, so each one gets the full scan.
-const root = new URL("../", import.meta.url).pathname;
+const root = fileURLToPath(new URL("../", import.meta.url));
 const files = ["library/packages", "library/assistants", "bot-library/builtins"].flatMap((dir) =>
   readdirSync(join(root, dir)).filter((name) => name.endsWith(".json") && !name.startsWith(".")).map((name) => join(dir, name)));
 
