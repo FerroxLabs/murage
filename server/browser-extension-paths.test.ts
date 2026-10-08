@@ -28,7 +28,10 @@ describe("Fable L4 and L5: registration and socket files live in the data folder
   });
 });
 
-describe("L5: the fallback folder is the user's own, never one another user pre-created", () => {
+// The fallback folder exists only for a Unix socket path that is too long; it is judged by the POSIX owner and mode
+// of a real directory. Windows uses a named pipe in the data folder and never takes this path, and its directories
+// carry no POSIX owner or 0700 mode to check, so these real-filesystem cases run on macOS and Linux only.
+describe.skipIf(process.platform === "win32")("L5: the fallback folder is the user's own, never one another user pre-created", () => {
   const deep = "/Users/ann/Library/Application Support/murage/" + "x".repeat(60);
   const uid = process.getuid?.() ?? 0;
   const hash = createHash("sha256").update(deep).digest("hex").slice(0, 12);
