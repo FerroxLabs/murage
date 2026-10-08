@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir } from "./testing/cleanup.ts";
@@ -229,7 +230,11 @@ describe("custom MCP probe", () => {
 
     it("an installer that answers late passes with first-run patience and times out without it", async () => {
       const shim = join(dir, "npx");
-      writeFileSync(shim, `#!/bin/sh\nsleep 0.7\nexec "${process.execPath}" "${fakeServer}"\n`);
+      // Windows cannot run a sh script; there the launcher reads a node shebang
+      // (as it does for npm's own scripts) and runs the shim with node.
+      writeFileSync(shim, process.platform === "win32"
+        ? `#!${process.execPath}\nsetTimeout(() => import(${JSON.stringify(pathToFileURL(fakeServer).href)}), 700);\n`
+        : `#!/bin/sh\nsleep 0.7\nexec "${process.execPath}" "${fakeServer}"\n`);
       chmodSync(shim, 0o755);
       const server = { command: shim, args: ["-y", "pkg"], env: {}, enabled: false };
       const without = await probeMcpServer(server, 300);

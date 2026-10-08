@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { domFunction, nativeRealm } from "./testing/native-dom-fixture.ts";
+import { privateTestDirectory, writePrivateTestFile } from "./testing/private-test-dir.ts";
 // Round 8 (Codex Astra chrome7 report, SEC-01 to SEC-10). Each test reproduces the attack the report describes and fails on the base
 // commit b569630c. Chrome-dependent proofs (a real page, a real closed shadow root) are in scripts/browser-corefix8.node-test.mjs.
 import { createHash } from "node:crypto";
@@ -251,7 +252,7 @@ const services: Awaited<ReturnType<typeof createBrowserExtensionService>>[] = []
 afterEach(async () => { for (const service of services.splice(0)) await service.close(); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 async function serviceFixture(extra: Record<string, unknown> = {}) {
-  const directory = await fs.mkdtemp(path.resolve(".corefix8-")); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".corefix8-")); cleanup.push(directoryRoot);
   const bindings = new Map<string, { generation: number; state: string; tabs: Tab[] }>();
   const calls: BrowserExtensionCommand[] = []; const siteAsked: string[] = []; const cards: string[] = [];
   let facts: Record<string, unknown> = { tag: "textarea", role: "textbox", name: "Notes" };
@@ -371,7 +372,7 @@ describe("SEC-07 nothing resumes from a state file", () => {
     const f = await serviceFixture(); await f.fill(); await f.service.close();
     const file = f.options.stateFile as string; const saved = JSON.parse(await fs.readFile(file, "utf8"));
     const forged = { ...saved, bindings: saved.bindings.map((b: any) => ({ ...b, taskL1: [A, "https://evil.example"], taskL2: [A, "https://evil.example"], task: { ...b.task, lastAt: Date.now(), startedAt: Date.now() } })) };
-    await fs.writeFile(file, JSON.stringify(forged), { mode: 0o600 });
+    writePrivateTestFile(file, JSON.stringify(forged));
     const restored = await createBrowserExtensionService({ ...f.options, now: () => Date.now() } as never);
     expect(restored.taskInfo(f.id)).toBeUndefined();
     const rewritten = JSON.parse(await fs.readFile(file, "utf8"));

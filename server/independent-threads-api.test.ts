@@ -45,7 +45,7 @@ async function create(){
 }
 async function hold(id:string,threadId:string,label:string,second=false){
   expect((await api("POST",`/api/bots/${id}/messages`,{threadId,text:`__fixture_hold_authority__ ${label}`})).status).toBe(202);
-  await expect.poll(()=>{try{return JSON.stringify(dump(second).prompt).includes(label);}catch{return false;}},{timeout:10000}).toBe(true);
+  await expect.poll(()=>{try{return JSON.stringify(dump(second).prompt).includes(label);}catch{return false;}},{timeout:30000}).toBe(true);
   return dump(second);
 }
 it("runs distinct models/accounts concurrently, enforces three, and stops exactly one thread",async()=>{
@@ -326,6 +326,7 @@ it("new task retains the visible engine and model through the actual API and dis
 },30000);
 
 
+// Four sequential engine launches plus interrupts. A single launch costs 7-8 s on a loaded Windows runner (see the previous test), so 30 s was never enough there.
 it("dispatches pinned skill bytes through explicit references and native discovery across owner edits",async()=>{
   const bot=await create(),skillRoot=join(fixture.info.dataDir,"workspaces",bot.id,"skills","pinned-fixture"),stateRoot=join(fixture.info.dataDir,"skill-state",bot.id);
   mkdirSync(skillRoot,{recursive:true});mkdirSync(stateRoot,{recursive:true});
@@ -352,4 +353,4 @@ it("dispatches pinned skill bytes through explicit references and native discove
   expect(realpathSync.native(customRun.procedureProbe.cwd)).toBe(realpathSync.native(custom));expect(customRun.procedureProbe.explicit).toContain("OWNER REVISED PROCEDURE");expect(customRun.procedureProbe.native).toBeNull();
   expect(existsSync(join(custom,".agents"))).toBe(false);expect(readFileSync(join(custom,"owner.txt"),"utf8")).toBe("untouched");
   await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:third.threadId});
-},30000);
+},120000);

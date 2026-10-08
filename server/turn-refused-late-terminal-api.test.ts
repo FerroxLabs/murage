@@ -46,7 +46,15 @@ const stoppedNotices = (thread: any[]) => thread.filter(message => message.kind 
 const dispatches = (): Array<{ turnId: string; threadId: string; skillAuthoring: boolean }> => existsSync(dumpPath) ? readFileSync(dumpPath, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 const disclosures = (threadId: string) => {
   const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
-  try { return db.prepare("SELECT state FROM memory_disclosures WHERE thread_id=? ORDER BY created_at").all(threadId).map(row => (row as { state: string }).state); }
+  // Frames only: a room member turn also notes its quoted working context on
+  // a `<frame>:lookup` companion receipt (memory/dispatch.ts noteSources),
+  // which companionStates checks against its frame.
+  try { return db.prepare("SELECT state FROM memory_disclosures WHERE thread_id=? AND bundle_id NOT LIKE '%:lookup' ORDER BY created_at").all(threadId).map(row => (row as { state: string }).state); }
+  finally { db.close(); }
+};
+const companionStates = (threadId: string) => {
+  const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
+  try { return db.prepare("SELECT c.state AS companion, f.state AS frame FROM memory_disclosures c JOIN memory_disclosures f ON c.bundle_id=f.bundle_id||':lookup' WHERE c.thread_id=?").all(threadId) as Array<{ companion: string; frame: string }>; }
   finally { db.close(); }
 };
 const serverLog = () => readFileSync(fixture.info.logPath, "utf8");
@@ -101,6 +109,8 @@ const expectStaleFoldAndTwoDispatches = (threadId: string, refusedTurnId: string
   expect(rows[1]).toEqual({ turnId: expect.any(String), threadId, skillAuthoring: true });
   expect(rows[1].turnId).not.toBe(refusedTurnId);
   expect(disclosures(threadId)).toEqual(["revoked", "delivered"]);
+  // a companion receipt is revoked and delivered with its frame
+  for (const pair of companionStates(threadId)) expect(pair.companion).toBe(pair.frame);
 };
 
 posixOnly("a refused child's late terminal event does not stop the re-dispatch", () => {
