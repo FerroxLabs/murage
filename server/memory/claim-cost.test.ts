@@ -8,7 +8,10 @@ import * as jobs from "./jobs.ts";
 import { memoryTickGapMs, resetBacklogTrace, traceBacklog, traceSlowStep } from "./claim-trace.ts";
 
 const NOW = 1_000_000;
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor?.(); });
+// These tests commit thousands of rows one by one; the default synchronous=FULL makes that fsync-bound
+// (over 20 s on a Windows runner). Durability is not what they check.
+function noFsync() { database().exec("PRAGMA synchronous=OFF"); }
+beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); jobs.resetMemoryClaimCursor?.(); noFsync(); });
 afterEach(() => { delete process.env.MURAGE_TURN_TRACE; resetBacklogTrace(); vi.restoreAllMocks(); });
 
 /** Seed `count` capture jobs over `scopes` scopes with a few KB of text each. `mix` adds every

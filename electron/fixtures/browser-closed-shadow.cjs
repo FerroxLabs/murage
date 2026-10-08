@@ -4,9 +4,14 @@ process.stdout.write("fixture-entered\n");
 const { once } = require("node:events");
 const { join } = require("node:path");
 const { createServer } = require("node:http");
-const { app, BrowserWindow, WebContentsView, nativeImage } = require("electron");
+const { app, BrowserWindow, WebContentsView, ipcMain, nativeImage } = require("electron");
 const { createBrowserSurfaceManager } = require("../browser-surface.cjs");
 process.stdout.write("fixture-modules-loaded\n");
+
+// The preload reads the desktop secret with a synchronous IPC call that main
+// always answers. Without a listener here the renderer blocks for about 30 s
+// before Electron gives up, which on a slow runner outlasts the test deadline.
+ipcMain.on("desktop:surface-secret", (event) => { event.returnValue = ""; });
 
 // Linux CI runs under Xvfb as root. The dedicated Windows fixture job receives
 // the restricted-package filesystem ACL it needs from the test wrapper and

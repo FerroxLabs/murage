@@ -24,6 +24,8 @@ import type { ProviderTurnRoute } from "../provider-routing.ts";
 const posix = describe.skipIf(process.platform === "win32");
 const STUB = fileURLToPath(new URL("../testing/pip-stub-cli.mjs", import.meta.url));
 const SCHEMA = { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false };
+// macOS stamps __CF_USER_TEXT_ENCODING onto every exec'd process; it is not something the driver passed.
+const envKeys = (env: Record<string, string>) => Object.keys(env).filter((key) => key !== "__CF_USER_TEXT_ENCODING").sort();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let base: string, out: string, etc: string, home: string;
@@ -32,12 +34,18 @@ beforeEach(() => {
   out = join(base, "rec.jsonl"); etc = join(base, "etc"); home = join(base, "home");
   mkdirSync(etc); mkdirSync(home);
 });
-afterEach(() => rmSync(base, { recursive: true, force: true }));
+// Windows: a child still exiting can hold the folder for a moment (EPERM/EBUSY); rm retries those.
+afterEach(() => rmSync(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+// The 1.0.0 Windows job supervisor compiles its C# (Add-Type) on every launch and every stop, a
+// second or more each on a loaded runner; Windows gets the room that costs (the native job helper removes it).
+const WIN_SLOW = process.platform === "win32";
 
 const preflight = () => ({ etcRoot: etc, home, grokHome: join(home, ".grok"), platform: "linux" as const, mdmDir: null, claudeManagedPath: join(base, "no-managed.json") });
 const cfg = (scenario: string, extra: Partial<HeadlessEngineConfig> = {}): HeadlessEngineConfig => ({
   engine: "fuigo", cli: process.execPath, cliPrefixArgs: [STUB, `--stub=${scenario}`, `--stub-out=${out}`],
-  tmpBase: join(base, "tmp"), pathValue: "/usr/bin:/bin", fluxKey: "flux-test-key", preflight: preflight(), postResultGraceMs: 3000, ...extra,
+  tmpBase: join(base, "tmp"),
+  // Windows resolves powershell.exe (the job supervisor) through this PATH, so it must be the real one there
+  pathValue: process.platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin", fluxKey: "flux-test-key", preflight: preflight(), postResultGraceMs: 3000, ...extra,
 });
 const input = (over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({
   system: "SYS", text: "USER", model: "model-1", outputSchema: SCHEMA, signal: new AbortController().signal,
@@ -64,10 +72,11 @@ posix("headless text-only: stub binary (group 1)", () => {
       "--tools", "mcp__murage__none", "--disallowed-tools", "search_tool,use_tool,Agent", "--disable-web-search", "--no-memory", "--no-auto-update", "--verbatim",
       "--output-format", "streaming-messages-json", "--json-schema", JSON.stringify(SCHEMA), "--prompt-file", `${T}/prompt.txt`, "--debug-file", `${T}/debug.log`,
     ]);
-    expect(Object.keys(r.env).sort()).toEqual(["FUIGO_API_BASE_URL", "FUIGO_HOME", "FUIGO_MODELS_BASE_URL", "HOME", "MURAGE_PROVIDER_API_KEY", "PATH", ...Object.keys(FUIGO_OFF_SWITCHES)].sort());
+    expect(envKeys(r.env)).toEqual(["FUIGO_API_BASE_URL", "FUIGO_HOME", "FUIGO_MODELS_BASE_URL", "HOME", "MURAGE_PROVIDER_API_KEY", "PATH", ...Object.keys(FUIGO_OFF_SWITCHES)].sort());
     expect(r.env.FUIGO_HOME).toBe(`${T}/home`);
     expect(r.env.HOME).toBe(r.env.FUIGO_HOME.replace(/\/home$/, ""));
-    expect(r.cwd).toBe(`${T}/work`);
+    // a child's cwd is reported canonical (macOS /var is /private/var)
+    expect(r.cwd.replace(/^\/private(?=\/var\/)/, "")).toBe(`${T}/work`);
     expect(r.homeFiles).toContain("config.toml");
     expect(r.prompt).toBe("SYS\n\nUSER");
     expect(existsSync(T)).toBe(false); // temp root gone after confirmed exit
@@ -90,7 +99,7 @@ posix("headless text-only: stub binary (group 1)", () => {
     expect(result.verdict.state).toBe("validated");
     const [r] = records();
     expect(r.homeFiles).toEqual(["auth.json"]);
-    expect(Object.keys(r.env).sort()).toEqual(["GROK_HOME", "HOME", "PATH", ...Object.keys(GROK_OFF_SWITCHES)].sort());
+    expect(envKeys(r.env)).toEqual(["GROK_HOME", "HOME", "PATH", ...Object.keys(GROK_OFF_SWITCHES)].sort());
     rmSync(out); rmSync(join(parent, "auth.json"));
     const missing = await headlessTextOnlyTurn(input(), cfg("ok", { engine: "grok", parentGrokHome: parent }));
     expect(missing.verdict).toEqual({ state: "unsupported", reason: "auth" });
@@ -186,7 +195,7 @@ posix("headless text-only: stub binary (group 1)", () => {
     ]);
     // The settings ride in a per-attempt file whose path names the temp root (finding 4), carrying the same hook switch.
     expect(r.settingsContent).toBe('{"disableAllHooks":true}');
-    expect(Object.keys(r.env).sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER", "DISABLE_TELEMETRY", "HOME", "PATH"]);
+    expect(envKeys(r.env)).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER", "DISABLE_TELEMETRY", "HOME", "PATH"]);
     expect(r.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("2000");
     expect(r.homeFiles).toEqual([".credentials.json"]);
     expect(readFileSync(out, "utf8")).toContain('"stdin":"USER"');
@@ -578,20 +587,28 @@ describe("Astra audit2 transport regressions", () => {
     const { database } = await import("../database.ts");
     const { DATA_DIR } = await import("../config.ts"); mkdirSync(DATA_DIR, { recursive: true });
     const abort = new AbortController();
-    const pending = withContinuityInferenceLease(lease => lease.request(async () => (await headlessTextOnlyTurn(input({ signal: abort.signal }), cfg("usage-before-abort"))).text, "system", 2000, abort.signal, [{ role: "user", content: "fixture" }], "continuity", { botId: "usage-abort", family: "lived" })).catch(e => e);
-    for (let i = 0; i < 100 && (!existsSync(out) || !readFileSync(out, "utf8").includes('"usage-ready"')); i++) await sleep(20);
+    let turn: unknown;
+    const pending = withContinuityInferenceLease(lease => lease.request(async () => { const r = await headlessTextOnlyTurn(input({ signal: abort.signal }), cfg("usage-before-abort")); turn = r; return r.text; }, "system", 2000, abort.signal, [{ role: "user", content: "fixture" }], "continuity", { botId: "usage-abort", family: "lived" })).catch(e => e);
+    for (let i = 0; i < (WIN_SLOW ? 1000 : 100) && (!existsSync(out) || !readFileSync(out, "utf8").includes('"usage-ready"')); i++) await sleep(20);
+    if (!existsSync(out)) {
+      // Diagnose before failing: the lease or the turn may have settled without the
+      // stub ever starting (the pending result is otherwise swallowed by .catch above).
+      const early = await Promise.race([pending, sleep(2000).then(() => "still pending")]);
+      const detail = early instanceof Error ? `${early.name}: ${early.message}\n${early.stack ?? ""}` : JSON.stringify(early);
+      throw new Error(`the stub never wrote ${out}; the leased turn gave: ${detail}; turn result: ${JSON.stringify(turn)}; files in base: ${JSON.stringify(readdirSync(base, { recursive: true }))}`);
+    }
     expect(readFileSync(out, "utf8")).toContain('"usage-ready"');
     await sleep(30); abort.abort();
     expect(await pending).toMatchObject({ name: "cancelled" });
     const ledger = JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(continuityLedgerId("usage-abort", continuityDay()))!.intent));
     expect(ledger.input).toBe(10); expect(ledger.output).toBe(5);
-  });
+  }, WIN_SLOW ? 60_000 : undefined);
 
   it("21: rejects hook execution found only in the debug log", async () => {
     const got = await headlessTextOnlyTurn(input(), cfg("debug-hook"));
     expect(got.verdict).toMatchObject({ state: "unsupported", reason: "managed-config", detail: "hook-execution" });
     expect(got.text).toBe("");
-  });
+  }, WIN_SLOW ? 60_000 : undefined);
 
   it("23: delivers a large reflection prompt verbatim through the production argv", async () => {
     const text = "You are reliable. ".repeat(2000);
@@ -599,5 +616,5 @@ describe("Astra audit2 transport regressions", () => {
     expect(got.verdict.state).toBe("validated");
     expect(records()[0].argv).toContain("--verbatim");
     expect(records()[0].prompt).toBe("SYS\n\n" + text);
-  });
+  }, WIN_SLOW ? 60_000 : undefined);
 });
