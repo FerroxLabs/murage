@@ -68,6 +68,8 @@ function fact(text: string) {
 /** A lexical ranker over the real eligibility predicate, so exclusion that
  * happens before ranking is observable as a top-k that is unchanged. */
 function rankedBridge() {
+  // a test may build several bridges; close the previous reader, or Windows cannot delete the open messages.db
+  eligibility?.close();
   eligibility = new MemoryEligibility(join(DATA_DIR, "messages.db"));
   return {
     async search(input: { query: string; scopeIds: string[]; policyRevision: number; deletionEpoch: number; historical: boolean; cursor: string; limit: number }) {

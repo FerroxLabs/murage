@@ -6,9 +6,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PushStore, initializeMobilePush, type PushEventRow } from "./mobile-push-store.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+const opened: DatabaseSync[] = [];
+afterEach(() => {
+  // Close every handle before removing its folder: Windows refuses to delete a
+  // database file another handle still holds open (EPERM).
+  for (const db of opened.splice(0)) if (db.isOpen) db.close();
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 function open(file = ":memory:") {
   const db = new DatabaseSync(file);
+  opened.push(db);
   db.exec("PRAGMA foreign_keys=ON");
   initializeMobilePush(db);
   return new PushStore(db);

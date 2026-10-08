@@ -22,7 +22,10 @@ import { setMemoryMode } from "./repository.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "dax", threadId: "dax-direct" }], groups: [] };
 const thread = "dax-direct";
-beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); });
+// These tests commit thousands of rows one by one; the default synchronous=FULL makes that fsync-bound
+// (over 20 s on a Windows runner). Durability is not what they check.
+function noFsync() { database().exec("PRAGMA synchronous=OFF"); }
+beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); reconcileMemoryRoster(roster); noFsync(); });
 function access(): MemoryAccess {
   const registry = new InternalCapabilities(); registry.begin("dax", thread, "g");
   return memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: "dax", threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);

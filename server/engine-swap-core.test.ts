@@ -380,7 +380,8 @@ describe("CF-5 history is fixed (I-24)", () => {
 
   it("keeps the modules that rewrite a row to the harness and its own cards", () => {
     const writers = readdirSync(here, { recursive: true })
-      .map(String)
+      // readdirSync joins nested names with the platform separator; compare as posix
+      .map((file) => String(file).replaceAll("\\", "/"))
       .filter((file) => file.endsWith(".ts") && !file.includes(".test.") && !file.startsWith("testing/"))
       .filter((file) => /\b(?:patchMessage|updateMessage|deleteMessage|removeMessage)\(/.test(source(file)))
       .sort();
