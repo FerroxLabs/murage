@@ -8,7 +8,7 @@
 // done. Each engine kind answers with the verdict block in its reply
 // (fake-review.ts); Fuigo also answers through project_review_result. A
 // reviewer that gives no verdict wakes the lead, who decides.
-import { chmodSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -94,7 +94,12 @@ const reviewRows = (cardId: string) => withDb(db => db.prepare("SELECT to_bot_id
 describe.skipIf(process.platform === "win32")("a card in review always ends in a verdict", () => {
   it.each(REVIEWERS)("the %s reviewer's verdict moves the card to done", async (instance) => {
     const { group, card, reviewer } = await goalCard(instance);
-    await expect.poll(async () => (await cardOf(group.id, card.id))?.state, { timeout: 60000, interval: 250 }).toBe("done");
+    try { await expect.poll(async () => (await cardOf(group.id, card.id))?.state, { timeout: 60000, interval: 250 }).toBe("done"); }
+    catch (error) {
+      // what the reviewer's run left: its review request and the server's last lines
+      const log = readFileSync(fixture.info.logPath, "utf8").split("\n").slice(-60).join("\n");
+      throw new Error(`${(error as Error).message}\nreview rows ${JSON.stringify(reviewRows(card.id))}\nserver log tail:\n${log}`);
+    }
     expect(reviewRows(card.id)).toEqual([{ to_bot_id: reviewer!.id, state: "done", outcome_note: "pass" }]);
     const room = (await api("GET", `/api/threads/${group.threadId}/messages`)).body.messages;
     // the room shows the verdict in words, never the block or its nonce
