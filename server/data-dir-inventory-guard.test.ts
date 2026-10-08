@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { dataDirWriteRecorder, scanDataDirWrites, unclassifiedDataDirNames, unclassifiedStaticWrites } from "./testing/data-dir-guard.ts";
 
@@ -51,7 +52,7 @@ describe("the data-folder inventory guard", () => {
       "fs.writeFileSync(Buffer.from(join(dir, 'buffer-probe')), 'x');",
       "fs.writeFileSync((await import('node:url')).pathToFileURL(join(dir, 'url probe')), 'x');",
     ].join("\n");
-    const result = spawnSync(process.execPath, ["--import", preload, "--input-type=module", "-e", writes], {
+    const result = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, "--input-type=module", "-e", writes], {
       encoding: "utf8",
       env: { PATH: process.env.PATH ?? "", HOME: scratch, MURAGE_DATA_DIR: data },
     });

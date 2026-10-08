@@ -118,7 +118,11 @@ process.stdout.write("DONE\\n");
     child.stdout.on("data", chunk => { out += chunk; for (const line of String(chunk).split("\n")) if (line) onLine?.(line, kill); });
     child.stderr.on("data", chunk => { err += chunk; });
     child.on("error", reject);
-    child.on("exit", (code, signal) => { if (code && !signal) reject(new Error(`child failed ${code}: ${err}`)); else resolve({ signal, out }); });
+    child.on("exit", (code, signal) => {
+      // Windows has no signals: process.kill(self, "SIGKILL") is TerminateProcess, seen as exit code 1 with no signal and no stderr.
+      if (code && !signal && process.platform === "win32" && code === 1 && !err.trim()) { resolve({ signal: "SIGKILL", out }); return; }
+      if (code && !signal) reject(new Error(`child failed ${code}: ${err}`)); else resolve({ signal, out });
+    });
   });
 }
 

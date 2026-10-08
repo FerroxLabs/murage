@@ -3,13 +3,14 @@
 import { nativeRealm } from './testing/native-dom-fixture.ts';
 import { describe, expect, it } from "vitest";
 import { runInNewContext } from "node:vm";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { classifyDataDirEntry } from "./data-dir-inventory.ts";
 import { scanDataDirWrites } from "./testing/data-dir-guard.ts";
 import { BROWSER_DOCUMENT_GUARD_SOURCE } from "./browser-document-guard.ts";
 import { createBrowserExtensionService } from "./browser-extension-service.ts";
+import { makePrivateTestSubdirectory } from "./testing/private-test-dir.ts";
 
 describe("OR-1 (High): the browser runtime folder never pauses a backup", () => {
   it("bx-run, written under the data folder, is classified and left out of every backup", () => {
@@ -23,7 +24,7 @@ describe("OR-2 (Medium): Stop is final in the service too: an owner resume never
   it("a resumed event for a stopped binding leaves it stopped", async () => {
     const dir = mkdtempSync(join(tmpdir(), "mbe-or2-"));
     try {
-      const stateDir = join(dir, "private"); mkdirSync(stateDir, { mode: 0o700 });
+      const stateDir = join(dir, "private"); makePrivateTestSubdirectory(stateDir);
       let generation = 1, state: "active" | "paused" | "stopped" = "active";
       const summary = () => ({ generation, state, tabs: [] });
       const broker = { profiles: () => [{ version: 1 as const, type: "hello" as const, profileId: "profile_1", browser: "chromium" as const, extensionVersion: "0.1.0", capabilities: ["scoped_cdp", "durable_stop", "explicit_share", "manual_pause", "engine_cdp_v1", "unexpected_input_pause", "ordered_requests_v1"] }],

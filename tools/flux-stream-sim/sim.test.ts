@@ -418,10 +418,15 @@ describe("faults", () => {
     c.ws.send(Buffer.alloc(3200)); // 100 ms, then 4 s of nothing
     await new Promise((r) => setTimeout(r, 4000));
     for (let i = 0; i < 100; i += 1) c.ws.send(Buffer.alloc(3200)); // 10 s at once
-    await until(() => c.messages.some((m) => m.type === "warning"));
-    const warning = c.messages.find((m) => m.type === "warning") as { dropped_ms: number };
-    expect(warning.dropped_ms).toBeGreaterThanOrEqual(6_900); // at most 3 s (plus the frame in flight) was accepted
-    c.ws.close();
+    // The 100 ms warning tick can fire while the burst is still being read, so
+    // one warning may carry only part of it. The close is read after every
+    // frame of the burst and reports each range still owed before
+    // session.closed: the warnings up to then hold the whole burst.
+    c.ws.send(JSON.stringify({ type: "session.close" }));
+    await c.closed;
+    expect(c.messages.some((m) => m.type === "session.closed")).toBe(true);
+    const dropped = c.messages.filter((m) => m.type === "warning").reduce((n, m) => n + (m as { dropped_ms: number }).dropped_ms, 0);
+    expect(dropped).toBeGreaterThanOrEqual(6_900); // at most 3 s (plus the frame in flight) was accepted
   }, 15_000);
 
   it("reports each separate dropped run as its own range (Astra 3 I9)", async () => {
