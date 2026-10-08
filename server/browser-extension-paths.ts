@@ -2,7 +2,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 
 /** Where the browser broker keeps its socket and the owned launcher and receipt. In the data folder, not in a
  * predictable /tmp or %TEMP% name another user or Storage Sense can reach. A Unix socket path has a hard length limit
@@ -10,6 +10,8 @@ import { join } from "node:path";
  * pipe, so its length never matters; its folder is a sibling of browser-extension/ because the Windows helper must be the one that creates that itself. */
 export function browserExtensionRuntimeDir(options: { dataDir: string; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; tmp?: string; uid?: number; random?: () => string }): string {
   const platform = options.platform ?? process.platform, env = options.env ?? process.env;
+  // Paths follow the platform asked about, not the host, so one answer holds wherever it is computed.
+  const join = platform === "win32" ? path.win32.join : path.posix.join;
   if (env.MURAGE_BROWSER_EXTENSION_RUNTIME_ROOT) return join(env.MURAGE_BROWSER_EXTENSION_RUNTIME_ROOT, `mbe-${createHash("sha256").update(options.dataDir).digest("hex").slice(0, 12)}`);
   // A short sibling of browser-extension/ on every platform: short enough for a Mac data folder
   // ("~/Library/Application Support/murage"), and never inside the folder the Windows helper must create itself.

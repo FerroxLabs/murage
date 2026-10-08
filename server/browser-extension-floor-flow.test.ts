@@ -12,6 +12,7 @@ import { BrowserActivityStore, configureBrowserActivity } from "./browser-extens
 import type { FloorFacts } from "./browser-floor.ts";
 import { BROWSER_APP_PROTOCOL } from "../shared/browser-extension-protocol.ts";
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from "../shared/browser-extension-protocol.ts";
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
 
 const agreeBox: FloorFacts = { operation: "click", tag: "input", type: "checkbox", role: "checkbox", name: "I agree to the terms and conditions" };
 const benign: FloorFacts = { operation: "click", tag: "button", role: "button", name: "Save draft" };
@@ -182,7 +183,7 @@ describe("T03 policy: handoff reason and unbind (L11b)", () => {
 const cleanup: string[] = [];
 afterEach(async () => { configureBrowserActivity(undefined); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
 async function serviceFixture(initialFacts: FloorFacts) {
-  const directory = await fs.mkdtemp(path.resolve(".floor-service-")); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".floor-service-")); cleanup.push(directoryRoot);
   const activityDir = mkdtempSync(path.join(tmpdir(), "floor-activity-")); cleanup.push(activityDir);
   const activityStore = new BrowserActivityStore(activityDir); configureBrowserActivity(activityStore);
   const bindings = new Map<string, { generation: number; state: string; tabs: { tabId: number; navigationEpoch: number; origin: string; url: string }[] }>();

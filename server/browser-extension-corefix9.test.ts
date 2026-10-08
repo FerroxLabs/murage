@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { domFunction } from "./testing/native-dom-fixture.ts";
+import { privateTestDirectory, writePrivateTestFile } from "./testing/private-test-dir.ts";
 // Round 9 (blind Astra re-review of round 8, R8-01 to R8-12). Each test reproduces the attack and fails on 4355d11d.
 // Chrome-dependent proofs are in scripts/browser-corefix9.node-test.mjs.
 import fs from "node:fs/promises";
@@ -139,7 +140,7 @@ const A = "https://fixture.test";
 const cleanup: string[] = [];
 afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
 async function service() {
-  const directory = await fs.mkdtemp(path.resolve(".corefix9-")); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".corefix9-")); cleanup.push(directoryRoot);
   const bindings = new Map<string, any>();
   const broker = {
     profiles: () => [{ version: 1, type: "hello", profileId: "profile", browser: "chromium", extensionVersion: "1.0", capabilities: ["scoped_cdp", "durable_stop", "explicit_share", "manual_pause", "engine_cdp_v1", "unexpected_input_pause", "ordered_requests_v1", "lifecycle_v1"] }] as never,
@@ -161,7 +162,7 @@ describe("R8-12 a forged Allow always does not survive a restart", () => {
     await f.created.close();
     const file = f.options.stateFile; const saved = JSON.parse(await fs.readFile(file, "utf8"));
     saved.bindings[0].sites[A] = "allow";
-    await fs.writeFile(file, JSON.stringify(saved), { mode: 0o600 });
+    writePrivateTestFile(file, JSON.stringify(saved));
     const restored = await createBrowserExtensionService(f.options as never);
     expect(restored.status().bindings[0].sites[A]).not.toBe("allow");
   });

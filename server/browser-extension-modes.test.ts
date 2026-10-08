@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
 
 const A = 'https://fixture.test';
 const cleanup: string[] = [];
@@ -12,7 +13,7 @@ afterEach(async () => { for (const directory of cleanup.splice(0)) await fs.rm(d
 
 type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string };
 async function fixture(extra: Record<string, unknown> = {}) {
-  const directory = await fs.mkdtemp(path.resolve('.modes-')); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve('.modes-')); cleanup.push(directoryRoot);
   const bindings = new Map<string, { generation: number; state: string; tabs: Tab[] }>();
   const calls: BrowserExtensionCommand[] = [];
   const siteAsked: string[] = []; const cards: string[] = []; const ended: { reason: string; taskId: string }[] = [];
