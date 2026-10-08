@@ -78,8 +78,16 @@ describe("platform process hooks", () => {
     const root = 4242;
     setPlatformProcessHooks({ listTree: async (info) => (info.pid === root ? [root, 5001, 5002] : undefined) });
     expect(await descendantPids(root)).toEqual(new Set([5001, 5002]));
-    expect(await untrackedDescendants(root, new Set([5001]))).toEqual(new Set([5002]));
-    expect(await untrackedDescendants(root, new Set([5001, 5002]))).toEqual(new Set());
+    // a baseline without recorded creation identities exempts nothing (fail closed;
+    // process-tree-hook-identity.test.ts covers the identity match). Windows has
+    // no hook start identity: the settle check is unknown (null), so the turn
+    // recycles (documented fail-closed behaviour in process-tree.ts).
+    if (!posix) {
+      expect(await untrackedDescendants(root, new Set([5001]))).toBeNull();
+      return;
+    }
+    expect(await untrackedDescendants(root, new Set([5001]))).toEqual(new Set([5001, 5002]));
+    expect(await untrackedDescendants(root, new Set([5001, 5002]))).toEqual(new Set([5001, 5002]));
     // the baseline reads each listed pid's start time (process-tree.test.ts
     // covers the started-after-init rule): a pid with none is never baseline
     if (!posix) return;
