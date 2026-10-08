@@ -140,6 +140,9 @@ beforeAll(async () => {
         displayName: "Busy worker fixture",
         environment: {
           FAKE_CLAUDE_MODE: "slow",
+          // held until the test has seen the goal wait for it: an 800 ms slow
+          // reply could end before the lead's first turn did (Windows CI)
+          FAKE_CLAUDE_REPLY_GATE: join(home, "release-busy-worker"),
           FAKE_CLAUDE_REPLIES: JSON.stringify([
             "The unrelated direct research is complete.",
             "Evidence gathered for the coordinator.",
@@ -422,13 +425,14 @@ describe("goal-driven channel runs", () => {
           roomBusyBotId: current?.busyBotId,
           workerDirectBusy: state.bots.find((bot: { id: string }) => bot.id === worker.id)?.busy,
         };
-      }).toMatchObject({
+      }, { timeout: 10_000 }).toMatchObject({
         status: "working",
         detail: expect.stringMatching(/Busy specialist is finishing another conversation/i),
         turnCount: 1,
         roomBusyBotId: null,
         workerDirectBusy: true,
       });
+      writeFileSync(join(home, "release-busy-worker"), "release");
 
       await expect.poll(async () => {
         const state = (await api("GET", "/api/bots?messages=30")).body;
@@ -470,7 +474,7 @@ describe("goal-driven channel runs", () => {
       await api("DELETE", `/api/bots/${lead.id}`).catch(() => undefined);
       await api("DELETE", `/api/bots/${worker.id}`).catch(() => undefined);
     }
-  });
+  }, 60_000);
 
   // (Ordinary chat no longer skips a busy member: it is queued, or admitted
   // on a free thread. server/room-turn-engine-api.test.ts covers that.)
@@ -1071,8 +1075,10 @@ describe("goal-driven channel runs", () => {
       const state = (await api("GET", "/api/bots?messages=40")).body;
       const current = state.groups.find((candidate: { id: string }) => candidate.id === room.id);
       return current?.messages.find((message: { kind: string }) => message.kind === "goal.run")?.goalRun;
-    }, { timeout: 15_000 }).toMatchObject({ status: "limit-reached", turnCount: 13, maxTurns: 13 });
-  });
+    // thirteen engine turns, each a fresh CLI process: Windows starts a process
+    // several times slower than Linux, so the wait is sized for it
+    }, { timeout: 60_000 }).toMatchObject({ status: "limit-reached", turnCount: 13, maxTurns: 13 });
+  }, 90_000);
 
   it("never treats a failed provider turn as a completed goal", async () => {
     const lead = (await api("POST", "/api/bots", {
