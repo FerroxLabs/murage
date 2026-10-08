@@ -37,7 +37,11 @@ describe("import guard in a worker", () => {
     const files = fixture(49);
     const gaps: number[] = [];
     let last = performance.now();
-    const ticker = setInterval(() => { const now = performance.now(); gaps.push(now - last); last = now; }, 10);
+    { // DIAG: idle control
+      let l = performance.now(); const g: number[] = []; const t = setInterval(() => { const n = performance.now(); g.push(n - l); l = n; }, 10);
+      await new Promise(r => setTimeout(r, 8000)); clearInterval(t); g.sort((a, b) => b - a); console.log(`DIAG idle worst ${g.slice(0, 5).map(Math.round).join(",")} of ${g.length}`);
+    }
+    const ticker = setInterval(() => { const now = performance.now(); gaps.push(now - last); if (now - last > 25) console.log(`DIAG gap ${Math.round(now - last)} at ${Math.round(now - started)} mem ${Math.round(process.memoryUsage().heapUsed / 1e6)}`); last = now; }, 10);
     const started = performance.now();
     const seen: number[] = [];
     const scanId = "event-loop-check";

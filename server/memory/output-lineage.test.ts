@@ -7,7 +7,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { closeDatabase, database, transaction } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
 import { captureSource } from "./capture.ts";
@@ -76,12 +76,16 @@ it("a 600-reply ACTIVE chat with memory outputs keeps every reply visible until 
   // every reply is made under the receipt and is shown the reply before it:
   // reply k rests on the k replies before it (past the old 256 cap)
   const chain = ["x-prime"];
-  for (let turn = 1; turn < 600; turn++) {
-    const id = `r-${turn}`;
-    recordOutputRoots(thread, id, outputRootsFor([bot(chain.at(-1)!)]));
-    receipt.output(id);
-    chain.push(id);
-  }
+  // The chain is built in one transaction (each step nests in it): as one
+  // commit apiece the 600 replies took 270 s on a GitHub Windows runner.
+  transaction(() => {
+    for (let turn = 1; turn < 600; turn++) {
+      const id = `r-${turn}`;
+      recordOutputRoots(thread, id, outputRootsFor([bot(chain.at(-1)!)]));
+      receipt.output(id);
+      chain.push(id);
+    }
+  });
   expect(rootsOf("r-599")).toHaveLength(599);
   expect(database().prepare("SELECT count(*) AS n FROM memory_output_roots WHERE set_id=''").get()?.n).toBe(0);
   // memory goes off and one more reply paraphrases the newest
