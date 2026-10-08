@@ -9,6 +9,24 @@ import path from 'node:path';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
 import { FakeNode, h, page, gmailChat, teamsV2, realCollectFacts, runRecipientScan, addLookalikeContact, addSecondWindow } from './testing/chat-dom-fixture.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
+// Disk-fault injection reaches the writer the product uses on each platform: fs.writeFile of a temp file on
+// macOS and Linux, the native helper's private write on Windows (browser-extension-windows.mjs).
+const windowsWriteFault = vi.hoisted(() => ({ match: null as null | ((file: string) => boolean) }));
+vi.mock('../electron/browser-extension-windows.mjs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../electron/browser-extension-windows.mjs')>();
+  return { ...real, writePrivateWindowsJson: (file: string, value: unknown, options?: unknown) => {
+    if (windowsWriteFault.match?.(String(file))) throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' });
+    return (real.writePrivateWindowsJson as (f: string, v: unknown, o?: unknown) => void)(file, value, options);
+  } };
+});
+/** Every atomic save fails (ENOSPC) until mockRestore. */
+function failAtomicWrites() {
+  const real = fs.writeFile.bind(fs);
+  const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file: any, ...rest: any[]) => { if (String(file).includes('.tmp')) throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }); return (real as any)(file, ...rest); });
+  windowsWriteFault.match = () => true;
+  return { mockRestore: () => { windowsWriteFault.match = null; spy.mockRestore(); } };
+}
 
 const A = 'https://fixture.test';
 const cleanup: string[] = [];
@@ -18,7 +36,7 @@ type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string
 let engineNode: (() => { backendNodeId: number; frameId?: string }) | undefined;
 async function fixture(extra: Record<string, unknown> = {}) {
   engineNode = undefined;
-  const directory = await fs.mkdtemp(path.resolve('.modes-')); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve('.modes-')); cleanup.push(directoryRoot);
   const bindings = new Map<string, { generation: number; state: string; tabs: Tab[] }>();
   const calls: BrowserExtensionCommand[] = [];
   const siteAsked: string[] = []; const cards: string[] = []; const ended: { reason: string; taskId: string }[] = [];
@@ -208,8 +226,7 @@ describe('revoke-site: a failed write never lets an Allow always come back', () 
   it('the revoke throws and a restart does not restore the allowed site', async () => {
     const f = await withMode('task');
     await f.service.setSiteAccess(f.id, A, 'allow');
-    const real = fs.writeFile.bind(fs);
-    const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file: any, ...rest: any[]) => { if (String(file).includes('.tmp')) throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }); return (real as any)(file, ...rest); });
+    const spy = failAtomicWrites();
     await expect(f.service.revoke(f.id, A)).rejects.toThrow();
     spy.mockRestore();
     const restarted = await createBrowserExtensionService(f.options as never);
@@ -511,8 +528,7 @@ describe('revoke-site: the owner is told once when a failed write turned Allow a
     const f = await withMode('task');
     await f.service.setSiteAccess(f.id, A, 'allow');
     await f.service.setSiteAccess(f.id, 'https://second.test', 'allow');
-    const real = fs.writeFile.bind(fs);
-    const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file: any, ...rest: any[]) => { if (String(file).includes('.tmp')) throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }); return (real as any)(file, ...rest); });
+    const spy = failAtomicWrites();
     await expect(f.service.revoke(f.id, A)).rejects.toThrow();
     spy.mockRestore();
     const restarted = await createBrowserExtensionService(f.options as never);
@@ -524,8 +540,7 @@ describe('revoke-site: the owner is told once when a failed write turned Allow a
   it('the note survives a restart until the owner has been told', async () => {
     const f = await withMode('task');
     await f.service.setSiteAccess(f.id, A, 'allow');
-    const real = fs.writeFile.bind(fs);
-    const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file: any, ...rest: any[]) => { if (String(file).includes('.tmp')) throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }); return (real as any)(file, ...rest); });
+    const spy = failAtomicWrites();
     await expect(f.service.revoke(f.id, A)).rejects.toThrow();
     spy.mockRestore();
     await createBrowserExtensionService(f.options as never);
@@ -535,8 +550,7 @@ describe('revoke-site: the owner is told once when a failed write turned Allow a
   it('the lowered note is on the next status poll too, and stays until the sites list takes it', async () => {
     const f = await withMode('task');
     await f.service.setSiteAccess(f.id, A, 'allow');
-    const real = fs.writeFile.bind(fs);
-    const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file: any, ...rest: any[]) => { if (String(file).includes('.tmp')) throw Object.assign(Error('ENOSPC'), { code: 'ENOSPC' }); return (real as any)(file, ...rest); });
+    const spy = failAtomicWrites();
     await expect(f.service.revoke(f.id, A)).rejects.toThrow();
     spy.mockRestore();
     const restarted = await createBrowserExtensionService(f.options as never);

@@ -101,7 +101,8 @@ int broker(const std::wstring& name,DWORD parent){
  const auto sid=currentSid();Security security(sid);std::vector<std::pair<std::thread,std::shared_ptr<std::atomic<bool>>>> readers;std::atomic<HANDLE> accepting=nullptr;
  auto first=std::make_shared<Handle>(CreateNamedPipeW(name.c_str(),PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED|FILE_FLAG_FIRST_PIPE_INSTANCE,PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT|PIPE_REJECT_REMOTE_CLIENTS,17,chunkLimit,chunkLimit,0,&security.attributes));
  privateAcl(first->value,sid);emit(4,0);
- std::thread acceptor([&,pipe=first]() mutable {try{DWORD next=1;while(!stopping){accepting=pipe->value;Handle ready(CreateEventW(nullptr,TRUE,FALSE,nullptr));OVERLAPPED op{};op.hEvent=ready.value;
+ // The acceptor owns the first pipe instance: a second reference here would keep the first client's pipe open after the broker closed it.
+ std::thread acceptor([&,pipe=std::move(first)]() mutable {try{DWORD next=1;while(!stopping){accepting=pipe->value;Handle ready(CreateEventW(nullptr,TRUE,FALSE,nullptr));OVERLAPPED op{};op.hEvent=ready.value;
   const BOOL connected=ConnectNamedPipe(pipe->value,&op);const DWORD error=connected?ERROR_SUCCESS:GetLastError();need(connected||error==ERROR_PIPE_CONNECTED||error==ERROR_IO_PENDING);
   if(error==ERROR_IO_PENDING){while(WaitForSingleObject(ready.value,100)==WAIT_TIMEOUT&&!stopping){}if(stopping){CancelIoEx(pipe->value,&op);DWORD ignored;GetOverlappedResult(pipe->value,&op,&ignored,TRUE);break;}DWORD ignored;win(GetOverlappedResult(pipe->value,&op,&ignored,FALSE));}
   // A client that exits right after connecting makes this check fail: drop that client only, open a fresh pipe instance, keep accepting.

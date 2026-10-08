@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
 import { BrowserExtensionPolicy } from './browser-extension-policy.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
 
 const A = 'https://fixture.test';
 const B = 'https://other.test';
@@ -16,7 +17,7 @@ type Tab = { tabId: number; navigationEpoch: number; origin: string; url: string
 /** M3: an ended task only restarts after a new owner message. */
 let ownerMessage = 1;
 async function fixture(extra: Record<string, unknown> = {}) {
-  const directory = await fs.mkdtemp(path.resolve('.tasks-')); cleanup.push(directory); await fs.chmod(directory, 0o700);
+  const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve('.tasks-')); cleanup.push(directoryRoot);
   const bindings = new Map<string, { generation: number; state: string; tabs: Tab[] }>();
   const calls: BrowserExtensionCommand[] = [];
   const siteAsked: string[] = []; const cards: string[] = []; const ended: { reason: string; taskId: string }[] = [];
