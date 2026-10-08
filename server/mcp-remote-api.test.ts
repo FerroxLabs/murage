@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readdirSync, readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -338,7 +338,7 @@ describe("the server files run under node's strip-only TypeScript mode (review L
     const all = files(serverDir);
     expect(all.length).toBeGreaterThan(100);
     for (const name of ["custom-mcp-mounts.ts", "remote-mcp-client.ts", "mcp-relay.ts", "mcp-secrets.ts", "drivers/remote-mcp-proxy.ts"]) {
-      expect(all.map((path) => path.slice(serverDir.length))).toContain(name);
+      expect(all.map((path) => path.slice(serverDir.length).split(sep).join("/"))).toContain(name);
     }
     const failures: string[] = [];
     for (const file of all) {

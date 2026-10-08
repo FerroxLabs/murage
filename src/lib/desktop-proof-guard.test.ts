@@ -16,7 +16,7 @@
 // harness reads the same proof from the query string, so those sinks must go
 // through desktopResourceUrl().
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -49,6 +49,9 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   }
   return out;
 }
+
+/** A source's path under src/ in the allowlists' spelling: posix separators on every OS. */
+const srcPath = (path: string) => relative(SRC, path).split(sep).join("/");
 
 const lineOf = (source: string, index: number) => source.slice(0, index).split("\n").length;
 
@@ -323,7 +326,7 @@ export function findUnprovenResourceSinks(source: string, file: string): Resourc
 
 describe("every raw request from src/ to the harness carries the desktop proof", () => {
   it("scans the real sources and finds none without it", () => {
-    const failures = sourceFiles(SRC).flatMap((path) => findUnprovenApiRequests(readFileSync(path, "utf8"), relative(SRC, path)));
+    const failures = sourceFiles(SRC).flatMap((path) => findUnprovenApiRequests(readFileSync(path, "utf8"), srcPath(path)));
     expect(
       failures.map((f) => `src/${f.file}:${f.line} raw ${f.kind} with no desktop proof: ${f.excerpt}`),
       "Send desktopCallerHeaders() (or go through api() in src/state/store.tsx); the harness answers an unproven request 404 no such route",
@@ -410,7 +413,7 @@ describe("every raw request from src/ to the harness carries the desktop proof",
       }
     });
     it("scans the real sources and finds no harness URL loaded without desktopResourceUrl", () => {
-      const failures = sourceFiles(SRC).flatMap((path) => findUnprovenResourceSinks(readFileSync(path, "utf8"), relative(SRC, path)));
+      const failures = sourceFiles(SRC).flatMap((path) => findUnprovenResourceSinks(readFileSync(path, "utf8"), srcPath(path)));
       expect(
         failures.map((f) => `src/${f.file}:${f.line} ${f.kind} loads a URL with no desktop proof: ${f.excerpt}`),
         "Wrap the URL in desktopResourceUrl() (src/lib/live-events.ts); a browser-loaded /api URL without it is answered 404 no such route",
@@ -430,7 +433,7 @@ describe("every raw request from src/ to the harness carries the desktop proof",
     });
     it("no component uploads through the shared parser's unproven default", () => {
       const offenders = sourceFiles(join(SRC, "components")).filter((path) => /import\s*\{[^}]*\bimageAttachmentFromFile\b[^}]*\}\s*from\s*["']@\/lib\/composer-attachments["']/.test(readFileSync(path, "utf8")));
-      expect(offenders.map((path) => relative(SRC, path))).toEqual([]);
+      expect(offenders.map((path) => srcPath(path))).toEqual([]);
     });
   });
 });
