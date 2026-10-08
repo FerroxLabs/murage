@@ -28,13 +28,15 @@ const probe = vi.hoisted(() => ({
   real: false,
   /** holds the driver's tree-stop confirmations until it resolves (one test only) */
   treeGate: null as null | Promise<void>,
+  /** tree-stop confirmations that reached the gate (proof the CLI's "close" fired) */
+  treeGated: 0,
 }));
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
   return {
     ...actual,
     awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (probe.treeGate
-      ? probe.treeGate.then(() => actual.awaitCliTreeStopped(...args))
+      ? (probe.treeGated++, probe.treeGate.then(() => actual.awaitCliTreeStopped(...args)))
       : actual.awaitCliTreeStopped(...args)),
   };
 });
@@ -107,6 +109,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     probe.baselineOverride = null;
     probe.real = false;
     probe.treeGate = null;
+    probe.treeGated = 0;
     for (const key of ["FAKE_CLAUDE_AUTH", "FAKE_CLAUDE_HOLD_MARKER", "FAKE_CLAUDE_HOLD_GATE", "FAKE_CLAUDE_HOLD_SEEN", "FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS", "FAKE_CLAUDE_STATE", "FAKE_CLAUDE_RETRY_SCALE", "CLAUDE_CONFIG_DIR", "FAKE_CLAUDE_MODE"]) delete process.env[key];
     if (originalTmpdir === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = originalTmpdir;
     info.mockRestore();
@@ -251,7 +254,9 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     let release: () => void = () => {};
     probe.treeGate = new Promise<void>((resolve) => { release = resolve; });
     process.kill(one.pid, "SIGKILL");
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Wait for the close handler itself (it starts the tree confirmation), so
+    // the reset below always lands after "close" fired, never before it.
+    await vi.waitFor(() => expect(probe.treeGated).toBeGreaterThan(0), { timeout: 5_000, interval: 10 });
     const started = Date.now();
     const reset = instance.adapter.resetSession!("t-dead").then(() => "reset", (error: unknown) => String(error));
     setTimeout(() => { probe.treeGate = null; release(); }, 500);
