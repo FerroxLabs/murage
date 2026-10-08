@@ -1018,7 +1018,22 @@ const poolIdleMs = (): number => envOr("MURAGE_ACP_POOL_IDLE_MS", 15 * 60_000);
  * leftover, and the turn closes that process and spawns fresh.
  * Even per turn, ACP turns still count toward user activity and background
  * classification. */
-const poolingEnabled = (): boolean => process.env.MURAGE_ACP_POOL === "1";
+// Windows: the opt-in pool stays off. Its activity window and tree checks lean on
+// process listing, which on Windows is a PowerShell CIM query (hundreds of ms per
+// call) with no argv probe, so the pool's checks are unreliable there. Re-enable
+// when the native job helper's `list` mode replaces the CIM query (the default,
+// per turn, is unchanged on every OS).
+let poolWin32Logged = false;
+export function acpPoolingEnabled(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): boolean {
+  if (env.MURAGE_ACP_POOL !== "1") return false;
+  if (platform !== "win32") return true;
+  if (!poolWin32Logged) {
+    poolWin32Logged = true;
+    console.info("[murage] MURAGE_ACP_POOL is ignored on Windows; ACP engines run per turn");
+  }
+  return false;
+}
+const poolingEnabled = (): boolean => acpPoolingEnabled();
 /** Off by default for 1.0: an ACP process is only ever reused by the thread that
  * spawned it. `MURAGE_ACP_CROSS_THREAD_SPARE=1` lets another thread adopt an idle
  * spare to load its own session on it (never to open a new one). */

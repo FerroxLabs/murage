@@ -28,13 +28,15 @@ const probe = vi.hoisted(() => ({
   real: false,
   /** holds the driver's tree-stop confirmations until it resolves (one test only) */
   treeGate: null as null | Promise<void>,
+  /** tree-stop confirmations that reached the gate (proof the CLI's "close" fired) */
+  treeGated: 0,
 }));
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
   return {
     ...actual,
     awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (probe.treeGate
-      ? probe.treeGate.then(() => actual.awaitCliTreeStopped(...args))
+      ? (probe.treeGated++, probe.treeGate.then(() => actual.awaitCliTreeStopped(...args)))
       : actual.awaitCliTreeStopped(...args)),
   };
 });
@@ -53,6 +55,13 @@ vi.mock("./process-tree.ts", async (original) => {
   };
 });
 
+// os.tmpdir() reads TMPDIR on POSIX but TEMP/TMP on Windows, so redirecting the
+// temp directory for a test has to set all three.
+const TMP_KEYS = ["TMPDIR", "TEMP", "TMP"] as const;
+const originalTmp = Object.fromEntries(TMP_KEYS.map((key) => [key, process.env[key]]));
+const useTmp = (dir: string) => { for (const key of TMP_KEYS) process.env[key] = dir; };
+const restoreTmp = () => { for (const key of TMP_KEYS) { const value = originalTmp[key]; if (value === undefined) delete process.env[key]; else process.env[key] = value; } };
+
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
 
 describe("ClaudeDriver warm process (fake CLI)", () => {
@@ -63,7 +72,6 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
   let traces: string[];
   let info: ReturnType<typeof vi.spyOn>;
   const sessions = new Map<string, string>();
-  const originalTmpdir = process.env.TMPDIR;
 
   const create = async (config: Partial<ClaudeConfig> = {}) => {
     instance = await ClaudeDriver.create({
@@ -92,6 +100,9 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     chmodSync(FAKE_CLI, 0o755);
     sessions.clear();
     scratch = mkdtempSync(join(tmpdir(), "murage-claude-warm-"));
+    // hermetic: the revision stats the CLI's global settings, which a real
+    // ~/.claude (or %USERPROFILE%\\.claude, which a temp HOME does not move) can change mid-test
+    process.env.CLAUDE_CONFIG_DIR = join(scratch, "claude-config-default");
     dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
     process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
@@ -107,8 +118,9 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     probe.baselineOverride = null;
     probe.real = false;
     probe.treeGate = null;
+    probe.treeGated = 0;
     for (const key of ["FAKE_CLAUDE_AUTH", "FAKE_CLAUDE_HOLD_MARKER", "FAKE_CLAUDE_HOLD_GATE", "FAKE_CLAUDE_HOLD_SEEN", "FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS", "FAKE_CLAUDE_STATE", "FAKE_CLAUDE_RETRY_SCALE", "CLAUDE_CONFIG_DIR", "FAKE_CLAUDE_MODE"]) delete process.env[key];
-    if (originalTmpdir === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = originalTmpdir;
+    restoreTmp();
     info.mockRestore();
     recorder?.stop();
     await instance?.dispose();
@@ -168,8 +180,17 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect(b.cred.path).not.toBe(a.cred.path);
     expect(dirname(b.cred.path)).not.toBe(dirname(a.cred.path));
     for (const cred of [a.cred, b.cred]) {
-      expect(statSync(cred.path).mode & 0o777).toBe(0o600);
-      expect(statSync(dirname(cred.path)).mode & 0o777).toBe(0o700);
+      if (process.platform === "win32") {
+        // Windows has no POSIX mode bits (statSync reports 0o666/0o777 whatever the ACL says).
+        // The equivalent guarantee is that the directory is created fresh under the per-user
+        // temp directory, whose ACL the new directory inherits.
+        expect(statSync(cred.path).isFile()).toBe(true);
+        expect(statSync(dirname(cred.path)).isDirectory()).toBe(true);
+        expect(dirname(dirname(cred.path)).toLowerCase()).toBe(tmpdir().toLowerCase());
+      } else {
+        expect(statSync(cred.path).mode & 0o777).toBe(0o600);
+        expect(statSync(dirname(cred.path)).mode & 0o777).toBe(0o700);
+      }
       expect(cred.path).not.toContain("t-iso");
     }
     expect(b.cred.content.agents.MURAGE_COMMS_TOKEN).toBe("tok-b");
@@ -251,7 +272,9 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     let release: () => void = () => {};
     probe.treeGate = new Promise<void>((resolve) => { release = resolve; });
     process.kill(one.pid, "SIGKILL");
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // Wait for the close handler itself (it starts the tree confirmation), so
+    // the reset below always lands after "close" fired, never before it.
+    await vi.waitFor(() => expect(probe.treeGated).toBeGreaterThan(0), { timeout: 5_000, interval: 10 });
     const started = Date.now();
     const reset = instance.adapter.resetSession!("t-dead").then(() => "reset", (error: unknown) => String(error));
     setTimeout(() => { probe.treeGate = null; release(); }, 500);
@@ -344,7 +367,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
   });
 
   it("R3-3: a steer queued before init settles when the pre-accept launch dies and the turn is retried", async () => {
-    process.env.TMPDIR = scratch;
+    useTmp(scratch);
     process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
     process.env.FAKE_CLAUDE_STATE = join(scratch, "state");
     await create();
@@ -422,9 +445,10 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect((finished[0] as { ok?: boolean }).ok).toBe(true);
   });
 
-  // chmod is how this test makes the emptying rename fail; root ignores it, so
-  // the failure can't be staged in a root container (the gate's docker runs).
-  it.skipIf(process.getuid?.() === 0)("recycles the process when the credential cannot be emptied at settle", async () => {
+  // The emptying rename is made to fail by putting a non-empty directory where the
+  // credential file is: a rename onto it fails on every platform and for root too
+  // (a chmod on the directory does nothing on Windows and nothing to root).
+  it("recycles the process when the credential cannot be emptied at settle", async () => {
     const gateFile = join(scratch, "hold.gate");
     process.env.FAKE_CLAUDE_HOLD_MARKER = "__hold_here__";
     process.env.FAKE_CLAUDE_HOLD_GATE = gateFile;
@@ -433,10 +457,11 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     const one = await run("t-clear", "one", base);
     const held = await instance.adapter.sendTurn({ threadId: "t-clear", text: "__hold_here__ two", resumeCursor: sessions.get("t-clear"), ...base });
     for (let i = 0; i < 100 && !existsSync(process.env.FAKE_CLAUDE_HOLD_SEEN!); i++) await new Promise((resolve) => setTimeout(resolve, 20));
-    chmodSync(dirname(one.cred.path), 0o500); // the emptying rename now fails
+    rmSync(one.cred.path, { force: true });
+    mkdirSync(one.cred.path); // the emptying rename now fails
+    writeFileSync(join(one.cred.path, "keep"), "x");
     writeFileSync(gateFile, "go");
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === held.turnId);
-    chmodSync(dirname(one.cred.path), 0o700);
     const three = await run("t-clear", "three", base);
     expect(three.pid).not.toBe(one.pid);
   });
@@ -484,7 +509,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
   it("the settings revision covers the repository root's and the main checkout's settings.local.json (subdirectory and worktree)", () => {
     const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.email=t@example.invalid", "-c", "user.name=t", ...args], { cwd, stdio: "ignore" });
     mkdirSync(join(scratch, "rev-repo", "sub", "deeper"), { recursive: true });
-    const repo = realpathSync(join(scratch, "rev-repo"));
+    const repo = realpathSync.native(join(scratch, "rev-repo"));
     git(repo, "init", "-q");
     git(repo, "commit", "-q", "--allow-empty", "-m", "init");
     const env = { CLAUDE_CONFIG_DIR: join(scratch, "rev-config") };
@@ -498,7 +523,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     // A linked worktree resolves the local file at the main checkout's root as well as its own.
     const tree = join(scratch, "rev-tree");
     git(repo, "worktree", "add", "-q", tree);
-    const treeReal = realpathSync(tree);
+    const treeReal = realpathSync.native(tree);
     expect(claudeGitRoots(treeReal)).toEqual([treeReal, repo]);
     const treeBefore = claudeSettingsRevision(env, treeReal, []);
     writeFileSync(join(repo, ".claude", "settings.local.json"), JSON.stringify({ permissions: { allow: ["Read"] } }));
@@ -524,7 +549,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
   });
 
   it("unlinks the credential file of a launch that died before accepting before the relaunch, not only at it", async () => {
-    process.env.TMPDIR = scratch;
+    useTmp(scratch);
     process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
     process.env.FAKE_CLAUDE_STATE = join(scratch, "state");
     await create();
@@ -976,7 +1001,6 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
   let lines: string[];
   let info: ReturnType<typeof vi.spyOn>;
   const sessions = new Map<string, string>();
-  const originalTmpdir = process.env.TMPDIR;
   const agents = (token: string) => ({
     agents: { command: process.execPath, args: ["fixture-agents-proxy"], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: token, MURAGE_TURN_DEPTH: "0" } },
   });
@@ -1021,7 +1045,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
   });
   afterEach(async () => {
     for (const key of ["FAKE_CLAUDE_DUMP", "MURAGE_WARM_ACTIVITY_WINDOW_MS", "MURAGE_PREWARM_FILE_GRACE_MS", "FAKE_CLAUDE_START_DELAY_MS", "FAKE_CLAUDE_START_LOG", "FAKE_CLAUDE_START_BANNER", "FAKE_CLAUDE_START_FRAMES", "FAKE_CLAUDE_INIT_ERROR"]) delete process.env[key];
-    if (originalTmpdir === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = originalTmpdir;
+    restoreTmp();
     info.mockRestore();
     recorder?.stop();
     await instance?.dispose();
@@ -1087,7 +1111,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
   });
 
   it("a prewarmed engine keeps no credentials or config on disk while it idles", async () => {
-    process.env.TMPDIR = scratch;
+    useTmp(scratch);
     await create();
     await run("t-pw-files", "one", { ...base, system: "be brief" });
     await eventually(() => warmPool.idleCount() === 0);
@@ -1105,7 +1129,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
   });
 
   it("a slow-starting prewarm keeps its config and prompt files until the CLI confirms it started, then drops them", async () => {
-    process.env.TMPDIR = scratch;
+    useTmp(scratch);
     process.env.MURAGE_PREWARM_FILE_GRACE_MS = "5000";
     await create();
     await run("t-pw-slowstart", "one", { ...base, system: "be brief" });
@@ -1128,7 +1152,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
   });
 
   it("a launcher banner on stdout never confirms startup: the files stay while the CLI has not read them", async () => {
-    process.env.TMPDIR = scratch;
+    useTmp(scratch);
     process.env.MURAGE_PREWARM_FILE_GRACE_MS = "5000";
     await create();
     await run("t-pw-banner", "one", { ...base, system: "be brief" });
@@ -1156,7 +1180,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     ["a control_response that answers someone else's request", [{ type: "control_response", response: { subtype: "success", request_id: "not-ours", response: {} } }]],
     ["a control_response with our id that did not succeed", null],
   ] as const)("%s never confirms startup: the files stay until the real answer", async (name, frames) => {
-    process.env.TMPDIR = scratch;
+    useTmp(scratch);
     process.env.MURAGE_PREWARM_FILE_GRACE_MS = "5000";
     const thread = `t-pw-bogus-${name.length}`;
     await create();
@@ -1188,7 +1212,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
   });
 
   it("a system/init event confirms startup: the files go at once", async () => {
-    process.env.TMPDIR = scratch;
+    useTmp(scratch);
     process.env.MURAGE_PREWARM_FILE_GRACE_MS = "5000";
     await create();
     await run("t-pw-init", "one", { ...base, system: "be brief" });
@@ -1204,7 +1228,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
   });
 
   it("a prewarm that does not confirm startup within its bound is retired first, and its files go with its close", async () => {
-    process.env.TMPDIR = scratch;
+    useTmp(scratch);
     await create();
     await run("t-pw-nostart", "one", { ...base, system: "be brief" });
     await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-nostart reason=activity window")));

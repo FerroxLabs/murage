@@ -482,7 +482,8 @@ describe("Qwen / Hermes ACP turns", () => {
       await instance.adapter.sendTurn({ threadId: "t-hermes", text: "hi", model: "omlx::gemma-4-31b-it-bf16" });
       await recorder.until((e) => e.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
-      expect(seen.argv).toEqual(["acp"]);
+      // every Hermes spawn names its profile (62184a14f): a bare `hermes acp` runs the sticky active profile
+      expect(seen.argv).toEqual(["-p", "default", "acp"]);
       expect(seen.env.OPENAI_API_KEY).toBeUndefined();
       expect(seen.env.OPENROUTER_API_KEY).toBeUndefined();
       const configCalls = JSON.parse(readFileSync(`${dump}.config.json`, "utf8")) as Array<{

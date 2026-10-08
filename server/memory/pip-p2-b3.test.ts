@@ -393,7 +393,8 @@ describe("restart rows and the reaper", () => {
     });
     return tempRoot;
   }
-  const noKill = { sweep: async () => [], termGraceMs: 0, forceWaitMs: 0, wait: async () => {} };
+  // The reaper cases below script POSIX groups and signals, so they pin the platform; Windows has its own job path (tests above).
+  const noKill = { platform: "linux" as const, sweep: async () => [], termGraceMs: 0, forceWaitMs: 0, wait: async () => {} };
 
   it.each(["requested", "refused:unstable"])("Windows restart reopens the persisted job and settles %s", async terminal => {
     const root = seedRun();
@@ -845,7 +846,7 @@ describe("Astra audit2 production regressions", () => {
   it("19: startup and maintenance recover disabled applied-only runs and orphan roots with memory off", async () => {
     const { maintainPip } = await import("./pip-reflect.ts");
     const { MemoryWorkerController, MEMORY_IDLE_SWEEP_MS } = await import("./worker-controller.ts");
-    const r = rig({ bot: bot({ continuity: false }), reaper: { sweep: async () => [] } });
+    const r = rig({ bot: bot({ continuity: false }), reaper: { platform: "linux", sweep: async () => [] } });
     const root = join(r.deps.tmpBase, "orphan"); mkdirSync(root, { recursive: true });
     const seed = (runId: string) => mutateReflect("moss", s => { s.run = { runId, kind: "reflect", threadId: "private", toMessageId: "o1", fromMessageId: null, toAt: T0, createdAt: T0, bootEpoch: r.deps.bootEpoch, fingerprint: "fp", window: { bytes: 1 }, families: { lived: { state: "applied", attempt: 1, snapshotGen: "g" } } }; });
     seed("startup"); setMemoryMode("off"); vi.useFakeTimers();

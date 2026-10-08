@@ -9,15 +9,16 @@ import path from "node:path";
 import { runNativeHost, readHostConfig, FrameDecoder, encodeFrame } from "../electron/browser-extension-host.mjs";
 import { BrowserExtensionIntegration } from "./browser-extension-integration.ts";
 import type { BotRecord } from "./store.ts";
+import { privateTestDirectory } from "./testing/private-test-dir.ts";
 
 const ROOT = process.platform === "win32" ? os.tmpdir() : realpathSync("/tmp");
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
 
 async function world(extra: Record<string, unknown> = {}) {
-  const dataDir = await fs.mkdtemp(path.join(ROOT, "c2d-")); const socketDir = await fs.mkdtemp(path.join(ROOT, "c2s-"));
-  await fs.chmod(dataDir, 0o700); await fs.chmod(socketDir, 0o700);
-  cleanup.push(() => fs.rm(dataDir, { recursive: true, force: true }), () => fs.rm(socketDir, { recursive: true, force: true }));
+  const dataDir = await fs.mkdtemp(path.join(ROOT, "c2d-")); await fs.chmod(dataDir, 0o700);
+  const { root: socketRoot, directory: socketDir } = await privateTestDirectory(path.join(ROOT, "c2s-"));
+  cleanup.push(() => fs.rm(dataDir, { recursive: true, force: true }), () => fs.rm(socketRoot, { recursive: true, force: true }));
   const botRecord = { id: "bot", name: "Bot", threadId: "thread", useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: "profile", browserApproval: "full" } as BotRecord;
   const modes: string[] = [];
   const integration = new BrowserExtensionIntegration({ dataDir, socketDir, workspaceId: "workspace", approvalBus: { store: { bots: [], groups: [], messagesFor: () => [] } } as never,

@@ -479,8 +479,9 @@ describe("PIP two-pass budget (A11)", () => {
   it("(b) with recall present on a small window the recall hit is still delivered, and a row placed in pass two renders in its A4 slot", async () => {
     writeBotIdentity(ticket, brief(), roster);
     const relation = writeBotIdentity(ticket, pip("relation", "owner", "R".repeat(520)), roster);
-    writeBotIdentity(ticket, pip("commitment", "small", "Call on Friday."), roster);
-    database().prepare("UPDATE memory_records SET created_at=created_at+10 WHERE id=?").run(relation.id); // newest first (design 2.2)
+    const small = writeBotIdentity(ticket, pip("commitment", "small", "Call on Friday."), roster);
+    // newest first (design 2.2); a fixed lead over the later write, as in (a): +10 ms raced it on a loaded Windows runner
+    database().prepare("UPDATE memory_records SET created_at=? WHERE id=?").run(Number(database().prepare("SELECT created_at FROM memory_records WHERE id=?").get(small.id)!.created_at) + 60_000, relation.id);
     const f = fact("moss", "harbour lantern oil on Tuesdays");
     const bridge = { search: async () => ({ hits: [{ id: f, version: 1, score: 1, lexical: true }] as IndexHit[], vectorRows: 0 }) };
     const bundle = await buildMemoryBundle("harbour lantern oil", access(), bridge, { continuity: true, availableContextTokens: window });
