@@ -192,6 +192,13 @@ jobs:
         run: node scripts/prepare-backup-test-fixtures.mjs --tool-directory "$RUNNER_TEMP/backup-test-age" >> "$GITHUB_ENV"
       - name: Build the server bundle that packaged-layout tests import
         run: pnpm build:server
+      - name: Build the Windows browser helper
+        # On Windows the browser broker and service keep their state through the
+        # native ACL helper (electron/browser-extension-windows.mjs) and fail
+        # closed without it. package:win builds it the same way, with the
+        # runner's own MSVC, into dist-native/browser-extension/win32-x64.
+        if: matrix.os == 'windows-latest'
+        run: pnpm build:browser-extension-windows
       - name: Run Vitest shard
         if: inputs.vitest_file == ''
         run: pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/6

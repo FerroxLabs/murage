@@ -17,6 +17,8 @@ import { launchVerificationServer, type VerificationServer } from "../scripts/co
 import { browserSessionId } from "./browser-engine.ts";
 import { BROWSER_UNAVAILABLE_PREFIX, USER_CHROME_ALLOW_REASON, USER_CHROME_UNREACHABLE_REASON } from "../shared/browser-unavailable.ts";
 import { USER_CHROME_SETUP_MESSAGE } from "./user-chrome.ts";
+// The warm engine carries per-turn tokens in a credential file; put them back inline as a proxy reads them.
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 
 const instrumentation = `
 const fs = await import('node:fs');
@@ -100,7 +102,7 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: await response.json() as any };
 };
 const dump = (second: boolean) => {
-  try { return JSON.parse(readFileSync(second ? join(fixture.info.dataDir, "second-dump.json") : fixture.fixtureDumpPath, "utf8")); } catch { return null; }
+  try { return withTurnSecrets(JSON.parse(readFileSync(second ? join(fixture.info.dataDir, "second-dump.json") : fixture.fixtureDumpPath, "utf8"))); } catch { return null; }
 };
 const sessionLog = (): LogEntry[] => {
   try { return JSON.parse(readFileSync(join(fixture.info.dataDir, "browser-sessions.json"), "utf8")); } catch { return []; }

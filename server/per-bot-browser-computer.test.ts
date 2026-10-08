@@ -25,6 +25,8 @@ import { startHeadlessEngine, type EngineClient } from "./drivers/headless-brows
 import { browserSessionId } from "./browser-engine.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
 import { fakeHostDescriptorSource } from "./testing/fake-host-descriptor.ts";
+// The warm engine carries per-turn tokens in a credential file; put them back inline as a proxy reads them.
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 
 /** Auto ("no computer chosen") only reaches this Mac on darwin — see
  * server/local-routing.ts:14. Everywhere else the auto-fallback assertions
@@ -181,11 +183,11 @@ const api = async (method: string, path: string, body?: unknown) => {
 };
 const dumpPath = (second: boolean) => second ? join(fixture.info.dataDir, "second-dump.json") : fixture.fixtureDumpPath;
 const dump = (second: boolean) => {
-  try { return JSON.parse(readFileSync(dumpPath(second), "utf8")); } catch { return null; }
+  try { return withTurnSecrets(JSON.parse(readFileSync(dumpPath(second), "utf8"))); } catch { return null; }
 };
 /** The last prompt an extra engine slot recorded (see the instrumentation). */
 const instanceDump = (instance: "slowclose" | "nostop") => {
-  try { return JSON.parse(readFileSync(join(fixture.info.dataDir, `${instance}-dump.json`), "utf8")); } catch { return null; }
+  try { return withTurnSecrets(JSON.parse(readFileSync(join(fixture.info.dataDir, `${instance}-dump.json`), "utf8"))); } catch { return null; }
 };
 /** Send a turn to a bot on an extra engine slot and wait until it is dispatched. */
 const startInstanceTurn = async (bot: any, label: string, instance: "slowclose" | "nostop") => {

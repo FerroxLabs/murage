@@ -97,3 +97,11 @@ test('Chrome then Brave coexist; Brave and Chromium reuse one exact owned regist
   adapter('brave').removeIfEqual(brave.registry, brave.manifest);
   assert.equal(values.size, 1); assert.equal(values.get('chrome:' + hostName), chrome.registry.value);
 });
+
+test('Windows broker disconnects a closed client, the first one included', async () => {
+  // Source assertion on every platform; the behaviour (a refused first client sees its pipe close) is proved on
+  // Windows by server/browser-extension-broker.test.ts "does not publish an authenticated extension...".
+  const source = await fs.readFile(new URL('../native/browser-extension/transport.cpp', import.meta.url), 'utf8');
+  assert.match(source, /std::thread acceptor\(\[&,pipe=std::move\(first\)\]/, 'a second reference to the first pipe instance keeps the first client connected');
+  assert.match(source, /closeConnection\(c\);DisconnectNamedPipe\(c->pipe->value\);try\{emit\(3,c->id\);\}/);
+});
