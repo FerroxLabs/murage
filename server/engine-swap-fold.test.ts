@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
+import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { Store, type Message } from "./store.ts";
@@ -216,7 +217,8 @@ it.each(["pi", "codex", "acp"])("N9/N10 %s production events preserve action evi
     nativeSource: "fixture.acp", models: { default: "one", options: [{ id: "one", label: "One" }] },
     loginNote: "fixture", spawnArgs: () => [], pickAuthMethod: () => null, authFailure: "continue", isAuthenticated: () => true });
   const driver = engine === "pi" ? PiDriver : engine === "codex" ? CodexDriver : acp;
-  const cli = new URL(`./testing/fake-${engine === "codex" ? "codex-app-server" : engine + "-cli"}.ts`, import.meta.url).pathname;
+  // fileURLToPath, not URL.pathname: on Windows a pathname is "/D:/..." and the fake CLI never starts
+  const cli = fileURLToPath(new URL(`./testing/fake-${engine === "codex" ? "codex-app-server" : engine + "-cli"}.ts`, import.meta.url));
   const instance = await driver.create({ instanceId: "fixture", displayName: "Fixture", enabled: true,
     environment: { [`FAKE_${engine.toUpperCase()}_MODE`]: "action-guard" }, config: { cli, fullAuto: false } });
   const recorder = recordEvents(instance.adapter);
@@ -279,7 +281,7 @@ describe("Fuigo hosted tool rows in the saved transcript", () => {
       loginNote: "fixture", spawnArgs: () => [], pickAuthMethod: () => null, authFailure: "continue", isAuthenticated: () => true });
     const instance = await driver.create({ instanceId: "fixture", displayName: "Fixture", enabled: true,
       environment: { FAKE_ACP_MODE: `fuigo-retry:disc-${variant}` },
-      config: { cli: new URL("./testing/fake-acp-cli.ts", import.meta.url).pathname, fullAuto: false } });
+      config: { cli: fileURLToPath(new URL("./testing/fake-acp-cli.ts", import.meta.url)), fullAuto: false } });
     const recorder = recordEvents(instance.adapter);
     try {
       const { store, bot, fold } = foldFixture();
@@ -345,6 +347,10 @@ describe("Fuigo hosted tool rows in the saved transcript", () => {
   });
 });
 
+// 600 rows (past the old 512 anchor cap) are 1,200 folded events, each saved
+// in its own committed transaction (synchronous=FULL). That is about 1.5 s on
+// Linux and a Windows desktop, but 26 s on a GitHub Windows runner, whose disk
+// flushes slowly: the limit covers that runner; the test asserts no timing.
 it("a hosted row's lead-in still lands before it after 600 earlier tool rows in the same turn", () => {
   const { store, bot, fold } = foldFixture();
   const base = { threadId: bot.threadId, turnId: "turn", providerInstanceId: "fixture", eventId: "event" };
@@ -357,7 +363,7 @@ it("a hosted row's lead-in still lands before it after 600 earlier tool rows in 
   fold({ ...base, type: "item.completed", itemType: "assistant_text", text: "Let me search.", beforeItemId: "hosted" });
   const tail = store.activePath(bot.threadId).slice(-3).map(row => row.kind === "text" ? `text:${row.text}` : `row:${row.tool?.name}`);
   expect(tail).toEqual(["row:read", "text:Let me search.", "row:web_search"]);
-});
+}, 120_000);
 
 /** Hosted-row anchors held for a thread, whatever shape the map keeps. */
 const heldAnchors = (map: Map<string, unknown>, threadId: string): number => {

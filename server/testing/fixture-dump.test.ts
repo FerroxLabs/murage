@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 it.each(["fake-claude-cli.ts", "fake-codex-app-server.ts", "fake-agy-cli.ts", "../drivers/acp/fuigo.test.ts"])("%s never dumps the inherited environment", file => {
   const source = readFileSync(new URL(file, import.meta.url), "utf8");
@@ -23,7 +24,7 @@ it("excludes unlisted fields and fingerprints asserted credentials",()=>{
 it("the ACP fake fingerprints credentials and keeps unlisted fields out of its dump",()=>{
  const dir=mkdtempSync(join(tmpdir(),"murage-acp-dump-")),dump=join(dir,"dump.json");
  try{
-  execFileSync(process.execPath,[new URL("./fake-acp-cli.ts",import.meta.url).pathname,"--version"],{encoding:"utf8",timeout:5_000,
+  execFileSync(process.execPath,[fileURLToPath(new URL("./fake-acp-cli.ts", import.meta.url)),"--version"],{encoding:"utf8",timeout:5_000,
    env:{PATH:process.env.PATH,HOME:dir,FAKE_ACP_DUMP:dump,OPENAI_API_KEY:"synthetic-openai-secret",MY_AGENT_TOKEN:"synthetic-agent-secret",PF_UNLISTED_SECRET:"fixture-canary"}});
   const text=readFileSync(dump,"utf8"),env=JSON.parse(text).env;
   expect(text.includes("synthetic-openai-secret")||text.includes("synthetic-agent-secret")||text.includes("fixture-canary")).toBe(false);
@@ -39,7 +40,7 @@ it("the ACP fake fingerprints credential-named MCP env in its dump, its mcp file
  const input=[{jsonrpc:"2.0",id:1,method:"initialize",params:{}},{jsonrpc:"2.0",id:2,method:"session/new",params:{cwd:dir,mcpServers:servers("synthetic-comms-one")}},
   {jsonrpc:"2.0",id:3,method:"session/load",params:{sessionId:"fake-acp-session",cwd:dir,mcpServers:servers("synthetic-comms-two")}}].map(line=>JSON.stringify(line)).join("\n")+"\n";
  try{
-  spawnSync(process.execPath,[new URL("./fake-acp-cli.ts",import.meta.url).pathname],{input,encoding:"utf8",timeout:5_000,
+  spawnSync(process.execPath,[fileURLToPath(new URL("./fake-acp-cli.ts", import.meta.url))],{input,encoding:"utf8",timeout:5_000,
    env:{PATH:process.env.PATH,HOME:dir,FAKE_ACP_DUMP:dump,FAKE_ACP_RPC_LOG:log}});
   const texts=[readFileSync(dump,"utf8"),readFileSync(`${dump}.mcp.json`,"utf8"),readFileSync(log,"utf8")];
   for(const text of texts)expect(["synthetic-comms-one","synthetic-comms-two","synthetic-notes-secret"].some(secret=>text.includes(secret))).toBe(false);

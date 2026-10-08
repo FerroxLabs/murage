@@ -35,9 +35,12 @@ describe("import guard in a worker", () => {
 
   it("keeps the event loop free while a 50 MB package is checked", async () => {
     const files = fixture(49);
-    const gaps: number[] = [];
-    let last = performance.now();
-    const ticker = setInterval(() => { const now = performance.now(); gaps.push(now - last); last = now; }, 10);
+    const gaps: number[] = [], held: number[] = [];
+    // Main-thread CPU time between ticks: what this thread itself ran, apart
+    // from time the OS gave its core to someone else.
+    const cpuMs = () => { const used = process.threadCpuUsage(); return (used.user + used.system) / 1000; };
+    let last = performance.now(), lastCpu = cpuMs();
+    const ticker = setInterval(() => { const now = performance.now(), cpu = cpuMs(); gaps.push(now - last); held.push(cpu - lastCpu); last = now; lastCpu = cpu; }, 10);
     const started = performance.now();
     const seen: number[] = [];
     const scanId = "event-loop-check";
@@ -46,12 +49,16 @@ describe("import guard in a worker", () => {
     try { result = await scanBotPackageForImportAsync(files, { scanId }); }
     finally { clearInterval(ticker); clearInterval(watcher); }
     const elapsed = performance.now() - started;
-    const worst = Math.max(...gaps);
-    console.log(`50MB scan: ${Math.round(elapsed)} ms, ${gaps.length} ticks, worst timer gap ${Math.round(worst)} ms (10 ms timer)`);
+    const worst = Math.max(...gaps), worstHeld = Math.max(...held);
+    console.log(`50MB scan: ${Math.round(elapsed)} ms, ${gaps.length} ticks, worst timer gap ${Math.round(worst)} ms, worst main-thread run ${Math.round(worstHeld)} ms (10 ms timer)`);
     expect(result.state).toBeUndefined();
     expect(result.blocked).toBe(false);
-    // A 10 ms timer is never held for more than 50 ms.
-    expect(worst).toBeLessThan(50);
+    // The server's own thread never runs more than 50 ms between two ticks of
+    // a 10 ms timer. Counted in this thread's CPU time, not wall time: on a
+    // three-core macOS runner the scan worker and its collector keep every
+    // core busy, and wall gaps of up to 95 ms showed while this thread sat
+    // idle waiting for a core (CI 37749162871); a busy desktop does the same.
+    expect(worstHeld).toBeLessThan(50);
     // The check reported real progress on the way, never going backwards.
     expect(seen.length).toBeGreaterThan(1);
     expect([...seen].sort((a, b) => a - b)).toEqual(seen);

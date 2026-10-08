@@ -5,7 +5,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { pushRiskFor, ratePushRevision, workspaceInside } from "./mobile-push-risk.ts";
 import { LOW_COMMANDS, isReadOnlyCommand } from "./mobile-push-readonly.ts";
@@ -304,7 +304,7 @@ describe("B1 allowlist round 6: a symlink named - (real filesystem)", () => {
       writeFileSync(join(base, "secret", "k"), "x");
       symlinkSync(join(base, "secret"), join(base, "ws", "-"));
       symlinkSync(join(base, "secret"), join(base, "ws", "lnk"));
-      const real = workspaceInside({ cwd: join(base, "ws"), roots: [join(base, "ws")], home: base, knownRecipients: new Set<string>(), realpath: (p: string) => realpathSync(p.startsWith("/") ? p : join(base, "ws", p)) }, []);
+      const real = workspaceInside({ cwd: join(base, "ws"), roots: [join(base, "ws")], home: base, knownRecipients: new Set<string>(), realpath: (p: string) => realpathSync(isAbsolute(p) ? p : join(base, "ws", p)) }, []);
       for (const command of ["head -", "tail -", "wc -", "ls -", "tree -", "cat -", "ls lnk", "ls lnk/", "tree lnk"]) {
         expect(pushRiskFor(null, "Bash", command, { input: { command }, inside: real }), command).toBe("risky");
       }

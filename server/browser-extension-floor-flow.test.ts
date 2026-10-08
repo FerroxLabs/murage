@@ -180,7 +180,10 @@ describe("T03 policy: handoff reason and unbind (L11b)", () => {
 
 // ---------------------------------------------------------------------------- service
 const cleanup: string[] = [];
-afterEach(async () => { configureBrowserActivity(undefined); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
+// Close every service before its folder goes: a save still in flight would recreate state.json mid-removal (ENOTEMPTY on macOS).
+const services: { close(): Promise<void> }[] = [];
+const track = <T extends { close(): Promise<void> }>(service: T): T => { services.push(service); return service; };
+afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); configureBrowserActivity(undefined); for (const directory of cleanup.splice(0)) await fs.rm(directory, { recursive: true, force: true, maxRetries: 5 }); });
 async function serviceFixture(initialFacts: FloorFacts) {
   const directory = await fs.mkdtemp(path.resolve(".floor-service-")); cleanup.push(directory); await fs.chmod(directory, 0o700);
   const activityDir = mkdtempSync(path.join(tmpdir(), "floor-activity-")); cleanup.push(activityDir);
@@ -213,7 +216,7 @@ async function serviceFixture(initialFacts: FloorFacts) {
       return { version: 1, type: "response", id: command.id, bindingId: command.bindingId, generation: command.generation, result: structuredClone(result) } as never;
     },
   };
-  const service = await createBrowserExtensionService({
+  const service = track(await createBrowserExtensionService({
     broker: broker as never, workspaceId: "workspace", stateFile: path.join(directory, "state.json"),
     collectFacts: async () => ({ ...(facts as object), visibility: { box: { x: 1, y: 1, width: 50, height: 20 }, inViewport: true, opacity: 1, visibility: "visible", ariaHidden: false, coveredBy: null } }) as never,
     onHandoff: info => { handoffs.push({ site: info.site, text: info.text, category: info.category, unsure: info.unsure, bindingId: info.context.bindingId }); },
@@ -226,7 +229,7 @@ async function serviceFixture(initialFacts: FloorFacts) {
       },
     }) as never,
     askSite: async () => "allow" as const, askAction: async () => { approvals++; return true; },
-  });
+  }));
   const binding = await service.ensureBinding({ botId: "bot", threadId: "thread", profileId: "profile" });
   return { service, binding, calls, handoffs, activityStore, setFacts: (v: FloorFacts) => { facts = v; }, setStatusError: (v: string) => { statusError = v; }, approvals: () => approvals };
 }
