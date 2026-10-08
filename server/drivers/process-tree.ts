@@ -4,9 +4,10 @@
 // inside a process we keep warm, so the driver recycles the process instead.
 import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { platformListTree } from "../platform-process-hooks.ts";
+import { platformListTree, platformProcessHooks } from "../platform-process-hooks.ts";
 
 /** One row of the Windows process table: pid, parent pid, creation time
  * (`start`: FILETIME ticks as text, the identity; `startMs`: epoch ms) and
@@ -97,6 +98,14 @@ function winBaseline(rows: readonly WindowsProcessRow[], kept: readonly WindowsP
   return found;
 }
 
+/** A hook baseline: the pids with their ps start identity (unreadable or a
+ * failed lookup records "", which never matches), so a recycled pid is not exempt. */
+function hookBaseline(pids: ReadonlySet<number>, starts: ProcessIdentities | null): Set<number> {
+  const found = new Set(pids);
+  winBaselineIds.set(found, new Map([...found].map((pid) => [pid, starts?.get(pid) ?? ""])));
+  return found;
+}
+
 const winWalkLines = (rows: readonly WindowsProcessRow[]) => rows.map((row) => `${row.pid} ${row.ppid}`).join("\n");
 
 /** Every descendant pid of `root`, or null where the probe failed (on Windows
@@ -108,11 +117,19 @@ export function descendantPids(root: number): Promise<Set<number> | null> {
 const PS_ARGS = ["-A", "-o", "pid=,ppid=,comm="];
 const PS_ETIME_ARGS = ["-A", "-o", "pid=,ppid=,etime=,comm="];
 
-/** Seconds in a `ps` etime field, `[[dd-]hh:]mm:ss`; null when malformed. */
+/** No real process is a century old. procps computes etime as uptime minus
+ * start; a process that started inside the same clock tick as ps's uptime
+ * reading comes out negative and wraps to ~441077234 days. Such a value is an
+ * unreadable start, not an ancient process. */
+const MAX_ETIME_DAYS = 36_500;
+
+/** Seconds in a `ps` etime field, `[[dd-]hh:]mm:ss`; null when malformed or
+ * implausibly old (see MAX_ETIME_DAYS). */
 export function parseEtime(text: string): number | null {
   const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(text.trim());
   if (!match) return null;
   const [, days, hours, minutes, seconds] = match;
+  if (Number(days ?? 0) > MAX_ETIME_DAYS) return null;
   return Number(days ?? 0) * 86_400 + Number(hours ?? 0) * 3_600 + Number(minutes) * 60 + Number(seconds);
 }
 
@@ -196,12 +213,7 @@ export async function descendantBaseline(root: number, initAtMs: number): Promis
     if (!platform) return null;
     if (!platform.size) return new Set();
     if (process.platform === "win32") return null;
-    return new Promise((resolve) => {
-      execFile("ps", ["-o", "pid=,etime=", "-p", [...platform].join(",")], { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-        if (psOutcome(error) === "failed") return resolve(null);
-        resolve(startedBeforeFromListing(String(stdout), platform, Date.now(), initAtMs));
-      });
-    });
+    return hookStartedBefore(platform, initAtMs);
   }
   if (process.platform === "win32") {
     const rows = await windowsListing();
@@ -246,25 +258,94 @@ export function parseIdentityListing(stdout: string): Array<{ pid: number; ppid:
   return out;
 }
 
-/** Start identities of a few pids (`ps -o pid=,lstart= -p`). A pid missing
- * from the answer is absent from the map (not confirmed); null when the
- * probe failed. */
+/** Linux: the process start in clock ticks since boot, /proc/<pid>/stat field
+ * 22. Tick resolution (10 ms), unlike lstart's 1 s, so two processes that
+ * shared a pid within one second still differ. "" when unreadable. Read
+ * asynchronously: the event loop is never blocked. */
+async function procStartTicks(pid: number): Promise<string> {
+  try {
+    const text = await readFile(`/proc/${pid}/stat`, "utf8");
+    // comm may hold spaces and parens: fields resume after the LAST ")";
+    // rest[0] is field 3 (state), so field 22 is rest[19].
+    const rest = text.slice(text.lastIndexOf(")") + 2).split(" ");
+    return /^\d+$/.test(rest[19] ?? "") ? `proc:${rest[19]}` : "";
+  } catch {
+    return "";
+  }
+}
+
+async function procStarts(pids: readonly number[]): Promise<ProcessIdentities> {
+  const out: ProcessIdentities = new Map();
+  await Promise.all(pids.map(async (pid) => {
+    const id = await procStartTicks(pid);
+    if (id) out.set(pid, id);
+  }));
+  return out;
+}
+
+/** The hook (platform listTree) baseline for Claude: of `platform`'s pids, those
+ * that started strictly before init, each with its start identity. Age and
+ * identity must describe ONE process, so both come from a single
+ * `ps -o pid=,etime=,lstart=` record. On Linux the identity is the finer
+ * /proc starttime (the same source processStarts uses at settle), read before
+ * and after ps: a pid whose two reads differ (it was replaced while ps ran) is
+ * left out, so its replacement can never become baseline. An unreadable
+ * identity is recorded as "" (in the set, never exempt). Null when ps failed. */
+function hookStartedBefore(platform: ReadonlySet<number>, initAtMs: number): Promise<Set<number> | null> {
+  const pids = [...platform].filter((pid) => Number.isInteger(pid) && pid > 0);
+  return new Promise((resolve) => {
+    const linux = process.platform === "linux";
+    (linux ? procStarts(pids) : Promise.resolve(new Map<number, string>())).then((first) => {
+      execFile("ps", ["-o", "pid=,etime=,lstart=", "-p", pids.join(",")], { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }, (error, stdout) => {
+        if (psOutcome(error) === "failed") return resolve(null);
+        const probeAtMs = Date.now();
+        (linux ? procStarts(pids) : Promise.resolve(new Map<number, string>())).then((second) => {
+          const before = new Set<number>();
+          const ids: ProcessIdentities = new Map();
+          const pattern = new RegExp(String.raw`^\s*(\d+)\s+(\S+)\s+${LSTART}\s*$`);
+          for (const line of String(stdout).split("\n")) {
+            const match = pattern.exec(line);
+            if (!match) continue;
+            const pid = Number(match[1]);
+            const elapsed = parseEtime(match[2]!);
+            if (!platform.has(pid) || elapsed === null || !startedBeforeInit(elapsed, probeAtMs, initAtMs)) continue;
+            // Not Linux: hooks are a Cloud/Linux feature and lstart (1 s) cannot
+            // tell same-second pid reuse apart, so the identity is unavailable
+            // ("": in the baseline, never exempt, the caller recycles).
+            let id = "";
+            if (linux) {
+              const a = first.get(pid);
+              if (a === undefined || a !== second.get(pid)) {
+                // unreadable: unidentified baseline; changed: replaced mid-probe, not baseline
+                if (a === undefined && second.get(pid) === undefined) { before.add(pid); ids.set(pid, ""); }
+                continue;
+              }
+              id = a;
+            }
+            before.add(pid);
+            ids.set(pid, id);
+          }
+          resolve(hookBaseline(before, ids));
+        });
+      });
+    });
+  });
+}
+
+/** Hook-path start identities of a few pids: /proc starttime on Linux; "" (no
+ * identity, never exempt) elsewhere. The same source serves the baseline, the
+ * settle check and ACP reconciliation. A pid missing from the answer is absent
+ * from the map (not confirmed); null where no answer is possible (Windows). */
 function processStarts(pids: Iterable<number>): Promise<ProcessIdentities | null> {
   const list = [...pids].filter((pid) => Number.isInteger(pid) && pid > 0);
   if (!list.length) return Promise.resolve(new Map());
   if (process.platform === "win32") return Promise.resolve(null);
-  return new Promise((resolve) => {
-    execFile("ps", ["-o", "pid=,lstart=", "-p", list.join(",")], { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }, (error, stdout) => {
-      if (psOutcome(error) === "failed") return resolve(null);
-      const out: ProcessIdentities = new Map();
-      const pattern = new RegExp(String.raw`^\s*(\d+)\s+${LSTART}\s*$`);
-      for (const line of String(stdout).split("\n")) {
-        const match = pattern.exec(line);
-        if (match) out.set(Number(match[1]), normStart(match[2]!));
-      }
-      resolve(out);
-    });
-  });
+  // Linux: /proc starttime (finer than lstart); an unreadable pid is absent.
+  if (process.platform === "linux") return procStarts(list);
+  // Elsewhere (macOS) a hook identity is unavailable by design: lstart has 1 s
+  // resolution, so a same-second pid reuse would pass as the same process.
+  // "" is never exempt, so every pid is reported and the caller recycles.
+  return Promise.resolve(new Map(list.map((pid) => [pid, ""] as const)));
 }
 
 /** The process-table listing with start identities; null when it failed. */
@@ -471,7 +552,21 @@ async function processTreeWalk(root: number, stopAt: ReadonlySet<number> | null,
   const platform = await platformListTree(root);
   if (platform !== undefined) {
     if (!platform) return null;
-    return new Set([...platform].filter((pid) => !stopAt?.has(pid)));
+    if (!stopAt) return hookBaseline(platform, await processStarts(platform));
+    if (!platform.size) return new Set();
+    // Windows: platform hooks are a Cloud/Linux feature and Windows has no
+    // hook start identity, so an identity-checked settle cannot be answered.
+    // Unknown (null), never exempt: the caller recycles. Fail closed by design.
+    if (process.platform === "win32") return null;
+    // A baseline pid is exempt only when its current start equals the one
+    // recorded for it; unreadable or unrecorded is new work (fail closed).
+    const starts = await processStarts(platform);
+    if (!starts) return null;
+    const ids = winBaselineIds.get(stopAt);
+    return new Set([...platform].filter((pid) => {
+      const start = starts.get(pid);
+      return !(start !== undefined && start !== "" && ids?.get(pid) === start);
+    }));
   }
   if (process.platform === "win32") {
     const rows = await windowsListing();
@@ -546,7 +641,16 @@ export function processParentsAndArgs(pids: Iterable<number>): Promise<Map<numbe
   if (process.platform === "win32") return Promise.resolve(null);
   return new Promise((resolve) => {
     execFile("ps", ["-ww", "-o", "pid=,ppid=,lstart=,args=", "-p", list.join(",")], { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }, (error, stdout) => {
-      resolve(settleArgsProbe(error, String(stdout ?? ""), list));
+      const settled = settleArgsProbe(error, String(stdout ?? ""), list);
+      // Under a platform listTree hook the tree's identities are the hook
+      // path's (processStarts), so start must come from the same source or a
+      // legitimate replacement could never match. "" when unavailable.
+      if (!settled || !platformProcessHooks().listTree) return resolve(settled);
+      processStarts(settled.keys()).then((ids) => {
+        if (!ids) return resolve(null);
+        for (const [pid, entry] of settled) entry.start = ids.get(pid) ?? "";
+        resolve(settled);
+      }, () => resolve(null));
     });
   });
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
-import { mkdtempSync, mkdirSync, renameSync, symlinkSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, renameSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -48,7 +48,10 @@ it("describes the turn override while preserving ordinary engine modes", () => {
 });
 
 it("F11 desk bookkeeping still asks and ancestor roots cannot contain Murage data", () => {
-  const dir = fresh(); const desk = join(dir, "desk"); mkdirSync(desk);
+  // A desk is taskWorkspacePath(DATA_DIR, ...) and DATA_DIR is canonical
+  // (config.ts canonicalDataDir); projectFileApproval refuses a desk spelled
+  // through a link. The macOS tmpdir is /var -> /private/var, so canonicalize.
+  const dir = realpathSync.native(fresh()); const desk = join(dir, "desk"); mkdirSync(desk);
   const dataDir = join(dir, "data"); mkdirSync(dataDir);
   expect(() => canonicalProjectRoots([{ path: dir }], { dataDir })).toThrow();
   for (const name of ["CLAUDE.md", "AGENTS.md", "SOUL.md", "skills/tool.md", "credentials/token"]) {

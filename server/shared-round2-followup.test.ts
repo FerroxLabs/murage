@@ -61,7 +61,7 @@ const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 it("R2.1/R2.7 publishImage and index artifactScopes use the Sales partition", () => {
   const f = fixture(), root = partitionRoots(f.iris, threadPartition(f.iris, f.work.threadId))[0];
   const image = publishImage(f.store, { botId: f.iris.id, threadId: f.work.threadId, generation: "gen", assertActive() {}, signal: new AbortController().signal }, { bytes: png, mime: "image/png" }, { provider: "openai", connectionId: "fixture", model: "fixture", operation: "generate", count: 1, referenceCount: 0 });
-  expect(image.path.startsWith(join(root, "generated-images", f.work.threadId))).toBe(true);
+  expect(image.path.startsWith(join(root, "generated-images", f.work.threadId)), `${image.path} is not under ${join(root, "generated-images", f.work.threadId)}`).toBe(true);
   expect(image.filesError).toBeUndefined(); expect(image.artifactId).toBeTruthy();
   expect(describeArtifact(database(), join(DATA_DIR, "artifact-files"), image.artifactId!, { owner: true, scopes: scopes(f.store) }).sourceConversationAvailable).toBe(true);
   expect(existsSync(join(DATA_DIR, "workspaces", f.iris.id, "generated-images"))).toBe(false);
