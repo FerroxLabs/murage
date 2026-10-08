@@ -148,7 +148,7 @@ jobs:
 
   vitest:
     if: ${{ !inputs.human_files }}
-    name: ${{ inputs.vitest_file && 'Scoped Vitest confirmation' || format('Vitest shard {0}/3', matrix.vitest_shard) }} (${{ matrix.os }})
+    name: ${{ inputs.vitest_file && 'Scoped Vitest confirmation' || format('Vitest shard {0}/6', matrix.vitest_shard) }} (${{ matrix.os }})
     # Preserve the previous validator-before-tests ordering for scoped dispatch.
     needs: quality
     strategy:
@@ -156,12 +156,13 @@ jobs:
       matrix:
         os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-latest","windows-latest"]') }}
         # Scoped dispatch keeps its existing single selected-file confirmation;
-        # ordinary CI uses all three bounded shards.
-        vitest_shard: ${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3]') }}
+        # ordinary CI uses six bounded shards: 1.0.0's suite outgrew three
+        # (every 20-minute shard was cancelled mid-run, CI 37727970532).
+        vitest_shard: ${{ fromJSON(inputs.vitest_file && '[1]' || '[1,2,3,4,5,6]') }}
     runs-on: ${{ matrix.os }}
     # Windows runners are the slowest per shard: a 20-minute cap cancelled
     # shard 3 mid-run (CI 36317693740) before any failure text was printed.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 35 || 20 }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 30 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
@@ -193,7 +194,7 @@ jobs:
         run: pnpm build:server
       - name: Run Vitest shard
         if: inputs.vitest_file == ''
-        run: pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/3
+        run: pnpm exec vitest run --shard=${{ matrix.vitest_shard }}/6
         env:
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
       - name: Scoped Vitest confirmation
