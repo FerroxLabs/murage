@@ -10,7 +10,7 @@
 // its own root; evidence stays in a separate directory the caller chose.
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { appendFileSync, lstatSync, mkdirSync, mkdtempSync, openSync, closeSync, writeFileSync } from "node:fs";
+import { appendFileSync, lstatSync, mkdirSync, mkdtempSync, openSync, closeSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -20,6 +20,15 @@ import { seedWhatsNewSeen } from "./control-murage.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
 
 export const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+
+/** The fake Claude CLI's source, ready to be copied out of the repo and
+ * extended. Its sibling imports (`./fixture-dump.ts` and the like) become
+ * absolute file URLs, so a copy in a task-owned root still finds them. */
+export function fakeClaudeCliSource(): string {
+  const testing = join(ROOT, "server", "testing");
+  return readFileSync(join(testing, "fake-claude-cli.ts"), "utf8")
+    .replace(/(from\s+")\.\/([^"]+)(")/g, (_match, open: string, file: string, close: string) => open + pathToFileURL(join(testing, file)).href + close);
+}
 export const FIXTURE_ENGINE = { instanceId: "fixtureClaude", model: "claude-sonnet-5" };
 
 /** One admitted real engine instance (from an admitted B08 engine descriptor). */

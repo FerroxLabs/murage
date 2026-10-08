@@ -74,6 +74,17 @@ export default function MemorySection() {
   const [status, setStatus] = useState<MemoryStatus | null>(null), [events, setEvents] = useState<LearningEvent[]>([]), [cursor, setCursor] = useState<string | null>(null), [filter, setFilter] = useState("");
   const [busy, setBusy] = useState(false), [historyBusy, setHistoryBusy] = useState(false), [error, setError] = useState<string | null>(null), [conflict, setConflict] = useState(false), [refusals, setRefusals] = useState<Record<string, string>>({}), [memoryRevision, setMemoryRevision] = useState(0);
   const mounted = useRef(false), historyGeneration = useRef(0), inFlight = useRef(false);
+  // A save disables the controls, and the browser drops focus from a disabled
+  // control. The control that was pressed gets focus back when the save ends,
+  // so a keyboard user can press it again without finding their place.
+  const pressed = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (busy) return;
+    const target = pressed.current; pressed.current = null;
+    if (!target?.isConnected || target.matches(":disabled")) return;
+    const active = document.activeElement;
+    if (!active || active === document.body) target.focus();
+  }, [busy]);
   const refreshStatus = useCallback(async () => { const value = await api("/api/memory/status") as MemoryStatus; if (mounted.current) setStatus(value); }, []);
   const loadHistory = useCallback(async (botId: string, next?: string) => {
     const generation = ++historyGeneration.current; setHistoryBusy(true);
@@ -103,6 +114,7 @@ export default function MemorySection() {
   const act = async (action: LearningAction) => {
     if (inFlight.current || conflict || desktop !== true) return;
     inFlight.current = true; setBusy(true); setError(null);
+    pressed.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     try {
       await requestLearningAction(api, action);
       await refreshStatus();

@@ -12,6 +12,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { openSidebar } from "./fixtures.ts";
 
 interface Fixture { info: { url: string; dataDir: string }; close(): Promise<void> }
 type Launcher = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<Fixture>;
@@ -206,6 +207,9 @@ test("a channel's details lead to its team (820, light)", async ({ page }, testI
   const roomId = ((await room.json()) as { group: { id: string } }).group.id;
   await open(page, 820, "light");
   expect(roomId).toBeTruthy();
+  // 768 to 1100px wide the sidebar starts folded to the rail; a person opens
+  // it out to read the channel names.
+  await openSidebar(page);
   await page.getByRole("complementary").getByText("Studio desk", { exact: true }).first().click();
   await page.getByRole("button", { name: "Details for Studio desk", exact: true }).click();
   const details = page.getByRole("dialog", { name: "Studio desk details" });

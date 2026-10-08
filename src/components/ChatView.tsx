@@ -1,5 +1,4 @@
-import { BrowserSetupCard } from "./BrowserSetupCard";
-import { PublishCard } from "./PublishCard";
+import { BrowserSetupCard, McpSignInCard, PublishCard } from "./LazyChatCards";
 import { readPublishCard } from "../../shared/publish-card";
 import { readBrowserSetupCard } from "../../shared/browser-setup-card";
 import { Component, Suspense, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -79,7 +78,6 @@ import { readSetupCard } from "../../shared/setup-card";
 import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
-import { McpSignInCard } from "./McpSignInCard";
 import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
 import { FolderTrustRow } from "./FolderTrustRow";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";

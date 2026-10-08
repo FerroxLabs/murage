@@ -38,6 +38,7 @@ import { openSidebar } from "./fixtures.ts";
 import type { Artifact } from "../../shared/artifacts.ts";
 import type { MediaResolveResponse } from "../../shared/media-assets.ts";
 import { openSidebarPlace } from "./sidebar-nav";
+import { withTurnSecrets } from "../../server/testing/fixture-dump.ts";
 
 interface Fixture {
   info: { url: string; dataDir: string; logPath: string }; fixtureDumpPath: string; child: ChildProcess;
@@ -99,6 +100,10 @@ async function bytesOf(path: string, withProof = true): Promise<Buffer> {
   expect(response.status, `GET ${path}`).toBe(200);
   return Buffer.from(await response.arrayBuffer());
 }
+/** An attachment as the desktop window loads it: the same app-owned file,
+ * with this launch's desktop proof in the query (desktopResourceUrl), since
+ * an <img> or a download link cannot send the proof as a header. */
+const provenAttachment = (id: string) => `/api/attachments/${id}?surface=desktop&surfaceSecret=${headers["x-murage-surface-secret"]}`;
 const messagesOf = async (bot: Bot) => (await api("/api/bots?messages=200")).bots.find((item: Bot) => item.id === bot.id).messages as any[];
 const imageArtifactsOf = async (bot: Bot) => (await api(`/api/artifacts?botId=${bot.id}&kind=image`)).items as Artifact[];
 const busy = async (bot: Bot) => Boolean((await api("/api/bots?messages=0")).bots.find((item: Bot) => item.id === bot.id)?.busy);
@@ -152,7 +157,7 @@ async function holdTurn(bot: Bot, previousToken?: string, text = "__fixture_hold
   const deadline = Date.now() + readyMs;
   while (!mount) {
     try {
-      const dump = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"));
+      const dump = withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")));
       const candidate = dump.mcpConfig?.mcpServers?.agents as Mount | undefined;
       seen = `dump pid ${dump.pid}, mount for ${candidate?.env?.MURAGE_BOT_ID ?? "nobody"}, mcpConfig ${dump.mcpConfig ? "present" : "absent"}`;
       if (candidate?.env?.MURAGE_COMMS_TOKEN && candidate.env.MURAGE_BOT_ID === bot.id && candidate.env.MURAGE_COMMS_TOKEN !== previousToken) { mount = candidate; break; }
@@ -342,7 +347,10 @@ test("one approved generation is one attachment, one receipt and one saved versi
   expect(await imageArtifactsOf(otherBot)).toEqual([]);
 
   // Download, open, preview and the media byte route: the same bytes every way.
-  expect(sha256(await bytesOf(`/api/attachments/${referenceId}`, false))).toBe(FIXTURE_SHA);
+  // An attachment is a conversation route: the desktop window proves itself
+  // (desktopResourceUrl), and an unproven caller is told there is no such route.
+  expect((await fetch(`${fixture.info.url}/api/attachments/${referenceId}`, { signal: AbortSignal.timeout(10_000) })).status).toBe(404);
+  expect(sha256(await bytesOf(`/api/attachments/${referenceId}`))).toBe(FIXTURE_SHA);
   expect(sha256(await bytesOf(`/api/artifacts/${artifactId}/download`))).toBe(FIXTURE_SHA);
   const native = await api(`/api/artifacts/${artifactId}/native`) as { path: string; sha256: string; kind: string };
   expect(native).toMatchObject({ sha256: FIXTURE_SHA, kind: "image" });
@@ -389,11 +397,11 @@ test("one approved generation is one attachment, one receipt and one saved versi
   await thumbs.click();
   await expect(lightbox(page)).toBeVisible();
   await expect(lightbox(page)).toHaveAccessibleName(`Preview ${referenceId}`);
-  await expect(lightboxImage(page)).toHaveAttribute("src", `/api/attachments/${referenceId}`);
+  await expect(lightboxImage(page)).toHaveAttribute("src", provenAttachment(referenceId));
   await expect.poll(() => lightboxImage(page).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
   await expect(page.getByRole("button", { name: "Next image" })).toHaveCount(0);
   const downloadLink = lightbox(page).getByRole("link", { name: `Download ${referenceId}` });
-  await expect(downloadLink).toHaveAttribute("href", `/api/attachments/${referenceId}`);
+  await expect(downloadLink).toHaveAttribute("href", provenAttachment(referenceId));
   expect(await downloadedSha(page, () => downloadLink.click())).toBe(FIXTURE_SHA);
   await page.screenshot({ path: testInfo.outputPath("lightbox-generated-image.png") });
   await lightbox(page).getByRole("button", { name: `Use ${referenceId} as a reference image in your next message` }).click();
@@ -402,7 +410,7 @@ test("one approved generation is one attachment, one receipt and one saved versi
   await expect(lightbox(page)).toHaveCount(0);
   const chip = page.getByRole("button", { name: `Preview ${referenceId}` });
   await expect(chip).toHaveCount(1);
-  await expect(chip.locator("img")).toHaveAttribute("src", `/api/attachments/${referenceId}`);
+  await expect(chip.locator("img")).toHaveAttribute("src", provenAttachment(referenceId));
   expect(pngsOnDisk(attachmentsDir()), "a reference pins the existing attachment; it copies nothing").toEqual([referenceId]);
   expect(JSON.parse(imageReceipt()).calls).toBe(1);
   await page.getByRole("button", { name: "Remove file" }).click();
@@ -490,7 +498,7 @@ test("a received image whose attachment cannot be written is retained, shown as 
   expect(artifacts.map(item => item.id).sort()).toEqual([first.artifactId, recovered.artifact_id].sort());
   expect(artifacts.every(item => item.sha256 === FIXTURE_SHA && item.producer === "image-operation")).toBe(true);
   expect(sha256(await bytesOf(`/api/artifacts/${recovered.artifact_id}/download`))).toBe(FIXTURE_SHA);
-  expect(sha256(await bytesOf(`/api/attachments/${recovered.attachment_id}`, false))).toBe(FIXTURE_SHA);
+  expect(sha256(await bytesOf(`/api/attachments/${recovered.attachment_id}`))).toBe(FIXTURE_SHA);
   // the first image is untouched by the recovery
   expect(rows.find(row => row.id !== failed.id)).toMatchObject({ artifact_id: first.artifactId, attachment_id: first.referenceId });
 
@@ -501,7 +509,7 @@ test("a received image whose attachment cannot be written is retained, shown as 
   await expect(page.getByRole("button", { name: /^Preview attached image/ })).toHaveCount(2);
   const recoveredThumb = page.getByRole("button", { name: `Preview attached image ${recovered.attachment_id}` });
   await recoveredThumb.click();
-  await expect(lightboxImage(page)).toHaveAttribute("src", `/api/attachments/${recovered.attachment_id}`);
+  await expect(lightboxImage(page)).toHaveAttribute("src", provenAttachment(recovered.attachment_id!));
   await expect.poll(() => lightboxImage(page).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
   await page.screenshot({ path: testInfo.outputPath("lightbox-recovered-image.png") });
   await page.keyboard.press("Escape");

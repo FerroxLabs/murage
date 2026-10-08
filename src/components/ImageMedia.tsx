@@ -462,8 +462,14 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
       onClick={stop}
       onMouseDown={(event) => {
         event.stopPropagation();
-        // the dialog fills the viewport; only its bare backdrop area is itself
-        if (event.target === event.currentTarget) closeRef.current();
+        // the dialog fills the viewport; only its bare backdrop area is itself.
+        // The press keeps focus where it is: the browser would otherwise move
+        // it to this dialog after it has gone, landing on the page body, and
+        // focus belongs back on the image that opened the preview.
+        if (event.target === event.currentTarget) {
+          event.preventDefault();
+          closeRef.current();
+        }
       }}
       className="fixed inset-0 m-0 hidden h-dvh max-h-none w-screen max-w-none items-center justify-center border-0 bg-transparent p-3 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-[calc(0.75rem+env(safe-area-inset-bottom))] text-white outline-none open:flex backdrop:bg-black/80 backdrop:backdrop-blur-sm sm:p-6"
     >

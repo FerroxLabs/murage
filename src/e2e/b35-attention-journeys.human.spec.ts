@@ -6,7 +6,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSyn
 import { join } from "node:path";
 import { openSidebar } from "./fixtures.ts";
 import { evidenceRoot } from "./evidence.ts";
-import { createHarness, linkChannelOwner, promoteFixtureChief, ROOT, waitFor, type Harness } from "../../scripts/channel-live-harness.ts";
+import { createHarness, fakeClaudeCliSource, linkChannelOwner, promoteFixtureChief, ROOT, waitFor, type Harness } from "../../scripts/channel-live-harness.ts";
 
 // B35 approval attention across bots and channels in the full isolated app:
 // the real source server and permission broker, a fake Claude engine that asks
@@ -55,7 +55,7 @@ test.beforeAll(async () => {
   // A permission-mode copy of the established fake CLI in the task-owned root,
   // exactly as scripts/channel-permission-rehearsal.ts extends it.
   const fixtureCli = join(harness.root, "permission-claude.ts");
-  const source = readFileSync(join(ROOT, "server", "testing", "fake-claude-cli.ts"), "utf8");
+  const source = fakeClaudeCliSource();
   const anchor = '  if (mode === "ask-user-question" || fixtureRequested(promptText(prompt), "__fixture_ask_user_question__")) {';
   if (source.split(anchor).length !== 2) throw new Error("fake CLI insertion anchor must be unique");
   writeFileSync(fixtureCli, source.replace(anchor, `  if (mode === "channel-permission") {
@@ -179,11 +179,17 @@ test("while the server restarts the count stays visible as stale, then reconcile
   const trigger = sidebar.locator("[data-sidebar-needs-you]"), count = sidebar.locator("[data-needs-you-count]");
   await expect(count).toHaveText("1", { timeout: 15_000 });
   await harness.stop();
+  // The row re-reads on focus, reconnect, a change notice or a 60 s safety net
+  // (1f6b8996e). Behind the dev proxy the live stream may not see the server
+  // go, so the read a person causes by coming back to the window observes it.
+  const foreground = () => page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await foreground();
   await expect(trigger).toHaveAttribute("aria-label", /may be out of date/, { timeout: 15_000 });
   await expect(count).toHaveText(/^1\s*\?$/); // the last known count stays, marked as unconfirmed
   await page.screenshot({ path: testInfo.outputPath("b35-restart-stale.png"), fullPage: true });
   await harness.boot();
   const total = (await waitFor("canonical total after restart", inbox, (value: any) => typeof value?.total === "number", 20_000) as any).total;
+  await foreground();
   await expect(trigger).not.toHaveAttribute("aria-label", /out of date/, { timeout: 20_000 });
   await expect(count).toHaveText(String(total), { timeout: 15_000 });
   await testInfo.attach("restart-reconciliation.json", { body: JSON.stringify({ countBeforeRestart: 1, canonicalTotalAfterRestart: total }), contentType: "application/json" });

@@ -12,7 +12,10 @@ import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 // Real Composer + StoreProvider + transcription HTTP registrar. Only the
 // external paid provider is replaced; no key/private audio leaves this rig.
 const bot = { id: "audio-bot", name: "Audio fixture", color: "blue", threadId: "audio-thread", modelSelection: { instanceId: "fixture", model: "text-model" }, tasks: [], messages: [], description: "", title: "" };
-const audio = Buffer.alloc(48); audio.write("RIFF"); audio.writeUInt32LE(40, 4); audio.write("WAVEfmt ", 8); audio.writeUInt32LE(16, 16); audio.writeUInt16LE(1, 20); audio.writeUInt16LE(1, 22); audio.writeUInt32LE(16000, 24); audio.writeUInt32LE(32000, 28); audio.writeUInt16LE(2, 32); audio.writeUInt16LE(16, 34); audio.write("data", 36); audio.writeUInt32LE(4, 40);
+// 2,048 bytes: the transcribe route refuses clips under MIN_CLIP_BYTES (1,024)
+// as too short to hear (server/voice/transcribe-route.ts), so the fixture
+// carries enough samples to be a real clip.
+const audio = Buffer.alloc(2048); audio.write("RIFF"); audio.writeUInt32LE(2040, 4); audio.write("WAVEfmt ", 8); audio.writeUInt32LE(16, 16); audio.writeUInt16LE(1, 20); audio.writeUInt16LE(1, 22); audio.writeUInt32LE(16000, 24); audio.writeUInt32LE(32000, 28); audio.writeUInt16LE(2, 32); audio.writeUInt16LE(16, 34); audio.write("data", 36); audio.writeUInt32LE(2004, 40);
 let server: ViteDevServer, origin: string, cache: string;
 let configured = true, mode: "success" | "hold" | "error" = "success", release = () => {};
 let budget = createVoiceBudget();

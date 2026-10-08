@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { FrameDecoder, encodeFrame, runNativeHost, readHostConfig, authProof } from './browser-extension-host.mjs';
 
 test('split header/body and coalesced frames decode once in order', () => {
@@ -62,14 +63,20 @@ test('config rejects public mode, symlink and unsupported Windows ownership', ()
   const root = fs.mkdtempSync(path.resolve('.native-host-')); fs.chmodSync(root, 0o700);
   try {
     const file = path.join(root, 'config.json'); fs.writeFileSync(file, '{}', { mode: 0o644 });
-    assert.throws(() => readHostConfig(file), /unsafe_config/);
-    const link = path.join(root, 'link'); fs.symlinkSync(file, link); assert.throws(() => readHostConfig(link));
-    assert.throws(() => readHostConfig(file, { platform: 'win32' }), /windows_acl_unverified/);
+    if (process.platform === 'win32') {
+      // Windows has no POSIX mode bits or uid; the default path reads only through the private-storage helper,
+      // which fails closed when the helper is absent or the file was not written privately by it.
+      assert.throws(() => readHostConfig(file), /windows_browser_helper_missing|windows_browser_private_storage_unavailable/);
+    } else {
+      assert.throws(() => readHostConfig(file), /unsafe_config/);
+      const link = path.join(root, 'link'); fs.symlinkSync(file, link); assert.throws(() => readHostConfig(link));
+    }
+    assert.throws(() => readHostConfig(file, { platform: 'win32', verifyWindowsOwnership: () => false }), /windows_acl_unverified/);
   } finally { fs.rmSync(root, { recursive: true }); }
 });
 
 test('standalone entrypoint stdout contains exactly one framed safe error', () => {
-  const child = spawnSync(process.execPath, [new URL('./browser-extension-host-entry.mjs', import.meta.url).pathname, '/missing-fixture-only/config.json']);
+  const child = spawnSync(process.execPath, [fileURLToPath(new URL('./browser-extension-host-entry.mjs', import.meta.url)), '/missing-fixture-only/config.json']);
   assert.equal(child.status, 0); assert.equal(child.stderr.length, 0);
   const messages = []; const decoder = new FrameDecoder(value => messages.push(value)); decoder.push(child.stdout); decoder.end();
   assert.equal(messages.length, 1); assert.equal(messages[0].error.code, 'host_unavailable');

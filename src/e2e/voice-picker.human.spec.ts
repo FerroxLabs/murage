@@ -140,8 +140,10 @@ test("choosing by keyboard: arrows, Home, End, typing a name, Enter", async ({ p
   await page.getByRole("searchbox", { name: "Search voices" }).focus();
   await page.keyboard.press("ArrowDown");
   await expect(option(page, "Kira")).toBeFocused();
+  // Grok voices are listed first (c82ceb200), so the row after Kira is
+  // Marcus, the next of the other voices.
   await page.keyboard.press("ArrowDown");
-  await expect(option(page, "Luke")).toBeFocused();
+  await expect(option(page, "Marcus")).toBeFocused();
   await page.keyboard.press("ArrowUp");
   await expect(option(page, "Kira")).toBeFocused();
   await page.keyboard.press("End");

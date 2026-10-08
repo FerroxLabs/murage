@@ -312,7 +312,9 @@ test("optional recovery-key and back-up-now methods: success, cancel and errors 
  // Setup already took the first backup, so one run-now has happened.
  await now.click();await expect(status.getByText("Murage will close and reopen this window to take the backup.")).toBeVisible();await status.getByRole("button",{name:"Cancel",exact:true}).click();await expect(now).toBeEnabled();expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="run-now").length)).toBe(1);
  for(const [mode,message] of [["consent","Backups aren't switched on yet. Turn them on first: Murage takes a backup by closing and reopening its own window, and Murage does that itself, so you never need to quit it."],["active","Finish or stop current work first."],["busy","A backup is already running."],["unknown","Backup settings could not be updated. Your data is preserved."]] as const){
-  await page.evaluate(mode=>{(window as any).runMode=mode;},mode);await now.click();await status.getByRole("button",{name:"Continue",exact:true}).click();await expect(status.getByRole("alert")).toContainText(message);
+  await page.evaluate(mode=>{(window as any).runMode=mode;},mode);await now.click();await status.getByRole("button",{name:"Continue",exact:true}).click();
+  // Said once, in the Needs attention list, never repeated as a card alert (d6a9461d0, 598929a0e).
+  await expect(status.getByRole("listitem").filter({hasText:message})).toHaveCount(1);await expect(status.getByRole("alert").filter({hasText:message})).toHaveCount(0);
  }
  await expect(page.getByText("PRIVATE_RUN_CANARY",{exact:false})).toHaveCount(0);
  // Active work makes the host record a skipped backup; the summary says so plainly.

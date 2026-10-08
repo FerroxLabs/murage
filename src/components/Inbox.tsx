@@ -9,9 +9,11 @@ import { inboxTabCounts, signedOutEngineRows } from "@/lib/signed-out-engines";
 import { usePageVisible } from "@/lib/page-visible";
 import { backupWaitingSentence } from "../../shared/backup-waiting";
 import { t } from "@/lib/i18n";
-import { InboxLearningSuggestions } from "./InboxLearningSuggestions";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 
 const ProjectRows=lazy(()=>import("./ProjectInboxRows"));
+// Learning suggestions and their screen copy load the first time the inbox has one (spec §6).
+const LearningSuggestions = retryableLazy(() => import("./InboxLearningSuggestions").then((module) => ({ default: module.InboxLearningSuggestions })));
 const button = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 // The selected view is a filled chip, not a grey one with a slightly
 // different edge: on the control tone the old `border-accent bg-accent/10`
@@ -421,7 +423,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, refreshK
     )}
     {suggestionRows.length > 0 && (
       <InboxSection label={t("inboxLearning.section")}>
-        <InboxLearningSuggestions rows={suggestionRows} onSettled={() => setRevision(current => current + 1)} onOpenLearning={onOpenLearning} />
+        <LazyBoundary inline onRetry={LearningSuggestions.retry}><Suspense fallback={null}><LearningSuggestions.Component rows={suggestionRows} onSettled={() => setRevision(current => current + 1)} onOpenLearning={onOpenLearning} /></Suspense></LazyBoundary>
       </InboxSection>
     )}
     {backupWaiting && (

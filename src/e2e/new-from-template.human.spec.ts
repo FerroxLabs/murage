@@ -62,8 +62,9 @@ test("New Bot: describe the job, see the best matches, preview one, create it", 
   await expect(page.getByRole("dialog", { name: "New Bot" })).toBeVisible();
   await expect(page.getByText("or browse:")).toBeVisible();
   await page.screenshot({ path: info.outputPath("new-bot-empty.png"), fullPage: true });
-  // Nothing in the catalogue does this job: the box says so plainly
-  await page.getByLabel("What should it do?").fill("chase unpaid invoices and follow up with clients");
+  // Nothing in the catalogue does this job: the box says so plainly. (Chasing
+  // unpaid invoices used to be the example; the bot library now has Collections.)
+  await page.getByLabel("What should it do?").fill("tune pianos and restring harps");
   await expect(page.getByText("No template fits that yet.", { exact: false })).toBeVisible();
   // and a job that has a template finds it
   await page.getByLabel("What should it do?").fill("write sales page headlines and hooks");

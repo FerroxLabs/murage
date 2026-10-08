@@ -20,8 +20,10 @@ import { createHarness, promoteFixtureChief, ROOT, waitFor, type Harness } from 
 // (evidence.ts → lane-data-dir.ts → server/testing/safe-wipe.mjs: OS temp or a
 // *scratch*/*evidence*/*.e2e* segment, never a home or Murage data dir). The
 // harness root itself is always a fresh OS-temp mkdtemp. Server evidence goes to
-// <MURAGE_E2E_DATA_DIR>/b35-delegation-server-evidence-<project>, which must be absent or
-// empty: the journey refuses to mix its evidence with an earlier run's.
+// <MURAGE_E2E_DATA_DIR>/b35-delegation-server-evidence-<project>-w<worker>, which must be
+// absent or empty: the journey refuses to mix its evidence with an earlier run's.
+// A retry runs in a new worker, so it writes beside the failed attempt's
+// evidence instead of being refused by it.
 test.describe.configure({ mode: "serial" });
 
 const CHIEF = "B35 Delegation Chief";
@@ -105,6 +107,8 @@ async function showChief(page: Page, sidebar: Locator) {
   await sidebar.locator(`[data-sidebar-bot-row="${chiefId}"]`).click();
   await expect(page.locator("[data-chat-header-name]").first()).toContainText(CHIEF, { timeout: 15_000 });
 }
+/** Transcript rows whose message bubble is the child's delegated reply. */
+const replyBubbles = (page: Page) => page.locator("[data-mid]").filter({ has: page.getByTestId("msg-bubble").filter({ hasText: "replied to the delegated task" }) });
 /** Select the Chief (parent) thread and require the global count to read `value` there. */
 async function chiefCount(page: Page, value: string) {
   const sidebar = await openSidebar(page);
@@ -116,7 +120,7 @@ async function chiefCount(page: Page, value: string) {
 
 test.beforeAll(async ({}, workerInfo) => {
   test.setTimeout(180_000);
-  evidence = join(evidenceRoot("b35-delegation"), `b35-delegation-server-evidence-${workerInfo.project.name}`);
+  evidence = join(evidenceRoot("b35-delegation"), `b35-delegation-server-evidence-${workerInfo.project.name}-w${workerInfo.workerIndex}`);
   if (existsSync(evidence) && readdirSync(evidence).length > 0) throw new Error(`B35 delegation evidence directory is not empty: ${evidence}. Use a fresh MURAGE_E2E_DATA_DIR or move the earlier evidence first.`);
   mkdirSync(evidence, { recursive: true, mode: 0o700 });
   // FAKE_CLAUDE_DUMP is emptied: its turn dump would copy the MCP config, which
@@ -272,10 +276,12 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
 
   // UI after settlement: re-select the Chief (parent) thread — 0 — then reload with the Chief selected — still 0.
   await chiefCount(page, "0");
-  await expect(page.locator("[data-mid]", { hasText: "replied to the delegated task" })).toHaveCount(before.replies + 1, { timeout: 15_000 });
+  // Count reply bubbles: the task's held-queue row (server/index.ts noteHeldQueue)
+  // also quotes the reply it still owes the Chief's engine, and is not a reply.
+  await expect(replyBubbles(page)).toHaveCount(before.replies + 1, { timeout: 15_000 });
   await page.reload();
   await chiefCount(page, "0");
-  await expect(page.locator("[data-mid]", { hasText: "replied to the delegated task" })).toHaveCount(before.replies + 1, { timeout: 15_000 });
+  await expect(replyBubbles(page)).toHaveCount(before.replies + 1, { timeout: 15_000 });
   return { taskId, requestId, replyText };
 }
 
@@ -292,7 +298,8 @@ test("a Chief-created sub-bot's delegated permission is global attention, opens 
   expect(named).toHaveLength(1);
   const child = named[0];
   childId = child.id;
-  expect(created[0].text).toBe(`Created @${CHILD} in ${TEAM} [id: ${childId}], Ask mode (the user approves each action). Assign work with delegate_bot.`);
+  // Sibling tools are named with their server (server/murage-tool-surface.ts).
+  expect(created[0].text).toBe(`Created @${CHILD} in ${TEAM} [id: ${childId}], Ask mode (the user approves each action). Assign work with MCP tool "delegate_bot" on this server.`);
   expect(child).toMatchObject({ section: TEAM, chiefOfStaff: true, approvePeerComms: false, autoApprove: false, computer: "off" });
   expect(child.chiefScope).not.toBe("workspace");
   expect(child.autoReview ?? "off").toBe("off");
@@ -305,16 +312,22 @@ test("a Chief-created sub-bot's delegated permission is global attention, opens 
   // The Chief thread shows exactly one delivered reply (delegatedApproval left it selected after a reload).
   let sidebar = await openSidebar(page);
   await showChief(page, sidebar);
-  await expect(page.locator("[data-mid]", { hasText: "replied to the delegated task" })).toHaveCount(1, { timeout: 15_000 });
+  await expect(replyBubbles(page)).toHaveCount(1, { timeout: 15_000 });
   await page.screenshot({ path: testInfo.outputPath("b35-delegation-settled.png"), fullPage: true });
 
   // Restart on the same data: stale while down, reconciled after, nothing replays.
   const trigger = sidebar.locator("[data-sidebar-needs-you]"), count = sidebar.locator("[data-needs-you-count]");
   await expect(count).toHaveText("0", { timeout: 15_000 });
+  // The row re-reads on focus, reconnect, a change notice or a 60 s safety net
+  // (1f6b8996e). Behind the dev proxy the live stream may not see the server
+  // go, so the read a person causes by coming back to the window observes it.
+  const foreground = () => page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await harness.stop();
+  await foreground();
   await expect(trigger).toHaveAttribute("aria-label", /may be out of date/, { timeout: 15_000 });
   await expect(count).toHaveText(/^0\s*\?$/);
   await harness.boot();
+  await foreground();
   await expect(trigger).not.toHaveAttribute("aria-label", /out of date/, { timeout: 20_000 });
   await expect(count).toHaveText("0", { timeout: 15_000 });
   await page.waitForTimeout(3_000); // room for a boot drain to misbehave
@@ -332,7 +345,7 @@ test("a Chief-created sub-bot's delegated permission is global attention, opens 
   expect((await inbox()).total).toBe(0);
   await page.reload();
   await chiefCount(page, "0");
-  await expect(page.locator("[data-mid]", { hasText: "replied to the delegated task" })).toHaveCount(1, { timeout: 15_000 });
+  await expect(replyBubbles(page)).toHaveCount(1, { timeout: 15_000 });
   await testInfo.attach("b35-delegation-journey-1.json", { body: JSON.stringify({ chiefId, childId, chiefThread, taskId: first.taskId, requestId: first.requestId, boots: harness.boots }), contentType: "application/json" });
 });
 
@@ -356,6 +369,6 @@ test("Deny on a second delegated child request reaches the child once and the pa
   // delegatedApproval ended on the Chief after a reload with the count at 0.
   const sidebar = await openSidebar(page);
   await showChief(page, sidebar);
-  await expect(page.locator("[data-mid]", { hasText: "replied to the delegated task" })).toHaveCount(2, { timeout: 15_000 });
+  await expect(replyBubbles(page)).toHaveCount(2, { timeout: 15_000 });
   await page.screenshot({ path: testInfo.outputPath("b35-delegation-deny-settled.png"), fullPage: true });
 });

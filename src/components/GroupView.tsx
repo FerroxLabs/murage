@@ -60,7 +60,6 @@ import { ChatFindBar } from "./ChatFindBar";
 import { GroupTaskPicker } from "./TaskPicker";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
-import { McpSignInCard } from "./McpSignInCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { channelWaitingRun, waitingRunMessage } from "@/lib/channel-waiting-run";
@@ -70,7 +69,7 @@ import { GroupCallButton, CallBarStrip } from "./CallControls";
 import { registerCallSlot } from "@/lib/call-slot";
 
 import { ApprovalCard } from "./ApprovalCard";
-import { PublishCard } from "./PublishCard";
+import { McpSignInCard, PublishCard } from "./LazyChatCards";
 import { QuestionCard } from "./QuestionCard";
 import { isQuestionCard } from "../../shared/questions";
 import { ManageMembersPanel } from "./ManageMembersPanel";
@@ -1839,8 +1838,14 @@ export function GroupView({ group }: { group: Group }) {
       )}
 
       {projectSurface && !setupPending && <>
+        {/* The project header never takes more than about half the window:
+            an expanded strip plus "Since you left" scrolls here, so the view
+            tabs, the chat composer and the board keep their room on a phone
+            and in a short window. */}
+        <div className="max-h-[45dvh] min-h-0 shrink overflow-y-auto">
         {group.channelProject && <ProjectStrip project={project} title={group.channelProject.goal} groupId={group.id} onBoard={() => chooseProjectTab("board")} />}
         {group.channelProject && visitCounts && (visitCounts.messages > 0 || visitCounts.cards > 0 || visitCounts.decisions > 0) && <ProjectSinceYouLeftLazy counts={visitCounts} onBoard={() => chooseProjectTab("board")} boardEnabled={state.config?.features?.projectsBoard !== false && project?.settings.parts.board !== false} />}
+        </div>
         <ProjectTabs isProject={!!group.channelProject} board={state.config?.features?.projectsBoard !== false && project?.settings.parts.board !== false} value={activeTab} onChange={chooseProjectTab} settingsOpen={menuOpen} onSettings={(trigger) => { menuTriggerRef.current = trigger; setMenuOpen((open) => !open); }} />
       </>}
 
@@ -1942,7 +1947,9 @@ export function GroupView({ group }: { group: Group }) {
 
       {projectSurface && !showChat && <ProjectViewBody tab={activeTab} group={group} members={members} project={project} />}
 
-      {showChat && <div className="relative min-h-0 flex-1">
+      {/* At least the docked composer plus one row, so the composer never
+          rides up over the tabs and the header above it. */}
+      {showChat && <div className="relative min-h-0 flex-1" style={{ minHeight: composerDock.height + 48 }}>
       <div
         ref={scrollRef}
         data-testid="chat-scroll"

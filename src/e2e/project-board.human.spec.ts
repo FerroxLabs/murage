@@ -134,7 +134,9 @@ async function drag(page: Page, source: Locator, target: Locator, position: "bef
   await page.mouse.move(from.x + from.width / 2 + 8, from.y + Math.min(30, from.height / 2), { steps: 3 });
   // Scrolling the board while dragging also exercises its cached-rect offsets.
   const destination = position === "before" ? target : target.getByRole("button", { name: /^Card / }).first();
-  await destination.scrollIntoViewIfNeeded(); const to = (await destination.boundingBox())!;
+  // Centre it: a card only partly in view leaves its top edge under the board
+  // toolbar, and a "before" drop aims at that edge.
+  await destination.evaluate(element => element.scrollIntoView({ block: "center", inline: "nearest" })); const to = (await destination.boundingBox())!;
   await page.mouse.move(to.x + to.width / 2, to.y + (position === "before" ? 4 : Math.min(to.height - 4, 100)), { steps: 12 });
   await page.mouse.up();
 }

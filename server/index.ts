@@ -16291,6 +16291,9 @@ const server = createServer(async (req, res) => {
     if (path === "/api/thread-snoozes" || path.startsWith("/api/thread-snoozes/")) {
       const result = threadSnoozeRequest(database(), { method, path, desktop: requestSurface(req.headers, url.searchParams) === "desktop",
         body: method === "PUT" ? await readBody(req) : undefined }, threadSnoozeDeps);
+      // A snooze set or lifted changes what the sidebar counts: every desktop
+      // window re-reads, not only the one that asked.
+      if (result && result.status === 200 && method !== "GET") announceInboxChanged();
       if (result) return json(res, result.status, result.body);
     }
     // What a Delete confirmation says before anything goes: how many messages

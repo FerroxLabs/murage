@@ -11,7 +11,7 @@
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { createHarness, promoteFixtureChief, ROOT, sleep, waitFor, type Harness } from "./channel-live-harness.ts";
+import { createHarness, fakeClaudeCliSource, promoteFixtureChief, ROOT, sleep, waitFor, type Harness } from "./channel-live-harness.ts";
 import { Checks, finishCleanup } from "./channel-live-qualify.ts";
 import { discordPrompt } from "../server/channels/discord/event.ts";
 import { slackPrompt } from "../server/channels/slack/event.ts";
@@ -104,7 +104,7 @@ for (const provider of ["discord", "slack"] as const) {
     // A permission-mode copy of the established fake CLI in the task-owned root,
     // exactly as scripts/channel-permission-rehearsal.ts extends it.
     const fixtureCli = join(harness.root, "permission-claude.ts");
-    const source = readFileSync(join(ROOT, "server", "testing", "fake-claude-cli.ts"), "utf8");
+    const source = fakeClaudeCliSource();
     const anchor = '  if (mode === "ask-user-question" || fixtureRequested(promptText(prompt), "__fixture_ask_user_question__")) {';
     if (source.split(anchor).length !== 2) throw new Error("fake CLI insertion anchor must be unique");
     writeFileSync(fixtureCli, source.replace(anchor, `  if (mode === "channel-permission") {

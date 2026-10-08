@@ -157,7 +157,9 @@ test("there is no own-key link, and someone with an old key sees one quiet line"
   await expect(lock(page)).toBeVisible();
   await expect(page.getByRole("button", { name: /own key/i })).toHaveCount(0);
   await expect(page.getByText("Connected apps now run through Flux Router. Reconnect your apps here.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // the quiet line sends nobody anywhere: the panel is the only dialog and Settings stays shut
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toHaveCount(0);
   expect(connectorHits).toEqual([]);
 });
 

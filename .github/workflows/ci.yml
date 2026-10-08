@@ -95,7 +95,12 @@ jobs:
         # before Vitest starts so a cold download cannot consume the fixture
         # timeout.
         run: node --input-type=commonjs -e "require('electron')"
-      - run: pnpm typecheck
+      - name: Typecheck
+        # The server project outgrew Node's default heap on the 7 GB macOS
+        # runner (tsc -p tsconfig.server.json aborted with exit 134).
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: pnpm typecheck
       - run: pnpm lint
       - name: Typecheck the Composio broker Worker
         # `pnpm test` runs the Worker's Vitest suite, but the suite does not

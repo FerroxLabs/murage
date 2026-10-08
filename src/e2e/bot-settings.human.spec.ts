@@ -4,9 +4,15 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
 interface Fixture { info: { url: string; dataDir: string }; close(): Promise<void> }
-type Launcher = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<Fixture>;
+type Launcher = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string; env?: { MURAGE_COMPANION_TOKEN?: string } }) => Promise<Fixture>;
+// The companion's launch secret. The phone and the browser door reach the
+// harness through the companion, which stamps it on every request it forwards
+// (x-murage-door-token, server/companion-authority.ts). A bare loopback caller
+// is not a phone: the route policy answers it 404 (audit C5).
+const doorToken = randomBytes(32).toString("hex");
 let fixture: Fixture, vite: ViteDevServer, origin: string, owner: Record<string, string>;
 const botId = "settings-proof-bot";
 // Never chose an approval level: like every new bot, its record has no
@@ -14,7 +20,7 @@ const botId = "settings-proof-bot";
 const levelBotId = "level-proof-bot";
 test.beforeAll(async () => {
   const { launchVerificationServer } = await import(new URL("../../scripts/control-murage.ts", import.meta.url).href) as { launchVerificationServer: Launcher };
-  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `import {writeFileSync} from 'node:fs';import {join} from 'node:path';const at=Date.now();writeFileSync(join(process.env.MURAGE_DATA_DIR,'bots.json'),JSON.stringify([{id:'${botId}',threadId:'settings-proof-task',name:'Settings proof bot',title:'Research helper',description:'Use supplied evidence.',color:'green',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:'settings-proof-task',title:'Research task',createdAt:at,resumeCursors:{}}],chiefOfStaff:false,autoApprove:false,composio:false,computer:'off',browser:false,installedPackage:{id:'fixture-profile',name:'Fixture profile',release:'1.0.0',requiredApps:[],sourceRole:'leader',sourceTeam:'Studio'}},{id:'${levelBotId}',threadId:'level-proof-task',name:'Level proof bot',title:'',description:'',color:'blue',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:'level-proof-task',title:'Level task',createdAt:at,resumeCursors:{}}],composio:false,computer:'off',browser:false}]));` });
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `import {writeFileSync} from 'node:fs';import {join} from 'node:path';const at=Date.now();writeFileSync(join(process.env.MURAGE_DATA_DIR,'bots.json'),JSON.stringify([{id:'${botId}',threadId:'settings-proof-task',name:'Settings proof bot',title:'Research helper',description:'Use supplied evidence.',color:'green',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:'settings-proof-task',title:'Research task',createdAt:at,resumeCursors:{}}],chiefOfStaff:false,autoApprove:false,composio:false,computer:'off',browser:false,installedPackage:{id:'fixture-profile',name:'Fixture profile',release:'1.0.0',requiredApps:[],sourceRole:'leader',sourceTeam:'Studio'}},{id:'${levelBotId}',threadId:'level-proof-task',name:'Level proof bot',title:'',description:'',color:'blue',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:'level-proof-task',title:'Level task',createdAt:at,resumeCursors:{}}],composio:false,computer:'off',browser:false}]));`, env: { MURAGE_COMPANION_TOKEN: doorToken } });
   try {
     const proof = await (await fetch(fixture.info.url + "/api/desktop-secret")).json() as { secret: string };
     owner = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
@@ -67,9 +73,13 @@ test("Appearance is open at the top of Identity & instructions, and an image ava
   // the panel opens on what the bot is FOR; Appearance is no longer on Overview
   await expect(dialog.getByText("What is this bot for?", { exact: true })).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Upload image", exact: true })).toHaveCount(0);
-  await dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button", { name: "Identity & instructions", exact: true }).click();
+  // A phone picks the section from a list; a wider window has the rail.
+  if (page.viewportSize()!.width < 640) await dialog.getByRole("combobox", { name: "Section", exact: true }).selectOption("identity");
+  else await dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button", { name: "Identity & instructions", exact: true }).click();
   await expect(dialog.getByRole("heading", { name: "Appearance", exact: true })).toBeVisible();
-  await expect(dialog.locator("details")).toHaveCount(0);
+  // Appearance is never folded away. Other sections stay mounted but hidden
+  // (Learning keeps a <details> of its own), so look only at this one.
+  await expect(dialog.locator('[data-settings-section="identity"] details')).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Upload image", exact: true })).toBeVisible();
   // the mascot has nothing larger to show
   await expect(dialog.getByRole("button", { name: "View avatar larger", exact: true })).toHaveCount(0);
@@ -120,10 +130,11 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   await expect(dialog.getByText("Imported role: Team leader", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Imported team: Studio", { exact: true })).toBeVisible();
   await expect(dialog.getByText("The imported role is not active. Use the role control below to assign a role explicitly.", { exact: true })).toBeVisible();
-  // 12 on the desktop: the 11 sections everywhere plus "What shapes", which
-  // is offered only once the renderer knows it is the desktop.
-  if (width < 640) await expect(dialog.getByRole("combobox", { name: "Section", exact: true }).locator("option")).toHaveCount(12);
-  else await expect(dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button")).toHaveCount(12);
+  // 14 on the desktop: the 11 sections everywhere plus the three that read
+  // or change desktop-only routes (What shapes, Learning, Teams), offered
+  // only once the renderer knows it is the desktop (DESKTOP_ONLY_BOT_SETTINGS).
+  if (width < 640) await expect(dialog.getByRole("combobox", { name: "Section", exact: true }).locator("option")).toHaveCount(14);
+  else await expect(dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button")).toHaveCount(14);
   await page.screenshot({ path: testInfo.outputPath(`settings-overview-${width}-${skin}.png`), fullPage: true });
   if (width === 1440 && skin === "dark") {
     // Delay an actual fixture upload response. Closing must not pretend it
@@ -204,8 +215,9 @@ test("a refused Full access snaps back to the saved level and says why; away fro
   const stored = await (await fetch(fixture.info.url + "/api/bots?messages=0", { headers: owner })).json() as { bots: { id: string; fullAccess?: boolean }[] };
   expect(stored.bots.find(bot => bot.id === levelBotId)?.fullAccess).not.toBe(true);
 
-  // A renderer the harness answers as remote (a phone, the browser door).
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  // A renderer the harness answers as remote (a phone, the browser door):
+  // its requests arrive forwarded by the companion, without the desktop proof.
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, extraHTTPHeaders: { "x-murage-door-token": doorToken } });
   try {
     const phone = await context.newPage();
     await phone.route("**/api/desktop-secret", route => route.fulfill({ status: 404, contentType: "application/json", body: "{}" }));

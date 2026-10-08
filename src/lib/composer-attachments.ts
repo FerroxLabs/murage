@@ -556,13 +556,18 @@ export function composerShouldRefocus(active: FocusNode | null, input: ComposerI
  * (upstream #1872). Opening a thread from the sidebar leaves focus on the row
  * or the New thread button, so the composer takes it from any plain control.
  * It never takes it from another text field (the sidebar search, a rename) or
- * from an open dialog, where the person is typing or deciding something else.
+ * from an open dialog, menu or list, where the person is typing or deciding
+ * something else.
  */
 export function composerTakesFocusOnOpen(active: OpenFocusNode | null, input: ComposerInputNode): boolean {
   if (composerShouldRefocus(active, input)) return true;
   if (!active) return true;
   const tag = active.tagName?.toUpperCase();
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || active.isContentEditable) return false;
+  // A menu or list the person just opened (the You menu on their name, a
+  // picker) keeps focus too: a thread that finishes loading a moment later
+  // must not pull the caret away and fold the menu shut under the pointer.
+  if (active.closest?.("[role=menu], [role=listbox], [aria-haspopup][aria-expanded=true]")) return false;
   return !active.closest?.("[role=dialog], [role=alertdialog], [aria-modal=true]");
 }
 

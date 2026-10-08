@@ -87,6 +87,7 @@ export interface LiveEventsHandlers {
 //     so a shipped bundle has no code that could ask.
 export const SURFACE_SECRET_HEADER = "x-murage-surface-secret";
 export const SURFACE_SECRET_QUERY = "surfaceSecret";
+const MEDIA_BYTES_PATH = /^\/api\/media\/bytes(?:[/?#]|$)/;
 /** Same path the harness serves it on; dev only, at both ends. */
 export const DEV_SECRET_PATH = "/api/desktop-secret";
 
@@ -136,9 +137,13 @@ export function desktopCallerHeaders(): Record<string, string> {
  * audio or download link) cannot send headers, so the proof rides in the
  * query, the way the live stream's does. Anything that is not a local /api
  * path, and every renderer that holds no secret (a phone, a paired browser),
- * gets the URL back unchanged. */
+ * gets the URL back unchanged. A signed media byte URL already carries its
+ * own short-lived capability (the "media" class in server/route-policy.ts),
+ * so it stays exactly as issued and the launch secret never sits in a link
+ * that can be saved or shared. */
 export function desktopResourceUrl<T extends string | null | undefined>(url: T): T | string {
   if (typeof url !== "string" || !url.startsWith("/api/") || !desktopSecret) return url;
+  if (MEDIA_BYTES_PATH.test(url)) return url;
   const hash = url.indexOf("#");
   const base = hash < 0 ? url : url.slice(0, hash);
   const params = new URLSearchParams({ surface: "desktop", [SURFACE_SECRET_QUERY]: desktopSecret });

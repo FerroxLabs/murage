@@ -21,7 +21,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { ROOT } from "../../scripts/channel-live-harness.ts";
+import { fakeClaudeCliSource } from "../../scripts/channel-live-harness.ts";
 
 /** The unique line the block is inserted before (fake-claude-cli.ts:557). */
 export const B35_ANCHOR = 'if (mode === "ask-user-question" || fixtureRequested(';
@@ -206,7 +206,7 @@ export function b35DelegationEngineSource(source: string): string {
 }
 
 /** Write `<root>/b35-delegation-claude.ts` (0700) and return its path. */
-export function writeB35DelegationCli(root: string, source = readFileSync(join(ROOT, "server", "testing", "fake-claude-cli.ts"), "utf8")): string {
+export function writeB35DelegationCli(root: string, source = fakeClaudeCliSource()): string {
   const target = join(root, B35_CLI_NAME);
   writeFileSync(target, b35DelegationEngineSource(source), { mode: 0o700 });
   chmodSync(target, 0o700);

@@ -84,12 +84,15 @@ for(const mutation of ["forget","correct"] as const)test(`workspace ${mutation} 
   await page.goto(origin);const sidebar=await openSidebar(page);await sidebar.getByRole("button",{name:"App settings",exact:true}).click();
   const dialog=page.getByRole("dialog",{name:"Settings",exact:true});await dialog.getByRole("navigation").getByRole("button",{name:"Memory",exact:true}).click();
   const history=dialog.getByRole("region",{name:"What it learned",exact:true});await expect(history.getByText(record.text,{exact:true})).toBeVisible();
-  await history.getByRole("button",{name:"Show more",exact:true}).click();await expect.poll(()=>historyCalls).toBe(2);
+  // The dev renderer runs under React StrictMode, which mounts the section's
+  // effects twice, so the first page can be asked for twice; count from here.
+  const firstPage=historyCalls;expect(firstPage).toBeGreaterThanOrEqual(1);
+  await history.getByRole("button",{name:"Show more",exact:true}).click();await expect.poll(()=>historyCalls).toBe(firstPage+1);
   await dialog.getByRole("button",{name:"Inspect memory",exact:true}).click();
   const detail=dialog.getByRole("region",{name:"Memory details",exact:true});
   if(mutation==="forget"){await detail.getByRole("checkbox",{name:"Confirm forgetting this memory"}).check();await detail.getByRole("button",{name:"Forget memory",exact:true}).click();}
   else{await detail.getByRole("textbox",{name:"Correction text",exact:true}).fill("CORRECTED_HISTORY_CANARY");await detail.getByRole("button",{name:"Save correction",exact:true}).click();}
-  await expect.poll(()=>historyCalls).toBe(3);await expect(history.getByText(record.text,{exact:true})).toHaveCount(0);if(mutation==="forget")await expect(history.getByRole("link")).toHaveCount(0);
+  await expect.poll(()=>historyCalls).toBe(firstPage+2);await expect(history.getByText(record.text,{exact:true})).toHaveCount(0);if(mutation==="forget")await expect(history.getByRole("link")).toHaveCount(0);
   const staleResponse=page.waitForResponse(response=>response.url().endsWith("/api/memory/action")&&response.request().postDataJSON()?.cursor==="older");
   release();await staleResponse;await expect(history.getByText(mutation==="forget"?"Nothing learned yet. New learning will appear here with its source.":"CORRECTED_HISTORY_CANARY",{exact:true})).toBeVisible();await expect(history.getByText(record.text,{exact:true})).toHaveCount(0);
  }finally{release();}

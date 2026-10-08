@@ -200,6 +200,10 @@ async function ownerWashDown(page: Page): Promise<void> {
 const hueGap = (a: number, b: number) => { const d = Math.abs(((a - b) % 360 + 360) % 360); return d > 180 ? 360 - d : d; };
 
 test("every phase, for a circular photo, a square image, a transparent sprite and the mascot", async ({ page }, info) => {
+  // Four avatars through eight phases and two skins, with screenshots and
+  // axe; and each bot turn waits out the owner's wash fading for real (its
+  // two releases, ~3 s) rather than reading a ground still half blue.
+  test.setTimeout(150_000);
   const shots = process.env.MURAGE_AURA_SHOTS ? join(process.env.MURAGE_AURA_SHOTS, info.project.name) : info.outputPath();
   mkdirSync(shots, { recursive: true });
   // routes first: the portrait is asked for on mount, and a miss is cached

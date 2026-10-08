@@ -57,11 +57,15 @@ const MARKDOWN = [
   "",
   "Tracked: ![pixel](https://tracker.example/pixel.png)",
   "",
-  "Private: ![secret](/Users/sean/private/secret.png)",
+  "Private: ![secret](/Users/alex/private/secret.png)",
 ].join("\n");
 
 let server: ViteDevServer, origin: string, cache: string;
 const served: string[] = [];
+/** An attachment as the desktop window asks for it: an <img> cannot send
+ *  headers, so the window's per-launch proof rides in the query. */
+const FIXTURE_PROOF = "media-fixture-proof";
+const proofed = (path: string) => `${path}?surface=desktop&surfaceSecret=${FIXTURE_PROOF}`;
 
 test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -110,7 +114,7 @@ createRoot(document.getElementById('root')).render(h(React.StrictMode,{},h('main
           res.setHeader("content-type", "image/png"); res.end(bytes); return;
         }
         const json = (body: unknown) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)); };
-        if (url.pathname === "/api/desktop-secret") return json({ secret: "media-fixture-proof" });
+        if (url.pathname === "/api/desktop-secret") return json({ secret: FIXTURE_PROOF });
         if (url.pathname === "/api/artifacts/art-chart/preview") return json({ artifact: ARTIFACT, mode: "image", content: SAVED });
         if (url.pathname === "/api/artifacts") return json({ items: [ARTIFACT], total: 1, page: 0, pageSize: 25 });
         next();
@@ -211,19 +215,19 @@ test("focus stays inside, arrows stay inside the message, and a failed image doe
   await page.keyboard.press("ArrowRight");
   await expect(dialog).toContainText("Image 3 of 3");
   await expect(dialog.getByRole("status")).toHaveCount(0);
-  await expect(lightboxImage(page)).toHaveAttribute("src", "/api/attachments/wide-2.png");
+  await expect(lightboxImage(page)).toHaveAttribute("src", proofed("/api/attachments/wide-2.png"));
   await page.getByRole("button", { name: "Next image" }).click();
   await expect(dialog).toContainText("Image 1 of 3");
   await page.getByRole("button", { name: "Previous image" }).click();
   await expect(dialog).toContainText("Image 3 of 3");
   await page.keyboard.press("Home");
-  await expect(lightboxImage(page)).toHaveAttribute("src", "/api/attachments/portrait-1.png");
+  await expect(lightboxImage(page)).toHaveAttribute("src", proofed("/api/attachments/portrait-1.png"));
   // a single image has no set to walk
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Enlarge image Weekly chart" }).click();
   await expect(page.getByRole("button", { name: "Next image" })).toHaveCount(0);
   await page.keyboard.press("ArrowRight");
-  await expect(lightboxImage(page)).toHaveAttribute("src", "/api/attachments/tall-3.png");
+  await expect(lightboxImage(page)).toHaveAttribute("src", proofed("/api/attachments/tall-3.png"));
 });
 
 for (const skin of ["light", "dark"]) for (const [width, height] of [[390, 844], [1440, 900]] as const) {
@@ -233,7 +237,7 @@ for (const skin of ["light", "dark"]) for (const [width, height] of [[390, 844],
     await page.getByRole("button", { name: "Preview attached image portrait-1.png" }).click();
     for (const src of ["/api/attachments/portrait-1.png", "/api/attachments/wide-2.png"]) {
       if (src.includes("wide")) await page.keyboard.press("End");
-      await expect(lightboxImage(page)).toHaveAttribute("src", src);
+      await expect(lightboxImage(page)).toHaveAttribute("src", proofed(src));
       await expect.poll(() => lightboxImage(page).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
       const box = (await lightboxImage(page).boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0); expect(box.y).toBeGreaterThanOrEqual(0);
@@ -256,8 +260,12 @@ test("reduced motion removes the dialog animation and the thumbnail zoom", async
   const thumb = page.getByRole("button", { name: "Preview attached image portrait-1.png" });
   // styles.css's global reduced-motion rule forces 0.01ms !important over the
   // component's own transition-none; either way nothing perceptibly moves
-  const seconds = await thumb.locator("img").evaluate((img) => parseFloat(getComputedStyle(img).transitionDuration));
-  expect(seconds).toBeLessThanOrEqual(0.00001);
+  // Polled, and read from the <img> on screen each time: a phone first asks
+  // for a ?w= thumbnail and swaps in a fresh <img> for the original once it
+  // learns the original was served (ImageThumb's smallOriginal), and a
+  // detached element has no computed style to read.
+  await expect.poll(() => thumb.locator("img").evaluate((img) => img.isConnected ? parseFloat(getComputedStyle(img).transitionDuration) : NaN))
+    .toBeLessThanOrEqual(0.00001);
   await thumb.click();
   const panel = lightbox(page).locator(":scope > div");
   expect(await panel.evaluate((node) => getComputedStyle(node).animationName)).toBe("none");

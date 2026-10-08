@@ -376,6 +376,7 @@ describe("composerTakesFocusOnOpen", () => {
     role?: string;
     tagName?: string;
     isContentEditable?: boolean;
+    openPopupTrigger?: boolean;
     closest: (sel: string) => Fake | null;
     contains: (el: unknown) => boolean;
   };
@@ -386,6 +387,7 @@ describe("composerTakesFocusOnOpen", () => {
         for (let cur: Fake | undefined = self; cur; cur = cur.parent) {
           if (sel === "[data-composer]" && cur.role === "composer") return cur;
           if (sel.includes("[role=dialog]") && cur.role === "dialog") return cur;
+          if (sel.includes("[role=menu]") && (cur.role === "menu" || cur.openPopupTrigger)) return cur;
         }
         return null;
       },
@@ -422,5 +424,11 @@ describe("composerTakesFocusOnOpen", () => {
   it("leaves an open dialog alone", () => {
     const dialog = node({ tagName: "DIV", role: "dialog", parent: body });
     expect(composerTakesFocusOnOpen(node({ tagName: "BUTTON", parent: dialog }), input)).toBe(false);
+  });
+
+  it("leaves a menu the person just opened alone, its trigger or its items", () => {
+    expect(composerTakesFocusOnOpen(node({ tagName: "BUTTON", openPopupTrigger: true, parent: sidebar }), input)).toBe(false);
+    const menu = node({ tagName: "DIV", role: "menu", parent: sidebar });
+    expect(composerTakesFocusOnOpen(node({ tagName: "BUTTON", parent: menu }), input)).toBe(false);
   });
 });

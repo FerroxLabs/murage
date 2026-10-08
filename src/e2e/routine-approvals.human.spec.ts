@@ -74,8 +74,15 @@ async function start(page: import("@playwright/test").Page) {
   await page.goto(origin);
 }
 
-const routine = async (page: import("@playwright/test").Page) =>
-  (await (await page.request.get(`${fixture.info.url}/api/routines`)).json()).routines.find((item: { id: string }) => item.id === "rwa-watch");
+/** The harness's own view of the routines, read the way the desktop window
+ *  reads it: an unproven caller is told there is no such route. */
+async function routines(): Promise<{ routines: Array<{ id: string; permissionMode?: string; alwaysAllow?: string[] }>; runs: Array<{ routineId: string }> }> {
+  const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
+  const response = await fetch(`${fixture.info.url}/api/routines`, { headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret } });
+  expect(response.ok, `GET /api/routines ${response.status}`).toBe(true);
+  return await response.json();
+}
+const routine = async () => (await routines()).routines.find((item) => item.id === "rwa-watch");
 
 test("the chip in a routine's conversation shows and sets the routine's level", async ({ page }, info) => {
   await start(page);
@@ -90,7 +97,7 @@ test("the chip in a routine's conversation shows and sets the routine's level", 
   await expect(page.getByRole("menu").getByText("Changes the level of the routine RWA watch. Every run of it works here.")).toBeVisible();
   await page.getByRole("menuitemradio", { name: /^Auto mode/ }).click();
   await expect(page.getByRole("button", { name: "Auto mode for the routine RWA watch" })).toBeVisible();
-  await expect.poll(async () => (await routine(page))?.permissionMode).toBe("auto");
+  await expect.poll(async () => (await routine())?.permissionMode).toBe("auto");
 });
 
 // Gap 7: the editor offers four stored levels, with no inherit choice.
@@ -106,7 +113,7 @@ test("the routine editor stores a selected ceiling and lists its remembered appr
   await editor.getByText(/^Advanced/).click();
 
   const level = editor.getByLabel("Approvals for this routine");
-  await expect(level).toHaveValue((await routine(page)).permissionMode);
+  await expect(level).toHaveValue((await routine())!.permissionMode!);
   await expect(level.locator("option")).toHaveText(["Ask for approval", "Auto mode", "Full access", "No limits"]);
   expect(await level.locator("option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value)))
     .toEqual(["ask", "auto", "full", "unlimited"]);
@@ -119,13 +126,13 @@ test("the routine editor stores a selected ceiling and lists its remembered appr
 
   await grants.getByRole("button", { name: `Remove always allow for ${COMMAND}` }).click();
   await expect(grants.getByText(/^Nothing yet/)).toBeVisible();
-  await expect.poll(async () => (await routine(page))?.alwaysAllow).toBeUndefined();
+  await expect.poll(async () => (await routine())?.alwaysAllow).toBeUndefined();
 
   await level.selectOption("ask");
   await expect(editor.getByText("Every run of this routine: ask before actions that need your permission.", { exact: false })).toBeVisible();
   await editor.getByRole("button", { name: "Save", exact: true }).click();
   await expect(editor).toHaveCount(0);
-  await expect.poll(async () => (await routine(page))?.permissionMode).toBe("ask");
+  await expect.poll(async () => (await routine())?.permissionMode).toBe("ask");
 });
 
 test("each run in a routine's conversation begins with a visible divider", async ({ page }, info) => {
@@ -162,7 +169,7 @@ test("a card answered after its run ended offers Run again, which starts the rou
   await sidebar.getByText("Dax", { exact: true }).first().click();
   const row = page.getByTestId("routine-run-again");
   await expect(row).toContainText("This run of RWA watch ended before you answered, so nothing was run.");
-  const runs = async () => ((await (await page.request.get(`${fixture.info.url}/api/routines`)).json()).runs as Array<{ routineId: string }>).filter((run) => run.routineId === "rwa-watch").length;
+  const runs = async () => (await routines()).runs.filter((run) => run.routineId === "rwa-watch").length;
   const before = await runs();
   await row.getByRole("button", { name: "Run again" }).click();
   await expect(row.getByRole("button", { name: "Started" })).toBeDisabled();

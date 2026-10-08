@@ -62,7 +62,7 @@ async function open(page: Page, width: number, options: { flags?: boolean; missi
   }
   await page.route("**/api/config", async (route) => {
     const response = await route.fetch(); const config = await response.json();
-    await route.fulfill({ response, json: { ...config, features: { ...config.features, showToolCalls: false, ...(options.flags === false ? {} : { projectsLead: true, projectsAutonomy: true, roomsQueue: true, projectsBoard: true }) } } });
+    await route.fulfill({ response, json: { ...config, features: { ...config.features, showToolCalls: false, ...(options.flags === false ? { projectsLead: false, projectsBoard: false, projectsAutonomy: false, roomsQueue: false } : { projectsLead: true, projectsAutonomy: true, roomsQueue: true, projectsBoard: true }) } } });
   });
   await page.route("**/api/bots?*", async (route) => {
     const response = await route.fetch(); const data = await response.json();
@@ -162,7 +162,7 @@ for (const skin of ["light", "dark"] as const) for (const width of [390, 820, 14
     await expect(page.getByRole("region", { name: "Memory", exact: true })).toBeVisible();
   }
   await page.getByRole("tab", { name: "Board", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Board", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Board", exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "Chat", exact: true }).click();
   expect(errors).toEqual([]);
 });

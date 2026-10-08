@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { createHarness, promoteFixtureChief, ROOT, waitFor, sleep } from "./channel-live-harness.ts";
+import { createHarness, fakeClaudeCliSource, promoteFixtureChief, ROOT, waitFor, sleep } from "./channel-live-harness.ts";
 
 const evidence = resolve(process.argv[2] ?? "docs/verification/channel-permission-rehearsal");
 mkdirSync(evidence, { recursive: true });
@@ -25,7 +25,7 @@ for (const provider of ["discord", "slack"] as const) {
   // The original fake and real engines remain unchanged. Its MCP call helper
   // performs initialize/tools-call against the real permission-proxy process.
   const fixture = join(harness.root, "permission-claude.ts");
-  const source = readFileSync(join(ROOT, "server/testing/fake-claude-cli.ts"), "utf8");
+  const source = fakeClaudeCliSource();
   const anchor = '  if (mode === "ask-user-question" || fixtureRequested(promptText(prompt), "__fixture_ask_user_question__")) {';
   assert.equal(source.split(anchor).length, 2, "fake CLI insertion anchor must be unique");
   writeFileSync(fixture, source.replace(anchor, `  if (mode === "channel-permission") {

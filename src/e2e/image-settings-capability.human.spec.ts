@@ -144,7 +144,9 @@ test("a Flux Router key added in Settings → Models makes Image generation stat
   await openApp(page);
   const settings = await openSettings(page, "Models");
   const field = settings.getByLabel("Flux Router key", { exact: true });
-  await field.fill("fixture-flux-key");
+  // A Flux Router key is sk-flux- and at least 16 more characters
+  // (src/lib/flux-key-paste.ts); anything else is refused before it is saved.
+  await field.fill("sk-flux-fixture-image-settings-key");
   await settings.locator("#flux-router-connection").getByRole("button", { name: "Connect", exact: true }).click();
   await expect(settings.getByText("Key saved. Test the connection to check its model catalog.")).toBeVisible();
 

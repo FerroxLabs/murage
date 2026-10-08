@@ -2858,6 +2858,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const session = sessions.get(threadId);
           active.get(threadId)?.stop();
           if (!session) return;
+          // The child already closed (it exited, or an earlier close is still
+          // confirming its tree stopped before the session leaves the map):
+          // its "close" has fired and never fires again, so waiting for it
+          // only timed out 10 s later and failed the next send. Confirm the
+          // tree instead, and finish the close so the thread is free.
+          if (session.finishClose) {
+            closeSession(threadId, "memory context reset");
+            if (!(await awaitCliTreeStopped(session.child))) throw new Error("CLAUDE_SESSION_RESET_TIMEOUT");
+            await session.finishClose();
+            await requireRetiredStopped(threadId);
+            return;
+          }
           await new Promise<void>((resolve, reject) => {
             const timeout = setTimeout(() => {
               session.child.off("close", closed);

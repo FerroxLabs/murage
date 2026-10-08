@@ -43,6 +43,8 @@ const options = {
   instructions: [{ agent: "scout", path: "bots/scout/SOUL.md" }],
 };
 const preview = { archiveSha256: "archive-sha", reviewHash: "review-hash", scan, missingDependencies: [], summary: { name: "Selected package", agents: 1, skills: 1, routines: 0, instructions: 1, suggestedChief: "scout" } };
+// The dialog tags each import call with its check id (?scanId=...), so match the path, not the whole URL.
+const packageImport = (url: URL) => url.pathname === "/api/packages/import";
 async function emptyCatalog(page: import("@playwright/test").Page) {
   await page.route("**/api/team-library/catalog", route => route.fulfill({ json: { teams: [], repositoryUrl: "" } }));
   await page.route("**/api/library/browse", route => route.fulfill({ json: { facets: [], totalSkills: 0 } }));
@@ -52,8 +54,9 @@ test("desktop ZIP picker selects exact content and updates the existing workspac
   await page.addInitScript(() => { (window as any).muragebox = { getPathForFile: () => "/fixture/selected.zip" }; });
   await emptyCatalog(page);
   const requests: any[] = [];
-  await page.route("**/api/packages/import", async route => {
-    const body = route.request().postDataJSON(); requests.push(body);
+  const scanIds: (string | null)[] = [];
+  await page.route(packageImport, async route => {
+    const body = route.request().postDataJSON(); requests.push(body); scanIds.push(new URL(route.request().url()).searchParams.get("scanId"));
     if (body.action === "options") return route.fulfill({ json: options });
     if (body.action === "preview") return route.fulfill({ json: preview });
     return route.fulfill({ json: { bots: [{ id: "fresh-bot", name: "Researcher", composio: false, computer: "off", browser: false }], groups: [], routines: [] } });
@@ -77,11 +80,13 @@ test("desktop ZIP picker selects exact content and updates the existing workspac
   expect(imported.result.importedBotIds).toEqual(["fresh-bot"]);
   expect(imported.actions).toEqual(expect.arrayContaining([expect.objectContaining({ type: "botAdded", bot: expect.objectContaining({ id: "fresh-bot", computer: "off" }) })]));
   expect(requests.at(-1)).toMatchObject({ action: "import", archivePath: "/fixture/selected.zip", selection: { agents: ["scout"], skills: ["research"], routines: [], instructions: ["scout"] }, archiveSha256: "archive-sha", reviewHash: "review-hash" });
+  expect(scanIds).toHaveLength(requests.length);
+  expect(scanIds.every(id => typeof id === "string" && id.length > 0)).toBe(true);
 });
 
 test("warning acknowledgement resets after stale import and dependencies require an explicit new selection", async ({ page }) => {
   let missing = true;
-  await page.route("**/api/packages/import", route => {
+  await page.route(packageImport, route => {
     const body = route.request().postDataJSON();
     if (body.action === "options") return route.fulfill({ json: options });
     if (body.action === "import") return route.fulfill({ status: 409, json: { error: "Package changed." } });
@@ -105,7 +110,7 @@ test("warning acknowledgement resets after stale import and dependencies require
 });
 
 test("blocked options cannot expose candidate content or proceed; browser-only file picker explains the missing native path", async ({ page }) => {
-  await page.route("**/api/packages/import", route => route.fulfill({ json: { archiveSha256: "blocked", scan: { blocked: true, reviewRequired: false, findings: [{ path: "manifest.json", rule: "provider-token" }] }, agents: [{ key: "fake", name: "FAKE_SECRET_MUST_NOT_RENDER" }] } }));
+  await page.route(packageImport, route => route.fulfill({ json: { archiveSha256: "blocked", scan: { blocked: true, reviewRequired: false, findings: [{ path: "manifest.json", rule: "provider-token" }] }, agents: [{ key: "fake", name: "FAKE_SECRET_MUST_NOT_RENDER" }] } }));
   await page.goto(origin + "/__bundle?direct=1");
   await expect(page.getByRole("alert")).toContainText("Import blocked");
   await expect(page.getByRole("button", { name: "Preview selection" })).toHaveCount(0);
@@ -120,7 +125,7 @@ test("blocked options cannot expose candidate content or proceed; browser-only f
 
 test("version comparison describes the prior selection and omitted content without offering an in-place upgrade", async ({ page }, info) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.route("**/api/packages/import", route => route.fulfill({ json: route.request().postDataJSON().action === "options" ? options : {
+  await page.route(packageImport, route => route.fulfill({ json: route.request().postDataJSON().action === "options" ? options : {
     ...preview, comparison: { status: "compared", previousRelease: "1.0.0", incomingRelease: "1.1.0", changes: [
       { category: "agents", key: "scout", change: "changed" },
       { category: "skills", key: "citations", change: "added" },
@@ -146,7 +151,7 @@ test("version comparison describes the prior selection and omitted content witho
 
 test("unavailable comparison stays explicit and blocked previews suppress all version details", async ({ page }) => {
   let blocked = false;
-  await page.route("**/api/packages/import", route => route.fulfill({ json: route.request().postDataJSON().action === "options" ? options : {
+  await page.route(packageImport, route => route.fulfill({ json: route.request().postDataJSON().action === "options" ? options : {
     ...preview, scan: { ...scan, blocked },
     comparison: blocked
       ? { status: "compared", previousRelease: "PRIVATE_PREVIOUS_RELEASE", incomingRelease: "PRIVATE_INCOMING_RELEASE", changes: [{ category: "skills", key: "PRIVATE_COMPARISON_KEY", change: "changed" }] }

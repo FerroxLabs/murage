@@ -2598,13 +2598,18 @@ ipcMain.on("desktop:unread-count", (event, value) => {
 // created only after /api/health succeeded (serverReady).
 let startupSplash = null;
 let startupSplashClosing = false;
-function closeStartupSplash() {
+function closeStartupSplash({ afterMainWindowClosed = false } = {}) {
   if (!startupSplash) return;
   // Closing the splash is not "the user closed the last window": never let it
   // trigger window-all-closed's quit when a faceless startup path follows.
-  startupSplashClosing = true;
+  // Only a splash that is the last open window can trigger that event, so the
+  // guard is held only then; a main window closed during the guard would
+  // otherwise leave the app running with no window.
+  const lastWindow = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed()).length <= 1;
   startupSplash.close();
   startupSplash = null;
+  if (afterMainWindowClosed || !lastWindow) return;
+  startupSplashClosing = true;
   setTimeout(() => { startupSplashClosing = false; }, 1000).unref?.();
 }
 
@@ -2967,7 +2972,12 @@ function createWindow({quiet=false}={}) {
   installWindowStatePersistence(win);
   applyUnreadBadge(win);
   win.once("closed", () => {
-    if (mainWindow === win) mainWindow = null;
+    if (mainWindow !== win) return;
+    mainWindow = null;
+    // Closed before its first paint: the reveal never runs, so the splash goes
+    // here and the normal last-window rule decides whether Murage quits.
+    startupSplashClosing = false;
+    closeStartupSplash({ afterMainWindowClosed: true });
   });
 
   // Popups never open inside Murage. Credential-free http(s) links go to the

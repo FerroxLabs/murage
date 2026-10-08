@@ -24,15 +24,26 @@ export function CallMood({ phase, color, signals }: { phase: AuraPhase; color: R
   const amber = phase === "held" || phase === "reconnecting";
   const muted = phase === "muted";
   const peak = MOOD_PEAK[useActiveSkin()];
+  // One pair of smoothers for the whole call, not one per phase: a wash that
+  // is still fading when the phase turns (the owner's, as the bot starts to
+  // answer) carries on fading from where it was, instead of starting again
+  // from nothing and rising back toward a voice that has only just gone.
+  const ownerSmoother = useRef<LevelSmoother | null>(null);
+  const botSmoother = useRef<LevelSmoother | null>(null);
+  ownerSmoother.current ??= new LevelSmoother(ATTACK_MS, RELEASE_MS);
+  botSmoother.current ??= new LevelSmoother(ATTACK_MS, RELEASE_MS);
 
   useEffect(() => {
     const ownerEl = ownerRef.current;
     const botEl = botRef.current;
-    if (!ownerEl || !botEl) return;
-    const owner = new LevelSmoother(ATTACK_MS, RELEASE_MS);
-    const bot = new LevelSmoother(ATTACK_MS, RELEASE_MS);
+    const owner = ownerSmoother.current;
+    const bot = botSmoother.current;
+    if (!ownerEl || !botEl || !owner || !bot) return;
     const started = performance.now();
     if (muted || amber) {
+      // painted still: the next live phase rises from nothing, as shown
+      owner.reset();
+      bot.reset();
       ownerEl.style.opacity = "0";
       botEl.style.opacity = amber ? (0.25 * peak).toFixed(3) : "0";
       return;

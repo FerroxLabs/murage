@@ -9,18 +9,20 @@ import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let server: ViteDevServer, origin: string, cache: string;
 test.beforeAll(async () => {
   const root=fileURLToPath(new URL("../../",import.meta.url));cache=mkdtempSync(join(tmpdir(),"murage-call-avatar-"));
-  server=await createServer({configFile:false,root,cacheDir:cache,envFile:false,optimizeDeps:{noDiscovery:true,include:["react","react-dom/client","react/jsx-runtime","react/jsx-dev-runtime","lucide-react"]},resolve:{alias:{"@":`${root}/src`}},server:{host:"127.0.0.1",watch:null,hmr:false},plugins:[tailwindcss(),{name:"call-avatar-fixture",enforce:"pre",
+  server=await createServer({configFile:false,root,cacheDir:cache,envFile:false,optimizeDeps:{noDiscovery:true,include:["react","react-dom","react-dom/client","react/jsx-runtime","react/jsx-dev-runtime","lucide-react"]},resolve:{alias:{"@":`${root}/src`}},server:{host:"127.0.0.1",watch:null,hmr:false},plugins:[tailwindcss(),{name:"call-avatar-fixture",enforce:"pre",
     resolveId(id){const map:Record<string,string>={"@/state/store":"store","@/lib/call":"call","@/lib/tts":"tts","@/lib/tts/useSpeech":"speech","@/lib/push-to-talk":"push"};for(const[alias,key]of Object.entries(map))if(id===alias||id.endsWith("/src/"+alias.slice(2)))return "\0avatar-"+key;if(id==="/__call.js")return "\0avatar-entry";},
     load(id){
       if(id.endsWith("/src/styles.css"))return readFileSync(id,"utf8").replace('@import "tailwindcss";','@import "tailwindcss" source(none);\n@source "./components";');
-      if(id==="\0avatar-store")return `const empty=[];export const visibleMessages=()=>empty;export const useStore=()=>({state:{config:{}},dispatch:()=>{}});export const api=async()=>({});`;
+      if(id==="\0avatar-store")return `const empty=[];export const visibleMessages=()=>empty;export const viewedTaskBot=bot=>bot;export const useStreaming=()=>null;export const useStore=()=>({state:{config:{}},dispatch:()=>{}});export const api=async()=>({});`;
       if(id==="\0avatar-call")return `export const useOnCall=()=>"portrait-bot";export const currentCall=()=>"portrait-bot";export const deferCallCleanup=()=>{};export const requestCall=()=>{};export const takeCallRequest=()=>false;export const useCallRequest=()=>null;export const endCall=()=>{};export const startCall=()=>{};`;
       if(id==="\0avatar-tts")return `export const speaker={isSpeaking:()=>false,speak:async()=>{},stop:()=>{}};export const onClipElement=()=>()=>{};`;
       if(id==="\0avatar-speech")return `export const useSpeech=()=>({caption:"",error:null});`;
       if(id==="\0avatar-push")return `export const usePushToTalk=()=>false;`;
       if(id!=="\0avatar-entry")return;
-      return `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{CallOverlay}from'/src/components/CallControls.tsx';import'/src/styles.css';
-        function Fixture(){const[bot,setBot]=useState({id:'portrait-bot',name:'Ada',color:'green',busy:true,messages:[],avatarUrl:'/api/attachments/portrait.png',avatarCrop:'circle'});window.setAvatar=patch=>setBot(current=>({...current,...patch}));return React.createElement(CallOverlay,{bot});}createRoot(document.getElementById('root')).render(React.createElement(Fixture));`;
+      // The call's full screen portals into the chat column's slot (src/lib/call-slot.ts); with no slot it
+      // shows only the bar, so this fixture mounts a full-viewport slot as ChatView does.
+      return `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{CallOverlay}from'/src/components/CallControls.tsx';import{registerCallSlot}from'/src/lib/call-slot.ts';import'/src/styles.css';
+        function Fixture(){const[bot,setBot]=useState({id:'portrait-bot',name:'Ada',color:'green',busy:true,messages:[],avatarUrl:'/api/attachments/portrait.png',avatarCrop:'circle'});window.setAvatar=patch=>setBot(current=>({...current,...patch}));const slotRef=React.useRef(null);React.useEffect(()=>{registerCallSlot(slotRef.current);return()=>registerCallSlot(null);},[]);return React.createElement(React.Fragment,null,React.createElement('div',{ref:slotRef,style:{position:'fixed',inset:0}}),React.createElement(CallOverlay,{bot}));}createRoot(document.getElementById('root')).render(React.createElement(Fixture));`;
     },configureServer(vite){vite.middlewares.use((req,res,next)=>{if(req.url!=="/__call")return next();res.setHeader("content-type","text/html");res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/__call.js"></script>');});}
   }]});await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });

@@ -115,6 +115,18 @@ async function openSeeded(page: Page, target: "chat" | "channel"): Promise<void>
   ).toBeVisible();
 }
 
+/** The workspace's voice endpoint, as GET /api/config reports it: on, with no
+ *  voice picked, or off. Everything else in the config is the real server's. */
+async function withVoiceEndpoint(page: Page, configured: boolean): Promise<void> {
+  await page.route((url) => url.pathname === "/api/config", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+    body.tts = configured ? { ...(body.tts ?? {}), configured: true, ready: true, voice: undefined } : { ...(body.tts ?? {}), configured: false, ready: false };
+    await route.fulfill({ response, json: body });
+  });
+}
+
 /** The bot's answer. `.last()` because the user's question is above it. */
 const answerBubble = (page: Page) => page.getByTestId("msg-bubble").last();
 const sheet = (page: Page) => page.getByRole("dialog", { name: "Message actions" });
@@ -146,6 +158,7 @@ test.describe("on a phone", () => {
   });
 
   test("a tap on a message offers everything the desktop rail does", async ({ app }) => {
+    await withVoiceEndpoint(app, true);
     await openSeeded(app, "chat");
     await tap(app, answerBubble(app));
 
@@ -153,12 +166,23 @@ test.describe("on a phone", () => {
     for (const name of ["Copy message", "Reply", "Pin message"]) {
       await expect(sheet(app).getByRole("button", { name, exact: true })).toBeVisible();
     }
-    // Speak is present whether or not a voice is configured — with the reason
-    // as its label when it is not, because a hidden control is not a control.
-    await expect(sheet(app).getByRole("button", { name: /Read aloud|ElevenLabs|Pick a voice/ })).toBeVisible();
+    // With a voice endpoint, Speak is there whether or not this bot has a
+    // voice picked: with the reason as its label when it has not, because a
+    // hidden control is not a control.
+    await expect(sheet(app).getByRole("button", { name: /^(Read aloud|Pick a voice)/ })).toBeVisible();
 
     // …and the timestamp the phone also lost when the rail went.
     await expect(sheet(app)).toContainText(/\d{1,2}:\d{2}/);
+  });
+
+  test("with no voice endpoint the sheet leaves Read aloud out, as the rail does", async ({ app }) => {
+    // SpeakButton hides itself without tts.configured (a control that can
+    // only fail is noise); the sheet is derived from the same predicate.
+    await withVoiceEndpoint(app, false);
+    await openSeeded(app, "chat");
+    await tap(app, answerBubble(app));
+    await expect(sheet(app).getByRole("button", { name: "Copy message", exact: true })).toBeVisible();
+    await expect(sheet(app).getByRole("button", { name: /Read aloud|Pick a voice|Stop/ })).toHaveCount(0);
   });
 
   test("every action is a target a thumb can hit", async ({ app }, testInfo) => {

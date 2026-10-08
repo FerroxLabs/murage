@@ -126,6 +126,24 @@ describe("the first paint", () => {
     expect(reached).toContain("src/lib/connected-apps-preload.ts");
   });
 
+  it("loads the publish, browser-setup and app sign-in chat cards the first time a bot raises one (1.0.0)", () => {
+    const reached = staticallyReached(graph);
+    for (const name of ["PublishCard", "BrowserSetupCard", "McpSignInCard"]) {
+      const path = `src/components/${name}.tsx`;
+      expect(reached, path).not.toContain(path);
+      expect(graph.inputs[path], path).toBeDefined();
+    }
+    expect(reached).toContain("src/components/LazyChatCards.tsx");
+  });
+
+  it("loads the inbox's learning suggestions and the learning screen copy when there is one to show (1.0.0)", () => {
+    const reached = staticallyReached(graph);
+    for (const path of ["src/components/InboxLearningSuggestions.tsx", "src/lib/inbox-learning-suggestions.ts", "src/lib/learning-screen.ts"]) {
+      expect(reached, path).not.toContain(path);
+      expect(graph.inputs[path], path).toBeDefined();
+    }
+  });
+
   it("keeps the strip shell in first paint and its details and project views lazy", () => {
     const reached = staticallyReached(graph);
     expect(reached).toContain("src/components/ProjectStrip.tsx");

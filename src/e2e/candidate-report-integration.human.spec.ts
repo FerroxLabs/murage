@@ -9,6 +9,10 @@ import { dirname, isAbsolute, join, resolve, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Artifact } from "../../shared/artifacts.ts";
 import { openSidebar, SEND_KEY } from "./fixtures.ts";
+// The driver keeps a turn's tokens out of the mcp config and hands them over
+// in a per-turn credential file; this puts them back into the agents server's
+// env, as the proxy resolves them for this turn.
+import { withTurnSecrets } from "../../server/testing/fixture-dump.ts";
 
 interface VerificationServer {
   info: { url: string; pid: number; dataDir: string; logPath: string };
@@ -77,7 +81,7 @@ test("selected report survives Inbox historical navigation, download and same-pr
   await composer.fill("__fixture_hold_authority__ joined report"); await composer.press(SEND_KEY);
   const response = await sent; expect(response.status()).toBe(202); expect(response.request().postDataJSON().threadId).toBe(first);
   let mount: { command: string; args: string[]; env: Record<string, string> } | undefined;
-  await expect.poll(() => { try { mount = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).mcpConfig.mcpServers.agents; return Boolean(mount?.env.MURAGE_COMMS_TOKEN); } catch { return false; } }, { timeout: 15000 }).toBe(true);
+  await expect.poll(() => { try { mount = withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))).mcpConfig.mcpServers.agents; return Boolean(mount?.env.MURAGE_COMMS_TOKEN); } catch { return false; } }, { timeout: 15000 }).toBe(true);
   expect(mount!.env.MURAGE_BOT_ID).toBe(botId);
   const current = await state(), task = current.tasks.find((task: any) => task.threadId === first);
   const workspace = realpathSync(resolve(task.cwd ?? current.cwd ?? join(fixture.info.dataDir, "workspaces", botId)));

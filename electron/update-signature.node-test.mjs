@@ -362,9 +362,12 @@ test("real gpg Ed25519 export and detached signatures interoperate in an isolate
   if (available.error?.code === "ENOENT") return t.skip("gpg is not installed");
   assert.equal(available.status, 0, available.stderr);
   const home = await mkdtemp(join(tmpdir(), "murage-gpg-"));
-  t.after(() => { spawnSync("gpgconf", ["--homedir", home, "--kill", "all"], { timeout: 1000 }); safeWipeSync(home); });
+  // gpg runs with cwd = home and a relative "." homedir: the gpg on Windows runners is Git for Windows' MSYS build,
+  // which treats a native "C:\\..." argument as relative, while the process cwd is translated for it. gpg makes "." absolute.
+  t.after(() => { spawnSync("gpgconf", ["--homedir", ".", "--kill", "all"], { cwd: home, timeout: 1000 }); safeWipeSync(home); });
   const gpg = args => {
-    const result = spawnSync("gpg", ["--homedir", home, "--no-options", "--batch", "--pinentry-mode", "loopback", "--passphrase", "", ...args], { encoding: "utf8", env: { ...process.env, GNUPGHOME: home }, timeout: 30000 });
+    const env = { ...process.env }; delete env.GNUPGHOME;
+    const result = spawnSync("gpg", ["--homedir", ".", "--no-options", "--batch", "--pinentry-mode", "loopback", "--passphrase", "", ...args], { cwd: home, encoding: "utf8", env, timeout: 30000 });
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;
   };
@@ -374,7 +377,7 @@ test("real gpg Ed25519 export and detached signatures interoperate in an isolate
   const file = join(home, "sums.txt");
   await writeFile(file, data);
   for (const hash of ["SHA256", "SHA512"]) {
-    gpg(["--yes", "--digest-algo", hash, "--armor", "--detach-sign", file]);
+    gpg(["--yes", "--digest-algo", hash, "--armor", "--detach-sign", "sums.txt"]);
     const signature = await readFile(file + ".asc", "utf8");
     assert.equal(verifyDetachedSignature(data, signature, publicKey), parseReleaseKey(publicKey).fingerprint);
   }

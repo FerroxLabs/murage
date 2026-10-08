@@ -675,4 +675,12 @@ describe("desktopResourceUrl", () => {
     setDesktopSurfaceSecretForTest("");
     expect(desktopResourceUrl("/api/attachments/a.png")).toBe("/api/attachments/a.png");
   });
+
+  it("leaves a signed media byte url exactly as issued", () => {
+    setDesktopSurfaceSecretForTest("s3cret");
+    const signed = "/api/media/bytes/ma1_abc?cap=mc1.payload.signature";
+    expect(desktopResourceUrl(signed)).toBe(signed);
+    expect(desktopResourceUrl("/api/media/bytes")).toBe("/api/media/bytes");
+    expect(desktopResourceUrl("/api/media/assets/x")).toBe("/api/media/assets/x?surface=desktop&surfaceSecret=s3cret");
+  });
 });

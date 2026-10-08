@@ -90,8 +90,9 @@ test("New Team files the chosen bots under a new heading with its instructions",
     const menuBox = (await app.locator("#sidebar-create-options").boundingBox())!;
     expect(menuBox.x).toBeGreaterThanOrEqual(0);
     expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(app.viewportSize()!.width);
-    expect((await app.locator("#sidebar-create-options button").allTextContents()).slice(0, 5)).toEqual(
-      ["New Bot", "New Team", "New ChannelA chat with some bots.", "New ProjectA place for work, files and chat. A goal is optional.", "Export bots…"],
+    // The template library sits between the things you create and Export.
+    expect((await app.locator("#sidebar-create-options button").allTextContents()).slice(0, 6)).toEqual(
+      ["New Bot", "New Team", "New ChannelA chat with some bots.", "New ProjectA place for work, files and chat. A goal is optional.", "Browse templates…", "Export bots…"],
     );
     for (const skin of ["light", "dark"] as const) {
       await app.evaluate((value) => { document.documentElement.dataset.skin = value; }, skin);

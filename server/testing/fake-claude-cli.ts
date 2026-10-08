@@ -123,6 +123,15 @@ const argAfter = (flag: string): string | null => {
   return i === -1 ? null : (argv[i + 1] ?? null);
 };
 
+// The real CLI reads --mcp-config once, at start, and keeps its servers for
+// the life of the process. The driver deletes the file once the CLI is
+// running, so a warm process's later turn must not go back to disk for it.
+const startupMcpConfig: unknown = (() => {
+  const path = argAfter("--mcp-config");
+  if (!path) return null;
+  try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; }
+})();
+
 // Claude Code's own "/" commands, as 2.1.x reports them: names on every
 // `init` (`slash_commands`, with the terminal-bound subset in
 // `terminal_slash_commands`), descriptions in the answer to the SDK's
@@ -357,7 +366,7 @@ const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string
   const configPath = argAfter("--mcp-config");
   const match = promptTool ? /^mcp__(.+?)__(.+)$/.exec(promptTool) : null;
   if (!match || !configPath) return Promise.resolve(null);
-  const config = JSON.parse(readFileSync(configPath, "utf8")) as { mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }> };
+  const config = (startupMcpConfig ?? JSON.parse(readFileSync(configPath, "utf8"))) as { mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }> };
   const server = config.mcpServers?.[match[1]!];
   if (!server) return Promise.resolve(null);
   return new Promise((resolve, reject) => {

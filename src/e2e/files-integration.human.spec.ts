@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { openSidebar } from "./fixtures.ts";
 import type { Artifact } from "../../shared/artifacts.ts";
 import { openSidebarPlace, sidebarPlace } from "./sidebar-nav";
+import { withTurnSecrets } from "../../server/testing/fixture-dump.ts";
 
 interface Fixture { info: { url: string; dataDir: string; logPath: string }; fixtureDumpPath: string; child: ChildProcess; close(): Promise<void> }
 type Launcher = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<Fixture>;
@@ -38,7 +39,7 @@ test.beforeAll(async () => {
     bot = (await api("/api/bots", "POST", { name: "Files proof bot", modelSelection: { instanceId: "verification", model: "sonnet" } })).bot;
     await api(`/api/bots/${bot.id}/messages`, "POST", { text: "__fixture_hold_authority__" });
     let mount: { command: string; args: string[]; env: Record<string, string> } | undefined;
-    await expect.poll(() => { try { mount = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).mcpConfig.mcpServers.agents; return Boolean(mount?.env.MURAGE_COMMS_TOKEN); } catch { return false; } }, { timeout: 15_000 }).toBe(true);
+    await expect.poll(() => { try { mount = withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))).mcpConfig.mcpServers.agents; return Boolean(mount?.env.MURAGE_COMMS_TOKEN); } catch { return false; } }, { timeout: 15_000 }).toBe(true);
     expect(mount!.env.MURAGE_BOT_ID).toBe(bot.id);
     // Ask the server which folder this conversation actually resolved to
     // rather than assuming one: a task can own a folder of its own, and a

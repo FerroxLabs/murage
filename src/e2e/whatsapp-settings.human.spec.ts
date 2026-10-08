@@ -77,12 +77,12 @@ test("link by QR or code, choose who can message, approve a contact, enable a gr
   await page.getByRole("button", { name: "Refresh status" }).click();
   await expect(page.getByText("Linked to +•••• 4567 as Murage Desktop.", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Contact number with country code")).toHaveCount(0);
-  await page.getByLabel("Me and chosen contacts").check(); await expect(page.getByText("WhatsApp settings saved.")).toBeVisible();
+  await page.getByLabel("Me and chosen contacts").click(); await expect(page.getByLabel("Me and chosen contacts")).toBeChecked(); await expect(page.getByText("WhatsApp settings saved.")).toBeVisible();
   await page.getByLabel("Contact number with country code").fill("not a number"); await page.getByRole("button", { name: "Add number" }).click();
   await expect(page.getByText("Enter the number with its country code, digits only.")).toBeVisible();
   await page.getByLabel("Contact number with country code").fill("+49 155 5000 0001"); await page.getByRole("button", { name: "Add number" }).click();
-  await expect(page.getByText("+491555000001", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Remove +491555000001" }).click(); await expect(page.getByText("No contacts are allowed yet.")).toBeVisible();
+  await expect(page.getByText("+4915550000001", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Remove +4915550000001" }).click(); await expect(page.getByText("No contacts are allowed yet.")).toBeVisible();
 
   state = { ...state, pairing: [{ id: "abc123abc123", name: "Ana", number: "+•••• 0001", expiresAt: Date.now() + 3600000 }] };
   await page.getByRole("button", { name: "Refresh status" }).click(); await expect(page.getByText("Ana sent a message from +•••• 0001")).toBeVisible();
@@ -91,12 +91,12 @@ test("link by QR or code, choose who can message, approve a contact, enable a gr
   await page.getByLabel("Approve as").selectOption("p-ana"); await page.getByRole("button", { name: "Approve this contact" }).click();
   await expect(page.getByText("Contact approved.")).toBeVisible(); expect(calls).toContain("approve:K7M2Q9:p-ana");
 
-  await page.getByLabel("Allow chosen groups").check(); await page.getByRole("button", { name: "Load my groups" }).click();
-  await page.getByLabel("Use Family in Murage").check(); await expect(page.getByLabel("Activation for Family")).toHaveValue("mention");
+  await page.getByLabel("Allow chosen groups").click(); await expect(page.getByLabel("Allow chosen groups")).toBeChecked(); await page.getByRole("button", { name: "Load my groups" }).click();
+  await page.getByLabel("Use Family in Murage").click(); await expect(page.getByLabel("Use Family in Murage")).toBeChecked(); await expect(page.getByLabel("Activation for Family")).toHaveValue("mention");
   await page.getByLabel("Activation for Family").selectOption("always");
-  expect((state.settings.groups.allow as any[])).toEqual([{ jid: "123@g.us", name: "Family", activation: "always" }]);
-  await page.getByLabel("Send read receipts").check(); expect(state.settings.readReceipts).toBe(true);
-  await page.getByLabel("Quote the message being answered").selectOption("off"); expect(state.settings.quoteReplies).toBe("off");
+  await expect.poll(() => state.settings.groups.allow as any[]).toEqual([{ jid: "123@g.us", name: "Family", activation: "always" }]);
+  await page.getByLabel("Send read receipts").click(); await expect(page.getByLabel("Send read receipts")).toBeChecked(); await expect.poll(() => state.settings.readReceipts).toBe(true);
+  await page.getByLabel("Quote the message being answered").selectOption("off"); await expect.poll(() => state.settings.quoteReplies).toBe("off");
 
   state = { ...state, state: "retry" }; await page.getByRole("button", { name: "Refresh status" }).click();
   await expect(page.getByText("WhatsApp is reconnecting.", { exact: true })).toBeVisible();

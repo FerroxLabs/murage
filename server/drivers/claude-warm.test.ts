@@ -26,7 +26,18 @@ const probe = vi.hoisted(() => ({
   baselineOverride: null as null | ((pid: number, initAt: number) => Promise<Set<number> | null>),
   /** true: use the real `ps` for baseline and settle probes (one test only) */
   real: false,
+  /** holds the driver's tree-stop confirmations until it resolves (one test only) */
+  treeGate: null as null | Promise<void>,
 }));
+vi.mock("../procs.ts", async (original) => {
+  const actual = await original<typeof import("../procs.ts")>();
+  return {
+    ...actual,
+    awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (probe.treeGate
+      ? probe.treeGate.then(() => actual.awaitCliTreeStopped(...args))
+      : actual.awaitCliTreeStopped(...args)),
+  };
+});
 vi.mock("./process-tree.ts", async (original) => {
   const actual = await original<typeof import("./process-tree.ts")>();
   return {
@@ -95,6 +106,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     probe.override = null;
     probe.baselineOverride = null;
     probe.real = false;
+    probe.treeGate = null;
     for (const key of ["FAKE_CLAUDE_AUTH", "FAKE_CLAUDE_HOLD_MARKER", "FAKE_CLAUDE_HOLD_GATE", "FAKE_CLAUDE_HOLD_SEEN", "FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS", "FAKE_CLAUDE_STATE", "FAKE_CLAUDE_RETRY_SCALE", "CLAUDE_CONFIG_DIR", "FAKE_CLAUDE_MODE"]) delete process.env[key];
     if (originalTmpdir === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = originalTmpdir;
     info.mockRestore();
@@ -228,6 +240,26 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect(two.pid).not.toBe(one.pid);
     expect(two.trace).toMatch(/process=spawned reason=(no-process|process-exited)/);
   });
+
+  it("resetSession on a session whose CLI already closed confirms the tree, not a close event that already fired", async () => {
+    // The CLI closed while idle and the driver is still confirming its tree
+    // stopped, so the session is still in the map. A reset in that window
+    // used to wait for a second "close" that never comes and fail the next
+    // send with CLAUDE_SESSION_RESET_TIMEOUT after 10 s.
+    await create();
+    const one = await run("t-dead", "one", base);
+    let release: () => void = () => {};
+    probe.treeGate = new Promise<void>((resolve) => { release = resolve; });
+    process.kill(one.pid, "SIGKILL");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const started = Date.now();
+    const reset = instance.adapter.resetSession!("t-dead").then(() => "reset", (error: unknown) => String(error));
+    setTimeout(() => { probe.treeGate = null; release(); }, 500);
+    expect(await reset).toBe("reset");
+    expect(Date.now() - started).toBeLessThan(5_000);
+    const two = await run("t-dead", "two", base);
+    expect(two.pid).not.toBe(one.pid);
+  }, 20_000);
 
   it("recycles the process when a child process of the CLI is still alive at settle", async () => {
     await create();

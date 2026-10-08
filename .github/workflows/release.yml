@@ -140,6 +140,10 @@ jobs:
     # package-mac-qualification.yml needs 90 for ONE architecture plus the
     # GEPA build (45-minute cap inside build-mac.py); this job packages both.
     timeout-minutes: 120
+    # The server project outgrew Node's default heap on the 7 GB macOS runner
+    # (tsc aborted with exit 134 in CI); the build compiles the same project.
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

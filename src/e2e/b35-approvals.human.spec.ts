@@ -101,10 +101,16 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
   let sidebar = await openSidebar(page);
   const needsYouRow = sidebar.locator("[data-sidebar-needs-you]");
   await expect(needsYouRow).toContainText("1");
+  // The row re-reads on a change notice, on focus or reconnect, and on a
+  // slow (60 s) safety-net timer (1f6b8996e). Coming back to the window is
+  // the read a person causes, so the outage is observed through that.
+  const foreground = () => page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await page.route("**/api/inbox?**", route => route.abort());
+  await foreground();
   await expect(needsYouRow).toHaveAttribute("aria-label", /may be out of date/, { timeout: 12000 });
   await expect(sidebar.locator("[data-needs-you-count]")).toContainText("1");
   await page.unroute("**/api/inbox?**");
+  await foreground();
   await expect(needsYouRow).not.toHaveAttribute("aria-label", /out of date/, { timeout: 12000 });
   await needsYouRow.click();
   await page.getByRole("button", { name: "Open request", exact: true }).click();

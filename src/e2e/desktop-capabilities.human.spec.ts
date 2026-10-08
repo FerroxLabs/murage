@@ -87,6 +87,8 @@ test.beforeAll(async () => {
               if (which === 'routine-ready') card.routineProposalDigest = 'a'.repeat(64);
               if (which === 'routine-invalid') card.routineProposalDigest = 'incorrect';
             }
+            // SEC-006: a browser pairing offers Allow only on a card the harness rated low.
+            if (new URL(location.href).searchParams.get('low') === '1') card.lowRisk = true;
             if (which === 'approval-exact') { card.subtitle = 'git status | head -5'; card.exactAllowKey = 'exact:["fixture","/Users/ada/project","git status | head -5"]'; }
             const pending = {requestId:'request-a',tool:card.tool,allowKey:'Bash:git',exactAllowKey:card.exactAllowKey,detail:card.subtitle,message:{id:'message-a',role:'bot',kind:'options',at:1,card}};
             element = React.createElement(React.Fragment,{},React.createElement(PendingApprovalPanel,{pending,count:1,index:0}),React.createElement(PendingApprovalActions,{bot,threadId:'thread-a',onCancelTurn:()=>{},pending}));
@@ -114,7 +116,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => { await server?.close(); if (cache) safeWipeSync(cache); });
 
-async function mount(page: Page, component: string, desktop = false, { claudeAccounts = { accounts: [] } as unknown } = {}) {
+async function mount(page: Page, component: string, desktop = false, { claudeAccounts = { accounts: [] } as unknown, lowRisk = false } = {}) {
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/desktop-secret") return route.fulfill({ json: { secret: "fixture-proof" } });
@@ -129,7 +131,7 @@ async function mount(page: Page, component: string, desktop = false, { claudeAcc
     if (path === "/api/mcp/servers") return route.fulfill({ json: { servers: [] } });
     return route.fulfill({ json: { calls: [] } });
   });
-  await page.goto(`${origin}/__capabilities?component=${component}${desktop ? "&desktop=1" : ""}`);
+  await page.goto(`${origin}/__capabilities?component=${component}${desktop ? "&desktop=1" : ""}${lowRisk ? "&low=1" : ""}`);
 }
 
 async function mountPendingOAuth(page: Page, initial: ConnectorStatus) {
@@ -315,10 +317,19 @@ for (const terminal of ["EXPIRED", "FAILED"]) {
 }
 
 test("remote approvals retain once and deny without persistent grants", async ({ page }) => {
-  await mount(page, "approval");
+  await mount(page, "approval", false, { lowRisk: true });
   await expect(page.getByRole("button", { name: "Allow once", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Deny", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Always allow", exact: true })).toHaveCount(0);
+});
+
+test("remote approvals send an unrated card to the computer and keep Deny", async ({ page }) => {
+  await mount(page, "approval");
+  await expect(page.getByText("Approve this on your computer or in the Murage app.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Always allow/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Deny", exact: true }).click();
+  await expect.poll(() => page.evaluate("window.dispatched.at(-1)?.behavior")).toBe("deny");
 });
 
 test("engine enablement requires confirmation, stays pending, then reflects verified status", async ({ page }, testInfo) => {
@@ -488,7 +499,7 @@ test("desktop routine pause reports API failure and retains the event", async ({
 
 for (const variant of ["legacy", "invalid", "ready"]) {
   test(`remote routine ${variant} card keeps the appropriate confirmation choices`, async ({ page }) => {
-    await mount(page, `routine-${variant}`);
+    await mount(page, `routine-${variant}`, false, { lowRisk: true });
     const confirm = page.getByRole("button", { name: "Confirm", exact: true });
     const cancel = page.getByRole("button", { name: "Cancel", exact: true });
     await expect(cancel).toBeEnabled();
@@ -522,7 +533,7 @@ test("an exact command card recommends the narrow grant and records exactly that
 });
 
 test("remote approvals offer no exact command grant either", async ({ page }) => {
-  await mount(page, "approval-exact");
+  await mount(page, "approval-exact", false, { lowRisk: true });
   await expect(page.getByRole("button", { name: "Allow once", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Always allow/ })).toHaveCount(0);
 });
