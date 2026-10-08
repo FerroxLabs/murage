@@ -85,7 +85,21 @@ export function createTurnCredentialStore(): TurnCredentialStore {
     if (disposed) return;
     const tmp = `${path}.tmp`;
     writeFileSync(tmp, body, { mode: 0o600 });
-    renameSync(tmp, path);
+    try {
+      renameSync(tmp, path);
+    } catch (error) {
+      // Windows refuses a rename onto a file another process holds open (a proxy
+      // reading it, a scanner): EPERM/EBUSY/EACCES. The new body still has to
+      // land (the empty one is what revokes the turn), so write it in place;
+      // the directory is private and the proxies' reads tolerate a partial file.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform !== "win32" || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) throw error;
+      try {
+        writeFileSync(path, body, { mode: 0o600 });
+      } finally {
+        rmSync(tmp, { force: true });
+      }
+    }
   };
   put("{}");
   return {

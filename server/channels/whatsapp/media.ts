@@ -13,24 +13,47 @@ const PART_MAX_AGE_MS = 24 * 60 * 60_000;
 
 export const mediaRoot = (dataDir: string, connectionId: string): string => join(dataDir, "whatsapp", "media", connectionId);
 
-/** Create only below real directories, checking ancestors before any mkdir. */
-export function createMediaDirectory(directory: string): boolean {
-  const dir = resolve(directory);
-  try {
-    if (!existsSync(dir)) {
-      const parent = dirname(dir);
-      if (parent === dir || !createMediaDirectory(parent)) return false;
-      mkdirSync(dir, { mode: 0o700 });
-    }
-    const stat = lstatSync(dir);
-    return stat.isDirectory() && !stat.isSymbolicLink() && realpathSync(dir) === dir;
-  } catch { return false; }
+/**
+ * A media root is always <data>/whatsapp/media/<connectionId>. The data folder itself is the owner's choice and may
+ * sit behind a link (macOS keeps temp and some home folders under /var -> /private/var, a home can live on a linked
+ * volume), so it is resolved once. From <data>/whatsapp down nothing may be a link: every check below runs on this
+ * canonical form, where any link in the media tree still shows up as realpath(path) !== path.
+ */
+function canonicalRoot(root: string): string | null {
+  const base = resolve(root), anchor = dirname(dirname(dirname(base)));
+  try { return join(realpathSync(anchor), relative(anchor, base)); } catch { return null; }
+}
+
+/** `path` (given under either spelling of the root) in canonical form, or null when it is outside the root. */
+function canonicalIn(root: string, realRoot: string, path: string): string | null {
+  const base = resolve(root), full = resolve(path);
+  if (full === base || full.startsWith(base + sep)) return join(realRoot, relative(base, full));
+  if (full === realRoot || full.startsWith(realRoot + sep)) return full;
+  return null;
+}
+
+/** Create only below real directories, checking ancestors before any mkdir. `directory` must be inside `root`. */
+export function createMediaDirectory(root: string, directory: string): boolean {
+  const realRoot = canonicalRoot(root), dir = realRoot && canonicalIn(root, realRoot, directory);
+  if (!dir) return false;
+  const make = (current: string): boolean => {
+    try {
+      if (!existsSync(current)) {
+        const parent = dirname(current);
+        if (parent === current || !make(parent)) return false;
+        mkdirSync(current, { mode: 0o700 });
+      }
+      const stat = lstatSync(current);
+      return stat.isDirectory() && !stat.isSymbolicLink() && realpathSync(current) === current;
+    } catch { return false; }
+  };
+  return make(dir);
 }
 
 /** Check every directory before reading or writing a media file. */
 export function mediaDirectory(root: string, directory: string): boolean {
-  const base = resolve(root), dir = resolve(directory);
-  if (dir !== base && !dir.startsWith(base + sep)) return false;
+  const base = canonicalRoot(root), dir = base && canonicalIn(root, base, directory);
+  if (!base || !dir) return false;
   try {
     // A linked root or ancestor cannot redirect the connection's media tree.
     if (realpathSync(base) !== base) return false;
@@ -46,13 +69,14 @@ export function mediaDirectory(root: string, directory: string): boolean {
 
 export function containedMediaFile(root: string, path: string | undefined, maxBytes = 20 * 1024 * 1024): { path: string; bytes: number } | null {
   if (!path || path.includes("\0")) return null;
-  const full = resolve(path);
-  if (!full.startsWith(resolve(root) + sep) || !mediaDirectory(root, dirname(full))) return null;
+  const full = resolve(path), realRoot = canonicalRoot(root), real = realRoot && canonicalIn(root, realRoot, full);
+  if (!realRoot || !real || !real.startsWith(realRoot + sep) || !mediaDirectory(root, dirname(real))) return null;
   let fd: number | undefined;
   try {
-    fd = openSync(full, constants.O_RDONLY | constants.O_NOFOLLOW);
+    fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW);
     const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1 || stat.size > maxBytes || realpathSync(full) !== full) return null;
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > maxBytes || realpathSync(real) !== real) return null;
+    // The caller's spelling of the path is kept, so stored references stay under the data folder it configured.
     return { path: full, bytes: stat.size };
   } catch { return null; }
   finally { if (fd !== undefined) closeSync(fd); }

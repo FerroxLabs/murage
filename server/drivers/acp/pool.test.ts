@@ -20,7 +20,7 @@ import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { warmPool } from "../warm-pool.ts";
-import { createAcpDriver, type AcpSupport } from "./core.ts";
+import { acpPoolingEnabled, createAcpDriver, type AcpSupport } from "./core.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -71,7 +71,9 @@ async function until(check: () => boolean, what: string, timeoutMs = 5_000) {
   }
 }
 
-describe("ACP process pool (fake CLI)", () => {
+// The opt-in pool is off on Windows (acpPoolingEnabled), so its behaviour is
+// covered on macOS and Linux; Windows runs per turn, checked below.
+describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () => {
   let instance: ProviderInstance | undefined;
   let recorder: EventRecorder;
   let scratch: string;
@@ -80,6 +82,12 @@ describe("ACP process pool (fake CLI)", () => {
   let infoLines: string[] = [];
   let infoSpy: ReturnType<typeof vi.spyOn> | undefined;
   const logged = (text: string) => infoLines.some((line) => line.includes(text));
+  /** The reused process was closed for a child it should not carry. Windows has no argv probe, so there the
+   *  same close is reported as an unavailable probe (or by the park check) rather than pre-prompt-leftover. */
+  const closedForLeftover = () => logged("acp close thread=t-pool reason=pre-prompt-leftover")
+    || (process.platform === "win32" && (logged("acp close thread=t-pool reason=process probe unavailable") || logged("acp close thread=t-pool reason=post-turn-descendant")));
+  /** Windows' process listing (PowerShell) takes seconds, so an activity window sized for POSIX lapses mid-turn. */
+  const windowMs = (posix: number) => String(process.platform === "win32" ? 5_000 : posix);
 
   const spawns = () => (existsSync(spawnLog) ? readFileSync(spawnLog, "utf8").split("\n").filter(Boolean).map(Number) : []);
   const rpc = () => (existsSync(rpcLog)
@@ -455,7 +463,9 @@ describe("ACP process pool (fake CLI)", () => {
     expect(warmPool.idleCount()).toBe(0);
   });
 
-  it("MCP servers the engine replaces each turn are baseline: four replacing turns on one process, never closed as a leftover", async () => {
+  // Windows has no argv probe (processParentsAndArgs is null there), so a replaced MCP child cannot be
+  // verified and the pooled process is recycled by design; the pool is opt-in (MURAGE_ACP_POOL=1).
+  it.skipIf(process.platform === "win32")("MCP servers the engine replaces each turn are baseline: four replacing turns on one process, never closed as a leftover", async () => {
     const mcpLog = join(scratch, "mcp-children.log");
     process.env.FAKE_ACP_MCP_CHILD_LOG = mcpLog;
     const mcpChildren = () => (existsSync(mcpLog) ? readFileSync(mcpLog, "utf8").split("\n").filter(Boolean).map(Number) : []);
@@ -496,10 +506,11 @@ describe("ACP process pool (fake CLI)", () => {
     // the child appears well after the settle check passed and well before the 5 s parked sweep
     await until(() => existsSync(childPidFile) && readFileSync(childPidFile, "utf8").length > 0, "the late child to start");
     const later = Number(readFileSync(childPidFile, "utf8"));
-    expect(logged("reason=post-turn-descendant")).toBe(false);
+    // Windows' listing takes longer than the 800 ms delay, so its park check may already see the child
+    if (process.platform !== "win32") expect(logged("reason=post-turn-descendant")).toBe(false);
     const [first] = spawns();
     expect((await turn({ text: "two", resumeCursor: SESSION })).done).toMatchObject({ ok: true });
-    expect(logged("acp close thread=t-pool reason=pre-prompt-leftover")).toBe(true);
+    expect(closedForLeftover()).toBe(true);
     expect(spawns()).toHaveLength(2);
     // the turn ran on the fresh process, never the one with the leftover
     expect(calls("session/prompt").at(-1)!.pid).toBe(spawns()[1]);
@@ -519,7 +530,7 @@ describe("ACP process pool (fake CLI)", () => {
     await until(() => existsSync(childPidFile) && readFileSync(childPidFile, "utf8").length > 0, "the late child to start");
     const later = Number(readFileSync(childPidFile, "utf8"));
     expect((await turn({ text: "two", resumeCursor: SESSION })).done).toMatchObject({ ok: true });
-    expect(logged("acp close thread=t-pool reason=pre-prompt-leftover")).toBe(true);
+    expect(closedForLeftover()).toBe(true);
     const fresh = spawns()[1]!;
     expect(fresh).toBeDefined();
     // the replacement tried the cursor, got null, and opened its own session
@@ -596,7 +607,7 @@ describe("ACP process pool (fake CLI)", () => {
 
   it("MURAGE_ACP_POOL=1: one spare while active, and back to zero after the activity window", async () => {
     expect(process.env.MURAGE_ACP_POOL).toBe("1");
-    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "300";
+    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = windowMs(300);
     await create();
     await turn({ text: "one" });
     await turn({ text: "two", resumeCursor: SESSION });
@@ -604,11 +615,11 @@ describe("ACP process pool (fake CLI)", () => {
     const [pid] = spawns();
     await until(() => warmPool.idleCount() === 1, "the spare to park");
     expect(alive(pid!)).toBe(true);
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await new Promise((resolve) => setTimeout(resolve, Number(windowMs(300)) + 150));
     await warmPool.tick();
     await until(() => !alive(pid!), "the spare to be released after the window");
     expect(warmPool.idleCount()).toBe(0);
-  });
+ }, 45_000);
 
   it.each([["unset", undefined], ["0", "0"], ["true", "true"]] as const)("the default config (MURAGE_ACP_POOL %s) keeps no spare: each turn spawns and closes its own process", async (_name, value) => {
     if (value === undefined) delete process.env.MURAGE_ACP_POOL; else process.env.MURAGE_ACP_POOL = value;
@@ -736,6 +747,7 @@ describe("ACP process pool (fake CLI)", () => {
 
     it("prewarm then send reuses the engine: no second spawn, the turn is prompted on the held session", async () => {
       await goCold();
+      process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = windowMs(250);
       expect(await instance!.adapter.prewarm!("t-pool")).toBe(true);
       const { done } = await turn({ text: "two", resumeCursor: SESSION });
       expect(done).toMatchObject({ ok: true });
@@ -937,4 +949,13 @@ describe("ACP process pool (fake CLI)", () => {
     });
   });
 
+});
+
+describe("the opt-in pool on Windows", () => {
+  it("MURAGE_ACP_POOL=1 on win32 stays per turn; other platforms honour it, and the default is off everywhere", () => {
+    expect(acpPoolingEnabled({ MURAGE_ACP_POOL: "1" }, "win32")).toBe(false);
+    expect(acpPoolingEnabled({ MURAGE_ACP_POOL: "1" }, "darwin")).toBe(true);
+    expect(acpPoolingEnabled({ MURAGE_ACP_POOL: "1" }, "linux")).toBe(true);
+    for (const platform of ["win32", "darwin", "linux"] as const) expect(acpPoolingEnabled({}, platform)).toBe(false);
+  });
 });
