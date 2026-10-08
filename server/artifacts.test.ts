@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
 import {
   artifactsRequest, ARTIFACT_MAX_BYTES, ARTIFACT_PREVIEW_MAX_BYTES, ARTIFACT_STORAGE_MAX_BYTES, ARTIFACT_TEXT_EXTENSIONS, describeArtifact, initializeArtifacts, listArtifacts, previewArtifact, readArtifact, registerArtifact, type ArtifactAccess,
-  artifactRelativePathParts, artifactSourceFingerprint, authorizedArtifactRoot, isPrivateWorkspaceName, safeArtifactDirectory, verifiedArtifactSource,
+  artifactRelativePathParts, artifactSourceFingerprint, authorizedArtifactRoot, isPrivateWorkspaceName, safeArtifactDirectory, verifiedArtifactSource, workspacePathWithin,
 } from "./artifacts.ts";
 const roots: string[] = [], databases: DatabaseSync[] = [];
 afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -214,4 +214,16 @@ it("records trusted producer provenance and selects a managed output root only f
   expect(listArtifacts(f.db, f.storage, { kind: "image" }, both).items.map(item => item.id)).toEqual([image.id]);
   expect(() => registerArtifact(f.db, f.storage, f.input, f.access, { producer: "invented" as never })).toThrow("producer");
   expect(() => registerArtifact(f.db, f.storage, f.input, f.access, { publicationId: "../receipt" })).toThrow("publication");
+});
+
+// Partition boundaries are judged with the platform's own separator. A literal "/" test let every
+// Windows path through as "outside the managed folder", so another team's folder was not refused.
+it("judges a workspace boundary with the platform's own paths", () => {
+  const base = join(tmpdir(), "murage-within", "workspaces");
+  expect(workspacePathWithin(base, base)).toBe(true);
+  expect(workspacePathWithin(join(base, "bot.teams", "sales", "x.md"), base)).toBe(true);
+  expect(workspacePathWithin(join(base, "..", "elsewhere"), base)).toBe(false);
+  expect(workspacePathWithin(base + "-sibling", base)).toBe(false);
+  expect(workspacePathWithin(join(base, "..workspaces-not-a-parent"), base)).toBe(true);
+  if (process.platform === "win32") expect(workspacePathWithin(join(base.toUpperCase(), "bot"), base.toLowerCase())).toBe(true);
 });

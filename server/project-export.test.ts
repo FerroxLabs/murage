@@ -56,7 +56,9 @@ it('R2 refuses a parent swapped away for the open and swapped back before the ch
   } finally { done(); }
 });
 // Root ignores the folder mode, so this case needs an ordinary user (the build container runs as one).
-it.skipIf(process.getuid?.() === 0)('R1 an unexpected open failure is not reported as a refusal', () => {
+// Windows has no folder mode to deny with: chmod there only sets the read-only attribute, which does not
+// stop a file being created inside the folder, so no permission failure can be staged this way.
+it.skipIf(process.getuid?.() === 0 || process.platform === 'win32')('R1 an unexpected open failure is not reported as a refusal', () => {
   const {db,selected,done}=raceFixture('project-export-eacces-');
   try {
     let caught: unknown;
