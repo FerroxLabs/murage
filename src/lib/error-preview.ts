@@ -11,6 +11,7 @@
 import { t } from "@/lib/i18n";
 import { engineErrorCategory, type ProviderErrorInfo } from "../../shared/provider-error";
 import { isProviderSafetyBlock } from "../../shared/provider-safety";
+import { plainTurnError } from "../../shared/turn-error-code";
 
 const PROVIDER_CATEGORIES = ["credits", "spend-cap", "payment", "authentication", "permission", "rate-limit", "unavailable"] as const;
 export type ProviderErrorCategory = typeof PROVIDER_CATEGORIES[number] | "unknown";
@@ -38,5 +39,8 @@ export function errorPreview(tool: { name: string; setup?: boolean; errorKind?: 
   if (isProviderSafetyBlock(message) || isProviderSafetyBlock(tool.errorDetails ?? "")) return "The provider blocked this request.";
   const category = engineErrorCategory(tool.errorKind);
   if (category) return t(`runtimeError.engineKind.${category}`);
+  // an internal code reads as its plain sentence, never as the code
+  const coded = plainTurnError(message);
+  if (coded) return coded.split(/(?<=\.)\s/)[0];
   return "This request hit a problem.";
 }

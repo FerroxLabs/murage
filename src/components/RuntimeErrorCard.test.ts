@@ -25,6 +25,24 @@ const rendered = (copy: string) =>
   copy.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
 
 describe("runtime error recovery", () => {
+  it("an internal code reads as a plain sentence with Retry, and the code stays under Technical details only", () => {
+    const markup = renderToStaticMarkup(createElement(RuntimeErrorCard, { message: "CLAUDE_SESSION_RESET_TIMEOUT", botName: "Sable", onRetry: () => {}, onOpenProviderSettings: () => {} }));
+    expect(markup).toContain(rendered("Sable's engine was starting a fresh conversation and needed a moment longer. Select Retry to send your message again."));
+    expect(markup).toContain("Retry");
+    const [visible, details] = markup.split("<details");
+    expect(visible).not.toContain("CLAUDE_SESSION_RESET_TIMEOUT");
+    expect(visible).not.toContain("choose another configured model");
+    expect(details).toContain("CLAUDE_SESSION_RESET_TIMEOUT");
+    // with no bot name, and with developer text after the code
+    const unnamed = render({ message: "MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay", onRetry: () => {} }).split("<details")[0]!;
+    // a setting must change first: the copy says where, and never advises Retry
+    expect(unnamed).toContain(rendered("The bot's current engine can't start a fresh conversation, which this message needs. Choose a different engine for the bot in Provider settings, or start a new conversation with the bot."));
+    expect(unnamed).not.toContain("Select Retry");
+    expect(unnamed).not.toContain("starting a fresh conversation and needed a moment longer");
+    expect(unnamed).not.toContain("MEMORY_SESSION_RESET_UNAVAILABLE");
+    expect(unnamed).not.toContain("authorized replay");
+  });
+
   it("explains provider safety blocks without retry or provider-switch actions", () => {
     for (const props of [
       { message: "429 request blocked by our safety systems" },
