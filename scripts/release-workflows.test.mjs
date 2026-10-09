@@ -26,7 +26,7 @@ import { parse } from "yaml";
 
 describe("WhatsApp final release evidence", () => {
   const jobs = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")).jobs;
-  it.each(["mac", "windows", "linux"])("uploads WhatsApp reports and probe diagnostics after failure on %s", job => {
+  it.each(["mac", "mac-x64", "windows", "linux"])("uploads WhatsApp reports and probe diagnostics after failure on %s", job => {
     const steps = jobs[job].steps;
     const evidence = steps.find(step => step.with?.name === `${job}-whatsapp-gepa-evidence`);
     expect(evidence.if).toBe("always()");
@@ -36,20 +36,21 @@ describe("WhatsApp final release evidence", () => {
       expect(gate.run).toMatch(/2> qualification-evidence\/whatsapp-[\w-]+-probe\.log/);
     }
   });
-  it.each(["mac", "windows", "linux"])("binds final bytes and retains failure diagnostics for %s", job => {
+  it.each(["mac", "mac-x64", "windows", "linux"])("binds final bytes and retains failure diagnostics for %s", job => {
     const steps = jobs[job].steps;
     const bind = steps.find(step => step.name === "Bind WhatsApp reports to final artifacts");
     expect(bind).toBeDefined();
     expect(bind.if).toBeUndefined(); expect(bind["continue-on-error"]).toBeUndefined();
     expect(bind.run).toContain("set -euo pipefail");
     const copies = steps.findIndex(step => step.name?.startsWith("Stable-named"));
-    expect(steps.indexOf(bind)).toBeGreaterThan(copies);
+    if (job !== "mac-x64") expect(steps.indexOf(bind)).toBeGreaterThan(copies);
     if (job === "mac") expect(steps.indexOf(bind)).toBeGreaterThan(steps.findIndex(step => step.name?.startsWith("Staple, re-zip")));
+    if (job === "mac-x64") expect(jobs["mac-x64"].needs).toContain("mac");
     const evidence = steps.find(step => step.with?.name === `${job}-whatsapp-gepa-evidence`);
     expect(evidence.if).toBe("always()");
     expect(evidence.with.path).toBe("qualification-evidence/whatsapp-*");
     expect(steps.indexOf(evidence)).toBeGreaterThan(steps.indexOf(bind));
-    const targets = job === "mac" ? ["darwin-arm64", "darwin-x64"] : [job === "windows" ? "win32-x64" : "linux-x64"];
+    const targets = job === "mac" ? ["darwin-arm64"] : job === "mac-x64" ? ["darwin-x64"] : [job === "windows" ? "win32-x64" : "linux-x64"];
     for (const target of targets) {
       expect(bind.run).toContain(`scripts/bind-whatsapp-artifacts.mjs qualification-evidence/whatsapp-${target}.json release/`);
       const gate = steps.find(step => step.run?.includes(`> qualification-evidence/whatsapp-${target}.json`));
@@ -57,7 +58,7 @@ describe("WhatsApp final release evidence", () => {
       expect(gate.run).toContain(`2> qualification-evidence/whatsapp-${target}-probe.log`);
       expect(gate.run).toContain("set -euo pipefail");
     }
-    for (const extension of job === "mac" ? [".dmg", ".zip", ".blockmap"] : job === "windows" ? [".exe", ".blockmap"] : [".deb", ".AppImage"]) expect(bind.run).toContain(extension);
+    for (const extension of job === "mac" || job === "mac-x64" ? [".dmg", ".zip", ".blockmap"] : job === "windows" ? [".exe", ".blockmap"] : [".deb", ".AppImage"]) expect(bind.run).toContain(extension);
   });
 
   it("records final file hashes and preserves qualification fields", async () => {
@@ -79,17 +80,8 @@ describe("WhatsApp final release evidence", () => {
       expect(readFileSync(report, "utf8")).toBe(bytes);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
-
-  it.each([true, false])("probes x64 execution before Rosetta installation, available %s", available => {
-    const gate = jobs.mac.steps.find(step => step.run?.includes("--install-rosetta"));
-    const start = gate.run.indexOf("if ! /usr/bin/arch -x86_64 /usr/bin/true; then");
-    expect(start).toBeGreaterThanOrEqual(0);
-    const end = gate.run.indexOf("/usr/bin/arch -x86_64 /usr/bin/true", start + 10);
-    const probe = gate.run.slice(start, end + "/usr/bin/arch -x86_64 /usr/bin/true".length);
-    const mock = probe.replaceAll("/usr/bin/arch -x86_64 /usr/bin/true", "probe_x64").replaceAll("sudo softwareupdate --install-rosetta --agree-to-license", "install_rosetta");
-    const result = spawnSync("bash", ["-c", `set -euo pipefail\nready=${available ? 1 : 0}\nprobe_x64() { echo probe; test "$ready" = 1; }\ninstall_rosetta() { echo install; ready=1; }\n${mock}`], { encoding: "utf8" });
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual(available ? ["probe", "probe"] : ["probe", "install", "probe"]);
+  it("no job installs or depends on Rosetta any more", () => {
+    expect(JSON.stringify(jobs)).not.toContain("install-rosetta");
   });
 });
 
@@ -156,7 +148,7 @@ describe("release.yml should_release guard", () => {
   });
 
   it("gates every job that signs, builds or uploads", () => {
-    for (const job of ["mac", "windows", "linux", "assemble"]) {
+    for (const job of ["mac", "mac-x64", "windows", "linux", "ci-gate", "assemble"]) {
       expect(release.jobs[job].if, job).toBe("needs.prepare.outputs.should_release == 'true'");
     }
     const refuse = release.jobs.prepare.steps.find((step) => String(step.name || "").startsWith("Refuse to overwrite"));
@@ -501,20 +493,49 @@ describe("release.yml provenance gates (audit C8)", () => {
     expect(steps.indexOf(guard)).toBeLessThan(steps.findIndex(step => step.name?.startsWith("Package")));
   });
 
-  it("the prepare job refuses a pinned commit CI did not pass", () => {
-    const step = stepBy("prepare", "CI passed");
+  it("a CI gate job refuses a pinned commit CI did not pass, beside the builds", () => {
+    const step = stepBy("ci-gate", "CI passed");
     expect(step, "a step named for the CI gate").toBeDefined();
-    expect(step.if).toBe("steps.pin.outputs.should_release == 'true'");
     expect(step.run).toContain("scripts/release-ci-gate.mjs");
-    expect(step.env.SHA).toBe("${{ steps.pin.outputs.sha }}");
+    expect(step.env.SHA).toBe("${{ needs.prepare.outputs.sha }}");
     expect(step.env.GH_TOKEN).toBe("${{ github.token }}");
     // reading workflow runs needs actions: read, and nothing wider
-    expect(release.jobs.prepare.permissions).toEqual({ contents: "read", actions: "read" });
+    expect(release.jobs["ci-gate"].permissions).toEqual({ contents: "read", actions: "read" });
     // it waits for the CI run a push starts alongside this one
-    expect(release.jobs.prepare["timeout-minutes"]).toBeGreaterThanOrEqual(60);
-    // CI itself is the workflow named by ci.yml
+    expect(release.jobs["ci-gate"]["timeout-minutes"]).toBeGreaterThanOrEqual(60);
     expect(step.env.CI_WORKFLOW).toBe("ci.yml");
     expect(load("ci.yml").name).toBe("CI");
+    // pinning no longer waits for CI
+    expect(release.jobs.prepare.steps.some(s => String(s.run ?? "").includes("release-ci-gate"))).toBe(false);
+    expect(release.jobs.prepare["timeout-minutes"]).toBeLessThanOrEqual(30);
+  });
+
+  it("platform builds start on the pin; only assemble waits for CI", () => {
+    const needs = job => [release.jobs[job].needs].flat();
+    for (const job of ["mac", "windows", "linux"]) {
+      expect(needs(job), job).toEqual(["prepare"]);
+    }
+    expect(needs("mac-x64")).toEqual(["prepare", "mac"]);
+    expect(needs("assemble")).toEqual(expect.arrayContaining(["ci-gate", "mac", "mac-x64", "windows", "linux"]));
+    // nothing that creates a draft or touches murage-releases runs before assemble
+    for (const job of ["mac", "mac-x64", "windows", "linux"]) {
+      expect(JSON.stringify(release.jobs[job]), job).not.toContain("RELEASES_PAT");
+      expect(JSON.stringify(release.jobs[job]), job).not.toContain("release-guard.mjs upload");
+    }
+    const abort = release.jobs["abort-on-ci-failure"];
+    expect(abort.permissions).toEqual({ actions: "write" });
+    expect(abort.if).toContain("needs.ci-gate.result == 'failure'");
+  });
+
+  it("the x64 smoke runs natively on an Intel runner with one retry", () => {
+    const job = release.jobs["mac-x64"];
+    expect(job["runs-on"]).toBe("macos-15-intel");
+    const smoke = stepBy("mac-x64", "Qualify packaged WhatsApp (darwin-x64)");
+    expect(smoke.run).toContain("for attempt in 1 2");
+    expect(smoke.run).not.toContain("arch -x86_64");
+    expect(JSON.stringify(release.jobs.mac)).not.toContain("--arch x64");
+    const handoff = release.jobs.mac.steps.find(s => s.with?.name === "mac-x64-app-smoke");
+    expect(handoff).toBeDefined();
   });
 
   it("the Linux job signs SHA256SUMS and ships the signature", () => {
