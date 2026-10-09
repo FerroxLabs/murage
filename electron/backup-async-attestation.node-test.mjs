@@ -16,7 +16,7 @@ for(const [name,verify,pin] of [['age',signedAgeOwnedByCurrentAppAsync,AGE_ORIGI
   const root=realpathSync(mkdtempSync(path.join(tmpdir(),'murage-async-attestation-'))),app=path.join(root,'Murage.app'),file=path.join(app,'Contents/Resources/backup-tools/arm64',name),currentExecutable=path.join(app,'Contents/MacOS/Murage');mkdirSync(path.dirname(file),{recursive:true});mkdirSync(path.dirname(currentExecutable),{recursive:true});writeFileSync(file,bytes);writeFileSync(currentExecutable,'synthetic main');
   try{
    const calls=[];const run=async args=>{calls.push(args);await new Promise(r=>setTimeout(r,1));return {status:0,stderr:'TeamIdentifier=ABCDEFGHIJ\n'};};
-   assert.equal(await verify(file,bytes,{arch:"arm64",currentExecutable,run}),true);assert.equal(calls.length,4);assert.deepEqual(calls[0],['--verify','--strict','-R','=anchor apple generic',app]);assert(calls[3][3].includes('certificate leaf[subject.OU] = "ABCDEFGHIJ"'));
+   assert.equal(await verify(file,bytes,{arch:"arm64",currentExecutable,run}),true);assert.equal(calls.length,3);assert(!calls.some(call=>call.includes('--verify')&&call.at(-1)===app),'the whole app is never verified');assert(calls[2][3].includes('certificate leaf[subject.OU] = "ABCDEFGHIJ"'));
    for(const result of [{status:1},{status:null,error:Error('timeout')},{status:0,error:Error('command error')}])assert.equal(await verify(file,bytes,{arch:"arm64",currentExecutable,run:async()=>result}),false);
    assert.equal(await verify(file,bytes,{arch:"arm64",currentExecutable,run:async args=>({status:0,stderr:args.at(-1)===file?'TeamIdentifier=OTHERTEAM1\n':'TeamIdentifier=ABCDEFGHIJ\n'})}),false);
    assert.equal(await verify(file,bytes,{arch:"arm64",currentExecutable:process.execPath,run}),false);

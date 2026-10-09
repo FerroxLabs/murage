@@ -31,11 +31,11 @@ describe("Murage for Chrome prompt text", () => {
     expect(text).toMatch(/Murage checks each step against the owner's request/);
     expect(text).toMatch(/cannot paste, copy or select all, and downloads are blocked/);
   });
-  it("adds the Full permissive paragraph only in full mode", () => {
+  it("adds the Full access paragraph only in full mode", () => {
     const full = extensionBrowserSystemPrompt({ mode: "full", checker: "on" });
-    expect(full).toContain("The owner turned on Full permissive for you. You will not see cards for most steps; Murage still stops at the floor and when a step does not match the owner's request.");
-    expect(text).not.toContain("Full permissive");
-    expect(extensionBrowserSystemPrompt({ mode: "step", checker: "on" })).not.toContain("Full permissive");
+    expect(full).toContain("The owner turned on Full access for you. You will not see cards for most steps; Murage still stops at the floor and when a step does not match the owner's request.");
+    expect(text).not.toContain("Full access");
+    expect(extensionBrowserSystemPrompt({ mode: "step", checker: "on" })).not.toContain("Full access");
   });
   it("drops the action-check line when the checker is off", () => {
     expect(extensionBrowserSystemPrompt({ mode: "task", checker: "off" })).not.toMatch(/Murage checks each step/);

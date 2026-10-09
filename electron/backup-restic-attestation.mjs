@@ -20,7 +20,6 @@ export function signedResticOwnedByCurrentApp(file,bytes,{currentExecutable=proc
  const pin=resticPinForTarget("darwin",arch);if(!pin?.payloadSha256||normalizedAgePayloadHash(bytes)!==pin.payloadSha256)return false;
  try{
   const bundle=macBundle(file,currentExecutable,arch);if(!bundle)return false;
-  const valid=run(["--verify","--strict","-R","=anchor apple generic",bundle.app]);if(valid.status!==0||valid.error)return false;
   const info=run(["--display","--verbose=4",bundle.app]);if(info.status!==0||info.error)return false;const team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;
   const tool=run(["--display","--verbose=4",bundle.resolved]);if(tool.status!==0||tool.error||/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(tool.stderr))?.[1]!==team)return false;
   const check=run(["--verify","--strict","-R",`=anchor apple generic and certificate leaf[subject.OU] = "${team}"`,bundle.resolved]);return check.status===0&&!check.error;
@@ -49,7 +48,6 @@ export async function signedResticOwnedByCurrentAppAsync(file,bytes,{currentExec
     if(!unchanged())return false;
     const bundle=macBundle(file,currentExecutable,arch);if(!bundle)return false;
     const checked=async args=>{if(!unchanged())throw Error();const result=await run(args,{signal,...(timeoutMs?{timeoutMs}:{})});if(!unchanged()||result.status!==0||result.error)throw Error();return result;};
-    await checked(["--verify","--strict","-R","=anchor apple generic",bundle.app]);
     const info=await checked(["--display","--verbose=4",bundle.app]),team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;
     const toolInfo=await checked(["--display","--verbose=4",bundle.resolved]);if(/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(toolInfo.stderr))?.[1]!==team)return false;
     await checked(["--verify","--strict","-R",`=anchor apple generic and certificate leaf[subject.OU] = "${team}"`,bundle.resolved]);return unchanged();

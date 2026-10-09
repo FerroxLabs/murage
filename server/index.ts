@@ -296,7 +296,7 @@ import { murageToolOnThisServer } from "./murage-tool-surface.ts";
 import { UnifiedBrowserController } from "./browser-control.ts";
 import { browserOwnerRequest, browserOwnerId } from "./browser-owner-api.ts";
 import { browserRefusal, isBrowserRefusal, type BrowserProtection } from "./browser-lock.ts";
-import { unifiedBrowserSystemPrompt, browserEngineStatus, browserEngineEncryptionKey, browserSessionId, userChromeSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
+import { unifiedBrowserSystemPrompt, warmBrowserEngineCheck, browserEngineStatus, browserEngineEncryptionKey, browserSessionId, userChromeSessionId, agentBrowserIntegration, closeAgentBrowserSession, verifyAgentBrowserBinary, type AgentBrowserSpec } from "./browser-engine.ts";
 import { readUserChromeEndpoint, USER_CHROME_ALLOW_WAIT_MS, USER_CHROME_SETUP_MESSAGE, userChromeTrouble } from "./user-chrome.ts";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 import { abandonedLinkFailure, authorizeFailureSentence, panelAuthorizeError, parseConnectorRequests, connectedAppsAudienceRefusal, connectorCardText, connectorFailure, connectorRequestKey, connectorRequestStatus, connectorTimedOutSentence } from "./connector-requests.ts";
@@ -2172,7 +2172,7 @@ async function browserIntegration(botId: string, profile: string | undefined, th
       unifiedBrowserThreads.set(threadId, { botId, ownerId, profileKey: binding.bindingId, profile });
       return { profileKey: binding.bindingId, integration: { command: process.execPath, args: [SPAWNED_PROXIES.unifiedBrowser], env: {
         ...AGENTS_NODE_FLAG, MURAGE_BOT_ID: botId, MURAGE_THREAD_ID: threadId,
-        // A card waits up to two minutes for a person; the call outlives that and the action after it.
+        // A card waits up to fifteen minutes for a person; the call outlives that and the action after it.
         // One deadline for the external MCP client and this built-in mount (shared constant), and the extension transport so the proxy defers to the executor.
         MURAGE_BROWSER_TRANSPORT: "extension", MURAGE_BROWSER_CALL_TIMEOUT_MS: String(BROWSER_EXTENSION_CALL_TIMEOUT_MS),
         MURAGE_CONTROL_TOKEN: control.token, MURAGE_CONTROL_URL: control.url,
@@ -24712,6 +24712,8 @@ server.on("upgrade", (req, socket, head) => {
   if (!handleStreamUpgrade(req, socket, head, streamRouteDeps)) socket.destroy();
 });
 server.listen(PORT, "127.0.0.1", () => {
+  // The packaged browser's signature check starts now, off the event loop, so the first use finds it done.
+  void warmBrowserEngineCheck();
   console.log(`murage server on http://127.0.0.1:${PORT}`);
   startupMark("listen");
   // The memory worker's 250 ms tick starts only now: its synchronous database steps used to run

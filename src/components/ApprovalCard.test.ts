@@ -469,6 +469,14 @@ describe("the exact command grant on a pending approval", () => {
 
 describe("Murage for Chrome action cards (Fable H4, M9)", () => {
   const card = (subtitle: string): Message => ({ id: "ext", role: "bot", kind: "options", at: 1, card: { title: "Mira needs your approval", subtitle, options: ["Allow", "Deny"], tool: "browser_extension_action", requestId: "browser-1" } });
+  // D3: the heading is the card's own sentence, never the tool's internal name.
+  it("reads the heading the server wrote, not 'wants to browser extension action'", () => {
+    const message: Message = { id: "ext-title", role: "bot", kind: "options", at: 1, card: { title: "Ember wants to click on example.com", subtitle: "click on https://example.com", options: ["Allow", "Deny"], tool: "browser_extension_action", requestId: "browser-2" } };
+    const html = renderToStaticMarkup(createElement(ApprovalCard, { message }));
+    expect(html).toContain("Ember wants to click on example.com");
+    expect(html).not.toContain("browser extension action");
+    expect(html).not.toContain("browser_extension_action");
+  });
   it("shows a long reviewed text collapsed, with a real toggle", () => {
     const body = "word ".repeat(500); const html = renderToStaticMarkup(createElement(ApprovalCard, { message: card(`fill on https://example.test\nArguments: {"text":"${body}"}`) }));
     expect(html).toContain('data-approval-held="collapsed"'); expect(html).toContain("aria-expanded");

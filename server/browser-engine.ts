@@ -4,10 +4,10 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, opendirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
+import { homedir, tmpdir } from "node:os";
 import { browserBundlePaths, browserBundleSpec } from "./browser-bundle-release.ts";
-import { verifyPackagedMacBrowser } from "./browser-macos-identity.ts";
+import { packagedMacBrowserState, verifyPackagedMacBrowserAsync } from "./browser-macos-identity.ts";
 import { isUserChromeEndpoint } from "./user-chrome.ts";
 import { browserLockTurnNote, type BrowserProtection } from "./browser-lock.ts";
 import { BEFOREUNLOAD_GUARD_SCRIPT } from "./browser-beforeunload-guard.ts";
@@ -19,7 +19,7 @@ const KEY_FILE = "browser-engine-key";
 type ResolveOptions = { dataDir?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; arch?: string; musl?: boolean };
 export type BrowserEngineStatus =
   | { kind: "ready"; binaryPath: string; version: string | null; runtimeVerified: false }
-  | { kind: "unavailable"; reason: string; installable: boolean };
+  | { kind: "unavailable"; reason: string; installable: boolean; /** The packaged browser is being checked right now: it will be ready in a moment, nothing failed. */ checking?: true };
 export type AgentBrowserSpec = { command: string; args: string[]; env: Record<string, string> };
 
 export function isMusl(platform: NodeJS.Platform = process.platform): boolean {
@@ -169,7 +169,7 @@ export function resolveAgentBrowserBinary(options: ResolveOptions = {}): string 
         && lstatSync(bundle.manifest).isFile() && lstatSync(bundle.licenses).isDirectory();
       const admitted = raw ? bundle.engine
         : target === "darwin-arm64" && executable(bundle.engine, platform) && executable(bundle.chrome, platform)
-          && verifyPackagedMacBrowser(resources) ? bundle.engine : null;
+          && packagedMacBrowserState(resources) === "ok" ? bundle.engine : null;
       if (admitted && key) {
         // Re-take the identity AFTER verifying: if the files moved during the
         // check, the keys differ and nothing is cached.
@@ -190,6 +190,20 @@ export function resolveAgentBrowserBinary(options: ResolveOptions = {}): string 
   }
   return null;
 }
+/** Why the packaged browser was not started. The check itself does not care where the app sits (the signature, not the path, decides), so a Mac app running from outside the Applications folder is told to move the original there. */
+export function packagedBrowserRefusedReason(resources: string, platform: string = process.platform, home: string = homedir()): string {
+  const check = "The browser that comes with Murage didn't pass its signature check, so it wasn't started.";
+  if (platform !== "darwin") return `${check} Reinstall Murage from the download to fix it.`;
+  const inApplications = [resolve("/Applications/Murage.app/"), resolve(home, "Applications/Murage.app/")].some(app => resolve(resources).startsWith(app + sep));
+  return inApplications ? `${check} Reinstall Murage from the download to fix it.`
+    : `${check} This copy of Murage is running from outside the Applications folder. Move the original Murage.app into Applications and open it from there.`;
+}
+/** Start the packaged browser's signature check now (at start-up) and wait on the one shared run. Resolves when it has finished. */
+export async function warmBrowserEngineCheck(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const resources = env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH;
+  if (process.platform !== "darwin" || !resources || env.MURAGE_AGENT_BROWSER_PATH?.trim()) return;
+  try { await verifyPackagedMacBrowserAsync(resources); } catch { /* the status reads the outcome */ }
+}
 export function browserEngineStatus(options: ResolveOptions = {}): BrowserEngineStatus {
   const binaryPath = resolveAgentBrowserBinary(options);
   const env = options.env ?? process.env;
@@ -203,8 +217,11 @@ export function browserEngineStatus(options: ResolveOptions = {}): BrowserEngine
     const target = `${platform}-${options.arch ?? process.arch}`;
     let present = false;
     try { present = lstatSync(browserBundlePaths(join((env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH)!, "browser-engine"), target).engine).isFile(); } catch { /* missing */ }
+    if (present && platform === "darwin" && packagedMacBrowserState((env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH)!) === "checking") {
+      return { kind: "unavailable", installable: false, checking: true, reason: "Murage is checking the browser that comes with it. This takes a few seconds the first time." };
+    }
     return { kind: "unavailable", installable: false, reason: present
-      ? "The browser that comes with Murage didn't pass its signature check, so it wasn't started. Reinstall Murage from the download to fix it."
+      ? packagedBrowserRefusedReason((env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH)!, platform)
       : "The browser that comes with Murage is missing. Reinstall Murage from the download to fix it." };
   }
   const asset = resolveAgentBrowserReleaseAsset(platform, options.arch ?? process.arch, options.musl ?? isMusl(platform));
