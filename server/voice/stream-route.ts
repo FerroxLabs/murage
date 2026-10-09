@@ -7,7 +7,8 @@
 //   GET  /api/voice/stream?ticket= websocket upgrade; the ticket redeems only for
 //                                  the same principal.
 // The harness relays contract A both ways and holds the Flux key; the page
-// never sees it. The harness never reconnects to Flux: the page owns fallback.
+// never sees it. Off by default (streamFlagOn): the Flux side is not live yet
+// (Flux FLUX-940, subprotocol flux.stt.v1). The harness never reconnects to Flux: the page owns fallback.
 import { randomBytes } from "node:crypto";
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
@@ -27,6 +28,13 @@ export function trimCloseReason(reason: string, maxBytes = 123): string {
     bytes += n;
   }
   return out;
+}
+
+/** Live streaming transcription is off unless MURAGE_VOICE_STREAM=on. Flux has
+ *  not built wss /v1/audio/transcriptions/stream yet (Flux FLUX-940, flux.stt.v1),
+ *  so dictation and calls use the batch POST /v1/audio/transcriptions path. */
+export function streamFlagOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MURAGE_VOICE_STREAM === "on";
 }
 
 export const STREAM_TICKET_PATH = "/api/voice/stream/ticket";

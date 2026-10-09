@@ -576,7 +576,7 @@ import {
 } from "../shared/setup.ts";
 import { handleTranscribeRoute } from "./voice/transcribe-route.ts";
 import {
-  STREAM_TICKET_PATH, closeAllStreams, createStreamBudget, createTicketStore, handleStreamTicketRoute, handleStreamUpgrade, streamPrincipal, upgradeAdmitted, upgradePrincipalFor,
+  STREAM_TICKET_PATH, closeAllStreams, createStreamBudget, createTicketStore, handleStreamTicketRoute, handleStreamUpgrade, streamFlagOn, streamPrincipal, upgradeAdmitted, upgradePrincipalFor,
 } from "./voice/stream-route.ts";
 import { cleanDictation } from "./voice/dictation-cleanup.ts";
 import { createCleanupBudget, handleCleanupRoute, withBudget, type CleanupRunner } from "./voice/dictation-cleanup-route.ts";
@@ -1021,7 +1021,7 @@ let providerConfigBusy = false;
 let streamsStopping = false;
 const streamRouteDeps = {
   // off until device acceptance (spec F); an owner's own Groq or OpenAI key keeps batch
-  enabled: () => process.env.MURAGE_VOICE_STREAM === "on" && voiceRouteFor("transcribe")?.via === "flux",
+  enabled: () => streamFlagOn(process.env) && voiceRouteFor("transcribe")?.via === "flux",
   busy: () => providerConfigBusy || dataWritersStopped || streamsStopping,
   fluxKey: () => fluxKey(process.env),
   // the ticket: the desktop proves itself with its surface headers, a phone
@@ -4419,7 +4419,7 @@ function imageConnectionIds(): string[] {
   if (fluxKey() && !ids.includes("flux")) ids.push("flux");
   return ids;
 }
-const imageService = new ImageGenerationService({ resolveConnection: imageConnection, connectionIds: imageConnectionIds, fluxCatalogue: true });
+const imageService = new ImageGenerationService({ resolveConnection: imageConnection, connectionIds: imageConnectionIds });
 /** Image generation is on and has a connection: the generate_image tools
  * have something behind them, so the image-generation skill may ride along. */
 const imageGenerationOn = () => cfg.imageGen?.enabled !== false && imageService.listConnections().length > 0;
