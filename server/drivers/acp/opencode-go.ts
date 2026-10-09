@@ -13,8 +13,10 @@ import { writeFileAtomic } from "../../atomic.ts";
 import { DATA_DIR } from "../../config.ts";
 import { execCli } from "../../procs.ts";
 import { fluxModelId } from "../../flux-routing.ts";
+import { opencodeConfigOverlay } from "../../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import {
+  OPENCODE_FLUX_PROVIDER,
   openCodeFluxRouted,
   opencodeConfigDir,
   opencodeConfigPath,
@@ -422,6 +424,16 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
     const tier = fluxModelId(model);
     if (tier) return opencodeFluxModelId(tier);
     return ensureOpenCodeInjectModel(normalizeLegacyOpenCodeModel(model, env), env);
+  },
+  /**
+   * Flux Memory headers. OpenCode merges `OPENCODE_CONFIG_CONTENT` (inline
+   * JSON) over the config files, so `provider.flux.options.headers` lands on
+   * the Flux provider Murage's connector wrote without rewriting the user's
+   * own opencode.json (a per-turn write there is exactly what the connector
+   * refuses to do). The provider id is the connector's.
+   */
+  applyFluxMemory: (env, { decision }) => {
+    env.OPENCODE_CONFIG_CONTENT = opencodeConfigOverlay(OPENCODE_FLUX_PROVIDER, decision.headers, env.OPENCODE_CONFIG_CONTENT);
   },
   transformEnv: stripForeignProviderKeys,
   // OpenCode reads opencode.json and .opencode/ from the working folder and

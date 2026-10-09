@@ -17,6 +17,8 @@ import { FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../.
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { applyProviderRoute, FUIGO_ALLOW_UPSTREAM_ENV, grokResumeBinding, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
+import { fluxHeaderRefusal, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders } from "../../flux-memory-headers.ts";
+import { fluxSurfaceFor, isFluxModel } from "../../flux-routing.ts";
 import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
 import {
   fromElicitationForm,
@@ -783,6 +785,16 @@ export interface AcpSupport {
   applyTurnEnv?(
     env: Record<string, string | undefined>,
     ctx: { model?: string; requestedModel?: string; cwd?: string },
+  ): void;
+  /** Put the Flux Memory headers of this turn on a Flux-routed child (PROPOSAL-v2
+   *  5.4). Called after the route is settled, only when the turn reaches Flux, so
+   *  the mechanism is engine-specific (a config overlay, a settings file, an env
+   *  var). An engine that cannot carry them is listed `unsupported` in
+   *  FLUX_ENGINE_HEADERS and the core refuses the Flux route for non-owner and
+   *  background turns instead. */
+  applyFluxMemory?(
+    env: Record<string, string | undefined>,
+    ctx: { decision: import("../../flux-memory-headers.ts").FluxMemoryDecision; providerRoute?: import("../../provider-routing.ts").ProviderTurnRoute; model?: string },
   ): void;
   /** Pick the ACP authenticate methodId from initialize's advertised
    * authMethods; return null to skip the authenticate step. */
@@ -1834,6 +1846,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let promptTurn = grokBinding?.replay ? replayGrokTurn() : turn;
         const resolvedModel = providerBinding?.model ?? support.resolveTurnModel?.(turn.model, env, config);
         if (!providerBinding) support.applyTurnEnv?.(env, { model: resolvedModel, requestedModel: turn.model, cwd });
+        // Flux Memory headers: decided per thread audience, applied only when the
+        // turn actually reaches Flux (a Flux connection, or a flux-* pick with a key).
+        const fluxRoutedTurn = turn.providerRoute ? turn.providerRoute.preset === "flux" : isFluxModel(turn.model) && fluxSurfaceFor(support.driverKind) !== null;
+        if (fluxRoutedTurn) {
+          const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
+          const headerRefusal = fluxHeaderRefusal(support.driverKind, fluxMemory);
+          if (headerRefusal) throw new Error(headerRefusal);
+          support.applyFluxMemory?.(env, { decision: fluxMemory, providerRoute: turn.providerRoute, model: turn.model });
+          logFluxMemoryHeaders(support.driverKind, fluxMemory);
+        }
         const cliTurn =
           resolvedModel !== undefined && resolvedModel !== turn.model
             ? { ...turn, model: resolvedModel }

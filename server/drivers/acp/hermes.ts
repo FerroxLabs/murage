@@ -15,6 +15,7 @@ import { quietChildPipes } from "../../child-pipe-quiet.mjs";
 import { DATA_DIR } from "../../config.ts";
 import { fluxKey } from "../../flux-config.ts";
 import { FLUX_OPENAI_BASE, fluxModelId } from "../../flux-routing.ts";
+import { hermesExtraHeaderLines } from "../../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import { decodeInjectId, hostApiKey, INJECT_SEP, localHost, mergeLocalInject } from "../local-inject.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
@@ -135,6 +136,10 @@ export function materializeFluxHermesHome(
     "  api_mode: chat_completions",
     `  api_key: ${quoteYaml(key)}`,
     "providers: {}",
+    // The scoped home is shared by every Flux Hermes bot, so Hermes's own memory stays off in it.
+    "memory:",
+    "  memory_enabled: false",
+    "  user_profile_enabled: false",
     "",
   ].join("\n");
   writeFileAtomic(join(dir, "config.yaml"), text, { mode: 0o600 });
@@ -625,6 +630,32 @@ const support: AcpSupport = {
     signInCommand: "hermes setup",
   },
   spawnArgs: (config, _turn, ctx) => hermesSpawnArgs(config, ctx?.env),
+  /**
+   * Flux Memory headers. Hermes (0.21.3 source, agent/auxiliary_client.py
+   * `_apply_user_default_headers`) merges `model.extra_headers` from the
+   * config onto the OpenAI client for the main and the auxiliary calls. The
+   * scoped home's config.yaml is Murage's own (applyHermesFluxHome, or a Flux
+   * connection's routed home), so the block is inserted before `providers:`.
+   * If that file is not ours to edit and the headers must say "off", the turn
+   * is refused rather than sent without them.
+   */
+  applyFluxMemory: (env, { decision }) => {
+    // Only Murage's own scoped home is ours to edit. A native Hermes turn (no key,
+    // or the user's own home) is not on Flux, so there is nothing to carry.
+    if (!murageRoutedHome(env)) return;
+    const home = env.HERMES_HOME;
+    const file = home ? join(home, "config.yaml") : null;
+    let text: string | null = null;
+    try { text = file ? readFileSync(file, "utf8") : null; } catch { text = null; }
+    const anchor = text ? /\nproviders:/.exec(text) : null;
+    if (!file || !text || !anchor || !text.startsWith("model:\n")) {
+      if (decision.capture === "off" || decision.inject === "off") throw new Error("This engine cannot carry Flux Memory choices for this conversation, so it does not use Flux here.");
+      return;
+    }
+    const cleaned = text.replace(/\n  extra_headers:\n(?:    .*\n)+/, "\n");
+    const at = cleaned.search(/\nproviders:/);
+    writeFileAtomic(file, `${cleaned.slice(0, at + 1)}${hermesExtraHeaderLines(decision.headers).join("\n")}\n${cleaned.slice(at + 1)}`, { mode: 0o600 });
+  },
   transformEnv: (env) => {
     // A leftover OPENAI_API_KEY makes Hermes auto-resolve to OpenRouter and
     // send no Authorization header. ACP also reloads ~/.hermes/.env, so the

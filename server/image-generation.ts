@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { fluxCallHeaders } from "./flux-memory-headers.ts";
 import { z } from "zod";
 import { redactSecretsInText } from "./redact.ts";
 import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES } from "../shared/media-assets.ts";
@@ -631,7 +632,7 @@ export class ImageGenerationService {
     try {
       assertCredentialOrigin("flux", FLUX_CATALOGUE_URL);
       const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
-      const response = await this.fetcher(FLUX_CATALOGUE_URL, { headers: { authorization: `Bearer ${connection.apiKey}` }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
+      const response = await this.fetcher(FLUX_CATALOGUE_URL, { headers: { authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
       if (response.ok) value = parseFluxImageCatalogue(await boundedJson(response, MAX_CATALOG_BYTES));
       else { void response.body?.cancel(); if (response.status >= 500 || response.status === 429) ttl = FLUX_CATALOGUE_RETRY_MS; }
     } catch { value = null; ttl = FLUX_CATALOGUE_RETRY_MS; }
@@ -649,7 +650,7 @@ export class ImageGenerationService {
     try {
       assertCredentialOrigin("flux", FLUX_MODELS_URL);
       const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
-      const response = await this.fetcher(FLUX_MODELS_URL, { headers: { authorization: `Bearer ${connection.apiKey}` }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
+      const response = await this.fetcher(FLUX_MODELS_URL, { headers: { authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
       if (response.ok) {
         const body = await boundedJson(response, MAX_CATALOG_BYTES);
         const ids = record(body) && Array.isArray(body.data) ? body.data.flatMap(item => record(item) && typeof item.id === "string" && /^flux-image[a-z0-9._-]{0,110}$/.test(item.id) ? [item.id] : []) : [];
@@ -721,7 +722,7 @@ export class ImageGenerationService {
         const url = URLS.flux;
         assertCredentialOrigin("flux", url);
         const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
-        const response = await this.fetcher(url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}` },
+        const response = await this.fetcher(url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") },
           body: JSON.stringify({ model: modelId, probe: true }), signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout, redirect: "error" });
         if (!response.ok) return done({ ok: false, free: true, errorCode: "provider-error", errorMessage: `Flux answered HTTP ${response.status}${await providerErrorDetail(response)}.` });
         const body = await boundedJson(response, 64 * 1024);
@@ -901,6 +902,8 @@ export class ImageGenerationService {
       if (connection.provider === "flux") {
         // A repeated request with this key returns the same job or result, never a second render.
         outbound.headers["idempotency-key"] = sha256(hooks.operationId ?? randomUUID());
+        // Flux Memory: image work is background work, never the owner's turn (PROPOSAL-v2 5.4).
+        Object.assign(outbound.headers, fluxCallHeaders("image-generation"));
         if (delivery === "job") outbound.headers.prefer = "respond-async";
       }
       active();
@@ -928,7 +931,8 @@ export class ImageGenerationService {
       }
       active();
       outcome = "uncertain";
-      const auth = connection.provider === "google" ? { "x-goog-api-key": connection.apiKey } : { authorization: `Bearer ${connection.apiKey}` };
+      const auth: Record<string, string> = connection.provider === "google" ? { "x-goog-api-key": connection.apiKey }
+        : { authorization: `Bearer ${connection.apiKey}`, ...(connection.provider === "flux" ? fluxCallHeaders("image-generation") : {}) };
       const pollJob = (id: string, firstDelaySeconds?: number) => {
         const url = `${FLUX_JOBS_URL}/${encodeURIComponent(id)}`;
         assertCredentialOrigin(connection.provider, url);

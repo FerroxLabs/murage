@@ -20,6 +20,7 @@ import { keyIssuer } from "../electron/provider-connections.mjs";
 import { readPersistedJson, PersistedStateRecoveryError } from "./persisted-state.ts";
 import { notificationPreferencesSchema, type NotificationPreferences } from "../shared/notification-preferences.ts";
 import { isNetlifyMcpUrl, NETLIFY_TOKEN_ENTRY } from "../shared/published-sites.ts";
+import { setFluxMemoryConfig } from "./flux-memory-headers.ts";
 
 const optionalText = z.string().optional();
 const SSH_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -330,7 +331,7 @@ const appConfigSchema = z.object({
    *  WORKSPACE_CREDENTIAL_ENV, so no spawned engine CLI ever inherits it and
    *  every route that needs it injects a copy under a harness-owned name
    *  AFTER the strip. Absent = Flux routing is simply unavailable. */
-  flux: z.object({ apiKey: optionalText, connectionAliases: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), label: z.string().min(1).max(80), enabled: z.boolean(), revision: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }).strict()).max(1024).optional() }).optional(),
+  flux: z.object({ apiKey: optionalText, memory: z.object({ enabled: z.boolean().optional(), inject: z.boolean().optional(), owner: z.boolean().optional(), spaces: z.boolean().optional() }).strict().optional(), connectionAliases: z.array(z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), label: z.string().min(1).max(80), enabled: z.boolean(), revision: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }).strict()).max(1024).optional() }).optional(),
   /** Which control plane the onboarding signup is posted to. NOT a Sendlane
    *  credential and deliberately incapable of holding one: an ASAR is an
    *  archive, so anything a desktop build carries is public. The keys and the
@@ -416,7 +417,7 @@ export interface AppConfig {
     /** Check the default image model once a day with one small render (off by default). */
     dailyProbe?: boolean };
   webSearch?: { provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
-  flux?: { apiKey?: string; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
+  flux?: { apiKey?: string; memory?: { enabled?: boolean; inject?: boolean; owner?: boolean; spaces?: boolean }; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
   sendlane?: { baseUrl?: string };
   decider?: { enabled?: boolean; provider?: "flux"; jobs?: { roomRouting?: boolean }; byoKey?: string; baseUrl?: string };
   profile?: { name?: string; email?: string };
@@ -678,6 +679,8 @@ export function loadConfig(): AppConfig {
   cfg.flux = { ...cfg.flux };
   if (process.env.FLUX_API_KEY !== undefined) cfg.flux.apiKey = process.env.FLUX_API_KEY;
   if (process.env.MURAGE_FLUX_CONNECTION_ALIASES !== undefined) cfg.flux.connectionAliases = appConfigSchema.shape.flux.unwrap().shape.connectionAliases.parse(JSON.parse(process.env.MURAGE_FLUX_CONNECTION_ALIASES));
+  // Flux Memory switches: the saved ones; MURAGE_FLUX_MEMORY* env still overrides them.
+  setFluxMemoryConfig(cfg.flux.memory);
   return cfg;
 }
 

@@ -1,5 +1,6 @@
 // REST shapes verified against Tavily search, Exa's coding-agent guide, and Firecrawl v2 search.
 // Results are untrusted data; this adapter never follows their source URLs.
+import { fluxCallHeaders } from "./flux-memory-headers.ts";
 export type WebSearchProvider = "tavily" | "exa" | "firecrawl";
 export type SearchErrorCode = "missing-config" | "auth" | "plan" | "quota" | "rate-limit" | "unavailable" | "offline" | "timeout" | "cancel" | "invalid-response" | "invalid-request";
 const messages: Record<SearchErrorCode, string> = {
@@ -154,7 +155,7 @@ export async function searchFlux(input: { baseUrl?: string; apiKey?: string; que
   try {
     const fetching = (options.fetch ?? fetch)(`${input.baseUrl.replace(/\/+$/, "")}/search`, {
       method: "POST", redirect: "error", signal: controller.signal,
-      headers: { authorization: `Bearer ${input.apiKey.trim()}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${input.apiKey.trim()}`, "content-type": "application/json", ...fluxCallHeaders("web-search") },
       body: JSON.stringify({ query: input.query, provider: "xai" }),
     });
     void fetching.then(response => { if (controller.signal.aborted) void response.body?.cancel().catch(() => {}); }, () => {});

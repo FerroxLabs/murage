@@ -18,6 +18,7 @@
 // CLEAN-UP MUST NEVER LOSE OR BLOCK DICTATION. Every failure path returns the
 // raw transcript: no endpoint, a non-2xx, a throw, the 4 s timeout, empty
 // output, and the guardrails in `acceptCleaned`.
+import { fluxCallHeadersVia } from "../flux-memory-headers.ts";
 import type { VoiceEndpoint } from "./voice-routes.ts";
 
 /** The longest a person waits on clean-up before getting the raw text. */
@@ -171,7 +172,7 @@ export async function cleanDictation(raw: string, options: CleanupOptions): Prom
   try {
     const res = await call(`${endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
-      headers: { authorization: `Bearer ${endpoint.key}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${endpoint.key}`, "content-type": "application/json", ...fluxCallHeadersVia("dictation-cleanup", endpoint.via) },
       body: JSON.stringify({
         model: endpoint.model,
         messages: [

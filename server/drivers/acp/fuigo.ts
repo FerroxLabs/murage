@@ -30,6 +30,7 @@ import { resolveFuigoCli } from "../../env-path.ts";
 import { DATA_DIR, deleteEnvNames } from "../../config.ts";
 import { headlessTextOnlyTurn } from "../headless-text-only.ts";
 import { fluxKey } from "../../flux-config.ts";
+import { fuigoConfigOverlay } from "../../flux-memory-headers.ts";
 import { catalogFetchAllowed, noteCatalogResult } from "../../flux-key-health.ts";
 import { isFluxKeyShape } from "../../../electron/provider-connections.mjs";
 import { FLUX_TIERS, mergeFluxCatalog } from "../../flux-surface.ts";
@@ -662,6 +663,20 @@ const support: AcpSupport = {
    * Same "degrade to native rather than 401" rule `applyFluxSurface` follows
    * (flux-routing.ts:334).
    */
+  /**
+   * Flux Memory headers (PROPOSAL-v2 5.4). Fuigo has no FUIGO_EXTRA_HEADERS
+   * and needs none: its config loader merges an inline `FUIGO_CONFIG` JSON
+   * overlay, the overlay allowlist keeps the whole `[models]` table, and
+   * `[models].extra_headers` is a global default folded into every model
+   * (fuigo-shell agent/config.rs apply_global_extra_headers; the sampler
+   * applies them verbatim to the request, fuigo-sampler client.rs). Set per
+   * turn, after the route is settled, so it lands in the pooled-process
+   * contract digest. A Flux-shaped FUIGO_API_KEY is the only credential, so
+   * the headers go to Flux and nowhere else.
+   */
+  applyFluxMemory: (env, { decision }) => {
+    env.FUIGO_CONFIG = fuigoConfigOverlay(decision.headers, env.FUIGO_CONFIG);
+  },
   transformEnv: (env) => {
     reachBundledFuigo(env);
     isolateFuigoFromExternalMcp(env);

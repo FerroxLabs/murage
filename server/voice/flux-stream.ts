@@ -2,6 +2,7 @@
 // wss://…/v1/audio/transcriptions/stream with the workspace's Flux key as a
 // Bearer header. The key goes in that header and nowhere else.
 import WebSocket from "ws";
+import { withFluxCallHeaders } from "../flux-memory-headers.ts";
 
 import {
   HANDSHAKE_TIMEOUT_MS,
@@ -68,7 +69,7 @@ export async function openFluxStream(opts: { key: string; query: URLSearchParams
     throw new FluxStreamRefused(4502, fatal("capability_unavailable", "Flux streaming base must be wss://"), "the Flux streaming base must be wss:// (cleartext ws:// is allowed only to a loopback host)");
   }
   const ws = new WebSocket(url, [SUBPROTOCOL], {
-    headers: { authorization: `Bearer ${opts.key}` },
+    headers: withFluxCallHeaders("voice-stream", { authorization: `Bearer ${opts.key}` }),
     handshakeTimeout: opts.handshakeMs ?? HANDSHAKE_TIMEOUT_MS,
     maxPayload: 1024 * 1024,
   });

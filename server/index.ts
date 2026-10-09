@@ -345,6 +345,7 @@ import { ComputerControl } from "./computer-control.ts";
 import { augmentedPath, findCliCandidates, resetPathCache, bundledFuigoPath, resolveFuigoCli } from "./env-path.ts";
 import { fluxSelectionRefusal } from "./flux-surface.ts";
 import { isFluxModel } from "./flux-surface.ts";
+import { fluxFirstTokenProbe } from "./flux-memory-first-token.ts";
 import { describeSpawnFailure, execCli } from "./procs.ts";
 import { updateClaudeCli } from "./claude-update.ts";
 import { engineSwitchLines } from "../shared/engine-switch.ts";
@@ -5857,6 +5858,7 @@ function replyGuardContext(threadId: string) {
 }
 
 const foldRuntimeEvent = (event: RuntimeEvent) => {
+  fluxFirstTokenProbe.observe(event);
   if (event.type !== "request.opened") accountProjectEvent(event);
   if (shouldIgnoreProviderEvent(event)) return;
   const guarded = replyGuardContext(event.threadId);
@@ -10454,6 +10456,8 @@ async function sendProjectUsageTurn(instance: ProviderInstance, turn: SendTurnIn
   let request = requestId ? roomRequest(database(),requestId) : null;
   // background work is told by this dispatch's own request (a routine's), never by the thread's newest message
   if (turn.background === undefined && turnIsBackground({}, request)) turn = { ...turn, background: true };
+  // first-token timing for the Flux Memory breaker (one site for every engine; foldRuntimeEvent settles it)
+  fluxFirstTokenProbe.begin(turn);
   const group = projectGroupForThread(turn.threadId,owner?.botId) ?? (request ? store.group(request.groupId) : undefined);
   const sharedTurn = owner && !request ? sharedOwnerUsageTurn(instance, turn, owner) : null;
   if (sharedTurn) return sharedTurn;
