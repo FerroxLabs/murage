@@ -384,6 +384,8 @@ export interface ParsedRun {
   initCount: number; resultCount: number; malformed: number;
   tools: string[] | null; mcpServers: string[] | null;
   toolCallLines: number; result?: ParsedResult;
+  /** Claude's synthetic answer tool (`--json-schema`): its tool_use blocks, and the tool_result blocks that answer one. Neither counts in `toolCallLines`. */
+  structuredCalls: { id: string | null; input: unknown }[]; structuredResults: number;
   /** 0-based position among the non-empty lines; null when the line never appeared. Init must precede the result. */
   initSeq: number | null; resultSeq: number | null;
 }
@@ -403,11 +405,33 @@ function hasToolBlock(line: Record<string, unknown>): boolean {
   }
   return false;
 }
+/** The CLI's own answer tool under `--json-schema`. It is not a capability: its input is the schema object itself. */
+export const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
+const isRec = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+/**
+ * Split a line's content blocks into the StructuredOutput tool_use blocks, the tool_result blocks answering a call already
+ * seen, and the remainder (returned as a copy of the line with those blocks removed, for the ordinary tool check).
+ */
+function takeStructuredBlocks(line: Record<string, unknown>, knownIds: Set<string | null>): { calls: { id: string | null; input: unknown }[]; results: number; rest: Record<string, unknown> } {
+  const calls: { id: string | null; input: unknown }[] = []; let results = 0;
+  const msg = line.message;
+  if ((line.type !== "assistant" && line.type !== "user") || !isRec(msg) || !Array.isArray(msg.content)) return { calls, results, rest: line };
+  const kept = msg.content.filter((b) => {
+    if (!isRec(b)) return true;
+    if (line.type === "assistant" && b.type === "tool_use" && b.name === STRUCTURED_OUTPUT_TOOL) {
+      calls.push({ id: typeof b.id === "string" ? b.id : null, input: b.input }); return false;
+    }
+    if (line.type === "user" && b.type === "tool_result" && knownIds.has(typeof b.tool_use_id === "string" ? b.tool_use_id : null)) { results++; return false; }
+    return true;
+  });
+  return { calls, results, rest: { ...line, message: { ...msg, content: kept } } };
+}
 const num = (v: unknown): number | undefined => typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
 
 /** NDJSON parser for streaming-messages-json (Fuigo, Grok) and Claude stream-json. */
 export function parseHeadlessMessages(stdout: Buffer | string): ParsedRun {
-  const run: ParsedRun = { initCount: 0, resultCount: 0, malformed: 0, tools: null, mcpServers: null, toolCallLines: 0, initSeq: null, resultSeq: null };
+  const run: ParsedRun = { initCount: 0, resultCount: 0, malformed: 0, tools: null, mcpServers: null, toolCallLines: 0, structuredCalls: [], structuredResults: 0, initSeq: null, resultSeq: null };
+  const knownIds = new Set<string | null>();
   let seq = -1;
   for (const raw of String(stdout instanceof Buffer ? stdout.toString("utf8") : stdout).split(/\r?\n/)) {
     const text = raw.trim();
@@ -442,7 +466,10 @@ export function parseHeadlessMessages(stdout: Buffer | string): ParsedRun {
       };
       continue;
     }
-    if (hasToolBlock(line)) run.toolCallLines++;
+    const taken = takeStructuredBlocks(line, knownIds);
+    for (const c of taken.calls) { run.structuredCalls.push(c); knownIds.add(c.id); }
+    run.structuredResults += taken.results;
+    if (hasToolBlock(taken.rest)) run.toolCallLines++;
   }
   return run;
 }
@@ -546,11 +573,17 @@ export interface GateObservation {
   outputSchema: JsonSchema; history?: MissHistory; overBytes?: boolean; allowedHomeNew?: RegExp[]; allowedRootNew?: RegExp[];
   /** Fuigo and Grok must answer in `structured_output`; only Claude's result text is parsed as a fallback (A.1). */
   engine?: PipEngine;
+  /** The request carried `--json-schema` (Claude only): the CLI then lists and calls its synthetic StructuredOutput answer tool. */
+  structuredTool?: boolean;
 }
+
+/** Claude run that asked for a schema: the one synthetic answer tool is admitted, nothing else. */
+const structuredToolAllowed = (o: GateObservation): boolean => o.structuredTool === true && o.engine === "claude";
 
 export function buildIsolationReport(o: GateObservation): IsolationReport {
   return {
-    mcpServers: o.parsed.mcpServers ?? [], tools: o.parsed.tools ?? [],
+    mcpServers: o.parsed.mcpServers ?? [],
+    tools: (o.parsed.tools ?? []).filter((t) => !(structuredToolAllowed(o) && t === STRUCTURED_OUTPUT_TOOL && o.parsed.tools!.length === 1)),
     homeNewFiles: [...o.homeNewFiles, ...(o.rootNewFiles ?? []).map((f) => `<root>/${f}`)], cwdNewFiles: o.cwdNewFiles,
     stopReason: o.parsed.result?.stopReason, exited: o.exited, initLine: o.parsed.initCount === 1 && o.parsed.tools !== null && o.parsed.mcpServers !== null,
   };
@@ -566,7 +599,12 @@ export function gateRun(o: GateObservation): Verdict {
     if (h.noInitLine >= 2) return { state: "unsupported", reason: "transport", detail: "no-init-line" };
     return { state: "refused", reason: "isolation", detail: "no-init-line", counted: true };
   }
-  if (p.tools.length > 0 || p.toolCallLines > 0) return { state: "unsupported", reason: "tools", detail: p.tools.join(",") || "tool-call-line" };
+  // Under --json-schema Claude's CLI lists exactly [StructuredOutput] and answers through one call to it. Anything else is a tool.
+  const so = structuredToolAllowed(o);
+  const toolsOk = p.tools.length === 0 || (so && p.tools.length === 1 && p.tools[0] === STRUCTURED_OUTPUT_TOOL);
+  if (!toolsOk || p.toolCallLines > 0) return { state: "unsupported", reason: "tools", detail: p.tools.join(",") || "tool-call-line" };
+  if (!so && p.structuredCalls.length > 0) return { state: "unsupported", reason: "tools", detail: "tool-call-line" };
+  if (p.structuredCalls.length > 1 || p.structuredResults > p.structuredCalls.length) return { state: "unsupported", reason: "tools", detail: "multiple-structured-output" };
   if (p.mcpServers.length > 0) return { state: "unsupported", reason: "managed-config", detail: `mcp:${p.mcpServers.join(",")}` };
   const allowed = o.allowedHomeNew ?? DEFAULT_ALLOWED_HOME_NEW;
   const strayHome = o.homeNewFiles.filter((f) => !allowed.some((re) => re.test(f)));
@@ -587,6 +625,7 @@ export function gateRun(o: GateObservation): Verdict {
   if (r.subtype !== "success" || r.isError) return { state: "refused", reason: "bad-output", detail: r.errors.includes("cancelled") ? "cancelled" : r.subtype || "error", counted: true };
   if (r.stopReason === "cancelled") return { state: "refused", reason: "bad-output", detail: "cancelled", counted: true };
   let structured: unknown = r.structuredOutput;
+  if (structured === undefined && so && p.structuredCalls.length === 1) structured = p.structuredCalls[0].input;
   if (structured === undefined && o.engine === "claude" && r.text !== undefined) { try { structured = JSON.parse(r.text); } catch { structured = undefined; } }
   if (structured === undefined || structured === null || typeof structured !== "object") return { state: "refused", reason: "bad-output", detail: "no-structured-output", counted: true };
   const bad = validateAgainstSchema(structured, o.outputSchema);

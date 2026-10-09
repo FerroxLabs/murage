@@ -163,7 +163,7 @@ export async function runHeadlessCli(o: HeadlessRunOptions): Promise<TextOnlyTur
       finish(exited);
       return { text: "", usage: accountUsage(), isolation: { ...noProcessReport(), exited }, verdict: { state: "uncertain-transport", reason: "inventory-unreadable" } };
     }
-    const observation = { parsed, homeNewFiles, cwdNewFiles, rootNewFiles, exited, outputSchema: o.outputSchema, history: o.history, overBytes, allowedHomeNew: o.allowedHomeNew, allowedRootNew: job ? [...(o.allowedRootNew ?? DEFAULT_ALLOWED_ROOT_NEW), /^job-args\.json$/] : o.allowedRootNew, engine: o.engine };
+    const observation = { parsed, homeNewFiles, cwdNewFiles, rootNewFiles, exited, outputSchema: o.outputSchema, history: o.history, overBytes, allowedHomeNew: o.allowedHomeNew, allowedRootNew: job ? [...(o.allowedRootNew ?? DEFAULT_ALLOWED_ROOT_NEW), /^job-args\.json$/] : o.allowedRootNew, engine: o.engine, structuredTool: o.engine === "claude" };
     const isolation = buildIsolationReport(observation);
     // A first byte that never arrived is a start-up delay, not a bad answer.
     let verdict: Verdict = timedOut && bytes === 0 && exited

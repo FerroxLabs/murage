@@ -57,6 +57,55 @@ describe("per-run gate and the A.6 miss map", () => {
     for (const engine of ["fuigo", "grok"] as const) expect(gateRun(obs(`${INIT}\n${r}`, { engine }))).toMatchObject({ state: "refused", detail: "no-structured-output" });
     expect(gateRun(obs(`${INIT}\n${r}`))).toMatchObject({ state: "refused", detail: "no-structured-output" });
   });
+  describe("Claude StructuredOutput answer tool (CLI 2.1.293 under --json-schema)", () => {
+    const SO_INIT = line({ type: "system", subtype: "init", tools: ["StructuredOutput"], mcp_servers: [] });
+    const soUse = (id: string, input: unknown = { ok: true }) => line({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "StructuredOutput", input }] } });
+    const soRes = (id: string) => line({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "Structured output provided successfully" }] } });
+    const run = (...lines: string[]) => lines.join("\n");
+    const claude = (stdout: string, over: Partial<GateObservation> = {}) => obs(stdout, { engine: "claude", structuredTool: true, ...over });
+    it("accepts init [StructuredOutput], one call, its result, and result.structured_output", () => {
+      expect(gateRun(claude(run(SO_INIT, soUse("t1"), soRes("t1"), RESULT)))).toEqual({ state: "validated", structured: { ok: true } });
+    });
+    it("falls back to the single call's input when the result has no structured_output", () => {
+      const bare = line({ type: "result", subtype: "success", is_error: false, stop_reason: "end_turn" });
+      expect(gateRun(claude(run(SO_INIT, soUse("t1", { ok: false }), soRes("t1"), bare)))).toEqual({ state: "validated", structured: { ok: false } });
+    });
+    it("prefers structured_output over the call input", () => {
+      expect(gateRun(claude(run(SO_INIT, soUse("t1", { ok: false }), soRes("t1"), RESULT)))).toEqual({ state: "validated", structured: { ok: true } });
+    });
+    it("reports the synthetic tool as no tool in the isolation report", () => {
+      expect(buildIsolationReport(claude(run(SO_INIT, RESULT))).tools).toEqual([]);
+    });
+    it("refuses StructuredOutput plus any other tool in the init list", () => {
+      const init = line({ type: "system", subtype: "init", tools: ["StructuredOutput", "Bash"], mcp_servers: [] });
+      expect(gateRun(claude(run(init, soUse("t1"), soRes("t1"), RESULT)))).toMatchObject({ state: "unsupported", reason: "tools" });
+    });
+    it("refuses another tool call next to StructuredOutput, in the same message or a separate one", () => {
+      const mixed = line({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "StructuredOutput", input: { ok: true } }, { type: "tool_use", id: "t2", name: "Read", input: {} }] } });
+      expect(gateRun(claude(run(SO_INIT, mixed, soRes("t1"), RESULT)))).toMatchObject({ state: "unsupported", reason: "tools" });
+      const other = line({ type: "assistant", message: { content: [{ type: "tool_use", id: "t2", name: "Read", input: {} }] } });
+      expect(gateRun(claude(run(SO_INIT, other, soUse("t1"), soRes("t1"), RESULT)))).toMatchObject({ state: "unsupported", reason: "tools" });
+    });
+    it("refuses a tool_result that answers no StructuredOutput call", () => {
+      expect(gateRun(claude(run(SO_INIT, soRes("zz"), soUse("t1"), soRes("t1"), RESULT)))).toMatchObject({ state: "unsupported", reason: "tools" });
+    });
+    it("refuses two StructuredOutput calls", () => {
+      expect(gateRun(claude(run(SO_INIT, soUse("t1"), soRes("t1"), soUse("t2"), soRes("t2"), RESULT)))).toMatchObject({ state: "unsupported", reason: "tools", detail: "multiple-structured-output" });
+    });
+    it("refuses any MCP server alongside it", () => {
+      const init = line({ type: "system", subtype: "init", tools: ["StructuredOutput"], mcp_servers: [{ name: "x" }] });
+      expect(gateRun(claude(run(init, soUse("t1"), soRes("t1"), RESULT)))).toMatchObject({ state: "unsupported", reason: "managed-config" });
+    });
+    it("is not admitted without the schema flag or for other engines", () => {
+      const stdout = run(SO_INIT, soUse("t1"), soRes("t1"), RESULT);
+      expect(gateRun(obs(stdout, { engine: "claude" }))).toMatchObject({ state: "unsupported", reason: "tools" });
+      for (const engine of ["fuigo", "grok"] as const) expect(gateRun(obs(stdout, { engine, structuredTool: true }))).toMatchObject({ state: "unsupported", reason: "tools" });
+    });
+    it("still accepts an older CLI: empty tools list and a JSON text result", () => {
+      const r = line({ type: "result", subtype: "success", is_error: false, result: '{"ok":true}' });
+      expect(gateRun(claude(run(INIT, r)))).toEqual({ state: "validated", structured: { ok: true } });
+    });
+  });
   it("maps each miss to exactly one state", () => {
     const tools = line({ type: "system", subtype: "init", tools: ["Read"], mcp_servers: [] });
     const mcp = line({ type: "system", subtype: "init", tools: [], mcp_servers: ["x"] });
