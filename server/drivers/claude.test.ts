@@ -1860,12 +1860,14 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create();
 
     await instance.adapter.sendTurn({ threadId: "t-fresh-budget", text: `${PRE_ACCEPT_PROMPT}one` });
-    const firstDone = await recorder.until((e) => e.type === "turn.completed");
+    const wait = process.platform === "win32" ? 90_000 : 10_000; // each launch starts under the Job Object supervisor on Windows
+    const firstDone = await recorder.until((e) => e.type === "turn.completed", wait);
     await instance.adapter.sendTurn({ threadId: "t-fresh-budget", text: `${PRE_ACCEPT_PROMPT}two` });
-    await recorder.until((e) => e.type === "turn.completed" && e.eventId !== firstDone.eventId);
+    await recorder.until((e) => e.type === "turn.completed" && e.eventId !== firstDone.eventId, wait);
 
     expect(recorder.events.filter((e) => e.type === "turn.retrying").map((e) => e.attempt)).toEqual([1, 2, 1, 2]);
-  }, 20_000);
+    // Windows starts every launch under a PowerShell Job Object supervisor
+  }, process.platform === "win32" ? 120_000 : 20_000);
 
   it("never retries a terminal (auth-shaped) exit", async () => {
     await create("exit-early"); // exit 3 with no transient vocabulary — terminal
@@ -2803,7 +2805,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         expect(argv.includes("--permission-prompt-tool")).toBe(expected !== "bypassPermissions");
       }
     }
-  });
+    // Twelve launches; on Windows each starts under the Job Object supervisor
+  }, process.platform === "win32" ? 180_000 : undefined);
 
   // S3b: Ask and Auto bots send connected-app calls (send, post, pay) to Murage too.
   it("does not pre-allow connected apps on a turn that routes asks", async () => {

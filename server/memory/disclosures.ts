@@ -93,7 +93,16 @@ export function continuationMemoryRevoked(threadId: string, driverInstance: stri
   // are judged here, every one of them; a check that cannot finish resets the
   // session (0.1.61.1 memreplay review M1).
   const bad = new Set<string>();
-  invalid = sessionLineageBad(threadId, driverInstance, nativeSession, readerAudience(access), bad);
+  // The owner's own direct chat judges what the session's receipts cite by
+  // the content rule, as its replay does (filterDirectReplay, 1.0.1): a reply
+  // the session's memory rests on stays vouched for unless content it used was
+  // forgotten, deleted or changed. Judged by receipt state instead, one
+  // install-wide revoke (a roster or settings change) left every earlier reply
+  // unvouched forever, so each fresh session's first frame, which cites them
+  // through the thread checkpoint and recall, failed here on the next turn and
+  // the thread reset its engine on every turn (1.0.1.1). This session's own
+  // receipts were judged on state, policy and epoch just above.
+  invalid = sessionLineageBad(threadId, driverInstance, nativeSession, ownerDirectChat(threadId, access) ? null : readerAudience(access), bad);
   if (persist) for (const id of bad) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(id);
   if (invalid && why) why.reason = "lineage";
   if (invalid) return true;
