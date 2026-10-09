@@ -1314,3 +1314,8 @@ button:disabled.bg-danger {
 @media (prefers-reduced-motion: reduce) {
   .announce-in { animation: none; }
 }
+
+/* The sentence a sidebar claim row points at (src/lib/focus-message.ts). */
+::highlight(murage-claim) {
+  background-color: color-mix(in oklab, var(--color-accent) 28%, transparent);
+}

@@ -549,7 +549,7 @@ import { engineStamp } from "./engine-profile.ts";
 import type { MessageEngine } from "../shared/engine-switch.ts";
 import { heldQueueText, promptRows, deliveredExternalIds, planExternalDelivery, withExternalDelivery } from "./external-context-delivery.ts";
 import { recordUnverifiable, routeHasTools } from "./engine-capabilities.ts";
-import { checkReplyActions, toolAction } from "./reply-action-guard.ts";
+import { checkReplyActions, delegationSources, toolAction } from "./reply-action-guard.ts";
 import { beginTurnTrace, endTurnTrace, traceEngineEvent } from "./turn-trace.ts";
 import { EarlyBundle, dispatchAccess } from "./early-bundle.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
@@ -6807,9 +6807,18 @@ function recordReplyActionCheck(threadId: string, reply: Message): void {
     const task = owner ? store.taskByThread(owner.id, threadId) : undefined;
     const instanceId = reply.engine?.instanceId ?? task?.lastInstanceId;
     const instance = instanceId ? registry.get(instanceId) : undefined;
+    const path = store.activePath(threadId);
+    // Work done by teammates this bot asked or handed a task to counts as a record.
+    const delegated = delegationSources(path, groupId => store.group(groupId)?.threadId).flatMap(source => {
+      const rows = store.messagesFor(source.threadId).filter(row => row.at >= source.since);
+      if (!source.messageIds) return rows.filter(row => row.role === "bot");
+      const turns = new Set(rows.filter(row => source.messageIds!.includes(row.id)).map(row => row.turnId).filter(Boolean));
+      return rows.filter(row => row.role === "bot" && (source.messageIds!.includes(row.id) || (row.turnId && turns.has(row.turnId))));
+    });
     const check = checkReplyActions({
       reply,
-      path: store.activePath(threadId),
+      path,
+      delegated,
       unverifiable: recordUnverifiable(instance?.driverKind, instance?.adapter.capabilities),
     });
     if (check.state === "none" && reply.actionCheck === undefined) return;

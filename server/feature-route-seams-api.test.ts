@@ -162,8 +162,7 @@ it("serves resolve-image-reference only to the active turn's agents capability",
       const captured = dump();
       token = captured?.mcpConfig?.mcpServers?.agents?.env?.MURAGE_COMMS_TOKEN ?? "";
       return (JSON.stringify(captured?.prompt) ?? "").includes("reference-seam") && token.length > 0;
-      // a turn start on a busy Windows runner can take well over 10 s; the test allows 60 s
-    }, { timeout: 30_000 }).toBe(true);
+    }, { timeout: 10000 }).toBe(true);
     const auth = { authorization: `Bearer ${token}` };
     expect((await call("GET", "/api/internal/resolve-image-reference", auth)).status).toBe(405);
     expect((await call("POST", "/api/internal/resolve-image-reference?botId=someone-else", auth, {})).status).toBe(403);

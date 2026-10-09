@@ -388,17 +388,12 @@ describe('presence wiring in the runtime', () => {
     await f.command('pause');
   });
   it('does not detach while a command is in flight', async () => {
-    // The idle window runs from start(); the slow command must be dispatched inside it or the tab is
-    // released legitimately BEFORE any command is in flight (a loaded runner took >80 ms to get there).
-    // A window far longer than that gap, and a wait that outlasts it, keeps the claim: in flight past the window, no detach.
-    const IDLE = 1000;
-    // commandTimeoutMs must outlast the wait below, or the command itself times out and detaches.
-    const f = rig({}, { idleDetachMs: IDLE, commandTimeoutMs: 5 * IDLE }); await f.start();
+    const f = rig({}, { idleDetachMs: 80 }); await f.start();
     const base = f.api.debugger.sendCommand, impl = base.getMockImplementation();
     let release; base.mockImplementation((s, m, p) => (m === 'Runtime.evaluate' && p.expression === 'slow') ? new Promise(r => { release = () => r({ result: { value: 1 } }); }) : impl(s, m, p));
     const pending = f.cdp('Runtime.evaluate', { expression: 'slow' });
     await vi.waitFor(() => expect(release).toBeTypeOf('function'));
-    await new Promise(r => setTimeout(r, IDLE + 300));
+    await new Promise(r => setTimeout(r, 250));
     expect(f.api.debugger.detach).not.toHaveBeenCalled();
     release(); expect((await pending).error).toBeUndefined();
     await f.command('pause');
