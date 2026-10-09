@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { fluxKey } from "./flux-config.ts";
 import { FLUX_OPENAI_BASE } from "./flux-routing.ts";
+import { fluxCallHeaders, isFluxUrl } from "./flux-memory-headers.ts";
 import type { BotRecord } from "./store.ts";
 
 export const AVATAR_DIRECTION_MAX_CHARS = 400;
@@ -261,6 +262,8 @@ async function attemptAvatarImage(
       headers: {
         authorization: `Bearer ${route.apiKey}`,
         "content-type": "application/json",
+        // Flux Memory: an avatar render is background work (PROPOSAL-v2 5.4).
+        ...(isFluxUrl(route.url) ? fluxCallHeaders("avatar-image") : {}),
       },
       body: requestBody(route, prompt),
       signal: timeoutSignal,

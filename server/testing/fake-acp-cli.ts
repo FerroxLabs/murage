@@ -308,6 +308,11 @@ const dumpEnv = Object.fromEntries(
     "FUIGO_HOME",
     "HERMES_HOME",
     "OPENCODE_DISABLE_PROJECT_CONFIG",
+    // Flux Memory headers: config overlays and settings paths, no secret
+    "FUIGO_CONFIG",
+    "GROK_CONFIG",
+    "QWEN_CODE_SYSTEM_SETTINGS_PATH",
+    "OPENCODE_CONFIG_CONTENT",
     // routing switches: stripped unconditionally, never allowlistable
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",

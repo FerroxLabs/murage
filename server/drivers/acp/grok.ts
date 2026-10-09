@@ -12,6 +12,7 @@ import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost
 import { readTomlConfigForEdit, removeTomlTables } from "./kimi.ts";
 import { DATA_DIR } from "../../config.ts";
 import { headlessTextOnlyTurn } from "../headless-text-only.ts";
+import { fuigoConfigOverlay } from "../../flux-memory-headers.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 export const STATIC_GROK_MODELS: ModelCatalog = {
@@ -270,6 +271,11 @@ const support: AcpSupport = {
     }
   },
 
+  /** Flux Memory headers: Grok Build shares Fuigo's shell, so the inline `GROK_CONFIG` overlay
+   *  (xai-grok-shell config GROK_CONFIG_ENV) carries `[models].extra_headers` the same way. */
+  applyFluxMemory: (env, { decision }) => {
+    env.GROK_CONFIG = fuigoConfigOverlay(decision.headers, env.GROK_CONFIG);
+  },
   // The CLI owns its own grok.com login; a leaked API key silently flips
   // billing from the subscription to pay-as-you-go.
   transformEnv: (env) => {

@@ -15,7 +15,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ModelCatalog } from "../../contracts.ts";
+import { createHash } from "node:crypto";
+import { DATA_DIR } from "../../config.ts";
 import { fluxKey } from "../../flux-config.ts";
+import { isFluxUrl, qwenSettingsJson } from "../../flux-memory-headers.ts";
 import { applyFluxSurface, isFluxModel } from "../../flux-routing.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
@@ -264,6 +267,27 @@ const support: AcpSupport = {
     env.OPENAI_BASE_URL = local.host.baseUrl;
     env.OPENAI_API_KEY = hostApiKey(local.host, env);
     env.OPENAI_MODEL = local.model;
+  },
+  /**
+   * Flux Memory headers. Qwen reads `model.generationConfig.customHeaders` from
+   * settings and sends them on every API request (docs: configuration/settings.md,
+   * `customHeaders`). Settings layers deep-merge with the SYSTEM layer last
+   * (cli.js mergeSettings), and `QWEN_CODE_SYSTEM_SETTINGS_PATH` names that
+   * layer, so a one-purpose file under Murage's own data dir outranks the
+   * user's settings without touching them. The file is content-addressed, so
+   * a change of headers is a change of path and of the process contract.
+   */
+  applyFluxMemory: (env, { decision }) => {
+    // A flux-* pick with no key runs on Qwen's own login: not a Flux request.
+    if (!isFluxUrl(env.OPENAI_BASE_URL)) return;
+    const text = qwenSettingsJson(decision.headers);
+    const dir = join(DATA_DIR, "native", "flux-memory");
+    const file = join(dir, `qwen-${createHash("sha256").update(text).digest("hex").slice(0, 16)}.json`);
+    if (!existsSync(file)) {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      writeFileSync(file, text, { mode: 0o600 });
+    }
+    env.QWEN_CODE_SYSTEM_SETTINGS_PATH = file;
   },
   pickAuthMethod: () => null,
   authFailure: "continue",

@@ -23,6 +23,7 @@
 // does: the key must not leave the server. `fluxKey()` is the one reader of
 // that credential and this file is a caller of it, never a second copy.
 import { fluxKey } from "../flux-config.ts";
+import { fluxCallHeaders } from "../flux-memory-headers.ts";
 import { notPermitted } from "./voice-routes.ts";
 
 /** OpenAI-compatible base. Read per call, NOT captured at module load: a
@@ -267,7 +268,7 @@ export async function transcribe(recording: Recording, options: TranscribeOption
       method: "POST",
       // Bearer, not a vendor header: this is the same key the chat surfaces
       // use, and it must never be logged or echoed back to a renderer.
-      headers: { authorization: `Bearer ${key}` },
+      headers: { authorization: `Bearer ${key}`, ...(own ? {} : fluxCallHeaders("voice-transcribe")) },
       body: form,
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });

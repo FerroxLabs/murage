@@ -1,4 +1,5 @@
 import { NO_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
+import { fluxMemoryContextForTurn, fluxMemoryDecision, isFluxUrl, type FluxMemoryDecision } from "../flux-memory-headers.ts";
 import type {
   DriverCreateInput,
   ModelCatalog,
@@ -415,6 +416,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     /** The turn's submission fence, run right before every request write
      *  (each redirect hop too) with no await in between. */
     beforeWrite?: () => void,
+    /** Flux Memory headers for this call; a caller with no turn is off/off. */
+    fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
   ): Promise<Completion> => {
     const local = providerRoute ? null : options.localEndpoint?.(model) ?? null;
     const endpoint: ChatEndpoint | undefined = local
@@ -432,7 +435,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     // same errno.
     const reached = { value: false };
     try {
-      return await completeWithin(requestSignal, idle, reached, messages, model, stream, onDelta, endpoint, beforeWrite);
+      return await completeWithin(requestSignal, idle, reached, messages, model, stream, onDelta, endpoint, beforeWrite, fluxMemory);
     } catch (value) {
       // An idle expiry outside the stream reader (connect, headers, or a
       // non-streamed body) is the provider's timeout failure. The caller's own
@@ -490,6 +493,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     onDelta?: (delta: string, kind: "assistant_text" | "reasoning_text") => void,
     providerRoute?: ChatEndpoint,
     beforeWrite?: () => void,
+    fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
   ): Promise<Completion> => {
     const label = providerRoute?.preset ?? options.httpErrorLabel;
     const secret = providerRoute?.apiKey ?? options.apiKey;
@@ -529,6 +533,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         headers: {
           ...(sameOrigin ? { authorization: `Bearer ${secret}` } : {}),
           "content-type": "application/json",
+          // Flux Memory: only on a Flux host (a Flux connection, or a compat URL that is Flux).
+          ...(isFluxUrl(endpoint) ? fluxMemory.headers : {}),
         },
         body: requestBody,
         signal: requestSignal,
@@ -809,7 +815,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             const out = todo.push(delta);
             emitPlans(out.plans);
             emitAnswerDelta(out.text);
-          }, turn.providerRoute, turn.beforeSubmit);
+          }, turn.providerRoute, turn.beforeSubmit, fluxMemoryDecision(fluxMemoryContextForTurn(turn)));
           const rest = todo.flush();
           emitPlans(rest.plans);
           emitAnswerDelta(rest.text);

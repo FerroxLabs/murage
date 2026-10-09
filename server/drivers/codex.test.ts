@@ -449,7 +449,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       const dump = join(scratch, "flux.json");
       process.env.FAKE_CODEX_DUMP = dump;
 
-      await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model: "flux::flux-auto" });
+      await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model: "flux::flux-auto", warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } });
       await recorder.until((event) => event.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));

@@ -230,12 +230,14 @@ describe("applyFluxSurface — responses (codex)", () => {
     expect(result.surface).toBe("responses");
     expect(result.model).toBe("flux-auto");
     expect(env[FLUX_CODEX_ENV_KEY]).toBe(KEY);
-    expect(result.args).toEqual([
+    expect(result.args.slice(0, 8)).toEqual([
       "-c", `model_providers.${FLUX_CODEX_PROVIDER}.name="Flux Router"`,
       "-c", `model_providers.${FLUX_CODEX_PROVIDER}.base_url="https://api.fluxrouter.ai/v1"`,
       "-c", `model_providers.${FLUX_CODEX_PROVIDER}.wire_api="responses"`,
       "-c", `model_providers.${FLUX_CODEX_PROVIDER}.env_key="${FLUX_CODEX_ENV_KEY}"`,
     ]);
+    // the memory tables ride the same argv, whatever the audience (flux-memory-headers.test.ts pins their headers)
+    expect(result.args.join(" ")).toContain("model_providers.flux-off.http_headers");
     // argv is world-readable in `ps`: the NAME travels, never the value.
     expect(result.args.join(" ")).not.toContain(KEY);
     expect(result.args.join(" ")).toContain(FLUX_CODEX_ENV_KEY);

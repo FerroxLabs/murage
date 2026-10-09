@@ -10,6 +10,7 @@
 // Every answer is checked in parse.ts before anyone acts on it. Error bodies
 // are never read: they can echo the request.
 import { FLUX_OPENAI_BASE } from "../flux-routing.ts";
+import { fluxCallHeaders, isFluxUrl } from "../flux-memory-headers.ts";
 import { parseDecideResponse } from "./parse.ts";
 import type { BackendRequest, BackendResult, DeciderBackend, DeciderQuestion } from "./types.ts";
 
@@ -106,7 +107,7 @@ async function decide(request: BackendRequest): Promise<BackendResult> {
   try {
     response = await request.fetch(endpoint, {
       method: "POST",
-      headers: { authorization: `Bearer ${request.key}`, "content-type": "application/json", accept: "application/json" },
+      headers: { authorization: `Bearer ${request.key}`, "content-type": "application/json", accept: "application/json", ...(isFluxUrl(endpoint) ? fluxCallHeaders("decider") : {}) },
       body: JSON.stringify(decideRequestBody(request.state, request.questions)),
       signal: request.signal,
       // Never replay the key to wherever a redirect points.

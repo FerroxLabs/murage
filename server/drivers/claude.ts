@@ -27,6 +27,7 @@ import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { toolFilePaths } from "../own-workspace-approval.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
+import { claudeCustomHeadersValue, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders, type FluxMemoryDecision } from "../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
 import { awaitCliTreeStopped, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { bindCredentialPath, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
@@ -141,6 +142,9 @@ function claudeEnvironment(
   model?: string | null,
   source: NodeJS.ProcessEnv = process.env,
   providerRoute?: ProviderTurnRoute,
+  // Flux Memory headers for this process. A caller with no turn (a reflection,
+  // a catalog probe) gets the unknown-purpose default: off/off.
+  fluxMemory: FluxMemoryDecision = fluxMemoryDecision(),
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...source, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
   delete env.CLAUDECODE;
@@ -154,8 +158,16 @@ function claudeEnvironment(
   // identity as the API key deleted below, so that guard needs this to hold.
   // Must run before applyClaudeInject: the inject re-sets what it means to.
   stripRoutingEnv(env);
-  if (providerRoute) applyProviderRoute(DRIVER_KIND, env, providerRoute);
-  else claudeRouting(env, model);
+  // ANTHROPIC_CUSTOM_HEADERS is set AFTER the account strip and the routing
+  // strip, only for a Flux route (the headers mean nothing to another host),
+  // and it replaces whatever the user's shell held: those belonged to a
+  // different endpoint. It is part of the spawn contract (see the warm key).
+  if (providerRoute) {
+    applyProviderRoute(DRIVER_KIND, env, providerRoute);
+    if (providerRoute.preset === "flux") env.ANTHROPIC_CUSTOM_HEADERS = claudeCustomHeadersValue(fluxMemory.headers);
+  } else if (claudeRouting(env, model).flux) {
+    env.ANTHROPIC_CUSTOM_HEADERS = claudeCustomHeadersValue(fluxMemory.headers);
+  }
   return env;
 }
 
@@ -204,9 +216,9 @@ class StoppedBeforeLaunch extends Error {
 function claudeRouting(
   env: NodeJS.ProcessEnv,
   model: string | null | undefined,
-): { model: string | null; injected: boolean } {
+): { model: string | null; injected: boolean; flux?: boolean } {
   const flux = applyFluxSurface(DRIVER_KIND, env, model, fluxKey());
-  if (flux.applied) return { model: flux.model, injected: true };
+  if (flux.applied) return { model: flux.model, injected: true, flux: true };
   const applied = applyClaudeInject(env, model);
   // Neither routed: the CLI runs on its own login, and an inherited API key
   // would silently bill a subscription account pay-as-you-go.
@@ -1593,7 +1605,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         args.push("--allowedTools", allowed.join(","));
       }
 
-      const env = claudeEnvironment(turnModel, turnEnvironment, turn.providerRoute);
+      // Flux Memory headers are decided per thread audience and are part of the
+      // spawn contract: a change of audience, purpose or memory choice differs
+      // in the warm key below and forces a respawn.
+      const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
+      const env = claudeEnvironment(turnModel, turnEnvironment, turn.providerRoute, fluxMemory);
       const cwd = turn.cwd ?? homedir();
       // Everything that shapes the process, minus session/turn-specific temp
       // paths. Their contents are represented directly in the key instead.
@@ -1614,6 +1630,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         model: injected.model ?? null,
         providerRoute: turn.providerRoute ? [turn.providerRoute.connectionId, turn.providerRoute.revision] : null,
         baseUrl: env.ANTHROPIC_BASE_URL ?? null,
+        fluxMemory: env.ANTHROPIC_CUSTOM_HEADERS ? fluxMemory.signature : null,
         // The credential the process was launched with, whichever route put it
         // in env (local host, Flux, a provider connection, the CLI's own
         // token): a digest, so a rotated key respawns without the key being
@@ -1666,6 +1683,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         : diffWarmKey(live.warm, warm) ?? (sessionId && sessionId !== live.sessionId ? "cursor" : null);
       const dispatchTrace = `claude dispatch thread=${threadId} process=${spawnReason === null ? "reused reason=unchanged" : `spawned reason=${spawnReason}`}`;
       console.info(dispatchTrace);
+      if (spawnReason !== null && env.ANTHROPIC_CUSTOM_HEADERS) logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
       appendNative(threadId, { dir: "out", source: "claude.session", msg: { dispatch: dispatchTrace } });
       if (live && spawnReason === null) {
         // The submission fence (SendTurnInput.beforeSubmit): no await
