@@ -2,7 +2,8 @@ import type { MemoryBundle } from "../../shared/memory.ts";
 import { database } from "../database.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import type { MemorySearchBridge } from "./search.ts";
-import { contentRevoked, databaseStamp, outputRootsBad, preLineageSessionRevoked, sessionLineageBad, sessionOutputRoots } from "./replay-lineage.ts";
+import { authorityStamp } from "./authority-epoch.ts";
+import { contentRevoked, outputRootsBad, preLineageSessionRevoked, sessionLineageBad, sessionOutputRoots } from "./replay-lineage.ts";
 import { assertMemoryBundle, buildMemoryBundle, memoryHandleRecord } from "./bundle.ts";
 import { assertMemoryDisclosureCurrent, bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDisclosure, linkMemoryDisclosureOutput, noteMemoryLookup, prepareMemoryDisclosure } from "./disclosures.ts";
 
@@ -43,10 +44,10 @@ export function memorySessionRevoked(threadId:string,instanceId:string,session:s
  * while this turn awaited recall; that thread revokes only its own receipts,
  * so memorySessionRevoked (state and counters) cannot see it. True when the
  * session must reset and rebuild its authorized replay. The full check is
- * skipped only while the database is unmoved since `checkedStamp`, the stamp
+ * skipped only while the authority epoch is unmoved since `checkedStamp`, the stamp
  * taken right after the last full check passed. */
 export function resumedSessionInvalid(threadId:string,instanceId:string,session:string,access:MemoryAccess,checkedStamp:string|undefined,why?:{reason?:string}):boolean {
-  if(checkedStamp!==undefined&&databaseStamp()===checkedStamp)return false;
+  if(checkedStamp!==undefined&&authorityStamp()===checkedStamp)return false;
   return continuationMemoryRevoked(threadId,instanceId,session,access,why);
 }
 /** A retained native session checked in EVERY memory mode, with no reader
@@ -103,7 +104,7 @@ export class MemoryDispatchReceipt {
    * again at acceptance, so a revoke that lands in between ends the session
    * instead of letting the new frame be accepted into it. */
   private resumedSession?: string;
-  /** databaseStamp() right after the last full session check passed: an unmoved database skips the next one. */
+  /** authorityStamp() right after the last full session check passed: an unmoved authority epoch skips the next one. */
   private sessionCheckedStamp?: string;
   resumes(session:string,checkedStamp?:string) { this.resumedSession=session; this.sessionCheckedStamp=checkedStamp; }
   /** Every pre-submit check (before dispatch, after the image await, at the
@@ -116,7 +117,7 @@ export class MemoryDispatchReceipt {
   private assertSessionCurrent() {
     if(this.resumedSession===undefined)return;
     if(resumedSessionInvalid(this.access.threadId,this.instanceId,this.resumedSession,this.access,this.sessionCheckedStamp))throw new Error("MEMORY_CONTEXT_REVOKED");
-    this.sessionCheckedStamp=databaseStamp();
+    this.sessionCheckedStamp=authorityStamp();
   }
   assertCurrent() { if(this.failure)throw this.failure; assertMemoryBundle(this.bundle,this.access); this.assertSessionCurrent(); }
   private boundSession?: string;

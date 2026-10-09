@@ -77,3 +77,30 @@ it("a query whose deadline has passed is dropped: no model work, no result", asy
     expect(sent.some(m => m.requestId === "late")).toBe(false);
   });
 });
+
+const work = (id: string) => ({ id, sourceId: "s", revision: 1, leaseGeneration: 1, policyRevision: 0, deletionEpoch: 0, scopeId: "scope", stage: "capture", kind: "text", speaker: "owner", outcome: "recorded", cursor: 0, totalBytes: 5, text: "hello" });
+
+it("a search that arrives while a capture is waiting is answered first, and the capture is still done", async () => {
+  await withWorker(async ({ emit, sent }) => {
+    emit(work("job"));
+    emit({ type: "query", requestId: "turn", input: input("turn", { semantic: false }) });
+    await vi.waitFor(() => expect(sent.filter(message => message.type === "result")).toHaveLength(1));
+    const order = sent.map(message => message.type);
+    expect(order.indexOf("query-result")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("query-result")).toBeLessThan(order.indexOf("result"));
+  });
+});
+
+it("a capture that fails inside the helper is reported as rejected work and written to stderr, and the helper goes on", async () => {
+  const errors: string[] = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => { errors.push(args.join(" ")); });
+  try {
+    await withWorker(async ({ emit, sent }) => {
+      emit({ ...work("bad"), totalBytes: 2 });  // 5 bytes of text for a 2 byte source: INVALID_SOURCE_COVERAGE
+      await vi.waitFor(() => expect(sent.some(message => message.type === "error")).toBe(true));
+      emit(work("good"));
+      await vi.waitFor(() => expect(sent.some(message => message.type === "result")).toBe(true));
+    });
+  } finally { spy.mockRestore(); }
+  expect(errors.some(line => line.includes("capture rejected") && line.includes("INVALID_SOURCE_COVERAGE"))).toBe(true);
+});

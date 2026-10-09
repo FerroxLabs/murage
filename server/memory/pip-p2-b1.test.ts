@@ -134,7 +134,8 @@ describe("PIP kind list", () => {
       "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 2, "memory/procedure-review.ts": 3,
       "memory/projection.ts": 2, "memory/recent.ts": 2,
       // +3: derivationAncestryCurrent reads parent states only, never text (revoke fix round 2)
-      "memory/replay-lineage.ts": 12, "memory/restore.ts": 7, "memory/retention.ts": 8, "memory/reveal-capture.ts": 2, "memory/routes.ts": 8,
+      "memory/replay-lineage.ts": 12, "memory/restore.ts": 7, // +1: the status scan counts records by state and adds up text lengths, never returning text
+      "memory/retention.ts": 9, "memory/reveal-capture.ts": 2, "memory/routes.ts": 8,
       "memory/schema.ts": 3, "memory/search.ts": 1, "memory/settings.ts": 3, "memory/worker-controller.ts": 3, "skills.ts": 6, "human-principals.ts": 1,
       // B3: the lived family, episodes and reflection read only PIP kinds, named in their own statements.
       // Round 2 removed the redundant episode check from pip-reflect; pip-episodes owns it.

@@ -1,3 +1,4 @@
+import { authorityStamp, pinStamp } from "./authority-epoch.ts";
 import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { humanMayReadRecord } from "../human-principals.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -178,8 +179,16 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   // A room member reaches its own bot scope, but never its owner-private
   // identity partition, pinned or not: that is withheld, not a failed pin.
   const room = accessIncludesRoom(access);
-  const pinRows = db.prepare(`SELECT id,version FROM memory_records r WHERE state='active' AND owner_pinned=1 AND r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND scope_id IN (SELECT value FROM json_each(?))
+  // The owner's pins: no index serves owner_pinned, so reading them walks every active record of the reader's scopes (41 ms with 20,000 captured
+  // chunks). They change only when a pinned record is added, changed or removed, which the pin stamp counts (authority-epoch.ts).
+  const pinKey = JSON.stringify([access.scopeIds, room]), pinAt = pinStamp();
+  const cachedPins = pinAt === undefined ? undefined : pinCache.get(pinKey);
+  const pinRows = cachedPins && cachedPins.stamp === pinAt ? cachedPins.rows : db.prepare(`SELECT id,version FROM memory_records r WHERE state='active' AND owner_pinned=1 AND r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND scope_id IN (SELECT value FROM json_each(?))
     ${room ? "AND NOT EXISTS (SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.partition='identity')" : ""} ORDER BY id,version`).all(JSON.stringify(access.scopeIds));
+  if (pinAt !== undefined && cachedPins?.stamp !== pinAt && pinStamp() === pinAt) {
+    if (pinCache.size >= 64) pinCache.delete(pinCache.keys().next().value!);
+    pinCache.set(pinKey, { stamp: pinAt, rows: pinRows.map(row => ({ id: row.id, version: row.version })) });
+  }
   // A pin resting on a reply bots no longer see is left out, not a refused
   // turn: the owner is told, and the room goes on without it. Left-out pins
   // take no handle.
@@ -395,7 +404,8 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     const row = scopeRow(db, scope.kind,scope.owner);
     return row ? threadCheckpointId(String(row.id),access.threadId) : "";
   }).filter(Boolean))];
-  const checkpoints = db.prepare("SELECT id,version FROM memory_records WHERE state='active' AND owner_pinned=0 AND kind='checkpoint' AND id IN (SELECT value FROM json_each(?)) AND scope_id IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC LIMIT 1").all(JSON.stringify(ownCheckpoints),JSON.stringify(access.scopeIds));
+  // Driven from the thread's own checkpoint ids by primary key; the scope condition only filters (an index on the scope would walk every chunk it holds).
+  const checkpoints = db.prepare("SELECT r.id,r.version FROM json_each(?) j JOIN memory_records r ON r.id=j.value WHERE r.state='active' AND r.owner_pinned=0 AND r.kind='checkpoint' AND +r.scope_id IN (SELECT value FROM json_each(?)) ORDER BY r.created_at DESC LIMIT 1").all(JSON.stringify(ownCheckpoints),JSON.stringify(access.scopeIds));
   inMemoryAccessPass(() => {
     for (const row of checkpoints) {
       try {
@@ -538,12 +548,20 @@ function citesOnly(record: BundleRecord, sources: Set<string>): boolean {
   return sources.size > 0 && record.evidence.length > 0 && record.evidence.every(handle => sources.has(handle.sourceId));
 }
 
-/** Must run immediately before the adapter call, after all other asynchronous setup. */
+/** The owner's pinned records per reader, and the pin stamp they were read at. */
+const pinCache = new Map<string, { stamp: string; rows: Array<{ id: unknown; version: unknown }> }>();
+/** The authority stamp at which a bundle last passed the record loop below, per bundle. */
+const bundleCheckedAt = new WeakMap<object, string>();
+/** Must run immediately before the adapter call, after all other asynchronous setup.
+ * The access check runs every time; the per-record rehydration and withheld-source walk are
+ * memoised per (bundle, authority epoch): they read only what the epoch tracks (authority-epoch.ts). */
 export function assertMemoryBundle(bundle: MemoryBundle, access: MemoryAccess) {
   const trusted = bundles.get(bundle);
   if (!trusted || trusted.access !== access) throw new Error("MEMORY_BUNDLE_UNTRUSTED");
   if (bundle.tokenCount !== tokens(bundle.text)) throw new Error("MEMORY_BUNDLE_BUDGET_MISMATCH");
   assertMemoryAccess(access);
+  const stamp = authorityStamp();
+  if (stamp !== undefined && bundleCheckedAt.get(bundle) === stamp) return;
   inMemoryAccessPass(() => {
     for (const record of trusted.records) {
       const current = hydrateDisclosedMemoryRecord(record.id,record.version,access);
@@ -552,4 +570,6 @@ export function assertMemoryBundle(bundle: MemoryBundle, access: MemoryAccess) {
       if (trusted.withheldMessage && recordRestsOnWithheldMessage(record.id,record.version,trusted.withheldMessage)) throw new Error("MEMORY_CONTEXT_REVOKED");
     }
   });
+  // Re-read after the loop: a stamp taken before it that has since moved is not a pass at that stamp.
+  if (stamp !== undefined && authorityStamp() === stamp) bundleCheckedAt.set(bundle, stamp);
 }

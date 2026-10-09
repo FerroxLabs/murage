@@ -7,7 +7,7 @@ import { InternalCapabilities } from "../internal-capabilities.ts";
 import { ensureScope,memoryAccess,reconcileMemoryRoster,assertMemoryAccess } from "./policy.ts";
 import { searchMemory } from "./search.ts";
 import { buildMemoryBundle } from "./bundle.ts";
-import { materializeRecentMemory } from "./recent.ts";
+import { catchUpRecentMemory, materializeRecentMemory } from "./recent.ts";
 import { claimMemoryJob,publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
 
@@ -22,6 +22,8 @@ const empty={search:async()=>({hits:[],vectorRows:0,degradedReason:"keyword-only
 it("recalls a captured preference from the bot's previous task before worker indexing",async()=>{
   const {access}=context();appendMessage("old",{id:"preference",at:123,role:"user",kind:"text",text:"My report colour is charcoal."});
   expect(database().prepare("SELECT count(*) n FROM memory_records").get()?.n).toBe(0);
+  // Search itself writes nothing; the turn's one catch-up step (run before recall) makes a message written a moment ago recallable.
+  expect(catchUpRecentMemory(access)).toBe(1);
   const result=await searchMemory("report colour",access,empty);
   expect(result.hits.some(hit=>hit.text.includes("charcoal"))).toBe(true);expect(result.recentFallback).toBe(true);
   expect(result.hits.flatMap(hit=>hit.evidence).some(e=>e.occurredAt===123)).toBe(true);
@@ -32,6 +34,7 @@ it("recalls a captured preference from the bot's previous task before worker ind
 });
 it("does not grant another bot the private prior-task history, in a shared room either",async()=>{
   const r=roster(),{access}=context(r);appendMessage("old",{id:"private",at:1,role:"user",kind:"text",text:"PRIVATE_PAST_CANARY report"});
+  catchUpRecentMemory(access);
   await searchMemory("report",access,empty);
   // 0.1.61 lane M recall both ways: in an owner room the bot recalls its own
   // prior task, its teammate never does
@@ -53,6 +56,7 @@ it("does not infer grants for aliased or excluded old tasks",()=>{
 });
 it("returns bounded recent evidence with explicit degradation when the worker is unavailable",async()=>{
   const {access}=context();appendMessage("old",{id:"fresh",at:321,role:"user",kind:"text",text:"The launch deadline is Friday."});
+  catchUpRecentMemory(access);
   const result=await searchMemory("launch deadline",access,{search:async()=>{throw new Error("worker offline");}});
   expect(result.degradedReason).toBe("MEMORY_RECALL_UNAVAILABLE");expect(result.coverageComplete).toBe(false);
   expect(result.hits.some(hit=>hit.text.includes("Friday"))).toBe(true);
@@ -79,5 +83,6 @@ it("an ordinary append keeps its predecessors' jobs pending and only a branch ch
 });
 it("revocation during worker await cannot disclose the recent fallback",async()=>{
   const {access,registry}=context();appendMessage("old",{id:"secret",at:1,role:"user",kind:"text",text:"Fresh private report"});
+  catchUpRecentMemory(access);
   await expect(searchMemory("private report",access,{search:async()=>{registry.revokeThread("new");return {hits:[],vectorRows:0};}})).rejects.toThrow("MEMORY_UNAUTHORIZED");
 });

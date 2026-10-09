@@ -21,10 +21,12 @@ export class MemoryIndex {
     this.db=db;
     // secure_delete: forgotten text is overwritten in the file, not left in
     // free space (a deleted conversation's words must not stay readable).
-    db.exec(`PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;
+    db.exec(`PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON; PRAGMA journal_size_limit=67108864;
       CREATE TABLE IF NOT EXISTS entries(id TEXT NOT NULL,version INTEGER NOT NULL,scope_id TEXT NOT NULL,text TEXT NOT NULL,PRIMARY KEY(id,version));
       CREATE VIRTUAL TABLE IF NOT EXISTS lexical USING fts5(id UNINDEXED,version UNINDEXED,text,tokenize='unicode61');
       CREATE TABLE IF NOT EXISTS vectors(id TEXT NOT NULL,version INTEGER NOT NULL,model TEXT NOT NULL,part INTEGER NOT NULL,vector BLOB NOT NULL,PRIMARY KEY(id,version,model,part));`);
+    // One TRUNCATE before traffic gives back a log left large by an earlier run (PROPOSAL-v2 10.3).
+    try{db.exec("PRAGMA wal_checkpoint(TRUNCATE)");}catch{/* a reader holds it; the next checkpoint takes it */}
     // FTS5 keeps a deleted document's terms in its index segments until they
     // are merged, so secure_delete alone left a forgotten memory's words in
     // the file (0.1.60 low). A write that deletes merges the index

@@ -1,3 +1,4 @@
+import { fluxCallHeaders } from "../flux-memory-headers.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { DEFAULT_MEMORY_EVOLUTION_POLICY, readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { z } from "zod";
@@ -41,13 +42,17 @@ export const CONTINUITY_REQUEST_TIMEOUT_MS=270_000;
 export async function requestMemoryInference(input:Parameters<typeof requestMemoryExtraction>[0],text:string,maximumOutputTokens:number,signal:AbortSignal,dispatch:MemoryExtractionDispatch):Promise<string>{
   return requestMemoryTransport(input,text,maximumOutputTokens,signal,dispatch.messages,dispatch.purpose==="reflection"?8000:dispatch.purpose==="continuity"?CONTINUITY_OUTPUT_CAP:2000);
 }
+/** A background call to Flux: capture off, inject off, x-flux-memory-app murage (flux-memory-headers.ts decides). Other endpoints get none. */
+export function extractionFluxHeaders(url: URL): Record<string, string> {
+  return /(^|\.)fluxrouter\.ai$/i.test(url.hostname) ? fluxCallHeaders("memory-extraction") : {};
+}
 async function requestMemoryTransport(input:Parameters<typeof requestMemoryExtraction>[0],text:string,maximumOutputTokens:number,signal:AbortSignal,messages:ReadonlyArray<Readonly<{role:string;content:string}>>|undefined,outputCap:number):Promise<string>{
   if(!text.trim()||Buffer.byteLength(text)>65536||!Number.isSafeInteger(maximumOutputTokens)||maximumOutputTokens<1||maximumOutputTokens>outputCap)throw new Error("MEMORY_EXTRACTION_LIMIT");
   if(!input.apiKey||!input.model)throw new Error("MEMORY_EXTRACTOR_UNAVAILABLE");
   const url=new URL(`${input.url.replace(/\/+$/,"")}/chat/completions`);
   if(!["http:","https:"].includes(url.protocol)||url.username||url.password)throw new Error("MEMORY_EXTRACTOR_UNAVAILABLE");
   const response=await fetch(url,{method:"POST",redirect:"error",signal:AbortSignal.any([signal,AbortSignal.timeout(60000)]),
-    headers:{"content-type":"application/json",authorization:`Bearer ${input.apiKey}`},
+    headers:{"content-type":"application/json",authorization:`Bearer ${input.apiKey}`,...extractionFluxHeaders(url)},
     body:JSON.stringify({model:input.model,messages:messages??memoryExtractionMessages(text),max_tokens:maximumOutputTokens,stream:false,...input.provider?{provider:input.provider}:{}})});
   if(!response.ok||!response.body){await response.body?.cancel();throw Object.assign(new Error("MEMORY_EXTRACTION_REQUEST_FAILED"),{status:response.status});}
   const declared=Number(response.headers.get("content-length"));

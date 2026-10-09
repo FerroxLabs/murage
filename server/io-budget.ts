@@ -7,6 +7,7 @@ import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { endianness } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import { turnTraceEnabled } from "./turn-trace.ts";
+import { reportSlowSql, SLOW_SQL_MS } from "./observe.ts";
 
 export const IO_BUDGET_INTERVAL_MS = 60_000;
 export const IO_BUDGET_BYTES_PER_MINUTE = 50 * 1024 * 1024;
@@ -145,6 +146,7 @@ export class IoBudget {
       if (this.statements.size >= 500) this.statements.clear();
       this.statements.set(key, { sql: key, calls: 1, ms });
     }
+    if (keyed && ms > SLOW_SQL_MS) reportSlowSql(shortStatement(key), ms, this.currentSource());
   }
 
   topStatements(count = 3): StatementCost[] {
