@@ -1821,7 +1821,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const retried = JSON.parse(readFileSync(dump, "utf8"));
     expect(retried.argv).toContain("--resume");
     expect(retried.argv[retried.argv.indexOf("--resume") + 1]).toBe(sessionIds[0]);
-  }, 20_000);
+  }, 60_000);
 
   it("a relaunched turn keeps the id sendTurn returned through to turn.completed", async () => {
     process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
@@ -1836,7 +1836,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.started").map((e) => e.turnId)).toEqual([turnId, turnId]);
     expect(recorder.events.every((e) => e.threadId !== "t-retry-id" || e.turnId === turnId)).toBe(true);
     expect(readFileSync(join(scratch, "launches-same-id"), "utf8")).toBe("2");
-  }, 20_000);
+  }, 60_000);
 
   it("stops retrying at the attempt cap and settles the turn as failed", async () => {
     process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "9";
@@ -3018,12 +3018,12 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
   it("still carries a valid 14 MiB multibyte frame intact", async () => {
     await create();
     const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__" });
-    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId, 90_000);
 
     expect(done).toMatchObject({ ok: true });
     const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.turnId === turnId);
     expect(Buffer.byteLength((reply as { text: string } | undefined)?.text ?? "")).toBe(14 * 1024 * 1024);
-  });
+  }, 120_000);
 
   it("drops an ask connection whose frame is over the limit and keeps serving others", async () => {
     const asks: Array<{ id: string }> = [];

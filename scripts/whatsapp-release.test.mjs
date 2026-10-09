@@ -6,12 +6,12 @@ import { parse } from "yaml";
 
 it.each([
   ["mac", "darwin", "arm64", "release/mac-arm64/Murage.app/Contents/Resources/server", "release/mac-arm64/Murage.app/Contents/MacOS/Murage"],
-  ["mac-x64", "darwin", "x64", "release/mac/Murage.app/Contents/Resources/server", "release/mac/Murage.app/Contents/MacOS/Murage"],
+  ["mac", "darwin", "x64", "release/mac/Murage.app/Contents/Resources/server", "release/mac/Murage.app/Contents/MacOS/Murage"],
   ["windows", "win32", "x64", "release/win-unpacked/resources/server", "release/win-unpacked/Murage.exe"],
   ["linux", "linux", "x64", "release/linux-unpacked/resources/server", "release/linux-unpacked/murage"],
 ])("requires both WhatsApp gates after packaging and before upload: %s %s %s", (job, platform, arch, server, runtime) => {
   const steps = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")).jobs[job].steps;
-  const packaged = steps.findIndex(step => /pnpm package:(mac|win|linux)|tar -xf x64-app/.test(step.run ?? ""));
+  const packaged = steps.findIndex(step => /pnpm package:(mac|win|linux)/.test(step.run ?? ""));
   const upload = steps.findIndex(step => step.uses?.startsWith("actions/upload-artifact@"));
   const gate = steps.findIndex(step => step.run?.includes(`--server-directory "${server}"`));
   expect(gate).toBeGreaterThan(packaged); expect(gate).toBeLessThan(upload);

@@ -286,6 +286,8 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
 }
 
 test("a Chief-created sub-bot's delegated permission is global attention, opens its exact card, decides once and delivers one reply", async ({ page }, testInfo) => {
+  // Creates a team, restarts the harness and waits out a boot drain: minutes of real work on a loaded runner.
+  test.setTimeout(300_000);
   // A sub-bot created through the product: agents create_bot with lead:true.
   expect((await inbox()).total).toBe(0);
   await expectApprovalsOnlyOnChild("before create_bot");

@@ -309,6 +309,11 @@ function relay(page: WebSocket, url: URL, principal: string | null, deps: Stream
     lastSeq += 1;
     page.send(JSON.stringify({ type: "error", seq: lastSeq, received_audio_ms: lastReceived, error }));
     page.close(code, error.code);
+    // A page that never answers the close frame is cut after a short grace,
+    // as at a restart, rather than held until the socket library's own 30 s.
+    const cut = setTimeout(() => page.terminate(), PAGE_CLOSE_GRACE_MS);
+    cut.unref?.();
+    void pageClosed.then(() => clearTimeout(cut));
   };
   /** The page is told going_away (once) and closed 1001; a page that does not
    *  answer the close frame is cut after a short grace. */

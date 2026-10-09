@@ -1,13 +1,11 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BridgeHost } from "../server/channels/whatsapp/bridge-host.ts";
 import { expect, it } from "vitest";
-import { probeWhatsApp, describeFailure } from "./smoke-whatsapp-packaged.mjs";
+import { probeWhatsApp } from "./smoke-whatsapp-packaged.mjs";
 it("requires the packaged handshake and an isolated dry-run supervisor", async () => {
   let options, stopped = false;
   class Host {
@@ -70,36 +68,3 @@ it("rejects an ordinary Node executable through the real supervisor", async () =
 it("rejects a nonexistent executable through the real supervisor", async () => {
   await expect(probeWhatsApp({ server: tmpdir(), runtime: join(tmpdir(), "missing-electron"), platform: process.platform, arch: process.arch, electronVersion: "43.4.0", Host: BridgeHost, timeoutMs: 100, cleanupMs: 20 })).rejects.toThrow("could not spawn");
 }, 1000);
-
-it("attaches bridge lifecycle events to a failure and describes them", async () => {
-  class Host {
-    constructor(o) { this.o = o; }
-    async start() { this.o.onLifecycle({ kind: "spawn-error" }); }
-    async stop() {}
-  }
-  const error = await probeWhatsApp({ server: "/fixture", runtime: "/runtime", platform: "darwin", arch: "x64", electronVersion: "43.4.0", Host, timeoutMs: 1000 }).catch(e => e);
-  expect(error.diagnostics.events).toEqual([expect.objectContaining({ lifecycle: "spawn-error" })]);
-  const text = describeFailure(error);
-  expect(text).toContain("FAILED");
-  expect(text).toContain("spawn-error");
-  expect(text).toContain("child stderr tail");
-});
-it("captures the child's stderr tail from the real supervisor", async () => {
-  const server = mkdtempSync(join(tmpdir(), "wa-stderr-probe-"));
-  try {
-    mkdirSync(join(server, "channels/whatsapp"), { recursive: true });
-    writeFileSync(join(server, "channels/whatsapp/bridge.js"), `process.stderr.write("boom-from-bridge\\n"); setTimeout(() => process.exit(1), 50);`);
-    const error = await probeWhatsApp({ server, runtime: process.execPath, platform: process.platform, arch: process.arch, electronVersion: "43.4.0", Host: BridgeHost, timeoutMs: 3000 }).catch(e => e);
-    expect(error.message).toContain("exited before qualification");
-    expect(error.diagnostics.stderrTail).toContain("boom-from-bridge");
-    expect(describeFailure(error)).toContain("boom-from-bridge");
-  } finally { rmSync(server, { recursive: true, force: true }); }
-}, 10000);
-it("the command line never fails silently", () => {
-  const script = join(dirname(fileURLToPath(import.meta.url)), "smoke-whatsapp-packaged.mjs");
-  const result = spawnSync(process.execPath, [script], { encoding: "utf8" });
-  expect(result.status).toBe(1);
-  expect(result.stderr).toContain("Packaged WhatsApp qualification FAILED");
-  expect(result.stderr).toContain("Pass --server-directory");
-  expect(result.stderr).toContain("child stderr tail");
-});

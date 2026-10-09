@@ -249,8 +249,10 @@ it.runIf(HOST_COMPUTER)("keeps the driver exclusive until the cancelled action h
 
     // Once the driver really answers the old action, the screen is free.
     await releaseDriver(mark);
-    const admitted = await next.client.request("tools/call", { name: "fixture_ping", arguments: {} }) as any;
-    expect(text(admitted)).toBe("quick action finished");
+    // The harness frees the screen when it has seen the old driver process
+    // exit, a beat after the "exited" frame is written; a refused ping sends
+    // nothing to the driver, so asking again until it is admitted is harmless.
+    await expect.poll(async () => text(await next!.client.request("tools/call", { name: "fixture_ping", arguments: {} }) as any), { timeout: 15_000, interval: 250 }).toBe("quick action finished");
   } finally {
     await releaseDriver(mark);
     await first.client.close();

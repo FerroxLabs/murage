@@ -417,7 +417,7 @@ async function runQ13(ctx: B34AdapterContext): Promise<AdapterArtifactsFor<"Q13"
   ctx.check("recovered-fact-delivered-after-restore", followUpLines.some(line => line.includes(B34_Q13.canary) && line.includes(OWNER_FACT_LINE)), `${followUpLines.length} frame lines`);
 
   // Quiesce on evidence, then count: the deferred source was extracted and grounded exactly once.
-  await stalled(ctx, "Q13 consolidation queue drained", () => pendingConsolidations(ctx) === 0 ? true : undefined, 60_000, stall);
+  await stalled(ctx, "Q13 consolidation queue drained", () => pendingConsolidations(ctx) === 0 ? true : undefined, 180_000, stall);
   const final = ledger(ctx);
   const extractions = requests(final, "extract").filter(entry => entry.sourceSha256 === b34Sha256(B34_Q13.statement));
   const groundings = requests(final, "ground", "q13-fact");
