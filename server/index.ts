@@ -100,6 +100,7 @@ import { isPipReflectThread, parseContinuityOptions } from "./memory/pip-types.t
 import { MemoryDispatchReceipt, resumedSessionInvalidAfterRecall, retainedSessionInvalid, buildMemoryBundleAfterReset, pinnedMemoryFailure, withheldPinLine } from "./memory/dispatch.ts";
 import { assertMemoryAccess, memoryAccess, backgroundMemoryAudience, type MemoryAccess } from "./memory/policy.ts";
 import { memoryState } from "./memory/repository.ts";
+import { noteContinuationReset } from "./memory/reset-watch.ts";
 import { continuationMemoryRevoked, filterDirectReplay, linkRetainedSessionOutput, replayBudgetBytes, replayWindow, readerWithheldMessage } from "./memory/disclosures.ts";
 import { roomTranscriptForTurn, roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import { memoryAgentRoute } from "./memory/routes.ts";
@@ -7989,6 +7990,9 @@ async function startTurn(
     let earlyContinuityKey: string | undefined;
     // The database stamp right after the early continuation check passed; the dispatch step skips its own run of the same check while it is unmoved.
     let earlyCheckStamp: string | undefined;
+    // What the early continuation check found: it marks failing receipts
+    // revoked, so the dispatch check then reads only "receipt-already-revoked".
+    const earlyWhy: { reason?: string } = {};
     try {
       await acquireDirectTurnSlot(run);
       trace.mark("slot.acquired");
@@ -7998,7 +8002,7 @@ async function startTurn(
       // step re-checks it and takes this one bundle or cancels it.
       if (memoryState().mode === "active" && resumeCursor) {
         const access = turnMemoryAccess(bot.id, threadId, dispatchClaimId);
-        if (!continuationMemoryRevoked(threadId, instanceId, String(resumeCursor), access)) {
+        if (!continuationMemoryRevoked(threadId, instanceId, String(resumeCursor), access, earlyWhy)) {
           const early = new EarlyBundle<Awaited<ReturnType<typeof buildMemoryBundle>>, MemoryAccess>(access);
           const query = Buffer.from(text).subarray(0, 4093).toString("utf8").replace(/�+$/, "");
           const options = {
@@ -8483,7 +8487,11 @@ async function startTurn(
         const revokedWhy: { reason?: string } = {};
         const revoked=Boolean(resumeCursor && !earlyVerdictHolds && continuationMemoryRevoked(threadId,instanceId,String(resumeCursor),access,revokedWhy));
         // Why a live conversation is being dropped (it closes a warm engine and its browsers).
-        if(revoked)console.warn(`memory continuation reset thread=${threadId} engine=${instanceId} reason=${revokedWhy.reason??"check-failed"}`);
+        if(revoked){
+          const reason=earlyWhy.reason&&earlyWhy.reason!==revokedWhy.reason?`${earlyWhy.reason} (then ${revokedWhy.reason??"check-failed"})`:(revokedWhy.reason??"check-failed");
+          console.warn(`memory continuation reset thread=${threadId} engine=${instanceId} reason=${reason}`);
+          noteContinuationReset(threadId,instanceId,reason);
+        }
         // The stamp the post-recall recheck compares against: right after a full check passed.
         const checkedStamp=!resumeCursor||revoked?undefined:earlyVerdictHolds?earlyCheckStamp:databaseStamp();
         // Revoked since the overlapped build began: it is not this turn's bundle.
@@ -8557,6 +8565,7 @@ async function startTurn(
           const lateWhy: { reason?: string } = {};
           if(resumedSessionInvalidAfterRecall(threadId,instanceId,String(resumeCursor),access,checkedStamp,lateWhy)){
             console.warn(`memory continuation reset thread=${threadId} engine=${instanceId} reason=after-recall ${lateWhy.reason??"check-failed"}`);
+            noteContinuationReset(threadId,instanceId,`after-recall ${lateWhy.reason??"check-failed"}`);
             earlyBundle?.cancel();
             bundle=undefined;resumeCursor=undefined;sessionReset=true;memoryRefreshed=true;
           }
@@ -8600,6 +8609,7 @@ async function startTurn(
         submissionBoundary.alsoCheck(() => { if (resumeCursor && retainedSessionInvalid(threadId, instanceId, String(resumeCursor))) throw new Error("MEMORY_CONTEXT_REVOKED"); });
         if (resumeCursor && retainedSessionInvalid(threadId, instanceId, String(resumeCursor), offWhy)) {
           console.warn(`memory continuation reset thread=${threadId} engine=${instanceId} reason=memory-${memoryState().mode} ${offWhy.reason ?? "check-failed"}`);
+          noteContinuationReset(threadId, instanceId, `memory-${memoryState().mode} ${offWhy.reason ?? "check-failed"}`);
           earlyBundle?.cancel();
           resumeCursor = undefined; sessionReset = true;
           if (instance.adapter.resetSession) await instance.adapter.resetSession(threadId);
@@ -22124,7 +22134,10 @@ const server = createServer(async (req, res) => {
               return cursor === undefined || !retainedSessionInvalid(threadId, steerInstance, String(cursor));
             };
             const memorySessionHolds = steerSessionHolds();
-            if (!memorySessionHolds) console.warn(`memory continuation reset thread=${threadId} engine=${currentAtStart.modelSelection.instanceId} reason=steer-refused session-invalid`);
+            if (!memorySessionHolds) {
+              console.warn(`memory continuation reset thread=${threadId} engine=${currentAtStart.modelSelection.instanceId} reason=steer-refused session-invalid`);
+              noteContinuationReset(threadId, currentAtStart.modelSelection.instanceId, "steer-refused session-invalid");
+            }
             const steerId = randomUUID();
             // The quoted reply's roots are taken with the rendered text and
             // recorded on this running turn and its session inside the fence,
