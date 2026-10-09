@@ -29,7 +29,7 @@ it("wires the bot switch, Keep and Undo to revision-aware actions and opens sour
  const link=all.find(n=>typeof n.href==='string');(link!.onClick as (e:{preventDefault():void})=>void)({preventDefault(){}});expect(p.onOpen).toHaveBeenCalledWith(event.source);
 });
 it("reports review defaults, unavailable connections and paused memory truthfully",()=>{
- expect(learningStatusLine("active",learning)).toBe("Learning is on. Open Needs review below to approve new memories.");expect(learningStatusLine("active",{...learning,defaultOn:true})).toBe("Learning is on. Uses Flux Fast.");
+ expect(learningStatusLine("active",learning)).toBe("Learning is on. Memories that need your yes wait in Needs you.");expect(learningStatusLine("active",{...learning,defaultOn:true})).toBe("Learning is on. Uses Flux Fast.");
  expect(learningStatusLine("off",learning)).toContain("Learning is paused");expect(learningStatusLine("active",{...learning,connection:{instanceId:null,label:"No connection",source:"none"}})).toBe("Learning is paused: add your Flux key or choose a connection.");
  const reason="Learning is paused: the connection was refused. Check your key in Settings.";expect(learningStatusLine("active",{...learning,connection:{instanceId:null,label:"Flux",source:"none",reason}})).toBe(reason);
 });

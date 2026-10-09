@@ -19,6 +19,12 @@ export interface MemoryInspection {
 }
 export type MemoryAction = Record<string, unknown> & { action: string };
 
+/** A record's state, in the words a person uses. */
+export const memoryStateLabel = (state: string) => ({ candidate: "Waiting", active: "Current", archived: "Archived", superseded: "Replaced", deleted: "Forgotten" } as Record<string, string>)[state] ?? "Saved";
+/** Who or what a memory rests on. */
+export const memoryOriginLabel = (assertion: string) => ({ "owner-statement": "You said this", "tool-observation": "From a finished action", "assistant-inference": "Worked out by the bot", "unverified-import": "From imported notes" } as Record<string, string>)[assertion] ?? "Saved";
+const speakerLabel = (speaker: string) => speaker === "owner" || speaker.startsWith("person:") ? "You" : speaker === "tool" ? "A finished action" : "The bot";
+
 /** The approve request for a candidate, or null while approval is not allowed.
  * A correction that replaces a pinned fact needs the owner's explicit pin
  * choice; nothing is preselected (decision U-16). */
@@ -33,8 +39,8 @@ export function candidateApproval(record: MemoryRecord, correction: MemoryCorrec
 export const memoryInputClass = "w-full min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
 export const memoryButtonClass = "min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50";
 
-export function MemoryReview({ inspection, audiences, busy, onAction, onClose }: {
-  inspection: MemoryInspection; audiences: MemoryAudience[]; busy: boolean;
+export function MemoryReview({ inspection, audiences, busy = false, onAction, onClose }: {
+  inspection: MemoryInspection; audiences: MemoryAudience[]; busy?: boolean;
   onAction: (action: MemoryAction, success: string) => Promise<void>; onClose: () => void;
 }) {
   const { record, evidence, lineage } = inspection;
@@ -50,20 +56,18 @@ export function MemoryReview({ inspection, audiences, busy, onAction, onClose }:
   const choosePin = proposal?.status === "current" && proposal.target?.ownerPinned === true;
   return <section aria-label="Memory details" className="space-y-4 rounded-xl border border-hairline/50 bg-panel p-4" data-memory-detail-id={record.id}>
     <div className="flex items-center justify-between gap-3"><h3 className="text-[15px] font-medium">Memory details</h3><button className={memoryButtonClass} onClick={onClose}>Close details</button></div>
-    <p className="text-[12px] text-ink-secondary">{audience} · Record: {record.state} · Version {record.version} · {record.assertion.replaceAll("-", " ")} · <time dateTime={new Date(record.validFrom).toISOString()}>{new Date(record.validFrom).toLocaleString()}</time></p>
-    {record.assertion === "unverified-import" && <p className="text-[12px] text-ink-secondary">Imported notebook text is reference material. Active means saved for recall, not verified instructions or a change to workspace capture settings.</p>}
+    <p className="text-[12px] text-ink-secondary">{audience} · {memoryStateLabel(record.state)} · {memoryOriginLabel(record.assertion)} · <time dateTime={new Date(record.validFrom).toISOString()}>{new Date(record.validFrom).toLocaleString()}</time></p>
+    {record.assertion === "unverified-import" && <p className="text-[12px] text-ink-secondary">Imported notes are reference material. Keeping them saves them for recall; it does not verify them as instructions or change workspace capture settings.</p>}
     <p className="whitespace-pre-wrap break-words text-[13px]" data-testid="memory-record-text">{record.text}</p>
-    {record.state === "candidate" && record.reviewReason && <p className="text-[12px] text-ink-secondary">{record.reviewReason}</p>}
+    {record.state === "candidate" && record.reviewReason && <p className="text-[12px] text-ink-secondary">{record.reviewReason.replaceAll("Needs review", "Needs you")}</p>}
     <div className="space-y-2">
       <h4 className="text-[13px] font-medium">Sources</h4>
       {!evidence.length && <p className="text-[12px] text-ink-secondary">No linked source excerpts.</p>}
       {evidence.map(source => <details key={`${source.sourceId}:${source.revision}:${source.startByte}`} className="rounded-lg border border-hairline/40 p-3">
-        <summary className="cursor-pointer break-words text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">{source.path ?? source.sourceId} · {source.speaker} · Revision {source.revision}</summary>
+        <summary className="cursor-pointer break-words text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">{source.path ?? "A conversation"} · {speakerLabel(source.speaker)}</summary>
         <p className="mt-2 whitespace-pre-wrap break-words text-[13px]">{source.text}</p>
-        <p className="mt-2 break-all font-mono text-[11px] text-ink-secondary">Source hash: {source.hash}</p>
-        <p className="text-[11px] text-ink-secondary">Source bytes {source.startByte}–{source.endByte}</p>
       </details>)}
-      {lineage.length > 0 && <p className="break-all text-[12px] text-ink-secondary">Derived from: {lineage.map(item => `${item.id} (version ${item.version})`).join(", ")}</p>}
+      {lineage.length > 0 && <p className="text-[12px] text-ink-secondary">Built on {lineage.length} earlier {lineage.length === 1 ? "version" : "versions"} of this memory.</p>}
     </div>
     <fieldset disabled={busy} className="space-y-4">
       <legend className="sr-only">Review memory</legend>
@@ -84,7 +88,7 @@ export function MemoryReview({ inspection, audiences, busy, onAction, onClose }:
         </fieldset>}
       </div>}
       <div className="flex flex-wrap gap-2">
-        {record.state === "candidate" && <button className={memoryButtonClass} disabled={!approval} onClick={() => { if (approval) void onAction(approval, proposal ? t("memoryCorrection.approved") : "Candidate approved."); }}>{proposal ? t("memoryCorrection.approve") : "Approve candidate"}</button>}
+        {record.state === "candidate" && <button className={memoryButtonClass} disabled={!approval} onClick={() => { if (approval) void onAction(approval, proposal ? t("memoryCorrection.approved") : "Kept."); }}>{proposal ? t("memoryCorrection.approve") : "Keep"}</button>}
         {!managedInContinuity(record.kind) && active && <button className={memoryButtonClass} onClick={() => void onAction({ action: "pin", id: record.id, version: record.version, pinned: !record.ownerPinned }, record.ownerPinned ? "Memory unpinned." : "Memory pinned.")}>{record.ownerPinned ? "Unpin memory" : "Pin memory"}</button>}
       </div>
       {!managedInContinuity(record.kind) && active && <>

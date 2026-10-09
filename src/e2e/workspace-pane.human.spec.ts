@@ -218,7 +218,7 @@ for (const width of [390, 820, 1440]) for (const skin of ["light", "dark"]) test
   await expect(page.getByTestId("memory-settings")).toHaveAttribute("data-compact", "true");
   await expect(page.getByText(`Private note for research`, { exact: true })).toBeVisible();
   await expect(page.getByTestId("memory-settings")).toContainText(mode === "active" ? "Capture and recall are on." : mode === "off" ? "Memory is off." : "Processing and recall are paused.");
-  for (const view of ["Important", "Recent", "Needs review"]) { await page.getByRole("button", { name: view, exact: true }).click(); await expect(page.getByRole("button", { name: view, exact: true })).toBeEnabled(); }
+  for (const view of ["Important", "Recent", "Waiting"]) { await page.getByRole("button", { name: view, exact: true }).click(); await expect(page.getByRole("button", { name: view, exact: true })).toBeEnabled(); }
   await page.getByRole("button", { name: "Inspect memory", exact: true }).click();
   await page.getByRole("checkbox", { name: "Confirm forgetting this memory" }).check();
   await page.getByRole("button", { name: "Close details", exact: true }).click();

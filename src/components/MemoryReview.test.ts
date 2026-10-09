@@ -13,7 +13,7 @@ it("renders imported memory and source content as text and keeps approval explic
   expect(html).toContain("&lt;script&gt;untrusted&lt;/script&gt;");
   expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
   expect(html).not.toContain("<script>");
-  expect(html).toContain("Approve candidate");
+  expect(html).toContain(">Keep<");
   expect(html).not.toContain("Save correction");
   expect(html).not.toContain("Review as skill");
   expect(html).toContain("Confirm forgetting this memory");
@@ -46,7 +46,7 @@ describe("agent-proposed correction review", () => {
     expect(html.match(/type="radio"/g)).toHaveLength(2);
     expect(html).not.toContain('checked=""');
     expect(html).toMatch(/disabled=""[^>]*>Approve correction/);
-    expect(html).not.toContain("Approve candidate");
+    expect(html).not.toContain(">Keep<");
   });
 
   it("allows approval without a pin choice when the target is not pinned", () => {

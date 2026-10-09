@@ -34,6 +34,7 @@ import type { ProcedureEvaluatorBridge } from "./procedure-evaluator.ts";
 import { memoryHealth } from "./health.ts";
 import { forgetParkedThreads } from "./park.ts";
 import { revokeAllDisclosures } from "./revocation.ts";
+import { reviewBack, reviewEdit, reviewKeep, reviewKeepAll, reviewLater, reviewList, reviewSources, reviewSummary, reviewUndo } from "./review.ts";
 
 const SETTINGS="memory-owner-settings";
 type Configuration={excludedThreadIds:string[];extractorInstanceId:string|null};
@@ -50,11 +51,22 @@ export interface MemoryOwnerOptions {
   startSkillReview?:(input:{botId:string;record:{id:string;version:number};source:string;request:string})=>Promise<{botId:string;threadId:string;messageId:string}>;
 }
 const id=z.string().min(1).max(180),version=z.number().int().positive();
+/** A client-made action id: the key that makes a retried call return the first result. */
+const actionId=z.string().regex(/^[\w-]{8,80}$/);
 const subject={subjectType:z.enum(["bot","room"]),subjectId:id};
 const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("learning-history"),botId:id.optional(),cursor:id.optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
   z.object({action:z.literal("learning-undo"),eventId:id}).strict(),
   z.object({action:z.literal("learning-keep"),eventId:id}).strict(),
+  z.object({action:z.literal("waiting-summary")}).strict(),
+  z.object({action:z.literal("waiting-list"),subjectType:z.enum(["bot","room","other"]),subjectId:id,tab:z.enum(["waiting","later"]).optional(),cursor:z.string().max(16).optional()}).strict(),
+  z.object({action:z.literal("waiting-sources"),id,version}).strict(),
+  z.object({action:z.literal("review-keep"),actionId,id,version,correctionPin:z.enum(["transfer","unpin"]).optional()}).strict(),
+  z.object({action:z.literal("review-keep-all"),actionId,items:z.array(z.object({id,version}).strict()).min(1).max(500)}).strict(),
+  z.object({action:z.literal("review-later"),actionId,id,version}).strict(),
+  z.object({action:z.literal("review-back"),id}).strict(),
+  z.object({action:z.literal("review-edit"),actionId,id,version,text:z.string().min(1).max(4096),keep:z.boolean().optional(),correctionPin:z.enum(["transfer","unpin"]).optional()}).strict(),
+  z.object({action:z.literal("review-undo"),actionId,keepActionId:actionId,id,version}).strict(),
   z.object({action:z.literal("learning-bot"),botId:id,enabled:z.boolean(),learningRevision:z.number().int().nonnegative()}).strict(),
   z.object({action:z.literal("evolution-authorize")}).strict(),
   z.object({action:z.literal("evolution-authorize-classification")}).strict(),
@@ -274,6 +286,15 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   const input=parsed.data,db=database();
   if(input.action==="learning-history")return learningHistory(db,roster,input);
   if(input.action==="learning-undo"||input.action==="learning-keep")return transaction(()=>changeLearningEvent(db,input.eventId,input.action==="learning-undo"?"undo":"keep"));
+  if(input.action==="waiting-summary")return reviewSummary(ticket,roster);
+  if(input.action==="waiting-list")return reviewList(ticket,roster,input);
+  if(input.action==="waiting-sources")return reviewSources(ticket,roster,input);
+  if(input.action==="review-keep")return reviewKeep(ticket,roster,input);
+  if(input.action==="review-keep-all")return reviewKeepAll(ticket,roster,input);
+  if(input.action==="review-later")return reviewLater(ticket,roster,input);
+  if(input.action==="review-back")return reviewBack(ticket,roster,input);
+  if(input.action==="review-edit")return reviewEdit(ticket,roster,input);
+  if(input.action==="review-undo")return reviewUndo(ticket,roster,input);
   if(input.action==="learning-bot"){
     validSubject(roster,"bot",input.botId);
     transaction(()=>{const current=readMemoryLearning(db),paused=new Set(current.botsPaused);if(input.enabled)paused.delete(input.botId);else paused.add(input.botId);updateMemoryLearning(db,{botsPaused:[...paused]},input.learningRevision);});

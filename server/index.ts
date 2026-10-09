@@ -166,7 +166,10 @@ import { applyCardWaiting, applyCardRunResumed, applyReviewVerdict, redoContext 
 import { readReviewVerdict, reviewReplyShown } from "./project-review.ts";
 import { pauseProjectGoal, resumeProjectGoal } from "./project-goals.ts";
 import { inboxRequest, owedThreadsCached, type InboxRoutineRun } from "./inbox.ts";
-import { frameChangesInbox, onMessagesChanged } from "./inbox-version.ts";
+import { bumpMessagesVersion, frameChangesInbox, onMessagesChanged } from "./inbox-version.ts";
+import { memoryWaitingRows, withMemoryWaiting } from "./inbox-memory-waiting.ts";
+import { waitingSummary } from "./memory/review.ts";
+import { WaitingMonitor } from "./memory/waiting-monitor.ts";
 import { ioBudget } from "./io-budget.ts";
 import { inboxAccessFor, inboxDoor, inboxThreads, type InboxDoor } from "./inbox-access.ts";
 import { withBackupNotices } from "./inbox-backup-notices.ts";
@@ -4212,6 +4215,8 @@ function announceInboxChanged() {
   inboxChangedTimer.unref?.();
 }
 onMessagesChanged(announceInboxChanged);
+// Memories waiting for the owner: one cheap look every 500 ms, a counts-only frame when a number moves, and the Inbox key moves with it.
+new WaitingMonitor({ roster: () => ({ bots: store.bots, groups: store.groups }), emit: (frame) => broadcast({ ...frame }), changed: bumpMessagesVersion }).start();
 ioBudget.setOnScale(() => broadcast({ kind: "inbox.changed", pollScale: ioBudget.pollScale() }));
 ioBudget.setIsIdle(() => !store.bots.some(bot=>bot.busy)&&!store.groups.some(groupIsWorking)&&!activeProviderSelections.size&&!directTurnDispatchClaims.size&&!internalTurnOwners.size&&!groupTurnOperations.size&&!coordinationSlots.size&&!routines?.listRuns().some(run=>isLiveRoutineRunStatus(run.status)));
 ioBudget.start();
@@ -16280,7 +16285,10 @@ const server = createServer(async (req, res) => {
       const backupFailed = desktopInbox ? backupFailedNotice : null;
       // Lessons waiting for the owner's yes are the only learning in the Inbox (server/inbox-learning-suggestions.ts).
       const learningRows=desktopInbox?inboxSuggestionRows(database(),id=>store.bot(id)?.name,store.bots.map(bot=>bot.id)):[];
-      const body=withLearningSuggestions(withBackupNotices(result.body as { decisions?: number }, { backupWaiting, backupFailed }),learningRows);
+      // Memories the bots would like to keep: one card per bot, counted per item (server/inbox-memory-waiting.ts).
+      let waitingRows: ReturnType<typeof memoryWaitingRows> = [];
+      if (desktopInbox) { try { waitingRows = memoryWaitingRows(waitingSummary({ bots: store.bots, groups: store.groups })); } catch { /* memory not ready: the Inbox reads without it */ } }
+      const body=withMemoryWaiting(withLearningSuggestions(withBackupNotices(result.body as { decisions?: number }, { backupWaiting, backupFailed }),learningRows),waitingRows);
       if(method === "GET" && result.status === 200) {
         const projects=store.groups.filter(group=>group.channelProject && !group.dm && (desktopInbox || visibleToCompanion(store,{scope:"group",groupId:group.id}))).map(readProjectDecisions).filter(row=>row.count>0);
         const extra=projects.reduce((count,row)=>count+row.goals.length+row.deadWaitCards.length,0);
