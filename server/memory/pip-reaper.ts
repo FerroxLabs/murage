@@ -64,8 +64,15 @@ export async function readProcessStartTime(pid: number, platform: NodeJS.Platfor
 /** Child registration, right after spawn. Null means the read failed: the caller kills the tree and marks uncertain-transport. */
 export async function registerChild(pid: number | undefined, now = Date.now(), platform: NodeJS.Platform = process.platform): Promise<TransportChild | null> {
   if (pid === undefined) return null;
-  const startTime = await readProcessStartTime(pid, platform);
-  return startTime ? { pid, startTime, registeredAt: now } : null;
+  // A failed look ("unknown": ps could not be spawned or timed out on a loaded host) is retried; a process
+  // that is absent is not. Without the retry one slow ps made a healthy child "uncertain-transport".
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const seen = await observeProcess(pid, platform);
+    if (seen.state === "present") return { pid, startTime: seen.startTime, registeredAt: now };
+    if (seen.state === "absent") return null;
+    await sleep(150);
+  }
+  return null;
 }
 
 // --------------------------------------------------------- kill + verify ----
