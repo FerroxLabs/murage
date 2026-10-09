@@ -58,6 +58,9 @@
 //                      released only at that close, so a test can stand
 //                      inside the Stop → close window deterministically.
 //
+//   FAKE_CLAUDE_IGNORE_TERM=1 a wedged CLI: ignores SIGTERM and stdin EOF,
+//                      so only SIGKILL of its tree ends it.
+//
 //   FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS how many launches die with transient
 //                      stderr at startup WITHOUT reading stdin (counted in
 //                      FAKE_CLAUDE_STATE). The driver only sees its write
@@ -999,6 +1002,13 @@ const sigtermDelayMs = Number(process.env.FAKE_CLAUDE_SIGTERM_DELAY_MS);
 if (Number.isFinite(sigtermDelayMs) && sigtermDelayMs > 0) {
   process.on("SIGTERM", () => { setTimeout(() => process.exit(143), sigtermDelayMs); });
 }
+// A wedged CLI: SIGTERM and stdin EOF are both ignored, so only SIGKILL ends
+// it.
+const wedged = process.env.FAKE_CLAUDE_IGNORE_TERM === "1";
+if (wedged) {
+  process.on("SIGTERM", () => { /* ignored */ });
+  setInterval(() => { /* stays alive after stdin EOF */ }, 60_000);
+}
 
 // A slow start (a wrapper, a loaded machine): nothing is read or written for
 // FAKE_CLAUDE_START_DELAY_MS, then the CLI reads its --mcp-config and
@@ -1058,6 +1068,7 @@ process.stdin.on("data", (c) => {
   }
 });
 process.stdin.on("end", () => {
+  if (wedged) return;
   stdinEnded = true;
   finishIfDone();
 });

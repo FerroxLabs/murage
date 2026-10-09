@@ -284,6 +284,31 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect(two.pid).not.toBe(one.pid);
   }, 20_000);
 
+  it("resetSession on a wedged CLI (ignores SIGTERM and stdin EOF) kills its tree and never fails: the next send runs on a fresh session", async () => {
+    // 1.0.1.1: a CLI that would not close in 10 s failed the owner's turn
+    // with CLAUDE_SESSION_RESET_TIMEOUT. A reset now waits a short grace,
+    // then kills the whole tree and goes on.
+    process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
+    try {
+      await create();
+      const one = await run("t-wedged", "one", base);
+      const started = Date.now();
+      const reset = await instance.adapter.resetSession!("t-wedged").then(() => "reset", (error: unknown) => String(error));
+      const took = Date.now() - started;
+      expect(reset).toBe("reset");
+      expect(took).toBeLessThan(5_000);
+      // the old process is gone: it cannot answer for the thread
+      expect(() => process.kill(one.pid, 0)).toThrow();
+      const two = await run("t-wedged", "two", { ...base, sessionReset: true });
+      expect(two.pid).not.toBe(one.pid);
+      expect(two.trace).toMatch(/process=spawned reason=(no-process|sessionReset)/);
+      const replies = recorder.events.filter((e) => e.type === "turn.completed" && e.threadId === "t-wedged");
+      expect(replies).toHaveLength(2);
+    } finally {
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+    }
+  }, 20_000);
+
   it("recycles the process when a child process of the CLI is still alive at settle", async () => {
     await create();
     const one = await run("t-child", "one", base);

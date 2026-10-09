@@ -1129,6 +1129,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       ? configuredIdleMinimum
       : 10_000;
     const SESSION_IDLE_MS = Math.max(sessionIdleMinimum, Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MS) || 15 * 60_000);
+    /** How long a reset lets the old CLI exit on stdin EOF before killing its tree. */
+    const CLAUDE_RESET_GRACE_MS = 1_500;
+    /** How long a reset waits for the killed tree's confirmation before going on without it. */
+    const CLAUDE_RESET_KILL_WAIT_MS = 2_000;
 
     const backgroundCapMs = backgroundWaitCapMs(config.backgroundTaskCapMs);
     const backgroundOf = (t: SessionTurn): BackgroundState =>
@@ -2868,34 +2872,43 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const session = sessions.get(threadId);
           active.get(threadId)?.stop();
           if (!session) return;
-          // The child already closed (it exited, or an earlier close is still
-          // confirming its tree stopped before the session leaves the map):
-          // its "close" has fired and never fires again, so waiting for it
-          // only timed out 10 s later and failed the next send. Confirm the
-          // tree instead, and finish the close so the thread is free.
-          if (session.finishClose) {
-            closeSession(threadId, "memory context reset");
-            if (!(await awaitCliTreeStopped(session.child))) throw new Error("CLAUDE_SESSION_RESET_TIMEOUT");
-            await session.finishClose();
-            await requireRetiredStopped(threadId);
-            return;
-          }
-          await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              session.child.off("close", closed);
-              reject(new Error("CLAUDE_SESSION_RESET_TIMEOUT"));
-            }, 10_000);
-            const closed = () => {
-              void awaitCliTreeStopped(session.child).then((stopped) => {
-                clearTimeout(timeout);
-                if (stopped) resolve();
-                else reject(new Error("CLAUDE_SESSION_RESET_TIMEOUT"));
-              });
-            };
+          // A reset never fails the owner's turn (1.0.1.1). It used to wait
+          // up to 10 s for the old CLI to close, then throw
+          // CLAUDE_SESSION_RESET_TIMEOUT. Now the old process gets a short
+          // grace to exit on stdin EOF; past it, its whole tree is killed
+          // outright (no SIGTERM grace) and confirmed in the background.
+          // Either way it leaves this thread's slot at once, so the next send
+          // spawns a fresh session. It can no longer answer for the thread:
+          // closeSession took its broker and credentials, its turn was
+          // stopped, and frames with no open turn are dropped.
+          // A SIGKILL'd tree is confirmed within CLI_FORCE_WAIT_MS, and its
+          // close settles any turn it still held before the fresh session
+          // starts. Only a process the kernel cannot end in that time leaves
+          // the slot unconfirmed; its confirmation then finishes behind.
+          const started = Date.now();
+          closeSession(threadId, "memory context reset");
+          const exited = session.finishClose !== undefined || await new Promise<boolean>((resolve) => {
+            const done = (value: boolean) => { clearTimeout(timer); session.child.off("close", closed); resolve(value); };
+            const closed = () => done(true);
+            const timer = setTimeout(() => done(false), CLAUDE_RESET_GRACE_MS);
             session.child.once("close", closed);
-            closeSession(threadId, "memory context reset");
           });
-          await requireRetiredStopped(threadId);
+          const stopping = awaitCliTreeStopped(session.child, 0);
+          let capTimer: NodeJS.Timeout | undefined;
+          const stopped = await Promise.race([stopping, new Promise<undefined>((resolve) => { capTimer = setTimeout(() => resolve(undefined), CLAUDE_RESET_KILL_WAIT_MS); })]);
+          clearTimeout(capTimer);
+          const finished = (confirmed: boolean) => {
+            if (!confirmed) {
+              console.warn(`claude reset thread=${threadId} old process not confirmed stopped; it stays retiring and Stop retries it`);
+              return Promise.resolve();
+            }
+            retiring.delete(session);
+            return session.finishClose?.() ?? Promise.resolve();
+          };
+          if (stopped === undefined) void stopping.then(finished);
+          else await finished(stopped).catch(() => undefined);
+          if (sessions.get(threadId) === session) sessions.delete(threadId);
+          console.info(`claude reset thread=${threadId} ms=${Date.now() - started} old=${exited ? "exited" : "killed"}${stopped === true ? "" : " unconfirmed"}`);
         },
         respondToRequest: async (threadId, requestId, decision) => {
           // fail-closed by construction: no broker, or an ask that already
