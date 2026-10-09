@@ -136,8 +136,9 @@ it("shows a question card in auto mode instead of auto-approving it", async () =
   expect(said).not.toContain("auto-approved");
   // the audit keeps that the card was SHOWN, and nothing that says anyone or
   // anything approved it
+  // the audit line is appended in the background; wait for it, never race it
+  await expect.poll(() => decisions().filter((row) => row.requestId === card.card.requestId).map((row) => row.decision), { timeout: 15_000 }).toEqual(["card-shown"]);
   const rows = decisions().filter((row) => row.requestId === card.card.requestId);
-  expect(rows.map((row) => row.decision)).toEqual(["card-shown"]);
   expect(rows[0]).toMatchObject({ source: "question", tool: "AskUserQuestion" });
   expect(decisions().some((row) => row.decision === "auto-approved")).toBe(false);
   // autoReview is "enforce", and it still never asked a model to answer this
@@ -297,5 +298,5 @@ it("marks a question left open by a previous run as expired, never silently drop
   // it kept its questions, so the card can still be filled in and sent
   expect(swept.card.questions).toHaveLength(2);
   expect(swept.card.dismissed).toBeFalsy();
-  expect(decisions().some((row) => row.requestId === requestId && row.decision === "question-expired")).toBe(true);
+  await expect.poll(() => decisions().some((row) => row.requestId === requestId && row.decision === "question-expired"), { timeout: 15_000 }).toBe(true);
 }, 60000);

@@ -157,7 +157,7 @@ it("never ships a raw model id as a label when the provider's catalog omits name
   {id:"flux-pinned-deepseek-flash-max",capability:"chat"},
   {id:"claude-opus-5",capability:"chat",name:"Claude Opus 5"},
  ]},1);
- expect(models.map(model=>model.label)).toEqual(["Flux Auto","Flux Reasoning","Flux Pinned Deepseek Flash Max","Claude Opus 5"]);
+ expect(models.map(model=>model.label)).toEqual(["Flux Auto","Flux Reasoning","Flux Pinned DeepSeek Flash Max","Claude Opus 5"]);
 });
 it("still prefers a name the provider actually supplied over the Flux table",()=>{
  const f=fixture("flux"),connection=parseProviderBank(f.bank())[0]!;

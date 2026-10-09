@@ -54,6 +54,8 @@ describe.skipIf(process.platform === "win32")("Update Claude for me", () => {
     const { status, body } = await call("/api/instances/updatable/claude-update");
     expect(status).toBe(200);
     expect(body).toEqual({ ok: true, version: "2.1.280 (Claude Code)" });
-    expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["update", "--version"]);
+    // A sign-in probe can land in the log at any moment; only the updater's calls count.
+    const calls = readFileSync(log, "utf8").trim().split("\n").filter((line) => !line.startsWith("auth "));
+    expect(calls).toEqual(["update", "--version"]);
   });
 });
