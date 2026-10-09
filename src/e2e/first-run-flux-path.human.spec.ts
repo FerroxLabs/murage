@@ -597,17 +597,11 @@ test.describe("the checks in this file can fail", () => {
   test("the dead-end check catches a screen with nothing left to press", async ({ app }) => {
     await chiefHasSpoken(app);
     await screenIsUsable(app, "the live page, before anything is taken away");
-    // The live page keeps rendering (setup polling, the Chief's checklist), so a
-    // one-shot takeaway races fresh controls. Keep taking them away on every change.
     await app.evaluate(() => {
-      const takeAway = () => {
-        for (const element of Array.from(document.querySelectorAll("button, input, textarea, select"))) {
-          if (!(element as HTMLButtonElement).disabled) (element as HTMLButtonElement).disabled = true;
-        }
-        for (const element of Array.from(document.querySelectorAll("a[href]"))) element.removeAttribute("href");
-      };
-      takeAway();
-      new MutationObserver(takeAway).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["disabled", "href"] });
+      for (const element of Array.from(document.querySelectorAll("button, input, textarea, select"))) {
+        (element as HTMLButtonElement).disabled = true;
+      }
+      for (const element of Array.from(document.querySelectorAll("a[href]"))) element.removeAttribute("href");
     });
     await screams(
       () => screenIsUsable(app, "a page with every control disabled"),
