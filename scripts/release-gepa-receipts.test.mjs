@@ -74,7 +74,10 @@ describe("release.yml GEPA receipts", () => {
         .filter((step) => String(step.uses).startsWith("actions/upload-artifact"))
         .map((step) => step.with.name);
       expect(names.filter((name) => name.endsWith("-release")), job).toHaveLength(1);
-      expect(names.filter((name) => !name.endsWith("-release")).every((name) => name.endsWith("-gepa-evidence")), job).toBe(true);
+      // Besides evidence, the mac job hands its x64 app to the native Intel
+      // smoke job (mac-x64); that handoff never matches the "*-release" pattern.
+      const handoffs = job === "mac" ? ["mac-x64-app-smoke"] : [];
+      expect(names.filter((name) => !name.endsWith("-release") && !handoffs.includes(name)).every((name) => name.endsWith("-gepa-evidence")), job).toBe(true);
     }
   });
 
