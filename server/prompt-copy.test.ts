@@ -38,7 +38,6 @@ import { loadBundledSkills, renderSkillInstructions } from "./skill-library.ts";
 import { renderInstalledPlaybooks } from "./installed-playbooks.ts";
 import { importedSkillsPrompt } from "./procedure-bundles.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt, type ChiefTeamMember } from "./chief-of-staff.ts";
-import { openMurageStatusSystemPrompt } from "./murage-status-capsule.ts";
 import { channelProjectSystemLine } from "./project-channel.ts";
 import { groupGoalCoordinatorInstructions, groupGoalWorkerInstructions } from "./group-goal-run.ts";
 import { ensureWorkspace, memorySystemPrompt } from "./workspace.ts";
@@ -178,7 +177,6 @@ for (const canDelegate of [true, false]) {
 }
 add("chief empty workspace", chiefOfStaffSystemPrompt("chief", [team[0]!], true));
 add("individual alone", individualAssistantSystemPrompt("bruce", [team[4]!], true));
-add("murage status", openMurageStatusSystemPrompt({ cachePath: "/nonexistent/murage-status.json" }));
 
 // ── capabilities primer: every line in every combination that picks it ───
 const keys = Object.keys(INTEGRATION_FACTS) as IntegrationKey[];

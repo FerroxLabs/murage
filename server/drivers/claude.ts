@@ -9,6 +9,7 @@ import { CLAUDE_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts
 //   - Composio Sessions (connected apps → tools) over streamable HTTP
 //   - the bot's cloud computer (box.ascii.dev) via server/computer-proxy.ts
 //     — screenshot/exec/open_url, the CUA-on-the-box bridge
+import { boundedEnvMs } from "./env-ms.ts";
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
 import { execFileSync } from "node:child_process";
@@ -289,6 +290,9 @@ function extrasFromUnknown(value: unknown): Array<{ id: string; label: string }>
   });
 }
 
+/** Official Anthropic model ids, e.g. claude-sonnet-5-5 (no host:: inject prefix). */
+const OFFICIAL_CLAUDE_ID = /^claude-[a-z0-9.-]+$/;
+
 /** Extra ids from ~/.claude/settings.json. Official cloud rows stay untagged.
  *  `model` is Claude Code's last-used slug, not a catalog — listing it as
  *  Custom put a non-inject id in the picker and the turn then had no
@@ -316,7 +320,9 @@ export function readClaudeModelCatalog(env: Record<string, string | undefined> =
   for (const extra of extras) {
     if (seen.has(extra.id)) continue;
     seen.add(extra.id);
-    options.push({ id: extra.id, label: extra.label, custom: true });
+    // An Anthropic model id (claude-*) runs on the signed-in account like the
+    // static rows; only other ids are local/custom models (OpenMausBot #1990).
+    options.push(OFFICIAL_CLAUDE_ID.test(extra.id) ? { id: extra.id, label: extra.label } : { id: extra.id, label: extra.label, custom: true });
   }
   return { default: STATIC_CLAUDE_MODELS.default, options };
 }
@@ -1128,7 +1134,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const sessionIdleMinimum = Number.isFinite(configuredIdleMinimum) && configuredIdleMinimum > 0
       ? configuredIdleMinimum
       : 10_000;
-    const SESSION_IDLE_MS = Math.max(sessionIdleMinimum, Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MS) || 15 * 60_000);
+    const SESSION_IDLE_MS = Math.max(sessionIdleMinimum, boundedEnvMs(process.env.MURAGE_CLAUDE_SESSION_IDLE_MS, 15 * 60_000));
 
     const backgroundCapMs = backgroundWaitCapMs(config.backgroundTaskCapMs);
     const backgroundOf = (t: SessionTurn): BackgroundState =>

@@ -22,6 +22,12 @@
 
 // A refused local connection costs next to nothing, and this interval is the
 // worst-case wait between the port opening and the window starting.
+// A healthy child usually binds within a few seconds of fork, and a refused
+// loopback connect costs well under a millisecond, so poll briskly over that
+// window; slower boots fall back to the old interval (OpenMausBot #2390,
+// Apache-2.0).
+export const BOOT_PROBE_FAST_INTERVAL_MS = 25;
+export const BOOT_PROBE_FAST_WINDOW_MS = 5_000;
 export const BOOT_PROBE_INTERVAL_MS = 100;
 /** A running memory upgrade keeps the wait going in steps of this size ... */
 export const BOOT_EXTEND_STEP_MS = 5_000;
@@ -83,7 +89,9 @@ export async function pollServerIdentity({
     } catch {
       // Not up yet, or this probe ran into the wall-clock budget — either way
       // back off to the poll interval, then let the loop condition decide.
-      await sleep(Math.min(BOOT_PROBE_INTERVAL_MS, Math.max(1, deadline - now())));
+      const intervalMs =
+        now() - startedAt < BOOT_PROBE_FAST_WINDOW_MS ? BOOT_PROBE_FAST_INTERVAL_MS : BOOT_PROBE_INTERVAL_MS;
+      await sleep(Math.min(intervalMs, Math.max(1, deadline - now())));
       continue;
     }
     const body = await res.json().catch(() => null);

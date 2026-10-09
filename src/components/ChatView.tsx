@@ -1501,7 +1501,9 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     setFollow(next);
   }, []);
 
-  useEffect(() => setBottomFollow(true), [bot.id, setBottomFollow]);
+  // Another thread of the same bot is another transcript: re-arm on the key,
+  // not the bot (OpenMausBot #2462, Apache-2.0).
+  useEffect(() => setBottomFollow(true), [transcriptKey, setBottomFollow]);
   useBottomFollowResize(scrollRef, transcriptRef, followRef, transcriptKey);
 
   // A search result may be hundreds of rows before the mounted tail. Open a
@@ -1545,7 +1547,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     // keyboardInsetPx: the pane loses clientHeight when the keyboard opens
     // while scrollHeight is unchanged, so a pinned transcript has to re-pin or
     // the last message slides up behind the composer.
-  }, [bot.id, messages.length, streaming, liveReply, reasoning, plan, bot.busy, composerDock.pad, keyboardInsetPx]);
+  }, [transcriptKey, messages.length, streaming, liveReply, reasoning, plan, bot.busy, composerDock.pad, keyboardInsetPx]);
 
   // Reading scrollback (follow === false): preserve the anchor rather than let
   // the shrinking pane scroll the reader's row up out of view by exactly the

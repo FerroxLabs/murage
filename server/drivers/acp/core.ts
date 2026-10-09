@@ -1,4 +1,5 @@
 import { renderDriverReplay } from "../../turn-context.ts";
+import { boundedEnvMs } from "../env-ms.ts";
 import { FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../../murage-tool-surface.ts";
 // Generic ACP (Agent Client Protocol) driver core — one JSON-RPC-2.0-over-
 // stdio session runtime that every ACP CLI harness (Grok Build, Gemini CLI,
@@ -870,10 +871,7 @@ export interface AcpSupport {
  *  cover that and still short enough that a genuinely wedged CLI surfaces as an
  *  error instead of a hang. A non-numeric or non-positive override is ignored
  *  rather than passed through as NaN, which would disarm the timeout entirely. */
-const envOr = (key: string, fallback: number): number => {
-  const n = Number(process.env[key]);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-};
+const envOr = (key: string, fallback: number): number => boundedEnvMs(process.env[key], fallback);
 const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
 /** How long an unanswered permission card waits before it is denied. Read
  * lazily so a fixture can shorten it; a routine run's cards never use it

@@ -32,3 +32,5 @@ packageExtensions:
 # one nested under @huggingface/transformers that server/image-*.ts load at runtime.
 overrides:
   sharp: ">=0.35.5"
+  # mermaid 12.1 still allows dompurify 3.4.13. Force the patched release.
+  dompurify: 3.4.16

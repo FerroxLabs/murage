@@ -9,6 +9,7 @@ import { DATA_DIR } from "./config.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import { cancelCoalesced, flushCoalesced, scheduleCoalesced, writeFileAtomic } from "./atomic.ts";
 import { RoutineRunsJournal, routinesCommit } from "./routine-runs-journal.ts";
+import { PersistedStateRecoveryError, readPersistedJson } from "./persisted-state.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { CLOUD_ROUTINE_NOT_YET, type RoutineRunCardData } from "../shared/routine-run.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
@@ -695,6 +696,8 @@ export const STARTUP_WAIT_MS = 90_000;
 export const STARTUP_NOTE =
   "Note: connected apps had not finished loading when this run started, so their tools may be missing. If a tool you need is not available, say so plainly and stop instead of guessing; this run will be retried.";
 
+class MissingRoutinesFile extends Error {}
+
 export class RoutineManager {
   private startedAt: number;
   private gateOpened = false;
@@ -729,9 +732,14 @@ export class RoutineManager {
     let prePin: string | undefined;
     this.now = options.now ?? Date.now;
     this.startedAt = this.now();
+    // A missing file is a fresh start. Any other read, parse or shape failure
+    // stops startup (like webhooks.json) instead of loading empty state that
+    // the next save would write over the person's routines.
+    let original = "";
+    const parsedDisk = readPersistedJson(this.file, (path) => (original = readFileSync(path, "utf8")));
     try {
-      const original = readFileSync(this.file, "utf8");
-      const disk = JSON.parse(original) as Partial<RoutineFile>;
+      if (parsedDisk === undefined) throw new MissingRoutinesFile();
+      const disk = parsedDisk as Partial<RoutineFile>;
       this.routines = Array.isArray(disk.routines)
         ? disk.routines.flatMap((routine) => {
             const schedule = loadSchedule(routine.schedule);
@@ -827,7 +835,8 @@ export class RoutineManager {
             Number.isFinite(receipt?.appliedAt)
           )
         : [];
-    } catch {
+    } catch (error) {
+      if (!(error instanceof MissingRoutinesFile)) throw new PersistedStateRecoveryError(this.file, "invalid-shape", error);
       prePin = undefined;
       this.routines = [];
       this.runs = [];
@@ -1956,9 +1965,12 @@ export class RoutineManager {
       // (STOP1). The user's own cancel sets the run cancelled before its turn
       // stops, so this is a host stop (watchdog, connection change).
       if (!turnSucceeded(event)) {
+        // A bare "error" or "tool_error" says less than the runtime.error that
+        // came before it; keep the detailed one (OpenMausBot #2214, Apache-2.0).
+        const genericStopReason = event.stopReason === "error" || event.stopReason === "tool_error";
         this.failRun(run, turnStopped(event)
           ? "The run was stopped before it finished"
-          : event.stopReason ?? run.error ?? "The bot did not complete this run");
+          : (genericStopReason ? run.error : undefined) ?? event.stopReason ?? run.error ?? "The bot did not complete this run");
         queueMicrotask(() => void this.tick());
         return cloneRun(run);
       }

@@ -1,4 +1,5 @@
 import { criteriaRecordCorrection, createReplySpeakerTurns, replyAudienceIsOwner } from "./reply-speaker-guard.ts";
+import { readBody } from "./read-body.ts";
 import { flushCoalesced } from "./atomic.ts";
 import { projectIsClosing } from "./project-records.ts";
 import { reconcileTeamIdentities } from "./team-lifecycle.ts";
@@ -301,7 +302,6 @@ import { readUserChromeEndpoint, USER_CHROME_ALLOW_WAIT_MS, USER_CHROME_SETUP_ME
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 import { abandonedLinkFailure, authorizeFailureSentence, panelAuthorizeError, parseConnectorRequests, connectedAppsAudienceRefusal, connectorCardText, connectorFailure, connectorRequestKey, connectorRequestStatus, connectorTimedOutSentence } from "./connector-requests.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt, type ChiefTeamMember } from "./chief-of-staff.ts";
-import { openMurageStatusSystemPrompt } from "./murage-status-capsule.ts";
 import {
   containerComputerAction,
   containerComputerExists,
@@ -4847,6 +4847,10 @@ async function answerRequest(
     // (a crash, a cancel). Say so, keep an "Always allow for this routine"
     // the owner just chose, and offer Run again instead of a dead end.
     const routine = question ? undefined : routines?.listRoutines().find((candidate) => candidate.threadId === threadId && candidate.target === "bot");
+    // A card that already settled must not read as a failed delivery when its
+    // answer is replayed (a double tap, a second tab, a client retry): nothing
+    // was lost, the earlier answer already ran (OpenMausBot #2224, Apache-2.0).
+    if (existing?.card?.answered) return outcome;
     if (routine) {
       const saved = behavior === "allow" && Boolean(card?.routineAllowKey) && card?.routineId === routine.id && (routine.alwaysAllow ?? []).includes(card.routineAllowKey!);
       store.appendMessage(threadId, {
@@ -8379,7 +8383,6 @@ async function startTurn(
             bot.id,
             chiefRoster(surfacesForOwner, bot, threadId),
             Boolean(integrations.agents),
-            openMurageStatusSystemPrompt(),
           )
         // The Chief's other branch. The generic line below says "the other
         // bots in your section", which is the one thing an individual
@@ -9320,7 +9323,18 @@ routines = new RoutineManager({
   createTask: (botId, title, activate = false) => {
     const task = store.createTask(botId, title, activate);
     const bot = store.bot(botId);
-    if (task && bot) broadcast({ kind: "bot", bot: publicBot(bot) });
+    // A run's task that stays in the background changes the bot's task list,
+    // not the conversation on screen, so the frame carries no transcript. The
+    // whole active thread on every scheduled run can pass a phone stream's
+    // frame ceiling (OpenMausBot #2248, Apache-2.0). Clients keep their
+    // transcript when a bot frame has none. An activated task is a fresh,
+    // short thread the client must show.
+    if (task && bot) {
+      broadcast({
+        kind: "bot",
+        bot: activate ? publicBot(bot) : { ...wireBot(bot), tasks: store.tasks(bot.id).map(wireTask) },
+      });
+    }
     return task;
   },
   projectRoutine: run => {
@@ -12536,7 +12550,6 @@ async function runGroupMemberTurn(
             bot.id,
             chiefRoster(roomOwnerAudience, bot, threadId),
             Boolean(integrations.agents),
-            openMurageStatusSystemPrompt(),
           )
         : TURN_PROMPTS.roomReply,
       // hand-offs go through the tools; an @name is a reference (plan 3.2)
@@ -15845,42 +15858,6 @@ async function sendImage(res: ServerResponse, url: URL, key: string, version: st
   res.end(body.bytes);
 }
 
-function readBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<any> {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    let bytes = 0;
-    let done = false;
-    const fail = (status: number, msg: string) => {
-      if (done) return;
-      done = true;
-      const err = Object.assign(new Error(msg), { status });
-      reject(err);
-    };
-    req.on("data", (c) => {
-      if (done) return;
-      bytes += typeof c === "string" ? Buffer.byteLength(c) : c.length;
-      if (bytes > maxBytes) {
-        // Keep draining the socket, but stop retaining attacker-controlled
-        // bytes. Destroying the request here prevents the caller from
-        // receiving the useful 413 response.
-        return fail(413, "body too large");
-      }
-      data += c;
-    });
-    req.on("end", () => {
-      if (done) return;
-      let body: any;
-      try {
-        body = data ? JSON.parse(data) : {};
-      } catch {
-        return fail(400, "invalid JSON body");
-      }
-      done = true;
-      resolve(body);
-    });
-    req.on("error", (e) => fail(400, e instanceof Error ? e.message : String(e)));
-  });
-}
 
 // Loopback-only enforcement: the harness runs on 127.0.0.1 but accepts
 // requests from any loopback connection and any web page that DNS-rebinds

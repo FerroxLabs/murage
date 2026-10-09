@@ -1981,6 +1981,17 @@ describe("RoutineManager", () => {
     expect(h.manager.markAllSeen()).toHaveLength(1);
   });
 
+  it("keeps the detailed runtime error when the turn ends with a bare error stop reason", async () => {
+    const h = harness();
+    const routine = h.manager.create({ name: "Detailed error", prompt: "Write it", botId: "ember-a", schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() } });
+    h.setNow(routine.nextRunAt!);
+    await h.manager.tick();
+    const base = { provider: "fake", threadId: "thread-1", createdAt: new Date().toISOString() } as const;
+    h.manager.handleRuntimeEvent({ ...base, eventId: "detail", type: "runtime.error", message: "The model rejected the request: quota used up" } as never);
+    h.manager.handleRuntimeEvent({ ...base, eventId: "end", type: "turn.completed", ok: false, stopReason: "error" });
+    expect(h.manager.listRuns()[0].error).toBe("The model rejected the request: quota used up");
+  });
+
   it("fails, not completes, a run whose turn the host stopped (ok:true, stopReason cancelled) (STOP1)", async () => {
     const h = harness();
     const routine = h.manager.create({

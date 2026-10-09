@@ -703,8 +703,12 @@ describe("configuration boundaries", () => {
     expect(showToolCallsEnabled({ features: { showToolCalls: true } })).toBe(true);
   });
 
-  it.each([0, 1.5, 5, "2", null])("rejects an invalid per-bot VM limit: %j", (maxInstances) => {
+  it.each([0, 1.5, 9, "2", null])("rejects an invalid per-bot VM limit: %j", (maxInstances) => {
     expect(() => parseConfigPatch({ localVm: { maxInstances } })).toThrow("localVm.maxInstances");
+  });
+
+  it("accepts up to eight per-bot desktops", () => {
+    expect(parseConfigPatch({ localVm: { maxInstances: 8 } })).toEqual({ localVm: { maxInstances: 8 } });
   });
 
   it.each(["one-per-bot", "windows", 1, null])("rejects an invalid Local VM mode: %j", (mode) => {

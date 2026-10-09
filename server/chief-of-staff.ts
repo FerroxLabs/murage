@@ -142,7 +142,6 @@ export function chiefOfStaffSystemPrompt(
   chiefId: string,
   bots: ChiefTeamMember[],
   canDelegate: boolean,
-  trustedMurageStatus = "",
 ): string {
   const chief = bots.find((bot) => bot.id === chiefId);
   const delegation = delegationGuidance(canDelegate);
@@ -158,7 +157,6 @@ export function chiefOfStaffSystemPrompt(
       delegation,
       "Current workspace:",
       workspaceRoster(chief, bots),
-      trustedMurageStatus,
     ].filter(Boolean).join("\n");
   }
 
@@ -189,7 +187,6 @@ export function chiefOfStaffSystemPrompt(
       `@${clip(workspaceChief.name, ROSTER_NAME_MAX)} is the workspace Chief of Staff and is on your roster: report this section's results back to them when they assigned the work.`,
     `Your ${sectionName} team:`,
     roster,
-    trustedMurageStatus,
   ].filter(Boolean).join("\n");
 }
 

@@ -70,6 +70,22 @@ describe("readClaudeModelCatalog", () => {
     });
   });
 
+  it("lists a newer Anthropic model from extraModels with the official rows, not as custom", () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-claude-catalog-"));
+    scratchDirs.push(home);
+    const dir = join(home, ".claude");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "settings.json"),
+      JSON.stringify({ extraModels: [{ id: "claude-fixture-9-1", label: "Claude Fixture 9.1" }, "omlx::local-qwen"] }),
+    );
+
+    expect(readClaudeModelCatalog({ HOME: home }).options.slice(STATIC_CLAUDE_MODELS.options.length)).toEqual([
+      { id: "claude-fixture-9-1", label: "Claude Fixture 9.1" },
+      { id: "omlx::local-qwen", label: "omlx::local-qwen", custom: true },
+    ]);
+  });
+
   it("does not list settings.model as a Custom leftover", () => {
     const home = mkdtempSync(join(tmpdir(), "murage-claude-leftover-"));
     scratchDirs.push(home);

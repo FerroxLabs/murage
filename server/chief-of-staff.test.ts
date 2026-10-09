@@ -68,14 +68,11 @@ describe("chiefOfStaffSystemPrompt", () => {
     expect(prompt).not.toContain("delegate_bot");
   });
 
-  it("includes trusted Murage status only when the Chief caller supplies it", () => {
-    const status = "TRUSTED MURAGE STATUS\nfreshness=fresh; runtime_state=degraded";
+  it("ends at the roster: no status block rides on the Chief prompt", () => {
+    const prompt = chiefOfStaffSystemPrompt("chief", bots, true);
 
-    const chiefPrompt = chiefOfStaffSystemPrompt("chief", bots, true, status);
-    const ordinaryPrompt = chiefOfStaffSystemPrompt("writer", bots, true);
-
-    expect(chiefPrompt).toContain(status);
-    expect(ordinaryPrompt).not.toContain("TRUSTED MURAGE STATUS");
+    expect(prompt).not.toContain("TRUSTED MURAGE STATUS");
+    expect(prompt).not.toContain("freshness=");
   });
 });
 

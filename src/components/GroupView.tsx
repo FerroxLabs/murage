@@ -1505,7 +1505,7 @@ export function GroupView({ group }: { group: Group }) {
     setFollow(next);
   }, []);
 
-  useEffect(() => setBottomFollow(true), [group.id, setBottomFollow]);
+  useEffect(() => setBottomFollow(true), [transcriptKey, setBottomFollow]);
   // Observed only while the Chat tab's transcript is mounted: a project room
   // can open on Overview, and a key that did not change on the switch to Chat
   // left the new transcript unobserved, so a Thinking row or a streaming
@@ -1554,7 +1554,7 @@ export function GroupView({ group }: { group: Group }) {
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [group.id, roomMessages.length, streaming, group.busyBotId, group.working, composerDock.pad, showChat]);
+  }, [transcriptKey, roomMessages.length, streaming, group.busyBotId, group.working, composerDock.pad, showChat]);
 
   // Rows move in and out around the reader; a surviving row is kept where it
   // was (transcript-rows.ts, and see ChatView). The capture belongs to the
