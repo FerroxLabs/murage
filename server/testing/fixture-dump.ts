@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 export const fixtureCredentialFingerprint = (value: string) => createHash("sha256").update(value).digest("hex");
 /** Explicit driver assertion fields only. Credentials are fingerprints, never values. */
 export function fixtureDumpEnvironment(): Record<string, string | undefined> {
-  const plain = ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "OPENAI_BASE_URL", "MURAGE_USER_DATA", "MURAGE_BROWSER_CONNECTION", "MURAGE_CONNECTOR_UPSTREAM_URL", "FAKE_CLAUDE_MODE", "MURAGEBOX_BOX_ID", "CUSTOM_REJECTED_MARKER"];
+  const plain = ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_CUSTOM_HEADERS", "OPENAI_BASE_URL", "MURAGE_USER_DATA", "MURAGE_BROWSER_CONNECTION", "MURAGE_CONNECTOR_UPSTREAM_URL", "FAKE_CLAUDE_MODE", "MURAGEBOX_BOX_ID", "CUSTOM_REJECTED_MARKER"];
   const credentials = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "BOX_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "FLUX_API_KEY", "MURAGEBOX_BOX_TOKEN", "MURAGE_COMMS_TOKEN", "MURAGE_FLUX_API_KEY", "MURAGE_LOCAL_UNSLOTH_API_KEY", "MURAGE_MCP_TOKEN", "MURAGE_MEMORY_TOKEN", "MURAGE_PROVIDER_API_KEY", "MURAGE_TTS_KEY", "MURAGE_VM_TOKEN", "MY_AGENT_TOKEN", "NOTES_TOKEN", "OPENAI_API_KEY", "OPENCODE_API_KEY", "OPENROUTER_API_KEY", "XAI_API_KEY"];
   return Object.fromEntries([...plain.map(key => [key, process.env[key]]), ...credentials.map(key => [key, process.env[key] === undefined ? undefined : fixtureCredentialFingerprint(process.env[key]!)])]);
 }

@@ -43,6 +43,9 @@ it("B16 serializes one/four scoped references over real local HTTP after approva
    f.fetcher.mockImplementation(async (url, init) => {
     expect(String(url)).toBe("https://api.fluxrouter.ai/v1/images/edits"); expect(init?.redirect).toBe("error");
     expect(new Headers(init?.headers).get("authorization")).toBe("Bearer FAKE_B16_KEY");
+    // Flux Memory: image work is background work, never the owner's turn
+    expect(new Headers(init?.headers).get("x-flux-memory-app")).toBe("murage");
+    expect([new Headers(init?.headers).get("x-flux-memory-capture"), new Headers(init?.headers).get("x-flux-memory-inject")]).toEqual(["off", "off"]);
     return fetch(`http://127.0.0.1:${address.port}/v1/images/edits`, init);
    });
    const operations = new ImageOperations({ store, waiting: () => {} });

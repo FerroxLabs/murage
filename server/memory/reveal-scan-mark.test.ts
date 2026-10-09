@@ -36,23 +36,9 @@ function statementsDuring(run: () => void): string[] {
 const rangeScans = (sql: string[]) => sql.filter(text => text.includes("NOT INDEXED")).length;
 const receiptSweeps = (sql: string[]) => sql.filter(text => text.includes("subject_id='reveal-capture'")).length;
 
-/** One visit scans at most 8 windows of 4096 rowids and stops after 10 ms, so how many visits "a full
- * pass" takes depends on the machine. Drive visits until the persisted mark reaches the newest job row;
- * what any visit handed out is returned, so a test can still assert on it. */
-function fullPass(): string[] {
-  const handed: string[] = [];
-  for (let i = 0; i < 100; i++) {
-    handed.push(...reveal.pendingBotRevealJobs());
-    const mark = database().prepare("SELECT intent FROM memory_scope_bindings WHERE id='reveal-scan-mark'").get();
-    const newest = Number(database().prepare("SELECT max(rowid) AS n FROM memory_jobs").get()!.n);
-    if (mark && JSON.parse(String(mark.intent)).hwm === newest) return handed;
-  }
-  throw new Error("the reveal scan never reached the newest job row");
-}
-
 it("after a full pass, further idle visits are one probe and read no job rows", () => {
   seed(9000, "owner");  // nothing here is eligible for a reveal pass
-  expect(fullPass()).toEqual([]);
+  expect(reveal.pendingBotRevealJobs()).toEqual([]);
   const visits = statementsDuring(() => { for (let i = 0; i < 20; i++) expect(reveal.pendingBotRevealJobs()).toEqual([]); });
   expect(rangeScans(visits)).toBe(0);
   expect(visits.filter(text => text.includes("max(rowid)")).length).toBeLessThanOrEqual(20);
@@ -60,7 +46,7 @@ it("after a full pass, further idle visits are one probe and read no job rows", 
 
 it("rows past the mark are still picked up", () => {
   seed(5000, "owner");
-  expect(fullPass()).toEqual([]);
+  expect(reveal.pendingBotRevealJobs()).toEqual([]);
   const last = seed(1, "assistant");
   expect(reveal.pendingBotRevealJobs()).toEqual([`j${last}`]);
 });
@@ -68,7 +54,7 @@ it("rows past the mark are still picked up", () => {
 it("a job below the mark that finishes later is still picked up", () => {
   const first = seed(1, "assistant", "pending");
   seed(6000, "owner");
-  expect(fullPass()).toEqual([]);
+  expect(reveal.pendingBotRevealJobs()).toEqual([]);
   expect(reveal.pendingBotRevealJobs()).toEqual([]);
   database().prepare("UPDATE memory_jobs SET status='complete' WHERE id=?").run(`j${first}`);
   expect(reveal.pendingBotRevealJobs()).toEqual([`j${first}`]);
@@ -76,7 +62,7 @@ it("a job below the mark that finishes later is still picked up", () => {
 
 it("the mark is persisted and a restart resumes from it, never from rowid 0", () => {
   seed(9000, "owner");
-  fullPass();
+  reveal.pendingBotRevealJobs();
   const newest = Number(database().prepare("SELECT max(rowid) AS n FROM memory_jobs").get()!.n);
   expect(JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id='reveal-scan-mark'").get()!.intent)).hwm).toBe(newest);
   closeDatabase(); (reveal as any).resetRevealScan?.();
@@ -107,7 +93,7 @@ it("the scans use rowid-range and index access only", () => {
 it("more unsettled jobs than the open set holds do not pin the mark: steady-state visits are one probe", () => {
   seed(300, "assistant", "pending");   // eligible, never finishing: 44 more than the open set holds
   seed(5000, "owner");
-  expect(fullPass()).toEqual([]);
+  expect(reveal.pendingBotRevealJobs()).toEqual([]);
   for (let i = 0; i < 3; i++) reveal.pendingBotRevealJobs();
   const visits = statementsDuring(() => { for (let i = 0; i < 20; i++) expect(reveal.pendingBotRevealJobs()).toEqual([]); });
   expect(visits.filter(text => text.includes("j.rowid>?")).length).toBe(0);                 // no window of the job table is read

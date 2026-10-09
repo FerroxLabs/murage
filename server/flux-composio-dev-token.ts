@@ -22,6 +22,7 @@
 // Never inside the packaged app: an embedded harness receives its token from
 // main.mjs, and the env override `MURAGE_FLUX_COMPOSIO_BROKER_TOKEN` always
 // wins so QA can pin one by hand.
+import { fluxFetch } from "./flux-memory-headers.ts";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -151,7 +152,8 @@ export async function ensureDevFluxBrokerToken(options: DevFluxTokenOptions): Pr
     const baseFetch = options.fetchImpl ?? globalThis.fetch;
     const fetchImpl: typeof fetch = (input, init) => {
       attempted = true;
-      return baseFetch(input, init);
+      // Flux Memory: a broker call is background work, never an owner turn.
+      return fluxFetch("composio-broker", input as string | URL, init, baseFetch);
     };
     const before = current.fluxComposioBrokerToken;
     let next: DevFluxTokenDocument = current;

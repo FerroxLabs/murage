@@ -41,7 +41,8 @@ import { newEventId, newId } from "../contracts.ts";
 import { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 import { codexLocalProviderArgs } from "./local-inject.ts";
 import { fluxKey } from "../flux-config.ts";
-import { applyFluxSurface } from "../flux-routing.ts";
+import { applyFluxSurface, FLUX_CODEX_PROVIDER } from "../flux-routing.ts";
+import { codexFluxProviderFor, codexHttpHeaderArgs, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders } from "../flux-memory-headers.ts";
 import { fluxIdIsRoutable } from "../flux-surface.ts";
 import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
@@ -511,7 +512,18 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const flux = !turn.providerRoute && fluxIdIsRoutable(turn.model, DRIVER_KIND)
           ? applyFluxSurface(DRIVER_KIND, env, turn.model, fluxKey())
           : null;
+        // Flux Memory: the table this thread starts under. The headers live in
+        // three provider tables declared once in argv (flux-routing.ts), so the
+        // shared app-server is never recycled for an audience change; the warm
+        // key below carries the choice so a change still re-evaluates the thread.
+        const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
+        const fluxProvider = codexFluxProviderFor(fluxMemory);
         const providerBinding = turn.providerRoute ? applyProviderRoute(DRIVER_KIND, env, turn.providerRoute) : null;
+        // A Flux connection (a named provider route) carries the headers on its own table.
+        if (providerBinding?.modelProvider && turn.providerRoute?.preset === "flux") {
+          providerBinding.args.push(...codexHttpHeaderArgs(providerBinding.modelProvider, fluxMemory.headers));
+          logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
+        }
         const appServerArgs = [
           "app-server",
           ...(providerBinding ? [] : await codexLocalProviderArgs(env, turn.model)),
@@ -637,6 +649,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           proposalOnly: turn.proposalOnly === true,
           model: turn.model ?? null,
           providerRoute: turn.providerRoute ? [turn.providerRoute.connectionId, turn.providerRoute.revision] : null,
+          fluxMemory: flux?.applied ? fluxProvider : null,
           cwd: turn.cwd ?? homedir(),
           mcp: Object.fromEntries(Object.entries(stableServers).map(([name, server]) => [name, digest(server)])),
           env: digest(env),
@@ -1519,7 +1532,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const cursor = !reuse && !turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
         if (cursor) {
           try {
-            const resumed = await request("thread/resume", { threadId: cursor });
+            // A resumed Flux thread names its table again: the headers belong to the
+            // table, and the audience may have changed since the thread started.
+            const resumeSelection = !providerBinding ? decodeCodexSelection(turn.model) : null;
+            const resumeFlux = flux?.applied && resumeSelection?.modelProvider === FLUX_CODEX_PROVIDER;
+            const resumed = await request("thread/resume", { threadId: cursor, ...(resumeFlux ? { modelProvider: fluxProvider } : {}) });
             if (cancelledBeforeStart()) return;
             codexThreadId = resumed?.thread?.id ?? cursor;
           } catch {
@@ -1530,6 +1547,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         if (!codexThreadId) {
           const selection = providerBinding ? { model: providerBinding.model, modelProvider: providerBinding.modelProvider } : decodeCodexSelection(turn.model);
+          // A Flux thread starts under the table whose headers match its audience.
+          if (flux?.applied && !providerBinding && selection.modelProvider === FLUX_CODEX_PROVIDER) {
+            selection.modelProvider = fluxProvider;
+            logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
+          }
           const started = await request("thread/start", {
             cwd: turn.cwd ?? homedir(),
             model: selection.model,
