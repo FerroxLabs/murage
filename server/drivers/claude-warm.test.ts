@@ -30,6 +30,8 @@ const probe = vi.hoisted(() => ({
   treeGate: null as null | Promise<void>,
   /** tree-stop confirmations that reached the gate (proof the CLI's "close" fired) */
   treeGated: 0,
+  /** true: the forced stop reports "not confirmed" without touching the process (one test only) */
+  forceFails: false,
 }));
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
@@ -38,6 +40,9 @@ vi.mock("../procs.ts", async (original) => {
     awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (probe.treeGate
       ? (probe.treeGated++, probe.treeGate.then(() => actual.awaitCliTreeStopped(...args)))
       : actual.awaitCliTreeStopped(...args)),
+    forceCliTreeStopped: (...args: Parameters<typeof actual.forceCliTreeStopped>) => (probe.forceFails
+      ? Promise.resolve(false)
+      : actual.forceCliTreeStopped(...args)),
   };
 });
 vi.mock("./process-tree.ts", async (original) => {
@@ -119,6 +124,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     probe.real = false;
     probe.treeGate = null;
     probe.treeGated = 0;
+    probe.forceFails = false;
     for (const key of ["FAKE_CLAUDE_AUTH", "FAKE_CLAUDE_HOLD_MARKER", "FAKE_CLAUDE_HOLD_GATE", "FAKE_CLAUDE_HOLD_SEEN", "FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS", "FAKE_CLAUDE_STATE", "FAKE_CLAUDE_RETRY_SCALE", "CLAUDE_CONFIG_DIR", "FAKE_CLAUDE_MODE"]) delete process.env[key];
     restoreTmp();
     info.mockRestore();
@@ -284,6 +290,72 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect(two.pid).not.toBe(one.pid);
   }, 20_000);
 
+  it("resetSession on a wedged CLI (ignores SIGTERM and stdin EOF) kills its tree and never fails: the next send runs on a fresh session", async () => {
+    // 1.0.1.1: a CLI that would not close in 10 s failed the owner's turn
+    // with CLAUDE_SESSION_RESET_TIMEOUT. A reset now waits a short grace,
+    // then kills the whole tree and goes on.
+    process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
+    try {
+      await create();
+      const one = await run("t-wedged", "one", base);
+      const started = Date.now();
+      const reset = await instance.adapter.resetSession!("t-wedged").then(() => "reset", (error: unknown) => String(error));
+      const took = Date.now() - started;
+      expect(reset).toBe("reset");
+      expect(took).toBeLessThan(3_500);
+      // the old process is gone: it cannot answer for the thread
+      expect(() => process.kill(one.pid, 0)).toThrow();
+      const two = await run("t-wedged", "two", { ...base, sessionReset: true });
+      expect(two.pid).not.toBe(one.pid);
+      expect(two.trace).toMatch(/process=spawned reason=(no-process|sessionReset)/);
+      const replies = recorder.events.filter((e) => e.type === "turn.completed" && e.threadId === "t-wedged");
+      expect(replies).toHaveLength(2);
+    } finally {
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+    }
+  }, 20_000);
+
+  it("a reset whose old tree cannot be confirmed keeps the thread blocked: the next send fails retryably, then runs once the tree is confirmed", async () => {
+    process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
+    try {
+      await create();
+      const one = await run("t-blocked", "one", base);
+      probe.forceFails = true;
+      await instance.adapter.resetSession!("t-blocked");
+      // never beside a live old tree: the old process is still there
+      expect(() => process.kill(one.pid, 0)).not.toThrow();
+      const blocked = await instance.adapter.sendTurn({ threadId: "t-blocked", text: "two", ...base, sessionReset: true }).then(() => "sent", (error: unknown) => String(error));
+      expect(blocked).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+      expect(() => process.kill(one.pid, 0)).not.toThrow();
+      probe.forceFails = false;
+      const two = await run("t-blocked", "two", { ...base, sessionReset: true });
+      expect(two.pid).not.toBe(one.pid);
+      expect(() => process.kill(one.pid, 0)).toThrow();
+    } finally {
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+    }
+  }, 30_000);
+
+  it("a late init frame from a retired session is ignored: no session.started, no resume cursor", async () => {
+    process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
+    process.env.FAKE_CLAUDE_LATE_INIT = "1";
+    try {
+      await create();
+      await run("t-late-init", "one", base);
+      const before = recorder.events.filter((e) => e.type === "session.started" && e.threadId === "t-late-init").length;
+      const started = Date.now();
+      await instance.adapter.resetSession!("t-late-init");
+      expect(Date.now() - started).toBeLessThan(3_500);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const after = recorder.events.filter((e) => e.type === "session.started" && e.threadId === "t-late-init");
+      expect(after).toHaveLength(before);
+      expect(JSON.stringify(after)).not.toContain("late-retired-session");
+    } finally {
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+      delete process.env.FAKE_CLAUDE_LATE_INIT;
+    }
+  }, 20_000);
+
   it("recycles the process when a child process of the CLI is still alive at settle", async () => {
     await create();
     const one = await run("t-child", "one", base);
@@ -361,7 +433,8 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     await create();
     const one = await run("t-initat", "one", base);
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.pid).toBe(one.pid);
+    // Windows launches Claude under the Job Object supervisor, so the pid handed over is the supervisor's
+    if (process.platform === "win32") expect(calls[0]!.pid).toBeGreaterThan(0); else expect(calls[0]!.pid).toBe(one.pid);
     expect(calls[0]!.initAt).toBeGreaterThanOrEqual(before);
     expect(calls[0]!.initAt).toBeLessThanOrEqual(Date.now());
   });
@@ -667,7 +740,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     const kid = Number(readFileSync(process.env.FAKE_CLAUDE_CHILD_PID!, "utf8"));
     try {
       // taken exactly once, with the CLI's own pid, for the init message
-      expect(seen).toEqual([one.pid]);
+      if (process.platform === "win32") expect(seen).toHaveLength(1); else expect(seen).toEqual([one.pid]);
       probe.baselineOverride = null;
       const two = await run("t-base", "two", base);
       expect(two.pid).not.toBe(one.pid);
@@ -1213,7 +1286,9 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
 
   it("a system/init event confirms startup: the files go at once", async () => {
     useTmp(scratch);
-    process.env.MURAGE_PREWARM_FILE_GRACE_MS = "5000";
+    // Windows starts the CLI under a PowerShell Job Object supervisor, which takes seconds
+    const slowStart = process.platform === "win32";
+    process.env.MURAGE_PREWARM_FILE_GRACE_MS = slowStart ? "25000" : "5000";
     await create();
     await run("t-pw-init", "one", { ...base, system: "be brief" });
     await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-init reason=activity window")));
@@ -1223,7 +1298,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     process.env.FAKE_CLAUDE_START_FRAMES = JSON.stringify([{ type: "system", subtype: "init", session_id: "s", model: "m", tools: [] }]);
     expect(await instance.adapter.prewarm!("t-pw-init")).toBe(true);
     const mine = () => readdirSync(scratch).filter((n) => /^murage-(mcp|system)-/.test(n));
-    await eventually(() => mine().length === 0, 600);
+    await eventually(() => mine().length === 0, slowStart ? 20_000 : 600);
     expect(existsSync(startLog)).toBe(false);
   });
 

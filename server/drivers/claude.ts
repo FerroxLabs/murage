@@ -12,7 +12,7 @@ import { CLAUDE_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
 import { execFileSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
@@ -28,7 +28,7 @@ import { toolFilePaths } from "../own-workspace-approval.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
-import { awaitCliTreeStopped, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, forceCliTreeStopped, resolveCli, windowsCommandResolvable, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { bindCredentialPath, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantBaseline, untrackedDescendants, processNames } from "./process-tree.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
@@ -1124,11 +1124,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * so Stop, reset and dispose still reach a predecessor whose shutdown is
      * pending or failed, and can report that it could not be stopped. */
     const retiring = new Map<Session, string>();
+    /** Threads whose reset could not confirm the old process tree stopped. The
+     * slot stays held: the next turn waits briefly for the confirmation and
+     * otherwise fails retryably, never running beside a live old tree. */
+    const resetBlocked = new Map<string, Session>();
     const configuredIdleMinimum = Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MIN_MS);
     const sessionIdleMinimum = Number.isFinite(configuredIdleMinimum) && configuredIdleMinimum > 0
       ? configuredIdleMinimum
       : 10_000;
     const SESSION_IDLE_MS = Math.max(sessionIdleMinimum, Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MS) || 15 * 60_000);
+    /** How long a reset lets the old CLI exit on stdin EOF before killing its tree. */
+    const CLAUDE_RESET_GRACE_MS = 1_500;
+    /** How long a reset waits for the killed tree's confirmation before going on without it. */
+    const CLAUDE_RESET_KILL_WAIT_MS = 2_000;
+    /** How long a turn on a reset-blocked thread waits for the old tree's confirmation. */
+    const CLAUDE_RESET_BLOCK_WAIT_MS = 3_000;
 
     const backgroundCapMs = backgroundWaitCapMs(config.backgroundTaskCapMs);
     const backgroundOf = (t: SessionTurn): BackgroundState =>
@@ -1189,6 +1199,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         return stopped;
       }));
       return confirmed.filter((stopped) => !stopped).length;
+    };
+    /** The old tree is confirmed gone: free the thread's slot. */
+    const releaseResetSlot = async (threadId: string, session: Session) => {
+      retiring.delete(session);
+      if (resetBlocked.get(threadId) === session) resetBlocked.delete(threadId);
+      if (sessions.get(threadId) === session) sessions.delete(threadId);
+      await session.finishClose?.();
+    };
+    /** A reset left this thread blocked: wait briefly for the old tree's
+     * confirmation (killing it again outright), else say so retryably. */
+    const awaitResetUnblocked = async (threadId: string) => {
+      const blocked = resetBlocked.get(threadId);
+      if (!blocked) return;
+      let timer: NodeJS.Timeout | undefined;
+      const confirmed = await Promise.race([
+        forceCliTreeStopped(blocked.child),
+        new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), CLAUDE_RESET_BLOCK_WAIT_MS); }),
+      ]).finally(() => clearTimeout(timer));
+      if (!confirmed) throw new Error("CLAUDE_SESSION_NOT_STOPPED: the earlier Claude process for this thread could not be confirmed stopped yet; retry shortly");
+      await releaseResetSlot(threadId, blocked).catch(() => undefined);
     };
     const requireRetiredStopped = async (threadId?: string) => {
       const failed = await stopRetiring(threadId);
@@ -1633,7 +1663,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // rebuilt conversation says so explicitly: without the reset an edit,
       // branch switch, cwd or engine change replayed the transcript on top
       // of the idle process's old context (upstream 581a740b, #1562).
-      const live = sessions.get(threadId);
+      let live = sessions.get(threadId);
       // A settle-time process probe may still be deciding whether this process
       // can be kept; the answer comes before this turn picks a process.
       if (live?.settleCheck) {
@@ -1650,6 +1680,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           throw error;
         }
       }
+      if (resetBlocked.has(threadId)) {
+        try {
+          await awaitResetUnblocked(threadId);
+        } catch (error) {
+          if (mcpConfigPath) {
+            try { rmSync(dirname(mcpConfigPath), { recursive: true, force: true }); } catch {}
+          }
+          throw error;
+        }
+      }
+      live = sessions.get(threadId);
       if (turn.prewarm && live && !live.closing && live.child.exitCode === null) {
         // an engine is already live on this thread: nothing to warm
         if (mcpConfigPath) {
@@ -1878,13 +1919,29 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
 
       let child: ReturnType<typeof spawnCli>;
+      let job: { name: string; argsFile: string } | undefined;
+      let jobDir: string | undefined;
       try {
+        // Windows: Claude and every descendant (MCP proxies included) live in
+        // an owned Job Object, so a stop is confirmed by the job being empty,
+        // not by the root closing.
+        // (A command Windows cannot find launches directly, so the spawn
+        // itself reports ENOENT as spawn_error, not a supervisor exit.)
+        if (process.platform === "win32" && windowsCommandResolvable(resolveCli(config.cli).command, env)) {
+          jobDir = mkdtempSync(join(tmpdir(), "murage-claude-job-"));
+          job = { name: `Local\\murage-pip-${randomUUID()}`, argsFile: join(jobDir, "job-args.json") };
+        }
         child = spawnCli(config.cli, args, {
           cwd,
           env,
           stdio: ["pipe", "pipe", "pipe"],
-        });
+        }, job);
+        if (jobDir) {
+          const dir = jobDir;
+          child.once("close", () => { try { rmSync(dir, { recursive: true, force: true }); } catch {} });
+        }
       } catch (error) {
+        if (jobDir) { try { rmSync(jobDir, { recursive: true, force: true }); } catch {} }
         cleanupUnownedLaunch();
         throw error;
       }
@@ -2116,6 +2173,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           if (!session.turn) dropStartFiles();
         }
         appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: o });
+        // A retired session (closing, or replaced in the thread's slot) with
+        // no open turn can no longer speak for the thread: its system/init must
+        // not become session.started, which writes the thread's resume cursor.
+        if ((session.closing || sessions.get(threadId) !== session) && (!session.turn || session.turn.settled)) return;
         const contentFrame = o.type === "stream_event" || o.type === "assistant" || o.type === "user";
         const taskFrame = o.type === "system" && typeof o.subtype === "string" && (o.subtype.startsWith("task_") || o.subtype === "background_tasks_changed");
         // Frames with no open turn were not asked for: a background task's
@@ -2868,34 +2929,43 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const session = sessions.get(threadId);
           active.get(threadId)?.stop();
           if (!session) return;
-          // The child already closed (it exited, or an earlier close is still
-          // confirming its tree stopped before the session leaves the map):
-          // its "close" has fired and never fires again, so waiting for it
-          // only timed out 10 s later and failed the next send. Confirm the
-          // tree instead, and finish the close so the thread is free.
-          if (session.finishClose) {
-            closeSession(threadId, "memory context reset");
-            if (!(await awaitCliTreeStopped(session.child))) throw new Error("CLAUDE_SESSION_RESET_TIMEOUT");
-            await session.finishClose();
-            await requireRetiredStopped(threadId);
-            return;
-          }
-          await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              session.child.off("close", closed);
-              reject(new Error("CLAUDE_SESSION_RESET_TIMEOUT"));
-            }, 10_000);
-            const closed = () => {
-              void awaitCliTreeStopped(session.child).then((stopped) => {
-                clearTimeout(timeout);
-                if (stopped) resolve();
-                else reject(new Error("CLAUDE_SESSION_RESET_TIMEOUT"));
-              });
-            };
+          // A reset never fails the owner's turn (1.0.1.1). It used to wait
+          // up to 10 s for the old CLI to close, then throw
+          // CLAUDE_SESSION_RESET_TIMEOUT. Now the old process gets a short
+          // grace to exit on stdin EOF; past it, its whole tree is killed
+          // outright (no SIGTERM grace) and confirmed in the background.
+          // Either way it leaves this thread's slot at once, so the next send
+          // spawns a fresh session. It can no longer answer for the thread:
+          // closeSession took its broker and credentials, its turn was
+          // stopped, and frames with no open turn are dropped.
+          // A SIGKILL'd tree is confirmed within CLI_FORCE_WAIT_MS, and its
+          // close settles any turn it still held before the fresh session
+          // starts. Only a process the kernel cannot end in that time leaves
+          // the slot unconfirmed; its confirmation then finishes behind.
+          const started = Date.now();
+          closeSession(threadId, "memory context reset");
+          const exited = session.finishClose !== undefined || await new Promise<boolean>((resolve) => {
+            const done = (value: boolean) => { clearTimeout(timer); session.child.off("close", closed); resolve(value); };
+            const closed = () => done(true);
+            const timer = setTimeout(() => done(false), CLAUDE_RESET_GRACE_MS);
             session.child.once("close", closed);
-            closeSession(threadId, "memory context reset");
           });
-          await requireRetiredStopped(threadId);
+          // Force: a stop the child's own close already started (3 s SIGTERM
+          // grace) is escalated to SIGKILL of the whole tree right now.
+          const stopping = forceCliTreeStopped(session.child);
+          let capTimer: NodeJS.Timeout | undefined;
+          const stopped = await Promise.race([stopping, new Promise<undefined>((resolve) => { capTimer = setTimeout(() => resolve(undefined), CLAUDE_RESET_KILL_WAIT_MS); })]);
+          clearTimeout(capTimer);
+          if (stopped === true) await releaseResetSlot(threadId, session).catch(() => undefined);
+          else {
+            // Not confirmed: keep the slot and an explicit blocked state. The
+            // thread's next turn waits for the confirmation; it never starts
+            // a fresh session beside a tree that may still be running.
+            resetBlocked.set(threadId, session);
+            console.warn(`claude reset thread=${threadId} old process not confirmed stopped; this thread stays blocked until it is`);
+            void stopping.then((confirmed) => confirmed ? releaseResetSlot(threadId, session) : undefined).catch(() => undefined);
+          }
+          console.info(`claude reset thread=${threadId} ms=${Date.now() - started} old=${exited ? "exited" : "killed"}${stopped === true ? "" : " unconfirmed"}`);
         },
         respondToRequest: async (threadId, requestId, decision) => {
           // fail-closed by construction: no broker, or an ask that already

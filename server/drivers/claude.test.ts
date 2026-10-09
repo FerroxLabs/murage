@@ -1865,7 +1865,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed" && e.eventId !== firstDone.eventId);
 
     expect(recorder.events.filter((e) => e.type === "turn.retrying").map((e) => e.attempt)).toEqual([1, 2, 1, 2]);
-  }, 20_000);
+    // Windows starts every launch under a PowerShell Job Object supervisor
+  }, process.platform === "win32" ? 120_000 : 20_000);
 
   it("never retries a terminal (auth-shaped) exit", async () => {
     await create("exit-early"); // exit 3 with no transient vocabulary — terminal
