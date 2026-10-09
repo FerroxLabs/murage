@@ -60,13 +60,32 @@ export function assertSafeCliArgv(
 
 export const CLI_TERM_GRACE_MS = 3_000;
 export const CLI_FORCE_WAIT_MS = 1_000;
+/** The longest one confirmation attempt may run past its SIGTERM grace.
+ * Chosen to sit inside the waits that depend on it: a reset waits 2 s for a
+ * forced stop and a dispatch on a quarantined thread waits up to 3 s. With the
+ * old 20 s a hung platform hook stayed cached as the pending attempt, so every
+ * retry inside that window joined it and failed again. At 2.5 s (forced stops
+ * have no SIGTERM grace) a hung hook costs at most one failed wait: the cap
+ * clears the cached attempt before the dispatch window ends, and the dispatch
+ * loop then starts a fresh one. A late confirmation still counts when it arrives. */
+export const CLI_CONFIRM_CAP_MS = 2_500;
 interface CliOwnership {
   pid: number | undefined;
   platform: NodeJS.Platform;
   jobName?: string;
   closed: boolean;
+  /** Windows without a job: a taskkill /T /F of this tree already succeeded. */
+  taskkillOk?: boolean;
+  /** A taskkill issued by killCliTree that has not answered yet; a confirmation
+   * waits for its outcome instead of racing it with a second taskkill. */
+  taskkillPending?: Promise<boolean>;
   stopped: boolean;
+  /** Windows without a job: a tree-stop (taskkill /T) failed. Root closure
+   * cannot clear it; only a later successful taskkill /T can. */
+  treeStopFailed?: boolean;
   stopping?: Promise<boolean>;
+  /** Cut an in-flight stop's SIGTERM grace short: kill the whole tree now. */
+  escalate?: () => void;
   observations: StopRouteObservation[];
   observers: Set<StopRouteObserver>;
 }
@@ -187,12 +206,18 @@ export interface KillCliTreeDeps {
     callback: (error: Error | null) => void,
   ) => void;
   killProcess: (pid: number, signal: NodeJS.Signals) => void;
+  /** Is this pid still a live process? Absent: assumed alive (a failure stays a failure). */
+  processAlive?: (pid: number) => boolean;
 }
 
 const REAL_KILL_DEPS: KillCliTreeDeps = {
   get platform() { return process.platform; },
   execFile: (command, args, options, callback) => { execFile(command, args, options, (error) => callback(error)); },
   killProcess: (pid, signal) => { process.kill(pid, signal); },
+  processAlive: (pid) => {
+    try { process.kill(pid, 0); return true; }
+    catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+  },
 };
 
 /** Stop a CLI and every process it spawned (MCP proxies included). The
@@ -209,7 +234,17 @@ export function killCliTree(child: ChildProcess, observer?: StopRouteObserver): 
     try { child.kill("SIGTERM"); } catch { /* no group ownership */ }
     return;
   }
-  killCliTreeWith(child, observer, REAL_KILL_DEPS);
+  let answer: ((ok: boolean) => void) | undefined;
+  killCliTreeWith(child, ownership ? (observation) => {
+    if (observation.route === "windows_taskkill" && observation.result === "requested") {
+      ownership.taskkillPending = new Promise<boolean>((resolve) => { answer = resolve; });
+    } else if (observation.route === "windows_taskkill" && observation.result === "succeeded") {
+      ownership.taskkillOk = true; ownership.treeStopFailed = false; ownership.taskkillPending = undefined; answer?.(true);
+    } else if (observation.route === "windows_taskkill" && observation.result === "failed") {
+      ownership.treeStopFailed = true; ownership.taskkillPending = undefined; answer?.(false);
+    }
+    try { observer?.(observation); } catch { /* diagnostics never affect stop */ }
+  } : observer, REAL_KILL_DEPS);
 }
 
 /** Request termination and confirm the owned lifecycle. POSIX requires root
@@ -221,14 +256,26 @@ export function awaitCliTreeStopped(child: ChildProcess, termGraceMs = CLI_TERM_
   return stopOwnedCli(child, ownership, undefined, termGraceMs);
 }
 
-function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopRouteObserver, termGraceMs = CLI_TERM_GRACE_MS): Promise<boolean> {
+/** Like awaitCliTreeStopped, but with no SIGTERM grace: a stop already in
+ * flight (the child's own close started one) is escalated at once, so the
+ * whole tree is killed now instead of when that stop's grace runs out. */
+export function forceCliTreeStopped(child: ChildProcess): Promise<boolean> {
+  const ownership = cliOwnership.get(child);
+  if (!ownership) return Promise.resolve(false);
+  return stopOwnedCli(child, ownership, undefined, 0, true);
+}
+
+function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopRouteObserver, termGraceMs = CLI_TERM_GRACE_MS, force = false): Promise<boolean> {
   if (observer && !owned.observers.has(observer)) {
     owned.observers.add(observer);
     for (const observation of owned.observations) {
       try { observer(observation); } catch { /* diagnostics never affect stop */ }
     }
   }
-  if (owned.stopping) return owned.stopping;
+  if (owned.stopping) {
+    if (force) { try { owned.escalate?.(); } catch { /* confirmation still decides */ } }
+    return owned.stopping;
+  }
   if (owned.stopped) return Promise.resolve(true);
   const pid = owned.pid;
   if (pid === undefined) return Promise.resolve(true); // failed spawn
@@ -243,6 +290,8 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
   const run = async () => {
     if (owned.platform === "win32") {
       if (owned.jobName) {
+        const jobName = owned.jobName;
+        owned.escalate = () => { void stopWindowsJob(jobName, CLI_FORCE_WAIT_MS); };
         // End the exact supervisor first, including its pre-job startup window.
         // Its last handle closes on exit and terminates every job member.
         if (!owned.closed) {
@@ -256,13 +305,50 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
         }
         return stopWindowsJob(owned.jobName, termGraceMs + CLI_FORCE_WAIT_MS);
       }
-      if (owned.closed) return true;
+      if (owned.closed && !owned.treeStopFailed) return true;
+      if (owned.closed) {
+        // The root is gone but an earlier tree-stop failed, so descendants may
+        // remain. Only a successful taskkill /T clears that; asking for a closed
+        // root's tree must not be answered by "the root already exited".
+        return new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), 5_000);
+          REAL_KILL_DEPS.execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, (err) => {
+            clearTimeout(timer);
+            const gone = !err || taskkillProcessGone(err, pid, REAL_KILL_DEPS);
+            if (gone) owned.treeStopFailed = false;
+            resolve(gone);
+          });
+        });
+      }
       return new Promise<boolean>((resolve) => {
+        // Root close alone proves nothing about the tree: taskkill must also
+        // have succeeded (or found the root already gone), or it is unconfirmed.
+        let rootClosed = false;
+        // A taskkill already issued by killCliTree and accepted is not repeated:
+        // a second one finds the root gone and would read as a failure.
+        let treeKilled: boolean | undefined = owned.taskkillOk ? true : undefined;
         const finish = (value: boolean) => { clearTimeout(timer); child.off("close", closed); resolve(value); };
-        const closed = () => finish(true);
+        const settle = () => {
+          if (treeKilled === false) finish(false);
+          else if (rootClosed && treeKilled === true) finish(true);
+        };
+        const closed = () => { rootClosed = true; settle(); };
         const timer = setTimeout(() => finish(false), 5_000);
         child.once("close", closed);
-        killCliTreeWith(child, observer, REAL_KILL_DEPS);
+        const killTree = () => killCliTreeWith(child, (observation) => {
+          observe(observation);
+          if (observation.route === "windows_taskkill" && observation.result === "succeeded") { treeKilled = true; owned.treeStopFailed = false; }
+          else if (observation.route === "windows_taskkill" && observation.result === "failed") { treeKilled = false; owned.treeStopFailed = true; }
+          else if (observation.route === "already_exited") treeKilled = true;
+          settle();
+        }, REAL_KILL_DEPS);
+        owned.escalate = killTree;
+        const pending = owned.taskkillPending;
+        if (pending && !owned.taskkillOk) {
+          // killCliTree's own taskkill is still in flight: wait for its answer,
+          // a second one would race it and find the tree already gone.
+          void pending.then((ok) => { treeKilled = ok; settle(); });
+        } else if (!owned.taskkillOk) killTree();
       });
     }
     const settled = () => {
@@ -274,6 +360,7 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
       try { process.kill(-pid, value); }
       catch { if (!owned.closed) { try { child.kill(value); } catch { /* retain uncertainty */ } } }
     };
+    owned.escalate = () => signal("SIGKILL");
     const wait = async (ms: number) => {
       const deadline = Date.now() + ms;
       while (!settled()) {
@@ -301,13 +388,33 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
     return wait(CLI_FORCE_WAIT_MS);
   };
   // A platform hook (Murage Cloud) can only veto: its answer is ANDed with ours.
-  const attempt = run().then(async (stopped) => stopped && await platformConfirmStopped(child)).catch(() => false);
+  const raw = run().then(async (stopped) => stopped && await platformConfirmStopped(child)).catch(() => false);
+  // A confirmation that never resolves (a hung helper or platform hook) must
+  // not stay cached as the thread's pending stop forever: past this bound it
+  // reads "not stopped" and a later explicit retry makes a fresh attempt.
+  let capTimer: NodeJS.Timeout | undefined;
+  const attempt = new Promise<boolean>((resolve) => {
+    capTimer = setTimeout(() => resolve(false), termGraceMs + CLI_CONFIRM_CAP_MS);
+    capTimer.unref?.();
+    void raw.then((value) => { clearTimeout(capTimer); resolve(value); });
+  });
   owned.stopping = attempt;
   void attempt.then((stopped) => {
-    owned.stopped = stopped;
-    if (!stopped) owned.stopping = undefined; // explicit later retry may succeed
+    if (owned.stopping === attempt) owned.stopping = undefined;
+    if (stopped) owned.stopped = true;
   });
+  // A late confirmation, after the bound passed, still counts once it arrives.
+  void raw.then((value) => { if (value) owned.stopped = true; });
   return attempt;
+}
+
+/** taskkill exit code 128: "the process was not found" (already exited). */
+function taskkillProcessGone(err: unknown, pid: number, deps: Pick<KillCliTreeDeps, "processAlive">): boolean {
+  if ((err as { code?: unknown } | null)?.code === 128) return true;
+  // A taskkill racing a process that is exiting on its own fails in other ways
+  // too; what counts is that the process is no longer there. Access denied on a
+  // process that is still alive stays a failure.
+  return deps.processAlive ? !deps.processAlive(pid) : false;
 }
 
 /** killCliTree with injectable OS seams, so route selection and fallback
@@ -336,7 +443,9 @@ export function killCliTreeWith(
   if (deps.platform === "win32") {
     observe("windows_taskkill", "requested");
     deps.execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, (err) => {
-      if (!err) {
+      // Exit 128: the process is already gone, which is what a stop wants.
+      // Any other failure (access denied, ...) leaves the tree unconfirmed.
+      if (!err || taskkillProcessGone(err, pid, deps)) {
         observe("windows_taskkill", "succeeded");
         return;
       }

@@ -54,9 +54,13 @@ jobs:
   prepare:
     name: Pin the release commit
     runs-on: ubuntu-24.04
-    # Pinning and the preflight checks only. The CI gate is its own job so the
-    # platform builds start now instead of after CI finishes.
-    timeout-minutes: 15
+    # Waits for the CI run a push to main starts alongside this one (the gate
+    # below), so this is the CI cap, not the five minutes pinning needs.
+    timeout-minutes: 90
+    # actions: read lets the gate list CI's runs; nothing here writes.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       sha: ${{ steps.pin.outputs.sha }}
       version: ${{ steps.pin.outputs.version }}
@@ -91,6 +95,19 @@ jobs:
             should_release=$(node scripts/release-guard.mjs should-release "$current" "$previous")
           fi
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+      - name: Require that CI passed on the pinned commit
+        # Audit C8: nothing here used to check that CI ever ran on this SHA, so
+        # a dispatched release or a fast merge could sign and publish a commit
+        # whose tests were red or never started. The CI workflow is ci.yml
+        # (name: CI). A push to main starts both, so a run still in progress is
+        # waited for; a failed, cancelled or missing one stops the release
+        # before any signed build begins.
+        if: steps.pin.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.pin.outputs.sha }}
+          CI_WORKFLOW: ci.yml
+        run: node scripts/release-ci-gate.mjs
       - name: Refuse to overwrite a published release
         if: steps.pin.outputs.should_release == 'true'
         env:
@@ -114,49 +131,6 @@ jobs:
           [[ "$id" =~ ^[0-9]+$ ]] || { echo "::error::release token cannot create a draft on murage-releases"; exit 1; }
           gh api --method DELETE "repos/FerroxLabs/murage-releases/releases/$id"
           echo "ok: release token created and deleted throwaway draft $PROBE (id $id)"
-
-  ci-gate:
-    name: CI must have passed on the pinned commit
-    # Runs beside the platform builds, not before them. Only assemble (the
-    # first job that can create a draft) and everything after it wait for this
-    # verdict, so a CI failure leaves no draft and no release asset behind.
-    # Audit C8: a release must not be cut from a commit CI never passed. The
-    # CI workflow is ci.yml (name: CI). A push to main starts both, so a run
-    # still in progress is waited for; a failed, cancelled or missing one
-    # fails this job.
-    needs: prepare
-    if: needs.prepare.outputs.should_release == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    # actions: read lets the gate list CI's runs; nothing here writes.
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.prepare.outputs.sha }}
-          persist-credentials: false
-      - name: Require that CI passed on the pinned commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ needs.prepare.outputs.sha }}
-          CI_WORKFLOW: ci.yml
-        run: node scripts/release-ci-gate.mjs
-
-  abort-on-ci-failure:
-    name: Stop the builds when CI failed
-    # A red CI means nothing built here can ship; stop paying for the Mac job.
-    needs: [prepare, ci-gate]
-    if: always() && needs.ci-gate.result == 'failure'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      actions: write
-    steps:
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
 
   mac:
     name: macOS arm64 + x64 (sign, notarize, staple)
@@ -244,19 +218,26 @@ jobs:
           cp "release/mac-arm64/Murage.app/Contents/Resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-darwin-arm64-inventory.json
           node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/mac-arm64/Murage.app/Contents/Resources/server" --runtime "release/mac-arm64/Murage.app/Contents/MacOS/Murage" --platform darwin --arch arm64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-darwin-arm64.json 2> qualification-evidence/whatsapp-darwin-arm64-probe.log
 
-      - name: Hand the packaged x64 app to the native Intel smoke job
-        # The x64 WhatsApp smoke runs natively on an Intel runner (job mac-x64),
-        # not under Rosetta on this arm64 runner. tar keeps modes, symlinks and
-        # the signature; the app is the one packaged above, before notarization.
-        run: tar -cf "$RUNNER_TEMP/mac-x64-app.tar" -C release/mac Murage.app
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          # Not "*-release": assemble must never see this.
-          name: mac-x64-app-smoke
-          path: ${{ runner.temp }}/mac-x64-app.tar
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
+      - name: Qualify packaged WhatsApp (darwin-x64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Check x64 execution before installing Rosetta on this arm64 runner.
+          if ! /usr/bin/arch -x86_64 /usr/bin/true; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          /usr/bin/arch -x86_64 /usr/bin/true
+          mkdir -p qualification-evidence
+          node scripts/whatsapp-inventory.mjs "release/mac/Murage.app/Contents/Resources/server" --check
+          cp "release/mac/Murage.app/Contents/Resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-darwin-x64-inventory.json
+          # Rosetta translates the x64 Electron on its first launch, which outran the probe's 30 s
+          # handshake on 1.0.0. Launch it once so the probe measures the bridge, not the translation.
+          for attempt in 1 2; do
+            start=$(date +%s)
+            ELECTRON_RUN_AS_NODE=1 /usr/bin/arch -x86_64 "release/mac/Murage.app/Contents/MacOS/Murage" -e 'process.arch === "x64" || process.exit(3)'
+            echo "x64 Electron warm-up $attempt: $(( $(date +%s) - start )) s"
+          done
+          node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/mac/Murage.app/Contents/Resources/server" --runtime "release/mac/Murage.app/Contents/MacOS/Murage" --platform darwin --arch x64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-darwin-x64.json 2> qualification-evidence/whatsapp-darwin-x64-probe.log
 
       # The FINAL packaged build.json, not a pre-build directory (handoff 9):
       # release mode, the store identity, no development ID.
@@ -412,6 +393,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/bind-whatsapp-artifacts.mjs qualification-evidence/whatsapp-darwin-arm64.json release/Murage-*-arm64.dmg release/Murage-*-arm64.zip release/Murage-*-arm64.*.blockmap release/Murage.dmg release/latest-mac.yml
+          node scripts/bind-whatsapp-artifacts.mjs qualification-evidence/whatsapp-darwin-x64.json release/Murage-*-x64.dmg release/Murage-*-x64.zip release/Murage-*-x64.*.blockmap release/Murage-intel.dmg release/latest-mac.yml
       - name: Preserve WhatsApp qualification reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -440,73 +422,6 @@ jobs:
           name: mac-gepa-evidence
           path: qualification-evidence/
           if-no-files-found: warn
-          retention-days: 7
-
-  mac-x64:
-    name: macOS x64 WhatsApp smoke (native Intel)
-    # The packaged x64 app run natively: no Rosetta warm-up, no emulation
-    # timing, and a flaky smoke reruns this job alone, not the 90-minute Mac
-    # build. Binds its report to the final x64 bytes from the mac job.
-    needs: [prepare, mac]
-    if: needs.prepare.outputs.should_release == 'true'
-    runs-on: macos-15-intel
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.prepare.outputs.sha }}
-          persist-credentials: false
-      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: mac-x64-app-smoke
-          path: x64-app
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: mac-release
-          path: release
-      - name: Unpack the packaged x64 app
-        run: |
-          set -euo pipefail
-          mkdir -p release/mac
-          tar -xf x64-app/mac-x64-app.tar -C release/mac
-          test "$(uname -m)" = x86_64
-          lipo -archs release/mac/Murage.app/Contents/MacOS/Murage | grep -q x86_64
-      - name: Qualify packaged WhatsApp (darwin-x64)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p qualification-evidence
-          node scripts/whatsapp-inventory.mjs "release/mac/Murage.app/Contents/Resources/server" --check
-          cp "release/mac/Murage.app/Contents/Resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-darwin-x64-inventory.json
-          # One automatic retry; the first attempt's diagnostics are kept.
-          for attempt in 1 2; do
-            if node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/mac/Murage.app/Contents/Resources/server" --runtime "release/mac/Murage.app/Contents/MacOS/Murage" --platform darwin --arch x64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-darwin-x64.json 2> qualification-evidence/whatsapp-darwin-x64-probe.log; then
-              exit 0
-            fi
-            echo "::warning::x64 WhatsApp smoke attempt $attempt failed"; cat qualification-evidence/whatsapp-darwin-x64-probe.log
-            cp qualification-evidence/whatsapp-darwin-x64-probe.log "qualification-evidence/whatsapp-darwin-x64-probe-attempt$attempt.log"
-          done
-          exit 1
-      - name: Bind WhatsApp reports to final artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/bind-whatsapp-artifacts.mjs qualification-evidence/whatsapp-darwin-x64.json release/Murage-*-x64.dmg release/Murage-*-x64.zip release/Murage-*-x64.*.blockmap release/Murage-intel.dmg release/latest-mac.yml
-      - name: Preserve WhatsApp qualification reports
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: mac-x64-whatsapp-gepa-evidence
-          path: qualification-evidence/whatsapp-*
-          if-no-files-found: error
           retention-days: 7
 
   windows:
@@ -958,9 +873,7 @@ jobs:
 
   assemble:
     name: Assemble the draft and verify every feed
-    needs: [prepare, ci-gate, mac, mac-x64, windows, linux]
-    # Builds run beside CI; nothing below this point (draft, upload, publish)
-    # starts unless ci-gate passed, so a red CI leaves no draft behind.
+    needs: [prepare, mac, windows, linux]
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
     # generate-notes is a POST and needs Contents: write. Granted here rather
