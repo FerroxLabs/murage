@@ -20,7 +20,7 @@ function addMessage(id: string, role: "bot" | "user", text = "x", threadId = "t1
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
   db.exec(MEMORY_SCHEMA);
-  db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,6,?,'active')").run(randomUUID());
+  db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,7,?,'active')").run(randomUUID());
   db.exec("CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id))");
   addMessage("m1", "bot");
   addMessage("u1", "user", "how do we close the Acme deal", "t1", NOW - 10);

@@ -36,7 +36,7 @@ it("upgrades a v4 file to v5: six new tables, indexes, existing events and setti
   try {
     const settingsBefore = settingsOf(db);
     migrateMemorySchema(db);
-    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(7);
     for (const name of V5_TABLES) expect(tables(db).has(name), name).toBe(true);
     const indexes = (db.prepare("SELECT name FROM sqlite_schema WHERE type='index' AND name LIKE 'memory_%'").all() as { name: string }[]).map(row => row.name);
     expect(indexes).toEqual(expect.arrayContaining(["memory_outcomes_bot_created", "memory_feedback_bot_created", "memory_episodes_bot_group_week", "memory_lessons_bot_state"]));
@@ -105,14 +105,14 @@ it("downgrades v5 to v4 exactly: tables gone, new-kind events removed, old event
     migrateMemorySchema(db);
     db.exec("INSERT INTO memory_learning_events(id,scope_id,kind,created_at) VALUES('n1','s','lesson-learned',9)");
     db.exec("INSERT INTO memory_outcomes(id,bot_id,kind,proposed_by,created_at) VALUES('o','b','won','owner',1)");
-    expect(downgradeMemorySchema(db, 4)).toEqual({ status: "downgraded", from: 6, to: 4 });
+    expect(downgradeMemorySchema(db, 4)).toEqual({ status: "downgraded", from: 7, to: 4 });
     expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(4);
     for (const name of V5_TABLES) expect(tables(db).has(name), name).toBe(false);
     expect((db.prepare("SELECT id FROM memory_learning_events ORDER BY id").all() as { id: string }[]).map(row => row.id)).toEqual(["e1", "e2"]);
     validateMemorySchema(db);
     expect(downgradeMemorySchema(db, 4)).toEqual({ status: "already-v4", from: 4, to: 4 });
     migrateMemorySchema(db);
-    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(7);
     validateMemorySchema(db);
     for (const to of [4, 3, 2, 1] as const) { downgradeMemorySchema(db, to); validateMemorySchema(db); migrateMemorySchema(db); validateMemorySchema(db); }
   } finally { db.close(); }
@@ -165,7 +165,7 @@ it("a database the earlier development v5 wrote is rebuilt in place on open, kee
     expect(db.prepare("SELECT id,scope,kind,text FROM memory_lessons ORDER BY id").all()).toEqual([
       { id: "l1", scope: "owner", kind: "note", text: "No emojis" }, { id: "l2", scope: "bots", kind: "note", text: "Shared" }]);
     expect(db.prepare("SELECT id,correction FROM memory_feedback").all()).toEqual([{ id: "f1", correction: "x" }]);
-    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(7);
     // and a second open changes nothing
     migrateMemorySchema(db);
     expect(db.prepare("SELECT COUNT(*) c FROM memory_lessons").get()?.c).toBe(2);

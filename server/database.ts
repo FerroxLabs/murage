@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { DATA_DIR } from "./config.ts";
 import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_PRE_V3_SNAPSHOT, MEMORY_PRE_V4_SNAPSHOT, migrateMemorySchema } from "./memory/schema.ts";
 import { memoryUpgradeReporter } from "./memory/upgrade-status.ts";
+import { finishLineageStorageAtStartup } from "./memory/root-set-compaction.ts";
 import { initializeInbox } from "./inbox.ts";
 import { bumpMessagesVersion } from "./inbox-version.ts";
 import { instrumentDatabase } from "./io-budget.ts";
@@ -38,7 +39,14 @@ export function database(): DatabaseSync {
   try {
     // secure_delete: a deleted conversation's words are overwritten in the
     // file, not left in free space for anyone reading the raw bytes.
+    // A new file frees pages back to the disk in small steps (incremental
+    // vacuum, root-set-compaction.ts); it can only be chosen before the first table.
+    if (freshInstallation) db.exec("PRAGMA auto_vacuum=INCREMENTAL");
     db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;");
+    // The write-ahead log keeps the size of the largest transaction it ever
+    // held unless told otherwise (a 3.6 GB log after the 1.0.0 upgrade): after
+    // each checkpoint it is cut back to this.
+    db.exec("PRAGMA journal_size_limit=67108864; PRAGMA wal_autocheckpoint=1000;");
     // Backstop for the Inbox disk burn: a sort that outgrows the page cache must
     // spill into memory, not into a temp file opened and closed per statement.
     // cache_size is negative = KiB (32 MiB).
@@ -49,6 +57,11 @@ export function database(): DatabaseSync {
     const upgrade = memoryUpgradeReporter(DATA_DIR, basename);
     try {
       migrateMemorySchema(db, freshInstallation ? "active" : "off", { snapshotPath: join(DATA_DIR, MEMORY_PRE_V2_SNAPSHOT), snapshotV2Path: join(DATA_DIR, MEMORY_PRE_V3_SNAPSHOT), snapshotV3Path: join(DATA_DIR, MEMORY_PRE_V4_SNAPSHOT), onPhase: event => upgrade.phase(event) });
+      // A v6 file's root sets are converted, and their space handed back,
+      // here, before the server takes traffic: never on the request path.
+      // Resumable; a failure here leaves memory whole and is retried next start.
+      try { finishLineageStorageAtStartup(db, { onProgress: event => upgrade.storage(event) }); }
+      catch (error) { console.warn(`[memory] lineage storage: ${error instanceof Error ? error.message : String(error)}; the next start carries on`); }
       upgrade.done();
     } catch (error) { upgrade.blocked(error); throw error; }
     // After the memory upgrade, so its pre-migration copy never carries the index.

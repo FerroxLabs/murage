@@ -13,7 +13,7 @@ import path from "node:path";
 
 export const MEMORY_UPGRADE_STATUS_FILE = "memory-upgrade-status.json";
 const BLOCKED_CODES = new Set(["MEMORY_MIGRATION_DISK_SPACE", "MEMORY_SCHEMA_NEWER", "MEMORY_MIGRATION_FAILED"]);
-const PHASES = new Set(["checking", "copying", "migrating"]);
+const PHASES = new Set(["checking", "copying", "migrating", "converting", "reclaiming"]);
 const num = (value) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined);
 
 /** The note, validated, or null. `pid` must be the child that is starting now:
@@ -37,6 +37,8 @@ export function readMemoryUpgradeStatus(dataDir, { pid } = {}) {
     freeBytes: num(raw.freeBytes),
     shortBytes: num(raw.shortBytes),
     newerVersion: num(raw.newerVersion),
+    done: num(raw.done),
+    total: num(raw.total),
     partialName,
   };
 }
@@ -56,6 +58,9 @@ export function clearMemoryUpgradeStatus(dataDir) {
 export function memoryUpgradeProgress(status, dataDir, size = (file) => statSync(file).size) {
   if (!status || status.state !== "upgrading") return null;
   if (status.phase === "migrating") return 95;
+  // memory v7: root sets converted after the upgrade, then the space handed back
+  if (status.phase === "converting") return status.total ? Math.max(1, Math.min(94, Math.floor((status.done ?? 0) / status.total * 94))) : 1;
+  if (status.phase === "reclaiming") return 97;
   if (status.phase !== "copying" || !status.copyBytes || !status.partialName) return status.phase === "checking" ? 0 : null;
   try { return Math.max(1, Math.min(94, Math.floor((size(path.join(dataDir, status.partialName)) / status.copyBytes) * 100))); } catch { return 1; }
 }

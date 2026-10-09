@@ -31,14 +31,14 @@ const shape = (db: DatabaseSync) => (db.prepare("SELECT type,name,sql FROM sqlit
 
 it("a verified v2 copy exists before the file is rewritten; upgrade keeps the data; downgrade is accepted by the 0.1.61 validator", () => {
   const f = installation();
-  expect(MEMORY_SCHEMA_VERSION).toBe(6);
+  expect(MEMORY_SCHEMA_VERSION).toBe(7);
   expect(f.db.prepare("SELECT schema_version v FROM memory_meta").get()?.v).toBe(2);
   const before = shape(f.db);
   const snapshot = join(f.root, MEMORY_PRE_V3_SNAPSHOT);
   let copyExistedAtRewrite = false;
   migrateMemorySchema(f.db, "off", { snapshotV2Path: snapshot, freeBytes: () => 1024 ** 4, onPhase: e => { if (e.phase === "migrating") copyExistedAtRewrite = existsSync(snapshot); } });
   expect(copyExistedAtRewrite).toBe(true);
-  expect(f.db.prepare("SELECT schema_version v FROM memory_meta").get()?.v).toBe(6);
+  expect(f.db.prepare("SELECT schema_version v FROM memory_meta").get()?.v).toBe(7);
   expect(f.db.prepare("SELECT message_id c FROM memory_sources WHERE id='src1'").get()?.c).toBe("m1");
   const copy = open(snapshot);
   expect(shipped.validateMemorySchema(copy).size).toBeGreaterThan(0);
@@ -46,14 +46,14 @@ it("a verified v2 copy exists before the file is rewritten; upgrade keeps the da
   expect(copy.prepare("PRAGMA integrity_check").get()?.integrity_check).toBe("ok");
   expect(shape(copy)).toEqual(before);
   // back down to the shipped version
-  expect(downgradeMemorySchema(f.db, 2)).toEqual({ status: "downgraded", from: 6, to: 2 });
+  expect(downgradeMemorySchema(f.db, 2)).toEqual({ status: "downgraded", from: 7, to: 2 });
   expect(shipped.validateMemorySchema(f.db).size).toBeGreaterThan(0);
   expect(shape(f.db)).toEqual(before);
   expect(f.db.prepare("SELECT message_id c FROM memory_sources WHERE id='src1'").get()?.c).toBe("m1");
   // and forward again
   migrateMemorySchema(f.db, "off", { snapshotV2Path: join(f.root, "again.db"), freeBytes: () => 1024 ** 4 });
   validateMemorySchema(f.db);
-  expect(f.db.prepare("SELECT schema_version v FROM memory_meta").get()?.v).toBe(6);
+  expect(f.db.prepare("SELECT schema_version v FROM memory_meta").get()?.v).toBe(7);
 });
 
 it("a copy that is not a readable v2 file stops the upgrade before any rewrite", () => {

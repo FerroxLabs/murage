@@ -63,8 +63,8 @@ const BACKFILLED = [
 
 it("a fresh v4 install retains the v3 output index and the triggers keep the index equal to the receipts", () => {
   const db = open(); migrateMemorySchema(db, "active");
-  expect(MEMORY_SCHEMA_VERSION).toBe(6);
-  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+  expect(MEMORY_SCHEMA_VERSION).toBe(7);
+  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(7);
   seed(db);
   expect(index(db)).toEqual(BACKFILLED);
   // linkMemoryDisclosureOutput appends to the array
@@ -86,7 +86,7 @@ it("upgrades a 0.1.60 (v2) file: copy first, index backfilled, identity and lear
 
   const snapshot = join(f.root, MEMORY_PRE_V3_SNAPSHOT);
   migrateMemorySchema(f.db, "off", { snapshotV2Path: snapshot });
-  expect(f.db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...meta, schema_version: 6 });
+  expect(f.db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...meta, schema_version: 7 });
   expect(JSON.parse(String(f.db.prepare("SELECT settings FROM memory_learning_config").get()?.settings))).toMatchObject({version:2,reviewMode:false});
   expect(index(f.db)).toEqual(BACKFILLED);
   expect(existsSync(snapshot)).toBe(true);
@@ -103,7 +103,7 @@ it("upgrades a v1 file straight to v4 with the v3 output index", () => {
   db.prepare("INSERT INTO memory_meta VALUES(1,1,?,0,0,0,'off')").run(randomUUID());
   seed(db);
   migrateMemorySchema(db);
-  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(7);
   expect(index(db)).toEqual(BACKFILLED);
   expect(db.prepare("SELECT count(*) n FROM memory_learning_config").get()?.n).toBe(1);
 });
@@ -114,7 +114,7 @@ it("the previous release refuses a v4 file; the downgrade to v2 is accepted by i
   expect(() => validateAs0160(f.db)).toThrow("MEMORY_SCHEMA_UNSUPPORTED");
   f.db.exec(`INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     VALUES('after','thread','drv',NULL,'[]','[]','["m9"]',0,0,1,'delivered',9);`);
-  expect(downgradeMemorySchema(f.db, 2)).toEqual({ status: "downgraded", from: 6, to: 2 });
+  expect(downgradeMemorySchema(f.db, 2)).toEqual({ status: "downgraded", from: 7, to: 2 });
   expect(validateAs0160(f.db)).toBe(2);
   expect(f.db.prepare("SELECT schema_version,policy_revision,deletion_epoch,data_revision,mode FROM memory_meta").get()).toEqual({ schema_version: 2, policy_revision: 4, deletion_epoch: 5, data_revision: 6, mode: "active" });
   expect(f.db.prepare("SELECT bundle_id,output_message_ids FROM memory_disclosures ORDER BY bundle_id").all().map(row => row.bundle_id)).toEqual(["after", "b1", "b2", "b3"]);
@@ -123,10 +123,10 @@ it("the previous release refuses a v4 file; the downgrade to v2 is accepted by i
   // round trip: the next 0.1.61 start rebuilds the index, including rows written while downgraded
   migrateMemorySchema(f.db);
   expect(index(f.db)).toEqual([{ bundle_id: "after", thread_id: "thread", message_id: "m9" }, ...BACKFILLED]);
-  expect(downgradeMemorySchema(f.db)).toEqual({ status: "downgraded", from: 6, to: 1 });
+  expect(downgradeMemorySchema(f.db)).toEqual({ status: "downgraded", from: 7, to: 1 });
   expect(validateAs0160(f.db)).toBe(1);
   migrateMemorySchema(f.db);
-  expect(f.db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+  expect(f.db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(7);
   expect(index(f.db)).toHaveLength(4);
 });
 

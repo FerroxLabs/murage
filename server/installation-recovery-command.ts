@@ -86,8 +86,8 @@ export async function installationRecoveryCommand(args: string[], input: { readI
   if (command === "rollback" && options.size === 1 && options.has("--data-dir")) {
     return { ok: true, operation: "rollback", ...rollbackInstallationRestore(options.get("--data-dir")!) };
   }
-  if (command === "memory-downgrade" && options.has("--data-dir") && (options.size === 1 || options.size === 2 && ["1", "2", "3", "4", "5"].includes(options.get("--to") ?? ""))) {
-    return { ok: true, operation: "memory-downgrade", ...downgradeInstallationMemorySchema(options.get("--data-dir")!, options.get("--to") === "5" ? 5 : options.get("--to") === "4" ? 4 : options.get("--to") === "3" ? 3 : options.get("--to") === "2" ? 2 : 1) };
+  if (command === "memory-downgrade" && options.has("--data-dir") && (options.size === 1 || options.size === 2 && ["1", "2", "3", "4", "5", "6"].includes(options.get("--to") ?? ""))) {
+    return { ok: true, operation: "memory-downgrade", ...downgradeInstallationMemorySchema(options.get("--data-dir")!, options.get("--to") === "6" ? 6 : options.get("--to") === "5" ? 5 : options.get("--to") === "4" ? 4 : options.get("--to") === "3" ? 3 : options.get("--to") === "2" ? 2 : 1) };
   }
   if (command === "review" && options.size === 1 && options.has("--data-dir")) {
     return { ok: true, operation: "review", ...reviewInstallation(options.get("--data-dir")!) };

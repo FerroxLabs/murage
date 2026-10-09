@@ -112,7 +112,7 @@ it("downgrades a stopped installation's memory schema to v1 and refuses a runnin
   expect(running.stderr).toContain("LEASE");
   const first = await run(["memory-downgrade", "--data-dir", f.data]);
   expect(first.stdout + first.stderr).not.toContain("never-print-this-canary");
-  expect(JSON.parse(first.stdout)).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 6, to: 1 });
+  expect(JSON.parse(first.stdout)).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 7, to: 1 });
   expect(JSON.parse((await run(["memory-downgrade", "--data-dir", f.data])).stdout)).toMatchObject({ ok: true, status: "already-v1" });
   const check = new DatabaseSync(file);
   try {
@@ -123,8 +123,8 @@ it("downgrades a stopped installation's memory schema to v1 and refuses a runnin
   expect(() => acquireDataDirLease(f.data).release()).not.toThrow();
 });
 
-it.each([2,3])("supports a stopped-installation downgrade to v%s",async to=>{
+it.each([2,3,6])("supports a stopped-installation downgrade to v%s",async to=>{
  const f=fixture(),db=new DatabaseSync(join(f.data,"messages.db"));migrateMemorySchema(db);db.close();
  const result=await run(["memory-downgrade","--data-dir",f.data,"--to",String(to)]);
- expect(JSON.parse(result.stdout)).toMatchObject({status:"downgraded",from:6,to});
+ expect(JSON.parse(result.stdout)).toMatchObject({status:"downgraded",from:7,to});
 });

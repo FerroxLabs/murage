@@ -104,6 +104,7 @@ import { continuationMemoryRevoked, filterDirectReplay, linkRetainedSessionOutpu
 import { roomTranscriptForTurn, roomTranscriptWithoutMemory } from "./room-transcript.ts";
 import { memoryAgentRoute } from "./memory/routes.ts";
 import { MemoryWorkerController } from "./memory/worker-controller.ts";
+import { lineageStorageStatus, maintainLineageStorage } from "./memory/root-set-compaction.ts";
 import { pipReflectPending, maintainPip, runPipReflect, type ReflectDeps } from "./memory/pip-reflect.ts";
 import { createResolveRoute } from "./memory/pip-reflect-host.ts";
 import { recordMemorySettlement, reconcileInterruptedMemoryTurns } from "./memory/settlement.ts";
@@ -2857,8 +2858,18 @@ function announceRememberedMoments(jobId:string,since:number){
 setBotReplyObserver((threadId)=>{if(!threadAwaitsRememberedChip(threadId))return;try{for(const moment of rememberedMomentsAwaitingReply(database(),threadId))broadcast({kind:"learning.remembered",...moment});}catch{/* the chip is optional */}});
 // B7c: an automatic skill or routine change becomes one live event, so its chip shows without a reload.
 setImprovedListener(eventId=>{try{const moment=improvedMomentForEvent(database(),eventId);if(moment)broadcast({kind:"learning.improved",...moment});}catch{/* the chip is optional */}});
+/** The last request that changes something (any method but GET): a full
+ * VACUUM waits until the owner has been away from the app this long. */
+let lastOwnerActionAt = Date.now();
+const STORAGE_IDLE_MS = 5 * 60_000;
 const memoryWorker = new MemoryWorkerController({
-  onMaintenance: startup => maintainPip(pipReflectDeps, { startup }),
+  onMaintenance: async startup => {
+    // Output lineage storage (memory v7): convert a v6 file's root sets in
+    // short slices, collect unused sets, keep the log short, reclaim space.
+    try { await maintainLineageStorage({ database, idle: () => turnOutputRoots.size === 0 && Date.now() - lastOwnerActionAt > STORAGE_IDLE_MS, defer: () => ioBudget.shouldDefer("memory-idle") }); }
+    catch (error) { console.warn(`[memory] lineage storage maintenance: ${error instanceof Error ? error.message : String(error)}`); }
+    return maintainPip(pipReflectDeps, { startup });
+  },
   continuityEligible: () => store.bots.some(bot => bot.continuity === true),
   onContinuity: async signal => {
     if(providerConfigBusy||providerBankDispatchFenced())return;
@@ -15966,6 +15977,7 @@ function wouldRunEngineCommand(bot: { id: string; modelSelection: { instanceId: 
 }
 
 const server = createServer(async (req, res) => {
+  if (req.method && req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") lastOwnerActionAt = Date.now();
   let url: URL;
   try {
     url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
@@ -16326,6 +16338,8 @@ const server = createServer(async (req, res) => {
         signedOutEngines: await traySignedOutEngines(),
       }));
     }
+    // Progress of the output-lineage conversion and space reclaim (memory v7).
+    if(method==="GET" && path==="/api/memory/storage") return json(res,200,lineageStorageStatus(database()));
     if((method==="GET" && path==="/api/memory/status") || (method==="POST" && path==="/api/memory/action")) {
       try {
         const body=method==="POST"?await readBody(req):undefined;

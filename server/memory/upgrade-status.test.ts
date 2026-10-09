@@ -53,11 +53,11 @@ it("a disk that is too small leaves a blocked note whose sentence names the shor
 it("a newer data format leaves a blocked note that says to install the latest version", () => {
   const root = mkdtempSync(join(tmpdir(), "murage-upgrade-status-")); roots.push(root);
   const db = new DatabaseSync(":memory:"); dbs.push(db);
-  db.exec(MEMORY_SCHEMA.replace("CHECK(schema_version=6)", "CHECK(schema_version=7)"));
-  db.prepare("INSERT INTO memory_meta VALUES(1,7,?,0,0,0,'off')").run(randomUUID());
+  db.exec(MEMORY_SCHEMA.replace("CHECK(schema_version=7)", "CHECK(schema_version=8)"));
+  db.prepare("INSERT INTO memory_meta VALUES(1,8,?,0,0,0,'off')").run(randomUUID());
   const report = memoryUpgradeReporter(root, basename);
   try { migrateMemorySchema(db, "off"); } catch (error) { report.blocked(error); }
   const note = readMemoryUpgradeStatus(root, { pid: process.pid });
-  expect(note).toMatchObject({ state: "blocked", code: "MEMORY_SCHEMA_NEWER", newerVersion: 7 });
+  expect(note).toMatchObject({ state: "blocked", code: "MEMORY_SCHEMA_NEWER", newerVersion: 8 });
   expect(memoryUpgradeBlockedSentence(note, "en")).toMatch(/Install the latest version of Murage/);
 });

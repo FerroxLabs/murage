@@ -23,7 +23,7 @@
 // error, so a turn never fails and never shows what it could not check.
 import { database } from "../database.ts";
 import { supersededThreadCheckpoint } from "./checkpoints.ts";
-import { storeRootSet } from "./schema.ts";
+import { loadRootSetForest, provenRootSets, rootSetMembers, storeRootSet } from "./schema.ts";
 type DatabaseLike = ReturnType<typeof database>;
 
 export type Disclosure = Record<string,string|number|bigint|Uint8Array|null>;
@@ -495,8 +495,8 @@ function lineageJudge(threadId: string, audience: ReplayAudience | null, invalid
   };
   /** Of root sets `setIds`, the bad ones: a set missing, past the ceiling, or
    * holding a bad root. Every distinct root of all of them is judged once
-   * (grouped by thread), then the bad roots find their sets through the
-   * member index: indexed lookups, no recursive walk. */
+   * (grouped by thread), then each set is judged once along its chain of
+   * parents (v7), linear in the rows the sets hold. */
   const badSets = (setIds: readonly string[], depth: number): Set<string> => {
     const out = new Set<string>();
     const pending = [...new Set(setIds)].filter(id => { const known = setVerdicts.get(id); if (known) out.add(id); return known === undefined; });
@@ -509,18 +509,39 @@ function lineageJudge(threadId: string, audience: ReplayAudience | null, invalid
       if (size === undefined || size > rootCeiling()) { setVerdicts.set(id, true); out.add(id); } else live.push(id);
     }
     if (!live.length) return out;
-    const liveJson = JSON.stringify(live);
-    const members = db.prepare("SELECT DISTINCT root_thread_id,root_message_id FROM memory_root_set_members WHERE set_id IN (SELECT value FROM json_each(?))").all(liveJson);
-    rowsRead += members.length;
-    const byThread = new Map<string,string[]>();
-    for (const row of members) { const thread = String(row.root_thread_id); byThread.set(thread, [...(byThread.get(thread) ?? []), String(row.root_message_id)]); }
-    const holding = db.prepare("SELECT DISTINCT set_id FROM memory_root_set_members WHERE root_thread_id=? AND root_message_id=? AND set_id IN (SELECT value FROM json_each(?))");
-    const badLive = new Set<string>();
+    // Every set the live ones rest on (v7: a set may be its parent plus
+    // what it adds), read in one go; each distinct root judged once; a set
+    // is bad when its chain is unprovable or any set along it holds a bad root.
+    const forest = loadRootSetForest(db, live);
+    const proven = provenRootSets(forest, live);
+    let rowCount = 0;
+    const byThread = new Map<string,Set<string>>();
+    for (const rows of forest.own.values()) for (const [thread, message] of rows) {
+      rowCount++;
+      let messages = byThread.get(thread);
+      if (!messages) byThread.set(thread, messages = new Set());
+      messages.add(message);
+    }
+    rowsRead += rowCount;
+    const badKeys = new Set<string>();
     for (const [thread, messages] of byThread) {
-      for (const message of badRoots(thread, messages, depth)) {
-        charge();
-        for (const row of holding.all(thread, message, liveJson)) badLive.add(String(row.set_id));
+      for (const message of badRoots(thread, [...messages], depth)) { charge(); badKeys.add(rootKey(thread, message)); }
+    }
+    const ownBad = (id: string) => (forest.own.get(id) ?? []).some(([thread, message]) => badKeys.has(rootKey(thread, message)));
+    const chainBad = new Map<string, boolean>();
+    const badLive = new Set<string>();
+    for (const start of live) {
+      if (!proven.get(start)) { badLive.add(start); continue; }
+      const path: string[] = [];
+      let at: string | null = start, below = false;
+      while (at !== null) {
+        const known = chainBad.get(at);
+        if (known !== undefined) { below = known; break; }
+        path.push(at);
+        at = forest.nodes.get(at)!.parent;
       }
+      for (let index = path.length - 1; index >= 0; index--) { below = below || ownBad(path[index]!); chainBad.set(path[index]!, below); }
+      if (below) badLive.add(start);
     }
     for (const id of live) { setVerdicts.set(id, badLive.has(id)); if (badLive.has(id)) out.add(id); }
     return out;
@@ -700,6 +721,10 @@ CREATE TEMP TRIGGER IF NOT EXISTS lineage_roots_i AFTER INSERT ON main.memory_ou
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_roots_d AFTER DELETE ON main.memory_output_roots BEGIN ${NOTE("'m'||char(31)||OLD.thread_id||char(31)||OLD.message_id")}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_roots_u AFTER UPDATE ON main.memory_output_roots BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.message_id")}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_sets_d AFTER DELETE ON main.memory_root_set_members BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_set_rows_d AFTER DELETE ON main.memory_root_sets BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_set_rows_u AFTER UPDATE ON main.memory_root_sets BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_parents_d AFTER DELETE ON main.memory_root_set_parents BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_parents_u AFTER UPDATE ON main.memory_root_set_parents BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_receipts_u AFTER UPDATE ON main.memory_disclosures WHEN OLD.record_versions IS NOT NEW.record_versions OR OLD.source_versions IS NOT NEW.source_versions
  BEGIN INSERT INTO lineage_dirty SELECT 'm'||char(31)||thread_id||char(31)||message_id FROM main.memory_disclosure_outputs WHERE bundle_id=NEW.bundle_id; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_messages_u AFTER UPDATE ON main.messages WHEN OLD.json IS NOT NEW.json AND (instr(OLD.json,'copyOf')>0 OR instr(NEW.json,'copyOf')>0)
@@ -878,7 +903,10 @@ export function messageMadeWithMemory(threadId: string, messageId: string): bool
 
 /** A set of output roots: keys `thread\u0000message`; `over` when it passed
  * the ceiling (or a context could not be proven). */
-export interface OutputRoots { roots: Set<string>; over: boolean }
+export interface OutputRoots { roots: Set<string>; over: boolean;
+  /** The largest stored set taken whole into `roots`: the parent a new set
+   * is written against (v7), so a thread's growing sets stay linear. */
+  base?: { id: string; size: number; members?: ReadonlySet<string> } }
 const rootKey = (thread: string, message: string) => `${thread}\u0000${message}`;
 /** One commit for a set and the row that points at it. */
 function atomically(db: ReturnType<typeof database>, work: () => void): void {
@@ -886,13 +914,17 @@ function atomically(db: ReturnType<typeof database>, work: () => void): void {
   try { work(); db.exec("RELEASE memory_root_pointer"); }
   catch (error) { db.exec("ROLLBACK TO memory_root_pointer; RELEASE memory_root_pointer"); throw error; }
 }
-/** The members of one stored root set, into `into`; an unknown or empty id is unprovable. */
+/** The members of one stored root set, into `into`; an unknown or empty id,
+ * or a chain that cannot be proven, is unprovable. */
 function addSetMembers(into: OutputRoots, setId: string): void {
   const db = database();
   if (!setId) { into.over = true; return; }
   const size = db.prepare("SELECT size FROM memory_root_sets WHERE set_id=?").get(setId);
   if (!size || Number(size.size) > rootCeiling()) { into.over = true; return; }
-  for (const row of db.prepare("SELECT root_thread_id,root_message_id FROM memory_root_set_members WHERE set_id=?").all(setId)) into.roots.add(rootKey(String(row.root_thread_id), String(row.root_message_id)));
+  const members = rootSetMembers(db, setId);
+  if (!members) { into.over = true; return; }
+  for (const key of members) into.roots.add(key);
+  if (!into.base || into.base.size < members.size) into.base = { id: setId, size: members.size, members };
 }
 /** The flat root set of what a turn's context carries (memory schema v6):
  * each carried reply made under a receipt is a root itself, and a reply that
@@ -923,7 +955,8 @@ export function outputRootsFor(lines: ReadonlyArray<{ threadId: string; id: stri
 /** The union of two root sets. */
 export function mergeOutputRoots(a: OutputRoots, b: OutputRoots): OutputRoots {
   const roots = new Set([...a.roots, ...b.roots]);
-  return { roots, over: a.over || b.over || roots.size > rootCeiling() };
+  const base = !a.base ? b.base : !b.base ? a.base : a.base.size >= b.base.size ? a.base : b.base;
+  return { roots, over: a.over || b.over || roots.size > rootCeiling(), ...(base ? { base } : {}) };
 }
 /** Points a reply at the root set of what it rests on (every mode, v6): the
  * union with any set it already has, stored once and reused when the same
@@ -934,10 +967,10 @@ export function recordOutputRoots(threadId: string, messageId: string, set: Outp
   const db = database();
   const upsert = db.prepare("INSERT INTO memory_output_roots(thread_id,message_id,set_id) VALUES(?,?,?) ON CONFLICT(thread_id,message_id) DO UPDATE SET set_id=excluded.set_id WHERE set_id IS NOT excluded.set_id");
   const held = db.prepare("SELECT set_id FROM memory_output_roots WHERE thread_id=? AND message_id=?").get(threadId, messageId);
-  const union: OutputRoots = { roots: new Set(set.roots), over: set.over };
+  const union: OutputRoots = { roots: new Set(set.roots), over: set.over, ...(set.base ? { base: set.base } : {}) };
   if (held) { if (!String(held.set_id ?? "")) return; addSetMembers(union, String(held.set_id)); }
   if (union.over || union.roots.size > rootCeiling()) { upsert.run(threadId, messageId, ""); return; }
-  atomically(db, () => upsert.run(threadId, messageId, storeRootSet(db, union.roots)));
+  atomically(db, () => upsert.run(threadId, messageId, storeRootSet(db, union.roots, union.base?.id, union.base?.members)));
 }
 /** The roots a retained engine session was shown (v6). A session marked over,
  * or whose set is within the headroom of the ceiling, comes back `over`: it
@@ -960,10 +993,10 @@ export function recordSessionRoots(threadId: string, driverInstance: string, nat
   const db = database();
   const upsert = db.prepare("INSERT INTO memory_session_roots(thread_id,driver_instance,native_session,set_id) VALUES(?,?,?,?) ON CONFLICT(thread_id,driver_instance,native_session) DO UPDATE SET set_id=excluded.set_id WHERE set_id IS NOT excluded.set_id");
   const held = db.prepare("SELECT set_id FROM memory_session_roots WHERE thread_id=? AND driver_instance=? AND native_session=?").get(threadId, driverInstance, nativeSession);
-  const union: OutputRoots = { roots: new Set(set.roots), over: set.over };
+  const union: OutputRoots = { roots: new Set(set.roots), over: set.over, ...(set.base ? { base: set.base } : {}) };
   if (held) { if (!String(held.set_id ?? "")) return; addSetMembers(union, String(held.set_id)); }
   if (union.over || union.roots.size > rootCeiling()) { upsert.run(threadId, driverInstance, nativeSession, ""); return; }
-  atomically(db, () => upsert.run(threadId, driverInstance, nativeSession, storeRootSet(db, union.roots)));
+  atomically(db, () => upsert.run(threadId, driverInstance, nativeSession, storeRootSet(db, union.roots, union.base?.id, union.base?.members)));
 }
 /** Whether a root set no longer holds: past the ceiling, or any root
  * forgotten or withheld by its receipts (content only: no reader access
