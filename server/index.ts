@@ -554,8 +554,9 @@ import { beginTurnTrace, endTurnTrace, traceEngineEvent } from "./turn-trace.ts"
 import { EarlyBundle, dispatchAccess } from "./early-bundle.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 import { fluxConfigured, fluxKey, fluxKeyState, legacyFluxError } from "./flux-config.ts";
-import { appDecider } from "./decider/index.ts";
-import { decideRoomResponder, type RoomRoute } from "./decider/room-routing.ts";
+import { appDecider, deciderAvailable } from "./decider/index.ts";
+import { appendDeciderLog } from "./decider/log.ts";
+import { decideRoomResponder, routeLogRow, type RoomRoute } from "./decider/room-routing.ts";
 import { describeDecisionModelSettings, readDecisionModelSettings } from "./decider/settings.ts";
 import { noteFluxKeyAccepted, noteFluxKeyRefused, onFluxKeyHealthChange } from "./flux-key-health.ts";
 import { SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading, setupSignedOutReading } from "./setup.ts";
@@ -13611,13 +13612,15 @@ async function autoRoomRoute(args: {
       .filter((m) => m.id !== args.messageId && m.kind === "text" && typeof m.text === "string" && m.text.trim())
       .slice(-12)
       .map((m) => ({ from: m.role === "user" ? owner : m.from?.name ?? "Bot", text: m.text as string }));
-    return await decideRoomResponder(appDecider(), {
+    const route = await decideRoomResponder(appDecider(), {
       room: args.group.name,
       humans: [`${owner} (owner)`],
       members: args.availableMembers.map((member) => ({ id: member.id, name: member.name, title: member.title, description: member.description })),
       recent,
       message: { from: owner, text: args.text },
     }, { signal: args.signal });
+    try { if (route.kind !== "fallback" || !["disabled", "job_off", "no_key"].includes(route.reason)) appendDeciderLog(routeLogRow(route)); } catch { /* the log never changes a route */ }
+    return route;
   } catch {
     return { kind: "fallback", reason: "malformed" };
   }
@@ -14826,7 +14829,10 @@ function configStatus() {
     // refused, so the app can say so. Never the key itself.
     flux: { configured: fluxConfigured(), keyState: fluxKeyState() },
     // Decision model: switches and a key-present flag only, never the key.
-    decider: describeDecisionModelSettings(readDecisionModelSettings(cfg.decider)),
+    decider: describeDecisionModelSettings(
+      readDecisionModelSettings(cfg.decider, { defaultOn: Boolean(cfg.decider?.byoKey) || fluxConfigured() }),
+      { available: deciderAvailable() },
+    ),
     webSearch: { provider: cfg.webSearch?.provider ?? "engine",
       tavilyConfigured: Boolean(cfg.webSearch?.tavilyApiKey), exaConfigured: Boolean(cfg.webSearch?.exaApiKey), firecrawlConfigured: Boolean(cfg.webSearch?.firecrawlApiKey),
       fluxConfigured: Boolean(connectionFor("flux", providerConnections)) },

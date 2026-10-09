@@ -4,9 +4,11 @@
 // The in-app decision client: ask a hosted fast decision model (Flux Router
 // /v1/decide) one typed question and get a typed, validated answer, or a
 // reason none came. FAIL-OPEN everywhere: every failure is `{ ok: false }`
-// and the caller keeps today's rule. Gated OFF by default: a master switch
-// and one switch per job. Never throws.
+// and the caller keeps today's rule. ON by default when a Flux key is present
+// (the owner's saved switches win): a master switch and one switch per job.
+// A plan that cannot use it is remembered for a cooldown. Never throws.
 import { loadConfig } from "../config.ts";
+import { deciderUnavailable, markDeciderUnavailable } from "./availability.ts";
 import { fluxKey } from "../flux-config.ts";
 import { fluxBackend, isLoopbackUrl } from "./flux.ts";
 import { appendDeciderLog, hashState } from "./log.ts";
@@ -15,7 +17,8 @@ import type {
   AskOptions, BackendResult, ChoiceAnswer, ChoiceQuestion, DeciderAnswer, DeciderFailure, DeciderQuestion, DeciderResult, DeciderSeam,
 } from "./types.ts";
 
-export const DEFAULT_TIMEOUT_MS = 1_500;
+/** Flux gives up on its side at 1.1 s; a turn never waits longer than this. */
+export const DEFAULT_TIMEOUT_MS = 1_200;
 
 export interface DeciderDeps {
   /** The current settings; read on every call so a change applies at once. */
@@ -52,12 +55,22 @@ function resolveKey(settings: DecisionModelSettings, credential: () => string | 
 export function createDecider(deps: DeciderDeps = {}): Decider {
   const readSettings = deps.settings ?? (() => {
     try {
-      return readDecisionModelSettings((loadConfig() as { decider?: unknown }).decider as never);
+      const stored = (loadConfig() as { decider?: { byoKey?: unknown } }).decider;
+      // With nothing saved, the decision model is on when there is a key to use.
+      const hasKey = Boolean(stored?.byoKey) || fluxKeyPresent();
+      return readDecisionModelSettings(stored as never, { defaultOn: hasKey });
     } catch {
       return DEFAULT_DECIDER_SETTINGS;
     }
   });
   const credential = deps.credential ?? (() => fluxKey());
+  const fluxKeyPresent = () => {
+    try {
+      return Boolean(credential());
+    } catch {
+      return false;
+    }
+  };
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
 
   async function run(
@@ -73,6 +86,8 @@ export function createDecider(deps: DeciderDeps = {}): Decider {
     if (closed) return { ok: false, reason: closed };
     const key = resolveKey(settings, credential);
     if (!key) return { ok: false, reason: "no_key" };
+    // A plan that cannot use it is not asked again until the cooldown ends.
+    if (deciderUnavailable(key)) return { ok: false, reason: "plan_required" };
     if (options.signal?.aborted) return { ok: false, reason: "cancelled" };
 
     const started = Date.now();
@@ -99,6 +114,7 @@ export function createDecider(deps: DeciderDeps = {}): Decider {
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", onCaller);
     }
+    if (!result.ok && result.reason === "plan_required") markDeciderUnavailable(key);
     const latencyMs = Date.now() - started;
     let final: DeciderResult<Record<string, DeciderAnswer>>;
     if (result.ok) {
@@ -147,6 +163,18 @@ export function createDecider(deps: DeciderDeps = {}): Decider {
 }
 
 let shared: Decider | undefined;
+/** False while this workspace's key is known not to include the decision
+ * model; Auto is hidden and nothing is asked. Never throws. */
+export function deciderAvailable(): boolean {
+  try {
+    const stored = (loadConfig() as { decider?: { byoKey?: unknown } }).decider;
+    const own = typeof stored?.byoKey === "string" && stored.byoKey.trim() ? stored.byoKey.trim() : null;
+    return !deciderUnavailable(own ?? fluxKey());
+  } catch {
+    return true;
+  }
+}
+
 /** The process-wide decider, reading the live config on every call. */
 export function appDecider(): Decider {
   return (shared ??= createDecider());

@@ -34,6 +34,9 @@ export type DeciderFailure =
   | "unreachable"
   /** 401 or 403: the key was refused. */
   | "rejected"
+  /** 403 `paid_plan_required`: this key's plan does not include the decision
+   * model. Remembered for a cooldown; Auto is hidden meanwhile. */
+  | "plan_required"
   /** 429 */
   | "rate_limited"
   /** 529 or 503 */

@@ -24,9 +24,9 @@ export function autoFallbackBot<T extends { id: string; hidden?: boolean }>(
   return available.find((member) => member.id === value.fallbackBotId) ?? available[0];
 }
 
-/** The decision model is on and set to route rooms. */
-export function deciderRoutesRooms(config: { decider?: { enabled: boolean; jobs?: { roomRouting?: boolean } } } | null | undefined): boolean {
-  return config?.decider?.enabled === true && config.decider.jobs?.roomRouting === true;
+/** The decision model is on, set to route rooms, and usable with this key. */
+export function deciderRoutesRooms(config: { decider?: { enabled: boolean; available?: boolean; jobs?: { roomRouting?: boolean } } } | null | undefined): boolean {
+  return config?.decider?.enabled === true && config.decider.available !== false && config.decider.jobs?.roomRouting === true;
 }
 
 export function defaultResponderName(group: Group, members: Bot[]): string | null {

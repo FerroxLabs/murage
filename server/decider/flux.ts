@@ -15,6 +15,15 @@ import type { BackendRequest, BackendResult, DeciderBackend, DeciderQuestion } f
 
 export const FLUX_DECIDE_BASE_URL = FLUX_OPENAI_BASE;
 export const FLUX_DECIDE_MODEL = "flux-decide";
+/** Ask Flux not to keep the text, as the browser checker does
+ * (browser-action-checker-connection.ts NO_RETAIN_HEADER), and to leave the
+ * memory features out of a routing call. The reply is not required to echo it:
+ * a routing call that cannot be confirmed still falls open to the lead. */
+export const DECIDE_PRIVACY_HEADERS = Object.freeze({
+  "x-flux-no-retain": "1",
+  "x-flux-memory-capture": "off",
+  "x-flux-memory-inject": "off",
+}) as Readonly<Record<string, string>>;
 export const DECIDE_MAX_OPTIONS = 255;
 export const DECIDE_MIN_LEVELS = 2;
 export const DECIDE_MAX_LEVELS = 10;
@@ -99,6 +108,22 @@ function refusal(status: number): BackendResult {
   return { ok: false, reason: "http_error", status };
 }
 
+/** True only when a 403 body names `paid_plan_required`. Reads at most 4 KB,
+ * keeps nothing else from it (error bodies can echo the request). */
+async function isPlanRefusal(response: Response): Promise<boolean> {
+  try {
+    const raw = (await response.text()).slice(0, 4_096);
+    const find = (value: unknown, depth: number): boolean => {
+      if (typeof value === "string") return value === "paid_plan_required";
+      if (depth > 3 || !value || typeof value !== "object") return false;
+      return Object.values(value).some((inner) => find(inner, depth + 1));
+    };
+    return find(JSON.parse(raw), 0);
+  } catch {
+    return false;
+  }
+}
+
 async function decide(request: BackendRequest): Promise<BackendResult> {
   const endpoint = decideEndpoint(request.baseUrl);
   if (!endpoint || !questionsFit(request.questions)) return { ok: false, reason: "misconfigured" };
@@ -106,7 +131,7 @@ async function decide(request: BackendRequest): Promise<BackendResult> {
   try {
     response = await request.fetch(endpoint, {
       method: "POST",
-      headers: { authorization: `Bearer ${request.key}`, "content-type": "application/json", accept: "application/json" },
+      headers: { authorization: `Bearer ${request.key}`, "content-type": "application/json", accept: "application/json", ...DECIDE_PRIVACY_HEADERS },
       body: JSON.stringify(decideRequestBody(request.state, request.questions)),
       signal: request.signal,
       // Never replay the key to wherever a redirect points.
@@ -117,6 +142,7 @@ async function decide(request: BackendRequest): Promise<BackendResult> {
     return { ok: false, reason: "unreachable" };
   }
   if (!response.ok) {
+    if (response.status === 403 && (await isPlanRefusal(response))) return { ok: false, reason: "plan_required", status: 403 };
     await response.body?.cancel().catch(() => undefined);
     return refusal(response.status);
   }

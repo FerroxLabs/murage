@@ -631,7 +631,7 @@ export interface ConfigStatus {
    * renderer. Write it with PATCH /api/config `{ flux: { apiKey } }`. */
   flux?: { configured: boolean; keyState?: FluxKeyState };
   /** Decision model switches (never a key). Absent from an older harness. */
-  decider?: { enabled: boolean; jobs?: { roomRouting?: boolean } };
+  decider?: { enabled: boolean; /** false while this key's plan cannot use it */ available?: boolean; byoKeyConfigured?: boolean; jobs?: { roomRouting?: boolean } };
   webSearch?: { provider: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyConfigured: boolean; exaConfigured: boolean; firecrawlConfigured: boolean; fluxConfigured?: boolean };
   notifications?: import("../../shared/notification-preferences").NotificationPreferences;
   /** who's using the app — collected in onboarding, shown in the sidebar */

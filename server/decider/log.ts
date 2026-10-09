@@ -29,6 +29,8 @@ export interface DeciderLogRow {
   latencyMs: number;
   inputTokens: number | null;
   stateHash: string;
+  /** Room routing only: who was picked, or why the lead answered instead. No text. */
+  route?: { kind: "member" | "everyone" | "fallback"; botId?: string; why?: string };
 }
 
 export function hashState(state: unknown): string {

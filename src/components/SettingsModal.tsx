@@ -30,6 +30,7 @@ import { Card, Switch } from "./SettingsPrimitives";
 import { UsageSection } from "./UsageSection";
 import { SkinPicker } from "./SkinPicker";
 import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
+import { ROOM_ROUTING_COPY, RoomRoutingSettings } from "./RoomRoutingSettings";
 import { TranscriptionSettings } from "./TranscriptionSettings";
 import { SearchSettings } from "./SearchSettings";
 import { SkillsSettings } from "./skills/SkillsSettings";
@@ -1185,6 +1186,9 @@ export function SettingsModal() {
                 <ProjectAutonomySetting />
                 <Card title="Channel turns" subtitle="Stop a bot that goes quiet in a channel. Use Stop to end a reply yourself.">
                   <RoomTurnTimeoutSettings />
+                </Card>
+                <Card title={ROOM_ROUTING_COPY.title} subtitle={ROOM_ROUTING_COPY.subtitle}>
+                  <RoomRoutingSettings />
                 </Card>
                 <StarterProfiles />
               </>
