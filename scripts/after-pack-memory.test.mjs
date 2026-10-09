@@ -23,11 +23,11 @@ function fixture(platform,arch){
   fs.writeFileSync(path.join(runtime,"package.json"),JSON.stringify({name:"onnxruntime-node",version:"1.24.3"}));
   const manifest=path.join(server,"memory-runtime-manifest.json");
   const sharpPath="node_modules/@huggingface/transformers/node_modules/sharp",sharp=path.join(server,sharpPath),target=`${platform}-${arch}`;
-  const addonDir=path.join(sharp,"node_modules/@img",`sharp-${target}`,"lib"),addon=path.join(addonDir,`sharp-${target}.node`);
-  const libvips=platform==="darwin"?path.join(sharp,"node_modules/@img",`sharp-libvips-${target}`,"lib/libvips-cpp.8.17.3.dylib"):platform==="linux"?path.join(sharp,"node_modules/@img",`sharp-libvips-${target}`,"lib/libvips-cpp.so.8.17.3"):path.join(addonDir,"libvips-42.dll");
+  const addonDir=path.join(sharp,"node_modules/@img",`sharp-${target}`,"lib"),addon=path.join(addonDir,`sharp-${target}-0.35.5.node`);
+  const libvips=platform==="darwin"?path.join(sharp,"node_modules/@img",`sharp-libvips-${target}`,"lib/libvips-cpp.8.18.7.dylib"):platform==="linux"?path.join(sharp,"node_modules/@img",`sharp-libvips-${target}`,"lib/libvips-cpp.so.8.18.7"):path.join(addonDir,"libvips-42.dll");
   for(const file of [addon,libvips]){fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,header(platform,arch));}
-  fs.writeFileSync(path.join(sharp,"package.json"),JSON.stringify({name:"sharp",version:"0.34.5"}));
-  fs.writeFileSync(manifest,JSON.stringify({platform:"darwin",arch:"arm64",packages:[{name:"@huggingface/transformers",version:"4.2.0",path:"node_modules/@huggingface/transformers"},{name:"onnxruntime-node",version:"1.24.3",path:runtimePath},{name:"sharp",version:"0.34.5",path:sharpPath}]}));
+  fs.writeFileSync(path.join(sharp,"package.json"),JSON.stringify({name:"sharp",version:"0.35.5"}));
+  fs.writeFileSync(manifest,JSON.stringify({platform:"darwin",arch:"arm64",packages:[{name:"@huggingface/transformers",version:"4.2.0",path:"node_modules/@huggingface/transformers"},{name:"onnxruntime-node",version:"1.24.3",path:runtimePath},{name:"sharp",version:"0.35.5",path:sharpPath}]}));
   const names=["onnxruntime_binding.node",...(platform==="darwin"?["libonnxruntime.1.24.3.dylib"]:platform==="linux"?["libonnxruntime.so.1"]:["onnxruntime.dll","DirectML.dll","dxcompiler.dll","dxil.dll"])];
   for(const name of names)fs.writeFileSync(path.join(native,name),header(platform,arch));
   return {root,manifest,native,names,addon,libvips};
@@ -38,7 +38,7 @@ it("records the actual target and validated native files while retaining the dis
     const f=fixture(platform,arch),result=await validatePackagedMemoryRuntime(f.root,platform,value);
     expect(result).toMatchObject({platform,arch,stagingHost:{platform:"darwin",arch:"arm64"},nativeBackendAvailable:true});
     expect(result.nativeBackend.files).toHaveLength(f.names.length);
-    expect(result.thumbnailBackend).toEqual({available:true,package:"sharp",version:"0.34.5",files:[f.addon,f.libvips].map(file=>path.relative(path.join(f.root,"server"),file).split(path.sep).join("/"))});expect(result.nativeBackend.missingFiles).toEqual([]);
+    expect(result.thumbnailBackend).toEqual({available:true,package:"sharp",version:"0.35.5",files:[f.addon,f.libvips].map(file=>path.relative(path.join(f.root,"server"),file).split(path.sep).join("/"))});expect(result.nativeBackend.missingFiles).toEqual([]);
     expect(JSON.parse(fs.readFileSync(f.manifest,"utf8"))).toEqual(result);
     expect((await validatePackagedMemoryRuntime(f.root,platform,value)).stagingHost).toEqual({platform:"darwin",arch:"arm64"});
   }

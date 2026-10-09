@@ -28,3 +28,7 @@ packageExtensions:
     peerDependenciesMeta:
       sharp:
         optional: true
+# Security floor (GHSA libvips/libheif/librsvg): every sharp copy, including the
+# one nested under @huggingface/transformers that server/image-*.ts load at runtime.
+overrides:
+  sharp: ">=0.35.5"
