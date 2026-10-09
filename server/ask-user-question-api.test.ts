@@ -178,7 +178,7 @@ it("delivers the owner's answers to the engine exactly as they were chosen", asy
   expect(settled.card.expired).toBeFalsy();
   // An answer is conversation, not authorization. The audit keeps only that
   // the card was shown — never an approval, and never the answer itself.
-  expect(decisions().filter((row) => row.requestId === card.card.requestId).map((row) => row.decision)).toEqual(["card-shown"]);
+  await expect.poll(() => decisions().filter((row) => row.requestId === card.card.requestId).map((row) => row.decision), { timeout: 15_000 }).toEqual(["card-shown"]);
   expect(JSON.stringify(decisions())).not.toContain("Intro");
 }, 40000);
 
@@ -233,7 +233,8 @@ it("skips a question as soon as the card is closed, instead of leaving the bot w
   const said = await transcript(bot.threadId);
   expect(said).not.toContain("Couldn't deliver that answer");
   expect(said).not.toContain("best judgment");
-  expect(decisions().some((row) => row.requestId === card.card.requestId && row.decision === "question-skipped")).toBe(true);
+  // the audit line is appended in the background; wait for it, never race it
+  await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "question-skipped"), { timeout: 15_000 }).toBe(true);
 }, 40000);
 
 it("expires a question nobody answered, and still gets a late answer to the bot", async () => {
@@ -247,7 +248,7 @@ it("expires a question nobody answered, and still gets a late answer to the bot"
   expect(expired.card.answered).toBe("expired");
   expect(expired.card.questions).toHaveLength(2);
   expect(expired.card.dismissed).toBeFalsy();
-  expect(decisions().some((row) => row.requestId === requestId && row.decision === "question-expired")).toBe(true);
+  await expect.poll(() => decisions().some((row) => row.requestId === requestId && row.decision === "question-expired"), { timeout: 15_000 }).toBe(true);
 
   // an expired question takes no engine answer — it says so, in a way the
   // card can act on rather than a flat failure
