@@ -37,7 +37,7 @@ test.beforeAll(async () => {
   origin = "http://127.0.0.1:" + address.port;
 });
 test.afterAll(async () => { await server?.close(); safeWipeSync(cache); });
-const base: NotificationPreferences = { attention: true, completion: true, failures: true, previewContent: true };
+const base: NotificationPreferences = { attention: true, completion: true, failures: true, memories: true, previewContent: true };
 for (const locale of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) test("translated quiet-hour validation and save: " + locale, async ({ page }, info) => {
   await notificationAPI(page);
   const pack = JSON.parse(readFileSync(new URL("../locales/" + locale + ".json", import.meta.url), "utf8"));
@@ -76,7 +76,7 @@ async function notificationAPI(page: Page) {
 
 test("explicit save and reload retain false preferences and the stored quiet-hour time zone", async ({ page }) => {
   await notificationAPI(page);
-  let notifications: NotificationPreferences = { attention: false, completion: false, failures: true, previewContent: false, quietHours: { enabled: false, start: "23:00", end: "07:00", timeZone: "Europe/London" } };
+  let notifications: NotificationPreferences = { attention: false, completion: false, failures: true, memories: true, previewContent: false, quietHours: { enabled: false, start: "23:00", end: "07:00", timeZone: "Europe/London" } };
   const writes: any[] = [];
   let release: (() => void) | undefined;
   await page.route("**/api/config", async route => {
@@ -100,7 +100,7 @@ test("explicit save and reload retain false preferences and the stored quiet-hou
   await expect.poll(() => Boolean(release)).toBe(true);
   release!();
   await expect(page.getByRole("status")).toContainText("Notification preferences saved");
-  expect(writes[0]).toEqual({ notifications: { attention: true, completion: false, failures: true, previewContent: false, quietHours: { enabled: true, start: "23:00", end: "07:00", timeZone: "Europe/London" } } });
+  expect(writes[0]).toEqual({ notifications: { attention: true, completion: false, failures: true, memories: true, previewContent: false, quietHours: { enabled: true, start: "23:00", end: "07:00", timeZone: "Europe/London" } } });
   await page.reload();
   await expect(page.getByRole("switch", { name: /^Task completed/ })).not.toBeChecked();
   await expect(page.getByRole("switch", { name: /^Show notification previews/ })).not.toBeChecked();

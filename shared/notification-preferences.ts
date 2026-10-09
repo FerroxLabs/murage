@@ -6,7 +6,7 @@ const timeZone = z.string().min(1).max(100).refine(value => {
   try { new Intl.DateTimeFormat("en", { timeZone: value }).format(0); return true; } catch { return false; }
 }, "Choose a valid time zone");
 export const notificationPreferencesSchema = z.object({
-  attention: z.boolean().default(true), completion: z.boolean().default(true), failures: z.boolean().default(true), previewContent: z.boolean().default(true),
+  attention: z.boolean().default(true), completion: z.boolean().default(true), failures: z.boolean().default(true), memories: z.boolean().default(true), previewContent: z.boolean().default(true),
   quietHours: z.object({ enabled: z.boolean(), start: clockTime, end: clockTime, timeZone }).strict()
     .refine(value => value.start !== value.end, "Quiet hours must have different start and end times").optional(),
 }).strict();
@@ -18,7 +18,7 @@ export function resolveNotificationPreferences(value?: unknown): NotificationPre
   return notificationPreferencesSchema.parse(value === undefined || value === null ? {} : value);
 }
 export interface PreferenceNotification {
-  kind: "approval" | "question" | "takeover" | "done" | "routine-failed" | "turn-failed" | "backup-waiting";
+  kind: "approval" | "question" | "takeover" | "done" | "routine-failed" | "turn-failed" | "backup-waiting" | "memories-waiting";
   botId: string;
   threadId: string;
   title: string;
@@ -36,6 +36,7 @@ const minutes = (value: string) => Number(value.slice(0, 2)) * 60 + Number(value
 export function applyNotificationPreferences<T extends PreferenceNotification>(notification: T, currentPrefs: unknown, now: Date): T | null {
   const prefs = resolveNotificationPreferences(currentPrefs);
   const category = notification.kind === "done" ? "completion"
+    : notification.kind === "memories-waiting" ? "memories"
     : notification.kind === "routine-failed" || notification.kind === "turn-failed" ? "failures" : "attention";
   if (!prefs[category]) return null;
   const quiet = prefs.quietHours;
@@ -53,6 +54,7 @@ export function applyNotificationPreferences<T extends PreferenceNotification>(n
     ...(notification.messageId ? { messageId: notification.messageId } : {}),
     ...(notification.requestTurnId ? { requestTurnId: notification.requestTurnId } : {}),
     botName: "", title: "Murage", body: category === "attention" ? "Your attention is needed."
+      : category === "memories" ? "Memories are waiting for you."
       : category === "completion" ? "A task has finished." : "A task needs review after a failure.",
     privatePreview: true } as T;
 }
