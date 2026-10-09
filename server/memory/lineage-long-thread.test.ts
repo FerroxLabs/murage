@@ -95,8 +95,10 @@ it("a thread of 2,500 receipts reads rows in proportion to its receipts, not 20,
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: records[3]! });
   const after = rowsFor(messages, access("dax", "dax-direct"));
   expect(after.rows).toBeLessThan(BASE_FORGOTTEN / 4);
-  // the verdict is unchanged: a forgotten recall withholds every reply, the owner's words stay
-  expect(after.kept.filter(m => m.role !== "user")).toEqual([]);
+  // a forgotten recall withholds every reply made on it (turn 4 on, each
+  // reply of the session rests on every receipt before it), the replies made
+  // before it stay: the owner's direct chat withholds on content (1.0.1)
+  expect(after.kept.filter(m => m.role !== "user").map(m => m.id)).toEqual(["reply-1", "reply-2", "reply-3"]);
   expect(after.kept.filter(m => m.role === "user").length).toBeGreaterThanOrEqual(10);
 }, 240_000);
 
