@@ -4,8 +4,8 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { accessSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, opendirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
+import { homedir, tmpdir } from "node:os";
 import { browserBundlePaths, browserBundleSpec } from "./browser-bundle-release.ts";
 import { verifyPackagedMacBrowser } from "./browser-macos-identity.ts";
 import { isUserChromeEndpoint } from "./user-chrome.ts";
@@ -190,6 +190,14 @@ export function resolveAgentBrowserBinary(options: ResolveOptions = {}): string 
   }
   return null;
 }
+/** Why the packaged browser was not started. The check itself does not care where the app sits (the signature, not the path, decides), so a Mac app running from outside the Applications folder is told to move the original there. */
+export function packagedBrowserRefusedReason(resources: string, platform: string = process.platform, home: string = homedir()): string {
+  const check = "The browser that comes with Murage didn't pass its signature check, so it wasn't started.";
+  if (platform !== "darwin") return `${check} Reinstall Murage from the download to fix it.`;
+  const inApplications = [resolve("/Applications/Murage.app/"), resolve(home, "Applications/Murage.app/")].some(app => resolve(resources).startsWith(app + sep));
+  return inApplications ? `${check} Reinstall Murage from the download to fix it.`
+    : `${check} This copy of Murage is running from outside the Applications folder. Move the original Murage.app into Applications and open it from there.`;
+}
 export function browserEngineStatus(options: ResolveOptions = {}): BrowserEngineStatus {
   const binaryPath = resolveAgentBrowserBinary(options);
   const env = options.env ?? process.env;
@@ -204,7 +212,7 @@ export function browserEngineStatus(options: ResolveOptions = {}): BrowserEngine
     let present = false;
     try { present = lstatSync(browserBundlePaths(join((env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH)!, "browser-engine"), target).engine).isFile(); } catch { /* missing */ }
     return { kind: "unavailable", installable: false, reason: present
-      ? "The browser that comes with Murage didn't pass its signature check, so it wasn't started. Reinstall Murage from the download to fix it."
+      ? packagedBrowserRefusedReason((env.MURAGE_RESOURCES_PATH ?? env.OMB_RESOURCES_PATH)!, platform)
       : "The browser that comes with Murage is missing. Reinstall Murage from the download to fix it." };
   }
   const asset = resolveAgentBrowserReleaseAsset(platform, options.arch ?? process.arch, options.musl ?? isMusl(platform));

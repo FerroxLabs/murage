@@ -247,8 +247,7 @@ it("D4: a skill change is text-blind; it lands on its own only when every contex
   // the same matrix row for every text: benign or "dangerous" lands the same way
   expect(outcomes.filter(o => o.contained).map(o => [o.applied, o.reasons])).toEqual(words.map(() => [1, []]));
   expect(outcomes.filter(o => !o.contained).map(o => [o.applied, o.reasons])).toEqual(words.map(() => [0, ["outbound"]]));
-  // twelve full data-dir resets: over the 20 s default on a busy Windows runner
-}, 90_000);
+});
 
 it("D4: a routine of the bot at Auto or Unlimited keeps a skill change waiting (review AL-01)", async () => {
   for (const mode of ["auto", "unlimited"] as const) {

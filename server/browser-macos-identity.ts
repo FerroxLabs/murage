@@ -81,7 +81,9 @@ export function verifyPackagedMacBrowser(resources: string, currentExecutable = 
       if (records.length !== 1 || records[0].kind !== "file" || records[0].sha256 !== rawHash || records[0].bytes !== rawSize
         || !verifyMacBrowserImage(read(file, MAC_BROWSER_PAYLOADS[image].signatureOffset + 2 * 1024 ** 2), image)) return false;
     }
-    for (const file of [app, paths.engine, paths.chrome]) {
+    // Only the two tools are codesigned. Verifying the whole app takes 17 s warm and 37 s cold on a real Mac, always past the 10 s bound,
+    // so it refused every install. The app itself is bound by name and location above (Murage.app, running from its own Contents/MacOS).
+    for (const file of [paths.engine, paths.chrome]) {
       const result = spawnSync("/usr/bin/codesign", ["--verify", "--strict", "-R", requirement, file], { encoding: "utf8", timeout: 10000, maxBuffer: 65536, stdio: ["ignore", "pipe", "pipe"] });
       if (result.status !== 0 || result.error) return false;
     }

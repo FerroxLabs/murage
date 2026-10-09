@@ -66,11 +66,20 @@ describe.skipIf(process.platform === "win32")("arm64 packaged browser identity",
     bytes.writeBigUInt64LE(original + 4096n, p.linkeditCommand + 32);
     try { expect(verifyMacBrowserImage(bytes, image)).toBe(true); } finally { bytes.writeBigUInt64LE(original, p.linkeditCommand + 32); }
   });
-  it("binds a nested Electron helper to its owning app and verifies all three fixed signatures", () => {
+  it("binds a nested Electron helper to its owning app and verifies the two fixed tool signatures", () => {
     expect(verifyPackagedMacBrowser(root, "/fixture/Murage.app/Contents/Frameworks/Murage Helper.app/Contents/MacOS/Murage Helper")).toBe(true);
-    expect(mock.signature.mock.calls.map(call => call[1].at(-1))).toEqual(["/fixture/Murage.app", `${directory}/${spec.engine.executable}`, `${directory}/${spec.chrome.executable}`]);
+    expect(mock.signature.mock.calls.map(call => call[1].at(-1))).toEqual([`${directory}/${spec.engine.executable}`, `${directory}/${spec.chrome.executable}`]);
+    // Never the whole bundle: that takes 17 to 41 s on a real Mac and always timed out.
+    for (const call of mock.signature.mock.calls) expect(call[1].at(-1)).not.toMatch(/Murage\.app$/);
     for (const call of mock.signature.mock.calls) expect(call[1]).toContain('=anchor apple generic and certificate leaf[subject.OU] = "PX6SP9GPWJ"');
     expect(mock.closed).toHaveLength(3);
+  });
+  // D6: where the app sits is not part of the check. A real copy elsewhere passes when its bytes and signatures do.
+  it("admits the same bundle from any folder, as long as it is named Murage.app", () => {
+    const other = "/private/tmp/copy-1/Murage.app/Contents/Resources";
+    for (const [file, bytes] of [...mock.bytes]) mock.bytes.set(file.replace(root, other), bytes);
+    expect(verifyPackagedMacBrowser(other, "/private/tmp/copy-1/Murage.app/Contents/MacOS/Murage")).toBe(true);
+    expect(verifyPackagedMacBrowser(other.replace("Murage.app", "Murage 2.app"), "/private/tmp/copy-1/Murage 2.app/Contents/MacOS/Murage")).toBe(false);
   });
   it("refuses an external executable, wrong app, and changed manifest without signing", () => {
     expect(verifyPackagedMacBrowser(root, "/usr/bin/node")).toBe(false);
@@ -79,8 +88,8 @@ describe.skipIf(process.platform === "win32")("arm64 packaged browser identity",
     expect(verifyPackagedMacBrowser(root, "/fixture/Murage.app/Contents/MacOS/Murage")).toBe(false);
     expect(mock.signature).not.toHaveBeenCalled(); expect(mock.closed).toHaveLength(1);
   });
-  it("refuses app or either tool signature failure and closes every observation", () => {
-    for (const failure of [0, 1, 2]) {
+  it("refuses either tool signature failure and closes every observation", () => {
+    for (const failure of [0, 1]) {
       mock.closed.length = 0; mock.opened.length = 0; mock.signature.mockReset();
       let n = 0; mock.signature.mockImplementation(() => ({ status: n++ === failure ? 1 : 0 }));
       expect(verifyPackagedMacBrowser(root, "/fixture/Murage.app/Contents/MacOS/Murage")).toBe(false);
