@@ -72,6 +72,13 @@ describe.skipIf(process.platform === "win32")("arm64 packaged browser identity",
     for (const call of mock.signature.mock.calls) expect(call[1]).toContain('=anchor apple generic and certificate leaf[subject.OU] = "PX6SP9GPWJ"');
     expect(mock.closed).toHaveLength(3);
   });
+  // D6: where the app sits is not part of the check. A real copy elsewhere passes when its bytes and signatures do.
+  it("admits the same bundle from any folder, as long as it is named Murage.app", () => {
+    const other = "/private/tmp/copy-1/Murage.app/Contents/Resources";
+    for (const [file, bytes] of [...mock.bytes]) mock.bytes.set(file.replace(root, other), bytes);
+    expect(verifyPackagedMacBrowser(other, "/private/tmp/copy-1/Murage.app/Contents/MacOS/Murage")).toBe(true);
+    expect(verifyPackagedMacBrowser(other.replace("Murage.app", "Murage 2.app"), "/private/tmp/copy-1/Murage 2.app/Contents/MacOS/Murage")).toBe(false);
+  });
   it("refuses an external executable, wrong app, and changed manifest without signing", () => {
     expect(verifyPackagedMacBrowser(root, "/usr/bin/node")).toBe(false);
     expect(verifyPackagedMacBrowser(root.replace("Murage.app", "Other.app"), "/usr/bin/node")).toBe(false);

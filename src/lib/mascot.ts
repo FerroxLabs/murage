@@ -1,5 +1,6 @@
 import { EMBER_AVATAR_STATES, type EmberAvatarState } from "@/components/EmberAvatar";
 import { hostStoppedReason } from "../../shared/host-stop";
+import { EMBER_COLOR_HEX } from "../../shared/ember-colors";
 
 /** The mascot's behaviour vocabulary — EmberAvatar's 39 states, under the
  * app's historical names. */
@@ -61,18 +62,7 @@ export const EMBER_COLOR_NAMES = [
 
 export type EmberColor = (typeof EMBER_COLOR_NAMES)[number];
 
-export const EMBER_COLORS = {
-  green: "#009957",
-  blue: "#377FE6",
-  red: "#D94B52",
-  orange: "#FF6B35",
-  purple: "#8057C8",
-  cyan: "#0EA5C6",
-  pink: "#D84F8B",
-  yellow: "#D8A729",
-  teal: "#01A492",
-  coral: "#E5634E",
-} satisfies Record<EmberColor, string>;
+export const EMBER_COLORS: Record<EmberColor, string> = EMBER_COLOR_HEX;
 
 export const EMBER_MOTIONS = [
   "arrive",

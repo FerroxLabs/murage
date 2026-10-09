@@ -7,7 +7,7 @@ const macAdmission = vi.hoisted(() => vi.fn());
 vi.mock("./browser-macos-identity.ts", () => ({ verifyPackagedMacBrowser: macAdmission }));
 import { AGENT_BROWSER_VERSION, agentBrowserReleaseUrl, resolveAgentBrowserReleaseAsset } from "./browser-engine-release.ts";
 import { CLAUDE_TOOL_SURFACE, renderMurageTools } from "./murage-tool-surface.ts";
-import { ADMISSION_CACHE_TTL_MS, admissionWalkLimits, clearBrowserAdmissionCache, UNIFIED_BROWSER_SYSTEM_PROMPT, unifiedBrowserSystemPrompt, agentBrowserIntegration, BEFOREUNLOAD_GUARD_SCRIPT, browserEngineEncryptionKey, browserEngineStatus, browserSessionId, userChromeSessionId, closeAgentBrowserSession, installAgentBrowserBinary, pinnedBinaryPath, resolveAgentBrowserBinary, verifyAgentBrowserBinary } from "./browser-engine.ts";
+import { ADMISSION_CACHE_TTL_MS, admissionWalkLimits, clearBrowserAdmissionCache, UNIFIED_BROWSER_SYSTEM_PROMPT, unifiedBrowserSystemPrompt, agentBrowserIntegration, BEFOREUNLOAD_GUARD_SCRIPT, browserEngineEncryptionKey, browserEngineStatus, packagedBrowserRefusedReason, browserSessionId, userChromeSessionId, closeAgentBrowserSession, installAgentBrowserBinary, pinnedBinaryPath, resolveAgentBrowserBinary, verifyAgentBrowserBinary } from "./browser-engine.ts";
 
 const scratch: string[] = [];
 function temporary() { const path = mkdtempSync(join(tmpdir(), "murage-browser-test-")); scratch.push(path); return path; }
@@ -38,7 +38,18 @@ describe("optional browser resolver and installation", () => {
     macAdmission.mockReturnValue(false);
     const status = browserEngineStatus({ platform: "darwin", arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources } });
     expect(status).toMatchObject({ kind: "unavailable", installable: false });
-    expect(status.kind === "unavailable" && status.reason).toBe("The browser that comes with Murage didn't pass its signature check, so it wasn't started. Reinstall Murage from the download to fix it.");
+    expect(status.kind === "unavailable" && status.reason).toBe(packagedBrowserRefusedReason(resources, "darwin"));
+  });
+  // D6: the check is the signature, not the path. A copy under /private/tmp fails because a copy loses its seal, and the message says to move the app.
+  it("tells a Mac app running outside Applications to move the original there, and a normal install to reinstall", () => {
+    const outside = packagedBrowserRefusedReason("/private/tmp/Murage.app/Contents/Resources", "darwin", "/Users/alex");
+    expect(outside).toContain("Move the original Murage.app into Applications");
+    expect(outside).toContain("didn't pass its signature check");
+    expect(packagedBrowserRefusedReason("/Applications/Murage.app/Contents/Resources", "darwin", "/Users/alex")).toBe("The browser that comes with Murage didn't pass its signature check, so it wasn't started. Reinstall Murage from the download to fix it.");
+    expect(packagedBrowserRefusedReason("/Users/alex/Applications/Murage.app/Contents/Resources", "darwin", "/Users/alex")).toContain("Reinstall Murage");
+    expect(packagedBrowserRefusedReason("/Applications/Murage.app-copy/Contents/Resources", "darwin", "/Users/alex")).toContain("Move the original");
+    expect(packagedBrowserRefusedReason("/private/tmp/Murage.app/Contents/Resources", "linux", "/home/x")).toContain("Reinstall Murage");
+    expect(outside).not.toMatch(/safe|unsafe|—/i);
   });
   describe("packaged admission cache", () => {
     // Fixtures are created "now"; the cache refuses files touched in the last

@@ -2172,7 +2172,7 @@ async function browserIntegration(botId: string, profile: string | undefined, th
       unifiedBrowserThreads.set(threadId, { botId, ownerId, profileKey: binding.bindingId, profile });
       return { profileKey: binding.bindingId, integration: { command: process.execPath, args: [SPAWNED_PROXIES.unifiedBrowser], env: {
         ...AGENTS_NODE_FLAG, MURAGE_BOT_ID: botId, MURAGE_THREAD_ID: threadId,
-        // A card waits up to two minutes for a person; the call outlives that and the action after it.
+        // A card waits up to fifteen minutes for a person; the call outlives that and the action after it.
         // One deadline for the external MCP client and this built-in mount (shared constant), and the extension transport so the proxy defers to the executor.
         MURAGE_BROWSER_TRANSPORT: "extension", MURAGE_BROWSER_CALL_TIMEOUT_MS: String(BROWSER_EXTENSION_CALL_TIMEOUT_MS),
         MURAGE_CONTROL_TOKEN: control.token, MURAGE_CONTROL_URL: control.url,

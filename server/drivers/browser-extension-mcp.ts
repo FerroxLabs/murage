@@ -5,6 +5,7 @@ import { readPrivateBrowserClientJson } from "../browser-extension-clients.ts";
 import { createLineSplitter, writeMcpLine } from "../mcp-bridge.ts";
 import { listHeadlessBrowserTools, validateHeadlessBrowserCall } from "../browser-engine-policy.ts";
 import { BROWSER_EXTENSION_CALL_TIMEOUT_MS } from "../../shared/browser-extension-protocol.ts";
+import { EXTENSION_CALL_FAILED_TEXT } from "../browser-extension-refusals.ts";
 import { readBrowserRefusal } from "../browser-floor-builtin.ts";
 export type BrowserExtensionMcpConfig = { endpoint: string; clientId: string; token: string };
 export function parseBrowserExtensionMcpConfig(value: unknown): BrowserExtensionMcpConfig {
@@ -46,7 +47,7 @@ export async function runBrowserExtensionMcp(options: { config: BrowserExtension
       await writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id:rpc.id,result}));
     }catch(error){
       const refusal=(error as {refusal?:{code:string;text:string}}|undefined)?.refusal;
-      const message=refusal?.text??"Browser unavailable or permission refused. Open Murage to check this client's connection.";
+      const message=refusal?.text??EXTENSION_CALL_FAILED_TEXT;
       await writeMcpLine(output,JSON.stringify(rpc.method==="tools/call"?{jsonrpc:"2.0",id:rpc.id,result:{isError:true,...(refusal?{code:refusal.code}:{}),content:[{type:"text",text:message}]}}:{jsonrpc:"2.0",id:rpc.id,error:{code:-32000,message,...(refusal?{data:{code:refusal.code}}:{})}}));
     }
   }};

@@ -183,3 +183,26 @@ describe("T20 owner actions: the phone and the side panel may only tighten", () 
     expect(f.value.status().bindings[0].sites[origin]).toBe("ask");
   });
 });
+
+// D7: "Browser helper setup needs repair" is true only until the browser connects. It must not outlive a successful connect.
+describe("a leftover setup problem goes away once the browser connects", () => {
+  const stale = (value: unknown) => { const target = value as { registrationProblem: string; registrationCode: string }; target.registrationProblem = "Browser helper setup needs repair. No existing registration was adopted."; target.registrationCode = "registration_repair_required"; };
+  it("keeps the problem while nothing is connected", async () => {
+    const f = await fixture([]);
+    (f.value as unknown as { service: unknown }).service = f.service; stale(f.value);
+    expect(f.value.setupProblem()).toContain("needs repair");
+    expect(f.value.setupProblemKind()).toBe("repair");
+  });
+  it("clears it as soon as a browser profile is connected", async () => {
+    const f = await fixture(["profile_a"]);
+    (f.value as unknown as { service: unknown }).service = f.service; stale(f.value);
+    expect(f.value.setupProblem()).toBe("");
+    expect(f.value.setupProblemKind()).toBeUndefined();
+  });
+  it("clears it when the extension sends anything through the helper", async () => {
+    const f = await fixture([]);
+    stale(f.value);
+    f.value.handleBrokerMessage("profile_a", { type: "event", event: "notice", bindingId: "none", data: {} } as never);
+    expect(f.value.setupProblem()).toBe("");
+  });
+});
