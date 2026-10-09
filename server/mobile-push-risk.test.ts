@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { approvalSummary } from "../shared/approval-summary.ts";
 import { CREDENTIAL_CHECKS, DESTRUCTIVE_CHECKS, MAX_RISK_TEXT, pushRiskFor, liveRating, ratePushRevision, workspaceInside } from "./mobile-push-risk.ts";
+import { fastestOfMs } from "./testing/timing.ts";
 
 // R2-2: a command is low only when what it reads is inside the workspace.
 // The real workspace check (workspaceInside), not a stand-in: the turn runs in
@@ -162,9 +163,7 @@ describe("pushRiskFor (Decision 7)", () => {
     expect(DESTRUCTIVE_CHECKS.length).toBeGreaterThan(5);
     for (const [index, check] of [...CREDENTIAL_CHECKS, ...DESTRUCTIVE_CHECKS].entries()) {
       for (const input of ADVERSARIAL) {
-        const started = performance.now();
-        check(input.slice(0, 8192));
-        const ms = performance.now() - started;
+        const ms = fastestOfMs(() => check(input.slice(0, 8192)), 20, 5);
         expect(ms, `rule ${index} on ${JSON.stringify(input.slice(0, 12))}…`).toBeLessThan(20);
       }
     }

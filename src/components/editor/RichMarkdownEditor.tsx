@@ -50,6 +50,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 import { modShortcut } from "@/lib/mod-shortcut";
 import { createMarkdownExtensions, EMPTY_MARKDOWN_DOC } from "@/lib/markdown-fidelity";
 import { createSlashCommand, SlashMenuPopup, type SlashKeyHandle, type SlashState } from "./slashMenu";
+import { createEmittedValues } from "./emittedValues";
 import "./rich-markdown-editor.css";
 
 export const RICH_EDITOR_PLACEHOLDER = "Press '/' for commands, or just start typing…";
@@ -275,7 +276,7 @@ export interface RichMarkdownEditorProps {
 export function RichMarkdownEditor({ value, onChange, readOnly = false, isStreaming = false, ariaLabel, placeholder, className }: RichMarkdownEditorProps) {
   const kit = useRichEditorKit(placeholder);
   const editable = !readOnly && !isStreaming;
-  const lastValue = useRef(value);
+  const emitted = useRef(createEmittedValues(value));
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const initial = useMemo(() => richEditorContent(value), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -290,7 +291,7 @@ export function RichMarkdownEditor({ value, onChange, readOnly = false, isStream
     },
     onUpdate: ({ editor: current }) => {
       const markdown = current.getMarkdown();
-      lastValue.current = markdown;
+      emitted.current.note(markdown);
       onChangeRef.current?.(markdown);
     },
   });
@@ -298,8 +299,8 @@ export function RichMarkdownEditor({ value, onChange, readOnly = false, isStream
     if (editor && editor.isEditable !== editable) editor.setEditable(editable, false);
   }, [editor, editable]);
   useEffect(() => {
-    if (!editor || value === lastValue.current) return;
-    lastValue.current = value;
+    if (!editor || !emitted.current.isOutside(value)) return;
+    emitted.current.reset(value);
     const next = richEditorContent(value);
     editor.commands.setContent(next.content, { emitUpdate: false, ...("contentType" in next ? { contentType: next.contentType } : {}) });
   }, [editor, value]);

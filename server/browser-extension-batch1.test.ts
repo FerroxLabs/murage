@@ -42,8 +42,8 @@ describe("a dialog answer is not queued behind the blocked command", () => {
           const click = engine.transport.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 1, y: 1 }, document);
           // The page's alert is now open: the engine answers it while the click is still waiting.
           dialogAnswer = engine.transport.send("Page.handleJavaScriptDialog", { accept: true }, document);
-          await new Promise(resolve => setTimeout(resolve, 300));
-          expect(seen).toContain("Page.handleJavaScriptDialog");
+          // Wait for the answer to reach the broker while the click is still blocked (not a fixed beat: a loaded runner takes longer).
+          await expect.poll(() => seen, { timeout: 20_000 }).toContain("Page.handleJavaScriptDialog");
           releaseInput(); await click; await dialogAnswer;
           return { content: [{ type: "text", text: "ok" }] };
         },

@@ -318,6 +318,8 @@ test("reads in both skins and at phone width", async ({ page }, testInfo) => {
 // focused question. Not a pixel diff: a set of pictures for a person to look
 // at. `QCARD_EVIDENCE_DIR` puts them somewhere that survives the run.
 test("looks like it belongs in the transcript, in every state, width and skin", async ({ page }, testInfo) => {
+  // 36 states, widths and skins, each opened and measured: minutes of real work on a loaded runner.
+  test.setTimeout(300_000);
   const dir = process.env.QCARD_EVIDENCE_DIR;
   const states = ["open", "picked", "other", "focused", "answered", "expired"] as const;
   for (const skin of ["dark", "light"] as const) {
