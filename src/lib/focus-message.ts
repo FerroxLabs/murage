@@ -119,6 +119,42 @@ export function flashMessage(
   };
 }
 
+/** Briefly mark a sentence inside a message with the CSS Custom Highlight API.
+ * Where that is unavailable, or the words are not found, the row's own flash
+ * is all there is. Returns a function that clears the mark at once. */
+export function highlightSentence(root: Pick<Document, "querySelector" | "createRange">, messageId: string, sentence: string, ms = FLASH_MS): () => void {
+  try {
+    const registry = (globalThis as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+    const HighlightCtor = (globalThis as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
+    const wrapper = root.querySelector<HTMLElement>(`[data-mid="${CSS.escape(messageId)}"]`);
+    if (!registry || !HighlightCtor || !wrapper) return () => {};
+    const walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    let flat = "";
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) { nodes.push(node as Text); flat += (node as Text).data; }
+    const tryFind = (needle: string) => flat.toLowerCase().indexOf(needle.toLowerCase());
+    const candidates = [sentence.replace(/\u2026$/, "").trim(), sentence.split(/\s+/).slice(0, 6).join(" ")];
+    let start = -1, length = 0;
+    for (const candidate of candidates) { if (!candidate) continue; const at = tryFind(candidate); if (at >= 0) { start = at; length = candidate.length; break; } }
+    if (start < 0) return () => {};
+    const locate = (offset: number) => {
+      let seen = 0;
+      for (const node of nodes) { if (offset <= seen + node.data.length) return { node, offset: offset - seen }; seen += node.data.length; }
+      return undefined;
+    };
+    const from = locate(start), to = locate(start + length);
+    if (!from || !to) return () => {};
+    const range = root.createRange();
+    range.setStart(from.node, from.offset);
+    range.setEnd(to.node, to.offset);
+    registry.set("murage-claim", new HighlightCtor(range));
+    const timer = setTimeout(() => registry.delete("murage-claim"), ms);
+    return () => { clearTimeout(timer); registry.delete("murage-claim"); };
+  } catch {
+    return () => {};
+  }
+}
+
 export function useFocusMessage(threadId: string, ready: boolean) {
   const { state, dispatch } = useStore();
   const focus = state.focusMessage;
@@ -127,6 +163,11 @@ export function useFocusMessage(threadId: string, ready: boolean) {
     // Consume only after the target is mounted and the flash has begun.
     // `consumed` is intentionally not an effect dependency, so this active
     // flash survives the bookkeeping update while future remounts ignore it.
-    return flashMessage(document, focus.messageId, () => dispatch({ type: "focusMessageConsumed", nonce: focus.nonce }));
+    let clearSentence = () => {};
+    const stop = flashMessage(document, focus.messageId, () => {
+      if (focus.sentence) clearSentence = highlightSentence(document, focus.messageId, focus.sentence);
+      dispatch({ type: "focusMessageConsumed", nonce: focus.nonce });
+    });
+    return () => { stop(); clearSentence(); };
   }, [dispatch, focus?.nonce, focus?.threadId, focus?.messageId, threadId, ready]);
 }

@@ -807,7 +807,7 @@ export interface AppState {
   sidebarSectionOrder?: string[] | null;
   /** a search hit to scroll to once its thread is on screen; nonce lets the
    * same message be focused twice in a row */
-  focusMessage: { threadId: string; messageId: string; nonce: number; consumed: boolean } | null;
+  focusMessage: { threadId: string; messageId: string; nonce: number; consumed: boolean; sentence?: string } | null;
   /** The library is a modal, not a view, so it does not belong in
    *  `activeView`. It lives here rather than inside Sidebar because the
    *  Skills panel has to be able to open it with an agent already chosen —
@@ -1122,7 +1122,7 @@ export type Action =
   | { type: "toggleInspector"; open?: boolean }
   | { type: "workspacePane"; action: WorkspacePaneAction }
   // maxPages: how far back to walk for it (a deep link walks less far)
-  | { type: "focusMessage"; threadId: string; messageId: string; maxPages?: number }
+  | { type: "focusMessage"; threadId: string; messageId: string; maxPages?: number; sentence?: string }
   // scrollback: ask the server for the page before the oldest message held
   | { type: "loadOlderMessages"; threadId: string }
   | { type: "olderMessages"; threadId: string; generation: number; messages: Message[]; hasMore: boolean }
@@ -1836,6 +1836,7 @@ export function reducer(state: AppState, action: Action): AppState {
           messageId: action.messageId,
           nonce: (state.focusMessage?.nonce ?? 0) + 1,
           consumed: false,
+          ...(action.sentence ? { sentence: action.sentence } : {}),
         },
       };
     case "focusMessageConsumed":

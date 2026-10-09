@@ -11,9 +11,9 @@ import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { recordUnverifiable, routeHasTools, type RouteCapabilityFlags } from "./engine-capabilities.ts";
 import { heldQueueText, planExternalDelivery, withExternalDelivery } from "./external-context-delivery.ts";
-import { checkReplyActions } from "./reply-action-guard.ts";
+import { checkReplyActions, delegationSources } from "./reply-action-guard.ts";
 import { Store, type Message } from "./store.ts";
-import { FLAGGED_REPLY_LINE } from "../shared/reply-action-claims.ts";
+import { UNMATCHED_ACTION_EXPLANATION, unmatchedActionLabel } from "../shared/reply-action-claims.ts";
 
 const PROFILE_T: RouteCapabilityFlags = { agentsMcp: true, composioMcp: true };
 const PROFILE_N: RouteCapabilityFlags = {};
@@ -108,8 +108,10 @@ describe("the guard row", () => {
     const card = row({ kind: "options", turnId: "t2" });
     expect(check(PROFILE_T, "I scheduled it", [card]).state).toBe("flagged");
   });
-  it("the flag line is the exact copy and the vocabulary files have no em dash", () => {
-    expect(FLAGGED_REPLY_LINE).toBe("This reply describes an action that has no record. Nothing was done.");
+  it("the sidebar copy is exact, never says nothing was done, and the vocabulary files have no em dash", () => {
+    expect(unmatchedActionLabel("I ran the report")).toBe('No matching action found for: "I ran the report"');
+    expect(UNMATCHED_ACTION_EXPLANATION).toBe("Murage found no record of this action in this reply. It may have been done by another bot or in an earlier reply. Check before relying on it.");
+    expect(UNMATCHED_ACTION_EXPLANATION + unmatchedActionLabel("x")).not.toMatch(/nothing was done|\bsafe|unsafe|composio/i);
     for (const file of ["shared/reply-action-claims.ts", "server/reply-action-guard.ts", "shared/chat-engine-notes.ts"]) {
       expect(readFileSync(new URL(`../${file}`, import.meta.url), "utf8")).not.toContain("\u2014");
     }
@@ -203,5 +205,37 @@ describe("a retried engine attempt", () => {
     expect(checkReplyActions({ reply: closing, path }).state).toBe("recorded");
     const flagged = checkReplyActions({ reply: closing, path: [user(), closing] });
     expect(flagged.state).toBe("flagged");
+  });
+});
+
+describe("fewer false flags", () => {
+  it("counts a delegated bot's completed action as a record", () => {
+    const closing = reply("I sent the invoice.", "t9");
+    const path = [user(), closing];
+    expect(checkReplyActions({ reply: closing, path }).state).toBe("flagged");
+    const theirs = row({ kind: "activity", tool: { name: "send_message", ok: true }, turnId: "other", from: { botId: "peer", name: "Peer", color: "x" } });
+    expect(checkReplyActions({ reply: closing, path, delegated: [theirs] }).state).toBe("recorded");
+    const failed = row({ kind: "activity", tool: { name: "send_message", ok: false }, turnId: "other" });
+    expect(checkReplyActions({ reply: closing, path, delegated: [failed] }).state).toBe("flagged");
+  });
+  it("finds the teammates' threads from mirrored answers and pair-room chips since the owner last spoke", () => {
+    const mirrored = row({ text: "done", copyOf: { threadId: "th-peer", messageIds: ["m1"] } });
+    const chip = row({ kind: "activity", tool: { name: "Messaged @Wren", ok: true }, comm: { groupId: "g1", withBotId: "w", withName: "Wren", withColor: "x" } });
+    const old = row({ text: "old", copyOf: { threadId: "th-old", messageIds: ["m0"] } });
+    const sources = delegationSources([old, user(), mirrored, chip], id => (id === "g1" ? "th-pair" : undefined));
+    expect(sources.map(s => s.threadId).sort()).toEqual(["th-pair", "th-peer"]);
+    expect(sources.find(s => s.threadId === "th-peer")?.messageIds).toEqual(["m1"]);
+  });
+  it("counts the same bot's action in an earlier turn since the owner last spoke as recorded", () => {
+    const first = tool("send_message", "t1"), mid = row({ text: "on it", turnId: "t1" });
+    const closing = reply("I sent it.", "t2");
+    expect(checkReplyActions({ reply: closing, path: [user(), first, mid, closing] }).state).toBe("recorded");
+    const older = checkReplyActions({ reply: closing, path: [first, user(), closing] });
+    expect(older.state).toBe("earlier");
+  });
+  it("still flags a real unbacked claim next to a backed one", () => {
+    const closing = reply("I sent the email. I paid the invoice.", "t2");
+    const result = checkReplyActions({ reply: closing, path: [user(), tool("send_message", "t2"), closing] });
+    expect(result.claims.map(c => [c.class, c.state])).toEqual([["send", "recorded"], ["pay", "flagged"]]);
   });
 });

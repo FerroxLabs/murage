@@ -120,6 +120,34 @@ export interface ReplyActionInput {
   path: readonly Message[];
   /** the driver has tools but reports no tool events (see DRIVERS_WITHOUT_TOOL_EVENTS) */
   unverifiable?: boolean;
+  /** Rows of bots this bot asked or delegated to (ask_bot, delegate, assign_task)
+   * in this conversation, gathered by the caller from delegationSources. Their
+   * completed actions count as records for this reply. */
+  delegated?: readonly Message[];
+}
+
+/** A row that starts a fresh request from the owner. */
+function isOwnerRow(row: Message): boolean {
+  return row.role === "user" && !row.murage && row.actorKind !== "murage" && row.actorKind !== "routine";
+}
+
+/** Where the rows of the teammates this bot handed work to live: the thread a
+ * mirrored answer came from, and the pair room a "Messaged" chip points at. */
+export function delegationSources(path: readonly Message[], groupThreadOf: (groupId: string) => string | undefined): { threadId: string; messageIds?: string[]; since: number }[] {
+  let from = 0;
+  for (let i = path.length - 1; i >= 0; i--) if (isOwnerRow(path[i]!)) { from = i + 1; break; }
+  const since = from > 0 ? path[from - 1]!.at : 0;
+  const out = new Map<string, { threadId: string; messageIds?: string[]; since: number }>();
+  for (const row of path.slice(from)) {
+    if (row.copyOf?.threadId) {
+      const prior = out.get(row.copyOf.threadId);
+      out.set(row.copyOf.threadId, { threadId: row.copyOf.threadId, since, messageIds: [...(prior?.messageIds ?? []), ...row.copyOf.messageIds] });
+    } else if (row.comm?.groupId) {
+      const threadId = groupThreadOf(row.comm.groupId);
+      if (threadId && !out.has(threadId)) out.set(threadId, { threadId, since });
+    }
+  }
+  return [...out.values()];
 }
 
 export function checkReplyActions(input: ReplyActionInput): ActionCheck {
@@ -128,7 +156,19 @@ export function checkReplyActions(input: ReplyActionInput): ActionCheck {
   if (scans.every(({ scan }) => !scan.checked)) return { state: "unchecked", claims: [] };
   const current = new Set<ActionClass>(), earlier = new Map<ActionClass, string>();
   const opaqueClasses = new Set<ActionClass>();
-  for (const row of input.path) {
+  // The same bot's actions in earlier turns since the owner last spoke are
+  // records of this conversation; older ones stay "earlier".
+  let lastOwner = -1;
+  input.path.forEach((row, index) => { if (isOwnerRow(row)) lastOwner = index; });
+  const recent = new Set<ActionClass>();
+  for (const row of input.delegated ?? []) {
+    const evidence = rowActions(row);
+    for (const operation of evidence.operations?.length ? evidence.operations : [evidence]) {
+      if (operation.outcome === "completed") for (const cls of operation.classes) current.add(cls);
+    }
+  }
+  const sameBot = (row: Message) => !row.from?.botId || !input.reply.from?.botId || row.from.botId === input.reply.from.botId;
+  for (const [index, row] of input.path.entries()) {
     const evidence = rowActions(row);
     const sameTurn = input.reply.turnId !== undefined && row.turnId === input.reply.turnId;
     for (const operation of evidence.operations?.length ? evidence.operations : [evidence]) {
@@ -138,13 +178,16 @@ export function checkReplyActions(input: ReplyActionInput): ActionCheck {
       if (operation.outcome !== "completed") continue;
       for (const cls of operation.classes) {
         if (sameTurn) current.add(cls);
-        else earlier.set(cls, row.id);
+        else {
+          earlier.set(cls, row.id);
+          if (index > lastOwner && sameBot(row)) recent.add(cls);
+        }
       }
     }
   }
   const claims: CheckedClaim[] = scans.flatMap(({ piece, scan }) => scan.claims.map(claim => {
     const located = { ...claim, pieceId: piece.id, text: (piece.text ?? "").slice(...claim.span) };
-    if (current.has(claim.class)) return { ...located, state: "recorded" as const };
+    if (current.has(claim.class) || recent.has(claim.class)) return { ...located, state: "recorded" as const };
     if (input.unverifiable || opaqueClasses.has(claim.class)) return { ...located, state: "unverifiable" as const };
     const rowId = earlier.get(claim.class);
     if (rowId) return { ...located, state: "earlier" as const, rowId };

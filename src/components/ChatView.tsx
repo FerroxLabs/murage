@@ -153,7 +153,7 @@ import {
 import { captureRowAnchor, captureViewportAnchor, observeSeenRows, restoreRowAnchor, type ScrollAnchor } from "@/lib/transcript-rows";
 import { timelineEvents } from "@/lib/taskTimeline";
 import { engineDividers, engineHoverLabel } from "../../shared/chat-engine-notes";
-import { HeldQueueRow, ReplyActionNote } from "./EngineNotes";
+import { HeldQueueRow } from "./EngineNotes";
 import { useReplyDraft } from "@/lib/drafts";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
@@ -737,7 +737,6 @@ function Bubble({
               ) : null}
               {text ? <ChatMarkdown text={text} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
               {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
-              {message.actionCheck ? <ReplyActionNote text={text} check={message.actionCheck} onJump={messageId => dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })} /> : null}
             </MessageBoundary>
           )}
         </div>

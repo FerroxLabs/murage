@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { appendInspectorRuntime, inspectorCountLabel, summarizeNative, summarizeRuntime, toRows, type InspectorEntry, type InspectorPage } from "./inspector";
+import { appendInspectorRuntime, inspectorCountLabel, summarizeNative, summarizeRuntime, toRows, withClaimRows, type InspectorEntry, type InspectorPage } from "./inspector";
 
 const base = { eventId: "e", provider: "claudeAgent" as const, threadId: "t", createdAt: "2026-08-17T10:00:00.000Z" };
 
@@ -91,5 +91,20 @@ describe("toRows", () => {
     expect(row.summary.endsWith("…")).toBe(true);
     expect(row.summary.length).toBeLessThanOrEqual("assistant_text: ".length + 120);
     expect((row.data as unknown[])).toHaveLength(500);
+  });
+});
+
+describe("withClaimRows", () => {
+  it("puts a claim row right after its turn's end, and at the end when the turn is not in the page", () => {
+    const entries: InspectorEntry[] = [
+      { kind: "runtime", at: base.createdAt, data: { ...base, eventId: "a", type: "turn.started", turnId: "t1" } as never },
+      { kind: "runtime", at: base.createdAt, data: { ...base, eventId: "b", type: "turn.completed", turnId: "t1", ok: true } as never },
+      { kind: "runtime", at: base.createdAt, data: { ...base, eventId: "c", type: "turn.started", turnId: "t2" } as never },
+    ];
+    const out = withClaimRows(toRows(entries), [
+      { key: "x", sentence: "I ran it", messageId: "m1", turnId: "t1" },
+      { key: "y", sentence: "I sent it", messageId: "m2", turnId: "gone" },
+    ]);
+    expect(out.map(r => r.key)).toEqual(["a", "b", "claim:x", "c", "claim:y"]);
   });
 });

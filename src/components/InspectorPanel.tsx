@@ -13,7 +13,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bug, ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
-import { appendInspectorRuntime, formatTime, inspectorCountLabel, toRows, type InspectorPage, type InspectorRow } from "@/lib/inspector";
+import { appendInspectorRuntime, formatTime, inspectorCountLabel, toRows, withClaimRows, type ClaimInspectorRow, type InspectorPage, type InspectorRow } from "@/lib/inspector";
+import { unmatchedClaims } from "../../shared/chat-engine-notes";
+import { UNMATCHED_ACTION_EXPLANATION, unmatchedActionLabel } from "../../shared/reply-action-claims";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import type { RuntimeEvent } from "../../server/contracts.ts";
 
@@ -152,7 +154,9 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
     () => (page ? page.entries.filter((e) => (lens === "raw" ? e.kind === "native" : e.kind === "runtime")) : []),
     [page, lens],
   );
-  const rows = useMemo(() => toRows(entries), [entries]);
+  const eventRows = useMemo(() => toRows(entries), [entries]);
+  const claims = useMemo(() => unmatchedClaims(bot.messages), [bot.messages]);
+  const rows = useMemo(() => (lens === "events" ? withClaimRows(eventRows, claims) : eventRows), [eventRows, claims, lens]);
 
   // follow the tail unless the user has scrolled up to read
   useEffect(() => {
@@ -236,11 +240,25 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
             {lens === "raw" ? "No native protocol messages recorded for this thread yet." : "No runtime events for this thread yet."}
           </div>
         )}
-        {rows.map((row) => (
+        {rows.map((row) => row.kind === "claim" ? (
+          <ClaimRow key={row.key} row={row}
+            onJump={() => dispatch({ type: "focusMessage", threadId, messageId: row.messageId, sentence: row.sentence })} />
+        ) : (
           <Row key={row.key} row={row} open={expanded.has(row.key)} onToggle={() => toggle(row.key)} />
         ))}
       </div>
     </aside>
+  );
+}
+
+/** One quiet row: the sentence the reply said, with no matching action. Clicking it
+ * takes the reader to that sentence in the chat. */
+export function ClaimRow({ row, onJump }: { row: ClaimInspectorRow; onJump: () => void }) {
+  return (
+    <button data-testid="claim-row" onClick={onJump} className="block w-full border-b border-hairline/20 px-3 py-1.5 text-left font-sans text-[12px] text-ink-secondary hover:bg-raised/60">
+      <span className="block text-ink">{unmatchedActionLabel(row.sentence)}</span>
+      <span className="mt-0.5 block">{UNMATCHED_ACTION_EXPLANATION}</span>
+    </button>
   );
 }
 
