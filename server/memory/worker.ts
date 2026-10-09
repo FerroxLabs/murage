@@ -7,6 +7,11 @@ import { MemoryEmbeddings,type ModelManifest } from "./embeddings.ts";
 let index:MemoryIndex|null=null, embeddings:MemoryEmbeddings|null=null, eligibility:MemoryEligibility|null=null, busy=false;
 const queries:Array<{requestId:string;input:MemorySearchInput;enqueuedAt:number}>=[];
 const batches:Array<{requestId:string;records:IndexedMemory[]}>=[];
+/** Capture work waits behind queries: a waiting search is read and answered before the capture in hand starts. */
+const captures:Array<ReturnType<typeof workSchema.parse>>=[];
+/** An error's name and message only (never the work it was handling): the parent forwards stderr to a rate-limited log. */
+const describe=(error:unknown)=>error instanceof Error?`${error.name}: ${error.message.slice(0,160)}`:"unknown";
+const yieldToMessages=()=>new Promise<void>(resolve=>setImmediate(resolve));
 const cancelled=new Set<string>();
 /** Index records embedded per model call: a waiting query is served between slices. */
 const INDEX_SLICE=4;
@@ -35,12 +40,20 @@ async function drain(){
   if(busy||!index||!embeddings||!eligibility)return;busy=true;
   let queryBatchServed=false;
   try {
-    while(queries.length||batches.length){
+    while(queries.length||batches.length||captures.length){
       // Queries lead each drain. Sustained arrivals must still leave one slot
       // for a waiting index batch, then immediately return priority to queries.
-      if(queries.length&&(!batches.length||!queryBatchServed)){
+      if(queries.length&&((!batches.length&&!captures.length)||!queryBatchServed)){
         await serveQueries();
         queryBatchServed=true;
+      } else if(captures.length){
+        // A capture is synchronous CPU: let the loop read any query that arrived since the last one, then answer it first.
+        await yieldToMessages();
+        if(queries.length){await serveQueries();continue;}
+        const work=captures.shift()!;
+        try{process.send?.({type:"result",result:captureWork(work)});}
+        catch(error){console.error(`capture rejected: ${describe(error)}`);process.send?.({type:"error",reason:"INVALID_MEMORY_WORK"});}
+        queryBatchServed=false;
       } else {
         const batch=batches.shift()!;index.upsert(batch.records);
         const alive=batch.records.filter(r=>!r.deleted&&!r.archived);let embeddingStatus="indexed";
@@ -58,7 +71,7 @@ async function drain(){
         queryBatchServed=false;
       }
     }
-  }catch{process.send?.({type:"index-error",reason:"MEMORY_INDEX_FAILED"});}
+  }catch(error){console.error(`index drain failed: ${describe(error)}`);process.send?.({type:"index-error",reason:"MEMORY_INDEX_FAILED"});}
   finally{busy=false;}
 }
 process.on("message",input=>{
@@ -76,8 +89,9 @@ process.on("message",input=>{
     if(message.type==="cancel"&&message.requestId){cancelled.add(message.requestId);if(cancelled.size>128)cancelled.delete(cancelled.values().next().value!);return;}
     if(message.type==="query"&&message.requestId){if(queries.length>=64)throw new Error("queue full");queries.push({requestId:message.requestId,input:searchInputSchema.parse(message.input),enqueuedAt:performance.now()});void drain();return;}
     if(message.type==="index"&&message.requestId){if(batches.length>=2)throw new Error("index queue full");batches.push({requestId:message.requestId,records:indexBatchSchema.parse(message.records)});void drain();return;}
-    process.send?.({type:"result",result:captureWork(workSchema.parse(input))});
-  } catch {process.send?.({type:"error",reason:"INVALID_MEMORY_WORK"});}
+    if(captures.length>=2)throw new Error("capture queue full");
+    captures.push(workSchema.parse(input));void drain();
+  } catch(error) {console.error(`message rejected: ${describe(error)}`);process.send?.({type:"error",reason:"INVALID_MEMORY_WORK"});}
 });
 process.on("disconnect",()=>{index?.close();eligibility?.close();process.exit(0);});
 process.send?.({type:"ready"});

@@ -23,6 +23,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import nodePath from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { checkpointTruncate } from "./sqlite-checkpoint.ts";
 
 export type AcpHistoryEngine = "gemini" | "qwen" | "opencode" | "kimi" | "cursor" | "droid" | "hermes" | "antigravity";
 
@@ -211,7 +212,7 @@ function removeOpenCode(dataDir: string, dbOverride: string | undefined, folders
         for (const column of ["session_id", "aggregate_id"]) if (has.has(column)) db.prepare(`DELETE FROM "${table}" WHERE "${column}" IN (${idMarks})`).run(...list_);
       }
       db.prepare(`DELETE FROM session WHERE id IN (${idMarks})`).run(...list_);
-      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      checkpointTruncate(db, "deletion");
       for (const id of list_) removedIds.add(id);
       out.removed(path);
     } catch {
@@ -284,7 +285,7 @@ function removeDroid(root: string, folders: string[], ids: string[], out: Engine
         else if (/path|file/i.test(column)) for (const id of known) changed += Number(db.prepare(`DELETE FROM "${table}" WHERE instr("${column}", ?) > 0`).run(`${id}.jsonl`).changes);
       }
     }
-    if (changed) { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); out.removed(index); }
+    if (changed) { checkpointTruncate(db, "deletion"); out.removed(index); }
   } catch {
     out.failed(index);
   } finally {
@@ -327,7 +328,7 @@ function removeHermes(home: string, ids: string[], out: EngineRemoval): void {
         if (table !== "sessions" && cols(table).has("session_id")) changed += Number(db.prepare(`DELETE FROM "${table}" WHERE session_id IN (${marks})`).run(...known).changes);
       }
       if (tables.includes("sessions")) changed += Number(db.prepare(`DELETE FROM sessions WHERE id IN (${marks})`).run(...known).changes);
-      if (changed) { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); out.removed(path); }
+      if (changed) { checkpointTruncate(db, "deletion"); out.removed(path); }
     } catch {
       out.failed(path);
     } finally {
@@ -369,7 +370,7 @@ function removeAntigravity(appData: string, ids: string[], out: EngineRemoval): 
       const columns = (db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>).map((row) => row.name);
       if (columns.includes("conversation_id")) changed += Number(db.prepare(`DELETE FROM "${table}" WHERE conversation_id IN (${known.map(() => "?").join(",")})`).run(...known).changes);
     }
-    if (changed) { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); out.removed(path); }
+    if (changed) { checkpointTruncate(db, "deletion"); out.removed(path); }
   } catch {
     out.failed(path);
   } finally {

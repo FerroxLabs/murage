@@ -136,7 +136,7 @@ import { z } from "zod";
 import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PENDING_BYTES, SSE_MAX_PENDING_FRAMES, SSE_REPLAY_MAX_BYTES, SSE_REPLAY_MAX_ENTRIES, SseReplay, SseWriter } from "./sse-buffer.ts";
 import { conversationSubject, routeAdmits, routeClass, routeRefusal } from "./route-policy.ts";
 import { assertBrowserProfilePrecondition } from "./browser-profile-precondition.ts";
-import { database, transaction } from "./database.ts";
+import { database, DatabaseBusyError, isDatabaseBusy, transaction } from "./database.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { recordProjectRoutine, linkLegacyProjectRoutineRuns, projectMainThread } from "./project-routines.ts";
 import { projectProposalFolderSignals, createProjectRows, projectProposalInput, proposeProject, PROPOSAL_REPLY_LIMIT, startCreatedProjectGoal } from "./project-new.ts";
@@ -284,7 +284,12 @@ import { parseBotProfilePatch } from "./bot-profile.ts";
 import { groupTurnCwd } from "./room-cwd.ts";
 import { RoomPendingStop, RoomTurnStallRegistry, roomTurnSilenceMs, roomTurnStallMessage } from "./room-turn-timeout.ts";
 import { GROUP_CONTEXT_MESSAGES, ROOM_CONTEXT_PINNED_LABEL, roomContextMessageIds, roomContextMessages, ROOM_REPLY_WITHHELD, withheldRoomLine } from "./room-context.ts";
-import { databaseStamp, capturedMessageWithheld, copyOriginWithheld, mergeOutputRoots, messageMadeWithMemory, outputRootsBad, recordOutputRoots, recordSessionRoots, sessionOutputRoots, type OutputRoots } from "./memory/replay-lineage.ts";
+import { startLoopLagMonitor } from "./observe.ts";
+import { authorityMoved, authorityStamp } from "./memory/authority-epoch.ts";
+import { PreDispatchTimer } from "./memory/turn-spans.ts";
+import { RECALL_WAIT_MS, takeRecallMode, withRecallBudget } from "./memory/recall-budget.ts";
+import { catchUpRecentMemory } from "./memory/recent.ts";
+import { capturedMessageWithheld, copyOriginWithheld, mergeOutputRoots, messageMadeWithMemory, outputRootsBad, recordOutputRoots, recordSessionRoots, sessionOutputRoots, type OutputRoots } from "./memory/replay-lineage.ts";
 import { memoryStatsSince, memoryStatsSnapshot } from "./memory/turn-stats.ts";
 import { timedStep } from "./memory/claim-trace.ts";
 import * as box from "./box.ts";
@@ -7989,16 +7994,21 @@ async function startTurn(
     let earlyContinuityKey: string | undefined;
     // The database stamp right after the early continuation check passed; the dispatch step skips its own run of the same check while it is unmoved.
     let earlyCheckStamp: string | undefined;
+    // While this turn is between its slot and the engine send, the memory worker starts no main-thread step (PROPOSAL-v2 10.1 item 7).
+    let releaseTurnHold: (() => void) | undefined;
     try {
       await acquireDirectTurnSlot(run);
       trace.mark("slot.acquired");
+      if (memoryState().mode === "active") releaseTurnHold = memoryWorker.holdForTurn();
       // The memory bundle needs none of the mounts' results, so a resumed turn
       // builds it while they run. continuationMemoryRevoked still decides first
       // (a revoked turn resets and builds after, as before), and the dispatch
       // step re-checks it and takes this one bundle or cancels it.
-      if (memoryState().mode === "active" && resumeCursor) {
+      if (memoryState().mode === "active") {
         const access = turnMemoryAccess(bot.id, threadId, dispatchClaimId);
-        if (!continuationMemoryRevoked(threadId, instanceId, String(resumeCursor), access)) {
+        // The one write recall relies on: a message written a moment ago is captured now if the worker is behind. Lock-tolerant, bounded; recall itself writes nothing.
+        catchUpRecentMemory(access, undefined, jobId => memoryWorker.completedSource(jobId), { messageIds: [...skipTranscript] });
+        if (!resumeCursor || !continuationMemoryRevoked(threadId, instanceId, String(resumeCursor), access)) {
           const early = new EarlyBundle<Awaited<ReturnType<typeof buildMemoryBundle>>, MemoryAccess>(access);
           const query = Buffer.from(text).subarray(0, 4093).toString("utf8").replace(/�+$/, "");
           const options = {
@@ -8020,7 +8030,7 @@ async function startTurn(
             } catch (error) { bundleDone("error", statsBefore ? memoryStatsSince(statsBefore) : undefined); throw error; }
           });
           earlyBundle = early;
-          earlyCheckStamp = databaseStamp();
+          earlyCheckStamp = authorityStamp();
           earlyContinuityKey = JSON.stringify(earlyContinuity());
         }
       }
@@ -8473,28 +8483,32 @@ async function startTurn(
       await pendingCancelledProviderHandshakes.waitForClear(threadId);
       trace.mark("mounts.done", { integrations: Object.keys(integrations).length });
       let memoryReceipt: MemoryDispatchReceipt | undefined;
+      let recallSkippedForLine = false;
+      const pre = new PreDispatchTimer();
       const memoryDone = memoryState().mode==="active" ? trace.span("memory.assemble") : undefined;
       const assembleStats = memoryDone&&trace.enabled ? memoryStatsSnapshot() : undefined;
       if(memoryState().mode==="active") {
         // The early access is reused only while it is still current (a forget or
         // tombstone during the mounts cancels the early bundle and mints a fresh
         // access); the early continuation check is not run twice when nothing moved.
-        const {access,earlyVerdictHolds}=dispatchAccess(earlyBundle,earlyCheckStamp,{assertCurrent:assertMemoryAccess,stamp:databaseStamp,mint:()=>turnMemoryAccess(bot.id,threadId,dispatchClaimId)});
+        const {access,earlyVerdictHolds}=dispatchAccess(earlyBundle,earlyCheckStamp,{assertCurrent:assertMemoryAccess,stamp:authorityStamp,mint:()=>turnMemoryAccess(bot.id,threadId,dispatchClaimId)});
         const revokedWhy: { reason?: string } = {};
-        const revoked=Boolean(resumeCursor && !earlyVerdictHolds && continuationMemoryRevoked(threadId,instanceId,String(resumeCursor),access,revokedWhy));
+        const revoked=Boolean(resumeCursor && !earlyVerdictHolds && pre.sync("continuation.check",()=>continuationMemoryRevoked(threadId,instanceId,String(resumeCursor),access,revokedWhy)));
         // Why a live conversation is being dropped (it closes a warm engine and its browsers).
         if(revoked)console.warn(`memory continuation reset thread=${threadId} engine=${instanceId} reason=${revokedWhy.reason??"check-failed"}`);
         // The stamp the post-recall recheck compares against: right after a full check passed.
-        const checkedStamp=!resumeCursor||revoked?undefined:earlyVerdictHolds?earlyCheckStamp:databaseStamp();
+        const checkedStamp=!resumeCursor||revoked?undefined:earlyVerdictHolds?earlyCheckStamp:authorityStamp();
         // Revoked since the overlapped build began: it is not this turn's bundle.
         if(revoked)earlyBundle?.cancel();
         // Transcript-replay drivers hold no session at all, so they always
         // rebuild. The old literal list spelled two ids that no driver has
         // ever used ("openai", "openai-compatible") and missed the real
         // "openai-compat"; the driver set is now asserted against the drivers.
+        // The authority stamp right after the replay was last filtered: a second filter is needed only if it moved.
+        let replayStamp: string | undefined;
         const needsReplay=!resumeCursor || revoked || replaysTranscriptNatively(instance.driverKind);
         if(needsReplay) {
-          const {allowed,replayed,omitted}=filterDirectReplay(threadId,activeMessages,access,skipTranscript,replayOptions);replayOmitted=omitted;
+          const {allowed,replayed,omitted}=pre.sync("replay.filter",()=>filterDirectReplay(threadId,activeMessages,access,skipTranscript,replayOptions));replayOmitted=omitted;replayStamp=authorityStamp();
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=replayed.map(m=>replayEntry(m,transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")));
           ({transcript,omitted:replayOmitted}=fitRenderedReplay(transcript,instanceId,replayOmitted,replayOptions.maxBytes));
@@ -8506,7 +8520,7 @@ async function startTurn(
           // A resumed turn still carries its transcript: an ACP engine whose
           // session/load fails replays it into the new session (#1705), so
           // it must be the authorized history, never the raw branch.
-          const {allowed,replayed,omitted}=filterDirectReplay(threadId,activeMessages,access,skipTranscript,replayOptions);replayOmitted=omitted;
+          const {allowed,replayed,omitted}=pre.sync("replay.filter",()=>filterDirectReplay(threadId,activeMessages,access,skipTranscript,replayOptions));replayOmitted=omitted;replayStamp=authorityStamp();
           const allowedById=new Map(allowed.map(message=>[message.id,message]));
           transcript=replayed.map(m=>replayEntry(m,transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")));
           ({transcript,omitted:replayOmitted}=fitRenderedReplay(transcript,instanceId,replayOmitted,replayOptions.maxBytes));
@@ -8540,14 +8554,25 @@ async function startTurn(
         let bundle: Awaited<ReturnType<typeof buildMemoryBundle>> | undefined;
         // PIP settings are reread at dispatch: a Continuity switch or option change during the mounts discards the early bundle.
         if(earlyBundle&&earlyContinuityKey!==JSON.stringify({continuity:memoryOptions.continuity,...(memoryOptions.continuityOptions?{continuityOptions:memoryOptions.continuityOptions}:{})}))earlyBundle.cancel();
+        // A recall that is not back within RECALL_WAIT_MS is dropped: the turn goes out with its pins, identity and kept
+        // memories and no excerpts, and the line says so (PROPOSAL-v2 10.1 item 5). Memory is never why a turn is late.
+        const awaitRecall=async(early:Promise<Awaited<ReturnType<typeof buildMemoryBundle>>>)=>{
+          const waited=await pre.async("recall",()=>withRecallBudget(early,RECALL_WAIT_MS));
+          if("value" in waited)return waited.value;
+          recallSkippedForLine=true;earlyBundle?.cancel();
+          console.warn(`memory recall skipped thread=${threadId} engine=${instanceId} reason=budget wait=${RECALL_WAIT_MS}`);
+          return buildMemoryBundle("",access,memoryWorker,memoryOptions);
+        };
         const overlapped=resumeCursor?earlyBundle?.take():undefined;
         if(overlapped) {
-          bundle=await overlapped;
+          bundle=await awaitRecall(overlapped);
         } else if(resumeCursor) {
           const statsBefore=trace.enabled?memoryStatsSnapshot():undefined;
           const bundleDone=trace.span("memory.bundle");
+          const endRecall=pre.span("recall");
           try{bundle=await buildMemoryBundle(query,access,memoryWorker,memoryOptions);bundleDone("ok",statsBefore?memoryStatsSince(statsBefore):undefined);}
           catch(error){bundleDone("error",statsBefore?memoryStatsSince(statsBefore):undefined);throw error;}
+          finally{endRecall();}
         }
         // The recall await let other threads in: one may have retired or revoked
         // a source this session was shown on an earlier turn. Recheck the whole
@@ -8555,7 +8580,7 @@ async function startTurn(
         // bundle, reset, and rebuild the authorized replay below.
         if(resumeCursor){
           const lateWhy: { reason?: string } = {};
-          if(resumedSessionInvalidAfterRecall(threadId,instanceId,String(resumeCursor),access,checkedStamp,lateWhy)){
+          if(pre.sync("after.recall",()=>resumedSessionInvalidAfterRecall(threadId,instanceId,String(resumeCursor),access,checkedStamp,lateWhy))){
             console.warn(`memory continuation reset thread=${threadId} engine=${instanceId} reason=after-recall ${lateWhy.reason??"check-failed"}`);
             earlyBundle?.cancel();
             bundle=undefined;resumeCursor=undefined;sessionReset=true;memoryRefreshed=true;
@@ -8564,24 +8589,43 @@ async function startTurn(
         if(!bundle) {
           // Claude's idle retained process is not reported by hasSession; its
           // explicit per-thread reset must run even when no active turn exists.
-          bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{
+          assertMemoryAccess(access);
+          await pre.async("session.reset",async()=>{
             if(instance.adapter.resetSession)await instance.adapter.resetSession(threadId);
             else if(instance.adapter.hasSession(threadId)||instance.adapter.capabilities.queueing===true)throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
-          },memoryOptions);
+          });
+          assertMemoryAccess(access);
+          // The recall started at slot acquisition is this turn's bundle unless something revocation-relevant moved
+          // while the session shut down (a checkpoint rolled, a source retired): then it is built afresh, as before.
+          const early=earlyBundle&&!authorityMoved(earlyCheckStamp)?earlyBundle.take():undefined;
+          if(!early)earlyBundle?.cancel();
+          if(early)bundle=await awaitRecall(early);
+          else{
+            const endRecall=pre.span("recall");
+            // the session was shut down above; the post-reset helper re-asserts the access and builds
+            bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,async()=>{},memoryOptions);
+            endRecall();
+          }
           // The same await can invalidate disclosed history; re-filter with the
-          // original authority rather than replaying a pre-reset snapshot.
-          const {allowed,replayed,omitted}=filterDirectReplay(threadId,activeMessages,access,skipTranscript,replayOptions);replayOmitted=omitted;
-          const allowedById=new Map(allowed.map(message=>[message.id,message]));
-          transcript=replayed.map(m=>replayEntry(m,transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")));
-          ({transcript,omitted:replayOmitted}=fitRenderedReplay(transcript,instanceId,replayOmitted,replayOptions.maxBytes));
+          // original authority rather than replaying a pre-reset snapshot. When nothing
+          // revocation-relevant moved since the first filter, that filter still stands.
+          if(authorityMoved(replayStamp)){
+            const {allowed,replayed,omitted}=pre.sync("replay.filter",()=>filterDirectReplay(threadId,activeMessages,access,skipTranscript,replayOptions));replayOmitted=omitted;replayStamp=authorityStamp();
+            const allowedById=new Map(allowed.map(message=>[message.id,message]));
+            transcript=replayed.map(m=>replayEntry(m,transcriptText(m,allowedById,cfg.profile?.name?.trim()||"User")));
+            ({transcript,omitted:replayOmitted}=fitRenderedReplay(transcript,instanceId,replayOmitted,replayOptions.maxBytes));
+          }
           turnText=buildTurnContext({text:turnPrompt,transcript,
             rewound,memoryRefreshed,fresh:memoryRefreshed?false:fresh,externallyUpdated:memoryRefreshed?false:externalDelivery.replay,replaysNatively:replaysTranscriptNatively(instance.driverKind),currentInstanceId:instanceId,omitted:replayOmitted}).turnText;
         }
         noteWithheldPin(threadId,bundle);
+        const endReceipt=pre.span("receipt.prepare");
         memoryReceipt=new MemoryDispatchReceipt(bundle,access,instanceId);
+        endReceipt();
         // A resumed session is re-checked whole right before dispatch and at
-        // acceptance: a revoke landing after the check above ends it.
-        if(resumeCursor)memoryReceipt.resumes(String(resumeCursor));
+        // acceptance: a revoke landing after the check above ends it. The stamp says the
+        // check just passed: while the authority epoch has not moved, the next ones are not repeated.
+        if(resumeCursor)memoryReceipt.resumes(String(resumeCursor),authorityStamp());
         // The owner's "brought N of M" is written when this disclosure is
         // delivered, tied to this turn's bundle; a turn that carried no
         // continuity makes the last count not current (PIP).
@@ -8622,7 +8666,9 @@ async function startTurn(
         throw new DirectTurnSetupCancelled("turn stopped before dispatch");
       }
       watchdog.dispatched(threadId, bot.id, dispatchClaimId);
+      const endAssertDispatch = pre.span("assert.dispatch");
       memoryReceipt?.assertCurrent();
+      endAssertDispatch();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
       if (providerRoute) activeProviderSelections.set(threadId, { botId: bot.id, instanceId, route: providerRoute });
       // Immediately before sendTurn and after every check that can still
@@ -8640,11 +8686,15 @@ async function startTurn(
       // keeps the tag as text and goes on, as it did before it could inline
       // at all (unboundImagePolicy).
       const imagePlan = turnImageDelivery(instance, providerRoute, model);
+      const endImages = pre.span("images.collect");
       const collectedImages = imagePlan === "inline" ? await collectTurnImages(instance.driverKind, threadId, bot.id, text) : undefined;
+      endImages();
       const incomingImages = collectedImages?.images;
       const imagePrompt = imagePromptFor(imageDeliveryOutcome(imagePlan, collectedImages));
       if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped before image dispatch");
+      const endAssertImages = pre.span("assert.images");
       memoryReceipt?.assertCurrent();
+      endAssertImages();
       if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
       noteImagesLeftOut(threadId, bot, imagePlan, text, routedModelAcceptsImages(providerRoute, model));
       // Images past the count or the bytes are left out of the turn, not the
@@ -8659,13 +8709,13 @@ async function startTurn(
       const outputInstructions = prepareOutputDestination(bot.id, threadId, dispatchClaimId, worksInWorkspace && opts?.runOn !== "cloud", Boolean(integrations.agents));
       projectTurnLeases.markDispatched(dispatchClaimId);
       submissionBoundary.started();
-      preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId));
+      pre.sync("procedures.pin", () => preparePinnedProcedures(bot.id, threadId, procedurePin, false, procedureContext(bot.id,threadId)));
       // Hoisted so the primer and the driver read ONE trust answer. Scanning
       // twice could disagree if the folder changed between the two calls, and
       // a primer that says "trusted" over a turn dispatched untrusted is
       // exactly the kind of confident-and-wrong the primer exists to stop.
-      const folderTrust = fullAccessFolderTrust(bot, fullAccessOrigin, threadId, folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] }));
-      const primer = capabilitiesPrimer(turnCapabilityFacts({
+      const folderTrust = pre.sync("folder-trust", () => fullAccessFolderTrust(bot, fullAccessOrigin, threadId, folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] })));
+      const primer = pre.sync("primer", () => capabilitiesPrimer(turnCapabilityFacts({
         instance, integrations, model, providerRoute, cwd, folderTrust,
         // Vision is a property of the MODEL, not the engine. Murage only
         // holds that fact for a BYOK provider connection's catalog; for an
@@ -8684,7 +8734,7 @@ async function startTurn(
         canAskOwner: humanIsOwner && opts?.automationSource === undefined,
         ownerAudience: directOwnerAudience,
         browserLock: integrations.browser ? unifiedBrowserProtection(threadId) ?? undefined : undefined,
-      }));
+      })));
       // The system prompt as a labelled list, joined to the same bytes the
       // inline concatenation sent (bot-shapes.test.ts), and kept as this
       // bot's last turn for "What shapes <bot>". Built in the same tick as
@@ -8750,11 +8800,11 @@ async function startTurn(
       const nowLine = nowPrompt(new Date(), routineTimeZone());
       // "What I've been working on" rides the message too (working-context.ts):
       // owner audience only, and only when this session does not have it yet.
-      const working = engineCommand ? { text: "", quoted: [] } : workingContextBlock(surfacesForOwner, { botId: bot.id, currentThreadId: threadId, bots: store.bots, groups: store.groups, routines: routines?.listRoutines() ?? [], now: Date.now() });
+      const working = engineCommand ? { text: "", quoted: [] } : pre.sync("working-context", () => workingContextBlock(surfacesForOwner, { botId: bot.id, currentThreadId: threadId, bots: store.bots, groups: store.groups, routines: routines?.listRoutines() ?? [], now: Date.now() }));
       const workingBlock = workingContextForTurn(`${threadId}:${instanceId}`, working.text, resumeCursor === undefined || sessionReset);
       // What it learned (memory/lessons.ts): the owner's lessons ride the message, pinned for this turn.
       const learnedBlock = engineCommand ? { text: "", lessonIds: [], feedbackIds: [], digest: "" }
-        : pinLearnedForTurn(`${threadId}:${dispatchClaimId}`, () => renderLearnedBlock(database(), { botId: bot.id, threadId, ownerAudience: surfacesForOwner, onPath: onActiveBranch(threadId) }));
+        : pre.sync("learned.render", () => pinLearnedForTurn(`${threadId}:${dispatchClaimId}`, () => renderLearnedBlock(database(), { botId: bot.id, threadId, ownerAudience: surfacesForOwner, onPath: onActiveBranch(threadId) })));
       const learnedText = learnedForTurn(`${threadId}:${instanceId}`, learnedBlock, resumeCursor === undefined || sessionReset);
       // a reply built from it rests on the replies it quotes (Astra r1 #6)
       if (workingBlock && memoryReceipt && !memoryReceipt.noteSources(workingContextSources(working.quoted))) throw new Error("MEMORY_LOOKUP_LIMIT: working context could not be recorded");
@@ -8775,6 +8825,7 @@ async function startTurn(
       // Output lineage, every mode (v6): what this turn shows the engine
       // (its replay, the owed lines, the quoted working context) and what its
       // resumed session already holds.
+      const endLineage = pre.span("lineage.roots");
       {
         // A resumed session is not shown its replay again (only a driver that
         // replays natively is): what it was shown before is its session roots.
@@ -8794,6 +8845,10 @@ async function startTurn(
         }
         turnOutputRoots.set(threadId, { roots, instanceId, ...(resumeCursor ? { session: String(resumeCursor) } : {}) });
       }
+      endLineage();
+      releaseTurnHold?.();
+      if (memoryState().mode === "active") pre.finish({ route: /fluxrouter/i.test(providerRoute?.baseUrl ?? "") ? "flux" : "native", engine: instance.driverKind, resumed: Boolean(resumeCursor),
+        recallMode: recallSkippedForLine ? "skipped" : takeRecallMode(threadId) ?? "lexical", ...(recallSkippedForLine ? { skippedReason: "budget" } : {}) });
       trace.mark("dispatch.send", { engine: instance.driverKind });
       const dispatch = await guardTurnDispatch(sendProjectUsageTurn(instance, {
         // routine, schedule, card and delegation turns are background work: told by how THIS
@@ -8909,6 +8964,7 @@ async function startTurn(
         startScreenPoller(bot.id, previewCapture, { threadId, screenIsTheWork: instance.driverKind === "boxAgent" });
       }
     } catch (e) {
+      releaseTurnHold?.();
       earlyBundle?.cancel();
       if(acceptedTurnCleanupFailed) {
         // Termination is unconfirmed; hold ownership until application restart.
@@ -16360,6 +16416,7 @@ const server = createServer(async (req, res) => {
         }
         return json(res,200,result);
       } catch(error) {
+        if(isDatabaseBusy(error))return json(res,409,{error:new DatabaseBusyError("memory-action",0).message});
         const status=error && typeof error==="object" && "status" in error && typeof error.status==="number"?error.status:400;
         return json(res,status,{error:error instanceof Error?error.message:"MEMORY_ACTION_FAILED"});
       }
@@ -24676,6 +24733,8 @@ const server = createServer(async (req, res) => {
 
     return json(res, 404, { error: `no route: ${method} ${path}` });
   } catch (e) {
+    // A lock that outlasted its wait is "try again", never a server error (PROPOSAL-v2 10.3).
+    if (isDatabaseBusy(e)) return json(res, 409, { error: new DatabaseBusyError("request", 0).message });
     const status = (e as any)?.status ?? 500;
     return json(res, status, { error: e instanceof Error ? e.message : String(e) });
   }
@@ -24717,6 +24776,8 @@ server.listen(PORT, "127.0.0.1", () => {
   // The memory worker's 250 ms tick starts only now: its synchronous database steps used to run
   // before the port was open and held the loop while the window waited on /api/health.
   memoryWorker.start();
+  // `[loop] lag p50= p99= max= topSource=` every 5 minutes while p99 is over 100 ms (PROPOSAL-v2 section 11, line 5).
+  startLoopLagMonitor();
   logPid1ReaperCheck();
   // Jobs that do not gate the first request, moved here from before listen.
   // The skill sweep (it can switch skills off) deliberately stays before

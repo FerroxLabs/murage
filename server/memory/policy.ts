@@ -8,7 +8,7 @@ import type { MemoryScopeKind } from "../../shared/memory.ts";
 import { memoryState } from "./repository.ts";
 import { threadMemoryRoom } from "./capture-scope.ts";
 import { scopeRow } from "./scope-id.ts";
-import { eligibilityAnswer, inEligibilityPass } from "./eligibility-pass.ts";
+import { eligibilityAnswer, inEligibilityPass, passLookup } from "./eligibility-pass.ts";
 import { revokeAllDisclosures } from "./revocation.ts";
 
 export interface MemoryRoster {
@@ -347,9 +347,11 @@ export function backgroundMemoryAudience(botId: string, threadId: string, roster
 export function inMemoryAccessPass<T>(work: () => T): T { return inEligibilityPass(database(), work); }
 
 export function assertMemoryAccess(access: MemoryAccess, scope?: string) {
-  const trusted = contexts.get(access), state = memoryState();
+  const trusted = contexts.get(access);
   if (!trusted || !trusted.registry.isActive(trusted.claim)) throw new Error("MEMORY_UNAUTHORIZED");
-  if (state.policyRevision !== access.policyRevision || state.deletionEpoch !== access.deletionEpoch || policyRow()?.state !== "granted") throw new Error("MEMORY_CONTEXT_REVOKED");
+  // Inside a synchronous pass the meta row and the policy binding are read once (a row this connection writes ends the memo).
+  const { state, granted } = passLookup(database(), "assert-memory-state", () => ({ state: memoryState(), granted: policyRow()?.state === "granted" }));
+  if (state.policyRevision !== access.policyRevision || state.deletionEpoch !== access.deletionEpoch || !granted) throw new Error("MEMORY_CONTEXT_REVOKED");
   const roster = trusted.roster(), notOwner = trusted.claim.notOwnerAudience === true;
   // Inside a synchronous pass (hydrating one record, a hit loop) the audience is worked out once; the primary-key re-check still runs once per pass.
   const current = eligibilityAnswer(database(), `assert\u0000${access.botId}\u0000${access.threadId}\u0000${notOwner}`, roster, () => eligibleScopes(access.botId,access.threadId,roster,notOwner));

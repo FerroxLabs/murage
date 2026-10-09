@@ -22,6 +22,7 @@
 // caller that asks for failClosed gets the message withheld instead of an
 // error, so a turn never fails and never shows what it could not check.
 import { database } from "../database.ts";
+import { statementReusePassId, writeStamp } from "../io-budget.ts";
 import { supersededThreadCheckpoint } from "./checkpoints.ts";
 import { storeRootSet } from "./schema.ts";
 type DatabaseLike = ReturnType<typeof database>;
@@ -344,7 +345,7 @@ function lineageJudge(threadId: string, audience: ReplayAudience | null, invalid
       charge(1+refs.length+direct.length);
       const sourceIds = new Set(direct.map(source=>source.id));
       for (const source of direct) {
-        const current = db.prepare("SELECT state,revision FROM memory_sources WHERE id=?").get(source.id);
+        const current = sourceRow(source.id);
         if (!current || current.state!=="active" || current.revision!==source.revision) return true;
       }
       for (const ref of refs) {
@@ -424,6 +425,12 @@ function lineageJudge(threadId: string, audience: ReplayAudience | null, invalid
     refVerdicts.set(key, verdict);
     return verdict;
   };
+  /** One source row per check: a session's receipts cite the same sources again and again, and the row cannot change while the check runs. */
+  const sourceRows = new Map<string, Record<string, unknown> | undefined>();
+  const sourceRow = (id: string) => {
+    if (!sourceRows.has(id)) sourceRows.set(id, db.prepare("SELECT state,revision,thread_id,message_id FROM memory_sources WHERE id=?").get(id));
+    return sourceRows.get(id);
+  };
   /** Cited sources: still there, and the captured replies among them still
    * vouched for by every receipt that produced them (read in one grouped
    * listing per thread), and by their originals if they are copies. */
@@ -431,7 +438,7 @@ function lineageJudge(threadId: string, audience: ReplayAudience | null, invalid
     const replies = new Map<string,string[]>();
     for (const sourceId of sourceIds) {
       charge();
-      const source = db.prepare("SELECT thread_id,message_id,state FROM memory_sources WHERE id=?").get(sourceId);
+      const source = sourceRow(sourceId);
       if (!source || source.state!=="active") return true;
       if (!source.thread_id || !source.message_id) continue;
       const thread = String(source.thread_id), message = String(source.message_id);
@@ -749,14 +756,34 @@ export function databaseStamp(): string | undefined {
 /** The stamp the verdict cache is held under: the counter of changes a verdict cannot be
  * tracked through, and other connections' commits. Falls back to every change if the
  * triggers could not be installed. */
+let passStamp: { pass: number; db: object; writes: number; value: string | undefined } | null = null;
 function lineageStamp(): string | undefined {
   const db = database();
   if (db.isTransaction) return undefined;
-  if (!installEpoch(db)) return databaseStamp();
-  const row = db.prepare("SELECT (SELECT n FROM temp.lineage_epoch) AS epoch, (SELECT data_version FROM pragma_data_version) AS version").get();
-  return `e${row?.epoch}:${row?.version}`;
+  // Inside a synchronous pass with no write since it was last read, the stamp has not moved (see verdictCache).
+  const pass = statementReusePassId(), writes = writeStamp(db);
+  if (pass && writes !== undefined && passStamp && passStamp.pass === pass && passStamp.db === db && passStamp.writes === writes) return passStamp.value;
+  let value: string | undefined;
+  if (!installEpoch(db)) value = databaseStamp();
+  else {
+    const row = db.prepare("SELECT (SELECT n FROM temp.lineage_epoch) AS epoch, (SELECT data_version FROM pragma_data_version) AS version").get();
+    value = `e${row?.epoch}:${row?.version}`;
+  }
+  passStamp = pass && writes !== undefined ? { pass, db, writes, value } : null;
+  return value;
 }
+// Inside one synchronous pass (the check of a resumed session's receipts) that has written nothing since the cache was last made
+// current, it is still current: the stamp and the dirty list are not asked for again by each of the check's thousands of verdicts.
+// (A commit by another connection inside that one pass is seen by the next pass, which is how it already was for the check as a whole.)
+let passCache: { pass: number; db: object; writes: number; value: typeof verdicts } | null = null;
 function verdictCache(): typeof verdicts | undefined {
+  const db = database(), pass = statementReusePassId(), writes = writeStamp(db);
+  if (pass && writes !== undefined && passCache && passCache.pass === pass && passCache.db === db && passCache.writes === writes) return passCache.value;
+  const value = currentVerdictCache();
+  passCache = pass && writes !== undefined && value ? { pass, db, writes, value } : null;
+  return value;
+}
+function currentVerdictCache(): typeof verdicts | undefined {
   const stamp = lineageStamp();
   if (stamp === undefined) return undefined;
   const db = database();

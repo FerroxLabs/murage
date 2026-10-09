@@ -1,8 +1,9 @@
 import { database, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
-import { accessIncludesRoom, assertMemoryAccess, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
+import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { assertMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
-import { contentRevoked, databaseStamp, messageCopy, messageSourceForgotten, outputRootsBad, preLineageSessionRevoked, replayExclusions, sessionLineageBad, sessionOutputRoots, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
+import { authorityStamp } from "./authority-epoch.ts";
+import { contentRevoked, messageCopy, messageSourceForgotten, outputRootsBad, preLineageSessionRevoked, replayExclusions, sessionLineageBad, sessionOutputRoots, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 
 /** Persist before dispatch; records contain references, never duplicated memory text. */
@@ -44,44 +45,77 @@ export function assertMemoryDisclosureCurrent(bundleId: string, access: MemoryAc
   if (!row || revoked(row,access)) throw new Error("MEMORY_CONTEXT_REVOKED");
 }
 
-function revoked(row: Disclosure, access: MemoryAccess): boolean {
-  return revokedReason(row, access) !== null;
+function revoked(row: Disclosure, access: MemoryAccess, seen?: Seen): boolean {
+  return revokedReason(row, access, seen) !== null;
 }
+
+type Seen = { records: Set<string>; sources: Set<string> };
 
 /** Why a receipt no longer holds, as ids and states only (no content), or
  * null when it still holds. Each branch is the same test revoked() made. */
-function revokedReason(row: Disclosure, access: MemoryAccess): string | null {
+function revokedReason(row: Disclosure, access: MemoryAccess, seen?: Seen): string | null {
   if (row.state === "revoked") return "receipt-already-revoked";
   if (row.policy_revision !== access.policyRevision) return "policy-revision";
   if (row.deletion_epoch !== access.deletionEpoch) return "deletion-epoch";
   let step = "parse";
   try {
     const records: Array<{id:string;version:number}> = JSON.parse(String(row.record_versions));
-    for (const record of records) { step = `record ${record.id}@${record.version}`; hydrateDisclosedMemoryRecord(record.id,record.version,access); }
+    // One session's receipts cite the same records again and again: each is looked at once per check.
+    for (const record of records) {
+      const key = `${record.id}@${record.version}`;
+      if (seen?.records.has(key)) continue;
+      step = `record ${key}`; hydrateDisclosedMemoryRecord(record.id,record.version,access); seen?.records.add(key);
+    }
     const sources: Array<{id:string;revision:number}> = JSON.parse(String(row.source_versions));
     for (const source of sources) {
       step = `source ${source.id}@${source.revision}`;
+      if (seen?.sources.has(step)) continue;
       const current = database().prepare("SELECT scope_id,state,revision FROM memory_sources WHERE id=?").get(source.id);
       if (!current) return `${step} missing`;
       if (current.state!=="active") return `${step} state=${String(current.state)}`;
       if (current.revision!==source.revision) return `${step} now@${String(current.revision)}`;
       if (database().prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision)) return `${step} tombstoned`;
       assertMemoryAccess(access,String(current.scope_id));
+      seen?.sources.add(step);
     }
     return null;
   } catch (error) { return `${step} ${error instanceof Error ? error.message.slice(0, 60) : "error"}`; }
 }
 
+/** Sessions whose whole disclosure set passed the full check, and the authority stamp it passed at. While the epoch has not moved
+ * (authority-epoch.ts) nothing that could take a receipt away has been written, so the next turn does not repeat the check.
+ * Keyed by session and by who is asking, since what a reader may hydrate depends on the reader. */
+const sessionHolds = new Map<string, string>();
+const SESSION_HOLDS_MAX = 256;
+const sessionHoldKey = (threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess) =>
+  JSON.stringify([threadId, driverInstance, nativeSession, access.botId, access.humanPrincipal, memoryAccessNotOwnerAudience(access), access.scopeIds, access.policyRevision, access.deletionEpoch]);
+
 /** Unknown historical sessions also require a fresh replay: legacy disclosure is unproven. */
 export function continuationMemoryRevoked(threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why?: { reason?: string }): boolean {
   assertMemoryAccess(access);
   if (threadId !== access.threadId) throw new Error("MEMORY_SCOPE_DENIED");
+  const stamp = authorityStamp(), key = sessionHoldKey(threadId, driverInstance, nativeSession, access);
+  if (stamp !== undefined && sessionHolds.get(key) === stamp) return false;
+  sessionHolds.delete(key);
+  // One pass: the reader's audience is worked out once, not once per cited record.
+  const revoked = inMemoryAccessPass(() => fullContinuationCheck(threadId, driverInstance, nativeSession, access, why));
+  if (!revoked && stamp !== undefined && authorityStamp() === stamp) {
+    if (sessionHolds.size >= SESSION_HOLDS_MAX) sessionHolds.delete(sessionHolds.keys().next().value!);
+    sessionHolds.set(key, stamp);
+  }
+  return revoked;
+}
+/** Test hook: forget which sessions passed. */
+export function resetSessionHolds(): void { sessionHolds.clear(); }
+
+function fullContinuationCheck(threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why?: { reason?: string }): boolean {
   const rows = database().prepare("SELECT * FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=?").all(threadId,driverInstance,nativeSession);
   if (!rows.length) { if (why) why.reason = "no-receipts"; return true; }
   let invalid = false;
+  const seen = { records: new Set<string>(), sources: new Set<string>() };
   const persist = !memoryAccessNotOwnerAudience(access);
   for (const row of rows) {
-    const reason = revokedReason(row,access);
+    const reason = revokedReason(row,access,seen);
     if (reason === null) continue;
     if (why && !why.reason) why.reason = `memory-changed (${reason})`;
     if (persist) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(row.bundle_id);
@@ -93,7 +127,8 @@ export function continuationMemoryRevoked(threadId: string, driverInstance: stri
   // are judged here, every one of them; a check that cannot finish resets the
   // session (0.1.61.1 memreplay review M1).
   const bad = new Set<string>();
-  invalid = sessionLineageBad(threadId, driverInstance, nativeSession, readerAudience(access), bad);
+  // (the records and sources the loop above just passed are not hydrated a second time for the lineage's own-receipt verdicts)
+  invalid = sessionLineageBad(threadId, driverInstance, nativeSession, readerAudience(access, seen), bad);
   if (persist) for (const id of bad) database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id=?").run(id);
   if (invalid && why) why.reason = "lineage";
   if (invalid) return true;
@@ -187,14 +222,14 @@ export function filterMemoryReplay<T extends ReplayMessage>(threadId: string, me
   return messages.filter(message=>!excluded.has(message.id));
 }
 
-function readerAudience(access: MemoryAccess): ReplayAudience {
+function readerAudience(access: MemoryAccess, seen?: Seen): ReplayAudience {
   // One check, one answer per distinct receipt content: the receipts of a
   // resumed session cite the same frame (0.1.61.1 memreplay).
   const verdicts = new Map<string, boolean>();
   return { policyRevision: access.policyRevision, deletionEpoch: access.deletionEpoch, revoked: row => {
     const key = JSON.stringify([row.state, row.policy_revision, row.deletion_epoch, row.record_versions, row.source_versions]);
     let verdict = verdicts.get(key);
-    if (verdict === undefined) { verdict = revoked(row, access); verdicts.set(key, verdict); }
+    if (verdict === undefined) { verdict = revoked(row, access, seen); verdicts.set(key, verdict); }
     return verdict;
   },
   // An owner-audience reader sees the replies of the owner's bots, so a copy's
@@ -362,7 +397,7 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
   let stamp: string | undefined;
   return (threadId, messageId) => {
     if (threadId !== access.threadId) return false;
-    const now = databaseStamp();
+    const now = authorityStamp();
     if (now === undefined || now !== stamp) { verdicts.clear(); stamp = now; }
     let known = verdicts.get(messageId);
     if (known === undefined) {

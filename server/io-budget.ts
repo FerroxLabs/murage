@@ -5,8 +5,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { endianness } from "node:os";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { turnTraceEnabled } from "./turn-trace.ts";
+import { reportSlowSql, SLOW_SQL_MS } from "./observe.ts";
 
 export const IO_BUDGET_INTERVAL_MS = 60_000;
 export const IO_BUDGET_BYTES_PER_MINUTE = 50 * 1024 * 1024;
@@ -145,6 +146,7 @@ export class IoBudget {
       if (this.statements.size >= 500) this.statements.clear();
       this.statements.set(key, { sql: key, calls: 1, ms });
     }
+    if (keyed && ms > SLOW_SQL_MS) reportSlowSql(shortStatement(key), ms, this.currentSource());
   }
 
   topStatements(count = 3): StatementCost[] {
@@ -316,6 +318,26 @@ export function walFrameReader(databaseFile: string): (() => number) & { close()
   return Object.assign(read, { close, fd: () => held?.fd });
 }
 
+// Statement reuse for a synchronous pass that runs the same few statements thousands of times (a session's receipts are
+// checked record by record: ~60,000 prepares for one check). While a pass is open, preparing the same SQL again on the same
+// handle returns the statement already made. Statements are only shared inside the pass, which is synchronous, so no two users
+// ever hold one at the same time; the cache is dropped when the next outermost pass opens.
+let reuseDepth = 0, reuseGeneration = 0;
+export function withStatementReuse<T>(work: () => T): T {
+  if (reuseDepth++ === 0) reuseGeneration++;
+  try { return work(); } finally { reuseDepth--; }
+}
+const REUSE_LIMIT = 512;
+// Every write through an instrumented handle moves its counter (conservatively: a statement that can write, or any exec). A memo
+// that only needs to know "did this connection write since I looked" reads it instead of asking SQLite for total_changes().
+const writeCounts = new WeakMap<object, number>();
+export const writeStamp = (db: object): number | undefined => writeCounts.get(db);
+const wrote = (db: object) => writeCounts.set(db, (writeCounts.get(db) ?? 0) + 1);
+/** Whether a synchronous pass is open (the data folder cannot be swapped under it). */
+export const inStatementReusePass = () => reuseDepth > 0;
+/** Identifies the open pass (0 when none), so a memo made inside one is never read in another. */
+export const statementReusePassId = () => reuseDepth > 0 ? reuseGeneration : 0;
+
 /** Time every statement run through this handle, so a trip can name the culprits. */
 export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget): () => void {
   const prepare = db.prepare.bind(db);
@@ -325,13 +347,22 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
   let transactionSource = source;
   const sample = (name: string) => { if (source) budget.sampleByteSource(source, name); };
   const exec = db.exec.bind(db);
+  writeCounts.set(db, 0);
   db.exec = (sql: string) => {
     const inTransaction = db.isTransaction;
     if (!inTransaction) sample(source);
+    wrote(db);
     exec(sql);
     if (!db.isTransaction) sample(budget.currentSource() ?? (inTransaction ? transactionSource : statementKey(sql)));
   };
+  const reuse = new Map<string, StatementSync>();
+  let reuseSeen = -1;
   (db as unknown as { prepare: unknown }).prepare = (sql: string) => {
+    if (reuseDepth > 0) {
+      if (reuseSeen !== reuseGeneration) { reuse.clear(); reuseSeen = reuseGeneration; }
+      const known = reuse.get(sql);
+      if (known) return known;
+    }
     const statement = prepare(sql);
     const key = statementKey(sql);
     const tokens = sql.replace(/'(?:''|[^'])*'|--[^\n]*|\/\*[\s\S]*?\*\//g, " ");
@@ -349,9 +380,10 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
           }
           if (memoryWork && method === "run" && Number((result as {changes:number|bigint}).changes) > 0) budget.notifyMemoryWork();
           return result;
-        } finally { budget.note(key, performance.now() - started, true); }
+        } finally { if (writes) wrote(db); budget.note(key, performance.now() - started, true); }
       };
     }
+    if (reuseDepth > 0 && reuse.size < REUSE_LIMIT) reuse.set(sql, statement);
     return statement;
   };
   return unregister;

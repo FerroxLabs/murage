@@ -120,7 +120,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
 
   /** Run one turn to its terminal event, then prove the runtime stays inert
    * past another idle budget: no late event and no replayed request. */
-  const runTurn = async (instance: ProviderInstance, threadId: string, idleMs = IDLE_MS) => {
+  const runTurn = async (instance: ProviderInstance, threadId: string) => {
     const recorder = recordEvents(instance.adapter);
     const started = performance.now();
     await instance.adapter.sendTurn({ threadId, text: "question" });
@@ -129,7 +129,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
     const settledMs = settledAt - started;
     const seen = recorder.events.length;
     const requestsAtSettle = requests;
-    await delay(idleMs + 300);
+    await delay(IDLE_MS + 300);
     expect(recorder.events.length).toBe(seen);
     expect(requests).toBe(requestsAtSettle);
     expect(completions(recorder.events)).toHaveLength(1);
@@ -169,17 +169,11 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
       res.write(content("partial "));
       lastProgressAt = performance.now();
     };
-    // The budget starts when the request is sent, so connect + headers + the first frame must
-    // beat it for the stall to be a stall AFTER output. 600 ms is not enough on a loaded runner
-    // (the first frame then lands after the budget and the turn fails "did not answer in time"
-    // instead); this test gets a budget no scheduling delay reaches. The quantity under test is
-    // still the silence after "partial ", asserted against that same budget.
-    const STALL_IDLE_MS = 3_000;
-    const { completed, events, settledAt } = await runTurn(create({ timeoutMs: STALL_IDLE_MS }), "t-stall", STALL_IDLE_MS);
+    const { completed, events, settledAt } = await runTurn(create(), "t-stall");
     const idleFor = settledAt - lastProgressAt;
 
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
-    expect(idleFor).toBeGreaterThanOrEqual(STALL_IDLE_MS);
+    expect(idleFor).toBeGreaterThanOrEqual(IDLE_MS);
     expect(replies(events)).toEqual(["partial "]);
     expect(errors(events)).toEqual(['The model server stopped sending this answer before it was finished.']);
     expect(requests).toBe(1);

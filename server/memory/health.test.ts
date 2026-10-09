@@ -8,7 +8,7 @@ import { buildMemoryBundle } from "./bundle.ts";
 import { captureSource } from "./capture.ts";
 import { captureWork } from "./chunks.ts";
 import { MemoryDispatchReceipt } from "./dispatch.ts";
-import { memoryHealth } from "./health.ts";
+import { flushMemoryCounters, memoryHealth, resetMemoryCounters } from "./health.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
 import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
@@ -18,6 +18,7 @@ import { searchMemory, type MemorySearchBridge } from "./search.ts";
 const roster = { bots: [{ id: "bot", threadId: "thread" }], groups: [] };
 
 beforeEach(() => {
+  resetMemoryCounters();
   closeDatabase();
   rmSync(DATA_DIR, { recursive: true, force: true });
   mkdirSync(DATA_DIR, { recursive: true });
@@ -76,6 +77,8 @@ it("keeps retrieval, prepared disclosure, and accepted supplied context as disti
   const db = database();
   db.prepare("UPDATE memory_records SET owner_pinned=1 WHERE state='active'").run();
   const currentAccess = access();
+  // Counters are held in memory and written by the worker's idle sweep; the first write creates the row Details reads.
+  expect(flushMemoryCounters(Date.now(), true)).toBe(true);
 
   const retrieved = await searchMemory("durable", currentAccess, publishedBridge());
   expect(retrieved.hits).toHaveLength(1);

@@ -5,9 +5,9 @@ import { readFileSync,existsSync } from "node:fs";
 import { join } from "node:path";
 import { SPAWNED_PROXIES,SERVER_ROOT } from "../proxy-paths.ts";
 import { DATA_DIR } from "../config.ts";
-import { database,transaction } from "../database.ts";
+import { BACKGROUND_BUSY_MS, database,isDatabaseBusy,transaction,withBusyBudget } from "../database.ts";
 import { fileGrowthReader, ioBudget, walFrameReader } from "../io-budget.ts";
-import { claimMemoryJob, deferStaleMemoryWork, hasClaimableMemoryJob, heartbeatMemoryJob, isStaleMemoryPublication, nextMemoryJobDelay, notifyMemoryWork, onMemoryWork, publishMemoryWork, requeueStaleMemoryWork, STALE_MEMORY_REQUEUE_LIMIT } from "./jobs.ts";
+import { claimMemoryJob, deferStaleMemoryWork, hasClaimableMemoryJob, heartbeatMemoryJob, isStaleMemoryPublication, nextMemoryJobDelay, notifyMemoryWork, onMemoryWork, publishMemoryWork, redriveTransientFailedJobs, requeueStaleMemoryWork, STALE_MEMORY_REQUEUE_LIMIT } from "./jobs.ts";
 import { memoryState } from "./repository.ts";
 import { resultSchema, type MemoryWork,type MemorySearchInput } from "./worker-protocol.ts";
 import type { IndexHit } from "./index.ts";
@@ -15,6 +15,10 @@ import { hasPendingProjection, pendingProjectionRecords } from "./projection.ts"
 import { parkMaintenancePending, parkMaintenanceStep } from "./park.ts";
 import { memoryTickGapMs, traceBacklog, traceSlowStep } from "./claim-trace.ts";
 import { turnTraceEnabled } from "../turn-trace.ts";
+import { logSwallowed, makeStderrForwarder, type WorkerSubsystem } from "./worker-log.ts";
+import { flushMemoryCounters, stepHealthScan } from "./health.ts";
+import { stepRetentionScan } from "./retention.ts";
+import { blockMemoryIndexReader, closeMemoryIndexReader, unblockMemoryIndexReader } from "./index-reader.ts";
 
 export const MEMORY_IDLE_SWEEP_MS=30_000;
 /** Queued consolidation drains at most once a second, as before. */
@@ -23,6 +27,10 @@ export const MEMORY_DRAIN_GAP_MS=1_000;
 export const MEMORY_WORKER_INIT_MS=120_000;
 /** While parking maintenance is still pending, an idle controller comes back this soon for its next bounded step. */
 const PARK_STEP_MS=250;
+/** A turn between slot and send keeps the worker's claims, receipts and consolidation steps off the main thread for at most this long. */
+export const TURN_HOLD_MAX_MS=3_000;
+/** How soon a step that met a held write lock tries again. */
+const BUSY_RETRY_MS=250;
 
 export class MemoryWorkerController {
   private child: ChildProcess | null=null;
@@ -47,7 +55,38 @@ export class MemoryWorkerController {
   private indexDeadline=0;
   private indexRequestId:string|null=null;
   private queries=new Map<string,{input:MemorySearchInput;sent:boolean;resolve:(value:{hits:IndexHit[];vectorRows:number;degradedReason?:string})=>void;reject:(error:Error)=>void;cleanup:()=>void}>();
-  error: string | null=null;
+  /** One entry per subsystem, so one clean tick of the capture loop cannot hide a failing index and the reverse. The
+   * newest entry is what `error` reports. */
+  private errors=new Map<string,string>();
+  get error():string|null{let last:string|null=null;for(const value of this.errors.values())last=value;return last;}
+  set error(value:string|null){if(value===null)this.errors.clear();else this.setError("worker",value);}
+  private setError(subsystem:string,code:string){this.errors.delete(subsystem);this.errors.set(subsystem,code);}
+  private clearError(...subsystems:string[]){for(const subsystem of subsystems)this.errors.delete(subsystem);}
+  /** A failure that used to be swallowed: it is named in the log, and it sets the subsystem's error unless it was only a held write lock. */
+  private resetPending=false;
+  /** Mark every projection receipt as owed to a rebuilt index. False (and still owed) when the database stayed locked. */
+  private applyIndexReset():boolean{
+    if(!this.resetPending)return true;
+    try{
+      database().prepare("UPDATE memory_projection_receipts SET lexical_status=CASE WHEN (SELECT r.state FROM memory_records r WHERE r.id=record_id AND r.version=record_version)='active' THEN 'pending' ELSE 'pending-archive' END,embedding_status='pending' WHERE lexical_status!='delete-pending' AND lexical_status!='deleted'").run();
+      this.resetPending=false;return true;
+    }catch(error){this.swallowed("capture","helper","MEMORY_INDEX_RESET_FAILED",error);return false;}
+  }
+  private swallowed(log:WorkerSubsystem,subsystem:string,code:string,error:unknown){
+    if(this.stopping)return;
+    if(isDatabaseBusy(error)){logSwallowed(log,error,BUSY_RETRY_MS);return;}
+    logSwallowed(log,error);this.setError(subsystem,code);
+  }
+  // A turn between slot and send holds the worker's main-thread steps back (PROPOSAL-v2 10.1 item 7).
+  private turnHolds=0;
+  private turnHoldSince=0;
+  /** Held from slot acquisition to the engine send; call the returned function when the turn is past that point (or gone). */
+  holdForTurn():()=>void{
+    if(this.turnHolds++===0)this.turnHoldSince=performance.now();
+    let released=false;
+    return ()=>{if(released)return;released=true;if(--this.turnHolds<=0){this.turnHolds=0;this.wake();}};
+  }
+  private turnHeld(){return this.turnHolds>0&&performance.now()-this.turnHoldSince<TURN_HOLD_MAX_MS;}
   /** Stale requeues so far per job (id:source revision), since its last
    * publication or deferral (RED2K): a publication of the worker's result,
    * the stale deferral past the bound, or the worker's own deferral in
@@ -78,14 +117,14 @@ export class MemoryWorkerController {
   get wakeCount(){return this.wakes;}
 
   status() {
-    return {running:this.child!==null,ready:this.ready,indexing:this.indexing,queryCount:this.queries.size,error:this.error};
+    return {running:this.child!==null,ready:this.ready,indexing:this.indexing,queryCount:this.queries.size,error:this.error,errors:Object.fromEntries(this.errors)};
   }
 
   /** Notify the same derived-work hook after either capture publication path. */
   completedSource(jobId:string){
     if(this.stopping||!this.options.onCompletedSource)return;
     const task=this.options.onCompletedSource(jobId,this.consolidationAbort.signal)
-      .then(()=>{}).catch(()=>{if(!this.stopping)this.error="MEMORY_CONSOLIDATION_FAILED";})
+      .then(()=>{this.clearError("consolidation");}).catch(error=>this.swallowed("learning","consolidation","MEMORY_CONSOLIDATION_FAILED",error))
       .finally(()=>{this.consolidationTasks.delete(task);this.wake();});
     this.consolidationTasks.add(task);
   }
@@ -93,14 +132,17 @@ export class MemoryWorkerController {
   /** Recovery is independent of mode, indexing, and both inference tasks. */
   private independentWork(startup=false) {
     if(this.stopping)return;
+    // Retrieval counters reach the database here, once a minute, never on the recall path.
+    try{ioBudget.withSource("memory-idle",()=>flushMemoryCounters());}catch(error){logSwallowed("maintenance",error);}
+    this.scheduleStatusScan(startup?5_000:0);
     if(this.options.onMaintenance&&!this.maintenanceTask){
       this.maintenanceTask=Promise.resolve().then(()=>this.options.onMaintenance!(startup))
-        .then(()=>{}).catch(()=>{if(!this.stopping)this.error="MEMORY_MAINTENANCE_FAILED";})
+        .then(()=>{this.clearError("maintenance");}).catch(error=>this.swallowed("capture","maintenance","MEMORY_MAINTENANCE_FAILED",error))
         .finally(()=>{this.maintenanceTask=null;});
     }
     if(this.options.onContinuity&&!this.continuityTask&&(this.options.continuityEligible?.()??true)&&["capture","active"].includes(memoryState().mode)&&!ioBudget.shouldDefer("memory-idle")){
       this.continuityTask=Promise.resolve().then(()=>{if(!this.stopping)return this.options.onContinuity!(this.consolidationAbort.signal);})
-        .then(()=>{}).catch(()=>{if(!this.stopping)this.error="MEMORY_CONTINUITY_FAILED";})
+        .then(()=>{this.clearError("continuity");}).catch(error=>this.swallowed("reflection","continuity","MEMORY_CONTINUITY_FAILED",error))
         .finally(()=>{this.continuityTask=null;});
     }
   }
@@ -110,6 +152,9 @@ export class MemoryWorkerController {
     this.started=true;
     this.stopping=false;
     if(this.consolidationAbort.signal.aborted)this.consolidationAbort=new AbortController();
+    // Failed jobs whose cause says nothing about the conversation (the helper died, a timeout) get their attempts back, once.
+    try{ioBudget.withSource("memory-worker",()=>{const n=redriveTransientFailedJobs();if(n)console.log(`[memory-worker] subsystem=capture redriven=${n}`);});}
+    catch(error){logSwallowed("capture",error);}
     this.independentWork(true);
     this.maintenanceTimer=setInterval(()=>this.independentWork(),MEMORY_IDLE_SWEEP_MS);
     this.maintenanceTimer.unref();
@@ -153,9 +198,10 @@ export class MemoryWorkerController {
     const paced=performance.now()<this.nextEligibleWorkAt;
     const cycleStart=performance.now();
     const cycle={busy:0};
+    let clean=true,busy=false;
     try {
       // Timeouts are independent of the pacing deadline.
-      if(this.indexing){if(Date.now()>this.indexDeadline){this.error="MEMORY_INDEX_TIMEOUT";this.child?.kill("SIGKILL");}return;}
+      if(this.indexing){if(Date.now()>this.indexDeadline){this.setError("index","MEMORY_INDEX_TIMEOUT");logSwallowed("index","MEMORY_INDEX_TIMEOUT");this.child?.kill("SIGKILL");}return;}
       if(this.work) {
         if(Date.now()>this.deadline) { this.failWork("MEMORY_WORKER_TIMEOUT");this.child?.kill("SIGKILL"); }
         return;
@@ -165,6 +211,8 @@ export class MemoryWorkerController {
       // A notified tick that lands before the pacing deadline only moves to it: the arrival stays a
       // notification, so the I/O budget's deferral of unrequested polls does not strand it until the idle sweep.
       if(paced){if(requested)this.requested=true;return;}
+      // A turn between slot and send comes first: no claim, receipt write or consolidation starts until it has gone out.
+      if(this.turnHeld()){if(requested)this.requested=true;return;}
       if(turnTraceEnabled()&&Date.now()>=this.nextBacklogTrace){
         this.nextBacklogTrace=Date.now()+5000;
         traceBacklog(Number(database().prepare("SELECT count(*) AS n FROM memory_jobs WHERE status IN ('pending','partial','deferred')").get()?.n??0));
@@ -174,6 +222,7 @@ export class MemoryWorkerController {
         this.consolidationWake=false;this.consolidationDue=false;
         let worked=false;
         const task=Promise.resolve().then(()=>{
+          if(this.turnHeld())return;
           if(this.stopping)return;
           // The pass's synchronous time is charged to the same pacing deadline as a cycle's.
           const started=performance.now();
@@ -181,8 +230,8 @@ export class MemoryWorkerController {
           // The cycle's own claim and this prefix are one measurement: their costs add before the pause is computed, not overlap.
           finally{this.holdTotal(cycleStart,cycle.busy+(performance.now()-started));}
         // A run that did work keeps the one-second deadline: a notification inside it waits, and the drain below continues once it passes.
-        }).then(result=>{worked=result===true;})
-          .catch(()=>{if(!this.stopping)this.error="MEMORY_CONSOLIDATION_FAILED";})
+        }).then(result=>{worked=result===true;this.clearError("consolidation");})
+          .catch(error=>this.swallowed("learning","consolidation","MEMORY_CONSOLIDATION_FAILED",error))
           .finally(()=>{
             this.consolidationTasks.delete(task);
             // Arrivals during a run and a run that did work both continue after the drain gap.
@@ -191,6 +240,7 @@ export class MemoryWorkerController {
         this.consolidationTasks.add(task);
       }
       if(!requested&&ioBudget.shouldDefer("memory-worker"))return;
+      if(this.resetPending&&!this.applyIndexReset()){this.schedule(BUSY_RETRY_MS);return;}
       const projection=this.pendingProjection(),job=hasClaimableMemoryJob();
       // Nothing else to do: one bounded parking maintenance step (no helper is needed for it).
       if(!projection&&!job){this.maintain(false);return;}
@@ -206,18 +256,27 @@ export class MemoryWorkerController {
       const work=job?claimMemoryJob(this.owner):null;
       if(work) {this.work=work;this.deadline=Date.now()+60000;this.child.send(work);this.scheduleHeartbeat(this.child);}
       this.maintain(!!work);
-    } catch {this.error="MEMORY_WORKER_UNAVAILABLE";}
+    } catch(error) {
+      clean=false;
+      // A held write lock is "try again shortly": no error state, no attempt spent.
+      if(isDatabaseBusy(error)){busy=true;logSwallowed("capture",error,BUSY_RETRY_MS);}
+      else{logSwallowed("capture",error);this.setError("tick","MEMORY_WORKER_UNAVAILABLE");}
+    }
     finally {
       this.ticking=false;
+      // The tick finished without throwing: its own failure is over (a lock that has since cleared does not stay on screen).
+      if(clean)this.clearError("tick");
       // This cycle's own synchronous time, counted once: claim, projection selection,
       // consolidation start and maintenance are all inside it.
       if(!paced){cycle.busy=performance.now()-cycleStart;this.holdFor(cycle.busy);}
       let delay=MEMORY_IDLE_SWEEP_MS;
       if(this.work||this.indexing)delay=Math.max(1,(this.work?this.deadline:this.indexDeadline)-Date.now()+1);
+      else if(busy)delay=BUSY_RETRY_MS;
       else {
         try{delay=Math.min(delay,nextMemoryJobDelay()??delay);}catch{/* the fallback also covers a temporarily unavailable database */}
         if(paced)delay=Math.min(delay,Math.max(1,this.nextEligibleWorkAt-performance.now()));
         else if(parkMaintenancePending())delay=Math.min(delay,Math.max(PARK_STEP_MS,this.nextEligibleWorkAt-performance.now()));
+        if(this.turnHeld())delay=Math.min(delay,Math.max(50,TURN_HOLD_MAX_MS-(performance.now()-this.turnHoldSince)));
         // An earlier wake may have replaced the continuation timer: keep the owed consolidation on its deadline.
         // Once overdue, the continuation is only waiting on a deferral (the I/O budget, a run still in flight):
         // retry at the budget's next window, never sooner than PARK_STEP_MS, so the wait is not a tick storm.
@@ -228,6 +287,27 @@ export class MemoryWorkerController {
       }
       this.schedule(delay);
     }
+  }
+  private statusScanTimer:ReturnType<typeof setTimeout>|null=null;
+  /** Health and retention figures are measured a slice at a time in the background, so opening Memory reads a stored value. */
+  private scheduleStatusScan(delay:number){
+    if(this.stopping||this.statusScanTimer)return;
+    this.statusScanTimer=setTimeout(()=>{
+      this.statusScanTimer=null;
+      if(this.stopping)return;
+      if(this.turnHeld()||ioBudget.shouldDefer("memory-idle")){this.scheduleStatusScan(500);return;}
+      let more=false;
+      try{
+        more=ioBudget.withSource("memory-idle",()=>{
+          const started=performance.now();
+          const a=stepHealthScan(10),b=stepRetentionScan(10);
+          this.holdFor(performance.now()-started);
+          return a||b;
+        });
+      }catch(error){logSwallowed("maintenance",error);}
+      if(more)this.scheduleStatusScan(Math.max(50,this.nextEligibleWorkAt-performance.now()));
+    },delay);
+    this.statusScanTimer.unref();
   }
   /** The one place parking maintenance is decided, reached by every dispatch (projection batch,
    * capture job) and by an idle cycle: one bounded step when there was nothing else to do, and
@@ -250,12 +330,15 @@ export class MemoryWorkerController {
     if(gap)this.nextEligibleWorkAt=Math.max(this.nextEligibleWorkAt,startedAt+busyMs+gap);
   }
   /** Run `step` on the next turn of the event loop (not at all once the controller is stopped). */
-  private later(step:()=>void){
-    setImmediate(()=>{
+  private later(step:()=>void,delayMs=0){
+    const run=()=>{
       if(this.stopping)return;
+      // While a turn is between slot and send the step waits (for at most TURN_HOLD_MAX_MS); the job stays leased and heartbeating.
+      if(this.turnHeld()){setTimeout(run,100).unref();return;}
       const started=performance.now();
       try{ioBudget.withSource("memory-worker",step);}finally{traceSlowStep("memory.worker-message.deferred",performance.now()-started);}
-    });
+    };
+    if(delayMs>0)setTimeout(run,delayMs).unref();else setImmediate(run);
   }
   /** The next tick after a worker message: this handler's own loop time (a cycle's claim and
    * selection were charged to that cycle) pushes the shared pacing deadline, and one wake-up is
@@ -269,13 +352,20 @@ export class MemoryWorkerController {
     this.heartbeat=setTimeout(()=>{
       this.heartbeat=null;
       if(this.child!==child||!this.work||this.stopping)return;
-      if(!ioBudget.withSource("memory-worker",()=>heartbeatMemoryJob(this.work!,this.owner)))child.kill("SIGKILL");
+      let alive=true;
+      try{alive=ioBudget.withSource("memory-worker",()=>withBusyBudget(BACKGROUND_BUSY_MS,"heartbeat",()=>heartbeatMemoryJob(this.work!,this.owner)));}
+      catch(error){
+        // A held lock only delays the beat: the lease has 30 s and beats every 10.
+        if(!isDatabaseBusy(error))throw error;
+        logSwallowed("capture",error,10_000);
+      }
+      if(!alive)child.kill("SIGKILL");
       else this.scheduleHeartbeat(child);
     },10000);
     this.heartbeat.unref();
   }
   private failInit(reason:string){
-    this.error=reason;this.initFailures++;
+    this.setError("helper",reason);logSwallowed("capture",reason);this.initFailures++;
     this.respawnAt=Date.now()+Math.min(30*60_000,MEMORY_IDLE_SWEEP_MS*2**(this.initFailures-1));
     this.child?.kill("SIGKILL");
   }
@@ -283,17 +373,28 @@ export class MemoryWorkerController {
   private spawn() {
     if(!this.unregisterBytes){const index=join(DATA_DIR,"memory-index.db"),file=fileGrowthReader([index]),wal=walFrameReader(index);this.unregisterBytes=ioBudget.registerByteSource("memory-worker",()=>file()+wal());}
     this.initDeadline=Date.now()+MEMORY_WORKER_INIT_MS;
-    const child=fork(SPAWNED_PROXIES.memoryWorker,[],{execArgv:["--experimental-strip-types"],stdio:["ignore","ignore","ignore","ipc"],
+    // The helper may rebuild or rename a damaged index while it starts: the main process holds no handle until it says it is ready.
+    blockMemoryIndexReader();
+    const child=fork(SPAWNED_PROXIES.memoryWorker,[],{execArgv:["--experimental-strip-types"],stdio:["ignore","ignore","pipe","ipc"],
       env:{ELECTRON_RUN_AS_NODE:"1",...(process.env.SystemRoot?{SystemRoot:process.env.SystemRoot}:{}),...(process.env.TMPDIR?{TMPDIR:process.env.TMPDIR}:{})}});
     this.child=child;
+    // What the helper prints when it swallows a failure reaches the log (rate limited), not the void.
+    const forward=makeStderrForwarder();
+    child.stderr?.setEncoding("utf8");child.stderr?.on("data",chunk=>forward(String(chunk)));
     child.on("message", (message: unknown)=>ioBudget.withSource("memory-worker",()=>{
       if(this.stopping||this.child!==child)return;
       const handlerStart=performance.now();
-      try{this.onWorkerMessage(child,message);}finally{traceSlowStep("memory.worker-message",performance.now()-handlerStart);}
+      // A message handler that cannot finish (the database stayed locked past its wait) is logged and retried by the next tick; it must never
+      // reach the process as an uncaught exception, which ended a whole server.
+      try{this.onWorkerMessage(child,message);}
+      catch(error){this.swallowed("capture","helper","MEMORY_WORKER_MESSAGE_FAILED",error);this.schedule(BUSY_RETRY_MS);}
+      finally{traceSlowStep("memory.worker-message",performance.now()-handlerStart);}
     }));
-    child.on("error",()=>{this.error="MEMORY_WORKER_START_FAILED";});
+    child.on("error",error=>{this.setError("helper","MEMORY_WORKER_START_FAILED");logSwallowed("capture",error);});
     child.on("exit",()=>{if(this.child===child){
-      this.clearHeartbeat();this.failWork("MEMORY_WORKER_EXITED");this.child=null;this.ready=false;this.indexing=false;
+      unblockMemoryIndexReader();
+      // A helper that goes away because Murage is quitting says nothing about the job it held: it reschedules without spending an attempt.
+      this.clearHeartbeat();this.failWork(this.stopping?"MEMORY_WORKER_STOPPED":"MEMORY_WORKER_EXITED");this.child=null;this.ready=false;this.indexing=false;
       for(const pending of this.queries.values()){pending.cleanup();pending.reject(new Error("MEMORY_WORKER_EXITED"));}this.queries.clear();
       let delay=MEMORY_IDLE_SWEEP_MS;
       if(!this.stopping)try{delay=Math.min(delay,nextMemoryJobDelay()??delay);}catch{/* the lease remains recoverable by the fallback */}
@@ -311,8 +412,11 @@ export class MemoryWorkerController {
           manifest:JSON.parse(readFileSync(existsSync(manifest)?manifest:join(SERVER_ROOT,"..","shared","memory-model-manifest.json"),"utf8"))});return;
       }
       if(event.type==="initialised"){
-        if(event.reset)database().prepare("UPDATE memory_projection_receipts SET lexical_status=CASE WHEN (SELECT r.state FROM memory_records r WHERE r.id=record_id AND r.version=record_version)='active' THEN 'pending' ELSE 'pending-archive' END,embedding_status='pending' WHERE lexical_status!='delete-pending' AND lexical_status!='deleted'").run();
-        this.ready=true;this.initFailures=0;
+        // The index was rebuilt: every record is owed to it again. If the database is locked just now the owing is kept and applied by the next tick
+        // (before any indexing starts), not lost and not thrown into the message handler.
+        if(event.reset)this.resetPending=true;
+        this.applyIndexReset();
+        this.ready=true;this.initFailures=0;this.clearError("helper");unblockMemoryIndexReader();
         for(const [requestId,pending] of this.queries)if(!pending.sent){pending.sent=true;child.send({type:"query",requestId,input:pending.input});}
         this.scheduleTick(handlerStart);return;
       }
@@ -322,7 +426,7 @@ export class MemoryWorkerController {
         // The receipt writes (a synchronous transaction, one fsync) run on the next turn of the event loop, not
         // inside the IPC handler: `indexing` stays set until they are done, so no tick starts other work meanwhile.
         const records=event.records??[],embeddingStatus=event.embeddingStatus,requestId=event.requestId;
-        this.later(()=>{
+        const writeReceipts=()=>{
           if(this.indexRequestId!==requestId)return;
           const started=performance.now();
           try{
@@ -330,19 +434,25 @@ export class MemoryWorkerController {
               if(row.deleted) database().prepare("UPDATE memory_projection_receipts SET lexical_status='deleted',embedding_status='deleted' WHERE record_id=? AND record_version=? AND EXISTS(SELECT 1 FROM memory_records r WHERE r.id=record_id AND r.version=record_version AND r.state='deleted')").run(row.id,row.version);
               else database().prepare("UPDATE memory_projection_receipts SET lexical_status='indexed',embedding_status=? WHERE record_id=? AND record_version=? AND lexical_status!='delete-pending' AND EXISTS(SELECT 1 FROM memory_records r WHERE r.id=record_id AND r.version=record_version AND r.state!='deleted')").run(embeddingStatus==="indexed"?"indexed":"unavailable",row.id,row.version);
             }});
-          }catch{this.error="MEMORY_INDEX_FAILED";}
+            this.clearError("index");
+          }catch(error){
+            // The write lock is held elsewhere: the receipts are written a moment later, the job is not failed and nothing is shown.
+            if(isDatabaseBusy(error)){logSwallowed("index",error,BUSY_RETRY_MS);this.later(writeReceipts,BUSY_RETRY_MS);return;}
+            this.swallowed("index","index","MEMORY_INDEX_FAILED",error);
+          }
           this.indexing=false;this.indexRequestId=null;this.scheduleTick(started);
-        });
+        };
+        this.later(writeReceipts);
         return;
       }
-      if(event.type==="index-error"){this.error="MEMORY_INDEX_FAILED";this.indexing=false;this.indexRequestId=null;this.schedule(MEMORY_IDLE_SWEEP_MS);return;}
+      if(event.type==="index-error"){this.setError("index","MEMORY_INDEX_FAILED");logSwallowed("index","MEMORY_INDEX_FAILED",MEMORY_IDLE_SWEEP_MS);this.indexing=false;this.indexRequestId=null;this.schedule(MEMORY_IDLE_SWEEP_MS);return;}
       // Work is only sent once the helper is ready, so an error before then is its initialisation failing.
       if(event.type==="error"&&!this.ready){this.failInit("MEMORY_WORKER_START_FAILED");return;}
       if(!this.work)return;
       const work=this.work;
       // Publication and the checkpoint refresh run after the handler returns, in the same order and each in its own
       // transaction as before. The job stays held (`this.work`, its heartbeat running) until they finish, so no other work is claimed meanwhile.
-      this.later(()=>{
+      const deliver=()=>{
         if(this.work!==work)return;  // the work timed out or the worker exited in between
         this.clearHeartbeat();
         const started=performance.now();
@@ -359,27 +469,36 @@ export class MemoryWorkerController {
             if(!isStaleMemoryPublication(error))throw error;
             this.settleStale(error);this.work=null;this.scheduleTick(started);return;
           }
-          this.error=null;
+          this.clearError("capture","tick");
           this.staleRequeues.delete(this.staleKey(work));
           if(result.status==="complete") {
             // Capture is already durable. A failed derived checkpoint must not
             // recast that committed source job as a failed capture.
-            try { refreshMemoryCheckpoint(work.id); }
-            catch { this.error="MEMORY_CHECKPOINT_FAILED"; }
+            try { refreshMemoryCheckpoint(work.id);this.clearError("checkpoint"); }
+            catch(error) { this.swallowed("capture","checkpoint","MEMORY_CHECKPOINT_FAILED",error); }
             this.completedSource(work.id);
           }
-        } catch {this.failWork("MEMORY_RESULT_REJECTED");}
+        } catch(error) {
+          // The write lock is held elsewhere: publish a moment later. The lease is kept alive; no attempt is spent.
+          if(isDatabaseBusy(error)){logSwallowed("capture",error,BUSY_RETRY_MS);this.scheduleHeartbeat(child);this.later(deliver,BUSY_RETRY_MS);return;}
+          logSwallowed("capture",error);this.failWork("MEMORY_RESULT_REJECTED");
+        }
         this.work=null;
         this.scheduleTick(started);
-      });
+      };
+      // Publication and the checkpoint refresh run after the handler returns, in the same order and each in its own
+      // transaction as before. The job stays held (`this.work`, its heartbeat running) until they finish, so no other work is claimed meanwhile.
+      this.later(deliver);
     }
   }
   private failWork(reason: string) {
     if(!this.work)return;
     this.clearHeartbeat();
-    this.error=reason;
+    // Quitting is not a failure of the work.
+    if(reason!=="MEMORY_WORKER_STOPPED")this.setError("capture",reason);
     try {
-      publishMemoryWork(this.work,this.owner,{id:this.work.id,leaseGeneration:this.work.leaseGeneration,status:"deferred",nextCursor:this.work.cursor,chunks:[],reason});
+      const failing=this.work;
+      withBusyBudget(BACKGROUND_BUSY_MS,"fail-work",()=>publishMemoryWork(failing,this.owner,{id:failing.id,leaseGeneration:failing.leaseGeneration,status:"deferred",nextCursor:failing.cursor,chunks:[],reason}));
       // The deferral ends this lease cycle as a publication does: the next
       // claim starts its stale count afresh (RED2L).
       this.staleRequeues.delete(this.staleKey(this.work));
@@ -389,6 +508,8 @@ export class MemoryWorkerController {
       // the job must not sit leased with nobody working it: release the
       // holder's own lease so the next claim picks it up at once.
       if(isStaleMemoryPublication(error))this.settleStale(error,reason);
+      // A held write lock: the lease runs out by itself and the job is claimed again with its attempts untouched.
+      else logSwallowed("capture",error);
     }
     this.work=null;
   }
@@ -421,7 +542,7 @@ export class MemoryWorkerController {
     }
     this.staleRequeues.delete(key);
     const reason=failReason??"MEMORY_STALE_REQUEUE_LIMIT";
-    this.error=reason;
+    this.setError("capture",reason);
     let deferred=false;
     try { deferred=deferStaleMemoryWork(this.work,this.owner,reason); } catch { /* the database is unavailable; the lease expires on its own */ }
     console.warn(`[memory] worker result for job ${this.work.id} was ${stale} after ${STALE_MEMORY_REQUEUE_LIMIT} stale requeues (the authority kept moving while the job was leased); ${deferred?`deferred with an attempt spent (${reason})`:"lease no longer held, nothing to defer"}`);
@@ -442,6 +563,9 @@ export class MemoryWorkerController {
       child.disconnect();
     });
     ioBudget.sampleByteSource("memory-worker");this.unregisterBytes?.();this.unregisterBytes=null;
+    if(this.statusScanTimer)clearTimeout(this.statusScanTimer);this.statusScanTimer=null;
+    try{flushMemoryCounters(Date.now(),true);}catch{/* counters are advisory */}
+    unblockMemoryIndexReader();closeMemoryIndexReader();
   }
   search(input:MemorySearchInput,signal:AbortSignal):Promise<{hits:IndexHit[];vectorRows:number;degradedReason?:string}>{
     if(this.stopping||this.queries.size>=64)return Promise.reject(new Error("MEMORY_WORKER_NOT_READY"));
@@ -455,7 +579,7 @@ export class MemoryWorkerController {
       try{
         if(!this.child){if(Date.now()<this.respawnAt)throw new Error("MEMORY_WORKER_START_BACKOFF");this.spawn();}
         if(this.ready){pending.sent=true;this.child!.send({type:"query",requestId,input});}
-      }catch{this.queries.delete(requestId);pending.cleanup();this.error="MEMORY_WORKER_START_FAILED";reject(new Error("MEMORY_WORKER_START_FAILED"));}
+      }catch{this.queries.delete(requestId);pending.cleanup();this.setError("helper","MEMORY_WORKER_START_FAILED");logSwallowed("recall","MEMORY_WORKER_START_FAILED");reject(new Error("MEMORY_WORKER_START_FAILED"));}
     });
   }
 }

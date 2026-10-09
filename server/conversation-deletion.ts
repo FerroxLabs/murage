@@ -35,6 +35,7 @@ import zlib from "node:zlib";
 import { writeFileAtomic } from "./atomic.ts";
 import { blake3Hex } from "./blake3.ts";
 import { removeAcpEngineHistory, type AcpHistoryEngine } from "./engine-history-deletion.ts";
+import { checkpointTruncate } from "./sqlite-checkpoint.ts";
 
 const ID = /^[\w-]+$/;
 const ATTACHMENT_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}$/i;
@@ -401,7 +402,7 @@ export function scrubFuigoSearchIndex(path: string, sessionIds: readonly string[
     }
     // A reader Fuigo holds open can keep a TRUNCATE from finishing; the
     // rows are already gone and zeroed, and its next checkpoint takes them.
-    try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* see above */ }
+    try { checkpointTruncate(db, "deletion"); } catch { /* see above */ }
     // Fuigo rewrites a session's row as the conversation grows, without
     // secure_delete, so earlier copies of its text sit in free pages that no
     // delete of ours can reach (0.1.60 low). VACUUM rebuilds the file without
@@ -411,7 +412,7 @@ export function scrubFuigoSearchIndex(path: string, sessionIds: readonly string[
     try {
       if (Number((db.prepare("PRAGMA freelist_count").get() as { freelist_count?: number } | undefined)?.freelist_count ?? 0) > 0) {
         db.exec("VACUUM");
-        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        checkpointTruncate(db, "deletion");
       }
     } catch { /* Fuigo busy with it: the live rows are gone, and the next scrub tries again */ }
     return changes > 0;
@@ -629,7 +630,7 @@ function removeCodexRollouts(home: string, folders: string[], removed: string[],
         }
       }
       if (changed) {
-        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        checkpointTruncate(db, "deletion");
         removed.push(path);
       }
     } catch {

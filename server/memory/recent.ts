@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { database } from "../database.ts";
+import { BACKGROUND_BUSY_MS, database, DatabaseBusyError, isDatabaseBusy, withBusyBudget } from "../database.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
@@ -9,12 +9,16 @@ import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import type { IndexHit } from "./index.ts";
 
 /** A small authorized catch-up uses the same durable leases as the worker.
- * At most two 64KiB source chunks; no synthesis/model work on this path. */
-export function materializeRecentMemory(access: MemoryAccess, signal?: AbortSignal, onCompleted?: (jobId:string)=>void) {
+ * At most two 64KiB source chunks; no synthesis/model work on this path.
+ *
+ * This WRITES (a claim, the records and a checkpoint), so it is not part of recall: searchMemory and bundle
+ * assembly perform no writes at all (PROPOSAL-v2 10.1, AUDIT B1). The turn calls catchUpRecentMemory once,
+ * before recall starts, so a message written a moment ago is still found while the worker is behind. */
+export function materializeRecentMemory(access: MemoryAccess, signal?: AbortSignal, onCompleted?: (jobId:string)=>void, exclude?: { messageIds?: readonly string[]; withinMs?: number }) {
   const owner=`recall-${randomUUID()}`,start=performance.now();let completed=0;
   for(let n=0;n<2&&performance.now()-start<25;n++){
     signal?.throwIfAborted();assertMemoryAccess(access);
-    const work=claimMemoryJob(owner,Date.now(),access.scopeIds);
+    const work=claimMemoryJob(owner,Date.now(),access.scopeIds,{...exclude?.messageIds?.length?{exclude:{threadId:access.threadId,messageIds:exclude.messageIds}}:{},...exclude?.withinMs!==undefined?{recentWithinMs:exclude.withinMs}:{}});
     if(!work)break;
     const result=captureWork(work);
     signal?.throwIfAborted();assertMemoryAccess(access,work.scopeId);
@@ -44,4 +48,17 @@ export function recentMemoryHits(query:string,access:MemoryAccess):IndexHit[]{
     const matches=terms.filter(term=>text.includes(term)).length;
     return matches?[{id:String(row.id),version:Number(row.version),score:matches/terms.length,lexical:true}]:[];
   }).slice(0,20);
+}
+
+/** The turn's one catch-up step, run before recall: skips the messages the turn already holds (its own prompt: recall leaves it out, so
+ * capturing it now buys nothing and costs three writes), lock-tolerant (a held write lock means "the worker will
+ * get to it", not an error and not a wait), and never longer than two chunks or 25 ms of work. */
+export const CATCH_UP_WINDOW_MS = 15 * 60_000;
+export function catchUpRecentMemory(access: MemoryAccess, signal?: AbortSignal, onCompleted?: (jobId:string)=>void, exclude?: { messageIds: readonly string[] }): number {
+  // Only what was written in the last quarter hour: a standing backlog (an upgrade, a long outage) is the worker's, not one turn's.
+  try { return withBusyBudget(BACKGROUND_BUSY_MS, "recall-catchup", () => materializeRecentMemory(access, signal, onCompleted, { ...exclude, withinMs: CATCH_UP_WINDOW_MS })); }
+  catch (error) {
+    if (error instanceof DatabaseBusyError || isDatabaseBusy(error)) return 0;
+    throw error;
+  }
 }
