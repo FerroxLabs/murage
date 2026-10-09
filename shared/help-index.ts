@@ -516,6 +516,46 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- A sidebar that gets out of the way. Routines, Files, Apps and the Team map sit in one row. Your name opens About me, What's new and Settings.\n- Search Settings. Settings is grouped into clear sections, and a search box finds any setting by name.\n- Snooze until something happens. Snooze a conversation until there's new activity in it.\n- Murage opens cleanly. The window appears as soon as it can paint and recovers by itself if the graphics driver resets.\n\nWelcome to Murage 1.0."
   },
   {
+    "id": "changelog/v1-0-1#conversations-in-1-0-1",
+    "title": "What changed in Murage 1.0.1",
+    "description": "Bots keep every word of your conversation in view, reflection runs on current Claude, model names read cleanly, and image handling is up to date.",
+    "heading": "Conversations in 1.0.1",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.1",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.1",
+    "url": "https://murage.app/docs/changelog/v1-0-1#conversations-in-1-0-1",
+    "text": "- Your bots keep their own replies in view. When a bot's memory changes partway through a conversation, it picks up with your messages and its own replies alike, so it always knows what it said and what you agreed. If a reply relied on something you have since forgotten, the bot sees a short \"Reply withheld\" line in its place."
+  },
+  {
+    "id": "changelog/v1-0-1#memory-and-learning-in-1-0-1",
+    "title": "What changed in Murage 1.0.1",
+    "description": "Bots keep every word of your conversation in view, reflection runs on current Claude, model names read cleanly, and image handling is up to date.",
+    "heading": "Memory and learning in 1.0.1",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.1",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.1",
+    "url": "https://murage.app/docs/changelog/v1-0-1#memory-and-learning-in-1-0-1",
+    "text": "- Reflection runs on current Claude. Bots that use reflection on Claude now reflect on your conversations as intended, including on the latest Claude Code."
+  },
+  {
+    "id": "changelog/v1-0-1#models-in-1-0-1",
+    "title": "What changed in Murage 1.0.1",
+    "description": "Bots keep every word of your conversation in view, reflection runs on current Claude, model names read cleanly, and image handling is up to date.",
+    "heading": "Models in 1.0.1",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.1",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.1",
+    "url": "https://murage.app/docs/changelog/v1-0-1#models-in-1-0-1",
+    "text": "- Model names read cleanly. The model list shows names like Claude Haiku 5.5 and Claude Opus 4.1, and Claude Haiku 5.5 shows its price."
+  },
+  {
+    "id": "changelog/v1-0-1#under-the-hood-in-1-0-1",
+    "title": "What changed in Murage 1.0.1",
+    "description": "Bots keep every word of your conversation in view, reflection runs on current Claude, model names read cleanly, and image handling is up to date.",
+    "heading": "Under the hood in 1.0.1",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.1",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.1",
+    "url": "https://murage.app/docs/changelog/v1-0-1#under-the-hood-in-1-0-1",
+    "text": "- Image handling is up to date. Murage uses the latest image library for previews and thumbnails.\n- Backups on Windows wait for a slow start. On a busy Windows computer, setting up owner-only backup files now waits longer, so the step completes."
+  },
+  {
     "id": "computers/cloud-and-vps#box-cloud-computer",
     "title": "Cloud computer and your own VPS",
     "description": "Choose a managed Box desktop or a hardened container on a Linux server you own.",

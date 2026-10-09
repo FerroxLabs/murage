@@ -7851,7 +7851,10 @@ async function startTurn(
     : roomTranscriptWithoutMemory(threadId, activeMessages, surfacesForOwner, undefined, !surfacesForOwner && isWorkspaceOwner(threadHumanPrincipal(threadId)));
   // How much history this engine can take: two fifths of its window, at least
   // the newest 40 lines (memory/disclosures.ts replayBudgetBytes).
-  const replayOptions = { maxBytes: replayBudgetBytes(instance.models.options.find((option) => option.id === model)?.contextWindow) };
+  // In the owner's own direct chat a reply its check withholds stays in its
+  // place as its withheld line (filterDirectReplay), never a silent gap.
+  const replayOptions = { maxBytes: replayBudgetBytes(instance.models.options.find((option) => option.id === model)?.contextWindow),
+    withheldLine: (message: Message, forgotten: boolean) => withheldRoomLine(message, forgotten) };
   const replayableMessages = (opts?.projectCardRun ? [] : (replayFloor?.messages ?? activeMessages))
     .filter((m) => m.kind === "text" && m.text && !skipTranscript.has(m.id));
   const replayedMessages = replayWindow(replayableMessages, replayOptions);

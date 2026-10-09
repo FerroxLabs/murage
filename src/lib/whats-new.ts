@@ -26,6 +26,8 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   // 1.0.0: the full notes are on the release page; the in-app page returns
   // with art made for 1.0.
   "1.0.0": { kind: "none" },
+  // A patch: no page (release notes are written at publish).
+  "1.0.1": { kind: "none" },
 };
 
 /** The page for `version`, or null when it has none. */

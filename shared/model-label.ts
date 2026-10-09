@@ -52,12 +52,40 @@ export function bareModelId(id: string): string {
   return slash >= 0 ? withoutQualifier.slice(slash + 1) : withoutQualifier;
 }
 
-/** "flux-pinned-deepseek-flash-max" → "Flux Pinned Deepseek Flash Max".
+/** Brand words whose capitalisation is not "first letter up". */
+const BRAND_CASING: Readonly<Record<string, string>> = Object.freeze({
+  gpt: "GPT",
+  deepseek: "DeepSeek",
+});
+
+/** A trailing build date such as `20250805`. Never part of the name. */
+const DATE_SEGMENT = /^\d{8}$/;
+/** A version number written one digit group per segment: `5`, `1`. */
+const VERSION_SEGMENT = /^\d{1,2}$/;
+
+/** "claude-opus-4-1-20250805" → "Claude Opus 4.1"; "flux-pinned-deepseek-flash-max"
+ *  → "Flux Pinned DeepSeek Flash Max".
  *
+ *  The Flux website's rule (flux-router-app catalogue-view.ts modelLabel):
+ *  consecutive numeric segments join with ".", an 8-digit date suffix drops.
  *  A word that is already mixed- or upper-case is left alone: "MiniMax-M3"
- *  must not become "Minimax M3". Only an all-lowercase word is capitalised,
- *  and a word starting with a digit is untouched, so "3.3" stays "3.3". */
+ *  must not become "Minimax M3". An all-lowercase word is capitalised (known
+ *  brands get their own casing), and a word starting with a digit is untouched,
+ *  so "3.3" stays "3.3". */
 export function titleCaseModelId(id: string): string {
+  const words: string[] = [];
+  for (const part of bareModelId(id).split(/[-_\s]+/).filter(Boolean)) {
+    if (DATE_SEGMENT.test(part)) continue;
+    const last = words.length - 1;
+    if (last >= 0 && VERSION_SEGMENT.test(part) && /^\d{1,2}(\.\d{1,2})*$/.test(words[last]!)) words[last] += `.${part}`;
+    else words.push(part);
+  }
+  return words.map((word) => BRAND_CASING[word] ?? (/^[a-z]/.test(word) ? word[0]!.toUpperCase() + word.slice(1) : word)).join(" ");
+}
+
+/** The pre-1.0.1 rule, kept ONLY so a label an older build already stored
+ *  ("Gpt 4o", "Claude Opus 4 1 20250805") still reads as derived. */
+function legacyTitleCaseModelId(id: string): string {
   return bareModelId(id)
     .split(/[-_\s]+/)
     .filter(Boolean)
@@ -78,7 +106,7 @@ export function isDerivedLabel(id: string, label: string | null | undefined): bo
   if (typeof label !== "string") return true;
   const trimmed = label.trim();
   if (!trimmed) return true;
-  return trimmed === id || trimmed === bareModelId(id) || trimmed === titleCaseModelId(id);
+  return trimmed === id || trimmed === bareModelId(id) || trimmed === titleCaseModelId(id) || trimmed === legacyTitleCaseModelId(id);
 }
 
 /** The Flux tier label for a routing alias, or "" for anything else.

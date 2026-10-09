@@ -128,10 +128,11 @@ it("M2: a frame citing 256 replies of a 20,000-receipt session is checked in bou
   expect(rows).toBeLessThan(MAX_ROWS);
   // and a wall clock generous enough for a loaded machine
   expect(ms).toBeLessThan(MAX_MS);
-  // one of those producers revoked still withholds the reply built on them,
-  // with the same bounded work per check (a withheld line widens the window,
-  // so this call runs up to four checks)
-  database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id='p-0'").run();
+  // one of those producers resting on something gone still withholds the
+  // reply built on them, with the same bounded work per check (a withheld
+  // line widens the window, so this call runs up to four checks). The
+  // owner's direct chat withholds on content, not on a receipt's state (1.0.1).
+  database().prepare(`UPDATE memory_disclosures SET source_versions='[{"id":"gone","revision":1}]' WHERE bundle_id='p-0'`).run();
   resetReplayRowsRead();
   expect(filterDirectReplay("private", messages, a, new Set()).allowed.map(m => m.id)).not.toContain("latest");
   expect(replayRowsRead()).toBeLessThan(4 * MAX_ROWS);
@@ -143,7 +144,8 @@ it("L1: lines quoted from far back are checked and kept for their quotes, but ne
   const messages: M[] = [];
   for (let i = 0; i < 100; i++) messages.push(owner(`old-${i}`));
   for (let i = 0; i < 20; i++) { messages.push(owner(`q-${i}`, i < 10 ? `old-${i}` : undefined)); messages.push(bot(`t-${i}`)); }
-  for (let i = 0; i < 10; i++) insertReceipt(a, `bad-${i}`, null, [], [`t-${i}`], "revoked", i);
+  // each receipt cites a source that is gone (the owner's direct chat withholds on content, 1.0.1)
+  for (let i = 0; i < 10; i++) insertReceipt(a, `bad-${i}`, null, ["message:private:gone"], [`t-${i}`], "delivered", i);
   const { allowed, replayed } = filterDirectReplay("private", messages, a, new Set());
   expect(replayed).toHaveLength(40);
   expect(replayed.slice(0, 10).map(m => m.id)).toEqual(Array.from({ length: 10 }, (_, i) => `old-${90 + i}`));

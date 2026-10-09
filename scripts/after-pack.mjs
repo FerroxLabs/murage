@@ -197,9 +197,15 @@ async function checkPackagedSharp(server, manifest, platform, arch) {
   if (pkg.name !== "sharp" || pkg.version !== entry.version) throw new Error("Packaged sharp version differs from manifest");
   const record = file => path.relative(server, file).split(path.sep).join("/");
   const files = [];
-  const addon = path.join(packageRoot, "node_modules/@img", `sharp-${target}`, "lib", `sharp-${target}.node`);
-  try { await requireTargetBinary(addon, target, record(addon)); }
-  catch (error) { if (error?.code === "ENOENT") throw thumbnailMissing(`Packaged thumbnail runtime is missing for ${target}: ${record(addon)}`); throw error; }
+  // sharp <=0.34 ships sharp-<target>.node; 0.35 versions the file name (sharp-<target>-0.35.5.node).
+  const addonDirectory = path.join(packageRoot, "node_modules/@img", `sharp-${target}`, "lib");
+  const addonPattern = new RegExp(`^sharp-${target}(?:-\\d+\\.\\d+\\.\\d+)?\\.node$`);
+  let addonNames;
+  try { addonNames = (await readdir(addonDirectory)).filter(name => addonPattern.test(name)); }
+  catch (error) { if (error?.code === "ENOENT") addonNames = []; else throw error; }
+  if (addonNames.length !== 1) throw thumbnailMissing(`Packaged thumbnail runtime is missing for ${target}: ${record(path.join(addonDirectory, `sharp-${target}.node`))}`);
+  const addon = path.join(addonDirectory, addonNames[0]);
+  await requireTargetBinary(addon, target, record(addon));
   files.push(record(addon));
   const [libvipsPackage, pattern] = SHARP_LIBVIPS[platform](arch);
   const libDirectory = path.join(packageRoot, "node_modules/@img", libvipsPackage, "lib");

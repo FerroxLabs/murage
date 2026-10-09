@@ -144,7 +144,7 @@ it("a source forgotten mid-session withholds the replies made from it on, and ke
   expect(kept).toContain("ask-110");
 }, 240_000);
 
-it("a thread past 2048 receipts replays its recent lines, and one revoked receipt among them still withholds its reply", async () => {
+it("a thread past 2048 receipts replays its recent lines, and one receipt among them whose memory is gone still withholds its reply", async () => {
   const { a, messages } = await longConversation(4);
   // 2,400 more turns of a transcript-replay engine (no native session), each
   // a frame and a lookup receipt citing the same memories: 4,800 receipts
@@ -161,8 +161,9 @@ it("a thread past 2048 receipts replays its recent lines, and one revoked receip
   let kept = directAllowed("dax-direct", messages, a, new Set());
   expect(kept.filter(m => m.kind === "text").slice(-40).at(-1)?.id).toBe("reply-2404");
   expect(kept.map(m => m.id)).toContain("reply-2400");
-  // one receipt the owner's later turn found revoked
-  database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id='bulk-2400:lookup'").run();
+  // one receipt that recalled a memory since gone (the owner's direct chat
+  // withholds on content, not on a receipt's state: 1.0.1)
+  database().prepare(`UPDATE memory_disclosures SET record_versions='[{"id":"forgotten","version":1}]' WHERE bundle_id='bulk-2400:lookup'`).run();
   kept = directAllowed("dax-direct", messages, a, new Set());
   expect(kept.map(m => m.id)).not.toContain("reply-2400");
   expect(kept.map(m => m.id)).toContain("reply-2401");
