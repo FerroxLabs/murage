@@ -9,7 +9,7 @@ it("installs v4, validates ledger references, and round trips every supported do
  const db=new DatabaseSync(":memory:");
  try {
   migrateMemorySchema(db);
-  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(7);
   const settings=JSON.parse(String(db.prepare("SELECT settings FROM memory_learning_config").get()?.settings));
   expect(settings).toMatchObject({version:2,dailyInputTokens:400000,dailyOutputTokens:60000});
   db.exec("INSERT INTO memory_scopes VALUES('s','conversation','t','[]',0)");

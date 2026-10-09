@@ -247,7 +247,7 @@ const BOT_LEARNING_TABLES = ["memory_outcomes", "memory_feedback", "memory_lesso
  * the set it was shown (every v6 session has a row, an empty set included:
  * a session with receipts and no row predates lineage). memory_lineage_meta
  * keeps when lineage began (dispatch.ts retainedSessionInvalid). */
-const LINEAGE_SCHEMA = `
+const LINEAGE_SCHEMA_V6 = `
 CREATE TABLE IF NOT EXISTS memory_root_sets (
  set_id TEXT PRIMARY KEY NOT NULL, size INTEGER NOT NULL CHECK(size>=0));
 CREATE TABLE IF NOT EXISTS memory_root_set_members (
@@ -264,7 +264,33 @@ CREATE TABLE IF NOT EXISTS memory_session_roots (
 CREATE TABLE IF NOT EXISTS memory_lineage_meta (
  id INTEGER PRIMARY KEY CHECK(id=1), since INTEGER NOT NULL CHECK(since>=0));
 `;
-const LINEAGE_TABLES = ["memory_output_roots", "memory_session_roots", "memory_root_set_members", "memory_root_sets", "memory_lineage_meta"];
+/** v7 (1.0.2): root sets grow linearly. In a long thread every reply's set is
+ * the previous reply's set plus the newest receipt output, and v6 stored each
+ * one in full (O(n^2) member rows per thread: 10.9 million rows, 3.5 GB, on a
+ * real install). A v7 set may name a PARENT set that is a proper subset of
+ * it; its member rows then hold only what it adds to the parent, and its
+ * members are the union along the chain (rootSetMembers). A set with no
+ * parent row holds every member, exactly as in v6, so every v6 set is a valid
+ * v7 set and the upgrade itself writes nothing but two empty tables: the
+ * conversion of the old full sets runs afterwards in bounded steps
+ * (root-set-compaction.ts), recorded in memory_root_set_compaction. A chain is
+ * proven on every read: each link strictly smaller than its child, the root
+ * of the chain present, and each set's own rows exactly its size minus its
+ * parent's; anything else is unprovable and fails closed. */
+const MEMBER_ROOT_INDEX = "CREATE INDEX IF NOT EXISTS memory_root_set_members_root ON memory_root_set_members(root_thread_id,root_message_id);\n";
+// v7 drops the member index (it only served v6's which-set-holds-this-root
+// lookup; v7 judges sets along their chains) and adds the chain tables.
+const LINEAGE_SCHEMA = LINEAGE_SCHEMA_V6.replace(MEMBER_ROOT_INDEX, "") + `
+CREATE TABLE IF NOT EXISTS memory_root_set_parents (
+ set_id TEXT PRIMARY KEY NOT NULL, parent_id TEXT NOT NULL CHECK(parent_id<>set_id)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS memory_root_set_parents_parent ON memory_root_set_parents(parent_id);
+CREATE INDEX IF NOT EXISTS memory_session_roots_set ON memory_session_roots(set_id);
+CREATE TABLE IF NOT EXISTS memory_root_set_compaction (
+ id INTEGER PRIMARY KEY CHECK(id=1), total INTEGER NOT NULL CHECK(total>=0), done INTEGER NOT NULL CHECK(done>=0),
+ cursor TEXT NOT NULL DEFAULT '', started_at INTEGER NOT NULL, finished_at INTEGER, reclaimed_at INTEGER);
+`;
+const LINEAGE_TABLES_V6 = ["memory_output_roots", "memory_session_roots", "memory_root_set_members", "memory_root_sets", "memory_lineage_meta"];
+const LINEAGE_TABLES_V7 = ["memory_root_set_parents", "memory_root_set_compaction"];
 /** A root key: `thread\u0000message`. */
 const ROOT_KEY_SEP = "\u0000";
 /** The content address of a root set: the digest of its sorted, distinct members. */
@@ -273,20 +299,104 @@ export function rootSetId(keys: Iterable<string>): string {
   return `rs1:${createHash("sha256").update(sorted.join("\n")).digest("hex")}`;
 }
 /** Stores a root set once (a set already held is reused) and returns its id.
- * Members first, then the set row, inside one savepoint: a set row is only
- * ever there for a complete set. */
-export function storeRootSet(db: DatabaseSync, keys: Iterable<string>): string {
+ * `base` names a stored set the caller took whole into `keys` (the largest it
+ * carried): when it is still held and a proper subset, the new set is written
+ * as that parent plus the members it adds, so a thread's growing sets cost one
+ * row per new root instead of a full copy each (v7). Members first, then the
+ * set row, inside one savepoint: a set row is only ever there for a complete
+ * set. */
+export function storeRootSet(db: DatabaseSync, keys: Iterable<string>, base?: string, baseMembers?: ReadonlySet<string>): string {
   const sorted = [...new Set(keys)].sort(), id = rootSetId(sorted);
   if (db.prepare("SELECT 1 FROM memory_root_sets WHERE set_id=?").get(id)) return id;
+  let parent: string | undefined, delta = sorted;
+  if (base && base !== id) {
+    // the caller may hand over the members it already holds (the upgrade backfill); otherwise they are read and proven
+    const stored = baseMembers && Number(db.prepare("SELECT size FROM memory_root_sets WHERE set_id=?").get(base)?.size ?? -1) === baseMembers.size;
+    const held = stored ? baseMembers : rootSetMembers(db, base);
+    if (held && held.size < sorted.length) {
+      const all = new Set(sorted);
+      let subset = true;
+      for (const key of held) if (!all.has(key)) { subset = false; break; }
+      if (subset) { parent = base; delta = sorted.filter(key => !held.has(key)); }
+    }
+  }
   db.exec("SAVEPOINT memory_root_set");
   try {
     // one statement for all members
-    const pairs = sorted.map(key => { const at = key.indexOf(ROOT_KEY_SEP); return [key.slice(0, at), key.slice(at + 1)]; });
+    const pairs = delta.map(key => { const at = key.indexOf(ROOT_KEY_SEP); return [key.slice(0, at), key.slice(at + 1)]; });
     db.prepare("INSERT OR IGNORE INTO memory_root_set_members(set_id,root_thread_id,root_message_id) SELECT ?,value->>0,value->>1 FROM json_each(?)").run(id, JSON.stringify(pairs));
+    if (parent) db.prepare("INSERT OR REPLACE INTO memory_root_set_parents(set_id,parent_id) VALUES(?,?)").run(id, parent);
     db.prepare("INSERT OR IGNORE INTO memory_root_sets(set_id,size) VALUES(?,?)").run(id, sorted.length);
     db.exec("RELEASE memory_root_set");
   } catch (error) { db.exec("ROLLBACK TO memory_root_set; RELEASE memory_root_set"); throw error; }
   return id;
+}
+/** The stored sets `ids` and every set their chains rest on: each set's size,
+ * parent, and own member rows. One recursive read: a chain only ever steps to
+ * a strictly smaller set, so it ends. */
+export interface RootSetForest { nodes: Map<string, { size: number; parent: string | null }>; own: Map<string, Array<[string, string]>> }
+export function loadRootSetForest(db: DatabaseSync, ids: readonly string[]): RootSetForest {
+  const nodes: RootSetForest["nodes"] = new Map(), own: RootSetForest["own"] = new Map();
+  if (!ids.length) return { nodes, own };
+  const chained = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_root_set_parents'").get());
+  const rows = chained ? db.prepare(`WITH RECURSIVE chain(id,size,parent) AS (
+      SELECT r.set_id,r.size,p.parent_id FROM memory_root_sets r LEFT JOIN memory_root_set_parents p ON p.set_id=r.set_id WHERE r.set_id IN (SELECT value FROM json_each(?))
+      UNION SELECT r.set_id,r.size,p.parent_id FROM chain c JOIN memory_root_sets r ON r.set_id=c.parent LEFT JOIN memory_root_set_parents p ON p.set_id=r.set_id WHERE r.size<c.size)
+    SELECT id,size,parent FROM chain`).all(JSON.stringify([...new Set(ids)]))
+    : db.prepare("SELECT set_id AS id,size,NULL AS parent FROM memory_root_sets WHERE set_id IN (SELECT value FROM json_each(?))").all(JSON.stringify([...new Set(ids)]));
+  for (const row of rows) nodes.set(String(row.id), { size: Number(row.size), parent: row.parent === null || row.parent === undefined ? null : String(row.parent) });
+  for (const row of db.prepare("SELECT set_id,root_thread_id,root_message_id FROM memory_root_set_members WHERE set_id IN (SELECT value FROM json_each(?))").all(JSON.stringify([...nodes.keys()]))) {
+    const id = String(row.set_id);
+    let list = own.get(id);
+    if (!list) own.set(id, list = []);
+    list.push([String(row.root_thread_id), String(row.root_message_id)]);
+  }
+  return { nodes, own };
+}
+/** Whether each of `ids` is a provable set in `forest`: present, its chain
+ * ending at a set with no parent, every link strictly smaller, and every set's
+ * own rows exactly its size minus its parent's. Iterative: a chain can be as
+ * long as the set is large. */
+export function provenRootSets(forest: RootSetForest, ids: Iterable<string>, memo = new Map<string, boolean>()): Map<string, boolean> {
+  for (const start of ids) {
+    const path: string[] = [], seen = new Set<string>();
+    let at: string | null = start, below = true;
+    while (at !== null) {
+      const known = memo.get(at);
+      if (known !== undefined) { below = known; break; }
+      if (seen.has(at)) { below = false; break; }
+      seen.add(at); path.push(at);
+      const node = forest.nodes.get(at);
+      if (!node) { below = false; break; }
+      at = node.parent;
+    }
+    // from the bottom up: a set holds only when the set below it does
+    for (let index = path.length - 1; index >= 0; index--) {
+      below = below && ownRowsHold(forest, path[index]!);
+      memo.set(path[index]!, below);
+    }
+  }
+  return memo;
+}
+function ownRowsHold(forest: RootSetForest, id: string): boolean {
+  const node = forest.nodes.get(id);
+  if (!node) return false;
+  const count = forest.own.get(id)?.length ?? 0;
+  if (node.parent === null) return count === node.size;
+  const parent = forest.nodes.get(node.parent);
+  return Boolean(parent) && parent!.size < node.size && count === node.size - parent!.size;
+}
+/** Every member of one stored set (`thread\u0000message` keys), or null when
+ * it is not held or its chain cannot be proven (fail closed). */
+export function rootSetMembers(db: DatabaseSync, setId: string): Set<string> | null {
+  if (!setId) return null;
+  const forest = loadRootSetForest(db, [setId]);
+  if (!provenRootSets(forest, [setId]).get(setId)) return null;
+  const out = new Set<string>();
+  for (let at: string | null = setId; at !== null; at = forest.nodes.get(at)!.parent) {
+    for (const [thread, message] of forest.own.get(at) ?? []) out.add(`${thread}${ROOT_KEY_SEP}${message}`);
+  }
+  return out.size === forest.nodes.get(setId)!.size ? out : null;
 }
 /** Pre-v6 replies: in each thread, every bot text reply after the thread's
  * first receipt output references the root set of the receipt outputs before
@@ -301,18 +411,23 @@ function backfillOutputRoots(db: DatabaseSync) {
   for (const thread of threads) {
     const outputs = new Set(db.prepare("SELECT DISTINCT message_id FROM memory_disclosure_outputs WHERE thread_id=?").all(thread).map(row => String(row.message_id)));
     const before: string[] = [];
-    let setId: string | undefined;
+    let setId: string | undefined, previous: string | undefined, previousMembers: Set<string> | undefined;
     for (const row of db.prepare("SELECT id,role,kind FROM messages WHERE thread_id=? ORDER BY at,rowid").all(thread)) {
       const id = String(row.id);
       if (before.length && row.role === "bot" && row.kind === "text") {
-        setId ??= storeRootSet(db, before.map(root => `${thread}${ROOT_KEY_SEP}${root}`));
+        // each set is the one before plus the outputs since: stored as that (v7)
+        if (setId === undefined) {
+          const keys = before.map(root => `${thread}${ROOT_KEY_SEP}${root}`);
+          setId = previous = storeRootSet(db, keys, previous, previousMembers);
+          previousMembers = new Set(keys);
+        }
         insert.run(thread, id, setId);
       }
       if (outputs.has(id)) { before.push(id); setId = undefined; }
     }
   }
 }
-export const MEMORY_SCHEMA_VERSION = 6;
+export const MEMORY_SCHEMA_VERSION = 7;
 const SHAPE_MARKER = "memory-shape-check";
 /** The frozen v2 text (0.1.54 to 0.1.60), for validation and the v3 -> v2 inverse. */
 export const MEMORY_SCHEMA_V2 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=2)") + LEARNING_SCHEMA;
@@ -321,8 +436,10 @@ export const MEMORY_SCHEMA_V3 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1
 export const MEMORY_SCHEMA_V4 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=4)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA_V4;
 /** The frozen v5 text (0.1.62 to the 1.0 merge), for validation and the v6 -> v5 inverse. */
 export const MEMORY_SCHEMA_V5 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=5)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA;
-export const MEMORY_SCHEMA = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=6)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA + LINEAGE_SCHEMA;
-const SCHEMA_TEXT: Record<number, string> = { 1: MEMORY_SCHEMA_V1, 2: MEMORY_SCHEMA_V2, 3: MEMORY_SCHEMA_V3, 4: MEMORY_SCHEMA_V4, 5: MEMORY_SCHEMA_V5, 6: MEMORY_SCHEMA };
+/** The frozen v6 text (1.0.0 and 1.0.1), for validation and the v7 -> v6 inverse. */
+export const MEMORY_SCHEMA_V6 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=6)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA + LINEAGE_SCHEMA_V6;
+export const MEMORY_SCHEMA = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=7)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA + LINEAGE_SCHEMA;
+const SCHEMA_TEXT: Record<number, string> = { 1: MEMORY_SCHEMA_V1, 2: MEMORY_SCHEMA_V2, 3: MEMORY_SCHEMA_V3, 4: MEMORY_SCHEMA_V4, 5: MEMORY_SCHEMA_V5, 6: MEMORY_SCHEMA_V6, 7: MEMORY_SCHEMA };
 
 type SchemaRow = {type: string; name: string; tbl_name: string; sql: string | null};
 const expected = new Map<number, Map<string, SchemaRow>>();
@@ -362,7 +479,7 @@ export function validateMemorySchema(db: DatabaseSync, options: { references?: b
   if (!memoryRows.length) return new Set(); // private.7 legacy archive
   // Recognize only an exact known meta table before reading its version field.
   const metaSchema = memoryRows.find(row => row.name === "memory_meta");
-  const version = [1, 2, 3, 4, 5, 6].find(value => metaSchema?.sql === expectedSchema(value).get("memory_meta")?.sql);
+  const version = [1, 2, 3, 4, 5, 6, 7].find(value => metaSchema?.sql === expectedSchema(value).get("memory_meta")?.sql);
   if (!version) {
     // A newer Murage wrote this file: say so, and name the way out, instead of
     // the bare unsupported-schema code an older build prints.
@@ -710,8 +827,24 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
         SELECT id,version,CASE kind WHEN 'source' THEN 'episodic' WHEN 'checkpoint' THEN 'working' WHEN 'procedure' THEN 'procedural' WHEN 'identity' THEN 'identity' ELSE 'semantic' END,
           CASE WHEN state IN ('archived','superseded','deleted') THEN 'historical' ELSE 'useful' END,
           CASE WHEN state='candidate' THEN 'provisional' ELSE 'current' END,NULL FROM memory_records;`);
-      db.exec(OUTPUT_INDEX_BACKFILL);
-      backfillOutputRoots(db);
+      // A v6 file keeps its output index and lineage: v7 adds two empty
+      // tables, and its full root sets are converted right after this
+      // transaction, before the server takes traffic, one small transaction
+      // per set (root-set-compaction.ts finishLineageStorageAtStartup).
+      if (from < 6) {
+        db.exec(OUTPUT_INDEX_BACKFILL);
+        backfillOutputRoots(db);
+      }
+      if (from === 6) {
+        // The index holds ids only, never words, and the space-hand-back VACUUM
+        // rewrites the file after: freeing it need not zero gigabytes of pages.
+        const secure = Number(Object.values(db.prepare("PRAGMA secure_delete").get() ?? {})[0] ?? 0);
+        db.exec("PRAGMA secure_delete=FAST; DROP INDEX IF EXISTS memory_root_set_members_root;");
+        db.exec(`PRAGMA secure_delete=${secure === 1 ? "ON" : secure === 2 ? "FAST" : "OFF"}`);
+      }
+      if (from === 6 && Number(db.prepare("SELECT count(*) AS n FROM memory_root_sets").get()?.n ?? 0) > 0) {
+        db.prepare("INSERT OR IGNORE INTO memory_root_set_compaction(id,total,done,cursor,started_at) VALUES(1,(SELECT count(*) FROM memory_root_sets),0,'',?)").run(Date.now());
+      }
     } else {
       db.exec(MEMORY_SCHEMA);
       db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,?,?,?)").run(MEMORY_SCHEMA_VERSION,randomUUID(),initialMode);
@@ -772,17 +905,37 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
  * memory_meta text of its version. Chats and memory rows written after the
  * upgrade survive; what is dropped is derived or learning-only, and the next
  * newer start re-runs the same migration. Caller owns no transaction. */
-export function downgradeMemorySchema(db: DatabaseSync, to: 1 | 2 | 3 | 4 | 5 = 1): { status: "downgraded" | "already-v1" | "already-v2" | "already-v3" | "already-v4" | "already-v5"; from: number; to: 1 | 2 | 3 | 4 | 5 } {
+export function downgradeMemorySchema(db: DatabaseSync, to: 1 | 2 | 3 | 4 | 5 | 6 = 1): { status: "downgraded" | "already-v1" | "already-v2" | "already-v3" | "already-v4" | "already-v5" | "already-v6"; from: number; to: 1 | 2 | 3 | 4 | 5 | 6 } {
   if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_meta'").get()) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
   validateMemorySchema(db);
   const from = Number(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version);
-  if (from <= to) return { status: to === 1 ? "already-v1" : to === 2 ? "already-v2" : to === 3 ? "already-v3" : to === 4 ? "already-v4" : "already-v5", from, to };
+  if (from <= to) return { status: `already-v${to}` as "already-v1", from, to };
   if (from > MEMORY_SCHEMA_VERSION) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
   db.exec("BEGIN IMMEDIATE");
   try {
     for (let version = from; version > to; version--) {
+      // v6 reads every set in full: each chained set gets the members it
+      // inherits written out again (the v6 size), then the v7 tables go.
+      if (version === 7) {
+        const chained = db.prepare("SELECT set_id FROM memory_root_set_parents").all().map(row => String(row.set_id));
+        const write = db.prepare("INSERT OR IGNORE INTO memory_root_set_members(set_id,root_thread_id,root_message_id) SELECT ?,value->>0,value->>1 FROM json_each(?)");
+        const full = new Map<string, string>();
+        for (const id of chained) {
+          const members = rootSetMembers(db, id);
+          // an unprovable set becomes the unprovable marker: v6 withholds what rests on it
+          full.set(id, members ? JSON.stringify([...members].map(key => { const at = key.indexOf(ROOT_KEY_SEP); return [key.slice(0, at), key.slice(at + 1)]; })) : "");
+        }
+        for (const [id, members] of full) {
+          if (members) write.run(id, members);
+          else {
+            db.prepare("UPDATE memory_output_roots SET set_id='' WHERE set_id=?").run(id);
+            db.prepare("UPDATE memory_session_roots SET set_id='' WHERE set_id=?").run(id);
+          }
+        }
+        db.exec(`DROP INDEX memory_session_roots_set; ${LINEAGE_TABLES_V7.map(table => `DROP TABLE ${table};`).join(" ")}`);
+      }
       // Output lineage is derived from replies already kept; the next newer start backfills it again.
-      if (version === 6) for (const table of LINEAGE_TABLES) db.exec(`DROP TABLE ${table};`);
+      if (version === 6) for (const table of LINEAGE_TABLES_V6) db.exec(`DROP TABLE ${table};`);
       if (version === 5) {
         // Bot-learning rows are learning-only; the next newer start migrates again. Ledger rows of the new kinds go with them.
         for (const table of BOT_LEARNING_TABLES) db.exec(`DROP TABLE ${table};`);

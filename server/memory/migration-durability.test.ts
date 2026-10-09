@@ -54,6 +54,6 @@ it("retries a rename a Windows scanner briefly blocks, and gives up on a real er
     db.prepare("INSERT INTO memory_meta VALUES(1,2,?,4,5,6,'active')").run(randomUUID());
     db.prepare("INSERT INTO memory_learning_config VALUES(1,3,?)").run(JSON.stringify({ ...DEFAULT_MEMORY_LEARNING_V1, reviewMode: false }));
     schema.migrateMemorySchema(db, "off", { snapshotV2Path: join(root, schema.MEMORY_PRE_V3_SNAPSHOT), freeBytes: () => 1024 ** 4 });
-    expect(Number(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version)).toBe(6);
+    expect(Number(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version)).toBe(7);
   } finally { db.close(); }
 });

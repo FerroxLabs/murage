@@ -42,6 +42,18 @@ test("progress is the size of the growing copy over its expected size", () => {
   assert.equal(memoryUpgradeProgress({ state: "blocked", code: "MEMORY_MIGRATION_FAILED" }, "/d"), null);
 });
 
+test("after the upgrade, the root-set conversion counts sets done over sets in all, then the space hand-back", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "murage-upgrade-v7-"));
+  try {
+    note(root, { state: "upgrading", phase: "converting", done: 500, total: 1000 });
+    const status = readMemoryUpgradeStatus(root, { pid: 77 });
+    assert.equal(status.phase, "converting");
+    assert.equal(memoryUpgradeProgress(status, root), 47);
+    assert.equal(memoryUpgradeProgress({ ...status, done: 1000 }, root), 94);
+    assert.equal(memoryUpgradeProgress({ state: "upgrading", phase: "reclaiming" }, root), 97);
+  } finally { safeWipeSync(root); }
+});
+
 test("every sentence is plain: no em dash, no banned words, the shortfall is named", () => {
   assert.equal(describeBytes(1), "1 MB");
   assert.equal(describeBytes(590 * 1048576 - 1), "590 MB");

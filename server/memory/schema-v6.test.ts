@@ -85,7 +85,7 @@ it("upgrades a copy of a used v5 data dir additively, backfills Y's root, and th
     for (const table of NEW_TABLES) expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table), table).toBeUndefined();
     const before = rows(db), metaBefore = db.prepare("SELECT * FROM memory_meta").get(), bindingsBefore = withoutMarker(db);
     migrateMemorySchema(db);
-    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(7);
     validateMemorySchema(db, { references: true });
     const after = rows(db);
     // every existing table keeps every row, byte for byte (the shape-check marker aside)
@@ -94,7 +94,7 @@ it("upgrades a copy of a used v5 data dir additively, backfills Y's root, and th
       expect(after.get(table), table).toBe(content);
     }
     expect(withoutMarker(db)).toBe(bindingsBefore);
-    expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...metaBefore, schema_version: 6 });
+    expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...metaBefore, schema_version: 7 });
     // the backfill wrote only the roots table: Y, after the thread's first receipt output, rests on X'
     const roots = db.prepare("SELECT o.thread_id,o.message_id,m.root_thread_id,m.root_message_id FROM memory_output_roots o JOIN memory_root_set_members m ON m.set_id=o.set_id ORDER BY o.message_id").all();
     expect(roots).toEqual([{ thread_id: thread, message_id: "y", root_thread_id: thread, root_message_id: "x-prime" }]);
@@ -105,7 +105,7 @@ it("upgrades a copy of a used v5 data dir additively, backfills Y's root, and th
     migrateMemorySchema(db);
     for (const table of NEW_TABLES) expect(rows(db).get(table), table).toBe(after.get(table));
     // the inverse: back to the v5 file, every row as it was
-    expect(downgradeMemorySchema(db, 5)).toEqual({ status: "downgraded", from: 6, to: 5 });
+    expect(downgradeMemorySchema(db, 5)).toEqual({ status: "downgraded", from: 7, to: 5 });
     validateMemorySchema(db, { references: true });
     for (const table of NEW_TABLES) expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table), table).toBeUndefined();
     const back = rows(db);
@@ -119,7 +119,7 @@ it("after the upgrade, revoking X withholds the pre-v6 OFF reply Y with X'", asy
   rmSync(join(DATA_DIR, "messages.db"), { force: true });
   for (const suffix of ["-wal", "-shm"]) if (existsSync(join(DATA_DIR, `messages.db${suffix}`))) rmSync(join(DATA_DIR, `messages.db${suffix}`));
   copyFileSync(copy, join(DATA_DIR, "messages.db"));
-  expect(database().prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+  expect(database().prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(7);
   const lines = ["early", "x-prime", "y"].map(id => ({ id, role: "bot" }));
   expect([...replayExclusions(thread, lines, null, { failClosed: true })]).toEqual([]);
   reconcileMemoryRoster(roster);

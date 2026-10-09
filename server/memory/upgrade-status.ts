@@ -11,6 +11,7 @@
 import { renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDiskFullError, MemoryMigrationError, type MemoryMigrationPhase } from "./schema.ts";
+import type { StartupStorageEvent } from "./root-set-compaction.ts";
 
 export const MEMORY_UPGRADE_STATUS_FILE = "memory-upgrade-status.json";
 
@@ -19,7 +20,10 @@ export type MemoryUpgradeStatus = {
   state: "upgrading" | "blocked";
   /** Set when blocked. */
   code?: "MEMORY_MIGRATION_DISK_SPACE" | "MEMORY_SCHEMA_NEWER" | "MEMORY_MIGRATION_FAILED";
-  phase?: MemoryMigrationPhase["phase"];
+  phase?: MemoryMigrationPhase["phase"] | StartupStorageEvent["phase"];
+  /** Root sets converted so far, of total (phase "converting"). */
+  done?: number;
+  total?: number;
   from?: number;
   pid: number;
   startedAt: number;
@@ -59,6 +63,13 @@ export function memoryUpgradeReporter(dataDir: string, partialNameOf: (path: str
           dbBytes: event.dbBytes, copyBytes: event.copyBytes, needBytes: event.needBytes, freeBytes: event.freeBytes,
           ...(event.partialPath ? { partialName: partialNameOf(event.partialPath) } : {}),
         });
+      } catch { /* see above */ }
+    },
+    /** The output-lineage conversion and space hand-back after the upgrade (memory v7). */
+    storage(event: StartupStorageEvent) {
+      try {
+        write(dataDir, { v: 1, state: "upgrading", phase: event.phase, pid: process.pid, startedAt, updatedAt: Date.now(),
+          ...(event.phase === "converting" ? { done: event.done, total: event.total } : { dbBytes: event.dbBytes }) });
       } catch { /* see above */ }
     },
     blocked(error: unknown) {

@@ -212,7 +212,7 @@ function memoryDb() {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys=ON");
   db.exec(MEMORY_SCHEMA);
-  db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,6,?,'active')").run(randomUUID());
+  db.prepare("INSERT INTO memory_meta(id,schema_version,installation_id,mode) VALUES(1,7,?,'active')").run(randomUUID());
   return db;
 }
 const decision = (over: Partial<FeedbackDecision> = {}): FeedbackDecision => ({
