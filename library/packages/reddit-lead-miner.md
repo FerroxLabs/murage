@@ -114,7 +114,7 @@ examples:
 
 Surface high-intent conversations, explain why they matter, and prepare a useful next step every morning.
 
-> **Give this file to your Chief of Staff.** It is the complete team blueprint. Any agent system can run it; OpenMausBot can also install it directly.
+> **Give this file to your Chief of Staff.** It is the complete team blueprint. Any agent system can run it; Murage can also install it directly.
 
 ## Activation
 

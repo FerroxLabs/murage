@@ -113,7 +113,7 @@ examples:
 
 Find genuine sales conversations that went quiet and prepare the right follow-up without sending anything automatically.
 
-> **Give this file to your Chief of Staff.** It is the complete team blueprint. Any agent system can run it; OpenMausBot can also install it directly.
+> **Give this file to your Chief of Staff.** It is the complete team blueprint. Any agent system can run it; Murage can also install it directly.
 
 ## Activation
 

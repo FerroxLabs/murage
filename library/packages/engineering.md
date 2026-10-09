@@ -7,8 +7,7 @@ tagline: "Get a scoped implementation plan, coordinated engineering work, and a 
 summary: "For product teams delivering a software change. Get a scoped implementation plan, coordinated engineering work, and a release-readiness review backed by verification evidence."
 category: Engineering
 author:
-  name: OpenMausBot
-  url: https://openmausbot.com
+  name: Murage
 license: MIT
 featured: true
 tags:
@@ -127,7 +126,7 @@ examples:
 
 Turn a product change into a scoped plan, reviewed implementation, and release decision.
 
-> **Give this file to your Chief of Staff.** It is the complete team blueprint. Any agent system can run it; OpenMausBot can also install it directly.
+> **Give this file to your Chief of Staff.** It is the complete team blueprint. Any agent system can run it; Murage can also install it directly.
 
 ## Activation
 

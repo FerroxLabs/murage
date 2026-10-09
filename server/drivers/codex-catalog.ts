@@ -5,7 +5,7 @@
 // `model` + `modelProvider` separately; picker ids encode both.
 import { readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 
 import type { ModelCatalog } from "../contracts.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
@@ -188,7 +188,9 @@ export function readCodexAppServerModelCatalog(
 }
 
 export function codexHome(env: Record<string, string | undefined>): string {
-  if (env.CODEX_HOME) return env.CODEX_HOME;
+  // A relative CODEX_HOME would resolve against whatever folder the server
+  // happens to run in, and read sign-in state from there. Use it only when absolute.
+  if (env.CODEX_HOME && isAbsolute(env.CODEX_HOME)) return env.CODEX_HOME;
   return join(env.HOME || env.USERPROFILE || homedir(), ".codex");
 }
 

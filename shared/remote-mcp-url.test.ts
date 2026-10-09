@@ -401,7 +401,7 @@ describe("limits (3.9 size and time caps)", () => {
       toolsListed: 100,
       dnsMs: 3_000,
       connectMs: 10_000,
-      probeTotalMs: 20_000,
+      probeTotalMs: 30_000,
       initializeRelayMs: 30_000,
       toolCallMs: 10 * 60_000,
       signInMs: 10 * 60_000,

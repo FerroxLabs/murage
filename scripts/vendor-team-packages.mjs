@@ -29,6 +29,7 @@
 //   node scripts/vendor-team-packages.mjs [--dry-run] [--root <catalog url>]
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { sanitizeTeamPackage } from "./team-package-sanitize.mjs";
 import { fileURLToPath } from "node:url";
 
 import { parseBotPackage } from "../server/bot-package.ts";
@@ -75,7 +76,7 @@ for (const entry of catalog.teams) {
   const markdown = relative.endsWith(".md");
   const document = await fetch(`${options.root}/${relative}`, { redirect: "error" });
   if (!document.ok) throw new Error(`${relative} -> HTTP ${document.status}`);
-  const body = await document.text();
+  const body = sanitizeTeamPackage(await document.text());
   // The gate the app itself runs. A document that does not survive it is never
   // committed, so the generated catalog cannot advertise an entry the importer
   // would refuse.

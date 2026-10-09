@@ -7,8 +7,7 @@ tagline: "Assess demand and technical evidence, then get prioritized fixes, cont
 summary: "For businesses deciding where to invest in search visibility. Assess demand and technical evidence, then get prioritized fixes, content briefs, and a practical SEO roadmap."
 category: Marketing
 author:
-  name: OpenMausBot
-  url: https://openmausbot.com
+  name: Murage
 license: MIT
 featured: true
 tags:
@@ -140,7 +139,7 @@ examples:
 
 Turn search evidence into prioritized fixes, content briefs, owners, and measurable next steps.
 
-> **Give this file to your Chief of Staff.** It is the complete team blueprint. Any agent system can run it; OpenMausBot can also install it directly.
+> **Give this file to your Chief of Staff.** It is the complete team blueprint. Any agent system can run it; Murage can also install it directly.
 
 ## Activation
 

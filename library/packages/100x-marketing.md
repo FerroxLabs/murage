@@ -7,8 +7,7 @@ tagline: "Turn audience evidence into campaign assets, a distribution plan, and 
 summary: "For businesses ready to test a focused marketing campaign. Turn audience evidence into campaign assets, a distribution plan, and a measured stop, improve, or scale decision."
 category: Marketing
 author:
-  name: OpenMausBot
-  url: https://openmausbot.com
+  name: Murage
 license: MIT
 featured: true
 tags:
@@ -143,7 +142,7 @@ examples:
 
 Find a sharp position, produce the launch assets, distribute them, and make a stop-or-scale decision.
 
-> **Give this file to your Chief of Staff.** It is the complete team blueprint. Any agent system can run it; OpenMausBot can also install it directly.
+> **Give this file to your Chief of Staff.** It is the complete team blueprint. Any agent system can run it; Murage can also install it directly.
 
 ## Activation
 

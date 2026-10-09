@@ -33,6 +33,9 @@ const dead = () => {
 conn.on("error", dead);
 conn.on("close", dead);
 
+// Decode as a stream: a multi-byte character split across two reads must not
+// become U+FFFD in an approved write (adapted from OpenMausBot #2387).
+conn.setEncoding("utf8");
 let connBuf = "";
 conn.on("data", (chunk) => {
   connBuf += chunk;
@@ -162,6 +165,7 @@ async function handle(msg: any) {
   }
 }
 
+process.stdin.setEncoding("utf8");
 let inBuf = "";
 process.stdin.on("data", (chunk) => {
   inBuf += chunk;

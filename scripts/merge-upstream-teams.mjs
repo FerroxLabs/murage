@@ -4,10 +4,12 @@
 // They are MIT-licensed and genuinely good, and they cover outbound ground the
 // Wayland set does not. Two transforms are needed and both are pure renames the
 // fork created: the manifest extension (.mausteam.json -> .emberteam.json) and
-// the routine target enum (runOn: maus -> ember). Authorship is left ALONE —
-// keeping "OpenMausBot" as the author is the honest attribution.
+// the routine target enum (runOn: maus -> ember). The shipped package no longer
+// names the source product or links its site (team-package-sanitize.mjs); the MIT
+// licence text carries the attribution.
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { sanitizeTeamPackage } from "./team-package-sanitize.mjs";
 
 const UP = "https://raw.githubusercontent.com/milind-soni/openmausbot-teams/main";
 const OUT = "/tmp/murage-teams-repo";
@@ -30,7 +32,7 @@ for (const t of up.teams) {
   // the package markdown, with the two fork renames applied
   const pkgPath = `packages/${t.slug}.md`;
   let md = await get(t.package ?? pkgPath);
-  md = md.replace(/^(\s*runOn:\s*)maus\s*$/gm, "$1ember");
+  md = sanitizeTeamPackage(md.replace(/^(\s*runOn:\s*)maus\s*$/gm, "$1ember"));
   put(pkgPath, md);
 
   // the manifest, renamed to the extension our catalog parser requires

@@ -90,7 +90,7 @@ it.each([false, true])("R2.3 index coordination preserves Chief tools (shared=%s
   if (!shared) { delete f.iris.partitionedAt; delete f.iris.sharedWith; }
   const chiefRoster = seam("chiefRoster", { store: f.store, database, withProjectNow: (bots: unknown) => bots, projectBotNowAnywhere: () => undefined, partitionRoster });
   const prompt = value("coordinationPrompt", { bot: f.sam, threadId: f.sam.threadId, store: f.store, surfacesForOwner: true, audienceRoster: partitionRoster(f.store, f.sam, f.sam.threadId, true), isHomePartition, threadPartition, chiefRoster, chiefOfStaffSystemPrompt, integrations: { agents: true }, openMurageStatusSystemPrompt: () => "STATUS_TOOLS_CANARY" });
-  expect(prompt).toContain("Chief of Staff"); expect(prompt).toContain("delegate_bot"); expect(prompt).toContain("STATUS_TOOLS_CANARY");
+  expect(prompt).toContain("Chief of Staff"); expect(prompt).toContain("delegate_bot"); expect(prompt).not.toContain("STATUS_TOOLS_CANARY");
   if (shared) { expect(prompt).toContain("Iris (shared): available"); expect(prompt).not.toContain("HOME_PRIVATE_DESCRIPTION"); }
 });
 it.each([false, true])("R2.4 session turns are read-only during a team journal (partitioned=%s)", partitioned => {
