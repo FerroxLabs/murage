@@ -43,7 +43,7 @@ export function MemoryNotebookPicker({ botId, onPreview }: { botId?: string; onP
         onClick={() => void run(async () => onPreview(await request({ action: "import-preview", selections: selected.map(item => JSON.parse(item)) })))}>Preview selected notebooks</button>
       {inventory.links.filter(link => visible(link.selection)).map(link => <div key={link.id} role="group" aria-label={`Tracked notebook: ${label(link.selection)}`} className="rounded-lg border border-hairline/40 p-3 text-[13px]">
         <p className="break-words">{label(link.selection)}</p>
-        <p>{link.status === "current" ? "Tracking file changes" : "Needs review: check the file and any pinned, edited, archived or forgotten memories before importing again."}</p>
+        <p>{link.status === "current" ? "Tracking file changes" : "Needs you: check the file and any pinned, edited, archived or forgotten memories before importing again."}</p>
         <button type="button" className={memoryButtonClass} disabled={busy} onClick={() => void run(async () => { await request({ action: "import-stop-tracking", id: link.id }); await refresh(); })}>Stop tracking</button>
       </div>)}
     </>}

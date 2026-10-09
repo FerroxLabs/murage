@@ -2,6 +2,7 @@ import { projectEvents, type ProjectFrame } from "@/lib/project-events";
 import { emitInboxChanged } from "@/lib/inbox-changed";
 import { decideWithFreshAuth } from "@/lib/fresh-auth";
 import { REMEMBERED_EVENT } from "../../shared/learned-chip";
+import { MEMORY_WAITING_EVENT } from "@/lib/memory-review";
 // Server-backed store. The React app holds no transports of its own:
 // it dispatches typed commands over HTTP and folds the one SSE event
 // stream from the harness server into local state. The reducer stays
@@ -3258,6 +3259,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (frame.kind === "inbox.changed") { emitInboxChanged(frame.pollScale); return; }
       // A memory the bot just kept (B5m): the open chat attaches its chip under the reply it came from.
       if (frame.kind === "learning.remembered" || frame.kind === "learning.improved") { window.dispatchEvent(new CustomEvent(REMEMBERED_EVENT, { detail: frame })); return; }
+      // How many memories wait for the owner (counts only): the shared counts, the badge and the Memory screen move at once.
+      if (frame.kind === "memory.waiting") { window.dispatchEvent(new CustomEvent(MEMORY_WAITING_EVENT, { detail: frame })); return; }
       if (frame.kind === "project.strip" || frame.kind === "project.board" || frame.kind === "room.requests") {
         projectEvents.frame(frame as ProjectFrame);
         return;

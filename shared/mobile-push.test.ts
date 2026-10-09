@@ -28,7 +28,7 @@ describe("push categories", () => {
   });
   it("counts everything but done as attention (R5)", () => {
     expect(isAttention("done")).toBe(false);
-    for (const kind of ["approval", "question", "takeover", "routine-failed", "turn-failed", "backup-waiting"] as const) expect(isAttention(kind)).toBe(true);
+    for (const kind of ["approval", "question", "takeover", "routine-failed", "turn-failed", "backup-waiting", "memories-waiting"] as const) expect(isAttention(kind)).toBe(true);
   });
 });
 
