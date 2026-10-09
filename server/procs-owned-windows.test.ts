@@ -69,8 +69,41 @@ describe("owned Windows close confirmation (simulated)", () => {
   });
 });
 
+describe("Windows tree confirmation without a job (simulated)", () => {
+  it("a failed taskkill is not a stopped tree, even when the fallback then closes the root", async () => {
+    native.execFile.mockImplementation((_command, _args, _options, callback) => callback(new Error("access denied")));
+    child.kill = vi.fn(() => { queueMicrotask(() => child.emit("close", 1, null)); return true; });
+    const owned = spawnCli("fixture.exe", [], { stdio: ["pipe", "pipe", "pipe"] });
+    await expect(awaitCliTreeStopped(owned)).resolves.toBe(false);
+    expect(child.kill).toHaveBeenCalled();
+  });
+
+  it("a successful taskkill plus root close is a stopped tree", async () => {
+    native.execFile.mockImplementation((_command, _args, _options, callback) => { queueMicrotask(() => child.emit("close", 1, null)); callback(null); });
+    const owned = spawnCli("fixture.exe", [], { stdio: ["pipe", "pipe", "pipe"] });
+    await expect(awaitCliTreeStopped(owned)).resolves.toBe(true);
+    expect(native.execFile).toHaveBeenCalledWith("taskkill", expect.arrayContaining(["/T", "/F"]), expect.any(Object), expect.any(Function));
+  });
+});
 
 describe("Windows PIP job ownership", () => {
+  it("root exits first with a surviving child: not stopped until the job is empty", async () => {
+    let members = 1;
+    native.execFile.mockImplementation((_command, _args, _options, callback) => callback(null, JSON.stringify({ state: "present", activeProcesses: members })));
+    const owned = spawnCli("claude.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, { name: "Local\\murage-pip-claude-fixture", argsFile: join(base, "args.json") });
+    child.emit("close", 0, null); // the root is gone, one descendant still lives in the job
+    await expect(awaitCliTreeStopped(owned)).resolves.toBe(false);
+    members = 0;
+    await expect(awaitCliTreeStopped(owned)).resolves.toBe(true);
+  });
+
+  it("a failing job helper is never reported as stopped", async () => {
+    native.execFile.mockImplementation((_command, _args, _options, callback) => callback(new Error("helper failed"), ""));
+    const owned = spawnCli("claude.exe", [], { cwd: base, stdio: ["pipe", "pipe", "pipe"] }, { name: "Local\\murage-pip-claude-fixture", argsFile: join(base, "args.json") });
+    child.emit("close", 0, null);
+    await expect(awaitCliTreeStopped(owned)).resolves.toBe(false);
+  });
+
   it("spawns only the supervisor with CLI arguments in a JSON file", () => {
     const args = ["", 'a "quoted" value', "trailing\\", "line\nnext"];
     const argsFile = join(base, "job-args.json");

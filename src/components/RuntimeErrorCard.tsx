@@ -4,6 +4,7 @@ import { classifyLocalResourceConflict, classifyLocalSetupFailure, engineErrorCa
 import { t } from "@/lib/i18n";
 import { isProviderSafetyBlock } from "../../shared/provider-safety";
 import { plainEngineError } from "../../shared/plain-engine-error";
+import { describeTurnError } from "../../shared/turn-error-code";
 import { DiagnosticDetails,type IncidentMessageSelection } from "./DiagnosticDetails";
 
 const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
@@ -30,7 +31,12 @@ export function RuntimeErrorCard({ message, details, errorKind, localFailure, di
   // A raw provider response (`API error (status 400): {…}`) is not a
   // sentence: say what happened, naming the bot, and keep the provider's
   // words under Technical details (G11).
-  const plain = !setup && botName ? plainEngineError(message, botName) : undefined;
+  // An internal code (CLAUDE_SESSION_RESET_TIMEOUT) is not a sentence either:
+  // one plain line with the next step, the code under Technical details.
+  // The sentence names Retry only when this card shows that button (below).
+  const canRetry = !!onRetry && !setup && !safetyBlocked;
+  const coded = setup ? undefined : describeTurnError(message, botName, { canRetry });
+  const plain = (!setup && botName ? plainEngineError(message, botName) : undefined) ?? coded?.text;
   const diagnostic = plain && details && !details.includes(message) ? `${message}\n${details}` : details || message;
   return <div className="flex justify-start">
     <section role="alert" aria-labelledby={titleId} className="w-full max-w-[42rem] rounded-xl border border-danger/30 bg-card p-4 text-ink shadow-sm sm:p-5">
@@ -46,6 +52,8 @@ export function RuntimeErrorCard({ message, details, errorKind, localFailure, di
       </div>
       {setup || <p className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[13px] leading-relaxed text-ink-secondary">{safetyBlocked
         ? "The provider's content checks stopped this request. Review your request before sending a new message. Changing Murage permissions will not remove the provider's restriction."
+        : coded?.recovery === "retry" || coded?.recovery === "contact" ? "If it keeps happening, open Technical details and send them to support."
+        : coded ? "Once that is done, your next message will go through. Technical details has what support needs if it does not."
         : "Review the details, then retry or choose another configured model in Provider settings."}</p>}
       {!safetyBlocked && <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" onClick={onOpenProviderSettings} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-hairline/70 bg-control px-3 py-2 text-[13px] font-medium text-ink " + focus}><Settings2 size={15} aria-hidden="true" /> Provider settings</button>

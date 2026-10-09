@@ -67,6 +67,8 @@ interface CliOwnership {
   closed: boolean;
   stopped: boolean;
   stopping?: Promise<boolean>;
+  /** Cut an in-flight stop's SIGTERM grace short: kill the whole tree now. */
+  escalate?: () => void;
   observations: StopRouteObservation[];
   observers: Set<StopRouteObserver>;
 }
@@ -221,14 +223,26 @@ export function awaitCliTreeStopped(child: ChildProcess, termGraceMs = CLI_TERM_
   return stopOwnedCli(child, ownership, undefined, termGraceMs);
 }
 
-function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopRouteObserver, termGraceMs = CLI_TERM_GRACE_MS): Promise<boolean> {
+/** Like awaitCliTreeStopped, but with no SIGTERM grace: a stop already in
+ * flight (the child's own close started one) is escalated at once, so the
+ * whole tree is killed now instead of when that stop's grace runs out. */
+export function forceCliTreeStopped(child: ChildProcess): Promise<boolean> {
+  const ownership = cliOwnership.get(child);
+  if (!ownership) return Promise.resolve(false);
+  return stopOwnedCli(child, ownership, undefined, 0, true);
+}
+
+function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopRouteObserver, termGraceMs = CLI_TERM_GRACE_MS, force = false): Promise<boolean> {
   if (observer && !owned.observers.has(observer)) {
     owned.observers.add(observer);
     for (const observation of owned.observations) {
       try { observer(observation); } catch { /* diagnostics never affect stop */ }
     }
   }
-  if (owned.stopping) return owned.stopping;
+  if (owned.stopping) {
+    if (force) { try { owned.escalate?.(); } catch { /* confirmation still decides */ } }
+    return owned.stopping;
+  }
   if (owned.stopped) return Promise.resolve(true);
   const pid = owned.pid;
   if (pid === undefined) return Promise.resolve(true); // failed spawn
@@ -243,6 +257,8 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
   const run = async () => {
     if (owned.platform === "win32") {
       if (owned.jobName) {
+        const jobName = owned.jobName;
+        owned.escalate = () => { void stopWindowsJob(jobName, CLI_FORCE_WAIT_MS); };
         // End the exact supervisor first, including its pre-job startup window.
         // Its last handle closes on exit and terminates every job member.
         if (!owned.closed) {
@@ -258,11 +274,27 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
       }
       if (owned.closed) return true;
       return new Promise<boolean>((resolve) => {
+        // Root close alone proves nothing about the tree: taskkill must also
+        // have succeeded (or found the root already gone), or it is unconfirmed.
+        let rootClosed = false;
+        let treeKilled: boolean | undefined;
         const finish = (value: boolean) => { clearTimeout(timer); child.off("close", closed); resolve(value); };
-        const closed = () => finish(true);
+        const settle = () => {
+          if (treeKilled === false) finish(false);
+          else if (rootClosed && treeKilled === true) finish(true);
+        };
+        const closed = () => { rootClosed = true; settle(); };
         const timer = setTimeout(() => finish(false), 5_000);
         child.once("close", closed);
-        killCliTreeWith(child, observer, REAL_KILL_DEPS);
+        const killTree = () => killCliTreeWith(child, (observation) => {
+          observe(observation);
+          if (observation.route === "windows_taskkill" && observation.result === "succeeded") treeKilled = true;
+          else if (observation.route === "windows_taskkill" && observation.result === "failed") treeKilled = false;
+          else if (observation.route === "already_exited") treeKilled = true;
+          settle();
+        }, REAL_KILL_DEPS);
+        owned.escalate = killTree;
+        killTree();
       });
     }
     const settled = () => {
@@ -274,6 +306,7 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
       try { process.kill(-pid, value); }
       catch { if (!owned.closed) { try { child.kill(value); } catch { /* retain uncertainty */ } } }
     };
+    owned.escalate = () => signal("SIGKILL");
     const wait = async (ms: number) => {
       const deadline = Date.now() + ms;
       while (!settled()) {
