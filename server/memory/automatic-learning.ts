@@ -6,7 +6,7 @@ import { readMemoryLearning } from "./learning-policy.ts";
 
 export function learningReviewReason(reason:string):string {
   const reasons:Record<string,string>={
-    "needs-owner-approval":"Review this memory in Needs review before using it.",
+    "needs-owner-approval":"This memory needs you before it is used.",
     "private-into-shared":"This memory came from a private chat. Review it before sharing it here.",
     "cross-partition":"The cited sources belong to different audiences. Review this memory before using it.",
     "cross-scope":"The source belongs to another audience. Review this memory before using it.",
@@ -15,11 +15,15 @@ export function learningReviewReason(reason:string):string {
     "not-owner-audience":"This source is not from an owner conversation.","not-owner-speaker":"This source was not written by the owner.",
     "not-active":"The source has not finished capture or is no longer active.","source-gone":"The source is no longer available.","tombstoned":"The source was forgotten.",
     "excluded-thread":"Learning from this conversation is excluded.","tool-results-nightly-only":"Tool results are not learned through this path.","settlement":"Turn status is not an owner statement.","project-budget-reached":"The project learning allowance has been reached.",
-    "default-review":"This learning connection requires review. Open Needs review to approve this memory.","review-mode":"Review before using is on. Open Needs review to approve this memory.",
-    "automatic-off":"Automatic learning is off. Open Needs review to approve this memory.",
-    "correction-review":"This memory corrects an earlier memory. Approve the correction in Needs review.",
+    "default-review":"This learning connection asks you first. Open Needs you to approve this memory.","review-mode":"Asking you first is on. Open Needs you to approve this memory.",
+    "automatic-off":"Automatic learning is off. Open Needs you to approve this memory.",
+    "correction-review":"This memory corrects an earlier memory. Approve the correction in Needs you.",
   };
   return reasons[reason]??(reason.startsWith("origin-")?"This source was not an attended owner message. Review it before using it.":"This memory could not be confirmed. Review it before using it.");
+}
+/** A reason already stored on a candidate held before 1.0.2 still says "Needs review"; it reads as "Needs you" from here on. */
+export function storedReviewReason(basis:string):string {
+  return basis.replaceAll("Needs review","Needs you").replace("Review this memory in Needs you before using it.","This memory needs you before it is used.");
 }
 export function holdMemoryCandidate(db:DatabaseSync,id:string,reason:string){
   db.prepare("UPDATE memory_record_details SET confidence_basis=? WHERE record_id=? AND record_version=1 AND EXISTS(SELECT 1 FROM memory_records r WHERE r.id=memory_record_details.record_id AND r.version=memory_record_details.record_version AND r.state='candidate')").run(learningReviewReason(reason),id);

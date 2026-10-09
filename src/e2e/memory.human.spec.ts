@@ -126,7 +126,7 @@ async function clickAction(page:Page,label:string,action:string) {
 }
 async function inspectActive(page:Page,id:string) {
   await page.getByRole("combobox",{name:"Audience",exact:true}).selectOption(botScope);
-  await page.getByRole("combobox",{name:"Record status",exact:true}).selectOption("active");
+  await page.getByRole("combobox",{name:"Show",exact:true}).selectOption("active");
   await clickAction(page,"Search","list");
   await page.locator(`[data-memory-id="${id}"]`).getByRole("button",{name:"Inspect memory",exact:true}).click();
   await expect(page.getByRole("region",{name:"Memory details",exact:true})).toHaveAttribute("data-memory-detail-id",id);
@@ -148,7 +148,7 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
   await page.getByRole("button",{name:"Manage memory",exact:true}).click();
   await expect(page.getByRole("heading",{name:"Workspace memory",exact:true})).toBeVisible();
   const audience=page.getByRole("combobox",{name:"Audience",exact:true});
-  const status=page.getByRole("combobox",{name:"Record status",exact:true});
+  const status=page.getByRole("combobox",{name:"Show",exact:true});
   const search=page.getByRole("textbox",{name:"Search memory",exact:true});
   await expect(audience).toBeVisible();await expect(status).toBeVisible();await expect(search).toBeVisible();
   await audience.selectOption(botScope);
@@ -166,10 +166,9 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
   await expect(page.getByRole("heading",{name:"Memory details",exact:true})).toBeVisible();
   await expect(page.getByText(ORIGINAL,{exact:true}).first()).toBeVisible();
   const details=page.getByRole("region",{name:"Memory details",exact:true});
-  await details.locator("summary").filter({hasText:"source-browser-candidate"}).click();
-  await expect(details.getByText(/Source hash:/)).toBeVisible();
+  await details.locator("summary").filter({hasText:"A conversation"}).click();
   await screenshot("memory-review");
-  await clickAction(page,"Approve candidate","approve");
+  await clickAction(page,"Keep","approve");
   await inspectActive(page,"browser-candidate");
   await expect(page.getByRole("button",{name:"Save correction",exact:true})).toBeVisible();
   await page.getByRole("textbox",{name:"Correction text",exact:true}).fill(CORRECTED);
@@ -322,7 +321,7 @@ test("paged bot memory handles 3000 records in both skins without accumulating c
   await expect(panel.locator("[data-memory-id]").first()).toHaveAttribute("data-memory-id","paged-2999");
   await panel.getByRole("button",{name:"Important",exact:true}).click();
   await expect(panel.locator("[data-memory-id]")).toHaveCount(1);
-  await panel.getByRole("button",{name:"Needs review",exact:true}).click();
+  await panel.getByRole("button",{name:"Waiting",exact:true}).click();
   await expect(panel.locator("[data-memory-id]")).toHaveCount(1);
   await expect(panel.locator("[data-memory-id]").first()).toHaveAttribute("data-memory-id","paged-candidate");
   for(const skin of ["light","dark"]){

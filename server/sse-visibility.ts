@@ -265,6 +265,7 @@ export const KNOWN_FRAME_KINDS = [
   "inbox.changed",
   "learning.remembered",
   "learning.improved",
+  "memory.waiting",
 ] as const;
 
 /** Read the conversation a frame is about out of its payload.
@@ -346,6 +347,10 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
       return { scope: "desktop" };
     // An automatic skill or routine change (B7c): carries the name of the skill or routine, so desktop only.
     case "learning.improved":
+      return { scope: "desktop" };
+    // How many memories wait for the owner, per bot or room (counts only, no
+    // memory text). Desktop in Phase 0; the paired owner phone joins in Phase 1.
+    case "memory.waiting":
       return { scope: "desktop" };
     case "sidebar.order":
       return payload.audience === "remote" ? { scope: "remote" } : { scope: "desktop" };

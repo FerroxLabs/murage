@@ -409,6 +409,8 @@
   "notificationSettings.completionHelp": "A task has finished.",
   "notificationSettings.failuresLabel": "Task failed",
   "notificationSettings.failuresHelp": "A task or routine needs review after a failure.",
+  "notificationSettings.memoriesLabel": "Memories waiting for you",
+  "notificationSettings.memoriesHelp": "A bot has things it would like to remember and is waiting for your say. Shows a count only, never the memories themselves.",
   "notificationSettings.previewLabel": "Show notification previews",
   "notificationSettings.previewHelp": "Turn off to use a generic Murage title and message. Clicking still opens the right conversation.",
   "notificationSettings.soundLabel": "Play a sound",
