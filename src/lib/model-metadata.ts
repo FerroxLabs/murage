@@ -328,6 +328,12 @@ export function lookupModelMetadata(id: string, hint?: string | null): ModelMeta
   if (typeof id !== "string" || !id.trim()) return null;
   const forms = candidates(id);
   if (!forms) return null;
+  if (!hint) {
+    for (const form of forms) {
+      const own = FLUX_OVERLAY[form];
+      if (own) return { metadata: own, provider: "flux", modelId: form, tier: form === id.toLowerCase() ? "exact" : "normalised" };
+    }
+  }
   for (let position = 0; position < forms.length; position += 1) {
     const rows = loadModelMetadata().index.get(forms[position]!);
     if (!rows?.length) continue;
@@ -349,6 +355,23 @@ export function lookupModelMetadata(id: string, hint?: string | null): ModelMeta
   }
   return null;
 }
+
+/** Models the Flux Router serves that the bundled snapshot cannot describe on
+ *  its own: haiku 5.5 is newer than the snapshot (2026-09-23), and
+ *  claude-opus-4-1-20250805 is quoted at $13.50/$67.50 by one reseller and
+ *  $15/$75 by seventeen others with no `anthropic` entry to break the tie, so
+ *  the ambiguity gate refuses it. Both are Flux's own published rates (Haiku
+ *  5.5 from Flux, 2026-10-08) and Anthropic's list price for Opus 4.1.
+ *
+ *  Haiku 5.5 is tiered by prompt size: this format carries one rate, so the
+ *  entry holds the base band (prompts up to 100k tokens). Above 100k it is
+ *  $0.50 in / $2.50 out; cache read $0.01 / $0.05, 5m write $0.125 / $0.625,
+ *  1h write $0.20 / $1.00. Remove this when the live models.dev-backed catalog
+ *  lands (memory: murage-dynamic-model-catalog). */
+const FLUX_OVERLAY: Readonly<Record<string, ModelMetadata>> = Object.freeze({
+  "claude-haiku-5-5": { name: "Claude Haiku 5.5", inputPerMillion: 0.1, outputPerMillion: 0.5, contextWindow: 1_000_000, vision: true, tools: true, reasoning: true },
+  "claude-opus-4-1-20250805": { name: "Claude Opus 4.1", inputPerMillion: 15, outputPerMillion: 75, contextWindow: 200_000, vision: true, tools: true, reasoning: true },
+});
 
 /** The models.dev provider hint for a picker row, if any is trustworthy. */
 export function providerHint(preset?: string | null, reported?: string | null): string | undefined {

@@ -10,14 +10,16 @@
 import {spawnSync,execFile} from "node:child_process";
 
 const system32=()=>{const root=process.env.SystemRoot;if(typeof root!=="string"||!/^[A-Za-z]:\\[^"\x00-\x1f]*$/.test(root))throw Error("BACKUP_WINDOWS_ACL_UNAVAILABLE");return `${root.replace(/\\+$/,"")}\\System32`;};
-const run=(file,args,options={})=>spawnSync(file,args,{encoding:"utf8",windowsHide:true,timeout:20000,maxBuffer:1024*1024,...options});
+// PowerShell can take well over 20 s to start on a busy or slow Windows machine; a timeout here fails the
+// owner-only step outright, so wait up to a minute. The signed job helper replaces these calls.
+const run=(file,args,options={})=>spawnSync(file,args,{encoding:"utf8",windowsHide:true,timeout:60000,maxBuffer:1024*1024,...options});
 // The same tools, without blocking: the password store runs in Electron's
 // main process, where spawnSync froze the window for each PowerShell start
 // (about 3.5 s) and, called right after the native file dialog and message
 // box, never returned at all on Windows Server 2025 (the dialog's shell work
 // waits for the main thread that spawnSync holds). Resolves, never rejects.
 const runAsync=(file,args,options={})=>new Promise(resolve=>{
- try{execFile(file,args,{encoding:"utf8",windowsHide:true,timeout:20000,maxBuffer:1024*1024,...options},(error,stdout)=>resolve({status:error?(Number.isInteger(error.code)?error.code:1):0,stdout:String(stdout??"")}));}
+ try{execFile(file,args,{encoding:"utf8",windowsHide:true,timeout:60000,maxBuffer:1024*1024,...options},(error,stdout)=>resolve({status:error?(Number.isInteger(error.code)?error.code:1):0,stdout:String(stdout??"")}));}
  catch{resolve({status:1,stdout:""});}
 });
 const powershell=()=>`${system32()}\\WindowsPowerShell\\v1.0\\powershell.exe`;

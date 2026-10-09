@@ -249,12 +249,39 @@ export function replayWindow<T extends {text?: string}>(lines: readonly T[], opt
  *
  * A check that cannot finish withholds its line instead of failing the turn
  * (0.1.61.1 memreplay: a long chat with Dax failed every turn with
- * MEMORY_REPLAY_LIMIT because the whole branch was checked). */
-export function filterDirectReplay<T extends ReplayMessage & {kind?: string; text?: string; replyToId?: string}>(threadId: string, messages: readonly T[], access: MemoryAccess, skip: ReadonlySet<string>, options: ReplayWindowOptions = {}): {allowed: T[]; replayed: T[]; omitted: number} {
+ * MEMORY_REPLAY_LIMIT because the whole branch was checked).
+ *
+ * The workspace owner's own direct chat (an owner-audience turn on a thread
+ * that is not a room) follows the room rule (roomReplayWithheld): the bot's
+ * own reply is withheld only when content it used was forgotten, deleted or
+ * changed, never because a roster, settings or policy change revoked receipts
+ * across the install. Before 1.0.1 it read through filterMemoryReplay, whose
+ * receipt state and revision checks withheld every reply of a session once
+ * any one of its receipts was revoked (each reply is linked to every receipt
+ * of its native session), so after a memory continuation reset the fresh
+ * session was replayed the owner's lines and none of its own. Given
+ * `withheldLine`, a withheld line stays in its place as that text, so the
+ * turn never silently misses its own words; without it the line is left out.
+ * Every other direct turn (words nobody proved are the owner's, a person's
+ * chat) keeps filterMemoryReplay. */
+export function filterDirectReplay<T extends ReplayMessage & {kind?: string; text?: string; replyToId?: string}>(threadId: string, messages: readonly T[], access: MemoryAccess, skip: ReadonlySet<string>, options: ReplayWindowOptions & { withheldLine?: (message: T, forgotten: boolean) => string } = {}): {allowed: T[]; replayed: T[]; omitted: number; withheld: Set<string>} {
   const minLines = options.minLines ?? DIRECT_REPLAY_LINES;
   const replayable = (message: T) => message.kind === "text" && Boolean(message.text) && !skip.has(message.id);
   const lines = messages.filter(replayable);
   let allowed: T[] = [], replayed: T[] = [];
+  const ownerChat = ownerDirectChat(threadId, access);
+  const withheld = new Set<string>(), forgotten = new Set<string>();
+  // The lines among `fresh` this reader may be shown (as a withheld line, for
+  // the owner's own chat when the caller gives one).
+  const judge = (fresh: T[]): T[] => {
+    if (!ownerChat) return filterMemoryReplay(threadId, fresh, access, { failClosed: true });
+    const held = roomReplayWithheld(threadId, fresh);
+    for (const message of fresh) if (held.has(message.id)) {
+      withheld.add(message.id);
+      if (message.role !== "user" && messageSourceForgotten(threadId, message.id)) forgotten.add(message.id);
+    }
+    return options.withheldLine ? fresh : fresh.filter(message => !held.has(message.id));
+  };
   // A line's verdict does not depend on the lines asked with it, so a line a
   // round judged is not asked about again when the window widens: a thread
   // whose every reply is withheld widens to the whole thread, and would
@@ -266,14 +293,28 @@ export function filterDirectReplay<T extends ReplayMessage & {kind?: string; tex
     for (const message of tail) if (message.replyToId) ids.add(message.replyToId);
     const asked = messages.filter(message => ids.has(message.id));
     const fresh = asked.filter(message => !judged.has(message.id));
-    if (fresh.length) for (const message of filterMemoryReplay(threadId, fresh, access, { failClosed: true })) kept.add(message.id);
+    if (fresh.length) for (const message of judge(fresh)) kept.add(message.id);
     for (const message of fresh) judged.add(message.id);
     allowed = asked.filter(message => kept.has(message.id));
     replayed = allowed.filter(message => tailIds.has(message.id));
     if (replayed.length >= minLines || limit >= lines.length) break;
   }
+  const line = options.withheldLine;
+  if (line && withheld.size) {
+    // nothing of a withheld line is left to quote or follow
+    const shown = (message: T): T => withheld.has(message.id) ? { ...message, text: line(message, forgotten.has(message.id)), replyToId: undefined } : message;
+    allowed = allowed.map(shown);
+    replayed = replayed.map(shown);
+  }
   replayed = replayWindow(replayed, options);
-  return { allowed, replayed, omitted: lines.length - replayed.length };
+  return { allowed, replayed, omitted: lines.length - replayed.length, withheld };
+}
+
+/** The workspace owner's own direct chat with a bot: an owner-audience turn
+ * whose thread is not a room and belongs to the owner. */
+function ownerDirectChat(threadId: string, access: MemoryAccess): boolean {
+  return threadId === access.threadId && memoryAccessIsOwnerAudience(access) && !accessIncludesRoom(access)
+    && isWorkspaceOwner(threadHumanPrincipal(threadId));
 }
 
 /** The ids of a room's generated replies that bots may no longer be shown,

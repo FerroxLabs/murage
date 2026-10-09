@@ -30,7 +30,19 @@ describe("bareModelId", () => {
 
 describe("titleCaseModelId", () => {
   it("renders Sean's example", () => {
-    expect(titleCaseModelId("flux-pinned-deepseek-flash-max")).toBe("Flux Pinned Deepseek Flash Max");
+    expect(titleCaseModelId("flux-pinned-deepseek-flash-max")).toBe("Flux Pinned DeepSeek Flash Max");
+  });
+  it("joins numeric version segments and drops the date suffix", () => {
+    expect(titleCaseModelId("claude-haiku-5-5")).toBe("Claude Haiku 5.5");
+    expect(titleCaseModelId("claude-opus-4-1-20250805")).toBe("Claude Opus 4.1");
+    expect(titleCaseModelId("flux-pinned-claude-haiku-5-5")).toBe("Flux Pinned Claude Haiku 5.5");
+    expect(titleCaseModelId("claude-3-5-sonnet-20241022")).toBe("Claude 3.5 Sonnet");
+    expect(titleCaseModelId("gpt-4-1")).toBe("GPT 4.1");
+    expect(titleCaseModelId("claude-opus-5")).toBe("Claude Opus 5");
+    expect(titleCaseModelId("gemini-2-5-pro")).toBe("Gemini 2.5 Pro");
+    expect(titleCaseModelId("grok-4-7")).toBe("Grok 4.7");
+    expect(titleCaseModelId("qwen-3-8b")).toBe("Qwen 3 8b");
+    expect(titleCaseModelId("gpt-4-0613")).toBe("GPT 4 0613");
   });
   it("leaves a word that is already capitalised alone", () => {
     expect(titleCaseModelId("MiniMax-M3")).toBe("MiniMax M3");
@@ -50,13 +62,13 @@ describe("isDerivedLabel", () => {
   it("rejects a label that is only the id", () => {
     expect(isDerivedLabel("flux-auto", "flux-auto")).toBe(true);
     expect(isDerivedLabel("flux::flux-auto", "flux-auto")).toBe(true);
-    expect(isDerivedLabel("flux-pinned-deepseek-flash-max", "Flux Pinned Deepseek Flash Max")).toBe(true);
+    expect(isDerivedLabel("flux-pinned-deepseek-flash-max", "Flux Pinned DeepSeek Flash Max")).toBe(true);
     expect(isDerivedLabel("claude-opus-5", "")).toBe(true);
     expect(isDerivedLabel("claude-opus-5", undefined)).toBe(true);
   });
   it("accepts a name a provider actually wrote", () => {
     expect(isDerivedLabel("gpt-4o", "GPT-4o")).toBe(false);
-    expect(isDerivedLabel("claude-sonnet-4-6", "Claude Sonnet 4.6")).toBe(false);
+    expect(isDerivedLabel("claude-sonnet-4-6", "Claude Sonnet 4.6 (latest)")).toBe(false);
   });
   it("calls a name that happens to equal the title-cased id derived, harmlessly", () => {
     // "Claude Opus 5" IS what title-casing claude-opus-5 produces, so this
@@ -82,7 +94,7 @@ describe("resolveModelLabel", () => {
     expect(resolveModelLabel("gpt-4o", { catalogLabel: "gpt-4o", metadataName: "GPT-4o" })).toBe("GPT-4o");
     // and title-cases only when nothing named it — the pinned-route case
     expect(resolveModelLabel("flux-pinned-deepseek-flash-max", { catalogLabel: "flux-pinned-deepseek-flash-max" })).toBe(
-      "Flux Pinned Deepseek Flash Max",
+      "Flux Pinned DeepSeek Flash Max",
     );
   });
   it("treats a title-cased label from an earlier pass as still unnamed", () => {

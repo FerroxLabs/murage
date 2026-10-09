@@ -139,11 +139,11 @@ test("real Windows: this account's SID comes from the token and a new file is ma
  const {safeWipeSync}=await import("../server/testing/safe-wipe.mjs");
  resetCurrentUserSid();const sid=currentUserSid();
  const root=mkdtempSync(path.join(tmpdir(),"murage-acl-"));t.after(()=>safeWipeSync(root));
- // A person waits on this (choosing a password file, starting off-site): it
- // must finish in seconds, never at the tools' 20 s timeout.
+ // A person waits on this (choosing a password file, starting off-site): it must finish well inside the
+ // tools' 60 s timeout. A loaded CI runner starts PowerShell slowly (14.5 s seen), so the bound is 30 s.
  const file=path.join(root,"x.txt");writeFileSync(file,"x");const started=Date.now();restrictToOwner(file);
  assert.equal(aclIsOwnerOnly(readAcl(file),sid),true);
- assert.ok(Date.now()-started<10000,`owner-only took ${Date.now()-started} ms`);
+ assert.ok(Date.now()-started<30000,`owner-only took ${Date.now()-started} ms`);
 });
 test("a FAT32 or exFAT drive is known to hold no ACLs; anything unclear counts as NTFS (K-10 copies)",async()=>{
  const {volumeKeepsAcls}=await import("./backup-windows-acl.mjs");

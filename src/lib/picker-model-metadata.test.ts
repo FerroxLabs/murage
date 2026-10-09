@@ -108,7 +108,21 @@ describe("pickerModels fills what the engine never sent", () => {
     // Sean's screenshot: the Flux connection's /v1/models rows carry no name,
     // so `flux-auto` sat in the list beside the engine catalog's "Flux Auto".
     const rows = pickerModels(engine([]), [connection([fluxModel("flux-auto"), fluxModel("flux-pinned-deepseek-flash-max")])]);
-    expect(rows.map((row) => row.label)).toEqual(["Flux Auto", "Flux Pinned Deepseek Flash Max"]);
+    expect(rows.map((row) => row.label)).toEqual(["Flux Auto", "Flux Pinned DeepSeek Flash Max"]);
+  });
+});
+
+describe("Flux catalog rows the snapshot alone cannot label or price (1.0.1)", () => {
+  it("labels and prices Haiku 5.5 and the dated Opus 4.1 id", () => {
+    const rows = pickerModels(
+      engine([]),
+      [connection([fluxModel("claude-haiku-5-5"), fluxModel("claude-opus-4-1-20250805"), fluxModel("flux-pinned-claude-haiku-5-5")])],
+    );
+    expect(rows.map((row) => row.label)).toEqual(["Claude Haiku 5.5", "Claude Opus 4.1", "Claude Haiku 5.5"]);
+    for (const row of rows) expect(isPriceUnknown(row)).toBe(false);
+    expect(rows[0]!.pricing).toMatchObject({ inputPerMillion: 0.1, outputPerMillion: 0.5 });
+    expect(rows[0]!.contextWindow).toBe(1_000_000);
+    expect(rows[1]!.pricing).toMatchObject({ inputPerMillion: 15, outputPerMillion: 75 });
   });
 });
 
