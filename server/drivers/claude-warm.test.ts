@@ -30,14 +30,52 @@ const probe = vi.hoisted(() => ({
   treeGate: null as null | Promise<void>,
   /** tree-stop confirmations that reached the gate (proof the CLI's "close" fired) */
   treeGated: 0,
+  /** true: the forced stop reports "not confirmed" without touching the process (one test only) */
+  forceFails: false,
+  /** a pid whose forced stop reports "not confirmed" while every other tree is really stopped (one test only) */
+  forceFailPid: null as number | null,
+  /** true: every tree-stop confirmation reports "not confirmed" (one test only) */
+  stopFails: false,
+  /** true: the lifecycle proves every tree stopped while each caller-facing confirmation says "not confirmed", and every call is counted (one test only) */
+  disagree: false,
+  calls: { await: 0, force: 0, outcome: 0 },
+  signalPids: [] as Array<number | undefined>,
+  /** per-pid override of the durable stop signal (a late confirmation the test controls) */
+  signalByPid: new Map<number, Promise<true>>(),
+  /** one signal for every tree (a late confirmation the test controls) */
+  lateSignal: null as null | Promise<true>,
 }));
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
   return {
     ...actual,
-    awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (probe.treeGate
+    cliTreeStoppedSignal: (...args: Parameters<typeof actual.cliTreeStoppedSignal>) => {
+      probe.calls.outcome++;
+      probe.signalPids.push(args[0].pid);
+      if (probe.disagree) return Promise.resolve(true as const);
+      const forced = args[0].pid === undefined ? undefined : probe.signalByPid.get(args[0].pid);
+      if (forced) return forced;
+      if (probe.lateSignal) return probe.lateSignal;
+      // a simulated unconfirmable stop must never notify success through the durable signal either
+      if (probe.stopFails || probe.forceFails || (probe.forceFailPid !== null && args[0].pid === probe.forceFailPid)) return new Promise<true>(() => {});
+      const real = actual.cliTreeStoppedSignal(...args);
+      return probe.treeGate ? probe.treeGate.then(() => real) : real;
+    },
+    cliTreeConfirmedStopped: (...args: Parameters<typeof actual.cliTreeConfirmedStopped>) => (probe.disagree || probe.stopFails || probe.forceFails || (probe.forceFailPid !== null && args[0].pid === probe.forceFailPid)
+      ? false
+      : actual.cliTreeConfirmedStopped(...args)),
+    awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (probe.disagree
+      ? (probe.calls.await++, Promise.resolve(false))
+      : probe.stopFails
+      ? Promise.resolve(false)
+      : probe.treeGate
       ? (probe.treeGated++, probe.treeGate.then(() => actual.awaitCliTreeStopped(...args)))
       : actual.awaitCliTreeStopped(...args)),
+    forceCliTreeStopped: (...args: Parameters<typeof actual.forceCliTreeStopped>) => (probe.disagree
+      ? (probe.calls.force++, Promise.resolve(false))
+      : probe.forceFails || (probe.forceFailPid !== null && args[0].pid === probe.forceFailPid)
+      ? Promise.resolve(false)
+      : actual.forceCliTreeStopped(...args)),
   };
 });
 vi.mock("./process-tree.ts", async (original) => {
@@ -119,6 +157,10 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     probe.real = false;
     probe.treeGate = null;
     probe.treeGated = 0;
+    probe.forceFails = false;
+    probe.forceFailPid = null;
+    probe.stopFails = false; probe.disagree = false;
+    probe.signalByPid.clear(); probe.lateSignal = null;
     for (const key of ["FAKE_CLAUDE_AUTH", "FAKE_CLAUDE_HOLD_MARKER", "FAKE_CLAUDE_HOLD_GATE", "FAKE_CLAUDE_HOLD_SEEN", "FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS", "FAKE_CLAUDE_STATE", "FAKE_CLAUDE_RETRY_SCALE", "CLAUDE_CONFIG_DIR", "FAKE_CLAUDE_MODE"]) delete process.env[key];
     restoreTmp();
     info.mockRestore();
@@ -283,6 +325,302 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     const two = await run("t-dead", "two", base);
     expect(two.pid).not.toBe(one.pid);
   }, 20_000);
+
+  it("resetSession on a wedged CLI (ignores SIGTERM and stdin EOF) kills its tree and never fails: the next send runs on a fresh session", async () => {
+    // 1.0.1.1: a CLI that would not close in 10 s failed the owner's turn
+    // with CLAUDE_SESSION_RESET_TIMEOUT. A reset now waits a short grace,
+    // then kills the whole tree and goes on.
+    process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
+    try {
+      await create();
+      const one = await run("t-wedged", "one", base);
+      const started = Date.now();
+      const reset = await instance.adapter.resetSession!("t-wedged").then(() => "reset", (error: unknown) => String(error));
+      const took = Date.now() - started;
+      expect(reset).toBe("reset");
+      expect(took).toBeLessThan(3_500);
+      // the old process is gone: it cannot answer for the thread
+      expect(() => process.kill(one.pid, 0)).toThrow();
+      const two = await run("t-wedged", "two", { ...base, sessionReset: true });
+      expect(two.pid).not.toBe(one.pid);
+      expect(two.trace).toMatch(/process=spawned reason=(no-process|sessionReset)/);
+      const replies = recorder.events.filter((e) => e.type === "turn.completed" && e.threadId === "t-wedged");
+      expect(replies).toHaveLength(2);
+    } finally {
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+    }
+  }, 20_000);
+
+  it("a reset whose old tree cannot be confirmed keeps the thread blocked: the next send fails retryably, then runs once the tree is confirmed", async () => {
+    process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
+    try {
+      await create();
+      const one = await run("t-blocked", "one", base);
+      probe.forceFails = true;
+      await instance.adapter.resetSession!("t-blocked");
+      // never beside a live old tree: the old process is still there
+      expect(() => process.kill(one.pid, 0)).not.toThrow();
+      const blocked = await instance.adapter.sendTurn({ threadId: "t-blocked", text: "two", ...base, sessionReset: true }).then(() => "sent", (error: unknown) => String(error));
+      expect(blocked).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+      expect(() => process.kill(one.pid, 0)).not.toThrow();
+      probe.forceFails = false;
+      const two = await run("t-blocked", "two", { ...base, sessionReset: true });
+      expect(two.pid).not.toBe(one.pid);
+      expect(() => process.kill(one.pid, 0)).toThrow();
+    } finally {
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+    }
+  }, 30_000);
+
+  it("a late init frame from a retired session is ignored: no session.started, no resume cursor", async () => {
+    process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
+    process.env.FAKE_CLAUDE_LATE_INIT = "1";
+    try {
+      await create();
+      await run("t-late-init", "one", base);
+      const before = recorder.events.filter((e) => e.type === "session.started" && e.threadId === "t-late-init").length;
+      const started = Date.now();
+      await instance.adapter.resetSession!("t-late-init");
+      expect(Date.now() - started).toBeLessThan(3_500);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const after = recorder.events.filter((e) => e.type === "session.started" && e.threadId === "t-late-init");
+      expect(after).toHaveLength(before);
+      expect(JSON.stringify(after)).not.toContain("late-retired-session");
+    } finally {
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+      delete process.env.FAKE_CLAUDE_LATE_INIT;
+    }
+  }, 20_000);
+
+  it("a send and a prewarm that arrive while a reset is in progress wait for it: nothing launches beside the old tree", async () => {
+    process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
+    try {
+      await create();
+      const one = await run("t-barrier", "one", base);
+      const order: string[] = [];
+      info.mockImplementation((line: unknown) => {
+        if (typeof line !== "string") return;
+        if (line.startsWith("claude dispatch")) { traces.push(line); order.push("dispatch"); }
+        else if (line.startsWith("claude reset thread=")) order.push("reset-done");
+      });
+      const reset = instance.adapter.resetSession!("t-barrier");
+      // both arrive inside the reset's wait for the wedged old tree
+      const warmed = instance.adapter.prewarm!("t-barrier");
+      const sent = await instance.adapter.sendTurn({ threadId: "t-barrier", text: "two", ...base, sessionReset: true });
+      await reset;
+      expect(await warmed).toBe(false);
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(order[0]).toBe("reset-done");
+      expect(order.filter((entry) => entry === "dispatch")).toHaveLength(1);
+      expect(() => process.kill(one.pid, 0)).toThrow();
+      const two = JSON.parse(readFileSync(dump, "utf8")).pid as number;
+      expect(two).not.toBe(one.pid);
+    } finally {
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+    }
+  }, 30_000);
+
+  it("a late init from a closing session whose stopped turn is still open is ignored", async () => {
+    process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
+    process.env.FAKE_CLAUDE_LATE_INIT = "1";
+    process.env.FAKE_CLAUDE_MODE = "hang";
+    try {
+      await create();
+      const sent = await instance.adapter.sendTurn({ threadId: "t-late-active", text: "go", ...base });
+      await recorder.until((e) => e.type === "session.started" && e.threadId === "t-late-active");
+      const before = recorder.events.filter((e) => e.type === "session.started" && e.threadId === "t-late-active").length;
+      await instance.adapter.resetSession!("t-late-active");
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      const after = recorder.events.filter((e) => e.type === "session.started" && e.threadId === "t-late-active");
+      expect(after).toHaveLength(before);
+      expect(JSON.stringify(after)).not.toContain("late-retired-session");
+    } finally {
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+      delete process.env.FAKE_CLAUDE_LATE_INIT;
+    }
+  }, 30_000);
+
+  it("a tree that cannot be confirmed stopped still settles the turn; the thread then refuses a launch retryably until a confirmation succeeds", async () => {
+    process.env.FAKE_CLAUDE_MODE = "hang";
+    await create();
+    const sent = await instance.adapter.sendTurn({ threadId: "t-quarantine", text: "go", ...base });
+    await recorder.until((e) => e.type === "session.started" && e.threadId === "t-quarantine");
+    probe.stopFails = true;
+    probe.forceFails = true;
+    await instance.adapter.interruptTurn("t-quarantine").catch(() => undefined);
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId) as { ok?: boolean };
+    expect(done.ok).toBe(false);
+    expect(recorder.events.some((e) => e.type === "runtime.error" && String((e as { message?: string }).message).startsWith("CLAUDE_SESSION_NOT_STOPPED"))).toBe(true);
+    // settled, but quarantined: the retry is refused, retryably, and nothing is launched
+    process.env.FAKE_CLAUDE_MODE = "happy";
+    const refused = await instance.adapter.sendTurn({ threadId: "t-quarantine", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
+    expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+    // a later confirmation succeeds: the thread is free
+    probe.stopFails = false;
+    probe.forceFails = false;
+    const again = await run("t-quarantine", "again", base);
+    expect(again.pid).toBeGreaterThan(0);
+  }, 30_000);
+
+  it("a stop confirmed after every caller deadline releases the quarantine by itself: the next send goes through with no Retry", async () => {
+    process.env.FAKE_CLAUDE_MODE = "hang";
+    await create();
+    let confirmLate: (value: true) => void = () => {};
+    probe.lateSignal = new Promise<true>((resolve) => { confirmLate = resolve; });
+    const sent = await instance.adapter.sendTurn({ threadId: "t-late-release", text: "go", ...base });
+    await recorder.until((e) => e.type === "session.started" && e.threadId === "t-late-release");
+    probe.stopFails = true;
+    probe.forceFails = true; // every caller-facing confirmation keeps reading "not stopped"
+    await instance.adapter.interruptTurn("t-late-release").catch(() => undefined);
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    process.env.FAKE_CLAUDE_MODE = "happy";
+    const refused = await instance.adapter.sendTurn({ threadId: "t-late-release", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
+    expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+    // the shared confirmation finally succeeds, long after the attempt expired
+    confirmLate(true);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    // the flags stay on: only the durable success can have freed the thread
+    const again = await run("t-late-release", "again", base);
+    expect(again.pid).toBeGreaterThan(0);
+  }, 30_000);
+
+  it("repeated failed confirmations keep at most one success subscription per session, and one success releases once", async () => {
+    process.env.FAKE_CLAUDE_MODE = "hang";
+    await create();
+    let confirmLate: (value: true) => void = () => {};
+    probe.lateSignal = new Promise<true>((resolve) => { confirmLate = resolve; });
+    const sent = await instance.adapter.sendTurn({ threadId: "t-subs", text: "go", ...base });
+    await recorder.until((e) => e.type === "session.started" && e.threadId === "t-subs");
+    probe.stopFails = true;
+    probe.forceFails = true;
+    await instance.adapter.interruptTurn("t-subs").catch(() => undefined);
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    process.env.FAKE_CLAUDE_MODE = "happy";
+    probe.calls = { await: 0, force: 0, outcome: 0 };
+    probe.signalPids = [];
+    for (let i = 0; i < 5; i++) {
+      const refused = await instance.adapter.sendTurn({ threadId: "t-subs", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
+      expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+    }
+    // one subscription per session, however many attempts failed
+    expect(probe.signalPids.length).toBe(new Set(probe.signalPids).size);
+    console.log('SUBS', JSON.stringify(probe.signalPids));
+    confirmLate(true);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const again = await run("t-subs", "again", base);
+    expect(again.pid).toBeGreaterThan(0);
+    expect(probe.signalPids.length).toBe(new Set(probe.signalPids).size);
+  }, 60_000);
+
+  it("termination fails and the root's close never arrives: the turn still settles, quarantined, without waiting for the close", async () => {
+    process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
+    process.env.FAKE_CLAUDE_MODE = "hang";
+    try {
+      await create();
+      const sent = await instance.adapter.sendTurn({ threadId: "t-noclose", text: "go", ...base });
+      await recorder.until((e) => e.type === "session.started" && e.threadId === "t-noclose");
+      probe.stopFails = true;
+      probe.forceFails = true;
+      const stoppedAt = Date.now();
+      await instance.adapter.interruptTurn("t-noclose").catch(() => undefined);
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId) as { ok?: boolean };
+      // settled before the real SIGKILL escalation could have closed the root
+      expect(Date.now() - stoppedAt).toBeLessThan(2_500);
+      expect(done.ok).toBe(false);
+      expect(recorder.events.some((e) => e.type === "runtime.error" && String((e as { message?: string }).message).startsWith("CLAUDE_SESSION_NOT_STOPPED"))).toBe(true);
+      process.env.FAKE_CLAUDE_MODE = "happy";
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+      const refused = await instance.adapter.sendTurn({ threadId: "t-noclose", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
+      expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+      probe.stopFails = false;
+      probe.forceFails = false;
+      const again = await run("t-noclose", "again", base);
+      expect(again.pid).toBeGreaterThan(0);
+    } finally {
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+    }
+  }, 30_000);
+
+  it("confirmations that permanently disagree with the lifecycle proof never spin: bounded calls over 2 s, the event loop stays live, the turn gets the retryable error", async () => {
+    process.env.FAKE_CLAUDE_MODE = "hang";
+    try {
+      await create();
+      const sent = await instance.adapter.sendTurn({ threadId: "t-disagree", text: "go", ...base });
+      await recorder.until((e) => e.type === "session.started" && e.threadId === "t-disagree");
+      probe.disagree = true;
+      probe.calls = { await: 0, force: 0, outcome: 0 };
+      await instance.adapter.interruptTurn("t-disagree").catch(() => undefined);
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId) as { ok?: boolean };
+      expect(done.ok).toBe(false);
+      expect(recorder.events.some((e) => e.type === "runtime.error" && String((e as { message?: string }).message).startsWith("CLAUDE_SESSION_NOT_STOPPED"))).toBe(true);
+      let ticks = 0;
+      const ticker = setInterval(() => { ticks++; }, 100);
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      clearInterval(ticker);
+      expect(ticks).toBeGreaterThanOrEqual(10); // timers kept firing: no microtask spin
+      const total = probe.calls.await + probe.calls.force + probe.calls.outcome;
+      expect(total).toBeLessThan(40);
+    } finally {
+      probe.disagree = false;
+      process.env.FAKE_CLAUDE_MODE = "happy";
+    }
+  }, 30_000);
+
+  it("a stopped turn past its 5 s deadline leads into quarantine recovery, not a dead end: it settles, then the send waits for the confirmation", async () => {
+    process.env.FAKE_CLAUDE_IGNORE_TERM = "1";
+    process.env.FAKE_CLAUDE_MODE = "hang";
+    process.env.MURAGE_PROVIDER_CLOSE_MS = "300";
+    let release = () => {};
+    probe.treeGate = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      await create();
+      const sent = await instance.adapter.sendTurn({ threadId: "t-deadline", text: "go", ...base });
+      await recorder.until((e) => e.type === "session.started" && e.threadId === "t-deadline");
+      // the stop is requested but its confirmation hangs: no close, no quarantine yet
+      await instance.adapter.interruptTurn("t-deadline").catch(() => undefined);
+      probe.forceFails = true;
+      process.env.FAKE_CLAUDE_MODE = "happy";
+      const refused = await instance.adapter.sendTurn({ threadId: "t-deadline", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
+      // the old turn was settled by the quarantine, and the refusal is the retryable one
+      expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      probe.forceFails = false;
+      const again = await run("t-deadline", "again", base);
+      expect(again.pid).toBeGreaterThan(0);
+    } finally {
+      release();
+      probe.treeGate = null;
+      delete process.env.FAKE_CLAUDE_IGNORE_TERM;
+      delete process.env.MURAGE_PROVIDER_CLOSE_MS;
+    }
+  }, 30_000);
+
+  it("a quarantine or reset that arises during launch setup is waited out (bounded): the in-flight turn is cancelled by the reset, the next send goes through once", async () => {
+    await create();
+    const one = await run("t-late-wait", "one", base);
+    const spy = vi.spyOn(warmPool, "beforeSpawn").mockImplementationOnce(async () => {
+      // a reset begins after the dispatch's early check: its barrier is up when setup reaches the spawn
+      void instance.adapter.resetSession!("t-late-wait");
+    });
+    try {
+      const two = await run("t-late-wait", "two", { ...base, sessionReset: true });
+      // The reset that arose during setup stops the in-flight turn by design (it never
+      // fails it with an error): "two" settles as cancelled and nothing is refused.
+      expect(two.pid).toBe(one.pid); // the dump is still the first process's: "two" never spawned
+      const completed = recorder.events.filter((e) => e.type === "turn.completed" && e.threadId === "t-late-wait") as Array<{ ok?: boolean; stopReason?: string }>;
+      expect(completed).toHaveLength(2);
+      expect(completed[1]?.stopReason).toBe("cancelled");
+      expect(recorder.events.some((e) => e.type === "runtime.error" && String((e as { message?: string }).message).startsWith("CLAUDE_SESSION_NOT_STOPPED"))).toBe(false);
+      // the thread then recovers: the next send is really delivered to a fresh process
+      const three = await run("t-late-wait", "three", { ...base, sessionReset: true });
+      expect(JSON.stringify(three.seen.prompt)).toContain("three");
+      expect(three.pid).not.toBe(one.pid);
+      expect(recorder.events.some((e) => e.type === "runtime.error" && String((e as { message?: string }).message).startsWith("CLAUDE_SESSION_NOT_STOPPED"))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  }, 30_000);
 
   it("recycles the process when a child process of the CLI is still alive at settle", async () => {
     await create();
@@ -992,6 +1330,51 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     await instance.dispose();
     expect(mine().every((pid) => !alive(pid))).toBe(true);
   }, 30_000);
+
+  it("reset confirms EVERY older retiring process: A retiring, B current, A alive after reset keeps the thread quarantined so C cannot launch", async () => {
+    process.env.MINI_STUBBORN = "1";
+    await create();
+    await turn("t-older", "one");
+    const [old] = mine();
+    // a changed spawn contract replaces A with B; A ignores EOF and SIGTERM and stays retiring
+    await turn("t-older", "two", { model: "claude-other" });
+    expect(mine()).toHaveLength(2);
+    expect(alive(old!)).toBe(true);
+    // the forced stop cannot confirm A (B's is real)
+    probe.forceFailPid = old!;
+    await instance.adapter.resetSession!("t-older");
+    expect(alive(old!)).toBe(true);
+    const refused = await instance.adapter.sendTurn({ threadId: "t-older", text: "three", warmIdentity: identity, resumeCursor: "mini-session" }).then(() => "sent", (error: unknown) => String(error));
+    expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
+    expect(mine()).toHaveLength(2); // C never launched
+    // A is confirmed on a later attempt: the thread is free and A is really gone
+    probe.forceFailPid = null;
+    await turn("t-older", "three");
+    expect(alive(old!)).toBe(false);
+    expect(mine()).toHaveLength(3);
+  }, 40_000);
+
+  it("A times out, B is still pending, then A's stop is confirmed: the aggregation does not quarantine A again", async () => {
+    process.env.MINI_STUBBORN = "1";
+    await create();
+    await turn("t-interleave", "one");
+    const [old] = mine();
+    await turn("t-interleave", "two", { model: "claude-other" });
+    const current = mine().find((pid) => pid !== old)!;
+    probe.forceFailPid = old!; // A's forced stop reads "not stopped" at its deadline
+    let confirmA: (value: true) => void = () => {};
+    probe.signalByPid.set(old!, new Promise<true>((resolve) => { confirmA = resolve; }));
+    probe.signalByPid.set(current, new Promise<true>(() => {})); // B's release stays pending: the aggregation is still waiting on it
+    const reset = instance.adapter.resetSession!("t-interleave");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    confirmA(true); // A's late confirmation releases it from proof while the aggregation is pending
+    await reset;
+    probe.signalByPid.clear();
+    // A was released: the thread must not be quarantined on it again
+    const sent = await instance.adapter.sendTurn({ threadId: "t-interleave", text: "three", warmIdentity: identity, resumeCursor: "mini-session" }).then(() => "sent", (error: unknown) => String(error));
+    expect(sent).toBe("sent");
+    process.kill(old!, "SIGKILL"); // the fixture's own stubborn process
+  }, 40_000);
 });
 
 describe("ClaudeDriver intent prewarm (fake CLI)", () => {

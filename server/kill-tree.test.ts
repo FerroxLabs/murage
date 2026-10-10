@@ -103,13 +103,15 @@ describe("killCliTree", () => {
       killCliTree(parent);
       teardown.markStopRequested();
       const stopped = awaitCliTreeStopped(parent);
-      expect(awaitCliTreeStopped(parent)).toBe(stopped);
+      // a second caller joins the same in-flight stop (own deadline, one confirmation)
+      const joined = awaitCliTreeStopped(parent);
       if (!stubbornRoot) {
         await rootClose;
         expect(alive(helper)).toBe(true);
         await expect(teardown.wait({ closeMs: 40, maxMs: 40 })).resolves.toEqual({ closeConfirmed: false, reason: "timeout" });
       }
       await expect(stopped).resolves.toBe(true);
+      await expect(joined).resolves.toBe(true);
       await expect(teardown.wait({ closeMs: 500, maxMs: 500 })).resolves.toEqual({ closeConfirmed: true });
       expect(alive(helper)).toBe(false);
       expect(alive(parent.pid!)).toBe(false);

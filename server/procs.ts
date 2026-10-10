@@ -60,13 +60,33 @@ export function assertSafeCliArgv(
 
 export const CLI_TERM_GRACE_MS = 3_000;
 export const CLI_FORCE_WAIT_MS = 1_000;
+/** How long a reset or dispatch caller that passes an explicit deadline waits for
+ * the shared confirmation past its SIGTERM grace before reading "not stopped".
+ * It is the caller's deadline only: the confirmation keeps running and is
+ * joined, not restarted, by later callers. Callers that pass none wait exactly
+ * as 1.0.1 did. */
+export const CLI_CONFIRM_CAP_MS = 2_500;
+/** The deadline a reset or dispatch caller passes for the default SIGTERM grace. */
+export const CLI_CALLER_DEADLINE_MS = CLI_TERM_GRACE_MS + CLI_CONFIRM_CAP_MS;
+/** How long a pending confirmation stays cached as THE pending stop; past it a
+ * retry starts a fresh attempt (the old one may still succeed and is honoured). */
+export const CLI_LIFECYCLE_CAP_MS = 20_000;
 interface CliOwnership {
   pid: number | undefined;
   platform: NodeJS.Platform;
   jobName?: string;
   closed: boolean;
   stopped: boolean;
+  /** POSIX: the root closed and its process group was seen gone. Permanent: the
+   * saved numeric group id may belong to an unrelated group from now on, so it is
+   * never signalled again; a retry only re-runs the platform confirmation. */
+  treeGone?: boolean;
+  /** Durable success notification (outlives any attempt or caller deadline). */
+  stoppedSignal?: Promise<true>;
+  resolveStopped?: (value: true) => void;
   stopping?: Promise<boolean>;
+  /** Cut an in-flight stop's SIGTERM grace short: kill the whole tree now. */
+  escalate?: () => void;
   observations: StopRouteObservation[];
   observers: Set<StopRouteObserver>;
 }
@@ -215,20 +235,38 @@ export function killCliTree(child: ChildProcess, observer?: StopRouteObserver): 
 /** Request termination and confirm the owned lifecycle. POSIX requires root
  * close and group disappearance; Windows PIP requires named job confirmation.
  * Other Windows callers retain their root-close and taskkill contract. */
-export function awaitCliTreeStopped(child: ChildProcess, termGraceMs = CLI_TERM_GRACE_MS): Promise<boolean> {
+export function awaitCliTreeStopped(child: ChildProcess, termGraceMs = CLI_TERM_GRACE_MS, deadlineMs?: number): Promise<boolean> {
   const ownership = cliOwnership.get(child);
   if (!ownership) return Promise.resolve(false);
-  return stopOwnedCli(child, ownership, undefined, termGraceMs);
+  return stopOwnedCli(child, ownership, undefined, termGraceMs, false, deadlineMs);
 }
 
-function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopRouteObserver, termGraceMs = CLI_TERM_GRACE_MS): Promise<boolean> {
+/** Like awaitCliTreeStopped, but with no SIGTERM grace: a stop already in
+ * flight (the child's own close started one) is escalated at once, so the
+ * whole tree is killed now instead of when that stop's grace runs out. */
+export function forceCliTreeStopped(child: ChildProcess, deadlineMs = CLI_CONFIRM_CAP_MS): Promise<boolean> {
+  const ownership = cliOwnership.get(child);
+  if (!ownership) return Promise.resolve(false);
+  return stopOwnedCli(child, ownership, undefined, 0, true, deadlineMs);
+}
+
+function markStopped(owned: CliOwnership): void {
+  owned.stopped = true;
+  owned.resolveStopped?.(true);
+}
+
+function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopRouteObserver, termGraceMs = CLI_TERM_GRACE_MS, force = false, deadlineMs?: number): Promise<boolean> {
   if (observer && !owned.observers.has(observer)) {
     owned.observers.add(observer);
     for (const observation of owned.observations) {
       try { observer(observation); } catch { /* diagnostics never affect stop */ }
     }
   }
-  if (owned.stopping) return owned.stopping;
+  if (owned.stopping) {
+    if (force) { try { owned.escalate?.(); } catch { /* confirmation still decides */ } }
+    // Joined, not restarted: this caller still gets its own deadline.
+    return callerView(owned.stopping, deadlineMs);
+  }
   if (owned.stopped) return Promise.resolve(true);
   const pid = owned.pid;
   if (pid === undefined) return Promise.resolve(true); // failed spawn
@@ -243,6 +281,8 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
   const run = async () => {
     if (owned.platform === "win32") {
       if (owned.jobName) {
+        const jobName = owned.jobName;
+        owned.escalate = () => { void stopWindowsJob(jobName, CLI_FORCE_WAIT_MS); };
         // End the exact supervisor first, including its pre-job startup window.
         // Its last handle closes on exit and terminates every job member.
         if (!owned.closed) {
@@ -256,6 +296,12 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
         }
         return stopWindowsJob(owned.jobName, termGraceMs + CLI_FORCE_WAIT_MS);
       }
+      // Windows without a job keeps EXACTLY the 1.0.1 stop semantics: one
+      // `taskkill /PID <pid> /T /F` while the root is known alive, root close
+      // is what confirms, and a closed root is never re-targeted by its retained
+      // PID (the number may belong to an unrelated process by then). Proving
+      // that every Windows descendant has stopped needs owned job handles; that
+      // arrives with the native Job Object lane, not here.
       if (owned.closed) return true;
       return new Promise<boolean>((resolve) => {
         const finish = (value: boolean) => { clearTimeout(timer); child.off("close", closed); resolve(value); };
@@ -266,14 +312,21 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
       });
     }
     const settled = () => {
+      if (owned.treeGone) return true;
       if (!owned.closed) return false;
       try { process.kill(-pid, 0); return false; }
-      catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
+        owned.treeGone = true; // permanent: the number may be reused by an unrelated group
+        return true;
+      }
     };
     const signal = (value: NodeJS.Signals) => {
+      if (owned.treeGone) return;
       try { process.kill(-pid, value); }
       catch { if (!owned.closed) { try { child.kill(value); } catch { /* retain uncertainty */ } } }
     };
+    owned.escalate = () => { if (!settled()) signal("SIGKILL"); };
     const wait = async (ms: number) => {
       const deadline = Date.now() + ms;
       while (!settled()) {
@@ -301,13 +354,50 @@ function stopOwnedCli(child: ChildProcess, owned: CliOwnership, observer?: StopR
     return wait(CLI_FORCE_WAIT_MS);
   };
   // A platform hook (Murage Cloud) can only veto: its answer is ANDed with ours.
-  const attempt = run().then(async (stopped) => stopped && await platformConfirmStopped(child)).catch(() => false);
+  const raw = run().then(async (stopped) => stopped && await platformConfirmStopped(child)).catch(() => false);
+  // ONE in-flight confirmation per tree. Every caller (reset, dispatch, close,
+  // Stop) joins it instead of starting another stop. Callers without a deadline
+  // get the confirmation exactly as 1.0.1 timed it; a reset or dispatch caller
+  // passes an explicit deadline (callerView) and reads "not stopped" at it without
+  // ending the confirmation. The cache is bounded only so a hung platform hook
+  // cannot stay THE pending stop forever: past it a retry starts a fresh attempt,
+  // and a success that arrives later is still honoured (stoppedSignal).
+  const attempt = raw;
   owned.stopping = attempt;
+  const capTimer = setTimeout(() => { if (owned.stopping === attempt) owned.stopping = undefined; }, termGraceMs + CLI_LIFECYCLE_CAP_MS);
+  capTimer.unref?.();
   void attempt.then((stopped) => {
-    owned.stopped = stopped;
-    if (!stopped) owned.stopping = undefined; // explicit later retry may succeed
+    clearTimeout(capTimer);
+    if (owned.stopping === attempt) owned.stopping = undefined;
+    if (stopped) markStopped(owned);
   });
-  return attempt;
+  return callerView(attempt, deadlineMs);
+}
+
+/** One caller's view of the shared confirmation: with a deadline it reads "not
+ * stopped" at that deadline without ending or restarting the confirmation. */
+function callerView(shared: Promise<boolean>, deadlineMs: number | undefined): Promise<boolean> {
+  if (deadlineMs === undefined) return shared;
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), deadlineMs);
+    timer.unref?.();
+    void shared.then((value) => { clearTimeout(timer); resolve(value); });
+  });
+}
+
+/** Has this tree's stop ever been confirmed (however late)? */
+export function cliTreeConfirmedStopped(child: ChildProcess): boolean {
+  return cliOwnership.get(child)?.stopped === true;
+}
+
+/** Resolves true whenever this tree's stop is finally confirmed, however late
+ * (after any caller deadline or the cache bound); never resolves otherwise and
+ * holds no timer, so a session can register to be released by it. */
+export function cliTreeStoppedSignal(child: ChildProcess): Promise<true> {
+  const owned = cliOwnership.get(child);
+  if (!owned) return new Promise<true>(() => {});
+  if (owned.stopped) return Promise.resolve(true);
+  return owned.stoppedSignal ??= new Promise<true>((resolve) => { owned.resolveStopped = resolve; });
 }
 
 /** killCliTree with injectable OS seams, so route selection and fallback

@@ -28,7 +28,7 @@ import { toolFilePaths } from "../own-workspace-approval.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
-import { awaitCliTreeStopped, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, describeSpawnFailure, execCli, killCliTree, spawnCli } from "../procs.ts";
 import { bindCredentialPath, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantBaseline, untrackedDescendants, processNames } from "./process-tree.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
@@ -1104,6 +1104,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
        * undefined until the first result; null when the start is unknown. */
       costTotal: number | null | undefined;
       finishClose?: () => Promise<void>;
+      /** A confirmation already proved this process tree stopped: finishClose
+       * must not run another one that could disagree and quarantine it again. */
+      stopProven?: boolean;
+      /** Quarantine this process (tree not confirmed stopped) and settle its
+       * open turn, so the turn is never left busy behind it. */
+      quarantine?: () => void;
       /** Claude Code's "/" commands. `init` names them (`slash_commands`,
        * and `terminal_slash_commands` for the ones bound to a terminal
        * screen); the `initialize` control response describes them. Either
@@ -1124,11 +1130,53 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * so Stop, reset and dispose still reach a predecessor whose shutdown is
      * pending or failed, and can report that it could not be stopped. */
     const retiring = new Map<Session, string>();
+    /** The same registry indexed by thread, so per-thread lookups on release do
+     * not scan every retiring session. Only retire/unretire touch either. */
+    const retiringByThread = new Map<string, Set<Session>>();
+    const retire = (session: Session, threadId: string) => {
+      const before = retiring.get(session);
+      if (before !== undefined && before !== threadId) retiringByThread.get(before)?.delete(session);
+      retiring.set(session, threadId);
+      let set = retiringByThread.get(threadId);
+      if (!set) retiringByThread.set(threadId, set = new Set());
+      set.add(session);
+    };
+    const unretire = (session: Session) => {
+      const owner = retiring.get(session);
+      if (owner === undefined) return;
+      retiring.delete(session);
+      const set = retiringByThread.get(owner);
+      set?.delete(session);
+      if (set && set.size === 0) retiringByThread.delete(owner);
+    };
+    /** Threads whose reset could not confirm the old process tree stopped. The
+     * slot stays held: the next turn waits briefly for the confirmation and
+     * otherwise fails retryably, never running beside a live old tree. */
+    const resetBlocked = new Map<string, Session>();
+    /** A reset in progress on a thread: installed synchronously, before the
+     * reset's first await, and held until it finishes. A send or prewarm waits
+     * for it and rechecks ownership right before it launches or writes, so
+     * nothing starts beside the tree being reset. */
+    const resetBarriers = new Map<string, Promise<void>>();
+    /** Quarantine is about the PROCESS tree; the turn is a separate matter. A
+     * turn always settles, even when its old tree is not confirmed stopped; a
+     * quarantined thread then refuses a new launch until a later confirmation
+     * succeeds, and the person gets the retryable CLAUDE_SESSION_NOT_STOPPED. */
+    const NOT_STOPPED_MESSAGE = "CLAUDE_SESSION_NOT_STOPPED: the earlier Claude process for this thread could not be confirmed stopped yet; retry shortly";
     const configuredIdleMinimum = Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MIN_MS);
     const sessionIdleMinimum = Number.isFinite(configuredIdleMinimum) && configuredIdleMinimum > 0
       ? configuredIdleMinimum
       : 10_000;
     const SESSION_IDLE_MS = Math.max(sessionIdleMinimum, Number(process.env.MURAGE_CLAUDE_SESSION_IDLE_MS) || 15 * 60_000);
+    /** How long a reset lets the old CLI exit on stdin EOF before killing its tree. */
+    const CLAUDE_RESET_GRACE_MS = 1_500;
+    /** How long a reset waits for the killed tree's confirmation before going on without it. */
+    const CLAUDE_RESET_KILL_WAIT_MS = 2_000;
+    /** How long a turn on a reset-blocked thread waits for the old tree's confirmation. */
+    const CLAUDE_RESET_BLOCK_WAIT_MS = 3_000;
+    /** How long a launch that finds the thread quarantined waits for it to
+     * clear (revalidating ownership after) before the retryable refusal. */
+    const CLAUDE_LAUNCH_CLEAR_WAIT_MS = 3_000;
 
     const backgroundCapMs = backgroundWaitCapMs(config.backgroundTaskCapMs);
     const backgroundOf = (t: SessionTurn): BackgroundState =>
@@ -1141,8 +1189,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const stopSession = (session: Session) => {
       warmPool.release(session);
       killCliTree(session.child);
-      void awaitCliTreeStopped(session.child).then((stopped) => {
+      const confirmed = awaitCliTreeStopped(session.child, undefined, CLI_CALLER_DEADLINE_MS);
+      void confirmed.then((stopped) => {
         if (stopped) void session.finishClose?.();
+        // Termination failed and the root's close may never arrive: do not rely
+        // on the child's close handler to settle the turn.
+        else { session.quarantine?.(); watchLateStop(session); }
       });
     };
     const closeSession = (threadId: string, why: string) => {
@@ -1150,7 +1202,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (!s || s.closing) return;
       s.closing = true;
       warmPool.release(s);
-      retiring.set(s, threadId);
+      retire(s, threadId);
       if (s.idleTimer) clearTimeout(s.idleTimer);
       s.idleTimer = null;
       if (s.startupTimer) clearTimeout(s.startupTimer);
@@ -1178,17 +1230,104 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     /** Kill and confirm every retiring session (of one thread, or all); the
      * number that could NOT be confirmed stopped stay registered. */
     const stopRetiring = async (threadId?: string): Promise<number> => {
-      const targets = [...retiring].filter(([, owner]) => threadId === undefined || owner === threadId).map(([session]) => session);
+      const targets = threadId === undefined ? [...retiring.keys()] : [...(retiringByThread.get(threadId) ?? [])];
       const confirmed = await Promise.all(targets.map(async (session) => {
         killCliTree(session.child);
-        const stopped = await awaitCliTreeStopped(session.child);
+        const stopped = await awaitCliTreeStopped(session.child, undefined, CLI_CALLER_DEADLINE_MS);
         if (stopped) {
-          retiring.delete(session);
+          unretire(session);
           void session.finishClose?.();
-        }
+        } else watchLateStop(session);
         return stopped;
       }));
       return confirmed.filter((stopped) => !stopped).length;
+    };
+    /** The thread has no older process left unconfirmed: lift the quarantine,
+     * or hand it to the next predecessor still retiring. */
+    const refreshBlocked = (threadId: string, gone: Session) => {
+      if (resetBlocked.get(threadId) !== gone) return;
+      let next: Session | undefined;
+      for (const s of retiringByThread.get(threadId) ?? []) if (s !== gone) { next = s; break; }
+      if (next) resetBlocked.set(threadId, next); else resetBlocked.delete(threadId);
+    };
+    /** A quarantined session is released whenever its stop is finally confirmed,
+     * however late (past any caller deadline or the pending-attempt cache): the
+     * durable success signal IS the proof, so the slot is freed and the quarantine
+     * lifted with no second confirmation that could disagree, and no manual Retry. */
+    const lateStopWatch = new WeakMap<Session, Promise<void>>();
+    const watchLateStop = (session: Session, ownerThread?: string): Promise<void> => {
+      const existing = lateStopWatch.get(session);
+      if (existing) return existing; // ONE subscription per session, however many attempts fail
+      const release = async (delayMs: number): Promise<void> => {
+        const threadId = retiring.get(session) ?? ownerThread;
+        if (threadId === undefined) return;
+        try { await releaseResetSlot(threadId, session, true); }
+        catch {
+          // Only a real timer with backoff may retry, never the microtask queue.
+          if (delayMs > 4_000) return;
+          const timer = setTimeout(() => { void release(delayMs * 2); }, delayMs);
+          timer.unref?.();
+        }
+      };
+      const watch = cliTreeStoppedSignal(session.child).then(() => release(250));
+      lateStopWatch.set(session, watch);
+      return watch;
+    };
+    /** The old tree is confirmed gone: free the thread's slot. */
+    const releaseResetSlot = async (threadId: string, session: Session, proven = false) => {
+      if (proven) session.stopProven = true;
+      unretire(session);
+      refreshBlocked(threadId, session);
+      if (sessions.get(threadId) === session) sessions.delete(threadId);
+      await session.finishClose?.();
+    };
+    /** Confirm (killing outright) EVERY process of the thread that is retiring
+     * or quarantined, not just the current one: the 1.0.1 guarantee that a
+     * thread never launches beside an older tree. Returns those that could not
+     * be confirmed within the cap; the thread then stays quarantined. */
+    const confirmThreadStopped = async (threadId: string, capMs: number, extra?: Session): Promise<Session[]> => {
+      const targets = new Set<Session>();
+      for (const s of retiringByThread.get(threadId) ?? []) targets.add(s);
+      const blocked = resetBlocked.get(threadId);
+      if (blocked) targets.add(blocked);
+      if (extra) targets.add(extra);
+      const left: Session[] = [];
+      await Promise.all([...targets].map(async (target) => {
+        const stoppedP = forceCliTreeStopped(target.child);
+        // The slot is freed the moment the stop is confirmed (even after the
+        // cap); finishing the old session's close is awaited only briefly, so a
+        // slow close can never turn a confirmed stop into "unconfirmed".
+        // A confirmation after the cap still frees the slot (durable signal).
+        const released = watchLateStop(target, threadId);
+        let timer: NodeJS.Timeout | undefined;
+        const ok = await Promise.race([stoppedP, new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), capMs); })]).finally(() => clearTimeout(timer));
+        if (ok) {
+          let settleTimer: NodeJS.Timeout | undefined;
+          await Promise.race([released, new Promise<void>((resolve) => { settleTimer = setTimeout(resolve, 500); })]).finally(() => clearTimeout(settleTimer));
+        }
+        if (!ok) left.push(target);
+      }));
+      // A target whose stop was confirmed after its own cap (while another was
+      // still pending) was already released from proof: it must not be
+      // re-registered, so drop proven targets before failing or quarantining.
+      const stillLeft = left.filter((s) => !s.stopProven && !cliTreeConfirmedStopped(s.child));
+      if (stillLeft.length) { retire(stillLeft[0], threadId); resetBlocked.set(threadId, stillLeft[0]); }
+      return stillLeft;
+    };
+    /** A reset left this thread blocked: wait for the old trees' confirmation
+     * (killing them again outright), retrying with a fresh attempt while the
+     * budget lasts, else say so retryably. */
+    const awaitResetUnblocked = async (threadId: string, budgetMs = CLAUDE_RESET_BLOCK_WAIT_MS) => {
+      const deadline = Date.now() + budgetMs;
+      for (;;) {
+        if (!resetBlocked.has(threadId)) return;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new Error(NOT_STOPPED_MESSAGE);
+        const left = await confirmThreadStopped(threadId, remaining);
+        if (!left.length) { resetBlocked.delete(threadId); return; }
+        if (deadline - Date.now() <= 0) throw new Error(NOT_STOPPED_MESSAGE);
+        await new Promise<void>((resolve) => { const t = setTimeout(resolve, Math.min(250, Math.max(0, deadline - Date.now()))); t.unref?.(); });
+      }
     };
     const requireRetiredStopped = async (threadId?: string) => {
       const failed = await stopRetiring(threadId);
@@ -1340,14 +1479,21 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // first, and Windows ends it through an asynchronous taskkill. That
         // turn is not "already running": wait for its close, bounded by the
         // same deadline the harness gives a stopped child, then proceed.
+        let pastDeadline = false;
         await Promise.race([
           running.closed,
-          new Promise<void>((_, reject) => {
-            const timer = setTimeout(() => reject(new Error("the stopped turn has not closed yet; wait a moment and send again")), providerCloseDeadlineMs());
+          new Promise<void>((resolve) => {
+            const timer = setTimeout(() => { pastDeadline = true; resolve(); }, providerCloseDeadlineMs());
             timer.unref?.();
             void running.closed.finally(() => clearTimeout(timer));
           }),
         ]);
+        // Past the deadline the old process is not confirmed stopped: that is
+        // the quarantine path, not a dead end. Quarantine settles the stopped
+        // turn (freeing the thread); the dispatch below then waits, bounded,
+        // for the confirmation before it launches anything.
+        if (pastDeadline && active.get(threadId) === running) sessions.get(threadId)?.quarantine?.();
+        if (pastDeadline && active.has(threadId)) throw new Error("the stopped turn has not closed yet; wait a moment and send again");
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       }
       const turnId = relaunch?.turnId ?? newId();
@@ -1633,7 +1779,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // rebuilt conversation says so explicitly: without the reset an edit,
       // branch switch, cwd or engine change replayed the transcript on top
       // of the idle process's old context (upstream 581a740b, #1562).
-      const live = sessions.get(threadId);
+      let live = sessions.get(threadId);
       // A settle-time process probe may still be deciding whether this process
       // can be kept; the answer comes before this turn picks a process.
       if (live?.settleCheck) {
@@ -1650,6 +1796,24 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           throw error;
         }
       }
+      if (resetBarriers.has(threadId) || resetBlocked.has(threadId)) {
+        try {
+          // A reset in progress finishes first (a Stop ends the wait at once);
+          // a reset that left the old tree unconfirmed is retried, bounded.
+          while (resetBarriers.has(threadId)) {
+            await Promise.race([resetBarriers.get(threadId)!, ctl.stopped]);
+            assertSoleDispatch();
+          }
+          await awaitResetUnblocked(threadId);
+          assertSoleDispatch();
+        } catch (error) {
+          if (mcpConfigPath) {
+            try { rmSync(dirname(mcpConfigPath), { recursive: true, force: true }); } catch {}
+          }
+          throw error;
+        }
+      }
+      live = sessions.get(threadId);
       if (turn.prewarm && live && !live.closing && live.child.exitCode === null) {
         // an engine is already live on this thread: nothing to warm
         if (mcpConfigPath) {
@@ -1841,6 +2005,24 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // Headroom for one more engine: evicts an idle one if needed, never refuses.
         await warmPool.beforeSpawn();
         assertSoleDispatch();
+        // A quarantine or reset that arose during setup: wait for it to clear
+        // (bounded), then revalidate ownership and the Stop fence before the
+        // submission. Only an expired wait ends in the retryable refusal.
+        if (resetBarriers.has(threadId) || resetBlocked.has(threadId)) {
+          const waitDeadline = Date.now() + CLAUDE_LAUNCH_CLEAR_WAIT_MS;
+          while (resetBarriers.has(threadId) || resetBlocked.has(threadId)) {
+            const remaining = waitDeadline - Date.now();
+            if (remaining <= 0) throw new Error(NOT_STOPPED_MESSAGE);
+            const barrier = resetBarriers.get(threadId);
+            if (barrier) {
+              let timer: NodeJS.Timeout | undefined;
+              await Promise.race([barrier, ctl.stopped, new Promise<void>((resolve) => { timer = setTimeout(resolve, remaining); })]).finally(() => clearTimeout(timer));
+            } else {
+              await awaitResetUnblocked(threadId, remaining);
+            }
+            assertSoleDispatch();
+          }
+        }
 
         // This process's credential file, holding the first turn's tokens.
         if (Object.keys(secrets).length) {
@@ -1879,6 +2061,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
       let child: ReturnType<typeof spawnCli>;
       try {
+        // Ownership is rechecked right here, with no await before the spawn: a
+        // reset that began during setup, or a quarantined predecessor, means
+        // this launch would run beside a tree that may still be live.
+        if (resetBarriers.has(threadId) || resetBlocked.has(threadId)) throw new Error(NOT_STOPPED_MESSAGE);
         child = spawnCli(config.cli, args, {
           cwd,
           env,
@@ -2116,6 +2302,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           if (!session.turn) dropStartFiles();
         }
         appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: o });
+        // A retired session (closing, or replaced in the thread's slot) with
+        // no open turn can no longer speak for the thread: its system/init must
+        // not become session.started, which writes the thread's resume cursor.
+        // That holds even with a stopped, unsettled turn still open.
+        if ((session.closing || sessions.get(threadId) !== session) && ((o.type === "system" && o.subtype === "init") || !session.turn || session.turn.settled)) return;
         const contentFrame = o.type === "stream_event" || o.type === "assistant" || o.type === "user";
         const taskFrame = o.type === "system" && typeof o.subtype === "string" && (o.subtype.startsWith("task_") || o.subtype === "background_tasks_changed");
         // Frames with no open turn were not asked for: a background task's
@@ -2580,6 +2771,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (sessions.get(threadId) === session) sessions.delete(threadId);
       };
       let closeFinalized = false;
+      // Quarantine the process, settle the turn. The slot stays held and no new
+      // launch starts until a later confirmation succeeds, but the turn is never
+      // left busy behind it. Callable from the close handler and, when the root
+      // never closes, from the stop path itself.
+      const quarantineSession = () => {
+        if (closeFinalized) return;
+        session.closing = true;
+        retire(session, threadId);
+        if (!resetBlocked.has(threadId)) resetBlocked.set(threadId, session);
+        const open = session.turn;
+        if (open && !open.settled) {
+          emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: NOT_STOPPED_MESSAGE });
+          settle(false, "session_not_stopped");
+        }
+      };
+      session.quarantine = quarantineSession;
       child.on("close", (code) => {
         warmPool.release(session);
         // A user-message write still in flight when the process died has an
@@ -2592,13 +2799,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           if (closingTurn && !closingTurn.settled && closingTurn.boundary.submission === "in-flight" && closingTurn.submission) {
             await closingTurn.submission;
           }
-          if (!(await awaitCliTreeStopped(child))) {
-            emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: `${ENGINE} has not finished closing yet, so this conversation stays busy until it does. Restart Murage if it stays stuck.` });
+          const confirmed = session.stopProven ? Promise.resolve(true) : awaitCliTreeStopped(child, undefined, CLI_CALLER_DEADLINE_MS);
+          if (!(await confirmed)) {
+            quarantineSession();
+            watchLateStop(session);
             return;
           }
           if (closeFinalized) return;
           closeFinalized = true;
-          retiring.delete(session);
+          unretire(session);
+          refreshBlocked(threadId, session);
           onChildClose(code);
         };
         void session.finishClose();
@@ -2711,7 +2921,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const prewarm = async (threadId: string): Promise<boolean> => {
       const mem = lastTurns.get(threadId);
       const held = sessions.get(threadId);
-      if (!mem || active.has(threadId) || (held && !held.closing && held.child.exitCode === null) || !prewarming.begin(threadId)) return false;
+      if (!mem || active.has(threadId) || resetBarriers.has(threadId) || resetBlocked.has(threadId) || (held && !held.closing && held.child.exitCode === null) || !prewarming.begin(threadId)) return false;
       const turnId = newId();
       let stoppedBeforeLaunch = false;
       let wake = () => {};
@@ -2742,6 +2952,47 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (!s.initHandled) return new Promise<boolean>((resolve) => (s.queuedSteers ??= []).push({ turn: s.turn!, text, beforeWrite, resolve }));
       if (!steerFenceHolds(beforeWrite)) return false;
       return writeUser(s, threadId, text);
+    };
+
+    /** The reset itself; resetSession wraps it in the thread barrier. */
+    const resetSessionBody = async (threadId: string): Promise<void> => {
+      // interruptTurn alone ignores retained idle sessions. Cancel any
+      // active retry as well, then await this thread's existing close path.
+      const session = sessions.get(threadId);
+      active.get(threadId)?.stop();
+      // A reset never fails the owner's turn (1.0.1.1). It used to wait
+      // up to 10 s for the old CLI to close, then throw
+      // CLAUDE_SESSION_RESET_TIMEOUT. Now the old process gets a short
+      // grace to exit on stdin EOF; past it, its whole tree is killed
+      // outright (no SIGTERM grace) and confirmed in the background.
+      // Either way it leaves this thread's slot at once, so the next send
+      // spawns a fresh session. It can no longer answer for the thread:
+      // closeSession took its broker and credentials, its turn was
+      // stopped, and frames with no open turn are dropped.
+      // A SIGKILL'd tree is confirmed within CLI_FORCE_WAIT_MS, and its
+      // close settles any turn it still held before the fresh session
+      // starts. Only a process the kernel cannot end in that time leaves
+      // the slot unconfirmed; its confirmation then finishes behind.
+      const started = Date.now();
+      let exited = true;
+      if (session) {
+        closeSession(threadId, "memory context reset");
+        exited = session.finishClose !== undefined || await new Promise<boolean>((resolve) => {
+          const done = (value: boolean) => { clearTimeout(timer); session.child.off("close", closed); resolve(value); };
+          const closed = () => done(true);
+          const timer = setTimeout(() => done(false), CLAUDE_RESET_GRACE_MS);
+          session.child.once("close", closed);
+        });
+      }
+      // Force: a stop the child's own close already started (3 s SIGTERM
+      // grace) is escalated to SIGKILL of the whole tree right now. EVERY
+      // process of the thread is confirmed, the current one and any older
+      // predecessor still retiring (1.0.1's requireRetiredStopped guarantee):
+      // the barrier is only released once none is left, else the thread stays
+      // quarantined and the next turn waits for the confirmation.
+      const left = await confirmThreadStopped(threadId, CLAUDE_RESET_KILL_WAIT_MS, session);
+      if (left.length) console.warn(`claude reset thread=${threadId} ${left.length} old process${left.length === 1 ? "" : "es"} not confirmed stopped; this thread stays blocked until confirmed`);
+      if (session || left.length) console.info(`claude reset thread=${threadId} ms=${Date.now() - started} old=${exited ? "exited" : "killed"}${left.length ? " unconfirmed" : ""}`);
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
@@ -2860,42 +3111,23 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         interruptTurn: async (threadId) => {
           active.get(threadId)?.stop();
           // A replaced predecessor still shutting down is this thread's too.
-          if ([...retiring.values()].includes(threadId)) await requireRetiredStopped(threadId);
+          if (retiringByThread.has(threadId)) await requireRetiredStopped(threadId);
         },
         resetSession: async (threadId) => {
-          // interruptTurn alone ignores retained idle sessions. Cancel any
-          // active retry as well, then await this thread's existing close path.
-          const session = sessions.get(threadId);
-          active.get(threadId)?.stop();
-          if (!session) return;
-          // The child already closed (it exited, or an earlier close is still
-          // confirming its tree stopped before the session leaves the map):
-          // its "close" has fired and never fires again, so waiting for it
-          // only timed out 10 s later and failed the next send. Confirm the
-          // tree instead, and finish the close so the thread is free.
-          if (session.finishClose) {
-            closeSession(threadId, "memory context reset");
-            if (!(await awaitCliTreeStopped(session.child))) throw new Error("CLAUDE_SESSION_RESET_TIMEOUT");
-            await session.finishClose();
-            await requireRetiredStopped(threadId);
-            return;
+          // The barrier is installed before this function's first await, so no
+          // send or prewarm can slip in beside the tree being reset.
+          let release = () => {};
+          const barrier = new Promise<void>((resolve) => { release = resolve; });
+          const previousBarrier = resetBarriers.get(threadId);
+          resetBarriers.set(threadId, previousBarrier ? Promise.all([previousBarrier, barrier]).then(() => undefined) : barrier);
+          try {
+            await resetSessionBody(threadId);
+          } finally {
+            release();
+            // the latest barrier on a thread clears itself once it has settled
+            const current = resetBarriers.get(threadId);
+            if (current) void current.then(() => { if (resetBarriers.get(threadId) === current) resetBarriers.delete(threadId); });
           }
-          await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              session.child.off("close", closed);
-              reject(new Error("CLAUDE_SESSION_RESET_TIMEOUT"));
-            }, 10_000);
-            const closed = () => {
-              void awaitCliTreeStopped(session.child).then((stopped) => {
-                clearTimeout(timeout);
-                if (stopped) resolve();
-                else reject(new Error("CLAUDE_SESSION_RESET_TIMEOUT"));
-              });
-            };
-            session.child.once("close", closed);
-            closeSession(threadId, "memory context reset");
-          });
-          await requireRetiredStopped(threadId);
         },
         respondToRequest: async (threadId, requestId, decision) => {
           // fail-closed by construction: no broker, or an ask that already
