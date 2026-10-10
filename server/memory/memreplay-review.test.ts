@@ -20,12 +20,12 @@ import { continuationMemoryRevoked, filterDirectReplay, filterMemoryReplay } fro
 import { recordSessionRoots, REPLAY_RECEIPT_BUDGET, replayRowsRead, resetReplayRowsRead } from "./replay-lineage.ts";
 
 beforeEach(() => { closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true }); });
-function fixture(threadId = "private") {
+function fixture(threadId = "private", notOwnerAudience = false) {
   const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "private", section: "secret-team" }], groups: [] };
   reconcileMemoryRoster(roster);
   const registry = new InternalCapabilities();
   const generation = registry.begin("bot", threadId);
-  const token = registry.mint({ botId: "bot", threadId, generation, kind: "memory", depth: 100, skillAuthoring: false });
+  const token = registry.mint({ botId: "bot", threadId, generation, kind: "memory", depth: 100, skillAuthoring: false, ...(notOwnerAudience ? { notOwnerAudience: true as const } : {}) });
   return memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
 }
 type M = { id: string; role: string; kind: string; text: string; replyToId?: string };
@@ -43,9 +43,12 @@ const state = (id: string) => (database().prepare("SELECT state FROM memory_disc
 
 it("M1: a resumed session whose receipt cites a withheld reply is reset, though its outputs are far outside the replay window", () => {
   const a = fixture(); const scope = ensureScope("bot", "bot");
-  // x-old: a bot reply whose own receipt is revoked
-  botSource(scope, "x-old");
-  insertReceipt(a, "R-x", null, [], ["x-old"], "revoked", 1);
+  // x-old: a bot reply withheld on its content: its own receipt cites a
+  // source the owner since forgot (in the owner's own chat a receipt revoked
+  // on state alone no longer withholds a reply; see the 1.0.1.1 case below)
+  botSource(scope, "x-old"); botSource(scope, "gone");
+  database().prepare("UPDATE memory_sources SET state='deleted' WHERE id='message:private:gone'").run();
+  insertReceipt(a, "R-x", null, ["message:private:gone"], ["x-old"], "revoked", 1);
   // session S-A of engine fuigo: its frame cited x-old's captured source; its only output a-old
   insertReceipt(a, "R-s", "S-A", ["message:private:x-old"], ["a-old"], "delivered", 2);
   // a sound session S-B of the same engine
@@ -63,6 +66,20 @@ it("M1: a resumed session whose receipt cites a withheld reply is reset, though 
   // a sound session resumes
   expect(continuationMemoryRevoked("private", "fuigo", "S-B", a)).toBe(false);
   expect(state("R-b")).toBe("delivered");
+});
+
+it("M1 (1.0.1.1): a cited reply whose receipt was revoked on state alone ends the session for a reader not proven the owner, never the owner's own chat", () => {
+  for (const notOwner of [false, true]) {
+    closeDatabase(); rmSync(DATA_DIR, { recursive: true, force: true }); mkdirSync(DATA_DIR, { recursive: true });
+    const a = fixture("private", notOwner); const scope = ensureScope("bot", "bot");
+    // x-old: its receipt revoked by an install-wide change; its content intact
+    botSource(scope, "x-old");
+    insertReceipt(a, "R-x", null, [], ["x-old"], "revoked", 1);
+    insertReceipt(a, "R-s", "S-A", ["message:private:x-old"], ["a-old"], "delivered", 2);
+    recordSessionRoots("private", "fuigo", "S-A", { roots: new Set(), over: false });
+    expect(continuationMemoryRevoked("private", "fuigo", "S-A", a)).toBe(notOwner);
+    expect(state("R-s")).toBe("delivered");
+  }
 });
 
 it("M1: a session whose check cannot finish is reset, not resumed", () => {
