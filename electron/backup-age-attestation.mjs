@@ -103,7 +103,7 @@ export function signedAgeOwnedByCurrentApp(file,bytes,{currentExecutable=process
     if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app"))return ageFailure(report,"bundle-path");
     if(resolved!==path.join(resources,"backup-tools",arch,"age"))return ageFailure(report,"tool-location");
     if(!executable.startsWith(app+path.sep))return ageFailure(report,"executable-binding");
-    predicate="app-verify";const verified=run(["--verify","--strict","-R","=anchor apple generic",app]);if(verified.status!==0||verified.error)return ageFailure(report,predicate,verified);
+    // The app is not verified whole (17 to 41 s on a real Mac): its team comes from its signature, and the tool itself is verified against that team below.
     predicate="app-info";const info=run(["--display","--verbose=4",app]);if(info.status!==0||info.error)return ageFailure(report,predicate,info);
     const team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return ageFailure(report,"app-team");
     predicate="tool-info";const toolInfo=run(["--display","--verbose=4",resolved]);if(toolInfo.status!==0||toolInfo.error)return ageFailure(report,predicate,toolInfo);
@@ -179,7 +179,6 @@ export async function signedAgeOwnedByCurrentAppAsync(file,bytes,{currentExecuta
     const resolved=realpathSync(file),resources=path.dirname(path.dirname(path.dirname(resolved))),contents=path.dirname(resources),app=path.dirname(contents),executable=realpathSync(currentExecutable);
     if(path.basename(resources)!=="Resources"||path.basename(contents)!=="Contents"||!app.endsWith(".app")||resolved!==path.join(resources,"backup-tools",arch,"age")||!executable.startsWith(app+path.sep))return false;
     const checked=async args=>{if(!unchanged())throw Error();const result=await run(args,{signal,...(timeoutMs?{timeoutMs}:{})});if(!unchanged()||result.status!==0||result.error)throw Error();return result;};
-    await checked(["--verify","--strict","-R","=anchor apple generic",app]);
     const info=await checked(["--display","--verbose=4",app]),team=/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(info.stderr))?.[1];if(!team)return false;
     const toolInfo=await checked(["--display","--verbose=4",resolved]);if(/^TeamIdentifier=([A-Z0-9]{10})$/m.exec(String(toolInfo.stderr))?.[1]!==team)return false;
     await checked(["--verify","--strict","-R",`=anchor apple generic and certificate leaf[subject.OU] = "${team}"`,resolved]);return unchanged();

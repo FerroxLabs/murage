@@ -235,13 +235,18 @@ describe("hermesAcpModelId", () => {
 // naive "does Flux work" test and fail these.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { beforeEach } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 import { ensureDirs } from "../../config.ts";
+import { ConversationDeletions, runConversationDeletion } from "../../conversation-deletion.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { HermesAgentDriver, applyHermesFluxHome, fluxHermesHome } from "./hermes.ts";
+import { HermesAgentDriver, applyHermesFluxHome, applyHermesFluxMemory, fluxHermesHome, hermesFluxHeaderGate, parseHermesVersion } from "./hermes.ts";
+import { FLUX_HEADER_REFUSAL } from "../../flux-memory-headers.ts";
+import { resetVersionProbeBackoff } from "../isolation-cache.ts";
 
 const FAKE_ACP = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -266,7 +271,7 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     instance = await HermesAgentDriver.create({
       instanceId: "hermes-flux",
       displayName: "Hermes",
-      environment: { HOME: home, MURAGE_DATA_DIR: state, FAKE_ACP_DUMP: dump, ...extra },
+      environment: { HOME: home, MURAGE_DATA_DIR: state, FAKE_ACP_DUMP: dump, FAKE_ACP_VERSION: "Hermes Agent v0.21.3 (2026.9.14)", ...extra },
       enabled: true,
       config: { cli: FAKE_ACP, fullAuto: true },
     });
@@ -278,6 +283,7 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
 
   beforeEach(() => {
     ensureDirs();
+    resetVersionProbeBackoff(); // one fake file reports a different version per test; a real binary keeps one version per file signature
     home = mkdtempSync(join(tmpdir(), "murage-hermes-flux-"));
     state = mkdtempSync(join(tmpdir(), "murage-hermes-state-"));
     process.env.FLUX_API_KEY = FLUX_KEY;
@@ -298,7 +304,7 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
       if (fullAuto) { recorder!.stop(); await instance!.dispose(); }
       instance = await HermesAgentDriver.create({
         instanceId: "hermes-enforce", displayName: "Hermes", enabled: true,
-        environment: { ...scopedEnv(), FAKE_ACP_MODE: "permission" },
+        environment: { ...scopedEnv(), FAKE_ACP_MODE: "permission", FAKE_ACP_VERSION: "Hermes Agent v0.21.3 (2026.9.14)" },
         config: { cli: FAKE_ACP, fullAuto },
       });
       recorder = recordEvents(instance.adapter);
@@ -359,6 +365,93 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     expect(env.MURAGE_HERMES_ROUTED_HOME).toBe(env.HERMES_HOME);
   });
 
+  const decision = (capture: "on" | "off", inject: "on" | "off") => {
+    const headers: Record<string, string> = { "x-flux-memory-app": "murage" };
+    if (capture === "off") headers["x-flux-memory-capture"] = "off";
+    if (inject === "off") headers["x-flux-memory-inject"] = "off";
+    return { capture, inject, reason: "owner" as const, audience: "owner" as never, signature: `${capture}${inject}`, headers };
+  };
+  const fluxTurn = (d: ReturnType<typeof decision>, extra: Record<string, string> = {}) => {
+    const env: Record<string, string | undefined> = { HOME: home, MURAGE_DATA_DIR: state, PATH: "/bin", HERMES_MANAGED_DIR: join(home, "no-admin"), ...extra };
+    expect(applyHermesFluxHome(env, "flux-auto", FLUX_KEY)).toBe("flux-auto");
+    applyHermesFluxMemory(env, d);
+    return env;
+  };
+  const overlayOf = (env: Record<string, string | undefined>) => parseYaml(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")) as { model: { extra_headers: Record<string, string> } };
+
+  it("keeps ONE home for every audience; each child reads only its own turn's headers from its own overlay", () => {
+    const owner = fluxTurn(decision("on", "on"));
+    const off = fluxTurn(decision("off", "off")); // starts while the owner child is still running
+    const noRecall = fluxTurn(decision("on", "off"));
+    const owner2 = fluxTurn(decision("on", "on"));
+    // one home: state.db and sessions/ stay where deletion and resume look
+    for (const env of [owner, off, noRecall, owner2]) {
+      expect(env.HERMES_HOME).toBe(fluxHermesHome(scopedEnv()));
+      expect(env.MURAGE_HERMES_ROUTED_HOME).toBe(env.HERMES_HOME);
+    }
+    // distinct overlays per contract, the same one for the same contract
+    expect(new Set([owner, off, noRecall].map((env) => env.HERMES_MANAGED_DIR)).size).toBe(3);
+    expect(owner2.HERMES_MANAGED_DIR).toBe(owner.HERMES_MANAGED_DIR);
+    // a later turn never changed what an earlier child reads
+    expect(overlayOf(owner)).toEqual({ model: { extra_headers: { "x-flux-memory-app": "murage" } } });
+    expect(overlayOf(off)).toEqual({ model: { extra_headers: { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" } } });
+    expect(overlayOf(noRecall)).toEqual({ model: { extra_headers: { "x-flux-memory-app": "murage", "x-flux-memory-inject": "off" } } });
+    // the shared home's file is never edited for a turn, and no overlay holds the key
+    expect(readFileSync(scopedYaml(), "utf8")).not.toContain("extra_headers");
+    for (const env of [owner, off, noRecall]) expect(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")).not.toContain(FLUX_KEY);
+  });
+
+  it("carries an administrator's managed config into the overlay, with Murage's memory headers winning", () => {
+    const admin = join(home, "admin");
+    mkdirSync(admin, { recursive: true });
+    writeFileSync(join(admin, "config.yaml"), 'approvals:\n  mode: manual\nmodel:\n  extra_headers:\n    x-team: a\n    x-flux-memory-capture: "on"\n');
+    const env = fluxTurn(decision("off", "off"), { HERMES_MANAGED_DIR: admin });
+    expect(env.HERMES_MANAGED_DIR).not.toBe(admin);
+    expect(overlayOf(env)).toEqual({ approvals: { mode: "manual" }, model: { extra_headers: { "x-team": "a", "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" } } });
+  });
+
+  it("deleting a conversation removes its native history from the one home every Flux turn used", async () => {
+    const off = fluxTurn(decision("off", "off"));
+    const owner = fluxTurn(decision("on", "on"));
+    const shared = (env: Record<string, string | undefined>) => env.HERMES_HOME!;
+    expect(shared(off)).toBe(shared(owner));
+    const sid = "a1b2c3d4-1111-4222-8333-444455556666";
+    const store = new DatabaseSync(join(shared(off), "state.db"));
+    store.exec("CREATE TABLE sessions(id TEXT PRIMARY KEY, parent_session_id TEXT); CREATE TABLE messages(id INTEGER PRIMARY KEY, session_id TEXT, content TEXT);");
+    store.prepare("INSERT INTO sessions(id, parent_session_id) VALUES (?, NULL), ('kept-session-0001', NULL)").run(sid);
+    store.prepare("INSERT INTO messages(session_id, content) VALUES (?, 'capture-off secret'), ('kept-session-0001', 'kept')").run(sid);
+    store.close();
+    mkdirSync(join(shared(off), "sessions"), { recursive: true });
+    writeFileSync(join(shared(off), "sessions", `${sid}.jsonl`), "capture-off secret");
+    const data = mkdtempSync(join(tmpdir(), "murage-hermes-del-"));
+    // the conversation's own desk folder, which is what starts engine-history removal
+    mkdirSync(join(data, "workspaces", "f25024c1-a18e-4251-acf1-0c1713d9b6d9", "threads", "2e9018ee-1f45-46be-8ed1-7a02fc022807"), { recursive: true });
+    writeFileSync(join(data, "workspaces", "f25024c1-a18e-4251-acf1-0c1713d9b6d9", "threads", "2e9018ee-1f45-46be-8ed1-7a02fc022807", "a.md"), "x");
+    const db = new DatabaseSync(join(data, "messages.db"));
+    try {
+      const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
+      // the home server/index.ts registers for Flux Hermes turns
+      await runConversationDeletion(deletions, { threadIds: ["2e9018ee-1f45-46be-8ed1-7a02fc022807"], engineHomes: [{ engine: "hermes", home: fluxHermesHome({ MURAGE_DATA_DIR: state }) }], sessionIds: { hermesAgent: [sid] } }, () => true);
+    } finally {
+      db.close();
+      await removeTempDir(data);
+    }
+    const after = new DatabaseSync(join(shared(off), "state.db"));
+    expect(after.prepare("SELECT id FROM sessions").all().map((row) => row.id)).toEqual(["kept-session-0001"]);
+    expect(after.prepare("SELECT content FROM messages").all().map((row) => row.content)).toEqual(["kept"]);
+    after.close();
+    expect(existsSync(join(shared(off), "sessions", `${sid}.jsonl`))).toBe(false);
+  });
+
+  it("refuses a capture-off or inject-off turn when the home is not Murage's own, and lets an owner turn through", () => {
+    const foreign = () => ({ HOME: home, MURAGE_DATA_DIR: state, HERMES_HOME: join(home, "x"), MURAGE_HERMES_ROUTED_HOME: join(home, "x") });
+    expect(() => applyHermesFluxMemory(foreign(), decision("off", "off"))).toThrow(/cannot carry Flux Memory choices/);
+    expect(() => applyHermesFluxMemory(foreign(), decision("on", "off"))).toThrow(/cannot carry Flux Memory choices/);
+    const ownerEnv: Record<string, string | undefined> = foreign();
+    expect(() => applyHermesFluxMemory(ownerEnv, decision("on", "on"))).not.toThrow();
+    expect(ownerEnv.HERMES_MANAGED_DIR).toBeUndefined();
+  });
+
   it("POSITIVE CONTROL — the same helper touches nothing for a native id", () => {
     const env: Record<string, string | undefined> = { HOME: home, MURAGE_DATA_DIR: state, PATH: "/bin" };
     expect(applyHermesFluxHome(env, "openrouter:qwen/qwen3.8-max", FLUX_KEY)).toBeNull();
@@ -383,6 +476,14 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     const yaml = readFileSync(scopedYaml(), "utf8");
     expect(yaml).toContain("default: flux-reasoning");
     expect(yaml).not.toContain("flux-auto");
+  });
+
+  it("refuses a Flux turn whose headers say off when Hermes predates managed scope, or its version is unknown", async () => {
+    await expect(spawnFor("flux-auto", { FAKE_ACP_VERSION: "Hermes Agent v0.16.0 (2026.6.5)" })).rejects.toThrow(FLUX_HEADER_REFUSAL);
+    await instance?.dispose();
+    instance = undefined;
+    resetVersionProbeBackoff();
+    await expect(spawnFor("flux-auto", { FAKE_ACP_VERSION: "fake-acp 1.0.0" })).rejects.toThrow(FLUX_HEADER_REFUSAL);
   });
 
   // POSIX mode bits cannot establish Windows ACL privacy.
@@ -489,5 +590,37 @@ describe("hermesSpawnArgs routed homes (audit round 1, Astra 3)", () => {
     // A later HERMES_HOME that is not the marked one is the owner's again.
     env.HERMES_HOME = "/elsewhere";
     expect(hermesSpawnArgs({ profile: "fred" }, env)).toEqual(["-p", "fred", "acp"]);
+  });
+});
+
+describe("hermesFluxHeaderGate (managed-scope minimum 0.17.0)", () => {
+  const dec = (capture: "on" | "off", inject: "on" | "off") => ({ capture, inject, reason: "owner" as const, audience: "owner" as never, signature: `${capture}${inject}`, headers: {} });
+  const banner = (v: string) => `Hermes Agent v${v} (2026.9.14)`;
+
+  it("reads the version out of the banner, not the release date", () => {
+    expect(parseHermesVersion(banner("0.21.3"))).toEqual([0, 21, 3]);
+    expect(parseHermesVersion("v0.17.0")).toEqual([0, 17, 0]);
+    expect(parseHermesVersion("")).toBeNull();
+    expect(parseHermesVersion("Hermes Agent (2026.9.14)")).toBeNull();
+  });
+
+  it("refuses an off turn on a build older than 0.17.0, with the existing refusal text", () => {
+    for (const v of ["0.16.0", "0.15.1", "0.2.0"]) {
+      expect(hermesFluxHeaderGate(banner(v), dec("off", "on"))).toBe(FLUX_HEADER_REFUSAL);
+      expect(hermesFluxHeaderGate(banner(v), dec("on", "off"))).toBe(FLUX_HEADER_REFUSAL);
+    }
+  });
+
+  it("refuses an off turn when the version is unknown or unreadable", () => {
+    expect(hermesFluxHeaderGate("", dec("off", "off"))).toBe(FLUX_HEADER_REFUSAL);
+    expect(hermesFluxHeaderGate("something else", dec("on", "off"))).toBe(FLUX_HEADER_REFUSAL);
+  });
+
+  it("lets an off turn run on 0.17.0 and later", () => {
+    for (const v of ["0.17.0", "0.17.1", "0.20.6", "0.21.3", "1.0.0"]) expect(hermesFluxHeaderGate(banner(v), dec("off", "off"))).toBeNull();
+  });
+
+  it("never gates an all-on owner turn, whatever the version", () => {
+    for (const v of ["", "0.2.0", "0.16.9", "0.21.3"]) expect(hermesFluxHeaderGate(v && banner(v), dec("on", "on"))).toBeNull();
   });
 });

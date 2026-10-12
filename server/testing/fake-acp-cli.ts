@@ -100,6 +100,9 @@
 //                   (default "echo hi")
 //   FAKE_ACP_PERMISSION_TOOLCALL  JSON tool call a permission-mode ask sends
 //                   verbatim instead of the default shell command
+//   FAKE_ACP_PERMISSION_TIMING_FILE  append {askedAt, waitMs} per answered
+//                   permission-mode ask: how long the client took to answer,
+//                   as the engine sees it (Grok's own wait_ms)
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
 //   FAKE_ACP_LOAD_ERROR  JSON-RPC error object session/load answers with
@@ -308,12 +311,20 @@ const dumpEnv = Object.fromEntries(
     "FUIGO_HOME",
     "HERMES_HOME",
     "OPENCODE_DISABLE_PROJECT_CONFIG",
+    // Flux Memory headers: config overlays and settings paths, no secret
+    "FUIGO_CONFIG",
+    "GROK_CONFIG",
+    "QWEN_CODE_SYSTEM_SETTINGS_PATH",
+    "HERMES_MANAGED_DIR",
+    "OPENCODE_CONFIG_CONTENT",
     // routing switches: stripped unconditionally, never allowlistable
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",
     "OPENAI_BASE_URL",
     "OPENAI_MODEL",
     ...dumpCredentials,
+    // engine isolation switches (no secret): compat cells, memory, discovery off
+    ...Object.keys(process.env).filter((key) => /^(?:GROK|FUIGO)_[A-Z]+_[A-Z]+_ENABLED$|^(?:GROK|FUIGO)_MEMORY$|^OPENCODE_DISABLE_|^OPENCODE_PURE$|^(?:GEMINI_CLI|QWEN_CODE)_SYSTEM_SETTINGS_PATH$|^GEMINI_CLI_HOME$|^GROK_HOME$|^OPENCODE_CONFIG_DIR$|^FACTORY_HOME_OVERRIDE$/.test(key)),
   ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, dumpCredentials.has(key) ? fixtureCredentialFingerprint(process.env[key]!) : process.env[key]]] as const)),
 );
 const dumpState: Record<string, unknown> = { argv, env: dumpEnv };
@@ -329,7 +340,10 @@ async function printProbeAndExit(text: string): Promise<never> {
   process.exit(0);
 }
 if (argv.includes("--version")) {
-  await printProbeAndExit("fake-acp 1.0.0");
+  // FAKE_ACP_VERSION sets the reported version (the default is past every engine's scoped-home floor, so a turn is not rejected as too old); FAKE_ACP_VERSION_LOG counts probes; FAKE_ACP_VERSION_FAIL=1 makes `--version` fail (a working CLI with a broken probe).
+  if (process.env.FAKE_ACP_VERSION_LOG) appendFileSync(process.env.FAKE_ACP_VERSION_LOG, "probe\n");
+  if (process.env.FAKE_ACP_VERSION_FAIL === "1") process.exit(1);
+  await printProbeAndExit(process.env.FAKE_ACP_VERSION ?? "fake-acp 1.0.60");
 }
 // Cursor's driver probes `agent status` / `agent models` on the same binary
 // it later spawns for ACP. Answer those without entering the JSON-RPC loop
@@ -498,6 +512,8 @@ let pendingPermissionId: number | null = null;
 /** project-propose mode's own permission asks, answered by id. */
 const proposalAsks = new Map<number, (result: any) => void>();
 let onPermissionAnswered: (() => void) | null = null;
+/** When the open permission ask was sent (FAKE_ACP_PERMISSION_TIMING_FILE). */
+let permissionAskedAt: number | null = null;
 // folder-trust mode: what the client advertised and whether the folder was
 // trusted when the session was built (argv --trust, the way `fuigo --trust`
 // grants the process cwd up front)
@@ -551,6 +567,11 @@ const agentsMdForReply = () => {
 // ask-peer mode: the "agents" MCP server entry from session/new's mcpServers
 type McpEntry = { name?: string; command: string; args?: string[]; env?: Array<{ name: string; value: string }> };
 let agentsMcp: McpEntry | null = null;
+/** memory-search mode: the session's memory MCP server (the memory proxy). */
+let memoryMcp: McpEntry | null = null;
+const memoryServerOf = (servers: unknown): McpEntry | null => Array.isArray(servers)
+  ? (servers.find((s: any) => Array.isArray(s?.args) && s.args.some((arg: unknown) => /memory-proxy/.test(String(arg)))) as McpEntry | undefined) ?? null
+  : null;
 /** The session this process built or loaded, as Fuigo keeps it resident. */
 let liveSession: string | null = null;
 /** The serialized servers the live session was last handed. */
@@ -568,9 +589,13 @@ const startMcpChild = (servers: unknown) => {
     : spawn("sleep", ["300"], { stdio: "ignore" });
   appendFileSync(log, `${mcpChild.pid}\n`);
 };
+/** The server names the last session/new or session/load carried (FAKE_ACP_MCP_LIST "all:<status>"). */
+let lastMcpServerNames: string[] = [];
 const announceMcpReady = (sessionId: string, servers: unknown) => {
+  if (Array.isArray(servers)) lastMcpServerNames = servers.map((server) => String((server as { name?: unknown })?.name ?? "")).filter(Boolean);
   if (process.env.FAKE_ACP_MCP_READY !== "1" || !Array.isArray(servers) || !servers.length) return;
-  out({ jsonrpc: "2.0", method: "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: servers.length, elapsedMs: 1 } });
+  // Grok Build announces the same thing under its own name (FAKE_ACP_MCP_READY_METHOD).
+  out({ jsonrpc: "2.0", method: process.env.FAKE_ACP_MCP_READY_METHOD || "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: servers.length, elapsedMs: 1 } });
 };
 const agentsTokenOf = (servers: unknown): string | undefined => {
   if (!Array.isArray(servers)) return undefined;
@@ -839,6 +864,10 @@ function handle(msg: any) {
   // client's response to our permission request
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingPermissionId) {
     pendingPermissionId = null;
+    if (process.env.FAKE_ACP_PERMISSION_TIMING_FILE && permissionAskedAt !== null) {
+      appendFileSync(process.env.FAKE_ACP_PERMISSION_TIMING_FILE, `${JSON.stringify({ askedAt: permissionAskedAt, waitMs: Date.now() - permissionAskedAt })}\n`);
+      permissionAskedAt = null;
+    }
     if (process.env.FAKE_ACP_DUMP) {
       dumpState.decision = msg.result ?? { error: msg.error };
       writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
@@ -904,6 +933,7 @@ function handle(msg: any) {
         writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
       }
       agentsMcp = servers.find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? null;
+      memoryMcp = memoryServerOf(servers);
       if (process.env.FAKE_ACP_DUMP) {
         writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(dumpedServers(servers), null, 2));
       }
@@ -950,11 +980,13 @@ function handle(msg: any) {
         break;
       }
       const loadServers = JSON.stringify(msg.params?.mcpServers ?? []);
+      if (Array.isArray(msg.params?.mcpServers)) memoryMcp = memoryServerOf(msg.params.mcpServers) ?? memoryMcp;
       const serversChanged = !resident || loadServers !== liveServers;
       if (resident && Array.isArray(msg.params?.mcpServers)) {
         // Fuigo's reconnect: the resident session takes the new servers
         const servers: McpEntry[] = msg.params.mcpServers;
         agentsMcp = servers.find((s: any) => s?.name === "agents" || /^murage-agents-[a-f0-9]{20}$/.test(String(s?.name))) ?? null;
+        memoryMcp = memoryServerOf(servers);
         if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.mcp.json`, JSON.stringify(dumpedServers(servers), null, 2));
         if (serversChanged) startMcpChild(servers);
       }
@@ -1658,6 +1690,25 @@ function handle(msg: any) {
           });
         return;
       }
+      if (mode === "memory-search" && memoryMcp) {
+        // A bot's explicit recall: the prompt names the query after MSEARCH:,
+        // the injected memory proxy is asked through memory_search, and the
+        // outcome (never the remembered text) goes to FAKE_ACP_MEMORY_LOG.
+        const allText = (Array.isArray(msg.params?.prompt) ? msg.params.prompt : []).map((part: { text?: unknown }) => String(part?.text ?? "")).join("\n");
+        const query = /MSEARCH: ([^\n]+)/.exec(allText)?.[1]?.trim() || "weekly client report";
+        const started = performance.now();
+        const say = (text: string) => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text } } } }); complete(); };
+        const note = (row: object) => { if (process.env.FAKE_ACP_MEMORY_LOG) appendFileSync(process.env.FAKE_ACP_MEMORY_LOG, JSON.stringify({ at: Date.now(), ms: Math.round(performance.now() - started), ...row }) + "\n"); };
+        void driveMcp(memoryMcp, [{ name: "memory_search", args: () => ({ query }) }]).then(text => {
+          let body: any = null;
+          try { body = JSON.parse(text); } catch { /* the proxy's own sentence */ }
+          note(body && typeof body === "object"
+            ? { hits: Array.isArray(body.hits) ? body.hits.length : null, degradedReason: body.degradedReason ?? null, partial: body.partial ?? null, recentFallback: body.recentFallback ?? null, coverageComplete: body.coverageComplete ?? null, keys: Object.keys(body).filter(key => key !== "hits") }
+            : { hits: null, proxy: text.slice(0, 120) });
+          say(`memory search answered: ${body && Array.isArray(body.hits) ? body.hits.length : 0} hits`);
+        }).catch(error => { note({ hits: null, error: String(error?.message ?? error).slice(0, 120) }); say("memory search failed"); });
+        return;
+      }
       if ((mode === "ask-peer" || mode === "create-peer") && agentsMcp && Number(agentsMcp.env?.find(entry => entry.name === "MURAGE_TURN_DEPTH")?.value ?? "0") > 0) {
         // A nested helper answers its assignment, while proving that the
         // actual injected MCP server still supplies its scoped directory.
@@ -1957,6 +2008,7 @@ function handle(msg: any) {
         // request_permission (named in the tool call), exactly the shape a
         // question must never be auto-approved from.
         pendingPermissionId = 9001;
+        permissionAskedAt = Date.now();
         onPermissionAnswered = complete;
         out({
           jsonrpc: "2.0",
@@ -2005,6 +2057,18 @@ function handle(msg: any) {
         return;
       }
       complete();
+      break;
+    }
+    case "_x.ai/mcp/list":
+    case "_fuigo/mcp/list": {
+      // FAKE_ACP_MCP_LIST: per-server status JSON ({name: "ready" | "initializing"
+      // | ...}), answered as Grok Build and Fuigo answer it; unset: method not found.
+      if (!process.env.FAKE_ACP_MCP_LIST) { if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } }); break; }
+      const listed = process.env.FAKE_ACP_MCP_LIST;
+      const states = listed.startsWith("all:")
+        ? Object.fromEntries(lastMcpServerNames.map((name) => [name, listed.slice(4)]))
+        : JSON.parse(listed) as Record<string, string>;
+      result(msg.id, { servers: Object.entries(states).map(([name, status]) => ({ name, session: { enabled: true, status } })) });
       break;
     }
     case "_fuigo/interject": {

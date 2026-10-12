@@ -170,6 +170,60 @@ export interface CompletionHooks {
   /** Who moves on a card that a run nobody handed over (an owner card) put
    * in review in goal mode: the lead, in the room (lane R's rows decide). */
   reviewWake?: (db: DatabaseSync, request: RoomRequest) => { botId: string; threadId: string } | null;
+  /** An owner's queued message ended without a transcript line (the room closed it, it expired,
+   * it could not start): keep the owner's words as a chip. Called inside the completing
+   * transaction, so the closure and the chip commit together. See `ownerWordsOwed`. */
+  ownerWords?: (db: DatabaseSync, request: RoomRequest) => void;
+}
+
+/** The note of a request the OWNER cancelled: the one closure that needs no chip, because the owner chose it. */
+export const OWNER_CANCEL_NOTE = "cancelled by you";
+/** Recorded on a closed owner send once its words are a chip (the durable receipt of that). */
+export const OWNER_WORDS_KEPT = "owner_words_kept";
+
+/** Does a closed owner_send still owe its owner a chip? Every terminal state but done (its line is
+ * the receipt) and the owner's own cancel. A failed or unknown one that had started may have its
+ * line already: the caller checks the transcript for those. */
+export function ownerWordsOwed(request: RoomRequest): boolean {
+  return request.verb === "owner_send" && Boolean(request.payloadText)
+    && ["cancelled", "failed", "expired", "unknown"].includes(request.state)
+    && request.outcomeNote !== OWNER_CANCEL_NOTE && request.refusal !== OWNER_WORDS_KEPT;
+}
+
+/** Record that a closed owner send's words are kept (called in the same transaction as the chip). */
+export function markOwnerWordsKept(db: DatabaseSync, id: string): void {
+  db.prepare("UPDATE room_requests SET refusal=? WHERE id=? AND verb='owner_send'").run(OWNER_WORDS_KEPT, id);
+}
+
+/** Closed owner sends whose chip was never made (the write failed, or the process died between the
+ * closure and the chip): startup recovery gives each its chip. */
+export function ownerSendsOwingWords(db: DatabaseSync, now: number): RoomRequest[] {
+  const rows = db.prepare(`SELECT * FROM room_requests WHERE verb='owner_send' AND state IN ('cancelled','failed','expired','unknown')
+    AND COALESCE(outcome_note,'')<>? AND COALESCE(refusal,'')<>? AND payload_text IS NOT NULL AND payload_text<>'' AND finished_at>? ORDER BY finished_at, id`)
+    .all(OWNER_CANCEL_NOTE, OWNER_WORDS_KEPT, now - ROOM_REQUEST_RETENTION_MS) as Record<string, unknown>[];
+  return rows.map(fromRow);
+}
+
+/** A deleted conversation takes its owner words with it: every owner send aimed at the thread loses
+ * its payload (so no chip is ever made from it, at closure or by recovery), and one still waiting is
+ * closed as the owner's own cancel so nothing dispatches an empty message. Returns how many changed. */
+export function scrubOwnerSendsOfThread(db: DatabaseSync, threadId: string, now: number = Date.now()): number {
+  if (!db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='room_requests'").get()) return 0;
+  const where = "verb='owner_send' AND (target_thread_id=?1 OR (target_thread_id IS NULL AND root_thread_id=?1))";
+  db.prepare(`UPDATE room_requests SET state='cancelled', finished_at=?2, waiting_since=NULL, outcome_note=?3 WHERE state='queued' AND ${where}`)
+    .run(threadId, now, OWNER_CANCEL_NOTE);
+  const info = db.prepare(`UPDATE room_requests SET payload_text=NULL WHERE payload_text IS NOT NULL AND ${where}`).run(threadId);
+  return Number(info.changes);
+}
+
+/** Startup: owner sends whose conversation is already gone (deleted before this kept their words) are scrubbed the same way. */
+export function scrubOwnerSendsOfGoneThreads(db: DatabaseSync, isLive: (threadId: string) => boolean, now: number = Date.now()): number {
+  if (!db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='room_requests'").get()) return 0;
+  const rows = db.prepare("SELECT DISTINCT COALESCE(target_thread_id, root_thread_id) AS t FROM room_requests WHERE verb='owner_send' AND payload_text IS NOT NULL")
+    .all() as Array<{ t: string }>;
+  let changed = 0;
+  for (const { t } of rows) if (!isLive(t)) changed += scrubOwnerSendsOfThread(db, t, now);
+  return changed;
 }
 
 export interface CompletionResult {
@@ -492,6 +546,7 @@ export function completeRequest(
     if (done.verb === "review") Object.assign(done, roomRequest(db, id)!);
     if (ran) hooks.settleUsage?.(db, done);
     hooks.activity?.(db, done);
+    if (hooks.ownerWords && ownerWordsOwed(done)) hooks.ownerWords(db, done);
     // An interrupted card is an owner decision, including a card whose
     // continuation was interrupted. Retry or Skip must precede another wake.
     if (!fenced && done.state === "unknown" && done.workItemId && done.verb === "wake" && done.parentId && done.admissionKey === `wake:${done.parentId}`) {

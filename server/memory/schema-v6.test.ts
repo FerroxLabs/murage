@@ -36,9 +36,12 @@ function access(): MemoryAccess {
   return memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: "dax", threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);
 }
 const empty = { async search() { return { hits: [], vectorRows: 0, coverageComplete: false }; } };
-const message = (threadId: string, id: string, at: number, role: "user" | "bot", text: string) =>
-  database().prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,'text',?,?)")
-    .run(threadId, id, at, role, text, JSON.stringify({ id, at, role, kind: "text", text }));
+// (a legacy thread is a proven chain: every message names the one before it, as the app writes them)
+const message = (threadId: string, id: string, at: number, role: "user" | "bot", text: string) => {
+  const parentId = database().prepare("SELECT id FROM messages WHERE thread_id=? ORDER BY rowid DESC LIMIT 1").get(threadId)?.id ?? null;
+  return database().prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,'text',?,?)")
+    .run(threadId, id, at, role, text, JSON.stringify({ id, at, role, kind: "text", text, parentId }));
+};
 
 /** A used v5 data dir: the app's own writes, then the exact v6 -> v5 inverse. */
 async function usedV5DataDir(): Promise<string> {
@@ -85,7 +88,7 @@ it("upgrades a copy of a used v5 data dir additively, backfills Y's root, and th
     for (const table of NEW_TABLES) expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table), table).toBeUndefined();
     const before = rows(db), metaBefore = db.prepare("SELECT * FROM memory_meta").get(), bindingsBefore = withoutMarker(db);
     migrateMemorySchema(db);
-    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+    expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(8);
     validateMemorySchema(db, { references: true });
     const after = rows(db);
     // every existing table keeps every row, byte for byte (the shape-check marker aside)
@@ -94,7 +97,7 @@ it("upgrades a copy of a used v5 data dir additively, backfills Y's root, and th
       expect(after.get(table), table).toBe(content);
     }
     expect(withoutMarker(db)).toBe(bindingsBefore);
-    expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...metaBefore, schema_version: 6 });
+    expect(db.prepare("SELECT * FROM memory_meta").get()).toEqual({ ...metaBefore, schema_version: 8 });
     // the backfill wrote only the roots table: Y, after the thread's first receipt output, rests on X'
     const roots = db.prepare("SELECT o.thread_id,o.message_id,m.root_thread_id,m.root_message_id FROM memory_output_roots o JOIN memory_root_set_members m ON m.set_id=o.set_id ORDER BY o.message_id").all();
     expect(roots).toEqual([{ thread_id: thread, message_id: "y", root_thread_id: thread, root_message_id: "x-prime" }]);
@@ -105,7 +108,7 @@ it("upgrades a copy of a used v5 data dir additively, backfills Y's root, and th
     migrateMemorySchema(db);
     for (const table of NEW_TABLES) expect(rows(db).get(table), table).toBe(after.get(table));
     // the inverse: back to the v5 file, every row as it was
-    expect(downgradeMemorySchema(db, 5)).toEqual({ status: "downgraded", from: 6, to: 5 });
+    expect(downgradeMemorySchema(db, 5)).toEqual({ status: "downgraded", from: 8, to: 5 });
     validateMemorySchema(db, { references: true });
     for (const table of NEW_TABLES) expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(table), table).toBeUndefined();
     const back = rows(db);
@@ -119,7 +122,7 @@ it("after the upgrade, revoking X withholds the pre-v6 OFF reply Y with X'", asy
   rmSync(join(DATA_DIR, "messages.db"), { force: true });
   for (const suffix of ["-wal", "-shm"]) if (existsSync(join(DATA_DIR, `messages.db${suffix}`))) rmSync(join(DATA_DIR, `messages.db${suffix}`));
   copyFileSync(copy, join(DATA_DIR, "messages.db"));
-  expect(database().prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(6);
+  expect(database().prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(8);
   const lines = ["early", "x-prime", "y"].map(id => ({ id, role: "bot" }));
   expect([...replayExclusions(thread, lines, null, { failClosed: true })]).toEqual([]);
   reconcileMemoryRoster(roster);
@@ -137,9 +140,11 @@ it("the backfill writes deduplicated root sets past 256 outputs, with no marker 
     const insert = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,'text',?,?)");
     const bundle = db.prepare("SELECT bundle_id FROM memory_disclosure_outputs WHERE thread_id=? LIMIT 1").get(thread)?.bundle_id;
     const outputs = ["x-prime"];
+    let previous = String(db.prepare("SELECT id FROM messages WHERE thread_id=? ORDER BY rowid DESC LIMIT 1").get(thread)?.id ?? "");
     for (let i = 0; i < 300; i++) {
-      insert.run(thread, `o-${i}`, 100 + 2 * i, "bot", "made with memory", JSON.stringify({ id: `o-${i}`, at: 100 + 2 * i, role: "bot", kind: "text", text: "made with memory" }));
-      insert.run(thread, `f-${i}`, 101 + 2 * i, "bot", "made without", JSON.stringify({ id: `f-${i}`, at: 101 + 2 * i, role: "bot", kind: "text", text: "made without" }));
+      insert.run(thread, `o-${i}`, 100 + 2 * i, "bot", "made with memory", JSON.stringify({ id: `o-${i}`, at: 100 + 2 * i, role: "bot", kind: "text", text: "made with memory", parentId: previous || null }));
+      insert.run(thread, `f-${i}`, 101 + 2 * i, "bot", "made without", JSON.stringify({ id: `f-${i}`, at: 101 + 2 * i, role: "bot", kind: "text", text: "made without", parentId: `o-${i}` }));
+      previous = `f-${i}`;
       outputs.push(`o-${i}`);
     }
     db.prepare("UPDATE memory_disclosures SET output_message_ids=? WHERE bundle_id=?").run(JSON.stringify(outputs), String(bundle));

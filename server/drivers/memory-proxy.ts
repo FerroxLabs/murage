@@ -4,6 +4,7 @@ import { murageToolOnThisServer } from "../murage-tool-surface.ts";
 import readline from "node:readline";
 import { z } from "zod";
 import { turnSecret } from "../turn-credential.ts";
+import { MEMORY_CURSOR_MAX_CHARS } from "../memory/cursor-limits.ts";
 
 const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
 const token = () => turnSecret("MURAGE_MEMORY_TOKEN");
@@ -26,7 +27,7 @@ const schemas = {
   memory_search: z.object({
     query: text.refine(value => Buffer.byteLength(value, "utf8") <= 4096),
     limit: z.number().int().min(1).max(20).optional(),
-    historical: z.boolean().optional(), cursor: z.string().max(160).optional(),
+    historical: z.boolean().optional(), cursor: z.string().max(MEMORY_CURSOR_MAX_CHARS).optional(),
   }).strict(),
   memory_get: z.object({ handles: z.array(handle).min(1).max(20) }).strict(),
   memory_save: z.object({ text, evidence: evidenceList, idempotencyKey,
@@ -57,7 +58,7 @@ const tools = [
     annotations: { readOnlyHint: true, openWorldHint: false }, inputSchema: {
       type: "object", additionalProperties: false, required: ["query"], properties: {
         query: textSchema, limit: { type: "integer", minimum: 1, maximum: 20 },
-        historical: { type: "boolean" }, cursor: { type: "string", maxLength: 160 },
+        historical: { type: "boolean" }, cursor: { type: "string", maxLength: MEMORY_CURSOR_MAX_CHARS },
       },
     } },
   { name: "memory_get", description: `Get up to 20 memory record versions with sources. Each entry is either {handle} using a turn-local handle from <remembered-context> (m1, m2, ...) or {id, version} from ${murageToolOnThisServer("memory_search")}. Access is checked again by Murage. Internal record/source IDs, revisions, versions, checkpoint IDs and byte ranges are tool-argument metadata, never user-facing citations; do not echo them in replies. If attribution is needed, use an existing supplied m-handle when available, otherwise describe the source, date or action status in ordinary language. Never invent a handle.`,

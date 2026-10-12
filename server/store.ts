@@ -6,6 +6,7 @@ import { markPartitions, setExecutionStore, partitionRoots } from "./execution-a
 import { teamLabel, TEAM_JOURNAL, teamChangeOpen, assertSectionUnlocked, assertHomeMove, workThreadTitle } from "./team-identities.ts";
 import type { MessageEngine } from "../shared/engine-switch.ts";
 import type { MessageActorKind } from "../shared/message-actor.ts";
+import { BROWSER_CHECK_FAILED_REASON, browserUnavailableActivityName } from "../shared/browser-unavailable.ts";
 import { isErrorActivity } from "../shared/message-visibility.ts";
 import type { RoutineRunMarkerTrigger } from "../shared/routine-run-marker.ts";
 import type { ProcedurePin } from "./procedure-bundles.ts";
@@ -57,6 +58,7 @@ import { readPublishedSites } from "../shared/published-sites.ts";
 import { withoutQuestionGrants } from "./auto-approve.ts";
 import { imageApprovalOf, imageAskAfterOf } from "../shared/image-approval-setting.ts";
 import { settledTurnHelpers, type TurnHelper } from "../shared/turn-helpers.ts";
+import { LruMap } from "./thread-cache.ts";
 
 export type EmberColor =
   | "green"
@@ -286,7 +288,7 @@ export interface Message {
    * something — the UI offers setup instead of a retry that cannot work. */
   /** `summary` is a short read of what the call was for — the only thing that
    * tells two chips apart on engines that route every tool through a wrapper. */
-  tool?: { name: string; action?: ReturnType<typeof import("./reply-action-guard.ts").toolAction>; ok?: boolean; /** An engine notice shown in the conversation; never an action or a tool outcome. */ notice?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number;
+  tool?: { name: string; action?: ReturnType<typeof import("./reply-action-guard.ts").toolAction>; ok?: boolean; /** An engine notice shown in the conversation; never an action or a tool outcome. */ notice?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; /** The engine a local failure is about (an engine-folder failure), for the localized line. */ localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number;
     /** An image made without an approval card (server/image-approval.ts): what was asked for and the whole prompt, shown folded like the card's. */
     imageRecord?: { summary: string; prompt: string } };
   /** user messages sent INTO a running turn (capabilities.queueing): the
@@ -520,6 +522,9 @@ export interface TaskRecord {
    * under (owner-audience.ts). A turn for another audience never resumes it.
    * Absent for a cursor from before, which reads as the owner's. */
   resumeAudiences?: Record<string, string>;
+  /** The engine's session contract each cursor was made under (ProviderInstance.sessionContract).
+   * Absent for a cursor from before, or from an engine with none. */
+  resumeContracts?: Record<string, number>;
   /** Independent direct-thread settings; copied from the bot on creation. */
   modelSelection?: ModelSelection;
   autoApprove?: boolean;
@@ -563,6 +568,8 @@ export interface TaskRecord {
   heldQueueRowId?: string;
   /** what this task has spent: banked once per turn from turn.completed */
   usage?: TaskUsage;
+  /** the provider turns already banked into `usage` (most recent last, bounded): a redelivered terminal event adds nothing twice */
+  usageTurnKeys?: string[];
   /** the folder this task's turns run in, pinned on its first turn from
    * the bot's `cwd` at that moment. Pinned, not read live: Claude keeps
    * sessions per project directory and Codex threads carry their cwd, so
@@ -1289,6 +1296,26 @@ interface ThreadState {
   activeLeafId: string | null;
 }
 
+/** Open request cards a thread frame carries beside its page. */
+export const OPEN_CARDS_BESIDE_PAGE = 50;
+/** Unanswered cards looked at when choosing the ones beside a page. */
+const OPEN_CARD_CANDIDATES = 200;
+
+/** About 20 threads or 200 MB of parsed transcript, whichever comes first. */
+export const THREAD_CACHE_ENTRIES = 20;
+export const THREAD_CACHE_BYTES = 200 * 1024 * 1024;
+
+/** A cheap size estimate taken when a thread is cached: text, screen pixels
+ * and a flat allowance per row for the parsed object. */
+function threadStateBytes(state: ThreadState): number {
+  let bytes = 0;
+  for (const m of state.messages) bytes += messageBytes(m);
+  return bytes;
+}
+
+/** One held message's share of threadStateBytes. */
+const messageBytes = (m: Message): number => 512 + (m.text?.length ?? 0) * 2 + (m.png?.length ?? 0);
+
 /** bots.json never carries runtime activity: `busy`/`activity` are transient
  * per bot and per task, so every writer (ordinary saves and the package
  * transaction) serializes the same durable shape. */
@@ -1306,7 +1333,10 @@ export type MessageRewrite = (threadId: string, message: NewMessage) => NewMessa
 export class Store {
   bots: BotRecord[] = [];
   groups: GroupRecord[] = [];
-  private threads = new Map<string, ThreadState>();
+  /** Loaded threads, least recently used first out (THREAD_CACHE_*). */
+  private threads = new LruMap<ThreadState>(THREAD_CACHE_ENTRIES, THREAD_CACHE_BYTES, threadStateBytes, (threadId) => this.threadInFlight(threadId));
+  /** Threads with a write under way (Store.writing), by nesting depth. */
+  private writes = new Map<string, number>();
   private defaultSelection: () => ModelSelection;
   private listeners = new Set<(change: StoreChange) => void>();
   private accessRoles = new Map<string, string>();
@@ -1671,8 +1701,23 @@ export class Store {
       const next = prior !== undefined && prior !== identity ? { ...bot, accessRoleEpoch: (bot.accessRoleEpoch ?? 0) + 1 } : bot;
       return next.connectedAppAccess === undefined ? next : { ...next, connectedAppAccess: botAccessPolicy(next) };
     });
-    const write = () => writeFileAtomic(BOTS_FILE, persistedBotsJson(normalized), { mode: 0o600 });
-    if (!this.memoryReady || teamChangeOpen()) write(); else persistMemoryRoster({ bots: normalized, groups: this.groups }, write);
+    // Busy and activity never reach disk, so most saves (a turn starting or
+    // ending, a badge) leave the persisted roster byte for byte as it was. Then
+    // there is nothing to write and no memory roster to re-persist.
+    const json = persistedBotsJson(normalized);
+    const mode = !this.memoryReady || teamChangeOpen() ? "plain" : "memory";
+    const key = `${mode}\0${json}\0${this.groups.length ? JSON.stringify(this.groups.map(({ busyBotId: _b, turnStartedAt: _t, ...g }) => g)) : ""}`;
+    if (key === this.lastRosterKey && existsSync(BOTS_FILE)) { this.afterRosterSave(bots, normalized); return; }
+    const write = () => writeFileAtomic(BOTS_FILE, json, { mode: 0o600 });
+    if (mode === "plain") write(); else persistMemoryRoster({ bots: normalized, groups: this.groups }, write);
+    this.lastRosterKey = key;
+    this.afterRosterSave(bots, normalized);
+  }
+
+  /** What the last roster save wrote (mode, bots.json, groups). */
+  private lastRosterKey: string | undefined;
+
+  private afterRosterSave(bots: BotRecord[], normalized: BotRecord[]) {
     // The channels save against the roster being written, not the live one it replaces:
     // a stale label there would give a moved team's old name a fresh memory scope.
     if (!teamChangeOpen() && markPartitions({ bots: normalized, groups: this.groups })) this.saveGroupsNow(normalized);
@@ -1745,6 +1790,9 @@ export class Store {
   }
 
   private emit(change: StoreChange) {
+    // A bot, task or room going idle releases its thread's pin (threadInFlight):
+    // the cache is trimmed then, not at the next write, which may never come.
+    if (change.type === "bot" || change.type === "group") this.threads.evict();
     if (change.type === "message" && change.message.kind !== "screen" && (change.message.kind !== "activity" || isErrorActivity(change.message) || ("actorKind" in change.message && change.message.actorKind === "murage"))) {
       const group = this.groupByThread(change.threadId);
       const task = group?.threadId !== change.threadId && group?.tasks?.find(task => task.threadId === change.threadId);
@@ -2042,6 +2090,34 @@ export class Store {
     return recovered;
   }
 
+  /** A crash mid-"Checking the browser" leaves that note on screen as the
+   * conversation's leaf, a check that can never finish (boot recovery only
+   * looks for a trailing user message). Every pending checking note is
+   * abandoned: the one that ends its thread becomes the restart marker, any
+   * other settles to the "try again" wording. The pending notes come from a
+   * partial index, and each is patched as its own row: no history is scanned
+   * and no transcript is loaded. Idempotent (a settled note leaves the index). */
+  reconcileAbandonedBrowserChecks(interruptedNote: string): number {
+    let settled = 0;
+    // Index not built yet: skip, never fall back to a history scan; it is built in the reported upgrade work and the next start reconciles.
+    for (const hit of mdb.pendingBrowserCheckRows() ?? []) {
+      const tool = hit.isLeaf
+        ? { name: interruptedNote, ok: false }
+        : { name: browserUnavailableActivityName(BROWSER_CHECK_FAILED_REASON), ok: true };
+      if (this.patchMessageRow(hit.threadId, hit.message, { tool })) settled += 1;
+    }
+    return settled;
+  }
+
+  /** Patch one message whose row is already in hand. A thread already in memory goes through patchMessage (its cache stays right); otherwise only that row is rewritten, so the transcript is never loaded. */
+  private patchMessageRow(threadId: string, current: Message, patch: Partial<Message>): Message | null {
+    if (this.threads.has(threadId)) return this.patchMessage(threadId, current.id, patch);
+    const next = sanitizeMessageDiagnostic({ ...current, ...boundRemovedText(patch), card: patch.card ?? current.card });
+    mdb.updateMessage(threadId, next);
+    this.emit({ type: "message.patch", threadId, message: next, before: current });
+    return next;
+  }
+
   // ── channel tasks ────────────────────────────────────────────────────
   groupTasks(groupId: string): GroupTaskRecord[] {
     const group = this.group(groupId);
@@ -2137,6 +2213,43 @@ export class Store {
     return this.patchMessage(threadId, messageId, { reactions: next.length ? next : undefined });
   }
 
+  /** A thread the cache must keep: a write to it is under way, or a turn or
+   * stream is running on it (a busy bot or task on that thread, a room whose
+   * member is speaking). Evicting it would only reload it on the next row. */
+  private threadInFlight(threadId: string): boolean {
+    if (this.writes.has(threadId)) return true;
+    return this.bots.some((bot) => (bot.busy && bot.threadId === threadId) || Boolean(bot.tasks?.some((task) => task.busy && task.threadId === threadId)))
+      || this.groups.some((group) => Boolean(group.busyBotId) && group.threadId === threadId);
+  }
+
+  /** Run a write to one thread: the thread is never evicted while it runs,
+   * and the cache re-checks its caps once the outermost write ends. */
+  private writing<T>(threadId: string, run: () => T): T {
+    this.writes.set(threadId, (this.writes.get(threadId) ?? 0) + 1);
+    try {
+      return run();
+    } finally {
+      const left = (this.writes.get(threadId) ?? 1) - 1;
+      if (left) this.writes.set(threadId, left);
+      else { this.writes.delete(threadId); this.threads.evict(); }
+    }
+  }
+
+  /** A held thread's rows grew (or shrank) by `delta` bytes in place. Only
+   * the cached state is counted: a write to a state already evicted is in
+   * SQLite and nowhere else. */
+  private grew(threadId: string, t: ThreadState, delta: number): void {
+    if (this.threads.peek(threadId) === t) this.threads.adjust(threadId, delta);
+  }
+
+  /** Bytes of parsed transcript the loaded-thread cache holds (its estimate). */
+  cachedThreadBytes(): number { return this.threads.bytes; }
+
+  /** Resize the loaded-thread cache (tests, and a host that wants a tighter cap). */
+  setThreadCacheLimits(entries: number, bytes: number): void { this.threads.limits(entries, bytes); }
+  /** Thread ids currently held in memory, least recently used first. */
+  cachedThreadIds(): string[] { return this.threads.keys(); }
+
   private thread(threadId: string): ThreadState {
     const t = this.threads.get(threadId);
     if (t) return t;
@@ -2214,6 +2327,56 @@ export class Store {
     return first === -1 ? 0 : t.messages.length - first;
   }
 
+  /** How many of the newest messages reach back to the active branch head
+   * (0 for an empty thread). Open request cards are not counted: a page must
+   * not stretch to an old unanswered card (see openCardsOutside). */
+  branchHeadSpan(threadId: string): number {
+    const t = this.threads.get(threadId);
+    if (!t) return mdb.branchHeadSpan(threadId, mdb.readActiveLeafOrNewest(threadId));
+    const first = t.messages.findIndex((message) => message.id === t.activeLeafId);
+    return first === -1 ? 0 : t.messages.length - first;
+  }
+
+  /** The open request cards that are not in a page and sit on the active
+   * branch: at most `limit`, the newest ones, oldest first. They ride beside
+   * the page so the approval strip still sees them while a thread switch reads
+   * only the page, however old the unanswered card is. A card left on a branch
+   * the person edited away from is not sent: it no longer blocks the composer
+   * (the client cannot tell, since the rows linking it to the page are not
+   * held). Answered from the card index and the per-card branch answers kept
+   * in SQLite, loaded thread or not: the work is the cards, never the rows
+   * stored since them. */
+  openCardsOutside(threadId: string, page: readonly { id?: unknown }[], limit = OPEN_CARDS_BESIDE_PAGE): Message[] {
+    if (!page.length) return [];
+    const held = new Set(page.map((message) => message.id));
+    const candidates = mdb.openRequestCards(threadId, OPEN_CARD_CANDIDATES).filter((card) => !held.has(card.message.id));
+    if (!candidates.length) return [];
+    const onBranch = mdb.cardsOnBranch(threadId, mdb.readActiveLeafOrNewest(threadId), candidates.map((card) => ({ id: card.message.id, rowid: card.rowid })));
+    const cards = candidates.filter((card) => onBranch.has(card.message.id)).slice(0, limit).reverse();
+    return this.loadedMessages(cards.map((card) => card.message));
+  }
+
+  /** The stored branch head of a thread (its newest row when none is stored). */
+  activeLeafOf(threadId: string): string | null {
+    return mdb.readActiveLeafOrNewest(threadId);
+  }
+
+  /** A page of the branch that ends at `fromId` (the active head when omitted):
+   * up to `limit` rows reached by real parent links, oldest stored first, with
+   * `olderFrom`, the next ancestor, when the branch goes further back. This is
+   * the page a client opens on when another fork has grown far past the
+   * selected one, and the one it pages back with: storage order says nothing
+   * about ancestry once a thread has forked or had a row spliced in. Read from
+   * SQLite whether or not the thread is loaded, so both answer alike. Null when
+   * `fromId` is not a row of the thread. */
+  branchPage(threadId: string, limit: number, fromId?: string | null): { messages: Message[]; hasMore: boolean; activeLeafId: string | null; olderFrom: string | null } | null {
+    const leafId = mdb.readActiveLeafOrNewest(threadId);
+    const start = fromId ?? leafId;
+    if (!start) return { messages: [], hasMore: false, activeLeafId: leafId, olderFrom: null };
+    const chain = mdb.branchChain(threadId, start, limit);
+    return chain && { ...chain, messages: this.loadedMessages(chain.messages), activeLeafId: leafId };
+  }
+
   /** A `limit`-message window containing `messageId`, positioned like the
    * whole-history formula, read from SQLite without hydrating an uncached
    * thread. Null when the message is not in this thread. Never cached. */
@@ -2230,6 +2393,26 @@ export class Store {
     const start = Math.max(0, Math.min(index - leading, all.length - limit));
     const stop = Math.min(all.length, start + limit);
     return { messages: all.slice(start, stop), hasMore: start > 0 };
+  }
+
+  /** One message of a thread by id: from memory when the thread is loaded,
+   * otherwise a single indexed row. Never materializes the transcript. */
+  messageById(threadId: string, messageId: string): Message | undefined {
+    const loaded = this.threads.get(threadId);
+    if (loaded) return loaded.messages.find((message) => message.id === messageId);
+    const row = mdb.readMessage(threadId, messageId);
+    return row ? this.loadedMessages([row])[0] : undefined;
+  }
+
+  /** The first message written at or after `at`, else the newest one: a run's
+   * anchor in its thread. Answered from memory when the thread is loaded,
+   * otherwise from two indexed reads; a routine's transcript is not loaded to
+   * find one row. */
+  firstMessageSince(threadId: string, at: number): Message | undefined {
+    const loaded = this.threads.get(threadId);
+    if (loaded) return loaded.messages.find((message) => message.at >= at) ?? loaded.messages.at(-1);
+    const row = mdb.firstMessageSince(threadId, at);
+    return row ? this.loadedMessages([row])[0] : undefined;
   }
 
   messagesFor(threadId: string): Message[] {
@@ -2259,34 +2442,60 @@ export class Store {
 
   /** The visible conversation: root → activeLeafId. */
   activePath(threadId: string): Message[] {
-    const t = this.thread(threadId);
-    const byId = new Map(t.messages.map((m) => [m.id, m]));
     const path: Message[] = [];
-    let cur = t.activeLeafId ? byId.get(t.activeLeafId) : undefined;
-    while (cur) {
-      path.push(cur);
-      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
-    }
+    this.walkActivePath(threadId, (message) => { path.push(message); return false; });
     return path.reverse();
+  }
+
+  /** Walk the active branch from its leaf toward the root, stopping when
+   * `visit` returns true. A parent is always stored before its child, so each
+   * step scans downward from where the last one stopped: no id map of the
+   * whole thread is built, and a caller that stops early touches only the
+   * newest rows. Returns whether `visit` stopped the walk. A parent that is
+   * not found below its child (an out-of-order store) is looked up in an id
+   * map instead, so the result is the same as a map walk. */
+  walkActivePath(threadId: string, visit: (message: Message) => boolean): boolean {
+    const t = this.thread(threadId);
+    const rows = t.messages;
+    let index = t.activeLeafId ? rows.findLastIndex((m) => m.id === t.activeLeafId) : -1;
+    let byId: Map<string, number> | undefined;
+    while (index >= 0) {
+      const cur = rows[index]!;
+      if (visit(cur)) return true;
+      const parentId = cur.parentId;
+      if (!parentId) return false;
+      let next = -1;
+      for (let j = index - 1; j >= 0; j--) if (rows[j]!.id === parentId) { next = j; break; }
+      if (next < 0) {
+        byId ??= new Map(rows.map((m, i) => [m.id, i]));
+        next = byId.get(parentId) ?? -1;
+      }
+      index = next;
+    }
+    return false;
   }
 
   /** Mark the last assistant text on the active branch as this turn's final
    * visible answer. If a provider ends after commentary without emitting a
    * separate answer, that commentary remains visible as the safe fallback. */
   markTerminalAssistantMessage(threadId: string, turnId: string, outcome: MemoryTurnOutcome = "completed", helpers?: unknown): Message | null {
-    const t = this.thread(threadId);
-    const message = [...this.activePath(threadId)].reverse().find(m => m.role === "bot" && m.kind === "text" && m.turnId === turnId);
-    const kept = settledTurnHelpers(helpers);
-    const next = message ? { ...message, turnTerminal: true, ...(kept.length ? { turnHelpers: kept } : {}) } : null;
-    transaction(() => {
-      if (next) mdb.updateMessage(threadId,next);
-      recordMemorySettlement(threadId,turnId,outcome);
+    return this.writing(threadId, () => {
+      const t = this.thread(threadId);
+      let message = undefined as Message | undefined;
+      this.walkActivePath(threadId, (m) => (m.role === "bot" && m.kind === "text" && m.turnId === turnId ? ((message = m), true) : false));
+      const kept = settledTurnHelpers(helpers);
+      const next = message ? { ...message, turnTerminal: true, ...(kept.length ? { turnHelpers: kept } : {}) } : null;
+      transaction(() => {
+        if (next) mdb.updateMessage(threadId,next);
+        recordMemorySettlement(threadId,turnId,outcome);
+      });
+      if (next) {
+        t.messages[t.messages.findIndex(m => m.id === next.id)] = next;
+        this.grew(threadId, t, messageBytes(next) - messageBytes(message!));
+        this.emit({type:"message.patch",threadId,message:next});
+      }
+      return next;
     });
-    if (next) {
-      t.messages[t.messages.findIndex(m => m.id === next.id)] = next;
-      this.emit({type:"message.patch",threadId,message:next});
-    }
-    return next;
   }
 
   /** A last look at a message before it is written (see setMessageRewrite). */
@@ -2309,30 +2518,36 @@ export class Store {
     this.appendMessage(threadId,{role:'bot',kind:'text',actorKind:'murage',murage:{kind:'status'},text,sendId:key},id);
   }
 
-  appendMessage(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string): Message {
-    const t = this.thread(threadId);
-    const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
-    if (message === null) return { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(input) };
-    const full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
-    mdb.appendMessage(threadId, full);
-    t.messages.push(full);
-    t.activeLeafId = full.id;
-    if (full.kind === "screen") {
-      for (const pruned of this.pruneScreenFrames(t)) {
-        mdb.updateMessage(threadId, pruned);
-        this.emit({ type: "message.patch", threadId, message: pruned });
+  /** `within` runs in the same transaction as the insert (links the message must not exist without); if it throws, nothing
+   * is written, cached or announced. A `stableId` that already names a stored row returns that row (a redelivered event). */
+  appendMessage(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string, within?: (message: Message) => void): Message {
+    return this.writing(threadId, () => {
+      const t = this.thread(threadId);
+      if (stableId) { const held = t.messages.find(m => m.id === stableId) ?? mdb.storedMessage(threadId, stableId); if (held) return held; }
+      const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
+      if (message === null) return { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(input) };
+      const full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
+      mdb.appendMessage(threadId, full, within ? () => within(full) : undefined);
+      t.messages.push(full);
+      t.activeLeafId = full.id;
+      this.grew(threadId, t, messageBytes(full));
+      if (full.kind === "screen") {
+        for (const pruned of this.pruneScreenFrames(t, 4, (freed) => this.grew(threadId, t, -freed))) {
+          mdb.updateMessage(threadId, pruned);
+          this.emit({ type: "message.patch", threadId, message: pruned });
+        }
       }
-    }
-    this.emit({ type: "message", threadId, message: full });
-    // A legacy onboarding card is not a live ask. Talking past it hides it so
-    // the transcript is just the greeting plus what they said. Cards with a
-    // requestId are permission/question prompts and stay until answered, and
-    // intake cards own their own lifecycle (see dismissOnboardingCard).
-    if (full.role === "user" && full.kind === "text") {
-      this.dismissOnboardingCard(threadId);
-      this.observeOwnerSignals(threadId, full, t.messages.slice(-41, -1));
-    }
-    return full;
+      this.emit({ type: "message", threadId, message: full });
+      // A legacy onboarding card is not a live ask. Talking past it hides it so
+      // the transcript is just the greeting plus what they said. Cards with a
+      // requestId are permission/question prompts and stay until answered, and
+      // intake cards own their own lifecycle (see dismissOnboardingCard).
+      if (full.role === "user" && full.kind === "text") {
+        this.dismissOnboardingCard(threadId);
+        this.observeOwnerSignals(threadId, full, t.messages.slice(-41, -1));
+      }
+      return full;
+    });
   }
 
   /** Bot learning (B1): a re-ask, or the owner's edit of a bot draft, noticed
@@ -2353,52 +2568,57 @@ export class Store {
    * children are re-parented onto the inserted message, so the transcript
    * reads turn → artifact → follow-up and the leaf stays where it was. */
   insertMessageAfter(threadId: string, anchorId: string | undefined, message: Omit<Message, "id" | "at">): Message {
-    const t = this.thread(threadId);
-    const anchorExists = anchorId !== undefined && t.messages.some((m) => m.id === anchorId);
-    if (!anchorExists || t.activeLeafId === anchorId) return this.appendMessage(threadId, message);
-    const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
-    const children = t.messages.filter((m) => m.parentId === anchorId);
-    // A splice, not an append: the leaf stays where it is, in memory and on
-    // disk. mdb.appendMessage would move the stored leaf to this message,
-    // which reads as a branch change (memory retires the follow-up and revokes
-    // every receipt of the thread), and the next ordinary append, parented on
-    // the real leaf, would read as a second one: a warm engine was dropped
-    // with reason=memory-changed after every settle-time screenshot that
-    // landed behind a follow-up (continuation-churn.test.ts).
-    // One transaction for the insert, the screen-frame pruning and the
-    // reparenting, so a crash or a failure part-way leaves neither a stranded
-    // screenshot nor half-reparented siblings. Memory and every emit wait for
-    // the commit; if anything throws the cache is untouched and nothing is
-    // published. The work is computed on copies and applied afterwards.
-    const prunedCopies: Message[] = [];
-    if (full.kind === "screen") {
-      const screens = [...t.messages, full].filter((m) => m.kind === "screen" && m.png);
-      for (const m of screens.slice(0, Math.max(0, screens.length - 4))) prunedCopies.push({ ...m, png: undefined });
-    }
-    const reparented = children.map((child) => sanitizeMessageDiagnostic({ ...child, parentId: full.id }));
-    transaction(() => {
-      mdb.insertMessage(threadId, full);
-      for (const pruned of prunedCopies) mdb.updateMessage(threadId, pruned);
-      for (const next of reparented) mdb.updateMessage(threadId, next);
+    return this.writing(threadId, () => {
+      const t = this.thread(threadId);
+      const anchorExists = anchorId !== undefined && t.messages.some((m) => m.id === anchorId);
+      if (!anchorExists || t.activeLeafId === anchorId) return this.appendMessage(threadId, message);
+      const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
+      const children = t.messages.filter((m) => m.parentId === anchorId);
+      // A splice, not an append: the leaf stays where it is, in memory and on
+      // disk. mdb.appendMessage would move the stored leaf to this message,
+      // which reads as a branch change (memory retires the follow-up and revokes
+      // every receipt of the thread), and the next ordinary append, parented on
+      // the real leaf, would read as a second one: a warm engine was dropped
+      // with reason=memory-changed after every settle-time screenshot that
+      // landed behind a follow-up (continuation-churn.test.ts).
+      // One transaction for the insert, the screen-frame pruning and the
+      // reparenting, so a crash or a failure part-way leaves neither a stranded
+      // screenshot nor half-reparented siblings. Memory and every emit wait for
+      // the commit; if anything throws the cache is untouched and nothing is
+      // published. The work is computed on copies and applied afterwards.
+      const prunedCopies: Message[] = [];
+      if (full.kind === "screen") {
+        const screens = [...t.messages, full].filter((m) => m.kind === "screen" && m.png);
+        for (const m of screens.slice(0, Math.max(0, screens.length - 4))) prunedCopies.push({ ...m, png: undefined });
+      }
+      const reparented = children.map((child) => sanitizeMessageDiagnostic({ ...child, parentId: full.id }));
+      transaction(() => {
+        mdb.insertMessage(threadId, full);
+        for (const pruned of prunedCopies) mdb.updateMessage(threadId, pruned);
+        for (const next of reparented) mdb.updateMessage(threadId, next);
+      });
+      t.messages.push(full);
+      this.grew(threadId, t, messageBytes(full));
+      for (const pruned of prunedCopies) {
+        const idx = t.messages.findIndex((m) => m.id === pruned.id);
+        if (idx === -1) continue;
+        this.grew(threadId, t, -(t.messages[idx].png?.length ?? 0));
+        t.messages[idx].png = undefined;
+        this.emit({ type: "message.patch", threadId, message: t.messages[idx] });
+      }
+      this.emit({ type: "message", threadId, message: full });
+      // announced after the insert so no client ever sees two siblings
+      // claiming the same parent
+      for (const next of reparented) {
+        const idx = t.messages.findIndex((m) => m.id === next.id);
+        if (idx === -1) continue;
+        const before = t.messages[idx];
+        t.messages[idx] = next;
+        this.grew(threadId, t, messageBytes(next) - messageBytes(before));
+        this.emit({ type: "message.patch", threadId, message: next, before });
+      }
+      return full;
     });
-    t.messages.push(full);
-    for (const pruned of prunedCopies) {
-      const idx = t.messages.findIndex((m) => m.id === pruned.id);
-      if (idx === -1) continue;
-      t.messages[idx].png = undefined;
-      this.emit({ type: "message.patch", threadId, message: t.messages[idx] });
-    }
-    this.emit({ type: "message", threadId, message: full });
-    // announced after the insert so no client ever sees two siblings
-    // claiming the same parent
-    for (const next of reparented) {
-      const idx = t.messages.findIndex((m) => m.id === next.id);
-      if (idx === -1) continue;
-      const before = t.messages[idx];
-      t.messages[idx] = next;
-      this.emit({ type: "message.patch", threadId, message: next, before });
-    }
-    return full;
   }
 
   /** Insert a message into the chain directly before `beforeId`: it takes
@@ -2408,26 +2628,34 @@ export class Store {
    * written before: the transcript reads text → row → following text. The
    * leaf never moves, in memory or on disk. A missing target is a plain
    * append. */
-  insertMessageBefore(threadId: string, beforeId: string, input: Omit<Message, "id" | "at">): Message {
-    const t = this.thread(threadId);
-    const target = t.messages.find((m) => m.id === beforeId);
-    if (!target) return this.appendMessage(threadId, input);
-    const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
-    if (message === null) return { id: newId(), at: Date.now(), parentId: target.parentId, ...redactBotAuthored(input) };
-    // No backfill for unmarked rows: insertion before a row first ships with
-    // this marker, so no saved database holds an unmarked inserted row.
-    const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: target.parentId, insertedBefore: target.id };
-    const moved = sanitizeMessageDiagnostic({ ...target, parentId: full.id });
-    transaction(() => {
-      mdb.insertMessage(threadId, full);
-      mdb.updateMessage(threadId, moved);
+  insertMessageBefore(threadId: string, beforeId: string, input: Omit<Message, "id" | "at">, stableId?: string, within?: (message: Message) => void): Message {
+    return this.writing(threadId, () => {
+      const t = this.thread(threadId);
+      if (stableId) { const held = t.messages.find(m => m.id === stableId) ?? mdb.storedMessage(threadId, stableId); if (held) return held; }
+      const target = t.messages.find((m) => m.id === beforeId);
+      if (!target) return this.appendMessage(threadId, input, stableId, within);
+      const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
+      if (message === null) return { id: newId(), at: Date.now(), parentId: target.parentId, ...redactBotAuthored(input) };
+      // No backfill for unmarked rows: insertion before a row first ships with
+      // this marker, so no saved database holds an unmarked inserted row.
+      const full: Message = { id: stableId ?? newId(), at: Date.now(), ...redactBotAuthored(message), parentId: target.parentId, insertedBefore: target.id };
+      const moved = sanitizeMessageDiagnostic({ ...target, parentId: full.id });
+      transaction(() => {
+        mdb.insertMessage(threadId, full);
+        mdb.updateMessage(threadId, moved);
+        within?.(full);
+      });
+      t.messages.push(full);
+      this.grew(threadId, t, messageBytes(full));
+      const idx = t.messages.findIndex((m) => m.id === target.id);
+      if (idx !== -1) {
+        this.grew(threadId, t, messageBytes(moved) - messageBytes(t.messages[idx]));
+        t.messages[idx] = moved;
+      }
+      this.emit({ type: "message", threadId, message: full });
+      this.emit({ type: "message.patch", threadId, message: moved, before: target });
+      return full;
     });
-    t.messages.push(full);
-    const idx = t.messages.findIndex((m) => m.id === target.id);
-    if (idx !== -1) t.messages[idx] = moved;
-    this.emit({ type: "message", threadId, message: full });
-    this.emit({ type: "message.patch", threadId, message: moved, before: target });
-    return full;
   }
 
   /** Hide a legacy first-run quiz on this thread, if it is still open.
@@ -2464,7 +2692,7 @@ export class Store {
    * the transcript as placeholders. Mirrors the client's own frame cap.
    * Returns the messages whose pixels were dropped so the caller can
    * persist exactly those. */
-  private pruneScreenFrames(t: { messages: Message[] }, keep = 4): Message[] {
+  private pruneScreenFrames(t: { messages: Message[] }, keep = 4, freed?: (bytes: number) => void): Message[] {
     const pruned: Message[] = [];
     let seen = 0;
     for (let i = t.messages.length - 1; i >= 0 && seen < t.messages.length; i--) {
@@ -2472,6 +2700,7 @@ export class Store {
       if (m.kind !== "screen" || !m.png) continue;
       seen += 1;
       if (seen > keep) {
+        freed?.(m.png.length);
         m.png = undefined;
         pruned.push(m);
       }
@@ -2484,28 +2713,31 @@ export class Store {
    * client's identity for this edit, so a network retry answers with this
    * fork instead of forking and rerunning again (upstream #1387). */
   branchMessage(threadId: string, sourceId: string, text: string, origin?: MessageOrigin, sendId?: string): Message | null {
-    const t = this.thread(threadId);
-    const source = t.messages.find((m) => m.id === sourceId);
-    if (!source) return null;
-    const full: Message = {
-      id: newId(),
-      at: Date.now(),
-      role: "user",
-      kind: "text",
-      text,
-      parentId: source.parentId ?? null,
-      replyToId: source.replyToId,
-      ...(origin ? { origin } : {}),
-      ...(sendId ? { sendId } : {}),
-    };
-    mdb.appendMessage(threadId, full);
-    t.messages.push(full);
-    t.activeLeafId = full.id;
-    this.emit({ type: "message", threadId, message: full });
-    // A fork is not a child of the old leaf; publish the durable selection
-    // after its message so clients can display the server's active branch.
-    this.emit({ type: "thread", threadId, activeLeafId: full.id });
-    return full;
+    return this.writing(threadId, () => {
+      const t = this.thread(threadId);
+      const source = t.messages.find((m) => m.id === sourceId);
+      if (!source) return null;
+      const full: Message = {
+        id: newId(),
+        at: Date.now(),
+        role: "user",
+        kind: "text",
+        text,
+        parentId: source.parentId ?? null,
+        replyToId: source.replyToId,
+        ...(origin ? { origin } : {}),
+        ...(sendId ? { sendId } : {}),
+      };
+      mdb.appendMessage(threadId, full);
+      t.messages.push(full);
+      t.activeLeafId = full.id;
+      this.grew(threadId, t, messageBytes(full));
+      this.emit({ type: "message", threadId, message: full });
+      // A fork is not a child of the old leaf; publish the durable selection
+      // after its message so clients can display the server's active branch.
+      this.emit({ type: "thread", threadId, activeLeafId: full.id });
+      return full;
+    });
   }
 
   /** Point the visible conversation at the branch containing `messageId`,
@@ -2526,18 +2758,21 @@ export class Store {
   }
 
   patchMessage(threadId: string, messageId: string, patch: Partial<Message>): Message | null {
-    const t = this.thread(threadId);
-    const idx = t.messages.findIndex((m) => m.id === messageId);
-    if (idx === -1) return null;
-    const next = sanitizeMessageDiagnostic({ ...t.messages[idx], ...boundRemovedText(patch), card: patch.card ?? t.messages[idx].card });
-    // SQLite is the durable source of truth. Persist before changing memory so
-    // a failed write cannot make this process believe a card was answered
-    // while a restart would still show it as pending.
-    mdb.updateMessage(threadId, next);
-    const before = t.messages[idx];
-    t.messages[idx] = next;
-    this.emit({ type: "message.patch", threadId, message: next, before });
-    return next;
+    return this.writing(threadId, () => {
+      const t = this.thread(threadId);
+      const idx = t.messages.findIndex((m) => m.id === messageId);
+      if (idx === -1) return null;
+      const next = sanitizeMessageDiagnostic({ ...t.messages[idx], ...boundRemovedText(patch), card: patch.card ?? t.messages[idx].card });
+      // SQLite is the durable source of truth. Persist before changing memory so
+      // a failed write cannot make this process believe a card was answered
+      // while a restart would still show it as pending.
+      mdb.updateMessage(threadId, next);
+      const before = t.messages[idx];
+      t.messages[idx] = next;
+      this.grew(threadId, t, messageBytes(next) - messageBytes(before));
+      this.emit({ type: "message.patch", threadId, message: next, before });
+      return next;
+    });
   }
 
   bot(id: string) {
@@ -2987,7 +3222,7 @@ export class Store {
     return { ok: true, bot };
   }
 
-  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string) {
+  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number) {
     const bot = this.bot(botId);
     if (!bot) return;
     // the cursor belongs to the task that produced it, not to the bot
@@ -2996,6 +3231,12 @@ export class Store {
       task.resumeCursors[instanceId] = cursor;
       // and to the audience it was made for (SPEC-P 13.1)
       if (audience !== undefined) task.resumeAudiences = { ...task.resumeAudiences, [instanceId]: audience };
+      // and to the session contract it was made under (claude.ts CLAUDE_ISOLATION_CONTRACT)
+      if (contract !== undefined) task.resumeContracts = { ...task.resumeContracts, [instanceId]: contract };
+      else if (task.resumeContracts && Object.hasOwn(task.resumeContracts, instanceId)) {
+        const { [instanceId]: _dropped, ...rest } = task.resumeContracts;
+        task.resumeContracts = rest;
+      }
     }
     // The legacy mirror follows the task visible in chat, never a detached
     // routine task working in the background.
@@ -3104,9 +3345,12 @@ export class Store {
     botId: string,
     threadId: string,
     turn: { input?: number; output?: number; cachedInput?: number; costUsd: number | null },
+    /** idempotency key of the provider turn: banked in the same write as the totals, so a redelivery changes nothing */
+    turnKey?: string,
   ): TaskUsage | null {
     const task = this.taskByThread(botId, threadId);
     if (!task) return null;
+    if (turnKey && task.usageTurnKeys?.includes(turnKey)) return task.usage ?? null;
     const prev: TaskUsage = { input: 0, output: 0, costUsd: null, turns: 0, ...task.usage };
     const cost = typeof turn.costUsd === "number" && Number.isFinite(turn.costUsd) ? turn.costUsd : null;
     const prevCost = typeof prev.costUsd === "number" ? prev.costUsd : null;
@@ -3127,6 +3371,7 @@ export class Store {
       costUsd: cost === null ? prevCost : (prevCost ?? 0) + cost,
       turns: prev.turns + 1,
     };
+    if (turnKey) task.usageTurnKeys = [...(task.usageTurnKeys ?? []), turnKey].slice(-64);
     this.saveBots();
     this.emit({ type: "bot", botId });
     return task.usage;

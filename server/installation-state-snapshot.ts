@@ -409,7 +409,7 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       const rootNames = readdirSync(root).sort();
       // SQLite may create/remove these exact auxiliary files while taking its
       // own consistent backup. All other membership and file checks remain.
-      const rootMembership=(entries:string[])=>entries.filter(name=>name!=="messages.db-wal"&&name!=="messages.db-shm");
+      const rootMembership=(entries:string[])=>entries.filter(name=>name!=="messages.db-wal"&&name!=="messages.db-shm"&&name!=="connected-app-ledger.db-wal"&&name!=="connected-app-ledger.db-shm");
       if (rootNames.length > maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
       // One list decides every top-level name (data-dir-inventory.ts).
       const kinds = new Map<string, NonNullable<ReturnType<typeof classifyDataDirEntry>>>();
@@ -442,6 +442,10 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       manifest.database = await installation.snapshotDatabase(join(stage, "state", "messages.db"));
       if (manifest.database.status === "copied") add("messages.db", manifest.database.bytes, manifest.database.sha256, "messages.db");
       else manifest.missing.push("messages.db");
+      // A consistent copy of the connected-app ledger, so unknown-outcome
+      // records keep blocking duplicate actions on a restored computer.
+      const ledger = await installation.snapshotConnectedLedger(join(stage, "state", "connected-app-ledger.db"));
+      if (ledger.status === "copied") add("connected-app-ledger.db", ledger.bytes, ledger.sha256, "connected-app-ledger.db");
       check();
       const assertSourceUnchanged = () => {
         check();
