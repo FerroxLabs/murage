@@ -5,11 +5,13 @@
 // `model` + `modelProvider` separately; picker ids encode both.
 import { readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 
 import type { ModelCatalog } from "../contracts.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
 import { killCliTree, spawnCli } from "../procs.ts";
+import "./codex-scope-spec.ts"; // registers how a scope this process did not build is rebuilt
+import { currentScopeHome, scopedCliHomeRoot, withScopeRetry } from "./scoped-cli-home.ts";
 import { mergeLocalInject } from "./local-inject.ts";
 
 export const STATIC_CODEX_MODELS: ModelCatalog = {
@@ -83,10 +85,26 @@ export function readCodexAppServerModelCatalog(
   env: Record<string, string | undefined>,
   timeoutMs = 8_000,
 ): Promise<ModelCatalog | null> {
+  // An environment that names one of Murage's Codex scopes launches on that scope's CURRENT login generation, never an older path.
+  // A scope that cannot be resolved (contention is retried within the bound; anything else) gives NO catalog: the inherited path,
+  // which may hold a login the owner has since replaced or signed out of, is never launched with.
+  const named = env.CODEX_HOME && env.CODEX_HOME.startsWith(scopedCliHomeRoot("codex")) ? env.CODEX_HOME : null;
+  if (!named) return spawnCatalog(cli, env, timeoutMs);
+  return withScopeRetry(() => currentScopeHome("codex", named), "Codex").then(
+    (current) => (current ? spawnCatalog(cli, { ...env, CODEX_HOME: current }, timeoutMs) : null),
+    () => null,
+  );
+}
+
+function spawnCatalog(
+  cli: string,
+  launchEnv: Record<string, string | undefined>,
+  timeoutMs: number,
+): Promise<ModelCatalog | null> {
   return new Promise((resolve) => {
     const child = spawnCli(cli, ["app-server"], {
       cwd: homedir(),
-      env,
+      env: launchEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let settled = false;
@@ -188,7 +206,9 @@ export function readCodexAppServerModelCatalog(
 }
 
 export function codexHome(env: Record<string, string | undefined>): string {
-  if (env.CODEX_HOME) return env.CODEX_HOME;
+  // A relative CODEX_HOME would resolve against whatever folder the server
+  // happens to run in, and read sign-in state from there. Use it only when absolute.
+  if (env.CODEX_HOME && isAbsolute(env.CODEX_HOME)) return env.CODEX_HOME;
   return join(env.HOME || env.USERPROFILE || homedir(), ".codex");
 }
 

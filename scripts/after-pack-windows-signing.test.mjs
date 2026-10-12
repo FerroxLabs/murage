@@ -63,6 +63,7 @@ function fixture() {
   fs.writeFileSync(browser.engine, "pinned browser engine");
   fs.writeFileSync(browser.chrome, "pinned browser chrome");
   fs.writeFileSync(path.join(resources, "cloudflared", "cloudflared.exe"), "vendor fixture");
+  fs.writeFileSync(path.join(resources, "engine-exclusion.node"), Buffer.concat([Buffer.from("MZ"), Buffer.alloc(4096)])); // the engine-exclusion addon (the gate refuses a package without it)
   for (const name of ["fuigo-LICENSE.txt", "fuigo-README.md", "fuigo-THIRD_PARTY_NOTICES.md", "cloudflared-LICENSE.txt", "cloudflared-README.md"]) {
     fs.writeFileSync(path.join(resources, "licenses", name), "fixture");
   }
@@ -76,6 +77,7 @@ function fixture() {
   fs.mkdirSync(path.join(server, "memory"), { recursive: true });
   fs.writeFileSync(path.join(server, "memory/worker.js"), "// fixture worker");
   fs.writeFileSync(path.join(server, "bot-package-guard-worker.js"), "// fixture worker");
+  fs.writeFileSync(path.join(server, "engine-history-worker.js"), "// fixture worker");
   fs.writeFileSync(path.join(server, "memory-model-manifest.json"), JSON.stringify({ runtimeVersion: "4.2.0" }));
   fs.writeFileSync(path.join(runtime, "package.json"), JSON.stringify({ name: "onnxruntime-node", version: "1.24.3" }));
   fs.writeFileSync(path.join(server, "memory-runtime-manifest.json"), JSON.stringify({

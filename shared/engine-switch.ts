@@ -53,22 +53,23 @@ export const ENGINE_TOOL_KEYS = [
 ] as const;
 
 const FACTS: ReadonlyArray<{ key: keyof EngineSwitchCapabilities; lost: string; gained: string }> = [
-  { key: "agentsMcp", lost: "Loses the team tools (messaging, asking and handing work to other bots) on this engine.", gained: "Gains the team tools (messaging, asking and handing work to other bots) on this engine." },
-  { key: "composioMcp", lost: "Loses connected apps on this engine.", gained: "Gains connected apps on this engine." },
-  { key: "computerMcp", lost: "Loses its computer on this engine.", gained: "Gains its computer on this engine." },
-  { key: "browserMcp", lost: "Loses the browser on this engine.", gained: "Gains the browser on this engine." },
-  { key: "customMcp", lost: "Loses your own tool servers on this engine.", gained: "Gains your own tool servers on this engine." },
-  { key: "images", lost: "Loses reading pictures on this engine.", gained: "Gains reading pictures on this engine." },
-  { key: "queueing", lost: "Messages you send while it works wait until it finishes, on this engine.", gained: "Takes messages while it works, on this engine." },
+  { key: "agentsMcp", lost: "it doesn't message or hand work to other bots", gained: "it can message and hand work to other bots" },
+  { key: "composioMcp", lost: "connected apps aren't used", gained: "connected apps are used" },
+  { key: "computerMcp", lost: "the computer isn't used", gained: "it can use the computer" },
+  { key: "browserMcp", lost: "the browser isn't used", gained: "it can use the browser" },
+  { key: "customMcp", lost: "your own tool servers aren't used", gained: "your own tool servers are used" },
+  { key: "images", lost: "pictures aren't passed to the model", gained: "pictures are passed to the model" },
+  { key: "queueing", lost: "new messages wait for the current reply", gained: "it takes new messages while it works" },
 ];
 
 /** Every flag key a switch notice names. */
 export const ENGINE_SWITCH_KEYS: readonly string[] = FACTS.map((fact) => fact.key);
 
-/** One plain line per capability the switch loses, then one per capability
- * it gains. Empty when nothing changes (for example a new model on the same
- * engine). Unknown engines on either side say nothing rather than guess. */
-export function engineSwitchLines(from: EngineSwitchCapabilities | undefined, to: EngineSwitchCapabilities | undefined): string[] {
+/** What the engine does differently, as at most two calm statements: one for
+ * what it does not do, one for what it adds. Empty when nothing changes (for
+ * example a new model on the same engine). Unknown engines on either side say
+ * nothing rather than guess. */
+export function engineSwitchLines(from: EngineSwitchCapabilities | undefined, to: EngineSwitchCapabilities | undefined, engineLabel?: string): string[] {
   if (!from || !to) return [];
   const lost: string[] = [];
   const gained: string[] = [];
@@ -80,7 +81,31 @@ export function engineSwitchLines(from: EngineSwitchCapabilities | undefined, to
   }
   const hadEffort = (from.effortLevels?.length ?? 0) > 0;
   const hasEffort = (to.effortLevels?.length ?? 0) > 0;
-  if (hadEffort && !hasEffort) lost.push("Loses the effort setting on this engine.");
-  if (!hadEffort && hasEffort) gained.push("Gains the effort setting on this engine.");
-  return [...lost, ...gained];
+  if (hadEffort && !hasEffort) lost.push("the effort setting isn't offered");
+  if (!hadEffort && hasEffort) gained.push("the effort setting is offered");
+  const prefix = `On ${engineLabel?.trim() || "this engine"}: `;
+  const join = (parts: string[]) => `${prefix}${parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0]}.`;
+  return [...(lost.length ? [join(lost)] : []), ...(gained.length ? [join(gained)] : [])];
+}
+
+/** The calm capability statement for an engine that does not drive the
+ * computer. One sentence, shared by the Computer panel, the engine picker and
+ * (in spirit) the system layer a turn gets, so the wording never drifts. */
+export function engineWithoutComputerText(engineLabel: string | undefined): string {
+  return `${engineLabel?.trim() || "This model"} doesn't use the computer. Switch to a model that does, like Claude, to use it here.`;
+}
+
+/** The up-front picker line: the bot's computer is Local, VM or Cloud and the
+ * engine being picked cannot mount it. Null for every other case. */
+export function computerEngineNote(
+  computer: string | undefined,
+  target: { computerMcp?: boolean; localComputerMcp?: boolean } | undefined,
+  targetLabel: string | undefined,
+  driverKind?: string,
+): string | null {
+  if (!target) return null;
+  if (computer === "local") return target.localComputerMcp === true || target.computerMcp === true ? null : engineWithoutComputerText(targetLabel);
+  if (computer === "vm") return target.computerMcp === true && driverKind !== "boxAgent" ? null : engineWithoutComputerText(targetLabel);
+  if (computer === "cloud") return target.computerMcp === true || driverKind === "boxAgent" ? null : engineWithoutComputerText(targetLabel);
+  return null;
 }

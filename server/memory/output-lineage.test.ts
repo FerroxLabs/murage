@@ -48,7 +48,7 @@ async function disclose(): Promise<MemoryDispatchReceipt> {
   return receipt;
 }
 const bot = (id: string) => ({ threadId: thread, id, role: "bot" as const });
-const rootsOf = (id: string, threadId = thread) => database().prepare("SELECT m.root_thread_id,m.root_message_id FROM memory_output_roots o JOIN memory_root_set_members m ON m.set_id=o.set_id WHERE o.thread_id=? AND o.message_id=? ORDER BY m.root_message_id").all(threadId, id).map(row => `${row.root_thread_id}/${row.root_message_id}`);
+const rootsOf = (id: string, threadId = thread) => database().prepare("WITH RECURSIVE chain(id) AS (SELECT set_id FROM memory_output_roots WHERE thread_id=? AND message_id=? UNION SELECT p.parent_id FROM memory_root_set_parents p JOIN chain c ON p.set_id=c.id) SELECT m.root_thread_id,m.root_message_id FROM chain c JOIN memory_root_set_members m ON m.set_id=c.id ORDER BY m.root_message_id").all(threadId, id).map(row => `${row.root_thread_id}/${row.root_message_id}`);
 const setOf = (id: string, threadId = thread) => database().prepare("SELECT set_id FROM memory_output_roots WHERE thread_id=? AND message_id=?").get(threadId, id)?.set_id;
 afterEach(() => setRootSetCeilingForTest(null));
 const withheld = (ids: string[]) => replayExclusions(thread, ids.map(id => ({ id, role: "bot" })), null, { failClosed: true });
@@ -146,8 +146,8 @@ it("at the ceiling the retained session resets instead of withholding the reply"
 
 it("a pre-v6 session resets before its first v6 continuation whatever the counters say, then is not reset again", async () => {
   await disclose();
-  // the receipt predates lineage, and no counter moved since
-  database().prepare("UPDATE memory_lineage_meta SET since=? WHERE id=1").run(Date.now() + 60_000);
+  // the receipt predates lineage (a legacy session has receipts and no lineage row), and no counter moved since
+  database().prepare("DELETE FROM memory_session_roots WHERE thread_id=? AND driver_instance='claude' AND native_session='s-active'").run(thread);
   const why: { reason?: string } = {};
   expect(retainedSessionInvalid(thread, "claude", "s-active", why)).toBe(true);
   expect(why.reason).toBe("pre-lineage");

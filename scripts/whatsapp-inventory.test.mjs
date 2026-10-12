@@ -12,9 +12,10 @@ function fixture(extra) {
   const server = mkdtempSync(join(tmpdir(), "wa-inventory-")); roots.push(server);
   const packages = [["baileys", "7.0.0-rc14"], ["jimp", "1.6.1"], ...(extra ? [[extra, "1.0.0"]] : [])];
   for (const [name, version] of packages) {
-    const dir = join(server, "node_modules", ...(name === "baileys" || name === "jimp" ? [] : ["baileys", "node_modules"]), name);
+    // Hoisted layout: every staged package sits directly under node_modules; baileys declares the extra one.
+    const dir = join(server, "node_modules", name);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "package.json"), JSON.stringify({ name, version, license: "MIT" })); writeFileSync(join(dir, "LICENSE"), `${name} licence`);
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name, version, license: "MIT", ...(name === "baileys" && extra ? { dependencies: { [extra]: "1.0.0" } } : {}) })); writeFileSync(join(dir, "LICENSE"), `${name} licence`);
   }
   const lockfile = join(server, "lock.yaml");
   writeFileSync(lockfile, JSON.stringify({ packages: Object.fromEntries(packages.map(([name, version]) => [`${name}@${version}`, { resolution: { integrity: "sha512-YWJj" } }])) }));

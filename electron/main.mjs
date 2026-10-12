@@ -7,7 +7,7 @@ import { mutateFluxCredentials } from "./flux-connection-control.mjs";
 import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs";
 import { compileCacheEnvironment } from "./compile-cache.mjs";
 import { createDesktopTrace } from "./desktop-trace.mjs";
-import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from "electron";
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
 import { createApprovalNotifications } from "./approval-notification.mjs";
 import { BACKUP_MODE_ARGUMENT, BACKUP_TOOL_STUCK_AFTER, createBackupModeController, createBackupToolCapability, createResticToolCapability, prepareBackupRestart } from "./backup-mode.mjs";
@@ -1933,6 +1933,7 @@ async function startServerOn(port) {
   try {
     identity = await Promise.race([pollServerIdentity({
     extendWhile: () => upgradeWatch?.active() ?? false,
+    progressFresh: () => upgradeWatch?.fresh() ?? false,
     port,
     // Getter, not value: proc.pid stays undefined until the async `spawn`
     // event fires, and capturing it here would make the probe judge our own
@@ -2613,6 +2614,26 @@ function closeStartupSplash({ afterMainWindowClosed = false } = {}) {
   setTimeout(() => { startupSplashClosing = false; }, 1000).unref?.();
 }
 
+/** Help menu: one step back to Murage 1.0.1 after the memory v7 upgrade. Quits
+ * Murage, steps the memory database down to v6 under the recovery lease, then
+ * asks the person to install 1.0.1. The next start of this version brings the
+ * set-aside details up to date again. */
+async function prepareForMurage101() {
+  if (!app.isPackaged || prepareForMurage101.running || desktopRecoveryMode || desktopShutdownStarted || !desktopDataOwner || !desktopDataDir) return;
+  prepareForMurage101.running = true;
+  try {
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const confirm = await dialog.showMessageBox(...(parent ? [parent] : []), { type: "question", buttons: ["Prepare and quit", "Cancel"], defaultId: 0, cancelId: 1, title: "Prepare to reinstall Murage 1.0.1", message: "Prepare to reinstall Murage 1.0.1?", detail: "Murage will close. Your chats and memories stay. Details that only this version uses are set aside, and the next start of this version brings them up to date again. After Murage closes, install 1.0.1." });
+    if (confirm.response !== 0 || desktopRecoveryMode || desktopShutdownStarted) return;
+    desktopRecoveryMode = true;
+    let failure = null;
+    try { await runDesktopRecovery("memory-downgrade", {}); } catch (error) { if (error?.code !== "MEMORY_DATABASE_MISSING" && error?.message !== "MEMORY_DATABASE_MISSING") failure = typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(error.code) ? error.code : "RECOVERY_OPERATION_FAILED"; }
+    if (failure) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage could not get ready for 1.0.1.", detail: `Nothing was lost. The next start of this version picks up where it left off. Code: ${failure}` });
+    else await dialog.showMessageBox({ type: "info", buttons: ["Quit"], title: "Murage", message: "Ready for Murage 1.0.1.", detail: "Install it now; your chats and memories are kept." });
+    app.quit();
+  } finally { prepareForMurage101.running = false; }
+}
+
 function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
   desktopRecoveryMode = true;
   closeStartupSplash();
@@ -2789,7 +2810,8 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     : operation === "activate" ? ["activate", "--data-dir", dataDirectory, "--review-hash", parameters.reviewHash]
     : operation === "backup" ? ["backup", "--data-dir", dataDirectory, "--output", parameters.output]
     : operation === "restore" ? ["restore", "--data-dir", dataDirectory, "--archive", parameters.archive, "--sha256", parameters.sha256]
-    : operation === "rollback" ? ["rollback", "--data-dir", dataDirectory] : null;
+    : operation === "rollback" ? ["rollback", "--data-dir", dataDirectory]
+    : operation === "memory-downgrade" ? ["memory-downgrade", "--data-dir", dataDirectory, "--to", "6"] : null;
   if (!args || args.some(value => typeof value !== "string" || !value)) throw Object.assign(new Error("Invalid recovery request"), { code: "INVALID_RECOVERY_REQUEST" });
   if(operation==="backup-encrypted"&&parameters.maxBytes!==undefined){
     if(!Number.isSafeInteger(parameters.maxBytes)||parameters.maxBytes<1||parameters.maxBytes>1024**4||!Number.isSafeInteger(parameters.maxDurationMs)||parameters.maxDurationMs<1000||parameters.maxDurationMs>30*60000)throw new Error("INVALID_BACKUP_BUDGET");
@@ -3475,6 +3497,15 @@ ipcMain.handle("desktop:open-external", createOpenExternalHandler({
   isTrustedSender: ownedMainSenderGate({ window: () => mainWindow, origin: trustedRendererOrigin }),
   openExternal: (url) => shell.openExternal(url),
 }));
+
+// The terms screen's Quit (src/components/TermsGate.tsx): the person who will
+// not accept has no other way out of a screen that blocks the app. Same
+// owned-main-window sender gate as above.
+const isTermsQuitSender = ownedMainSenderGate({ window: () => mainWindow, origin: trustedRendererOrigin });
+ipcMain.handle("desktop:quit", (event) => {
+  if (isTermsQuitSender(event) !== true) throw new Error("Quit is available only from the main Murage window");
+  app.quit();
+});
 
 // The Box VNC viewer must be a top-level page for its token exchange. A
 // sandboxed modal BrowserWindow satisfies that requirement while keeping the
@@ -4209,6 +4240,13 @@ const desktopStartup = app.whenReady().then(async () => {
     applicationMenu.append(serverMenu.items[0]);
     Menu.setApplicationMenu(applicationMenu);
   } else Menu.setApplicationMenu(serverMenu);
+  if (app.isPackaged) {
+    const prepareItem = { label: "Prepare to reinstall Murage 1.0.1…", click: () => { void prepareForMurage101().catch(() => {}); } };
+    const currentMenu = Menu.getApplicationMenu();
+    const helpItem = currentMenu?.items.find(item => item.role === "help" || item.label === "Help");
+    if (helpItem?.submenu) { helpItem.submenu.append(new MenuItem(prepareItem)); Menu.setApplicationMenu(currentMenu); }
+    else if (currentMenu) { currentMenu.append(new MenuItem({ label: "Help", submenu: [prepareItem] })); Menu.setApplicationMenu(currentMenu); }
+  }
   if (app.isPackaged) acquireDesktopDataOwner();
   await initializeBackupScheduleHost();
   desktopMark("backup-host.ready");

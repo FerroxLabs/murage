@@ -1,4 +1,8 @@
+import { readFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
+
+// The terms version this build asks for (shared/terms.ts is TypeScript, so read it as text).
+const termsVersion = /TERMS_VERSION = "([^"]+)"/.exec(readFileSync(new URL("../shared/terms.ts", import.meta.url), "utf8"))?.[1];
 
 /** Build a fixture environment, not a copy of a developer's credentials.
  * PATH retains system tooling, with this exact Node runtime first. Engine
@@ -25,5 +29,9 @@ export function e2eEnvironment(base, dataDir, execPath = process.execPath) {
     MURAGE_UI_PORT: base.MURAGE_UI_PORT,
     MURAGE_WEBHOOK_PORT: base.MURAGE_WEBHOOK_PORT,
     FAKE_CLAUDE_MODE: "happy",
+    // A fixture install has no one to tick the terms box; the headless
+    // declaration (server/terms.ts) stands in. A spec about the terms screen
+    // itself sets MURAGE_TERMS_PENDING=1 to see the real first-run answer.
+    ...(termsVersion && base.MURAGE_TERMS_PENDING !== "1" ? { MURAGE_TERMS_ACCEPTED: termsVersion } : {}),
   };
 }

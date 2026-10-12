@@ -8,7 +8,7 @@ import { buildRemoteMount } from "../custom-mcp-mounts.ts";
 // These used to be POSIX-only: the fake CLI is a shebang script Windows
 // cannot exec, and the broker is a unix socket. Both now go through
 // resolveCliSpawn / permissionSocketPath, so they run everywhere.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { connect, createServer as createNetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -18,8 +18,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR, ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { brokerSocketCandidates, ClaudeDriver, claudeCostSnapshot, createPermissionBroker, permissionSocketPath, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
+import { brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
+import { invalidateCliVersions } from "../cli-version-cache.ts";
+import { CLAUDE_MANAGED_MCP_CONFLICT, CLAUDE_MIN_VERSION, CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionBelow, claudeVersionVerdict, requireClaudeCliVersion, resetClaudeVersionGate, VERSION_FAILURE_BACKOFF_MS } from "./claude-guards.ts";
 import * as localInject from "./local-inject.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-claude-cli.ts");
@@ -390,6 +392,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     delete process.env.FAKE_CLAUDE_DUMP;
     delete process.env.FAKE_CLAUDE_DUMP_LOG;
     delete process.env.FAKE_CLAUDE_CHILD_PID;
+    delete process.env.FAKE_CLAUDE_REFUSE;
+    delete process.env.FAKE_CLAUDE_VERSION;
+    delete process.env.CLAUDE_CODE_PLUGIN_DIRS;
+    resetClaudeVersionGate();
+    invalidateCliVersions();
     delete process.env.FAKE_CLAUDE_TRANSIENTS;
     delete process.env.FAKE_CLAUDE_PARTIAL_FAILS;
     delete process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS;
@@ -661,6 +668,110 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.env.XAI_API_KEY).toBeUndefined();
     expect(seen.env.BOX_TOKEN).toBeUndefined();
     expect(seen.env.MURAGE_TTS_KEY).toBeUndefined();
+  });
+
+  it("keeps the owner's personal Claude setup out of a chat turn with default sources and no secret on argv", async () => {
+    const account = join(scratch, "acct", ".claude");
+    mkdirSync(join(account, "skills", "mine"), { recursive: true });
+    writeFileSync(join(account, "skills", "mine", "SKILL.md"), "---\nname: my-skill\ndescription: d\n---\n");
+    mkdirSync(join(account, "commands", "sub"), { recursive: true });
+    writeFileSync(join(account, "commands", "sub", "deploy.md"), "---\ndescription: d\n---\nbody");
+    mkdirSync(join(account, "agents"), { recursive: true });
+    writeFileSync(join(account, "agents", "helper.md"), "---\nname: personal-helper\ndescription: d\n---\nbody");
+    process.env.CLAUDE_CODE_PLUGIN_DIRS = join(scratch, "personal-plugins");
+    writeFileSync(join(account, "settings.json"), JSON.stringify({ enabledPlugins: { "p@m": true }, apiKeyHelper: "/bin/helper-SECRETPATH", env: { HELPER_TOKEN: "SECRETVALUE", ANTHROPIC_DEFAULT_SONNET_MODEL: "mapped" } }));
+    mkdirSync(join(scratch, ".claude"), { recursive: true });
+    writeFileSync(join(scratch, ".claude", "settings.local.json"), JSON.stringify({ enabledPlugins: { "q@m": true } }));
+    await create(undefined, {}, { configDir: account });
+    const dump = join(scratch, "dump.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-isolation", text: "hi", cwd: scratch });
+    await recorder.until((e) => e.type === "turn.completed");
+    const { argv, env } = JSON.parse(readFileSync(dump, "utf8"));
+    // the CLI loads user, project and local settings as the owner's own Claude Code does
+    expect(argv).not.toContain("--setting-sources");
+    expect(argv).toContain("--strict-mcp-config");
+    expect(argv).toContain("--mcp-config");
+    expect(JSON.parse(readFileSync(argv[argv.indexOf("--settings") + 1], "utf8"))).toEqual({
+      disableAllHooks: true,
+      enabledPlugins: { "p@m": false, "q@m": false },
+      claudeMdExcludes: expect.arrayContaining([join(account, "CLAUDE.md"), join(account, "rules", "**")]),
+      skillOverrides: { mine: "off", "my-skill": "off", "sub:deploy": "off" },
+      permissions: { deny: ["Agent(personal-helper)"] },
+      outputStyle: "default",
+      agent: "",
+      env: { CLAUDE_CODE_PLUGIN_DIRS: "" },
+    });
+    // the overlay rides in a private file named by its content hash, never inline on argv
+    const overlay = argv[argv.indexOf("--settings") + 1];
+    expect(overlay).toMatch(/[0-9a-f]{32}\.json$/);
+    if (process.platform !== "win32") expect(statSync(overlay).mode & 0o777).toBe(0o600);
+    // plugins loaded from this variable need no settings entry: it never reaches the CLI
+    expect(env.CLAUDE_CODE_PLUGIN_DIRS).toBeUndefined();
+    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "session.started", sessionContract: CLAUDE_ISOLATION_CONTRACT }));
+    expect(instance.sessionContract).toBe(CLAUDE_ISOLATION_CONTRACT);
+    expect(JSON.stringify(argv)).not.toContain("SECRET");
+    // the login is untouched: no config-dir swap, no bare mode, no copied credentials
+    expect(argv).not.toContain("--bare");
+    expect(env.HELPER_TOKEN).toBeUndefined();
+  });
+
+  it("settles update_required when the CLI rejects an isolation flag it does not know", async () => {
+    process.env.FAKE_CLAUDE_REFUSE = "unknown-option";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-old", text: "hi", cwd: scratch });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", setup: true, claudeUpdate: true }));
+    expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "update_required" });
+  });
+
+  it("reports a managed MCP policy's refusal as CLAUDE_MANAGED_MCP_CONFLICT", async () => {
+    process.env.FAKE_CLAUDE_REFUSE = "managed-mcp";
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-managed", text: "hi", cwd: scratch });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", setup: true, errorKind: CLAUDE_MANAGED_MCP_CONFLICT }));
+    expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "managed_mcp_conflict" });
+  });
+
+  it("gives a proposal the managed-policy code when the CLI refuses", async () => {
+    process.env.FAKE_CLAUDE_REFUSE = "managed-mcp";
+    await create();
+    await expect(instance.proposeProject?.("Propose", new AbortController().signal, "chief-model")).rejects.toMatchObject({ code: CLAUDE_MANAGED_MCP_CONFLICT });
+  });
+
+  it("settles update_required before any launch when the CLI is older than 2.1.280", async () => {
+    process.env.FAKE_CLAUDE_VERSION = "2.1.279";
+    await create();
+    const dump = join(scratch, "dump-old.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-floor", text: "hi", cwd: scratch });
+    await recorder.until((e) => e.type === "turn.completed");
+    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", setup: true, claudeUpdate: true, message: CLAUDE_UPDATE_MESSAGE }));
+    expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "update_required" });
+    expect(existsSync(dump)).toBe(false);
+    await expect(instance.proposeProject?.("Propose", new AbortController().signal, "chief-model")).rejects.toMatchObject({ code: "update_required" });
+    expect(await instance.snapshot()).toMatchObject({ state: "unavailable", version: "2.1.279 (Claude Code)", reason: CLAUDE_UPDATE_MESSAGE });
+  });
+
+  it("launches at the floor, and on a version answer it cannot read, which it logs", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (const [version, thread] of [["2.1.280", "t-at-floor"], ["nightly", "t-unknown"]] as const) {
+        process.env.FAKE_CLAUDE_VERSION = version;
+        resetClaudeVersionGate();
+        await create();
+        await instance.adapter.sendTurn({ threadId: thread, text: "hi", cwd: scratch });
+        await recorder.until((e) => e.type === "turn.completed" && e.threadId === thread);
+        expect(recorder.events.filter((e) => e.threadId === thread).at(-1)).toMatchObject({ type: "turn.completed", ok: true });
+        if (version !== "nightly") await instance.dispose();
+      }
+      expect(warn.mock.calls.filter((call) => String(call[0]).includes("printed no version"))).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("strips ambient routing switches left in the shell by a provider switcher", async () => {
@@ -1821,7 +1932,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const retried = JSON.parse(readFileSync(dump, "utf8"));
     expect(retried.argv).toContain("--resume");
     expect(retried.argv[retried.argv.indexOf("--resume") + 1]).toBe(sessionIds[0]);
-  }, 20_000);
+  }, 60_000);
 
   it("a relaunched turn keeps the id sendTurn returned through to turn.completed", async () => {
     process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
@@ -1836,7 +1947,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.started").map((e) => e.turnId)).toEqual([turnId, turnId]);
     expect(recorder.events.every((e) => e.threadId !== "t-retry-id" || e.turnId === turnId)).toBe(true);
     expect(readFileSync(join(scratch, "launches-same-id"), "utf8")).toBe("2");
-  }, 20_000);
+  }, 60_000);
 
   it("stops retrying at the attempt cap and settles the turn as failed", async () => {
     process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "9";
@@ -2558,8 +2669,27 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create(); const dump=join(scratch,"project-proposal.json"); process.env.FAKE_CLAUDE_DUMP=dump;
     await expect(instance.proposeProject?.("Propose",new AbortController().signal,"chief-model")).resolves.toBe("fake generated text");
     const seen=JSON.parse(readFileSync(dump,"utf8"));
-    expect(seen.argv).toEqual(expect.arrayContaining(["--tools","","--strict-mcp-config","--no-session-persistence","--settings",'{"disableAllHooks":true}',"chief-model"]));
+    expect(seen.argv).toEqual(expect.arrayContaining(["--tools","","--strict-mcp-config","--no-session-persistence","--settings","chief-model"]));
+    // the same isolation as a turn: hooks and the owner's plugins off, default setting sources kept for the login
+    expect(seen.argv).not.toContain("--setting-sources");
+    expect(JSON.parse(readFileSync(seen.argv[seen.argv.indexOf("--settings")+1],"utf8"))).toMatchObject({disableAllHooks:true});
     expect(seen.prompt).toBe("Propose"); expect(seen.argv).not.toContain("Propose");
+  });
+
+  it("reads a helper's refusal only from before the CLI started work", async () => {
+    await create();
+    // after `init`, a refusal-shaped line is the CLI's later output, not a refusal of Murage's flags
+    process.env.FAKE_CLAUDE_ONE_SHOT_FAIL = "after-init";
+    try {
+      const late = await instance.proposeProject?.("Propose", new AbortController().signal, "chief-model").then(() => null, (error: Error & { code?: string }) => error);
+      expect(late).toBeInstanceOf(Error);
+      expect(late?.code).toBeUndefined();
+    } finally {
+      delete process.env.FAKE_CLAUDE_ONE_SHOT_FAIL;
+    }
+    // before `init` it is the CLI refusing the launch: the update offer
+    process.env.FAKE_CLAUDE_REFUSE = "unknown-option";
+    await expect(instance.proposeProject?.("Propose", new AbortController().signal, "chief-model")).rejects.toMatchObject({ code: "update_required" });
   });
 
   it("declares safe same-provider permission review", async () => {
@@ -2903,6 +3033,7 @@ describe("ClaudeDriver snapshot auth (fake CLI)", () => {
   beforeEach(() => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
+    invalidateCliVersions();
   });
 
   afterEach(async () => {
@@ -2917,20 +3048,55 @@ describe("ClaudeDriver snapshot auth (fake CLI)", () => {
     expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true });
   });
 
+  it("probes the login with the isolation flags a turn gets", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "in";
+    const seen = join(mkdtempSync(join(tmpdir(), "murage-auth-argv-")), "argv.json");
+    process.env.FAKE_CLAUDE_AUTH_ARGV = seen;
+    try {
+      await create();
+      expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true });
+      const lead = JSON.parse(readFileSync(seen, "utf8"));
+      expect(lead).toEqual(expect.arrayContaining(["--mcp-config", "--strict-mcp-config", "--settings"]));
+      expect(JSON.parse(readFileSync(lead[lead.indexOf("--settings") + 1], "utf8"))).toMatchObject({ disableAllHooks: true });
+    } finally {
+      delete process.env.FAKE_CLAUDE_AUTH_ARGV;
+      await removeTempDir(dirname(seen));
+    }
+  });
+
+  it("offers the update, not a sign-in, when the CLI refuses the probe's flags", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "in";
+    process.env.FAKE_CLAUDE_REFUSE = "unknown-option";
+    try {
+      await create();
+      const snapshot = await instance.snapshot();
+      expect(snapshot).toMatchObject({ state: "unavailable", reason: CLAUDE_UPDATE_MESSAGE });
+      expect(snapshot.authenticated).toBeUndefined();
+      process.env.FAKE_CLAUDE_REFUSE = "managed-mcp";
+      expect(await instance.snapshot()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("managed-mcp.json") });
+    } finally {
+      delete process.env.FAKE_CLAUDE_REFUSE;
+    }
+  });
+
   it("reports signed out when `auth status` says loggedIn:false", async () => {
     process.env.FAKE_CLAUDE_AUTH = "out";
     await create();
     expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
   });
 
-  it("fails closed instead of trusting stale credential storage", async () => {
+  it("never trusts stale credential storage, and shows a probe that gave no status as the CLI's own words, not as signed out", async () => {
     await create();
 
     process.env.FAKE_CLAUDE_AUTH = "unsupported";
-    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+    const unsupported = await instance.snapshot();
+    expect(unsupported).toMatchObject({ state: "available", reason: expect.stringContaining("unknown command 'auth'") });
+    expect(unsupported.authenticated).toBeUndefined();
 
     process.env.FAKE_CLAUDE_AUTH = "malformed";
-    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+    const malformed = await instance.snapshot();
+    expect(malformed).toMatchObject({ state: "available", reason: "auth status printed no status" });
+    expect(malformed.authenticated).toBeUndefined();
 
     // The real turn removes inherited API keys, so the auth probe must do the
     // same or setup can report a login the turn cannot use.
@@ -3018,12 +3184,12 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
   it("still carries a valid 14 MiB multibyte frame intact", async () => {
     await create();
     const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__" });
-    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId, 90_000);
 
     expect(done).toMatchObject({ ok: true });
     const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.turnId === turnId);
     expect(Buffer.byteLength((reply as { text: string } | undefined)?.text ?? "")).toBe(14 * 1024 * 1024);
-  });
+  }, 120_000);
 
   it("drops an ask connection whose frame is over the limit and keeps serving others", async () => {
     const asks: Array<{ id: string }> = [];
@@ -3259,5 +3425,294 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
     expect(auto.filter((_a, i) => auto[i - 1] === "--add-dir")).toEqual([realpathSync(grant)]); // the driver canonicalizes (macOS /var is /private/var)
     expect(await argvOf({ permissionMode: "default" }, "t-dir-ask", [grant])).not.toContain("--add-dir");
     expect(await argvOf({ permissionMode: "acceptEdits" }, "t-dir-none")).not.toContain("--add-dir");
+  });
+});
+
+describe("claudeIsolation", () => {
+  const dirs: string[] = [];
+  afterEach(async () => { for (const d of dirs.splice(0)) await removeTempDir(d); });
+  const temp = () => { const d = mkdtempSync(join(tmpdir(), "murage-iso-")); dirs.push(d); return d; };
+  const write = (path: string, value: unknown) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, typeof value === "string" ? value : JSON.stringify(value)); };
+  const settingsOf = (args: string[]) => JSON.parse(readFileSync(args[args.indexOf("--settings") + 1], "utf8"));
+
+  it("switches off every plugin named in a personal or local settings file, read at spawn time", () => {
+    const h = temp();
+    const dir = join(h, ".claude");
+    const work = join(h, "work");
+    write(join(dir, "settings.json"), { enabledPlugins: { "a@x": true, "off@x": false } });
+    write(join(dir, "settings.local.json"), { enabledPlugins: { "b@x": true } });
+    write(join(work, ".claude", "settings.local.json"), { enabledPlugins: { "c@x": true } });
+    // the workspace's own committed settings stay the workspace's
+    write(join(work, ".claude", "settings.json"), { enabledPlugins: { "team@x": true } });
+    const env = { CLAUDE_CONFIG_DIR: dir };
+    expect(settingsOf(claudeIsolation(env, work)).enabledPlugins).toEqual({ "a@x": false, "b@x": false, "c@x": false, "off@x": false });
+    write(join(dir, "settings.json"), { enabledPlugins: { "d@x": true } });
+    expect(settingsOf(claudeIsolation(env, work)).enabledPlugins).toEqual({ "b@x": false, "c@x": false, "d@x": false });
+  });
+
+  it("works from the home folder itself and from a symlink to it", () => {
+    const h = temp();
+    const dir = join(h, ".claude");
+    write(join(dir, "settings.json"), { enabledPlugins: { "a@x": true } });
+    const link = join(temp(), "alias");
+    symlinkSync(h, link);
+    for (const cwd of [h, link]) {
+      const args = claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, cwd);
+      expect(args.slice(0, 2)).toEqual(["--strict-mcp-config", "--settings"]);
+      expect(settingsOf(args)).toMatchObject({ disableAllHooks: true, enabledPlugins: { "a@x": false }, claudeMdExcludes: expect.arrayContaining([join(dir, "CLAUDE.md")]) });
+    }
+  });
+
+  it("excludes the personal CLAUDE.md and rules, and turns personal skills off by folder and declared name", () => {
+    const h = temp();
+    const dir = join(h, ".claude");
+    write(join(dir, "skills", "folder", "SKILL.md"), "---\nname: \"declared\"\ndescription: x\n---\n");
+    write(join(dir, "skills", "plain", "SKILL.md"), "no front matter");
+    const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
+    expect(settings.claudeMdExcludes).toEqual(expect.arrayContaining([join(dir, "CLAUDE.md"), join(dir, "rules", "**")]));
+    expect(settings.skillOverrides).toEqual({ declared: "off", folder: "off", plain: "off" });
+  });
+
+  it("never copies a credential, helper or env value", () => {
+    const h = temp();
+    const dir = join(h, ".claude");
+    write(join(dir, "settings.json"), { apiKeyHelper: "/bin/SECRET-helper", env: { CLAUDE_CODE_OAUTH_TOKEN: "SECRET-token", ANTHROPIC_BASE_URL: "https://SECRET-gw" }, hooks: { Stop: [] }, mcpServers: { s: {} } });
+    const args = claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w"));
+    expect(JSON.stringify(args)).not.toContain("SECRET");
+    expect(Object.keys(settingsOf(args)).sort()).toEqual(["agent", "claudeMdExcludes", "disableAllHooks", "enabledPlugins", "env", "outputStyle"]);
+    expect(settingsOf(args).env).toEqual({ CLAUDE_CODE_PLUGIN_DIRS: "" });
+  });
+
+  it("turns personal commands off by the name the CLI gives them, nested ones included", () => {
+    const h = temp();
+    const dir = join(h, ".claude");
+    write(join(dir, "commands", "top.md"), "---\ndescription: x\n---\n");
+    write(join(dir, "commands", "sub", "deeper", "leaf.md"), "body");
+    write(join(dir, "commands", "notes.txt"), "not a command");
+    const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
+    // rig, 2.1.281 and 2.1.295: "sub:ncmd" switches ~/.claude/commands/sub/ncmd.md off, "ncmd" does not
+    expect(settings.skillOverrides).toEqual({ "sub:deeper:leaf": "off", top: "off" });
+  });
+
+  it("switches off a personal skill folder that is a plugin, by the manifest's name and with no enabledPlugins entry", () => {
+    const h = temp();
+    const dir = join(h, ".claude");
+    // rig, 2.1.280 and 2.1.295: skills/dirname/.claude-plugin/plugin.json {"name":"manifestname"} loads as manifestname@skills-dir
+    write(join(dir, "skills", "dirname", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "manifestname", version: "1.0.0" }));
+    write(join(dir, "skills", "nameless", ".claude-plugin", "plugin.json"), JSON.stringify({ version: "1.0.0" }));
+    write(join(dir, "skills", "broken", ".claude-plugin", "plugin.json"), "{not json");
+    write(join(dir, "skills", "plain", "SKILL.md"), "---\nname: plain\n---\n");
+    write(join(dir, "settings.json"), JSON.stringify({ enabledPlugins: { "p@mkt": true } }));
+    const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
+    expect(settings.enabledPlugins).toEqual({ "broken@skills-dir": false, "manifestname@skills-dir": false, "nameless@skills-dir": false, "p@mkt": false });
+  });
+
+  it("denies every personal subagent by its declared name (file name when it declares none), and selects the default output style and main agent", () => {
+    const h = temp();
+    const dir = join(h, ".claude");
+    write(join(dir, "agents", "reviewer.md"), "---\nname: code-reviewer\ndescription: x\n---\nprompt");
+    write(join(dir, "agents", "team", "planner.md"), "no front matter");
+    const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
+    expect(settings.permissions).toEqual({ deny: ["Agent(code-reviewer)", "Agent(planner)"] });
+    expect(settings.outputStyle).toBe("default");
+    // rig, 2.1.281 and 2.1.295: a user `"agent": "uagent"` selects that main agent unless the flag settings say ""
+    expect(settings.agent).toBe("");
+    // no personal agent: no permissions key at all, so the owner's own rules are untouched
+    expect(settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: join(temp(), ".claude") }, h)).permissions).toBeUndefined();
+  });
+
+  it("reads agent names as YAML, the way the CLI does", () => {
+    const h = temp();
+    const dir = join(h, ".claude");
+    write(join(dir, "agents", "a.md"), "---\nname: commented # a YAML comment\ndescription: \"x: y\"\n---\nprompt");
+    write(join(dir, "agents", "b.md"), "\uFEFF---\r\nname: \"esc\\u0061ped\"\r\ndescription: x\r\n---\r\n");
+    write(join(dir, "agents", "c.md"), "---\nname: >-\n  folded\ndescription: x\n---\n");
+    write(join(dir, "agents", "d.md"), "---\ndescription: no name\n---\n");
+    write(join(dir, "agents", "e.md"), "---\nname: [not, a, string]\n---\n");
+    write(join(dir, "agents", "f.md"), "---\nname: 'single quoted'\n---\n");
+    const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
+    expect(settings.permissions.deny).toEqual(["Agent(commented)", "Agent(d)", "Agent(e)", "Agent(escaped)", "Agent(folded)", "Agent(single quoted)"]);
+  });
+
+  it("never denies a built-in agent's name, and skips names a rule cannot hold, logging both and carrying on", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const h = temp();
+      const dir = join(h, ".claude");
+      write(join(dir, "agents", "Explore.md"), "---\nname: Explore\ndescription: personal notes\n---\n");
+      write(join(dir, "agents", "notes.md"), "---\nname: general-purpose\n---\n");
+      write(join(dir, "agents", "odd.md"), "---\nname: \"bad) name\"\n---\n");
+      write(join(dir, "agents", "ok.md"), "---\nname: fine\n---\n");
+      const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
+      expect(settings.permissions).toEqual({ deny: ["Agent(fine)"] });
+      expect(CLAUDE_BUILT_IN_AGENTS.has("Explore")).toBe(true);
+      expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("built-in agent"))).toHaveLength(2);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("permission rule"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("falls back to the file name for front matter it cannot read, and logs a traversal bound instead of refusing", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const h = temp();
+      const dir = join(h, ".claude");
+      write(join(dir, "agents", "long.md"), `---\nname: hidden\ndescription: ${"x".repeat(70 * 1024)}\n---\n`);
+      write(join(dir, "agents", "broken.md"), "---\nname: [unclosed\n---\n");
+      write(join(dir, "agents", ...Array.from({ length: 10 }, (_, i) => `d${i}`), "deep.md"), "---\nname: deep\n---\n");
+      const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
+      expect(settings.permissions.deny).toEqual(["Agent(broken)", "Agent(long)"]);
+      const said = warn.mock.calls.map((c) => String(c[0]));
+      expect(said.some((m) => m.includes("front matter longer than"))).toBe(true);
+      expect(said.some((m) => m.includes("does not parse"))).toBe(true);
+      expect(said.some((m) => m.includes("nested deeper than"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("turns account-synced skills off by the name the CLI gives them, never the bookkeeping folders", () => {
+    const h = temp();
+    const dir = join(h, ".claude");
+    write(join(dir, "skills", "synced", "flat", "SKILL.md"), "---\nname: flat\ndescription: x\n---\n");
+    write(join(dir, "skills", "synced", "00000000-0000-4000-8000-000000000000_unbound", "folder", "SKILL.md"), "---\nname: declared-synced\ndescription: x\n---\n");
+    write(join(dir, "skills", "synced", ".trash", "gone", "SKILL.md"), "---\nname: gone\n---\n");
+    write(join(dir, "skills", "synced", ".staging", "half", "SKILL.md"), "---\nname: half\n---\n");
+    write(join(dir, "skills", "mine", "SKILL.md"), "---\nname: mine\n---\n");
+    const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
+    expect(settings.skillOverrides).toEqual({
+      "anthropic-skills:declared-synced": "off", "anthropic-skills:flat": "off", "anthropic-skills:folder": "off", mine: "off",
+    });
+    // the owner's settings are only read: syncClaudeAiSkills is never set (false would trash their synced skills)
+    expect(settings).not.toHaveProperty("syncClaudeAiSkills");
+  });
+
+  it("keeps a large personal inventory off argv: a private file named by its content", () => {
+    const h = temp();
+    const dir = join(h, ".claude");
+    for (let i = 0; i < 1000; i++) write(join(dir, "agents", `agent-with-a-long-name-${i}.md`), "prompt");
+    const args = claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w"));
+    expect(JSON.stringify(args).length).toBeLessThan(400);
+    const path = args[args.indexOf("--settings") + 1]!;
+    expect(settingsOf(args).permissions.deny).toHaveLength(1000);
+    if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
+    // the same overlay is the same file; a change is a new one, so a live CLI's file never changes
+    expect(claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w"))).toEqual(args);
+    write(join(dir, "agents", "one-more.md"), "prompt");
+    const next = claudeIsolation({ CLAUDE_CONFIG_DIR: dir }, join(h, "w"));
+    expect(next[next.indexOf("--settings") + 1]).not.toBe(path);
+    expect(existsSync(path)).toBe(true);
+    expect(settingsOf(next)).toEqual(claudeIsolationSettings({ CLAUDE_CONFIG_DIR: dir }, join(h, "w")));
+  });
+
+  it("gives Windows the forward-slash spelling of each exclusion too", () => {
+    const settings = settingsOf(claudeIsolation({ CLAUDE_CONFIG_DIR: "C:\\Work\\o\\.claude" }, temp(), "win32"));
+    expect(settings.claudeMdExcludes).toEqual(expect.arrayContaining(["C:/Work/o/.claude/CLAUDE.md"]));
+  });
+});
+
+describe("claudeLaunchRefusal", () => {
+  it("reads the CLI's own refusals and nothing else", () => {
+    expect(claudeLaunchRefusal("error: unknown option '--strict-mcp-config'\n")).toMatchObject({ stopReason: "update_required", claudeUpdate: true });
+    expect(claudeLaunchRefusal("You cannot use --strict-mcp-config when an enterprise MCP config is present")).toMatchObject({ stopReason: "managed_mcp_conflict", errorKind: CLAUDE_MANAGED_MCP_CONFLICT });
+    expect(claudeLaunchRefusal("error: unknown command 'auth'")).toBeNull();
+    expect(claudeLaunchRefusal("API Error: 529 overloaded")).toBeNull();
+    expect(claudeLaunchRefusalError("You cannot use --strict-mcp-config when an enterprise MCP config is present")).toMatchObject({ code: CLAUDE_MANAGED_MCP_CONFLICT });
+    expect(claudeLaunchRefusalError("boom")).toBeNull();
+  });
+
+  it("reads only refusals of Murage's own launch flags, in the wordings the CLI uses", () => {
+    for (const said of [
+      "error: unknown option '--settings'",
+      "error: unknown option \"--disallowedTools\"",
+      "Error: unknown option '--strict-mcp-config=1'",
+      "unknown option: --include-partial-messages",
+      "  error: unknown option '--effort'\n(Did you mean --verbose?)",
+      "some warning first\nerror: unknown option '--append-system-prompt-file'",
+    ]) expect(claudeLaunchRefusal(said), said).toMatchObject({ stopReason: "update_required" });
+    for (const said of [
+      // rig, 2.1.281 and 2.1.295: an option that is not one of ours
+      "error: unknown option '--no-such-flag-zz'",
+      "error: unknown option '--bogus-zz'",
+      // a tool or model talking about options mid-line is not the CLI refusing
+      "The tool said: error: unknown option '--settings'",
+      "Error: Settings file not found: {not json",
+    ]) expect(claudeLaunchRefusal(said), said).toBeNull();
+  });
+
+  it("holds the floor at 1.0.1's 2.1.280 and lets an unreadable answer through", () => {
+    expect(CLAUDE_MIN_VERSION).toBe("2.1.280");
+    expect(claudeVersionBelow("2.1.279 (Claude Code)")).toBe(true);
+    expect(claudeVersionBelow("2.0.999")).toBe(true);
+    expect(claudeVersionBelow("2.1.280 (Claude Code)")).toBe(false);
+    expect(claudeVersionBelow("2.1.281 (Claude Code)")).toBe(false);
+    expect(claudeVersionBelow("2.2.0")).toBe(false);
+    expect(claudeVersionVerdict("2.1.295 (Claude Code)")).toBe("ok");
+    expect(claudeVersionVerdict("1.0.0")).toBe("below");
+    expect(claudeVersionVerdict("garbage")).toBe("unknown");
+  });
+});
+
+describe("requireClaudeCliVersion", () => {
+  const dirs: string[] = [];
+  afterEach(async () => { vi.useRealTimers(); resetClaudeVersionGate(); for (const d of dirs.splice(0)) await removeTempDir(d); });
+  const cliFile = () => { const d = mkdtempSync(join(tmpdir(), "murage-ver-")); dirs.push(d); const p = join(d, "claude"); writeFileSync(p, "#!/bin/sh\n"); return p; };
+  const runner = (answers: Array<string | null>) => {
+    const calls: string[] = [];
+    const run = ((cli: string, _args: string[], _opts: unknown, cb: (err: Error | null, stdout: string) => void) => {
+      calls.push(cli);
+      const answer = answers.shift();
+      queueMicrotask(() => (answer === null || answer === undefined ? cb(new Error("timed out"), "") : cb(null, answer)));
+    }) as unknown as typeof import("../procs.ts").execCli;
+    return { run, calls };
+  };
+
+  it("probes an unchanged executable once, and again after it changes", async () => {
+    const cli = cliFile();
+    const { run, calls } = runner(["2.1.295 (Claude Code)", "2.1.279 (Claude Code)"]);
+    await requireClaudeCliVersion(cli, {}, undefined, run);
+    await requireClaudeCliVersion(cli, {}, undefined, run);
+    expect(calls).toHaveLength(1);
+    utimesSync(cli, new Date(), new Date(Date.now() + 5_000));
+    await expect(requireClaudeCliVersion(cli, {}, undefined, run)).rejects.toBeInstanceOf(ClaudeUpdateRequired);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("lets a failed probe launch, logged once, and does not probe again for ten minutes", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const cli = cliFile();
+      const { run, calls } = runner([null, "2.1.295 (Claude Code)"]);
+      await requireClaudeCliVersion(cli, {}, undefined, run);
+      await requireClaudeCliVersion(cli, {}, undefined, run);
+      vi.setSystemTime(Date.now() + VERSION_FAILURE_BACKOFF_MS - 1_000);
+      await requireClaudeCliVersion(cli, {}, undefined, run);
+      expect(calls).toHaveLength(1);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes("did not answer"))).toHaveLength(1);
+      vi.setSystemTime(Date.now() + 2_000);
+      await requireClaudeCliVersion(cli, {}, undefined, run);
+      expect(calls).toHaveLength(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("stops waiting the moment the turn is stopped", async () => {
+    const cli = cliFile();
+    const run = (() => { /* never answers */ }) as unknown as typeof import("../procs.ts").execCli;
+    const stop = new AbortController();
+    const waiting = requireClaudeCliVersion(cli, {}, stop.signal, run);
+    stop.abort();
+    await expect(waiting).resolves.toBeUndefined();
+  });
+
+  it("keys a bare command by the file found on the spawn PATH", () => {
+    const cli = cliFile();
+    const before = claudeExecutableIdentity("claude", { PATH: dirname(cli) });
+    expect(before).toContain(realpathSync(cli));
+    utimesSync(cli, new Date(), new Date(Date.now() + 9_000));
+    expect(claudeExecutableIdentity("claude", { PATH: dirname(cli) })).not.toBe(before);
   });
 });

@@ -34,7 +34,9 @@ export default defineConfig({
   // mutate the same workspace.
   workers: 1,
   reporter: process.env.CI ? [["github"], ["list"]] : [["list"]],
-  timeout: 60_000,
+  // A ceiling for a loaded runner (CI measured about three times slower than
+  // a developer machine); a passing spec never waits on it.
+  timeout: 120_000,
   expect: { timeout: 10_000 },
 
   // Runs after the webServers below are up (webServer is a runner plugin, and

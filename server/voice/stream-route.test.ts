@@ -18,6 +18,7 @@ import {
   createTicketStore,
   handleStreamTicketRoute,
   handleStreamUpgrade,
+  streamFlagOn,
   trimCloseReason,
   type StreamRouteDeps,
 } from "./stream-route.ts";
@@ -428,5 +429,14 @@ describe("trimCloseReason", () => {
     expect(Buffer.byteLength(emoji)).toBeLessThanOrEqual(123);
     expect(emoji).not.toContain("\uFFFD");
     expect(trimCloseReason("short")).toBe("short");
+  });
+});
+
+describe("live transcription flag", () => {
+  it("is off unless MURAGE_VOICE_STREAM is exactly on", () => {
+    expect(streamFlagOn({})).toBe(false);
+    expect(streamFlagOn({ MURAGE_VOICE_STREAM: "1" })).toBe(false);
+    expect(streamFlagOn({ MURAGE_VOICE_STREAM: "off" })).toBe(false);
+    expect(streamFlagOn({ MURAGE_VOICE_STREAM: "on" })).toBe(true);
   });
 });

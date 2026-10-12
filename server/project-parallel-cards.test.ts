@@ -6,6 +6,7 @@ import { createProjectGoal } from "./project-goals.ts";
 import { continuationResults, listRoomRequests, cancelRoomRequest } from "./room-requests.ts";
 import { continuationResultsPrompt } from "./project-prompt.ts";
 import { DATA_DIR } from "./config.ts";
+import { database } from "./database.ts";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { initializeProjectTables } from "./project-tables.ts";
@@ -21,7 +22,12 @@ import { handleProjectRouteWithInterrupt, applyProjectChangeWithInterrupt } from
 import { BUDGET_STOPPED, createProjectCardExecutor, STOPPED_BY_YOU } from "./project-card-executor.ts";
 
 const cleanups: Array<() => void> = [];
-beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(10000); });
+beforeEach(() => {
+  // The owner-audience lookups below open the real database; its hourly storage report timer (database.ts startupStorage,
+  // mem/1.0.2-perf) must be made on the real clock, not counted among the backoff timers these tests assert on.
+  mkdirSync(DATA_DIR, { recursive: true }); database();
+  vi.useFakeTimers(); vi.setSystemTime(10000);
+});
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.useRealTimers(); });
 function fixture() {
   mkdirSync(DATA_DIR, { recursive: true });

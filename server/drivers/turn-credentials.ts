@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { CRED_FILE_ENV, CRED_SERVER_ENV } from "../turn-credential.ts";
+import { cacheEnvFromProcess, clearMountIncomplete, mountIncomplete, type MountRef } from "../connector-cache.ts";
 
 /** Env names whose value is a per-turn secret. */
 export const TURN_SECRET_ENV = [
@@ -20,6 +21,12 @@ export const TURN_SECRET_ENV = [
   "MURAGE_MEMORY_TOKEN",
   "MURAGE_CONNECTORS_TOKEN",
   "MURAGE_CONNECTOR_UPSTREAM_HEADERS",
+  // Not secrets, but they change with the turn's access and must not make the
+  // spawn contract unique: the bridge reads the current pair on each call.
+  "MURAGE_CONNECTOR_IDENTITY",
+  "MURAGE_CONNECTOR_REVISION",
+  "MURAGE_CONNECTOR_INITIAL_TOOLS",
+  "MURAGE_CONNECTOR_INITIAL_GENERATION",
   "MURAGE_CONTROL_TOKEN",
   "MURAGE_MCP_TOKEN",
   "MURAGE_BROWSER_TOKEN",
@@ -51,6 +58,19 @@ export function splitTurnSecrets(mcpServers: Record<string, unknown>): { stableS
     stableServers[name] = { ...(server as object), env: { ...rest, [CRED_FILE_ENV]: CRED_FILE_PLACEHOLDER, [CRED_SERVER_ENV]: name } };
   }
   return { stableServers, secrets };
+}
+
+/** The connected-apps list scope (account identity and access revision) this
+ * turn carries, from the secrets split out of the mounts; empty when none. A
+ * warm engine keeps the tool catalog it listed at spawn, and nothing makes it
+ * list again when the bot's access changes, so a change here recycles the
+ * process (a field of the reuse key) instead of leaving old account choices,
+ * or missing new ones, in the model's tools. */
+export function connectorScopeOf(secrets: TurnSecrets): string {
+  return Object.keys(secrets).sort()
+    .map((name) => `${secrets[name]?.MURAGE_CONNECTOR_IDENTITY ?? ""}|${secrets[name]?.MURAGE_CONNECTOR_REVISION ?? ""}`)
+    .filter((scope) => scope !== "|")
+    .join(";");
 }
 
 /** The same servers with the real credential path in place of the placeholder. */
@@ -116,3 +136,35 @@ export function createTurnCredentialStore(): TurnCredentialStore {
     },
   };
 }
+
+// ── Session recovery for engines that never list again ───────────────────
+// When the connector bridge had to serve a provisional tool list, it filed a
+// marker (connector-cache.ts markMountIncomplete). A driver that keeps an
+// engine warm reads it at the next turn and starts a fresh engine instead of
+// reusing the one holding the stand-in: the conversation continues through the
+// usual resume, only the MCP mount is new, and it lists the remembered real list.
+
+/** The mount reference of one connected-apps server from its environment (null when it has no list scope). */
+export function connectorMountRefOfEnv(env: Record<string, string | undefined>, thread: string): MountRef | null {
+  const identity = env.MURAGE_CONNECTOR_IDENTITY ?? "";
+  const revision = env.MURAGE_CONNECTOR_REVISION ?? "";
+  return identity && revision ? { cache: cacheEnvFromProcess(env), identity, revision, thread } : null;
+}
+
+/** Mount references of a split turn: the cache folder rides the stable server env, the identity and revision the secrets. */
+export function connectorMountRefsOf(stableServers: Record<string, unknown>, secrets: TurnSecrets, thread: string): MountRef[] {
+  const refs: MountRef[] = [];
+  for (const name of Object.keys(secrets)) {
+    const own = secrets[name] ?? {};
+    if (!own.MURAGE_CONNECTOR_IDENTITY) continue;
+    const stable = ((stableServers[name] as { env?: Record<string, string> } | undefined)?.env) ?? {};
+    const ref = connectorMountRefOfEnv({ ...stable, ...own }, thread);
+    if (ref) refs.push(ref);
+  }
+  return refs;
+}
+
+/** True when any of these mounts was last served only a provisional list. */
+export const anyMountIncomplete = (refs: MountRef[]): boolean => refs.some((ref) => mountIncomplete(ref));
+/** The warm engine is being replaced for it: the new mount starts clean. */
+export const clearMountsIncomplete = (refs: MountRef[]): void => { for (const ref of refs) clearMountIncomplete(ref); };

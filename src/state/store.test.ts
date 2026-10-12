@@ -1142,6 +1142,70 @@ describe("pending queued chip", () => {
     modelSelection: { instanceId: "acp", model: "fake" },
   } satisfies Omit<Bot, "messages">;
 
+  it("shows a send the moment it starts and removes it when the server answers", () => {
+    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const sending = reducer(withBot, { type: "sendingStarted", threadId: "t1", sendId: "s1", text: "while you work" });
+    expect(sending.pendingQueued).toEqual({ t1: [{ queueId: "sending:s1", text: "while you work", sending: true, sendId: "s1", local: true }] });
+    // a repeated start (retry) does not double the line
+    expect(reducer(sending, { type: "sendingStarted", threadId: "t1", sendId: "s1", text: "while you work" })).toBe(sending);
+    // queued: the Sending line is replaced by the server's queued chip
+    const queued = reducer(reducer(sending, { type: "sendingSettled", threadId: "t1", sendId: "s1" }), {
+      type: "pendingQueued", threadId: "t1", queueId: "q9", text: "while you work",
+    });
+    expect(queued.pendingQueued).toEqual({ t1: [{ queueId: "q9", text: "while you work" }] });
+    // refused or steered: nothing is left behind
+    expect(reducer(sending, { type: "sendingSettled", threadId: "t1", sendId: "s1" }).pendingQueued).toEqual({});
+    // settling something unknown is a no-op
+    expect(reducer(withBot, { type: "sendingSettled", threadId: "t1", sendId: "nope" })).toBe(withBot);
+  });
+
+  it("every send goes through the persisted outbox and shows its Sending line, whatever the busy flags say", () => {
+    const source = readFileSync(fileURLToPath(new URL("./store.tsx", import.meta.url)), "utf8");
+    for (const action of ['case "send": {', 'case "sendGroup": {']) {
+      const body = source.slice(source.indexOf(action), source.indexOf("break;", source.indexOf(action) + 400));
+      expect(body, action).toContain("deliveryRef.current.submit(");
+      // not gated on a client busy flag: that was the invisible interval
+      expect(body, action).not.toMatch(/\.busy\b|busyBotId/);
+    }
+    const delivery = readFileSync(fileURLToPath(new URL("./send-delivery.ts", import.meta.url)), "utf8");
+    expect(delivery.indexOf("deps.outbox.add(entry)")).toBeLessThan(delivery.indexOf("deps.showSending(entry)"));
+  });
+
+  it("the server's pending list replaces the chips after a reload and keeps only the sends this device is still delivering", () => {
+    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const hydrated = reducer(withBot, {
+      type: "hydrate", bots: [{ ...bot, messages: [] }], groups: [], computerControl: {},
+      pendingSends: { t1: [
+        { queueId: "q1", sendId: "a", text: "queued earlier", state: "queued" },
+        { queueId: "sending:b", sendId: "b", text: "being handed over", state: "sending" },
+      ] },
+    });
+    expect(hydrated.pendingQueued.t1).toEqual([
+      { queueId: "q1", text: "queued earlier", sendId: "a" },
+      { queueId: "sending:b", text: "being handed over", sendId: "b", sending: true },
+    ]);
+    // a line this device is delivering with no server record yet stays; a stale chip the server no longer lists goes
+    const local = reducer(reducer(hydrated, { type: "sendingStarted", threadId: "t1", sendId: "c", text: "mine" }), {
+      type: "pendingQueued", threadId: "t1", queueId: "stale", text: "drained meanwhile",
+    });
+    const next = reducer(local, { type: "serverSends", threadId: "t1", pending: [{ queueId: "q1", sendId: "a", text: "queued earlier", state: "queued" }] });
+    expect(next.pendingQueued.t1).toEqual([
+      { queueId: "q1", text: "queued earlier", sendId: "a" },
+      { queueId: "sending:c", text: "mine", sending: true, sendId: "c", local: true },
+    ]);
+    // when the server takes the send over (queued under its own id) the local Sending line yields to it
+    const taken = reducer(next, { type: "serverSends", threadId: "t1", pending: [{ queueId: "q2", sendId: "c", text: "mine", state: "queued" }] });
+    expect(taken.pendingQueued.t1).toEqual([{ queueId: "q2", text: "mine", sendId: "c" }]);
+    // nothing pending anywhere: no chips
+    expect(reducer(taken, { type: "serverSends", threadId: "t1", pending: [] }).pendingQueued).toEqual({});
+  });
+
+  it("another client's pending send (a phone) shows on this desktop from the server's list alone", () => {
+    const withBot = reducer(initialState, { type: "botPatched", bot });
+    const seen = reducer(withBot, { type: "serverSends", threadId: "t1", pending: [{ queueId: "q7", sendId: "phone-1", text: "from my phone", state: "queued" }] });
+    expect(seen.pendingQueued.t1).toEqual([{ queueId: "q7", text: "from my phone", sendId: "phone-1" }]);
+  });
+
   it("records queue-fallback text and drops it when that user line lands", () => {
     const withBot = reducer(initialState, { type: "botPatched", bot });
     const queued = reducer(withBot, {
