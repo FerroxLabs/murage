@@ -31,3 +31,22 @@ describe("browser-unavailable notice", () => {
     expect(browserUnavailableReason(browserUnavailableActivityName("  "))).toBe("the browser engine did not start");
   });
 });
+
+describe("browser check progress (1.0.2)", () => {
+  it("keeps checking, finished and unfinished apart from the failure wording", async () => {
+    const m = await import("./browser-unavailable");
+    for (const [reason, kind] of [[m.BROWSER_CHECKING_REASON, "checking"], [m.BROWSER_CHECKED_REASON, "checked"], [m.BROWSER_CHECK_UNFINISHED_REASON, "unfinished"], [m.BROWSER_CHECK_FAILED_REASON, "check-failed"]] as const) {
+      expect(m.browserUnavailableKind(reason)).toBe(kind);
+      const text = m.browserUnavailableDisplayName(m.browserUnavailableActivityName(reason))!;
+      expect(text).not.toMatch(/couldn't start|ran without it/);
+      expect(text).not.toMatch(/—|safe/i);
+    }
+  });
+
+  it("a check that errored says it did not finish and to try again, not the next-turn fallback", async () => {
+    const m = await import("./browser-unavailable");
+    const text = m.browserUnavailableDisplayName(m.browserUnavailableActivityName(m.BROWSER_CHECK_FAILED_REASON))!;
+    expect(text).toBe("The browser check didn't finish. Try again in a moment.");
+    expect(text).not.toMatch(/didn't use the browser|next turn/);
+  });
+});

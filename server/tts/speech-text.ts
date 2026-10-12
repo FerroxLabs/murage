@@ -15,6 +15,8 @@
 // tuning against real transcripts, so it stays trivially testable.
 
 /** A fenced block becomes a mention of itself, with its language if known. */
+import { connectedAppNames } from "../../shared/connected-app-calls.ts";
+
 function describeCodeBlock(fence: string): string {
   const lang = fence.trim().split(/\s+/)[0]?.replace(/[^a-z0-9+#]/gi, "") ?? "";
   type SpokenLanguages = Record<string, string>;
@@ -326,11 +328,29 @@ export function splitLong(text: string, maxChars: number): string[] {
   return out;
 }
 
+/** The tool a wrapper call runs (`use_tool` with `tool_name`/`tool_input`). */
+function wrappedTool(toolName: string, input: unknown): { name: string; input: unknown } | null {
+  if (!/^(use_tool|call_tool|tool)$/i.test(toolName.trim()) || !input || typeof input !== "object" || Array.isArray(input)) return null;
+  const row = input as Record<string, unknown>;
+  const name = row.tool_name ?? row.toolName;
+  if (typeof name !== "string" || !name.trim() || /^(use_tool|call_tool|tool)$/i.test(name.trim())) return null;
+  return { name, input: row.tool_input ?? row.toolInput ?? row.arguments ?? row.input };
+}
+
 /** A tool-activity chip as a spoken progress line ("reading core.ts").
  * Returns null for chips not worth interrupting the ear for. */
-export function narrateTool(toolName: string): string | null {
+export function narrateTool(toolName: string, input?: unknown): string | null {
+  // An engine's tool wrapper (Grok's `use_tool`) names the real tool inside.
+  const wrapped = wrappedTool(toolName, input);
+  if (wrapped) return narrateTool(wrapped.name, wrapped.input);
   const name = toolName.replace(/^mcp__[^_]+__/, "").trim();
   if (!name) return null;
+  // A connected-app action says which app it is working in, so a long one
+  // reads as "working in Gmail", not an unnamed wait.
+  if (/^(composio__)?composio_(multi_)?execute_tool$/i.test(name)) {
+    const apps = connectedAppNames(input);
+    if (apps) return `working in ${apps}`;
+  }
   // the harness writes these as chips too; they are already spoken elsewhere
   if (/^(auto-approved|error):/i.test(name)) return null;
 

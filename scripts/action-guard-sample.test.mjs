@@ -32,9 +32,13 @@ it("N8 exports complete authored turns with earlier evidence on the selected for
     { id: "root", role: "user", text: "Begin", parentId: null },
     { id: "earlier-send", kind: "activity", turnId: "earlier", tool: { name: "send_message", ok: true }, parentId: "root" },
     { id: "earlier-reply", text: "Done", turnId: "earlier", turnTerminal: true, parentId: "earlier-send" },
-    { id: "fork-pay", kind: "activity", turnId: "turn", tool: { name: "pay_invoice", ok: true }, parentId: "earlier-reply" },
+    // The owner speaks again after the earlier turn. Same-bot actions since the owner last spoke now count as
+    // "recorded" (fix/1.0.2-claims-sidebar); evidence from before this request stays "earlier", which is what
+    // this fixture pins.
+    { id: "owner-again", role: "user", text: "Now continue", parentId: "earlier-reply" },
+    { id: "fork-pay", kind: "activity", turnId: "turn", tool: { name: "pay_invoice", ok: true }, parentId: "owner-again" },
     { id: "abandoned", text: "I paid it.", turnId: "turn", turnTerminal: true, parentId: "fork-pay", at: 99 },
-    { id: "first", text: "I sent it.", turnId: "turn", parentId: "earlier-reply" },
+    { id: "first", text: "I sent it.", turnId: "turn", parentId: "owner-again" },
     { id: "peer", text: "I paid it.", turnId: "turn", from: { botId: "peer" }, parentId: "first" },
     { id: "last", text: "Anything else?", turnId: "turn", turnTerminal: true, parentId: "peer" },
   ].map((row, at) => ({ role: "bot", kind: "text", at, ...row }));

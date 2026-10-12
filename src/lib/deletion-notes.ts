@@ -8,18 +8,31 @@
 export interface DeletionLeftover { what: string; where: string }
 
 export const BACKUPS_LINE = "Earlier backups still contain it until they expire.";
+/** Said once, whatever engine a conversation used: what Murage removes from the coding engines' files, what it does when an engine is
+ * using one, and what it does not reach. The same words are in the docs (Features, Chat and teams). */
+export const ENGINE_FILES_LINE = "When you delete a conversation, Murage removes its words from the coding engines' files on this computer. If an engine is using one of those files, Murage leaves that file alone, tells you, and finishes later. Murage never changes another conversation's words. Copies in backups or in an engine's online account are not removed by Murage.";
 
 const counted = (n: number, one: string, many: string) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 
 /** Lines a Delete confirmation adds under its own description: the messages
  * and saved files that go, counted, then the backups line. */
-export function deletionConsequenceLines(savedFiles: number | null | undefined, messages?: number | null): string[] {
+export function deletionConsequenceLines(savedFiles: number | null | undefined, messages?: number | null, engines?: readonly string[]): string[] {
   const lines: string[] = [];
   const files = savedFiles && savedFiles > 0 ? counted(savedFiles, "saved file", "saved files") : "";
   if (messages && messages > 0) lines.push(`That is ${counted(messages, "message", "messages")}${files ? ` and ${files}` : ""}.`);
   else if (files) lines.push(`This also deletes ${files}.`);
   lines.push(BACKUPS_LINE);
+  if (engines?.length) lines.push(ENGINE_FILES_LINE);
   return lines;
+}
+
+/** The note for engine copies that are still owed (the server's fixed sentences), with the lines for copies just finished. "Try again
+ * now" shows while any copy is still owed. */
+export function owedNote(notices: unknown): { title: string; items: string[]; retry: boolean; owed: true } | null {
+  const list = Array.isArray(notices) ? (notices as Array<{ text?: unknown; tryAgain?: unknown } | null>) : [];
+  const items = list.map((item) => (item && typeof item.text === "string" ? item.text : "")).filter(Boolean);
+  const pending = list.some((item) => item && typeof item.text === "string" && item.text && item.tryAgain !== false);
+  return items.length ? { title: pending ? "Deleted. Murage will finish removing these when it can:" : "Deleted.", items, retry: pending, owed: true } : null;
 }
 
 /** The note shown after a Delete, or null when everything was removed. */
@@ -31,7 +44,7 @@ export function deletionNote(response: { leftovers?: unknown; failed?: unknown }
   const items = leftovers.map((item) => `${item.what}, in ${item.where}.`);
   if (Array.isArray(response?.failed) && response!.failed.length) items.push("A few files could not be removed yet. Murage tries again the next time it starts.");
   if (!items.length) return null;
-  return { title: "Deleted. A few things could not be removed:", items };
+  return { title: "Deleted. Murage will finish removing these when it can:", items };
 }
 
 /** The one sentence shown when a Delete of a conversation fails. The server's

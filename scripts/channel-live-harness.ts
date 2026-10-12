@@ -16,7 +16,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
 import { GRACEFUL_CLOSE_MESSAGE } from "../electron/server-child-lifecycle.mjs";
-import { seedWhatsNewSeen } from "./control-murage.ts";
+import { seedTermsAccepted, seedWhatsNewSeen } from "./control-murage.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
 
 export const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -86,6 +86,7 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
   const data = join(root, "data"), staticDir = join(root, "static"), temp = join(root, "tmp");
   for (const dir of [data, join(staticDir, "assets"), temp]) mkdirSync(dir, { recursive: true, mode: 0o700 });
   seedWhatsNewSeen(data);
+  seedTermsAccepted(data);
   writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>Channel qualification</title>");
   writeFileSync(join(staticDir, "assets", "qualification.css"), "body{}");
   writeFileSync(join(data, "config.json"), JSON.stringify(harnessConfig(options.engine)), { mode: 0o600 });

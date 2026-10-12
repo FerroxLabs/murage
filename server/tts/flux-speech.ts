@@ -17,6 +17,7 @@
 // Runs on the HARNESS only: the key must not leave the server.
 import { clipFrom, type Audio, type Clip, type Voice } from "./elevenlabs.ts";
 import { RateLimitedError, retryAfterMs } from "./rate-limit.ts";
+import { fluxCallHeaders } from "../flux-memory-headers.ts";
 import { notPermitted, VoiceUnavailable, type VoiceEndpoint } from "../voice/voice-routes.ts";
 import { XAI_VOICES } from "./xai-speech.ts";
 
@@ -126,7 +127,7 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
     try {
       res = await call(`${baseFor(endpoint)}/audio/speech`, {
         method: "POST",
-        headers: { authorization: `Bearer ${endpoint.key}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${endpoint.key}`, "content-type": "application/json", ...(endpoint.via === "flux" ? fluxCallHeaders("voice-speech") : {}) },
         body: JSON.stringify({ model: endpoint.model, input: text, voice: chosen, response_format: "mp3" }),
         signal: control.signal,
       });

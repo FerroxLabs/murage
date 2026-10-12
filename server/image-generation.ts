@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { fluxCallHeaders } from "./flux-memory-headers.ts";
 import { z } from "zod";
 import { redactSecretsInText } from "./redact.ts";
 import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES } from "../shared/media-assets.ts";
@@ -585,8 +586,10 @@ export function imageModelsForBots(catalog: ImageCatalog): unknown[] {
 
 export interface ImageGenerationServiceOptions {
   resolveConnection: (id: string) => ImageConnection | null; connectionIds: () => string[]; fetch?: typeof fetch;
-  /** Read Flux's image catalogue (contract section 1). Off unless asked, so a
-   * service built for one purpose never reaches the network by surprise. */
+  /** Dormant: read Flux's image catalogue and follow its async jobs (contract
+   * sections 1 and 4). api.fluxrouter.ai has no handler for either (always 404),
+   * so production leaves this off: Flux image models come from GET /v1/models and
+   * renders are one synchronous call. */
   fluxCatalogue?: boolean;
   /** fit exact cropping; defaults to sharp when it loads. */
   crop?: () => Promise<CropImage | null>;
@@ -631,7 +634,7 @@ export class ImageGenerationService {
     try {
       assertCredentialOrigin("flux", FLUX_CATALOGUE_URL);
       const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
-      const response = await this.fetcher(FLUX_CATALOGUE_URL, { headers: { authorization: `Bearer ${connection.apiKey}` }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
+      const response = await this.fetcher(FLUX_CATALOGUE_URL, { headers: { authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
       if (response.ok) value = parseFluxImageCatalogue(await boundedJson(response, MAX_CATALOG_BYTES));
       else { void response.body?.cancel(); if (response.status >= 500 || response.status === 429) ttl = FLUX_CATALOGUE_RETRY_MS; }
     } catch { value = null; ttl = FLUX_CATALOGUE_RETRY_MS; }
@@ -649,7 +652,7 @@ export class ImageGenerationService {
     try {
       assertCredentialOrigin("flux", FLUX_MODELS_URL);
       const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
-      const response = await this.fetcher(FLUX_MODELS_URL, { headers: { authorization: `Bearer ${connection.apiKey}` }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
+      const response = await this.fetcher(FLUX_MODELS_URL, { headers: { authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
       if (response.ok) {
         const body = await boundedJson(response, MAX_CATALOG_BYTES);
         const ids = record(body) && Array.isArray(body.data) ? body.data.flatMap(item => record(item) && typeof item.id === "string" && /^flux-image[a-z0-9._-]{0,110}$/.test(item.id) ? [item.id] : []) : [];
@@ -682,8 +685,9 @@ export class ImageGenerationService {
     const { signal, discoverEdits = true } = options;
     const connection = this.connection(connectionId); const catalog = staticCatalog(connection);
     if (connection.provider === "flux") {
-      if (!this.options.fluxCatalogue) return catalog;
-      const catalogue = await this.fluxCatalogue(connection, signal, options.refresh);
+      // api.fluxrouter.ai has no /v1/images/models handler (always 404), so the
+      // catalogue is read only when the dormant contract mode is switched on.
+      const catalogue = this.options.fluxCatalogue ? await this.fluxCatalogue(connection, signal, options.refresh) : null;
       const full = catalogue?.entries.length ? fluxCatalogFrom(connection, catalogue) : catalog;
       // `offered` is asked only by the list and Settings paths, never by a render.
       const offered = options.offered ? await this.fluxOfferedIds(connection, signal, options.refresh) : null;
@@ -721,7 +725,7 @@ export class ImageGenerationService {
         const url = URLS.flux;
         assertCredentialOrigin("flux", url);
         const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
-        const response = await this.fetcher(url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}` },
+        const response = await this.fetcher(url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") },
           body: JSON.stringify({ model: modelId, probe: true }), signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout, redirect: "error" });
         if (!response.ok) return done({ ok: false, free: true, errorCode: "provider-error", errorMessage: `Flux answered HTTP ${response.status}${await providerErrorDetail(response)}.` });
         const body = await boundedJson(response, 64 * 1024);
@@ -836,7 +840,9 @@ export class ImageGenerationService {
       const expected = quality && caps.expectedSeconds?.[quality] ? caps.expectedSeconds[quality]! * Math.max(1, pixels / 1_048_576) : undefined;
       const longRender = expected !== undefined ? expected > LONG_RENDER_SECONDS : ["xhigh", "max"].includes(quality ?? "") || pixels > 2_400_000;
       const streams = ["openai", "flux"].includes(connection.provider) && (edit ? caps.delivery.streamEdits : caps.delivery.stream) && (connection.provider !== "openai" || count === 1);
-      const delivery: ImageDelivery = connection.provider === "flux" && caps.delivery.jobs && longRender ? "job" : streams ? "stream" : "buffered";
+      // Flux has no /v1/images/jobs handler: its renders are synchronous, so jobs exist only in the dormant contract mode.
+      const fluxJobs = Boolean(this.options.fluxCatalogue);
+      const delivery: ImageDelivery = connection.provider === "flux" && fluxJobs && caps.delivery.jobs && longRender ? "job" : streams ? "stream" : "buffered";
       const payload: Record<string, unknown> = { model: sent.model, prompt: assembled.prompt, n: count };
       // A native negative prompt is its own field: the card shows it beside the prompt.
       const nativeNegative = connection.provider === "flux" && caps.supports.negative ? request.negativePrompt?.trim() || undefined : undefined;
@@ -901,6 +907,8 @@ export class ImageGenerationService {
       if (connection.provider === "flux") {
         // A repeated request with this key returns the same job or result, never a second render.
         outbound.headers["idempotency-key"] = sha256(hooks.operationId ?? randomUUID());
+        // Flux Memory: image work is background work, never the owner's turn (PROPOSAL-v2 5.4).
+        Object.assign(outbound.headers, fluxCallHeaders("image-generation"));
         if (delivery === "job") outbound.headers.prefer = "respond-async";
       }
       active();
@@ -928,7 +936,8 @@ export class ImageGenerationService {
       }
       active();
       outcome = "uncertain";
-      const auth = connection.provider === "google" ? { "x-goog-api-key": connection.apiKey } : { authorization: `Bearer ${connection.apiKey}` };
+      const auth: Record<string, string> = connection.provider === "google" ? { "x-goog-api-key": connection.apiKey }
+        : { authorization: `Bearer ${connection.apiKey}`, ...(connection.provider === "flux" ? fluxCallHeaders("image-generation") : {}) };
       const pollJob = (id: string, firstDelaySeconds?: number) => {
         const url = `${FLUX_JOBS_URL}/${encodeURIComponent(id)}`;
         assertCredentialOrigin(connection.provider, url);
@@ -938,6 +947,7 @@ export class ImageGenerationService {
           get: async pollSignal => { active(); const response = await this.fetcher(url, { headers: auth, signal: pollSignal, redirect: "error" }); return { status: response.status, body: response.ok ? await boundedJson(response, imageResponseCap(count)) : (void response.body?.cancel(), null) }; } });
       };
       let result: unknown;
+      if (hooks.resumeJob && connection.provider === "flux" && !fluxJobs) fail("provider-timeout", "This image was started by an earlier version and its result can no longer be fetched. The render may have finished on the provider. Check before trying again; no automatic retry was attempted.", "uncertain");
       if (hooks.resumeJob) result = await pollJob(hooks.resumeJob.id, 2);
       else {
         // OpenAI sends no keepalive and its one preview frame can come late on
@@ -995,8 +1005,8 @@ export class ImageGenerationService {
           else {
             result = await boundedJson(response, imageResponseCap(count));
             // Only Flux runs jobs (contract section 4); any other 202 is read as an answer.
-            const job = connection.provider === "flux" && (response.status === 202 || delivery === "job") ? parseImageJob(result) : null;
-            if (connection.provider === "flux" && response.status === 202 && !job) fail("invalid-response", "The image provider accepted the request but returned no job to follow.", "uncertain");
+            const job = connection.provider === "flux" && fluxJobs && (response.status === 202 || delivery === "job") ? parseImageJob(result) : null;
+            if (connection.provider === "flux" && fluxJobs && response.status === 202 && !job) fail("invalid-response", "The image provider accepted the request but returned no job to follow.", "uncertain");
             if (job) {
               // Durable before the first poll: the same request_id resumes this job.
               hooks.jobStarted?.({ id: job.id });

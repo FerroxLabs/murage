@@ -3,11 +3,13 @@ import { purgeThreadLearning } from "./evolution-forgetting.ts";
 import { threadHumanPrincipal, isWorkspaceOwner } from "../human-principals.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { turnFirstRowid } from "../transcript-backfill.ts";
 import type { Message } from "../store.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
 import { applyMemoryTombstones } from "./restore.ts";
 import { forgetParkedSource, parkRetiredThreadJobs, reopenParkedThreadJobs } from "./park.ts";
+import { memoryClaimIndex } from "./claim-index.ts";
 import { enqueueProcedureSourceReview } from "./procedure-review.ts";
 import { threadCaptureScope } from "./capture-scope.ts";
 import { withoutImageTags } from "../../src/lib/composer-attachments.ts";
@@ -76,14 +78,48 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
  * recall and later admission see all of it, not only the last piece. Pieces
  * join in storage order with a blank line. A removal row's removedText never
  * joins (it is not part of what the engine said to the person). */
+export const TURN_WALK_MAX = 512;
 export function wholeTurnText(db: DatabaseSync, threadId: string, message: Message): string {
   if (!message.turnId) return message.text ?? "";
+  // Keeps the turn's first row on record (turn_first) for a turn begun before that table existed; free once kept.
+  turnFirstRowid(db, threadId, message.turnId, message.id);
+  // The parent-link walk reads root to this message only: right for the turn's last piece, which is all capture holds; a
+  // message with later pieces of its turn after it (the engine payload's reader) needs the branch read.
+  const path = (message.turnTerminal ? turnPath(db, threadId, message) : null) ?? boundedBranchPath(db, threadId, message);
+  return authoredTurnPieces(path, message).map(piece => piece.id === message.id ? message.text : piece.text).filter(Boolean).join("\n\n");
+}
+/** The rows of the captured message's turn, root to message: walked up the parent links from the message itself until the first row of an
+ * earlier turn (a different turnId), so the cost is the turn's length, never the history's. Null (not provable: a missing link, a row that
+ * is not held, a loop, or past TURN_WALK_MAX rows) sends the caller to the rowid-bounded branch read. */
+function turnPath(db: DatabaseSync, threadId: string, message: Message): Message[] | null {
+  const rows: Message[] = [message];
+  const seen = new Set<string>([message.id]);
+  const read = db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?");
+  let at: string | null | undefined = message.parentId;
+  while (at !== null) {
+    if (at === undefined || seen.has(at) || rows.length > TURN_WALK_MAX) return null;
+    const row = read.get(threadId, at);
+    if (!row) return null;
+    const parsed = JSON.parse(String(row.json)) as Message;
+    if (parsed.turnId && parsed.turnId !== message.turnId) break;
+    seen.add(at); rows.push(parsed);
+    at = parsed.parentId;
+  }
+  return rows.reverse();
+}
+function boundedBranchPath(db: DatabaseSync, threadId: string, message: Message): Message[] {
+  // Only this turn's own rows matter (authoredTurnPieces), and a parent is
+  // always stored before its child, so the walk up the branch stops at the
+  // turn's first row instead of climbing to the root of a very long thread.
+  // The turn's first row is kept as it is written (turn_first); a turn that began
+  // before that table existed is found the long way, once.
+  const first = { first: turnFirstRowid(db, threadId, message.turnId!, message.id) };
   const rows = db.prepare(`WITH RECURSIVE path(id,parent,json,depth) AS (
     SELECT id,json_extract(json,'$.parentId'),json,0 FROM messages WHERE thread_id=? AND id=(SELECT active_leaf_id FROM thread_state WHERE thread_id=?)
-    UNION ALL SELECT m.id,json_extract(m.json,'$.parentId'),m.json,p.depth+1 FROM messages m JOIN path p ON m.id=p.parent WHERE m.thread_id=?
-  ) SELECT json FROM path ORDER BY depth DESC`).all(threadId,threadId,threadId);
+    UNION ALL SELECT m.id,json_extract(m.json,'$.parentId'),m.json,p.depth+1 FROM messages m JOIN path p ON m.id=p.parent WHERE m.thread_id=? AND m.rowid>=? AND p.depth<10000
+  ) SELECT json FROM path ORDER BY depth DESC`).all(threadId,threadId,threadId,first.first ?? 0);
   const path = rows.map(row => JSON.parse(String(row.json)) as Message);
-  return authoredTurnPieces(path, message).map(piece => piece.id === message.id ? message.text : piece.text).filter(Boolean).join("\n\n");
+  return path;
 }
 
 /** Only folded message fields are accepted; raw provider envelopes never enter here. */
@@ -120,6 +156,8 @@ export function captureBranchChange(db: DatabaseSync, threadId: string, leafId: 
   db.prepare("UPDATE memory_sources SET state=CASE WHEN message_id IN (SELECT value FROM json_each(?)) THEN 'active' ELSE 'retired' END WHERE thread_id=? AND message_id IS NOT NULL AND state!='deleted' AND kind IN ('text','tool-outcome')").run(active,threadId);
   // A retired source's jobs can never be claimed: park them out of the open set, and bring back the ones whose source is active again.
   parkRetiredThreadJobs(db,threadId);reopenParkedThreadJobs(db,threadId);
+  // Sources active again bring their open jobs back: the claim's ready index sweeps for them (review finding 5).
+  memoryClaimIndex.reopened();
   revokeThreadDisclosures(db,threadId,"branch-change");
 }
 

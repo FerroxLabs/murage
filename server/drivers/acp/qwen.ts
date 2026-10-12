@@ -15,11 +15,15 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ModelCatalog } from "../../contracts.ts";
+import { createHash } from "node:crypto";
+import { DATA_DIR } from "../../config.ts";
 import { fluxKey } from "../../flux-config.ts";
+import { isFluxUrl, qwenSettingsJson } from "../../flux-memory-headers.ts";
 import { applyFluxSurface, isFluxModel } from "../../flux-routing.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
 import { displayConfigPath, isPlainObject, NativeConfigRefusal, readNativeJsonConfig } from "../native-config-file.ts";
+import { engineUpdateRequired } from "../scoped-cli-home.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 const EMPTY: ModelCatalog = { default: "", options: [] };
@@ -124,6 +128,44 @@ export function removeQwenLocalHost(
 
 const DRIVER_KIND = "qwenAgent";
 
+/** First Qwen Code that has `--acp` as well as the three switches below (0.5.x
+ *  still spoke `--experimental-acp`; rig-checked 0.1.0 / 0.5.0 / 0.10.0 / 0.15.6). */
+export const QWEN_ISOLATION_MIN = [0, 10, 0] as const;
+
+/**
+ * Switches that keep the owner's personal setup out of a bot turn, rig-proved on
+ * qwen 0.15.6 against a heavy ~/.qwen (2 personal MCP servers, an extension with
+ * its own server and context, a skill, hooks, QWEN.md):
+ *   --allowed-mcp-server-names=<n>  one per server Murage mounts this turn; with none,
+ *                                   a name nothing matches, because an empty list means all
+ *   -e none                         no extensions (their servers and context)
+ *   --exclude-tools=skill           no personal skills in the prompt
+ * Hooks are off in the system settings file (qwenSettingsJson). Not covered: the
+ * owner's global ~/.qwen/QWEN.md. The two levers that drop it (rig, qwen 0.25.0)
+ * would break the login: `--bare` / QWEN_CODE_SIMPLE=1 makes ACP `authenticate`
+ * fail (`rename ... -> ''`), and a scoped QWEN_HOME would fork oauth_creds.json,
+ * which Qwen refreshes by temp file + rename over the path (cacheQwenCredentials),
+ * replacing a link instead of writing through it. The repeated
+ * `=` form is deliberate: `--allowed-mcp-server-names a b` took only `a`.
+ * A CLI whose version is unknown (the probe is retried once) or older than the first one with
+ * the switches is rejected: the turn does not start and the owner is told to update Qwen.
+ */
+export function qwenIsolationArgs(serverNames: readonly string[] | undefined, cliVersion: string | undefined): string[] {
+  requireQwenIsolationVersion(cliVersion);
+  const names = serverNames?.length ? serverNames : ["murage-no-servers"];
+  return [...names.map((name) => `--allowed-mcp-server-names=${name}`), "-e", "none", "--exclude-tools=skill"];
+}
+
+/** Throws the update-required error for a Qwen that is unknown or older than QWEN_ISOLATION_MIN. Also run when the turn's env is
+ *  prepared, so the rejection reaches the owner as a structured error before anything is spawned. */
+export function requireQwenIsolationVersion(cliVersion: string | undefined): void {
+  const m = /(?:^|[^\d.])(\d+)\.(\d+)\.(\d+)/.exec(cliVersion ?? "");
+  const v = m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  const ok = v !== null && (v[0]! !== QWEN_ISOLATION_MIN[0] ? v[0]! > QWEN_ISOLATION_MIN[0] : v[1]! >= QWEN_ISOLATION_MIN[1]);
+  // Fails closed: without the switches the owner's MCP servers, extensions and skills would load into the bot.
+  if (!ok) throw engineUpdateRequired("Qwen", cliVersion?.trim() || undefined, QWEN_ISOLATION_MIN);
+}
+
 /**
  * Will this turn actually be routed at Flux?
  *
@@ -212,12 +254,17 @@ const support: AcpSupport = {
   // what still says the pick was local, so it is the gate, not `turn.model`.
   spawnArgs: (_config, turn, ctx) => [
     "--acp",
+    // The owner's personal MCP servers, extensions and skills stay out of the bot turn.
+    ...qwenIsolationArgs(ctx?.mcpServerNames, ctx?.cliVersion),
     // A model-connection turn (a pasted key or a ChatGPT/Grok plan sign-in)
     // needs it for the same reason: the route's OPENAI_* env must win over a
     // saved Qwen OAuth selectedType, or the turn goes to Qwen's cloud.
     ...(fluxRouted(turn.model) || localRouted(ctx?.requestedModel) || turn.providerRoute ? ["--auth-type", "openai"] : []),
     ...(turn.model ? ["-m", turn.model] : []),
   ],
+  spawnNeedsCliVersion: true,
+  versionRequired: true,
+  applyMountEnv: (_env, { cliVersion }) => requireQwenIsolationVersion(cliVersion),
   /**
    * Point the child at Flux's OpenAI chat-completions surface (spec §4.3).
    *
@@ -265,6 +312,24 @@ const support: AcpSupport = {
     env.OPENAI_API_KEY = hostApiKey(local.host, env);
     env.OPENAI_MODEL = local.model;
   },
+  /**
+   * Flux Memory headers. Qwen reads `model.generationConfig.customHeaders` from
+   * settings and sends them on every API request (docs: configuration/settings.md,
+   * `customHeaders`). Settings layers deep-merge with the SYSTEM layer last
+   * (cli.js mergeSettings), and `QWEN_CODE_SYSTEM_SETTINGS_PATH` names that
+   * layer, so a one-purpose file under Murage's own data dir outranks the
+   * user's settings without touching them. The file is content-addressed, so
+   * a change of headers is a change of path and of the process contract.
+   */
+  applyFluxMemory: (env, { decision }) => {
+    // A flux-* pick with no key runs on Qwen's own login: not a Flux request (applyTurnEnv already
+    // pointed the system settings at the memory-off file).
+    if (!isFluxUrl(env.OPENAI_BASE_URL)) return;
+    writeQwenSystemSettings(env, decision.headers);
+  },
+  // Qwen's own managed auto-memory is off in every bot session (a named provider route included):
+  // what a bot remembers is Murage's to fence. A Flux turn's headers replace this file, same switch.
+  transformEnv: (env) => writeQwenSystemSettings(env),
   pickAuthMethod: () => null,
   authFailure: "continue",
   /** F2 — "authenticated: true" was asserted here unconditionally, so a machine
@@ -292,5 +357,18 @@ const support: AcpSupport = {
   isAuthenticated: (env) => existsSync(join(qwenHome(env), "oauth_creds.json")),
   buildPromptText: (turn) => (turn.system ? `${turn.system}\n\n${turn.text}` : turn.text),
 };
+
+/** A one-purpose, content-addressed settings file in the system layer (outranks the user's settings,
+ *  which are left untouched). Always carries memory off; carries the Flux Memory headers when given. */
+function writeQwenSystemSettings(env: Record<string, string | undefined>, headers?: Record<string, string>): void {
+  const text = qwenSettingsJson(headers);
+  const dir = join(DATA_DIR, "native", "flux-memory");
+  const file = join(dir, `qwen-${createHash("sha256").update(text).digest("hex").slice(0, 16)}.json`);
+  if (!existsSync(file)) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(file, text, { mode: 0o600 });
+  }
+  env.QWEN_CODE_SYSTEM_SETTINGS_PATH = file;
+}
 
 export const QwenAgentDriver = createAcpDriver(support);
