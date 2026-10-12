@@ -124,6 +124,8 @@ export interface SseReplayEntry {
   bytes: number;
   /** A required frame was too large to replay; matching clients need a snapshot. */
   gap: boolean;
+  /** A page frame kept in the cards-beside shape only (index.ts broadcastPage). */
+  besideOnly?: boolean;
 }
 
 export class SseReplay {
@@ -139,7 +141,12 @@ export class SseReplay {
 
   get count(): number { return this.entries.length; }
 
-  append(meta: Pick<SseReplayEntry, "seq" | "kind" | "subject">, frame: string): SseReplayEntry {
+  /** Whether any frame after `since` was kept only in the cards-beside shape. */
+  hasBesideOnlySince(since: number | null): boolean {
+    return since !== null && this.entries.some((entry) => entry.seq > since && entry.besideOnly === true);
+  }
+
+  append(meta: Pick<SseReplayEntry, "seq" | "kind" | "subject"> & { besideOnly?: boolean }, frame: string): SseReplayEntry {
     const size = Buffer.byteLength(frame);
     const screen = meta.kind === "screen";
     const gap = !screen && (size > this.limits.maxFrameBytes || size > this.limits.maxBytes);

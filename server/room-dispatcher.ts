@@ -38,6 +38,7 @@ import {
   queuedRoomRequests,
   readdressReviewWake,
   recordRoomRequestRefusal,
+  type CompletionHooks,
   type RoomRequest,
 } from "./room-requests.ts";
 import type { AdmissionClaim, AdmissionDecision, AdmissionInput, ProjectContext, WorkAdmission, WriterRoot } from "./work-admission.ts";
@@ -61,6 +62,8 @@ export interface RoomDispatcherDeps {
   /** A room operation is running on this thread (one speaker at a time). */
   roomBusy(groupId: string, threadId: string): boolean;
   projectContext(request: RoomRequest): ProjectContext | undefined;
+  /** The room still exists (its members may all be gone). Absent: no members means the room is gone. */
+  roomExists?(groupId: string): boolean;
   /** The room's current members (a review wake moves only to a lead that is one). */
   memberIds(groupId: string): readonly string[];
   /** The work root a project room turn claims when free (SPEC-P 5.4a). */
@@ -75,6 +78,9 @@ export interface RoomDispatcherDeps {
   startMemberTurn(request: RoomRequest, claim: AdmissionClaim): void;
   /** A row was cancelled or expired here: say so in the room. */
   onClosed(request: RoomRequest, line: string): void;
+  /** An owner send was closed without a transcript line (member left, audience changed, expired, room gone):
+   * keep its words as a refused chip. Called inside the closing transaction, so both commit together. */
+  keepOwnerWords?(request: RoomRequest): void;
   /** A queued room turn has waited ROOM_TURN_STATUS_AFTER_MS. */
   onStillWaiting(request: RoomRequest, line: string): void;
   /** Rows changed (SSE `room.requests`). */
@@ -102,6 +108,9 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
   let pumping = false;
   let again = false;
   const statusSent = new Set<string>();
+
+  // A closed owner send keeps its words as a chip in the SAME transaction as the closure.
+  const hooks: CompletionHooks = deps.keepOwnerWords ? { ownerWords: (_db, request) => deps.keepOwnerWords!(request) } : {};
 
   const refusalLine = (decision: Extract<AdmissionDecision, { admit: false }>) => decision.line;
 
@@ -165,11 +174,14 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
         && deps.roomUsable({ ...request, toBotId: null })) continue;
       if (!deps.roomUsable(request)) {
         const members = deps.memberIds(request.groupId);
-        if (request.verb === "owner_send" && request.toBotId && members.length && !members.includes(request.toBotId)) {
+        // The owner's words are kept on EVERY unusable-room closure (the picked member left, the last
+        // member was deleted, the room is gone): the chip is made in the closing transaction.
+        // With no members left the room may still exist (its last member was deleted) or be gone; either way the words are kept.
+        if (request.verb === "owner_send" && request.toBotId && !members.includes(request.toBotId) && (members.length > 0 || deps.roomExists?.(request.groupId))) {
           const line = "The member you picked is no longer in this room; ask again.";
-          completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: line });
+          completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: line }, hooks);
           deps.onClosed(request, line);
-        } else completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: "the room is gone" });
+        } else completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: "the room is gone" }, hooks);
         deps.changed(request.groupId, threadId);
         continue;
       }
@@ -179,7 +191,7 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
       }
       if (!deps.audienceStillValid(request)) {
         const line = "This conversation's audience changed; ask again.";
-        completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: line });
+        completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: line }, hooks);
         deps.onClosed(request, line);
         deps.changed(request.groupId, threadId);
         continue;
@@ -239,7 +251,7 @@ export function createRoomDispatcher(deps: RoomDispatcherDeps): RoomDispatcher {
   function tick(): void {
     const db = deps.db();
     const now = deps.now();
-    for (const expired of expireOverdueRoomRequests(db, now, {}, row => !isSharedWorkRow(row))) {
+    for (const expired of expireOverdueRoomRequests(db, now, hooks, row => !isSharedWorkRow(row))) {
       statusSent.delete(expired.id);
       deps.onClosed(expired, "Not answered in time. Ask again.");
       deps.changed(expired.groupId, expired.targetThreadId);

@@ -19,6 +19,7 @@
 // `fluxKey()` (flux-config.ts:16), which reads config/`process.env` — never the
 // child env — and every call site must sit AFTER the strip, never before.
 import type { DriverKind } from "./contracts.ts";
+import { FLUX_CODEX_TABLE_HEADERS, codexHttpHeaderArgs } from "./flux-memory-wire.ts";
 
 /** The three verified wire surfaces. Endpoints confirmed live against
  *  api.fluxrouter.ai (docs/plans/flux-router-spec.md §1.1):
@@ -422,5 +423,20 @@ export function applyFluxSurface(
     "-c",
     `model_providers.${FLUX_CODEX_PROVIDER}.env_key=${JSON.stringify(FLUX_CODEX_ENV_KEY)}`,
   ];
+  // Flux Memory: the same provider declared three times with fixed headers
+  // (base, flux-off, flux-noinject). The app-server is shared, so a thread picks
+  // its table at thread/start; the argv never changes with the audience, so
+  // no running server is recycled when a settings switch moves a thread.
+  for (const [provider, headers] of Object.entries(FLUX_CODEX_TABLE_HEADERS)) {
+    if (provider !== FLUX_CODEX_PROVIDER) {
+      args.push(
+        "-c", `model_providers.${provider}.name=${JSON.stringify("Flux Router")}`,
+        "-c", `model_providers.${provider}.base_url=${JSON.stringify(FLUX_RESPONSES_BASE)}`,
+        "-c", `model_providers.${provider}.wire_api=${JSON.stringify("responses")}`,
+        "-c", `model_providers.${provider}.env_key=${JSON.stringify(FLUX_CODEX_ENV_KEY)}`,
+      );
+    }
+    args.push(...codexHttpHeaderArgs(provider, headers));
+  }
   return { surface, env: additions, stripped, args, model, applied: true };
 }

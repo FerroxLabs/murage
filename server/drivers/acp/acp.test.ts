@@ -3036,6 +3036,65 @@ createInterface({ input: process.stdin }).on("line", line => {
     }
   });
 
+  // Isolation-all round 3: the cursor of a 1.0.1 or earlier root is not in a bot's new state root. Each
+  // engine's own answer to a session it does not hold (read from the real CLIs with fake credentials and a
+  // fake home: grok 1.x and fuigo 1.0.24 -32603 FS_NOT_FOUND, gemini 0.47 -32603 "No previous sessions found
+  // for this project.", opencode -32603 "Internal error") ends in ONE new session and the replayed conversation.
+  it.each([
+    ["grok", { code: -32603, message: "Path not found.", data: { detail: "No such file or directory (os error 2)", code: "FS_NOT_FOUND" } }],
+    ["fuigo", { code: -32603, message: "Path not found.", data: { code: "FS_NOT_FOUND", detail: "No such file or directory (os error 2)", message: "Path not found.", error_kind: "session_storage" } }],
+    ["gemini", { code: -32603, message: "Internal error", data: { details: "No previous sessions found for this project." } }],
+    ["opencode", { code: -32603, message: "Internal error", data: { details: "Unexpected server error. Check server logs for details." } }],
+    ["invalid-params spelling", { code: -32602, message: "Invalid params: session not found", data: { sessionId: "old-root-cursor", extra: true } }],
+    ["invalid-params, text only", { code: -32602, message: "Session old-root-cursor does not exist" }],
+  ])("a cursor from an earlier root (%s) ends in one new session with the history replayed", async (_engine, failure) => {
+    process.env.FAKE_ACP_LOAD_ERROR = JSON.stringify(failure);
+    const promptDump = join(scratch, "r3-replayed-prompt.json");
+    process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
+    const rpcFile = join(scratch, "r3-rpc.json");
+    process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+    await create(GeminiAgentDriver);
+    await instance.adapter.sendTurn({
+      threadId: `t-r3-${String(_engine).replace(/\W/g, "")}`,
+      text: "What did I say?",
+      resumeCursor: "old-root-cursor",
+      transcript: [{ role: "user", text: "Remember ALPHA." }, { role: "assistant", text: "Remembered." }],
+    });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    const methods = JSON.parse(readFileSync(rpcFile, "utf8")) as string[];
+    expect(methods.filter((m) => m === "session/new")).toHaveLength(1);
+    const text = (JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ type: string; text?: string }>)
+      .filter((block) => block.type === "text").map((block) => block.text).join("\n");
+    expect(text).toMatch(/could not be restored[\s\S]*User: Remember ALPHA\./);
+    expect(recorder.events.filter((e) => e.type === "session.started")).toHaveLength(1);
+  });
+
+  // An opaque -32602 on a stored cursor (it names no model or setting) is the engine saying the cursor is gone:
+  // the SAME turn starts one new session and replays, with one plain notice and no error card.
+  it("an opaque -32602 on a stored cursor recovers within the same turn: one new session, history replayed, a plain notice, no error", async () => {
+    process.env.FAKE_ACP_LOAD_ERROR = JSON.stringify({ code: -32602, message: "Invalid params", data: { reason: "bad cursor" } });
+    const rpcFile = join(scratch, "r4-loop-rpc.json");
+    process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+    const promptDump = join(scratch, "r4-loop-prompt.json");
+    process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
+    await create(GeminiAgentDriver);
+    await instance.adapter.sendTurn({
+      threadId: "t-r4-loop", text: "Continue", resumeCursor: "stuck-cursor",
+      transcript: [{ role: "user", text: "Remember BRAVO." }],
+    });
+    expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+    const methods = JSON.parse(readFileSync(rpcFile, "utf8")) as string[];
+    expect(methods.filter((m) => m === "session/new")).toHaveLength(1);
+    const text = (JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ type: string; text?: string }>)
+      .filter((block) => block.type === "text").map((block) => block.text).join("\n");
+    expect(text).toContain("User: Remember BRAVO.");
+    const notices = recorder.events.filter((e) => e.type === "item.started" && (e as { toolKind?: string }).toolKind === "notice") as Array<{ title?: string }>;
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.title).toBe("Picked up this conversation in a fresh session");
+    expect(JSON.stringify(notices)).not.toMatch(/32602|bad cursor|invalid params/i); // technical detail stays in the log
+  });
+
   it("applyTurnEnv sees the picker model after resolveTurnModel", async () => {
     const dump = join(scratch, "turn-env.json");
     process.env.FAKE_ACP_DUMP = dump;

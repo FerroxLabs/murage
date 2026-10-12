@@ -42,7 +42,7 @@ it("the watchdog waits only after folder-held approval presentation, including r
   const end = source.indexOf("  const localVmTarget", begin);
   let held = true;
   const account = vi.fn();
-  const fold = evaluate(`${source.slice(begin, end)} }; return foldRuntimeEvent;`, { ...deps, replyGuardContext: () => null, accountProjectEvent: account,
+  const fold = evaluate(`${source.slice(begin, end)} }; return foldRuntimeEvent;`, { ...deps, fluxFirstTokenProbe: { observe() {}, begin() {} }, replyGuardContext: () => null, accountProjectEvent: account,
     accountPresentedProjectEvent, holdProjectWriteApproval: () => held });
   const approval = { type: "request.opened", threadId: "room", turnId: "turn", requestId: "approval" };
   raw.forEach(fn => fn(approval)); fold(approval);

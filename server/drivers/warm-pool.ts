@@ -69,6 +69,8 @@ export interface WarmMember {
   /** When the engine process was spawned (epoch ms): an idle engine past the
    * warm max age is closed with reason max-age. */
   spawnedAt?: number;
+  /** The engine home this process was started on (scope kind and bot): a login split on that scope drains it. */
+  scope?: { kind: string; bot: string | null };
 }
 
 /** How long a send waits for a prewarm that is still starting the same thread's engine. */
@@ -500,10 +502,29 @@ export function createWarmPool(overrides: Partial<WarmPoolDeps> = {}) {
     timer.unref?.();
   };
 
+  /** Scopes whose login split: engines started on them before this time are closed, now if idle and at settle if busy. */
+  const drained = new Map<string, number>();
+  const scopeId = (scope: { kind: string; bot: string | null }) => `${scope.kind}\u0000${scope.bot ?? ""}`;
+  const staleScope = (info: WarmMember): boolean => {
+    if (!info.scope) return false;
+    const at = drained.get(scopeId(info.scope));
+    return at !== undefined && !(info.spawnedAt !== undefined && info.spawnedAt > at);
+  };
+
   return {
+    /** The scope's login split: close every idle engine started on it, and any started before now when it settles. */
+    drainScope(scope: { kind: string; bot: string | null }, reason = "login-split"): number {
+      drained.set(scopeId(scope), d.now());
+      let closed = 0;
+      for (const [key, m] of [...idle]) {
+        if (m.scope && scopeId(m.scope) === scopeId(scope)) { idle.delete(key); sizes.delete(key); cancelEarly(key); try { m.close(reason); } catch {} closed++; }
+      }
+      return closed;
+    },
     /** An engine settled and is idle now (also refreshes its LRU position). */
     markIdle(member: object, info: WarmMember): Promise<void> {
       idle.delete(member);
+      if (staleScope(info)) { sizes.delete(member); cancelEarly(member); try { info.close("login-split"); } catch {} return Promise.resolve(); }
       if (info.hold && !info.background) intents.set(info.threadId, d.now() + windowMs());
       else intents.delete(info.threadId);
       if (info.background) {

@@ -22,6 +22,11 @@ describe("human fixture environment", () => {
     expect(env.MURAGE_DATA_DIR).toBe("/fixture");
   });
 
+  it("declares the current terms accepted unless a spec asks for the real first-run screen", () => {
+    expect(e2eEnvironment({}, "/fixture", "/runtime/node").MURAGE_TERMS_ACCEPTED).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(e2eEnvironment({ MURAGE_TERMS_PENDING: "1" }, "/fixture", "/runtime/node").MURAGE_TERMS_ACCEPTED).toBeUndefined();
+  });
+
   it("retains explicitly selected ports and required platform bootstrap", () => {
     const env = e2eEnvironment({SYSTEMROOT: "system-root", WINDIR: "windows-dir", PATHEXT: ".EXE;.CMD", MURAGE_PORT: "32000", MURAGE_UI_PORT: "32002", MURAGE_WEBHOOK_PORT: "32001", LANG: "en_US.UTF-8"}, "/fixture");
     expect(env).toMatchObject({SYSTEMROOT: "system-root", WINDIR: "windows-dir", PATHEXT: ".EXE;.CMD", MURAGE_PORT: "32000", MURAGE_UI_PORT: "32002", MURAGE_WEBHOOK_PORT: "32001", LANG: "en_US.UTF-8", FAKE_CLAUDE_MODE: "happy"});

@@ -13,19 +13,22 @@ function header(platform,arch){
   else{bytes.write("MZ",0);bytes.writeUInt32LE(0x40,0x3c);bytes.write("PE\0\0",0x40);bytes.writeUInt16LE(0x8664,0x44);}
   return bytes;
 }
-function fixture(platform,arch){
+function fixture(platform,arch,flat=false){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),"murage-memory-artifact-"));roots.push(root);
   const server=path.join(root,"server"),runtimePath="node_modules/@huggingface/transformers/node_modules/onnxruntime-node",runtime=path.join(server,runtimePath),native=path.join(runtime,"bin/napi-v6",platform,arch);
   fs.mkdirSync(native,{recursive:true});fs.mkdirSync(path.join(server,"memory"),{recursive:true});
   fs.writeFileSync(path.join(server,"memory/worker.js"),"// fixture module presence only\n");
   fs.writeFileSync(path.join(server,"bot-package-guard-worker.js"),"// fixture module presence only\n");
+  fs.writeFileSync(path.join(server,"engine-history-worker.js"),"// fixture module presence only\n");
   fs.writeFileSync(path.join(server,"memory-model-manifest.json"),JSON.stringify({runtimeVersion:"4.2.0"}));
   fs.writeFileSync(path.join(runtime,"package.json"),JSON.stringify({name:"onnxruntime-node",version:"1.24.3"}));
   const manifest=path.join(server,"memory-runtime-manifest.json");
-  const sharpPath="node_modules/@huggingface/transformers/node_modules/sharp",sharp=path.join(server,sharpPath),target=`${platform}-${arch}`;
-  const addonDir=path.join(sharp,"node_modules/@img",`sharp-${target}`,"lib"),addon=path.join(addonDir,`sharp-${target}-0.35.5.node`);
-  const libvips=platform==="darwin"?path.join(sharp,"node_modules/@img",`sharp-libvips-${target}`,"lib/libvips-cpp.8.18.7.dylib"):platform==="linux"?path.join(sharp,"node_modules/@img",`sharp-libvips-${target}`,"lib/libvips-cpp.so.8.18.7"):path.join(addonDir,"libvips-42.dll");
+  const sharpPath=flat?"node_modules/sharp":"node_modules/@huggingface/transformers/node_modules/sharp",sharp=path.join(server,sharpPath),target=`${platform}-${arch}`,img=flat?path.join(server,"node_modules/@img"):path.join(sharp,"node_modules/@img");
+  const addonDir=path.join(img,`sharp-${target}`,"lib"),addon=path.join(addonDir,`sharp-${target}-0.35.5.node`);
+  const libvips=platform==="darwin"?path.join(img,`sharp-libvips-${target}`,"lib/libvips-cpp.8.18.7.dylib"):platform==="linux"?path.join(img,`sharp-libvips-${target}`,"lib/libvips-cpp.so.8.18.7"):path.join(addonDir,"libvips-42.dll");
   for(const file of [addon,libvips]){fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,header(platform,arch));}
+  fs.mkdirSync(sharp,{recursive:true});
+  if(flat)for(const dir of [`sharp-${target}`,`sharp-libvips-${target}`].filter(dir=>fs.existsSync(path.join(img,dir))))fs.writeFileSync(path.join(img,dir,"package.json"),JSON.stringify({name:`@img/${dir}`,version:"0.35.5"}));
   fs.writeFileSync(path.join(sharp,"package.json"),JSON.stringify({name:"sharp",version:"0.35.5"}));
   fs.writeFileSync(manifest,JSON.stringify({platform:"darwin",arch:"arm64",packages:[{name:"@huggingface/transformers",version:"4.2.0",path:"node_modules/@huggingface/transformers"},{name:"onnxruntime-node",version:"1.24.3",path:runtimePath},{name:"sharp",version:"0.35.5",path:sharpPath}]}));
   const names=["onnxruntime_binding.node",...(platform==="darwin"?["libonnxruntime.1.24.3.dylib"]:platform==="linux"?["libonnxruntime.so.1"]:["onnxruntime.dll","DirectML.dll","dxcompiler.dll","dxil.dll"])];
@@ -41,6 +44,13 @@ it("records the actual target and validated native files while retaining the dis
     expect(result.thumbnailBackend).toEqual({available:true,package:"sharp",version:"0.35.5",files:[f.addon,f.libvips].map(file=>path.relative(path.join(f.root,"server"),file).split(path.sep).join("/"))});expect(result.nativeBackend.missingFiles).toEqual([]);
     expect(JSON.parse(fs.readFileSync(f.manifest,"utf8"))).toEqual(result);
     expect((await validatePackagedMemoryRuntime(f.root,platform,value)).stagingHost).toEqual({platform:"darwin",arch:"arm64"});
+  }
+});
+
+it("finds sharp's native addon and libvips in the hoisted runtime tree, where @img/* sits beside sharp",async()=>{
+  for(const [platform,arch,value] of [["darwin","arm64",3],["linux","x64",1],["win32","x64",1]]){
+    const f=fixture(platform,arch,true),result=await validatePackagedMemoryRuntime(f.root,platform,value);
+    expect(result.thumbnailBackend).toEqual({available:true,package:"sharp",version:"0.35.5",files:[f.addon,f.libvips].map(file=>path.relative(path.join(f.root,"server"),file).split(path.sep).join("/"))});
   }
 });
 
