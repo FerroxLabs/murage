@@ -13,7 +13,8 @@ import path from "node:path";
 
 export const MEMORY_UPGRADE_STATUS_FILE = "memory-upgrade-status.json";
 const BLOCKED_CODES = new Set(["MEMORY_MIGRATION_DISK_SPACE", "MEMORY_SCHEMA_NEWER", "MEMORY_MIGRATION_FAILED"]);
-const PHASES = new Set(["checking", "copying", "migrating"]);
+const PHASES = new Set(["checking", "copying", "migrating", "indexing", "converting", "repairing", "reclaiming"]);
+const STEPS = new Set(["tables", "indexes", "backfill", "validating", "committing"]);
 const num = (value) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined);
 
 /** The note, validated, or null. `pid` must be the child that is starting now:
@@ -37,6 +38,10 @@ export function readMemoryUpgradeStatus(dataDir, { pid } = {}) {
     freeBytes: num(raw.freeBytes),
     shortBytes: num(raw.shortBytes),
     newerVersion: num(raw.newerVersion),
+    done: num(raw.done),
+    total: num(raw.total),
+    step: STEPS.has(raw.step) ? raw.step : undefined,
+    stepElapsedMs: num(raw.stepElapsedMs),
     partialName,
   };
 }
@@ -56,6 +61,11 @@ export function clearMemoryUpgradeStatus(dataDir) {
 export function memoryUpgradeProgress(status, dataDir, size = (file) => statSync(file).size) {
   if (!status || status.state !== "upgrading") return null;
   if (status.phase === "migrating") return 95;
+  // memory v8: receipts indexed after the upgrade; memory v7: root sets converted, then the space handed back
+  // the one-time message-history index reports no count (server/message-tables.ts)
+  if (status.phase === "indexing" && !status.total) return 98;
+  if (status.phase === "indexing" || status.phase === "converting" || status.phase === "repairing") return status.total ? Math.max(1, Math.min(94, Math.floor((status.done ?? 0) / status.total * 94))) : 1;
+  if (status.phase === "reclaiming") return 97;
   if (status.phase !== "copying" || !status.copyBytes || !status.partialName) return status.phase === "checking" ? 0 : null;
   try { return Math.max(1, Math.min(94, Math.floor((size(path.join(dataDir, status.partialName)) / status.copyBytes) * 100))); } catch { return 1; }
 }
@@ -105,20 +115,29 @@ export function buildMemoryUpgradePage({ language, percent } = {}) {
 
 export const setMemoryUpgradeProgressScript = (percent) => `(()=>{const b=document.getElementById("bar");if(b)b.style.width=${JSON.stringify(`${Math.max(2, Math.min(100, Number(percent) || 2))}%`)}})()`;
 
+/** How long a note may sit unchanged and still count as the upgrade making progress. */
+export const UPGRADE_PROGRESS_FRESH_MS = 5 * 60_000;
+
 /** Polls the note while the child boots. `onUpdate(status|null, percent)` fires on
  * every change; `stop()` ends it. `active()` is true while an upgrade is running,
  * which the boot probe uses to keep waiting past its normal budget. */
-export function watchMemoryUpgrade({ dataDir, pid, onUpdate, intervalMs = 400, read = readMemoryUpgradeStatus, progress = memoryUpgradeProgress, setTimer = setInterval, clearTimer = clearInterval }) {
+export function watchMemoryUpgrade({ dataDir, pid, onUpdate, intervalMs = 400, read = readMemoryUpgradeStatus, progress = memoryUpgradeProgress, setTimer = setInterval, clearTimer = clearInterval, now = Date.now, freshMs = UPGRADE_PROGRESS_FRESH_MS }) {
   let last = "";
   let current = null;
+  // When the child last showed life: a new note (its own updatedAt moved) or a different figure
+  // (the copy grew). Measured on THIS clock, so a child with a wrong clock still counts.
+  let movedAt = null;
+  let seen = "";
   const tick = () => {
     const status = read(dataDir, { pid: typeof pid === "function" ? pid() : pid });
     current = status;
     const percent = progress(status, dataDir);
     const key = JSON.stringify([status?.state, status?.code, status?.phase, percent]);
+    const life = JSON.stringify([key, status?.updatedAt, status?.done]);
+    if (status?.state === "upgrading" && life !== seen) { seen = life; movedAt = now(); }
     if (key !== last) { last = key; try { onUpdate(status, percent); } catch { /* a screen glitch never blocks startup */ } }
   };
   const timer = setTimer(tick, intervalMs);
   timer?.unref?.();
-  return { active: () => current?.state === "upgrading", status: () => current, stop: () => clearTimer(timer), tick };
+  return { active: () => current?.state === "upgrading", fresh: () => current?.state === "upgrading" && movedAt !== null && now() - movedAt <= freshMs, status: () => current, stop: () => clearTimer(timer), tick };
 }

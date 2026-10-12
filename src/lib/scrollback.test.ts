@@ -71,6 +71,48 @@ describe("loadOlder", () => {
   });
 });
 
+describe("loadThrough on a branch page", () => {
+  // The branch is b0..b599 with a late-stored ancestor `late` spliced in between
+  // b49 and b50: storage order puts it after the newest row, so paging by
+  // `before` (storage order) never reaches it; the branch's parent links do.
+  function branchRig() {
+    const chain: Message[] = Array.from({ length: 600 }, (_, i) => ({ id: `b${i}`, at: i, role: "user", kind: "text", text: `#${i}`, parentId: i ? (i === 300 ? "late" : `b${i - 1}`) : null }) as never as Message);
+    const late = { id: "late", at: 500, role: "user", kind: "text", text: "late", parentId: "b299" } as never as Message;
+    const ancestry = [...chain.slice(0, 300), late, ...chain.slice(300)]; // root first
+    const held = ancestry.slice(-30);
+    const bot = { id: "bot", threadId: "t", messages: held, hasMore: true, olderFrom: ancestry[ancestry.length - 31]!.id, activeLeafId: "b599" } as never as Bot;
+    let state: AppState = { ...initialState, bots: [bot] };
+    const requests: string[] = [];
+    const request = vi.fn(async (path: string) => {
+      requests.push(path);
+      const url = new URL(path, "http://x");
+      const limit = Number(url.searchParams.get("limit"));
+      const around = url.searchParams.get("around");
+      if (around) return { messages: ancestry.filter((m) => m.id === around), hasMore: true };
+      const from = url.searchParams.get("branchFrom");
+      if (!from) throw new Error("storage-order paging cannot reach a late-stored ancestor");
+      const end = ancestry.findIndex((m) => m.id === from) + 1;
+      const start = Math.max(0, end - limit);
+      return { messages: ancestry.slice(start, end), hasMore: start > 0, olderFrom: start > 0 ? ancestry[start - 1]!.id : null };
+    });
+    const scrollback = createScrollback({ getState: () => state, dispatch: (a) => { state = reducer(state, a); }, request, onError: vi.fn(), settle: () => Promise.resolve() });
+    return { scrollback, requests, get state() { return state; } };
+  }
+
+  it("R3: a jump to a late-stored spliced ancestor follows the branch cursor and keeps it correct", async () => {
+    const r = branchRig();
+    await expect(r.scrollback.loadThrough("t", "late")).resolves.toBe("fetched");
+    expect(r.requests.slice(1).every((path) => path.includes("branchFrom="))).toBe(true);
+    const bot = r.state.bots[0]!;
+    expect(bot.messages.some((m) => m.id === "late")).toBe(true);
+    // the cursor moved on with the page: further paging continues from the oldest held ancestor
+    expect(bot.hasMore).toBe(true);
+    expect(bot.olderFrom).toBeTruthy();
+    expect(bot.messages.some((m) => m.id === bot.olderFrom)).toBe(false);
+    expect(r.state.loadingOlder).toEqual({});
+  });
+});
+
 describe("loadThrough", () => {
   it("answers at once for a message already held", async () => {
     const r = rig(300, 100);

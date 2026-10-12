@@ -1,14 +1,18 @@
+import { REQUIRED_MCP_SERVERS, startsWithNotDone, toolsUnavailableRunError } from "./drivers/mcp-readiness.ts";
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { ROUTINE_INSTRUCTIONS_MAX, routineInstructionsTooLongMessage } from "../shared/routine-instructions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
+import { awaitWriterGate, isDatabaseBusy, writersHeldForIndexBuild } from "./database.ts";
 
 import { DATA_DIR } from "./config.ts";
+import { rateLimited } from "./observe.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import { cancelCoalesced, flushCoalesced, scheduleCoalesced, writeFileAtomic } from "./atomic.ts";
 import { RoutineRunsJournal, routinesCommit } from "./routine-runs-journal.ts";
+import { PersistedStateRecoveryError, readPersistedJson } from "./persisted-state.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { CLOUD_ROUTINE_NOT_YET, type RoutineRunCardData } from "../shared/routine-run.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
@@ -58,6 +62,8 @@ export type RoutineRunStatus = typeof ROUTINE_RUN_STATUSES[number];
 const LIVE_RUN_STATUSES: readonly RoutineRunStatus[] = ["running", "waiting", "needs-you"];
 /** A run that is not settled yet. */
 const OPEN_RUN_STATUSES: readonly RoutineRunStatus[] = ["queued", ...LIVE_RUN_STATUSES];
+/** What a locked messages.db says (DatabaseBusyError's sentence, or SQLite's own): never a reason to fail a run. */
+const BUSY_MESSAGE = /Busy for a moment, try again|database is locked|SQLITE_BUSY/i;
 const isLive = (status: RoutineRunStatus) => LIVE_RUN_STATUSES.includes(status);
 const isOpen = (status: RoutineRunStatus) => OPEN_RUN_STATUSES.includes(status);
 /** Queued, running, waiting, or waiting on you: not settled yet. */
@@ -231,8 +237,25 @@ export interface RoutineRun {
   error?: string;
   cost?: number | null;
   denials?: string[];
+  /** Degraded availability, kept apart from the outcome: required tools
+   * ("connected apps", "memory") that had not loaded when the run's turn
+   * started. The run still completes when its task did not need them. */
+  toolsUnavailable?: string[];
+  /** "unknown": the engine could not say whether those tools were up. */
+  toolsReadiness?: "unknown";
   createdAt: number;
   seenAt?: number;
+}
+
+/** Which required tool family a tool call belongs to (by its server name in
+ * the engine's tool id), as the plain label the drivers report. */
+export function requiredToolLabelOf(event: { title?: string; toolIdentity?: { namespace?: string; name?: string } }): string | null {
+  const text = `${event.toolIdentity?.namespace ?? ""} ${event.toolIdentity?.name ?? ""} ${event.title ?? ""}`;
+  for (const [server, label] of Object.entries(REQUIRED_MCP_SERVERS)) {
+    const escaped = server.replace(/[-]/g, "[-_]");
+    if (new RegExp(`(^|[^a-z0-9])${escaped}(__|[^a-z0-9_-]|$)`, "i").test(text)) return label;
+  }
+  return /\bCOMPOSIO_[A-Z0-9_]+\b/.test(text) ? REQUIRED_MCP_SERVERS.composio! : null;
 }
 
 export interface EventActionBudget {
@@ -334,6 +357,25 @@ export interface RoutineManagerOptions {
   startupWaitMs?: number;
   /** Gap between two catch-up runs, so they never start at the same instant. */
   catchUpStaggerMs?: number;
+  /** Spread on-time scheduled runs over this window (F19, A21): each routine starts at its own fixed offset
+   * after its due time (a hash of its id), so sixty routines due at 9:00 do not all start in one tick. The run
+   * is queued and saved at its due time as before; only its start waits. 0 or absent: no spread. */
+  dispatchStaggerMs?: number;
+  /** Install-wide cap on automatic runs (schedule and webhook) running at once, across every bot. A due run
+   * over the cap stays queued, in order, until one finishes. Absent: no cap (each bot's three threads only). */
+  maxConcurrentAutomaticRuns?: number;
+  /** Owner first (owner-first.ts): false while the owner's own work should go first. An automatic run then
+   * stays queued for a later tick; the gate admits it at its bound. `waitedMs` is how long this run has been
+   * held back at the cap or the gate, on a monotonic clock (0 the first time it is asked). */
+  admitAutomatic?: (run: Readonly<RoutineRun>, waitedMs: number) => boolean;
+  /** Project routine work still queued or running in project rooms (room_requests): it counts against
+   * maxConcurrentAutomaticRuns like a running automatic run. */
+  activeProjectRoutineRuns?: () => number;
+  /** An automatic run held back this long (cap or owner-first gate) gets past the cap, up to twice the cap
+   * (aging: never starved behind newer runs). Default 120 s, the owner-first gate's own bound. */
+  automaticAgingMs?: number;
+  /** A monotonic clock for the waits above (default performance.now; tests pass their own). */
+  monotonicNow?: () => number;
   /** Step 0 check for a scheduled bot run: true while this bot should have
    * connected-app tools and they have not registered. The run is deferred
    * (see CONNECTOR_DEFER_DELAYS_MS) instead of running without them. */
@@ -550,6 +592,7 @@ function cloneRun(run: RoutineRun): RoutineRun {
     ...(run.eventBudget ? { eventBudget: structuredClone(run.eventBudget) } : {}),
     attachments: cloneAttachments(run.attachments),
     denials: run.denials ? [...run.denials] : undefined,
+    ...(run.toolsUnavailable ? { toolsUnavailable: [...run.toolsUnavailable] } : {}),
   };
 }
 
@@ -695,6 +738,8 @@ export const STARTUP_WAIT_MS = 90_000;
 export const STARTUP_NOTE =
   "Note: connected apps had not finished loading when this run started, so their tools may be missing. If a tool you need is not available, say so plainly and stop instead of guessing; this run will be retried.";
 
+class MissingRoutinesFile extends Error {}
+
 export class RoutineManager {
   private startedAt: number;
   private gateOpened = false;
@@ -704,12 +749,22 @@ export class RoutineManager {
   private readonly deferrals = new Map<string, { attempts: number; notBefore: number }>();
   private readonly file: string;
   private readonly now: () => number;
+  private readonly monotonicNow: () => number;
+  /** Automatic runs held back at the cap or the owner-first gate, by run id: how long each has waited. Elapsed time,
+   * not awake time: a Mac asleep counts (the wall clock moved while the monotonic one did not), a relaunch starts from
+   * the age the run's own stored creation time gives, and a wall clock set back adds nothing (the monotonic step counts). */
+  private readonly automaticHeldSince = new Map<string, { waitedMs: number; monotonic: number; wall: number }>();
   private readonly options: RoutineManagerOptions;
   private routines: Routine[] = [];
   private runs: RoutineRun[] = [];
   private routineRequestReceipts: RoutineRequestReceipt[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
+  /** The earliest time any routine needs the fleet walk (a due run, a watch expiry), or null when unknown.
+   * Every definition change goes through a save or a commit, which forget it. */
+  private fleetDueAt: number | null = null;
+  /** When the cap last said it was holding runs back (the log says so once a minute). */
+  private capLoggedAt = -Infinity;
   private watchReads = new Map<string, AbortController>();
   private readonly journal: RoutineRunsJournal;
   /** What routines.json last held, so an unchanged file is never rewritten. */
@@ -728,10 +783,16 @@ export class RoutineManager {
     let migratedLegacyRuns = false;
     let prePin: string | undefined;
     this.now = options.now ?? Date.now;
+    this.monotonicNow = options.monotonicNow ?? (options.now ? options.now : () => performance.now());
     this.startedAt = this.now();
+    // A missing file is a fresh start. Any other read, parse or shape failure
+    // stops startup (like webhooks.json) instead of loading empty state that
+    // the next save would write over the person's routines.
+    let original = "";
+    const parsedDisk = readPersistedJson(this.file, (path) => (original = readFileSync(path, "utf8")));
     try {
-      const original = readFileSync(this.file, "utf8");
-      const disk = JSON.parse(original) as Partial<RoutineFile>;
+      if (parsedDisk === undefined) throw new MissingRoutinesFile();
+      const disk = parsedDisk as Partial<RoutineFile>;
       this.routines = Array.isArray(disk.routines)
         ? disk.routines.flatMap((routine) => {
             const schedule = loadSchedule(routine.schedule);
@@ -827,7 +888,8 @@ export class RoutineManager {
             Number.isFinite(receipt?.appliedAt)
           )
         : [];
-    } catch {
+    } catch (error) {
+      if (!(error instanceof MissingRoutinesFile)) throw new PersistedStateRecoveryError(this.file, "invalid-shape", error);
       prePin = undefined;
       this.routines = [];
       this.runs = [];
@@ -1559,6 +1621,8 @@ export class RoutineManager {
   }
 
   stop() {
+    if (this.busyRetry) clearTimeout(this.busyRetry);
+    this.busyRetry = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     for (const read of this.watchReads.values()) read.abort();
@@ -1621,7 +1685,51 @@ export class RoutineManager {
     }
   }
 
+  private busyRetry: ReturnType<typeof setTimeout> | null = null;
+  /** The scheduler tick. It waits (asynchronously) while the revocation index build holds the writer lock, and it NEVER
+   * rejects: callers use `void this.tick()`, and a rejection there would end the server. A lock failure that still gets
+   * through leaves every run as it was (queued) and the tick runs again shortly; no run fails terminally on contention. */
   async tick(): Promise<void> {
+    try {
+      if (writersHeldForIndexBuild()) await awaitWriterGate();
+      await this.tickBody();
+      this.tickFailures = 0;
+    } catch (error) {
+      if (isDatabaseBusy(error)) this.retrySoon();
+      else {
+        this.tickFailures += 1;
+        this.lastTickFault = error instanceof Error ? error.message : String(error);
+        // Rate limited like the database's busy line: a save that keeps failing logs once a minute, with a count.
+        rateLimited("routine-tick-failed", 60_000, (suppressed) => `routine: tick failed (${this.tickFailures} in a row${suppressed ? `, ${suppressed} more since the last line` : ""}): ${this.lastTickFault}`);
+      }
+    }
+  }
+
+  /** Consecutive ticks that failed for a reason other than a locked database (reset by the next good tick). */
+  private tickFailures = 0;
+  private lastTickFault = "";
+  /** After this many failed ticks in a row the scheduler reports itself as not running on time. */
+  static readonly TICK_FAILURES_BEFORE_STALLED = 5;
+  /** The scheduler's own health, for whatever surface shows routine status: `stalled` once ticks keep failing. */
+  schedulerStatus(): { stalled: boolean; consecutiveFailures: number } {
+    return { stalled: this.tickFailures >= RoutineManager.TICK_FAILURES_BEFORE_STALLED, consecutiveFailures: this.tickFailures };
+  }
+
+  private retrySoon(): void {
+    if (this.busyRetry) return;
+    this.busyRetry = setTimeout(() => { this.busyRetry = null; void this.tick(); }, 1_000);
+    this.busyRetry.unref?.();
+  }
+
+  /** A run that met a locked database goes back to queued, with nothing of it lost, and the tick runs again. */
+  private requeueBusy(run: RoutineRun): void {
+    if (isLive(run.status)) { run.status = "queued"; run.startedAt = undefined; }
+    this.save();
+    this.emitRun(run);
+    this.retrySoon();
+  }
+
+  private async tickBody(): Promise<void> {
     // Before the guard, on purpose — see enforceRunLimits.
     await this.enforceRunLimits();
     if (this.ticking) return;
@@ -1630,7 +1738,18 @@ export class RoutineManager {
       const now = this.now();
       let changed = false;
       const missedRuns: RoutineRun[] = [];
-      for (const routine of this.routines) {
+      // Indexed (A21): nothing to do in the fleet walk before the earliest due time, and one pass over the runs
+      // answers every routine's overlap question instead of a scan of all runs per due routine.
+      const fleetDue = now >= this.nextFleetDue();
+      const openByRoutine = new Map<string, { open: boolean; scheduledQueued: boolean }>();
+      if (fleetDue) for (const run of this.runs) {
+        if (!isOpen(run.status)) continue;
+        const entry = openByRoutine.get(run.routineId) ?? { open: false, scheduledQueued: false };
+        entry.open = true;
+        if (run.status === "queued" && (run.triggerSource ?? (run.manual ? "manual" : "schedule")) === "schedule") entry.scheduledQueued = true;
+        openByRoutine.set(run.routineId, entry);
+      }
+      for (const routine of fleetDue ? this.routines : []) {
         if(this.options.automaticPaused?.())break;
         if (routine.watch && (now >= routine.watch.state.definition.expiresAt || routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks)) {
           if (routine.enabled || routine.nextRunAt !== null) {
@@ -1650,14 +1769,12 @@ export class RoutineManager {
         // recurring schedule needs this, not intervals alone: a daily routine
         // whose run is still running or waiting when tomorrow comes round
         // stacked another copy every day, and nothing ever cleared them.
-        const overlapping = routine.schedule.type !== "once" && this.runs.some(
-          (run) => run.routineId === routine.id && isOpen(run.status),
-        );
+        const open = openByRoutine.get(routine.id);
+        const overlapping = routine.schedule.type !== "once" && open?.open === true;
         // "queue" (upstream #1564) lets ONE scheduled occurrence wait behind
         // the active run, never a backlog: while a scheduled run is already
         // queued, later occurrences are skipped as before.
-        const scheduledQueued = overlapping && this.runs.some((run) => run.routineId === routine.id && run.status === "queued" &&
-          (run.triggerSource ?? (run.manual ? "manual" : "schedule")) === "schedule");
+        const scheduledQueued = overlapping && open?.scheduledQueued === true;
         if (!overlapping || (routine.overlap === "queue" && !scheduledQueued)) {
           if (late > CATCH_UP_MS) {
             const missed = this.newRun(routine, scheduledFor, false);
@@ -1668,6 +1785,7 @@ export class RoutineManager {
             missedRuns.push(cloneRun(missed));
           } else {
             const run = this.newRun(routine, scheduledFor, false);
+            openByRoutine.set(routine.id, { open: true, scheduledQueued: true });
             this.emitRun(run);
           }
         } else {
@@ -1693,8 +1811,38 @@ export class RoutineManager {
       if (changed) this.save();
       for (const missed of missedRuns) this.options.onRunFailed?.(missed);
 
-      for (const run of [...this.runs].reverse()) {
+      // One pass for the install-wide cap and the per-routine and per-thread "already working" questions below.
+      const cap = this.options.maxConcurrentAutomaticRuns;
+      const agingMs = this.options.automaticAgingMs ?? 120_000;
+      let automaticRunning = 0, capHeld = 0;
+      const liveRoutines = new Set<string>(), liveThreads = new Set<string>();
+      for (const other of this.runs) {
+        if (!isLive(other.status)) continue;
+        liveRoutines.add(other.routineId);
+        if (other.threadId) liveThreads.add(other.threadId);
+        const source = other.triggerSource ?? (other.manual ? "manual" : "schedule");
+        if (other.status === "running" && (source === "schedule" || source === "webhook")) automaticRunning++;
+      }
+      const automatic = (run: RoutineRun) => {
+        const source = run.triggerSource ?? (run.manual ? "manual" : "schedule");
+        return source === "schedule" || source === "webhook";
+      };
+      // Project routines run as room work after delivery (index.ts): they hold a place under the cap too.
+      if (cap !== undefined && this.options.activeProjectRoutineRuns && this.runs.some(run => run.status === "queued" && automatic(run))) {
+        try { automaticRunning += Math.max(0, Number(this.options.activeProjectRoutineRuns()) || 0); } catch { /* unknown: not counted */ }
+      }
+      // Order: the owner's own and channel runs newest first (as before), then automatic runs OLDEST first, so a
+      // freed place under the cap goes to the run that has waited longest, never to the newest arrival.
+      const queuedNow = this.runs.filter(run => run.status === "queued");
+      const byAge = queuedNow.map((run, index) => ({ run, index })).filter(entry => automatic(entry.run))
+        .sort((a, b) => (Number(a.run.createdAt) || 0) - (Number(b.run.createdAt) || 0) || a.index - b.index).map(entry => entry.run);
+      const dispatchOrder = [...queuedNow.filter(run => !automatic(run)).reverse(), ...byAge];
+      const queuedIds = new Set(queuedNow.map(run => run.id));
+      for (const id of [...this.automaticHeldSince.keys()]) if (!queuedIds.has(id)) this.automaticHeldSince.delete(id);
+      for (const run of dispatchOrder) {
         if (run.status !== "queued") continue;
+        // the build can start while this tick is between runs: the next dispatch waits it out before its first mutation
+        if (writersHeldForIndexBuild()) { await awaitWriterGate(); if (run.status !== "queued") continue; }
         if (run.instructionEvidence?.length && !this.options.validateInstructionEvidence?.(run, structuredClone(run.instructionEvidence))) {
           this.failRun(run, "The evidence supporting these learned instructions is no longer available to this routine. Review its instructions before running it again.");
           continue;
@@ -1762,8 +1910,7 @@ export class RoutineManager {
         // not merely for a free thread slot on its bot: the bot may have
         // spare slots while the earlier run waits on a teammate. Resource
         // admission is unchanged; this only holds the run before it.
-        const sameRoutineWorking = triggerSource === "schedule" && this.runs.some((other) =>
-          other.id !== run.id && other.routineId === run.routineId && isLive(other.status));
+        const sameRoutineWorking = triggerSource === "schedule" && liveRoutines.has(run.routineId);
         const state = sameRoutineWorking ? "busy" : this.targetState(run);
         if (state === "busy") continue;
         if (state === "missing") {
@@ -1777,9 +1924,36 @@ export class RoutineManager {
           this.failRun(run, CLOUD_ROUTINE_NOT_YET);
           continue;
         }
+        // Automatic runs (schedule, webhook) are spread, capped and owner-first (F19, A21), project routines
+        // included (they are room work once delivered). The run stays queued with its id, so a held-back run starts
+        // exactly once, on a later tick; nothing is missed. Oldest first (dispatchOrder); a run held back past
+        // automaticAgingMs gets past the cap (up to twice the cap) and the gate admits it at its bound.
+        if (!run.watch && (triggerSource === "schedule" || triggerSource === "webhook")) {
+          const stagger = this.options.dispatchStaggerMs ?? 0;
+          if (triggerSource === "schedule" && stagger > 0 && run.scheduledFor >= this.startedAt &&
+            this.now() < run.scheduledFor + RoutineManager.staggerOffset(run.routineId, stagger)) continue;
+          const monotonic = this.monotonicNow();
+          const wall = this.now();
+          let held = this.automaticHeldSince.get(run.id);
+          if (!held) { // A run queued before this launch keeps the wait it had (from its stored creation time), short of the aging bound,
+            // so a relaunch does not reset it and does not start every old run aged at once.
+            const before = Number(run.createdAt) < this.startedAt ? Math.max(0, wall - Number(run.createdAt)) : 0;
+            held = { waitedMs: Math.min(before, Math.max(0, agingMs - 1)), monotonic, wall }; this.automaticHeldSince.set(run.id, held); }
+          else {
+            held.waitedMs += Math.max(0, monotonic - held.monotonic, wall - held.wall);
+            held.monotonic = monotonic; held.wall = wall;
+          }
+          const waitedMs = held.waitedMs;
+          const aged = waitedMs >= agingMs;
+          if (cap !== undefined && automaticRunning >= (aged ? cap * 2 : cap)) { capHeld++; continue; }
+          if (this.options.admitAutomatic && !this.options.admitAutomatic(run, waitedMs)) continue;
+        }
         if (run.target === "room-goal" && this.options.projectRoutine) {
-          const delivered = this.options.projectRoutine(cloneRun(run));
+          let delivered: { threadId: string } | null;
+          try { delivered = this.options.projectRoutine(cloneRun(run)); }
+          catch (error) { if (isDatabaseBusy(error)) { this.retrySoon(); continue; } throw error; }
           if (delivered) {
+            if (triggerSource === "schedule" || triggerSource === "webhook") automaticRunning++;
             run.threadId = delivered.threadId;
             run.startedAt = this.now();
             run.finishedAt = this.now();
@@ -1800,7 +1974,7 @@ export class RoutineManager {
           ? this.routines.find((routine) => routine.id === run.routineId && routine.botId === run.botId)
           : undefined;
         const reusable = owner?.threadId && this.options.taskExists?.(run.botId, owner.threadId) ? owner.threadId : undefined;
-        if (reusable && (this.runs.some((active) => active.threadId === reusable && isLive(active.status)) || this.options.threadBusy?.(run.botId, reusable))) continue;
+        if (reusable && (liveThreads.has(reusable) || this.options.threadBusy?.(run.botId, reusable))) continue;
         // A webhook is an incoming message, so make its task the bot's live
         // chat immediately. Scheduled work remains detached and unobtrusive.
         const task = run.target === "room-goal"
@@ -1823,6 +1997,8 @@ export class RoutineManager {
         run.threadId = task.threadId;
         run.startedAt = this.now();
         run.status = "running";
+        liveRoutines.add(run.routineId); liveThreads.add(task.threadId);
+        if (triggerSource === "schedule" || triggerSource === "webhook") automaticRunning++;
         if (triggerSource === "schedule" && run.scheduledFor < this.startedAt) this.lastCatchUpAt = this.now();
         if (this.deferrals.delete(run.id) && run.attention?.startsWith("Waiting for connected apps")) run.attention = undefined;
         this.heldByStartup.delete(run.id);
@@ -1836,6 +2012,11 @@ export class RoutineManager {
           catch (error) { console.error("routine: run marker failed", error); }
         }
         const failDispatch = (message: string) => {
+          if (BUSY_MESSAGE.test(message)) {
+            // contention is not a failure of the run: it goes back to the queue with its occurrence intact
+            if (isLive(run.status)) this.requeueBusy(run);
+            return;
+          }
           if (!sharedChannel) return this.failThread(task.threadId, message);
           // A delayed callback from an earlier message cannot fail the next
           // message merely because both used this conversation.
@@ -1879,9 +2060,36 @@ export class RoutineManager {
           failDispatch(error instanceof Error ? error.message : String(error));
         }
       }
+      if (capHeld && this.now() - this.capLoggedAt >= 60_000) {
+        this.capLoggedAt = this.now();
+        console.log(`[routines] ${capHeld} due run${capHeld === 1 ? "" : "s"} waiting: ${automaticRunning} automatic runs already running (install-wide cap ${cap})`);
+      }
     } finally {
       this.ticking = false;
     }
+  }
+
+  /** min(nextRunAt of enabled routines, watch expiry of watched ones): nothing in the fleet walk can happen before it. */
+  private nextFleetDue(): number {
+    if (this.fleetDueAt !== null) return this.fleetDueAt;
+    let due = Infinity;
+    for (const routine of this.routines) {
+      if (routine.watch && (routine.enabled || routine.nextRunAt !== null)) {
+        // a watch that has used up its checks is closed on the next tick
+        if (routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks) return (this.fleetDueAt = -Infinity);
+        due = Math.min(due, routine.watch.state.definition.expiresAt);
+      }
+      if (routine.enabled && routine.nextRunAt != null) due = Math.min(due, routine.nextRunAt);
+    }
+    return (this.fleetDueAt = due);
+  }
+
+  /** A routine's fixed start offset inside the stagger window (FNV-1a of its id): the same every tick and every start. */
+  static staggerOffset(routineId: string, windowMs: number): number {
+    if (!(windowMs > 0)) return 0;
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < routineId.length; index++) { hash ^= routineId.charCodeAt(index); hash = Math.imul(hash, 0x01000193) >>> 0; }
+    return hash % Math.floor(windowMs);
   }
 
   private async startupGateOpen(now: number): Promise<boolean> {
@@ -1921,6 +2129,28 @@ export class RoutineManager {
       run.target === "room-goal" &&
       (event.type === "turn.completed" || (event.type === "item.completed" && event.itemType === "assistant_text"))
     ) return null;
+    if (event.type === "item.started" && event.itemType === "tool") {
+      // A call to a required tool family: if that family turns out not to have
+      // loaded and the call failed, the run needed it and it was blocked.
+      const label = requiredToolLabelOf(event);
+      if (label && event.itemId) {
+        const calls = this.requiredToolCalls.get(run.id) ?? new Map<string, { label: string; failed: boolean; op: string }>();
+        // The operation is the tool and what it was asked to do: a later
+        // success of the same operation (a retry) settles an earlier failure.
+        let input = "";
+        try { input = JSON.stringify((event as { input?: unknown }).input ?? null) ?? ""; } catch { /* unserialisable input: the title alone names it */ }
+        calls.set(event.itemId, { label, failed: false, op: `${label}\0${event.title ?? ""}\0${input}` });
+        this.requiredToolCalls.set(run.id, calls);
+      }
+      return null;
+    }
+    if (event.type === "item.completed" && event.itemType === "tool") {
+      const all = this.requiredToolCalls.get(run.id);
+      const call = event.itemId ? all?.get(event.itemId) : undefined;
+      if (call && !event.ok) call.failed = true;
+      else if (call && all) for (const other of all.values()) if (other.op === call.op) other.failed = false;
+      return null;
+    }
     if (event.type === "request.opened") {
       run.status = "waiting";
       run.attention = redactSecretsInText(event.summary).trim().slice(0, 500) || undefined;
@@ -1956,11 +2186,33 @@ export class RoutineManager {
       // (STOP1). The user's own cancel sets the run cancelled before its turn
       // stops, so this is a host stop (watchdog, connection change).
       if (!turnSucceeded(event)) {
+        // A bare "error" or "tool_error" says less than the runtime.error that
+        // came before it; keep the detailed one (OpenMausBot #2214, Apache-2.0).
+        const genericStopReason = event.stopReason === "error" || event.stopReason === "tool_error";
         this.failRun(run, turnStopped(event)
           ? "The run was stopped before it finished"
-          : event.stopReason ?? run.error ?? "The bot did not complete this run");
+          : (genericStopReason ? run.error : undefined) ?? event.stopReason ?? run.error ?? "The bot did not complete this run");
         queueMicrotask(() => void this.tick());
         return cloneRun(run);
+      }
+      // Required tools that had not loaded are degraded availability, recorded
+      // on the run. The run fails only when its task needed them: a call to
+      // one of them failed, or the bot said the task is not done (the notice
+      // asks it to start its reply with NOT_DONE_PREFIX then). A run that
+      // summarises supplied text completes while bot messaging is down.
+      const calls = [...(this.requiredToolCalls.get(run.id)?.values() ?? [])];
+      this.requiredToolCalls.delete(run.id);
+      if (event.toolsUnavailable?.length || event.mcpReadiness === "unknown") {
+        run.toolsUnavailable = event.toolsUnavailable?.length ? [...event.toolsUnavailable] : undefined;
+        run.toolsReadiness = event.mcpReadiness;
+        const unavailable = new Set(event.toolsUnavailable ?? []);
+        const blocked = [...new Set(calls.filter((call) => call.failed && unavailable.has(call.label)).map((call) => call.label))];
+        const saidNotDone = startsWithNotDone(run.output ?? "");
+        if (blocked.length || saidNotDone) {
+          this.failRun(run, toolsUnavailableRunError(blocked.length ? blocked : [...unavailable]));
+          queueMicrotask(() => void this.tick());
+          return cloneRun(run);
+        }
       }
       run.status = "completed";
       run.attention = undefined;
@@ -2020,7 +2272,11 @@ export class RoutineManager {
     return cloneRun(run);
   }
 
+  /** Calls to required tool families in each live run's turn, by item id. */
+  private readonly requiredToolCalls = new Map<string, Map<string, { label: string; failed: boolean; op: string }>>();
+
   private failRun(run: RoutineRun, message: string) {
+    this.requiredToolCalls.delete(run.id);
     run.status = "failed";
     run.attention = undefined;
     run.error = redactSecretsInText(message).slice(0, 500);
@@ -2150,6 +2406,7 @@ export class RoutineManager {
   }
 
   private emitRoutine(routine: Routine) {
+    this.fleetDueAt = null;
     this.options.emit?.({ kind: "routine", routine: this.routineWithHealth(routine) });
   }
 
@@ -2209,6 +2466,7 @@ export class RoutineManager {
    * uncommitted action for a durable one.
    */
   private commitMutation(mutate: () => void): void {
+    this.fleetDueAt = null;
     const before = {
       routines: this.routines.map(cloneRoutine),
       runs: this.runs.map(cloneRun),
@@ -2238,7 +2496,7 @@ export class RoutineManager {
       // runsCommit stays as recorded: a file without it accepts every journal line, including
       // those of a save that was interrupted before its routines.json write (audit A-3).
       bytes: Buffer.from(JSON.stringify({ version: 1, routines: next, routineRequestReceipts: this.routineRequestReceipts, ...(this.runsCommit === undefined ? {} : { runsCommit: this.runsCommit }) } satisfies RoutineFile, null, 2)),
-      publish: () => { this.routines = next; },
+      publish: () => { this.routines = next; this.fleetDueAt = null; },
     };
   }
 
@@ -2246,6 +2504,7 @@ export class RoutineManager {
    * grants, schedules and run starts rely on it throwing); `defer` coalesces to
    * once per 250 ms for cosmetic bookkeeping such as marking a run seen. */
   private save(options: { defer?: boolean } = {}) {
+    this.fleetDueAt = null;
     if (options.defer) { scheduleCoalesced(this.file, () => this.saveNow()); return; }
     this.saveNow();
     cancelCoalesced(this.file);

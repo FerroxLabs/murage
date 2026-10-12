@@ -2,8 +2,13 @@ import { createHash as actualHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { browserBundleSpec } from "./browser-bundle-release.ts";
 
-const mock = vi.hoisted(() => ({ bytes: new Map<string, Buffer>(), hashes: new Map<string, string>(), signature: vi.fn(), changed: false, closed: [] as number[], opened: [] as string[] }));
-vi.mock("node:child_process", () => ({ spawnSync: mock.signature }));
+const mock = vi.hoisted(() => ({ bytes: new Map<string, Buffer>(), hashes: new Map<string, string>(), signature: vi.fn(), changed: false, closed: [] as number[], opened: [] as string[], reads: [] as string[] }));
+// codesign now runs through async execFile; `signature` stands in for it. A reply may carry delayMs to model a slow run.
+vi.mock("node:child_process", () => ({ execFile: (file: string, args: string[], options: unknown, done: (error: Error | null) => void) => {
+  const reply = mock.signature(file, args, options) as { status: number; delayMs?: number; timedOut?: boolean };
+  const finish = () => done(reply.timedOut ? Object.assign(new Error("codesign timed out"), { killed: true, code: null, signal: "SIGTERM" }) : reply.status === 0 ? null : Object.assign(new Error("codesign refused"), { code: reply.status }));
+  if (reply.delayMs) setTimeout(finish, reply.delayMs); else queueMicrotask(finish);
+} }));
 vi.mock("node:crypto", async (original) => {
   const real = await original<typeof import("node:crypto")>();
   return { ...real, createHash: (...args: Parameters<typeof real.createHash>) => {
@@ -17,9 +22,9 @@ vi.mock("node:fs", async (original) => {
   const stat = () => ({ dev: 1, ino: 2, size: 100, mtimeMs: 1, ctimeMs: mock.changed ? 2 : 1, isFile: () => true, isDirectory: () => true, isSymbolicLink: () => false });
   return { ...real, realpathSync: (p: string) => p, lstatSync: stat, fstatSync: stat,
     openSync: (p: string) => { mock.opened.push(p); return mock.opened.length - 1; }, closeSync: (fd: number) => mock.closed.push(fd),
-    readFileSync: (fd: number) => { const bytes = mock.bytes.get(mock.opened[fd]); if (!bytes) throw new Error("missing fixture"); return bytes; } };
+    readFileSync: (fd: number) => { mock.reads.push(mock.opened[fd]); const bytes = mock.bytes.get(mock.opened[fd]); if (!bytes) throw new Error("missing fixture"); return bytes; } };
 });
-import { MAC_BROWSER_PAYLOADS, verifyMacBrowserImage, verifyPackagedMacBrowser } from "./browser-macos-identity.ts";
+import { MAC_BROWSER_PAYLOADS, checkPackagedMacBrowserAsync, clearMacBrowserCodesignCache, packagedMacBrowserState, verifyMacBrowserImage, verifyPackagedMacBrowser, verifyPackagedMacBrowserAsync } from "./browser-macos-identity.ts";
 
 const root = "/fixture/Murage.app/Contents/Resources", directory = `${root}/browser-engine`;
 const spec = browserBundleSpec("darwin-arm64");
@@ -42,7 +47,8 @@ for (const image of ["engine", "chrome"] as const) {
   images.set(image, bytes);
 }
 beforeEach(() => {
-  mock.changed = false; mock.opened.length = 0; mock.closed.length = 0;
+  clearMacBrowserCodesignCache();
+  mock.changed = false; mock.reads.length = 0; mock.opened.length = 0; mock.closed.length = 0;
   mock.signature.mockReset().mockReturnValue({ status: 0 });
   mock.bytes.clear();
   mock.bytes.set(`${directory}/manifest.json`, Buffer.from(JSON.stringify({ ...spec, files: [
@@ -66,30 +72,132 @@ describe.skipIf(process.platform === "win32")("arm64 packaged browser identity",
     bytes.writeBigUInt64LE(original + 4096n, p.linkeditCommand + 32);
     try { expect(verifyMacBrowserImage(bytes, image)).toBe(true); } finally { bytes.writeBigUInt64LE(original, p.linkeditCommand + 32); }
   });
-  it("binds a nested Electron helper to its owning app and verifies all three fixed signatures", () => {
-    expect(verifyPackagedMacBrowser(root, "/fixture/Murage.app/Contents/Frameworks/Murage Helper.app/Contents/MacOS/Murage Helper")).toBe(true);
-    expect(mock.signature.mock.calls.map(call => call[1].at(-1))).toEqual(["/fixture/Murage.app", `${directory}/${spec.engine.executable}`, `${directory}/${spec.chrome.executable}`]);
+  it("binds a nested Electron helper to its owning app and verifies the two fixed tool signatures", async () => {
+    expect(await verifyPackagedMacBrowserAsync(root, "/fixture/Murage.app/Contents/Frameworks/Murage Helper.app/Contents/MacOS/Murage Helper")).toBe(true);
+    expect(mock.signature.mock.calls.map(call => call[1].at(-1))).toEqual([`${directory}/${spec.engine.executable}`, `${directory}/${spec.chrome.executable}`]);
+    // Never the whole bundle: that takes 17 to 41 s on a real Mac and always timed out.
+    for (const call of mock.signature.mock.calls) expect(call[1].at(-1)).not.toMatch(/Murage\.app$/);
     for (const call of mock.signature.mock.calls) expect(call[1]).toContain('=anchor apple generic and certificate leaf[subject.OU] = "PX6SP9GPWJ"');
-    expect(mock.closed).toHaveLength(3);
   });
-  it("refuses an external executable, wrong app, and changed manifest without signing", () => {
-    expect(verifyPackagedMacBrowser(root, "/usr/bin/node")).toBe(false);
-    expect(verifyPackagedMacBrowser(root.replace("Murage.app", "Other.app"), "/usr/bin/node")).toBe(false);
+  // D6: where the app sits is not part of the check. A real copy elsewhere passes when its bytes and signatures do.
+  it("admits the same bundle from any folder, as long as it is named Murage.app", async () => {
+    const other = "/private/tmp/copy-1/Murage.app/Contents/Resources";
+    for (const [file, bytes] of [...mock.bytes]) mock.bytes.set(file.replace(root, other), bytes);
+    expect(await verifyPackagedMacBrowserAsync(other, "/private/tmp/copy-1/Murage.app/Contents/MacOS/Murage")).toBe(true);
+    expect(await verifyPackagedMacBrowserAsync(other.replace("Murage.app", "Murage 2.app"), "/private/tmp/copy-1/Murage 2.app/Contents/MacOS/Murage")).toBe(false);
+  });
+  it("refuses an external executable, wrong app, and changed manifest without signing", async () => {
+    expect(await verifyPackagedMacBrowserAsync(root, "/usr/bin/node")).toBe(false);
+    expect(await verifyPackagedMacBrowserAsync(root.replace("Murage.app", "Other.app"), "/usr/bin/node")).toBe(false);
     mock.bytes.set(`${directory}/manifest.json`, Buffer.from("{}"));
-    expect(verifyPackagedMacBrowser(root, "/fixture/Murage.app/Contents/MacOS/Murage")).toBe(false);
+    expect(await verifyPackagedMacBrowserAsync(root, "/fixture/Murage.app/Contents/MacOS/Murage")).toBe(false);
     expect(mock.signature).not.toHaveBeenCalled(); expect(mock.closed).toHaveLength(1);
   });
-  it("refuses app or either tool signature failure and closes every observation", () => {
-    for (const failure of [0, 1, 2]) {
-      mock.closed.length = 0; mock.opened.length = 0; mock.signature.mockReset();
-      let n = 0; mock.signature.mockImplementation(() => ({ status: n++ === failure ? 1 : 0 }));
-      expect(verifyPackagedMacBrowser(root, "/fixture/Murage.app/Contents/MacOS/Murage")).toBe(false);
-      expect(mock.closed).toHaveLength(3);
+  it("refuses either tool signature failure and closes every observation", async () => {
+    for (const failure of [0, 1]) {
+      clearMacBrowserCodesignCache(); mock.closed.length = 0; mock.opened.length = 0; mock.signature.mockReset();
+      mock.signature.mockImplementation((_file: string, args: string[]) => ({ status: args.at(-1)!.endsWith(failure === 0 ? spec.engine.executable : spec.chrome.executable) ? 1 : 0 }));
+      expect(await verifyPackagedMacBrowserAsync(root, "/fixture/Murage.app/Contents/MacOS/Murage")).toBe(false);
+      expect(mock.closed.length).toBeGreaterThanOrEqual(3);
     }
   });
-  it("refuses replacement during signature verification", () => {
-    mock.signature.mockImplementation(() => { mock.changed = true; return { status: 0 }; });
-    expect(verifyPackagedMacBrowser(root, "/fixture/Murage.app/Contents/MacOS/Murage")).toBe(false);
-    expect(mock.closed).toHaveLength(3);
+  // D6: the check never blocks. A slow codesign leaves the state at "checking" (no failure), callers share one run, and the answer is remembered.
+  it("reads 'checking' while a slow codesign runs, shares one run between callers, and remembers the answer", async () => {
+    vi.useFakeTimers();
+    try {
+      mock.signature.mockReset().mockReturnValue({ status: 0, delayMs: 30_000 });
+      const exe = "/fixture/Murage.app/Contents/MacOS/Murage";
+      let ticks = 0; const timer = setInterval(() => { ticks++; }, 1000);
+      expect(packagedMacBrowserState(root, exe)).toBe("checking");   // returns at once: the event loop is free
+      expect(verifyPackagedMacBrowser(root, exe)).toBe(false);        // checking is not a pass, and not a failure either
+      const a = verifyPackagedMacBrowserAsync(root, exe), b = verifyPackagedMacBrowserAsync(root, exe);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(ticks).toBe(10);                                          // timers kept firing while codesign ran
+      expect(packagedMacBrowserState(root, exe)).toBe("checking");
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect(await Promise.all([a, b])).toEqual([true, true]);
+      clearInterval(timer);
+      expect(mock.signature).toHaveBeenCalledTimes(2);                 // one run per tool, not one per caller
+      mock.signature.mockClear();
+      expect(packagedMacBrowserState(root, exe)).toBe("ok");           // remembered by the binaries' size, mtime and inode
+      expect(mock.signature).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  // 1.0.2: a check that could not finish is not a refusal, and the next attempt asks again.
+  it("reads a codesign that times out as 'unfinished' (not a refusal), does not remember it, and passes on the next attempt", async () => {
+    const exe = "/fixture/Murage.app/Contents/MacOS/Murage";
+    mock.signature.mockReset().mockReturnValue({ status: 1, timedOut: true });
+    expect(await checkPackagedMacBrowserAsync(root, exe)).toBe("unfinished");
+    expect(await verifyPackagedMacBrowserAsync(root, exe)).toBe(false);
+    expect(mock.signature).toHaveBeenCalledTimes(2);                  // one run per tool: the awaited outcome is returned, nothing restarts inside one attempt
+    // Turns that follow inside the back-off do not start a codesign again.
+    for (let i = 0; i < 5; i++) expect(packagedMacBrowserState(root, exe)).toBe("unfinished");
+    expect(mock.signature).toHaveBeenCalledTimes(2);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 31_000);                            // first back-off is 30 s
+      mock.signature.mockReset().mockReturnValue({ status: 1, timedOut: true });
+      expect(await checkPackagedMacBrowserAsync(root, exe)).toBe("unfinished");
+      expect(mock.signature).toHaveBeenCalledTimes(2);                  // tried again once
+      vi.setSystemTime(Date.now() + 31_000);
+      expect(packagedMacBrowserState(root, exe)).toBe("unfinished");    // second back-off is 2 minutes, so 31 s is too soon
+      expect(mock.signature).toHaveBeenCalledTimes(2);
+      vi.setSystemTime(Date.now() + 100_000);
+      mock.signature.mockReset().mockReturnValue({ status: 0 });
+      expect(await checkPackagedMacBrowserAsync(root, exe)).toBe("ok");
+      expect(mock.signature).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+  it("reads a codesign that cannot start as 'unfinished' and a real codesign refusal as 'failed'", async () => {
+    const exe = "/fixture/Murage.app/Contents/MacOS/Murage";
+    mock.signature.mockReset().mockImplementation(() => { throw new Error("spawn failed"); });
+    expect(await checkPackagedMacBrowserAsync(root, exe)).toBe("unfinished");
+    clearMacBrowserCodesignCache();
+    mock.signature.mockReset().mockReturnValue({ status: 3 });
+    expect(await checkPackagedMacBrowserAsync(root, exe)).toBe("failed");
+    expect(packagedMacBrowserState(root, exe)).toBe("failed");        // a refusal is remembered
+  });
+  it("reads a hash mismatch as 'failed'", async () => {
+    const exe = "/fixture/Murage.app/Contents/MacOS/Murage";
+    const chrome = images.get("chrome")!, original = chrome[100];
+    chrome[100] ^= 1;
+    try { expect(await checkPackagedMacBrowserAsync(root, exe)).toBe("failed"); } finally { chrome[100] = original; }
+  });
+  // P1: no earlier look vouches for the bytes. A payload changed in place with size, mtime and inode kept is hashed again and refused.
+  it("hashes the images on every full admission, so an in-place payload change under unchanged stat is refused", async () => {
+    const exe = "/fixture/Murage.app/Contents/MacOS/Murage";
+    expect(await checkPackagedMacBrowserAsync(root, exe)).toBe("ok");
+    const imageReads = () => mock.reads.filter(file => !file.endsWith("manifest.json")).length;
+    const before = imageReads();
+    expect(packagedMacBrowserState(root, exe)).toBe("ok");
+    expect(imageReads()).toBe(before + 2);                              // both images read and hashed again
+    const chrome = images.get("chrome")!, original = chrome[100];
+    chrome[100] ^= 1;
+    try { expect(packagedMacBrowserState(root, exe)).toBe("failed"); } finally { chrome[100] = original; }
+  });
+  // P1: the remembered codesign answer is keyed on ctime (and dev), so a change that keeps size, mtime and inode asks again.
+  it("asks codesign again when a tool's ctime changes", async () => {
+    const exe = "/fixture/Murage.app/Contents/MacOS/Murage";
+    expect(await checkPackagedMacBrowserAsync(root, exe)).toBe("ok");
+    expect(mock.signature).toHaveBeenCalledTimes(2);
+    mock.changed = true;
+    expect(packagedMacBrowserState(root, exe)).toBe("checking");
+    expect(mock.signature).toHaveBeenCalledTimes(4);
+  });
+  it("stops waiting when the caller is cancelled, without ending the shared run", async () => {
+    vi.useFakeTimers();
+    try {
+      const exe = "/fixture/Murage.app/Contents/MacOS/Murage";
+      mock.signature.mockReset().mockReturnValue({ status: 0, delayMs: 60_000 });
+      let stop = false;
+      const waiting = checkPackagedMacBrowserAsync(root, exe, 20_000, () => stop);
+      await vi.advanceTimersByTimeAsync(1_000);
+      stop = true;
+      await vi.advanceTimersByTimeAsync(300);
+      expect(await waiting).toBe("unfinished");                         // returned long before the 20 s budget
+      expect(mock.signature).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(packagedMacBrowserState(root, exe)).toBe("ok");           // the run itself finished for everyone else
+    } finally { vi.useRealTimers(); }
   });
 });

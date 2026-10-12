@@ -64,6 +64,7 @@ posixOnly("mid-turn steering e2e", () => {
   let home: string;
   let stderr = "";
   let steerGate: string;
+  let steerGate2: string;
   let replyGate: string;
   let base: string;
   let desktopHeaders: Record<string, string>;
@@ -104,6 +105,7 @@ posixOnly("mid-turn steering e2e", () => {
     home = mkdtempSync(join(tmpdir(), "murage-steer-"));
     mkdirSync(join(home, ".murage"), { recursive: true });
     steerGate = join(home, "delayed-steer.gate");
+    steerGate2 = join(home, "delayed-steer-2.gate");
     replyGate = join(home, "steer-reply.gate");
     writeFileSync(
       join(home, ".murage", "config.json"),
@@ -117,6 +119,23 @@ posixOnly("mid-turn steering e2e", () => {
           claudeRace: {
             driver: "claudeAgent",
             environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_STEER_GATE: steerGate },
+            config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
+          },
+          claudeLate: {
+            driver: "claudeAgent",
+            environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_STEER_GATE: steerGate2 },
+            config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
+          },
+          // init arrives at 6.5 s: a first steer queues at its 4 s bound, a second one typed in between must not overtake it
+          claudeSlowInit: {
+            driver: "claudeAgent",
+            environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_START_DELAY_MS: "6500" },
+            config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
+          },
+          // a cold start: nothing is read for 9 s, so a steer cannot be written yet
+          claudeCold: {
+            driver: "claudeAgent",
+            environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_START_DELAY_MS: "9000" },
             config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
           },
           // no live session: a message while busy uses the server-side queue
@@ -232,6 +251,84 @@ posixOnly("mid-turn steering e2e", () => {
     expect(rejected.body.error).toMatch(/no such bot/i);
   }, 40_000);
 
+  it("a steer that cannot be written because the engine is still starting answers within the bound: queued, then run as its own turn, never lost or run twice", async () => {
+    const created = await makeBot("claudeCold", "claude-fake");
+    expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "cold first" })).status).toBe(202);
+    await waitFor(async () => (await getBot(created.id))?.busy === true, "the cold turn to start");
+    // the CLI is spawned and holds the turn, but has not read anything yet
+    await new Promise((r) => setTimeout(r, 1_500));
+    const startedAt = Date.now();
+    const second = await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "typed while it starts", threadId: created.threadId });
+    expect(second.status).toBe(202);
+    expect(second.body.queued, JSON.stringify(second.body)).toBe(true);
+    expect(typeof second.body.queueId).toBe("string");
+    expect(Date.now() - startedAt).toBeLessThan(6_000);
+    await waitFor(
+      async () => (await getBot(created.id)).messages.some((m: any) => m.text === "typed while it starts"),
+      "the queued line to land in the transcript",
+      40_000,
+    );
+    await waitFor(async () => (await getBot(created.id)).busy === false, "the follow-up turn to settle", 40_000);
+    const bot = await getBot(created.id);
+    expect(bot.messages.filter((m: any) => m.text === "typed while it starts")).toHaveLength(1);
+    expect(bot.messages.filter((m: any) => m.role === "bot" && m.kind === "text" && String(m.text).includes("typed while it starts"))).toHaveLength(1);
+  }, 90_000);
+
+
+  it("a steer the engine accepted whose turn ended before the acknowledgement is recorded once, never a retryable 409, and a retry with the same sendId runs nothing again", async () => {
+    const created = await makeBot("claudeLate", "claude-fake");
+    expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "first late turn", threadId: created.threadId })).status).toBe(202);
+    await waitFor(async () => (await getBot(created.id))?.busy === true, "the turn to start");
+    await waitFor(async () => (await getBot(created.id))?.messages.some((m: any) => m.kind === "activity"), "the turn tool chip");
+    const sendId = "send_late_ack_0001";
+    const words = `accepted after the turn ended ${"y".repeat(900_000)}`;
+    const delayed = desktopApi("POST", `/api/bots/${created.id}/messages`, { text: words, threadId: created.threadId, sendId });
+    expect(await Promise.race([delayed.then(() => true), new Promise<false>((r) => setTimeout(() => r(false), 100))])).toBe(false);
+    await waitFor(async () => (await getBot(created.id))?.busy === false, "the original turn to settle");
+    writeFileSync(steerGate2, "open");
+    const first = await delayed;
+    expect(first.status, JSON.stringify(first.body)).toBe(202);
+    expect(first.body.steered).toBe(true);
+    expect(first.body.message?.text).toBe(words);
+    const copies = async () => (await getBot(created.id)).messages.filter((m: any) => m.role === "user" && m.sendId === sendId).length;
+    expect(await copies()).toBe(1);
+    const retry = await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: words, threadId: created.threadId, sendId });
+    expect(retry.status).toBe(202);
+    expect(retry.body.message?.id).toBe(first.body.message.id);
+    expect(await copies()).toBe(1);
+  }, 60_000);
+
+  it("a later send never overtakes an earlier one that is still deciding: both wait, in order, and the snapshot lists them for a reload or another device", async () => {
+    const created = await makeBot("claudeSlowInit", "claude-fake");
+    expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "slow first", threadId: created.threadId })).status).toBe(202);
+    await waitFor(async () => (await getBot(created.id))?.busy === true, "the turn to start");
+    const a = desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "instruction A", threadId: created.threadId, sendId: "send_order_a_00001" });
+    await new Promise((r) => setTimeout(r, 1_000));
+    const b = desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "correction B", threadId: created.threadId, sendId: "send_order_b_00001" });
+    const [ra, rb] = await Promise.all([a, b]);
+    expect(ra.status).toBe(202);
+    expect(rb.status).toBe(202);
+    expect(ra.body.queued, JSON.stringify(ra.body)).toBe(true);
+    expect(rb.body.queued, JSON.stringify(rb.body)).toBe(true);
+    // the server's own list of what is waiting (the hydrate snapshot every client reads)
+    const snapshot = await desktopApi("GET", "/api/bots");
+    const pending = snapshot.body.pendingSends?.[created.threadId] ?? [];
+    expect(pending.map((p: any) => p.text)).toEqual(["instruction A", "correction B"]);
+    expect(pending[0]).toMatchObject({ queueId: ra.body.queueId, sendId: "send_order_a_00001", state: "queued" });
+    // cancelling removes it from the list, and a late retry of the cancelled send does not queue it again
+    expect((await desktopApi("DELETE", `/api/bots/${created.id}/queue/${rb.body.queueId}`)).status).toBe(200);
+    const after = await desktopApi("GET", "/api/bots");
+    expect((after.body.pendingSends?.[created.threadId] ?? []).map((p: any) => p.text)).toEqual(["instruction A"]);
+    const retry = await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "correction B", threadId: created.threadId, sendId: "send_order_b_00001" });
+    expect(retry.status).toBe(202);
+    expect(retry.body.cancelled).toBe(true);
+    await waitFor(async () => (await getBot(created.id)).messages.some((m: any) => m.text === "instruction A"), "A to land", 40_000);
+    await waitFor(async () => (await getBot(created.id)).busy === false, "the follow-up turn to settle", 40_000);
+    const bot = await getBot(created.id);
+    expect(bot.messages.some((m: any) => m.text === "correction B")).toBe(false);
+    expect(bot.messages.filter((m: any) => m.text === "instruction A")).toHaveLength(1);
+  }, 90_000);
+
   it("an engine without a live session preserves the message in the server-side queue", async () => {
     const created = await makeBot("acp", "fake-model");
     expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "first" })).status).toBe(202);
@@ -239,6 +336,10 @@ posixOnly("mid-turn steering e2e", () => {
     const queued = await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "second" });
     expect(queued.status).toBe(202);
     expect(queued.body.queued).toBe(true);
+    // An engine that cannot take a line mid-turn (Grok) queues it without the
+    // steer's memory check, so a line sent while a long tool call runs is
+    // never logged as a refused steer or counted as a continuation reset.
+    expect(stderr).not.toMatch(/steer-refused/);
     expect((await getBot(created.id)).messages.some((m: any) => m.text === "second")).toBe(false);
     await api("POST", `/api/bots/${created.id}/interrupt`);
     await waitFor(

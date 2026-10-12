@@ -373,8 +373,19 @@ describe("engine switch notice (triage row 22)", () => {
   it("lists what the engine shown would lose or gain, and nothing when it matches", async () => {
     const { EngineSwitchNotice } = await import("./ModelPicker");
     expect(renderToStaticMarkup(createElement(EngineSwitchNotice, { lines: [] }))).toBe("");
-    const html = renderToStaticMarkup(createElement(EngineSwitchNotice, { lines: ["Loses connected apps on this engine."] }));
+    const html = renderToStaticMarkup(createElement(EngineSwitchNotice, { lines: ["On Grok: it can use the browser."] }));
     expect(html).toContain("data-engine-switch-notice");
-    expect(html).toContain("Loses connected apps on this engine.");
+    expect(html).toContain("On Grok: it can use the browser.");
+  });
+});
+
+describe("vision icon follows the engine", () => {
+  const seeing = () => modelRow({ label: "Vis", capabilities: { vision: true } } as never);
+  it("shows the eye when the model sees and the engine passes pictures", () => {
+    expect(renderToStaticMarkup(createElement(PickerRowMeta, { row: seeing(), engineImages: true }))).toContain('data-capability="vision"');
+    expect(renderToStaticMarkup(createElement(PickerRowMeta, { row: seeing() }))).toContain('data-capability="vision"');
+  });
+  it("hides the eye when the engine does not pass pictures", () => {
+    expect(renderToStaticMarkup(createElement(PickerRowMeta, { row: seeing(), engineImages: false }))).not.toContain('data-capability="vision"');
   });
 });

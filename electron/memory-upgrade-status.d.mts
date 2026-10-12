@@ -3,7 +3,8 @@ export const MEMORY_UPGRADE_STATUS_FILE: string;
 export type MemoryUpgradeNote = {
   state: "upgrading" | "blocked";
   code?: "MEMORY_MIGRATION_DISK_SPACE" | "MEMORY_SCHEMA_NEWER" | "MEMORY_MIGRATION_FAILED";
-  phase?: "checking" | "copying" | "migrating";
+  phase?: "checking" | "copying" | "migrating" | "indexing" | "converting" | "reclaiming";
+  done?: number; total?: number;
   startedAt?: number; updatedAt?: number; copyBytes?: number; needBytes?: number; freeBytes?: number; shortBytes?: number; newerVersion?: number;
   partialName?: string;
 };

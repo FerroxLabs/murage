@@ -38,7 +38,7 @@ it.each(drivers)("$driverKind resolves references against the real session mount
   const instance = await driver.create({ instanceId: "pf-surface", displayName: "PF fixture", enabled: true,
     config: driver.decodeConfig({ cli, fullAuto: true }), environment: {
       HOME: dir, USERPROFILE: dir, FAKE_ACP_MODE: "happy", FAKE_ACP_DUMP: dump, FAKE_ACP_PROMPT_DUMP: prompt,
-      FAKE_ACP_MCP_READY: "1", FAKE_ACP_MODELS: "fixture-model", CURSOR_API_KEY: "fixture-only", XAI_API_KEY: "fixture-only", FUIGO_API_KEY: "sk-flux-fixture-only", OPENCODE_API_KEY: "fixture-only", FACTORY_API_KEY: "fixture-only",
+      FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: driver === GrokAgentDriver ? "_x.ai/mcp_initialized" : "_fuigo/mcp_initialized", FAKE_ACP_MODELS: "fixture-model", CURSOR_API_KEY: "fixture-only", XAI_API_KEY: "fixture-only", FUIGO_API_KEY: "sk-flux-fixture-only", OPENCODE_API_KEY: "fixture-only", FACTORY_API_KEY: "fixture-only",
     } });
   const recorder = recordEvents(instance.adapter);
   try {

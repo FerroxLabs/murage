@@ -7,6 +7,7 @@
 // stdout cap, a 120 s first-byte timer, and settlement only after
 // awaitCliTreeStopped confirms the tree is gone. The per-run gate and the
 // miss map live in memory/pip-transport.ts.
+import { fluxCallHeaders, fuigoConfigOverlay } from "../flux-memory-headers.ts";
 import { copyFileSync, existsSync, chmodSync, readFileSync, lstatSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { PIP_JOB_REFUSAL } from "../memory/pip-job.ts";
@@ -238,6 +239,12 @@ export async function headlessTextOnlyTurn(input: TextOnlyTurnInput, cfg: Headle
     cleanup = bound.cleanup;
     model = bound.model;
     env = buildReflectionEnv(cfg.engine, cfg.pathValue ?? augmentedPath(), temp.home, temp.root, bound.env);
+    // Flux Memory: a reflection is background work, so a Flux-routed child carries off/off
+    // (PROPOSAL-v2 5.4, same overlay the engine's turns use).
+    if (input.providerRoute ? input.providerRoute.preset === "flux" : cfg.engine === "fuigo" && Boolean(cfg.fluxKey)) {
+      const overlay = fuigoConfigOverlay(fluxCallHeaders("pip-reflection"));
+      if (cfg.engine === "fuigo") env.FUIGO_CONFIG = overlay; else env.GROK_CONFIG = overlay;
+    }
   } catch (error) { removeTempRoot(cfg.tmpBase, temp.root); throw error; }
   return runHeadlessCli({
     cli: cfg.cli, args: [...(cfg.cliPrefixArgs ?? []), ...headlessArgv(temp, model, input.outputSchema)], cwd: temp.work, env,

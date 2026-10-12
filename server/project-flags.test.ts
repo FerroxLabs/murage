@@ -16,6 +16,6 @@ it("projects both defaults on and guards the digest scheduler during restore", (
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   for (const key of ["projectsBoard", "projectsDigest"]) expect(source).toContain(`${key}: cfg.features?.${key} !== false`);
   expect(source).toContain("if (!backupRestartAdmission.held()) runProjectDigests(");
-  expect(source).toContain("setInterval(digestTick, 15 * 60 * 1000)");
+  expect(source).toContain('setInterval(guardedWriter("project-digest", digestTick), 15 * 60 * 1000)');
   expect(source).toContain("queueMicrotask(digestTick)");
 });
