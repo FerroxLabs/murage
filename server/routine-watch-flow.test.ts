@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { RoutineManager, type RoutineRun } from "./routines.ts";
+import { resetObserveWindows, setObserveSink } from "./observe.ts";
 import { RoutineRequestService, type RoutineRequestMessage, type RoutineRequestOptionCard } from "./routine-requests.ts";
 import { createRoutineWatchFileAdapter } from "./routine-watch-file.ts";
 import { listRoutineWatchFiles, routineWatchFileScope, selectRoutineWatchFile } from "./routine-watch-integration.ts";
@@ -140,16 +141,41 @@ it("fences an in-flight result on pause and abandons restart reservations withou
   expect(f.manager.listRoutines()[0].watch?.state.checkpoint).toBeUndefined(); expect(f.startTurn).not.toHaveBeenCalled();
 });
 
+/** A tick never rejects (1.0.2 revocation: callers fire it with `void`, and a rejection would end the server): a failed save is logged and the tick runs again. */
+async function tickFailing(manager: { tick(): Promise<void> }): Promise<void> {
+  const lines: string[] = [];
+  resetObserveWindows(); setObserveSink(line => lines.push(line));
+  try { await manager.tick(); expect(lines.some(line => line.startsWith("routine: tick failed"))).toBe(true); } finally { setObserveSink(); }
+}
+it("a tick that keeps failing logs once a minute and reports the scheduler as stalled after five in a row; a good tick clears it", async () => {
+  const f = fixture(), p = await f.propose(); f.confirm(p.requestId);
+  const file = join(f.root, "routines.json"), preserved = join(f.root, "preserved-routines.json");
+  f.advance(); renameSync(file, preserved); mkdirSync(file);
+  const lines: string[] = [];
+  resetObserveWindows(); setObserveSink(line => lines.push(line));
+  try {
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      expect(f.manager.schedulerStatus().stalled).toBe(false);
+      await f.manager.tick(); f.advance();
+      expect(f.manager.schedulerStatus().consecutiveFailures).toBe(attempt);
+    }
+    expect(f.manager.schedulerStatus()).toEqual({ stalled: true, consecutiveFailures: 5 });
+    expect(lines.filter(line => line.startsWith("routine: tick failed"))).toHaveLength(1);
+  } finally { setObserveSink(); }
+  rmSync(file, { recursive: true }); renameSync(preserved, file);
+  f.restart(); await f.manager.tick();
+  expect(f.manager.schedulerStatus()).toEqual({ stalled: false, consecutiveFailures: 0 });
+});
 it("never reads before a failed atomic reservation save and never publishes a failed completion save", async () => {
   const f = fixture(), p = await f.propose(); f.confirm(p.requestId);
   const file = join(f.root, "routines.json"), preserved = join(f.root, "preserved-routines.json");
   f.advance(); renameSync(file, preserved); mkdirSync(file);
-  await expect(f.manager.tick()).rejects.toThrow(); expect(f.read).not.toHaveBeenCalled();
+  await tickFailing(f.manager); expect(f.read).not.toHaveBeenCalled();
   rmSync(file, { recursive: true }); renameSync(preserved, file);
   f.restart(); await f.manager.tick(); writeFileSync(join(f.folder, "status.txt"), "changed");
   const normalRead = f.read.getMockImplementation()!;
   f.read.mockImplementationOnce(async (...args) => { const result = await normalRead(...args); renameSync(file, preserved); mkdirSync(file); return result; });
-  f.advance(); await expect(f.manager.tick()).rejects.toThrow();
+  f.advance(); await tickFailing(f.manager);
   expect(f.projections.some(run => run.watch?.outcome === "changed")).toBe(false);
   rmSync(file, { recursive: true }); renameSync(preserved, file);
 });

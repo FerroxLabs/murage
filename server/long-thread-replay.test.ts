@@ -17,7 +17,7 @@ import { InternalCapabilities } from "./internal-capabilities.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
 import * as disclosures from "./memory/disclosures.ts";
 import { retainedSessionInvalid } from "./memory/dispatch.ts";
-import { THREAD_RECEIPT_LIMIT } from "./memory/replay-lineage.ts";
+import { THREAD_RECEIPT_LIMIT, outputRootsFor, recordSessionRoots } from "./memory/replay-lineage.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "dax", threadId: "dax-direct", section: "Operations" }], groups: [] };
 const NONE: ReadonlySet<string> = new Set();
@@ -92,6 +92,7 @@ function oneSession(turns: number) {
     insert.run(`s-${k}`, JSON.stringify(outputs), a.policyRevision, a.deletionEpoch, Date.now() + k);
   }
   database().exec("COMMIT");
+  recordSessionRoots("dax-direct", "driver", "s1", outputRootsFor([]));
   const messages = Array.from({ length: turns * 2 }, (_, i) => text(`m${i + 1}`, (i + 1) % 2 ? "user" : "bot"));
   return { a, messages };
 }

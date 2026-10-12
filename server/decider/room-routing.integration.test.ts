@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { normalizeGroupDefaultResponder, roomResponders, type GroupDefaultResponder } from "../store.ts";
 import { createDecider } from "./index.ts";
-import { decideRoomResponder, EVERYONE_OPTION, type RoomRoutingInput } from "./room-routing.ts";
+import { decideRoomResponder, estimateStateTokens, EVERYONE_OPTION, ROOM_ROUTING_STATE_TOKEN_BUDGET, type RoomRoutingInput } from "./room-routing.ts";
 import { readDecisionModelSettings } from "./settings.ts";
 
 const members = [
@@ -36,7 +36,7 @@ function deciderWith(fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>) {
 }
 const answering = (probabilities: Record<string, number>) => {
   const choice = Object.entries(probabilities).sort((a, b) => b[1] - a[1])[0]![0];
-  return vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ answers: { answer: { type: "choice", choice, probabilities } } }), { status: 200 }));
+  return vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ answers: { answer: { type: "choice", choice, probabilities } } }), { status: 200, headers: { "x-flux-no-retain": "applied" } }));
 };
 
 describe("auto room: the synchronous result", () => {
@@ -94,14 +94,23 @@ describe("auto room: the awaited override", () => {
     expect(f).not.toHaveBeenCalled();
   });
 
-  it("sends a bounded state: no more than 6000 chars of history and 8000 of message", async () => {
+  it("sends a bounded request, with the whole new message and the newest history", async () => {
     const f = answering({ maya: 0.9, theo: 0.05, ravi: 0.03, [EVERYONE_OPTION]: 0.02 });
     const recent = Array.from({ length: 60 }, (_v, i) => ({ from: "Maya", text: `${i} ${"x".repeat(480)}` }));
-    await decideRoomResponder(deciderWith(f), { ...input("y".repeat(20_000)), recent });
+    const text = `Can you check this? ${"detail ".repeat(100)}Is it NOT ready?`;
+    await decideRoomResponder(deciderWith(f), { ...input(text), recent });
     const body = JSON.parse(String(f.mock.calls[0]![1]?.body));
-    const history = JSON.stringify(body.state.recent_messages);
-    expect(history.length).toBeLessThan(6_000 + 60 * 40);
-    expect(body.state.new_message.text.length).toBe(8_000);
+    expect(estimateStateTokens(body.state)).toBeLessThanOrEqual(ROOM_ROUTING_STATE_TOKEN_BUDGET);
+    expect(ROOM_ROUTING_STATE_TOKEN_BUDGET).toBeLessThan(2_048);
+    expect(body.state.new_message.text).toBe(text);
+    expect(body.state.recent_messages.at(-1).text).toContain("x");
+  });
+
+  it("a new message that cannot fit whole is never clipped: state_too_long, nothing sent", async () => {
+    const f = answering({ maya: 1 });
+    const route = await decideRoomResponder(deciderWith(f), input(`${"y".repeat(20_000)} is this not done?`));
+    expect(route).toEqual({ kind: "fallback", reason: "state_too_long" });
+    expect(f).not.toHaveBeenCalled();
   });
 });
 

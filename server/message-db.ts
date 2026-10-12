@@ -11,10 +11,16 @@
 // no rows pulls the old file in, after which the DB is the source of
 // truth (the JSON file is left behind as a one-time backup).
 import { bumpForMessage, bumpMessagesVersion } from "./inbox-version.ts";
+import { initializeOwnerSends } from "./send-store.ts";
+import { scrubOwnerSendsOfThread } from "./room-requests.ts";
 import { chmodSync, readFileSync, renameSync } from "node:fs";
-import type { StatementSync } from "node:sqlite";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
+
+import { isOpenCardJson } from "./message-tables.ts";
+import { OPEN_PATH_WALK_STEPS, invalidateCardWalk, resolveCardBranch, startTranscriptBackfill, stepUpRow } from "./transcript-backfill.ts";
 
 import { database as db, closeDatabase, transaction } from "./database.ts";
+import { browserCheckIndexExists, PENDING_BROWSER_CHECK_SQL } from "./message-tables.ts";
 import type { Message } from "./store.ts";
 import { attachmentReferencesIn, messageJsonReferences } from "./attachment-access.ts";
 import {
@@ -77,6 +83,21 @@ function messageRowid(threadId: string, messageId: string): number | null {
   return row ? row.position : null;
 }
 
+/** The first row (storage order) written at or after `at`, else the newest
+ * row; null for a thread with no rows. Two indexed reads, never the thread. */
+export function firstMessageSince(threadId: string, at: number): Message | null {
+  const row = (db().prepare("SELECT json FROM messages WHERE thread_id = ? AND at >= ? ORDER BY rowid LIMIT 1").get(threadId, at)
+    ?? db().prepare("SELECT json FROM messages WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1").get(threadId)) as { json: string } | undefined;
+  return row ? rowToMessage(row) : null;
+}
+
+/** One row of a thread by id, through the (thread, id) key. Null when this
+ * thread has no such message. */
+export function readMessage(threadId: string, messageId: string): Message | null {
+  const row = db().prepare("SELECT json FROM messages WHERE thread_id = ? AND id = ?").get(threadId, messageId) as { json: string } | undefined;
+  return row ? rowToMessage(row) : null;
+}
+
 /** `limit` rows ending just before `rowid` (or at the newest row). */
 function sliceEndingBefore(threadId: string, limit: number, beforeRowid?: number): ThreadSlice & { empty: boolean } {
   const rows = rowsDescending(threadId, limit + 1, beforeRowid);
@@ -136,21 +157,107 @@ export function readThreadBefore(threadId: string, messageId: string, limit: num
 /** How many of the newest rows a newest-page must span to include every open
  * request card and the stored branch head (`leafId`), or 0 when neither is
  * older than the newest row. An open card is one the person still has to
- * answer: `Store.isOpenRequestCard`, spelled in SQL, and answered is any
- * truthy value exactly as `!card.answered` reads it. Upstream #1527 pages the
- * desktop; a card older than the page would otherwise vanish from the
- * composer that takes it over. */
+ * answer (OPEN_CARD_TEST, `Store.isOpenRequestCard` spelled in SQL). This is
+ * the page shape of a client that cannot take cards beside its page
+ * (older renderers, the phone); the oldest card comes from the card index, the
+ * head from the key, and only the rows they span are counted. */
 export function newestPageSpan(threadId: string, leafId: string | null): number {
-  const row = db()
-    .prepare(
-      "SELECT COUNT(*) AS span FROM messages WHERE thread_id = ? AND rowid >= (" +
-        "SELECT MIN(rowid) FROM messages WHERE thread_id = ? AND (id = ? OR (kind = 'options' " +
-        "AND json_type(json, '$.card.requestId') = 'text' AND json_extract(json, '$.card.requestId') <> '' " +
-        "AND COALESCE(json_extract(json, '$.card.answered'), '') IN ('', 0) " +
-        "AND COALESCE(json_extract(json, '$.card.dismissed'), 0) IN ('', 0))))",
-    )
-    .get(threadId, threadId, leafId ?? "") as { span: number } | undefined;
+  const card = db().prepare("SELECT MIN(position) AS position FROM (SELECT m.rowid AS position FROM open_card c CROSS JOIN messages m ON m.thread_id = c.thread_id AND m.id = c.id WHERE c.thread_id = ?)").get(threadId) as { position: number | null } | undefined;
+  const leaf = leafId ? messageRowid(threadId, leafId) : null;
+  const floor = Math.min(card?.position ?? Infinity, leaf ?? Infinity);
+  if (!Number.isFinite(floor)) return 0;
+  const row = db().prepare("SELECT COUNT(*) AS span FROM messages WHERE thread_id = ? AND rowid >= ?").get(threadId, floor) as { span: number } | undefined;
   return row?.span ?? 0;
+}
+
+/** How many of the newest rows reach back to the stored branch head (0 when
+ * the head is the newest row or unknown). Open request cards are NOT part of
+ * this: they travel beside the page (openRequestCards). */
+export function branchHeadSpan(threadId: string, leafId: string | null): number {
+  if (!leafId) return 0;
+  const row = db()
+    .prepare("SELECT COUNT(*) AS span FROM messages WHERE thread_id = ? AND rowid >= (SELECT rowid FROM messages WHERE thread_id = ? AND id = ?)")
+    .get(threadId, threadId, leafId) as { span: number } | undefined;
+  return row?.span ?? 0;
+}
+
+/** The thread's open request cards, newest first, at most `limit`, read
+ * through the card index (never the thread's rows). */
+export function openRequestCards(threadId: string, limit: number): Array<{ message: Message; rowid: number }> {
+  if (limit <= 0) return [];
+  const rows = db()
+    .prepare("SELECT json, position FROM (SELECT m.json AS json, m.rowid AS position FROM open_card c CROSS JOIN messages m ON m.thread_id = c.thread_id AND m.id = c.id WHERE c.thread_id = ?) ORDER BY position DESC LIMIT ?")
+    .all(threadId, limit) as Array<{ json: string; position: number }>;
+  return rows.map((row) => ({ message: rowToMessage(row), rowid: row.position }));
+}
+
+/** One step up a branch (transcript-backfill.stepUpRow) as a Message. */
+function stepUp(threadId: string, id: string): { position: number; message: Message; parent: string | null } | null {
+  const step = stepUpRow(db(), threadId, id);
+  return step ? { position: step.position, message: step.message as unknown as Message, parent: step.parent } : null;
+}
+
+/** Which of `cards` the branch that ends at `leafId` passes through. The
+ * answer per card is kept in card_branch against the leaf it was worked out
+ * for, and every append that grows the branch moves it on (trackCardBranch),
+ * so an open does one keyed read per card. A card with no answer for this leaf
+ * (a fork, a branch switch, a database from before the table) is looked for by
+ * walking parent links up from the leaf, at most OPEN_PATH_WALK_STEPS of them
+ * per open: the progress is saved, the rest is finished in the background
+ * (transcript-backfill.ts), and the answer is written once it is known. Until
+ * then a card the walk has not ruled out is shown (an approval the person has
+ * to answer is never hidden by an unfinished walk); that answer is not stored. */
+export function cardsOnBranch(threadId: string, leafId: string | null, cards: Array<{ id: string; rowid: number }>): Set<string> {
+  if (!leafId || !cards.length) return new Set();
+  const { onBranch, pending } = resolveCardBranch(db(), threadId, leafId, cards, OPEN_PATH_WALK_STEPS, (run) => transaction(() => run()));
+  if (pending.length) {
+    for (const id of pending) onBranch.add(id);
+    startBackfill();
+  }
+  return onBranch;
+}
+
+/** Start the background fill of the derived transcript tables (once per open handle). */
+export function startBackfill(): void {
+  const handle = db();
+  startTranscriptBackfill(handle, () => { try { return db() === handle; } catch { return false; } });
+}
+
+/** Keep card_branch current as a message is written: an open request card is
+ * on the branch that ends at it, and a message that continues the branch (its
+ * parent was the head) carries every answer on to the new head. A fork leaves
+ * the old answers against the old head, where they are no longer used. */
+function trackCardBranch(database: DatabaseSync, threadId: string, message: Message, previousLeaf: string | null): void {
+  if (previousLeaf && (message.parentId ?? null) === previousLeaf) {
+    database.prepare("UPDATE card_branch SET leaf_id = ? WHERE thread_id = ? AND leaf_id = ?").run(message.id, threadId, previousLeaf);
+    // a walk in progress for the old head is still right for the longer branch
+    database.prepare("UPDATE branch_walk SET leaf_id = ? WHERE thread_id = ? AND leaf_id = ?").run(message.id, threadId, previousLeaf);
+  }
+  if (isOpenCardJson(message)) {
+    database.prepare("INSERT OR REPLACE INTO card_branch (thread_id, card_id, leaf_id, on_branch) VALUES (?, ?, ?, 1)").run(threadId, message.id, message.id);
+  }
+}
+
+/** Up to `limit` rows of the branch that ends at `fromId`, oldest stored
+ * first, found by walking real parent links (never storage order, which says
+ * nothing about ancestry once a thread has forked or had a row spliced in).
+ * `olderFrom` is the id of the next ancestor when the branch goes further
+ * back: the cursor the next page starts from. Null when `fromId` is not a row
+ * of the thread. */
+export function branchChain(threadId: string, fromId: string, limit: number): { messages: Message[]; hasMore: boolean; olderFrom: string | null } | null {
+  const rows: Array<{ position: number; message: Message }> = [];
+  const seen = new Set<string>();
+  let next: string | null = fromId;
+  while (next && rows.length < limit && !seen.has(next)) {
+    seen.add(next);
+    const step = stepUp(threadId, next);
+    if (!step) { if (!rows.length) return null; next = null; break; }
+    rows.push({ position: step.position, message: step.message });
+    next = step.parent;
+  }
+  const olderFrom = next && !seen.has(next) && stepUp(threadId, next) ? next : null;
+  rows.sort((x, y) => x.position - y.position);
+  return { messages: rows.map((row) => row.message), hasMore: olderFrom !== null, olderFrom };
 }
 
 /** A `limit`-row window containing `messageId`, positioned exactly as the
@@ -228,8 +335,35 @@ function replaceRow(insert: StatementSync, threadId: string, message: Message): 
     | undefined;
   const result = insert.run(threadId, message.id, message.at, message.role, message.kind, message.text ?? null, JSON.stringify(message));
   if (prior) syncMessageSearchRow(db(), prior.position, null);
+  trackOpenCard(db(), threadId, message);
+  if (message.turnId) trackTurnFirst(threadId, message, Number(result.lastInsertRowid));
   const text = searchableText(message);
   if (text !== null) syncMessageSearchRow(db(), Number(result.lastInsertRowid), text);
+}
+
+/** Record a turn's first row as it is written. A row whose parent is already
+ * in the same turn continues an earlier row (a turn that began before this
+ * table existed): recording it would name a position that is too late, so it is
+ * left to the backfill or the one-time long lookup (turnFirstRowid), which find
+ * the true first row. */
+function trackTurnFirst(threadId: string, message: Message, position: number): void {
+  if (message.parentId === undefined) return;
+  if (message.parentId !== null) {
+    const parent = readMessage(threadId, message.parentId);
+    if (!parent || parent.turnId === message.turnId) return;
+  }
+  db().prepare("INSERT INTO turn_first(thread_id, turn_id, first_rowid) VALUES (?, ?, ?) ON CONFLICT(thread_id, turn_id) DO UPDATE SET first_rowid = MIN(first_rowid, excluded.first_rowid)").run(threadId, message.turnId!, position);
+}
+
+/** Keep the open-card list in step with a written row. */
+function trackOpenCard(database: DatabaseSync, threadId: string, message: Message): void {
+  if (isOpenCardJson(message)) {
+    // A card that becomes open (new, or reopened below the point a branch walk
+    // has reached) voids the walk's progress and any answer kept for it, in the
+    // same transaction as the write, so the walk starts again and sees it.
+    const added = database.prepare("INSERT OR IGNORE INTO open_card(thread_id, id) VALUES (?, ?)").run(threadId, message.id);
+    if (Number(added.changes) > 0) invalidateCardWalk(database, threadId, message.id, message.parentId);
+  } else database.prepare("DELETE FROM open_card WHERE thread_id = ? AND id = ?").run(threadId, message.id);
 }
 
 function writeMessage(threadId: string, message: Message): void {
@@ -275,12 +409,14 @@ export function insertMessage(threadId: string, message: Message): void {
 }
 
 /** Persist a new message and the branch head as one crash-safe mutation. */
-export function appendMessage(threadId: string, message: Message): void {
+export function appendMessage(threadId: string, message: Message, within?: () => void): void {
   transaction(() => {
     const previous = db().prepare("SELECT active_leaf_id FROM thread_state WHERE thread_id=?").get(threadId)?.active_leaf_id;
     writeMessage(threadId, message);
     writeActiveLeaf(threadId, message.id);
+    trackCardBranch(db(), threadId, message, (previous as string | null | undefined) ?? null);
     if ((message.parentId ?? null) !== (previous ?? null)) captureBranchChange(db(), threadId, message.id);
+    within?.();
   });
   observeCommitted(threadId, message);
 }
@@ -298,6 +434,11 @@ export function updateMessage(threadId: string, message: Message): void {
       const before = searchableText({ kind: prior.kind, text: prior.text, tool: { name: prior.tool_name } });
       const after = searchableText(message);
       if (before !== after) syncMessageSearchRow(database, prior.position, after);
+    }
+    // An answered or dismissed card is no longer open, or sought on any branch.
+    trackOpenCard(database, threadId, message);
+    if (message.kind === "options" && !isOpenCardJson(message)) {
+      database.prepare("DELETE FROM card_branch WHERE thread_id = ? AND card_id = ?").run(threadId, message.id);
     }
     captureMessage(database,threadId,message);
     bumpForMessage(message);
@@ -347,6 +488,30 @@ export function threadsEndingOnUserMessage(): Array<{ threadId: string; message:
     )
     .all() as Array<{ thread_id: string; json: string }>;
   return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message }));
+}
+
+/** The "Checking the browser" notes still pending (null while the index is not built), with whether each is its
+ * thread's branch head. Reads the partial index messages_pending_browser_check
+ * (server/message-tables.ts), named explicitly because the planner otherwise prefers the general kind index: cost follows the pending notes, not the history. */
+export function pendingBrowserCheckRows(): Array<{ threadId: string; message: Message; isLeaf: boolean }> | null {
+  // No index yet (its build failed or has not run): null, never a scan of the history on the request path.
+  if (!browserCheckIndexExists(db())) return null;
+  const rows = db()
+    .prepare(
+      "SELECT m.thread_id AS thread_id, m.json AS json, (s.active_leaf_id = m.id) AS is_leaf FROM messages m INDEXED BY messages_pending_browser_check " +
+        "LEFT JOIN thread_state s ON s.thread_id = m.thread_id " +
+        `WHERE m.kind = 'activity' AND json_extract(m.json, '$.tool.name') = ${PENDING_BROWSER_CHECK_SQL}`,
+    )
+    .all() as Array<{ thread_id: string; json: string; is_leaf: number | null }>;
+  return rows.map((row) => ({ threadId: row.thread_id, message: JSON.parse(row.json) as Message, isLeaf: row.is_leaf === 1 }));
+}
+
+/** The query plan of pendingBrowserCheckRows, for the test that proves it never scans history. */
+export function pendingBrowserCheckPlan(): string[] {
+  return (db().prepare(
+    "EXPLAIN QUERY PLAN SELECT m.thread_id, m.json FROM messages m INDEXED BY messages_pending_browser_check " +
+      `WHERE m.kind = 'activity' AND json_extract(m.json, '$.tool.name') = ${PENDING_BROWSER_CHECK_SQL}`,
+  ).all() as Array<{ detail: string }>).map((row) => row.detail);
 }
 
 /** Provider question cards still waiting on an answer (0.1.52 ASK2). An
@@ -412,6 +577,15 @@ export function deleteThread(threadId: string): void {
     const indexed = dropThreadSearchRows(database, threadId); // before the rows it is keyed by go
     database.prepare("DELETE FROM messages WHERE thread_id=?").run(threadId);
     database.prepare("DELETE FROM thread_state WHERE thread_id=?").run(threadId);
+    database.prepare("DELETE FROM card_branch WHERE thread_id=?").run(threadId);
+    database.prepare("DELETE FROM open_card WHERE thread_id=?").run(threadId);
+    database.prepare("DELETE FROM turn_first WHERE thread_id=?").run(threadId);
+    database.prepare("DELETE FROM branch_walk WHERE thread_id=?").run(threadId);
+    // the owner's sends for this conversation go with it (the words of a waiting or unconfirmed one live there)
+    initializeOwnerSends(database);
+    database.prepare("DELETE FROM owner_sends WHERE thread_id=?").run(threadId);
+    // ...and so do the words of its room requests (a request closed later must not make a chip for a conversation that is gone)
+    scrubOwnerSendsOfThread(database, threadId);
     if (indexed) mergeMessageSearchIndex(database);
     bumpMessagesVersion();
   });
@@ -569,4 +743,11 @@ export function threadsReferencingAttachment(name: string): string[] {
   const threads = new Set<string>();
   for (const row of rows) if (!threads.has(row.thread_id) && messageJsonReferences(row.json, name)) threads.add(row.thread_id);
   return [...threads];
+}
+
+/** The stored message with this id, if one exists (a redelivered provider event finds the copy it already wrote). */
+export function storedMessage(threadId: string, id: string): Message | null {
+  const row = db().prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(threadId, id) as { json?: string } | undefined;
+  if (!row?.json) return null;
+  try { return JSON.parse(row.json) as Message; } catch { return null; }
 }

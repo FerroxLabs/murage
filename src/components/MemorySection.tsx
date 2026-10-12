@@ -86,13 +86,14 @@ export default function MemorySection() {
     if (!active || active === document.body) target.focus();
   }, [busy]);
   const refreshStatus = useCallback(async () => { const value = await api("/api/memory/status") as MemoryStatus; if (mounted.current) setStatus(value); }, []);
-  const loadHistory = useCallback(async (botId: string, next?: string) => {
-    const generation = ++historyGeneration.current; setHistoryBusy(true);
+  // `quiet` re-reads in place: the rows already shown stay until the new ones arrive, and no loading line is inserted above them.
+  const loadHistory = useCallback(async (botId: string, next?: string, quiet = false) => {
+    const generation = ++historyGeneration.current; setHistoryBusy(!quiet);
     try {
       const page = await requestLearningAction(api, { action: "learning-history", ...(botId ? { botId } : {}), ...(next ? { cursor: next } : {}), limit: 20 }) as LearningPage;
       if (!mounted.current || generation !== historyGeneration.current) return;
       setEvents(previous => next ? [...previous, ...page.events.filter(row => !previous.some(item => item.id === row.id))] : page.events); setCursor(page.nextCursor);
-    } finally { if (mounted.current && generation === historyGeneration.current) setHistoryBusy(false); }
+    } finally { if (!quiet && mounted.current && generation === historyGeneration.current) setHistoryBusy(false); }
   }, []);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; historyGeneration.current++; }; }, []);
   useEffect(() => {
@@ -113,23 +114,23 @@ export default function MemorySection() {
   };
   const act = async (action: LearningAction) => {
     if (inFlight.current || conflict || desktop !== true) return;
-    inFlight.current = true; setBusy(true); setError(null);
+    inFlight.current = true; setError(null);
     pressed.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     try {
-      await requestLearningAction(api, action);
-      await refreshStatus();
-      if (action.action === "learning-keep" || action.action === "learning-undo") { await loadHistory(filter); if (mounted.current) setMemoryRevision(n => n + 1); }
+      const answer = await requestLearningAction(api, action) as Partial<MemoryStatus> | null;
+      // A settings change answers with the new status; nothing is read again.
+      if (answer && typeof answer === "object" && "learning" in answer && "mode" in answer) { if (mounted.current) setStatus(answer as MemoryStatus); }
+      if (action.action === "learning-keep" || action.action === "learning-undo") { await loadHistory(filter, undefined, true); if (mounted.current) setMemoryRevision(n => n + 1); }
     } catch (cause) {
       if (!mounted.current) return;
       const message = learningRequestError(cause); setError(message);
       if (cause instanceof Error && cause.message.includes("MEMORY_LEARNING_REVISION_CONFLICT")) setConflict(true);
       if (action.action === "learning-undo" && cause instanceof Error && (cause.message.startsWith("This memory") || cause.message === "This learning item cannot be changed.")) setRefusals(previous => ({ ...previous, [action.eventId]: message }));
-    } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+    } finally { inFlight.current = false; }
   };
   const workspaceMutated = () => {
     if (!mounted.current) return;
-    historyGeneration.current++; setEvents([]); setCursor(null); setRefusals({});
-    void loadHistory(filter).catch(() => { if (mounted.current) setError("Could not load learning history. Refresh settings to try again."); });
+    void loadHistory(filter, undefined, true).catch(() => { if (mounted.current) setError("Could not load learning history. Refresh settings to try again."); });
   };
   if (desktop !== true) return <p role="status" className="text-[13px] text-ink-secondary">Memory settings are available in the desktop app.</p>;
   return <div className="space-y-4">
@@ -139,6 +140,6 @@ export default function MemorySection() {
       onAction={action => void act(action)} onFilter={setFilter} onRefresh={() => void refresh()}
       onMore={() => { if (cursor) void loadHistory(filter, cursor).catch(() => { if (mounted.current) setError("Could not load more history. Try again."); }); }}
       onOpen={source => { if (openDeepLink({ threadId: source.threadId, ...(source.messageId ? { messageId: source.messageId } : {}) }, state, dispatch)) dispatch({ type: "toggleAppSettings", open: false }); else setError("This conversation is no longer available."); }}
-      workspace={<MemorySettings key={memoryRevision} sharedStatus={status} onStatusChange={setStatus} onMutation={workspaceMutated} onNavigate={() => dispatch({ type: "toggleAppSettings", open: false })} />} />}
+      workspace={<MemorySettings refreshToken={memoryRevision} sharedStatus={status} onStatusChange={setStatus} onMutation={workspaceMutated} onNavigate={() => dispatch({ type: "toggleAppSettings", open: false })} />} />}
   </div>;
 }

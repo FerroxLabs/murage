@@ -13,6 +13,7 @@ describe("channel queue", () => {
     let working = true;
     const run = vi.fn(() => {
       working = true;
+      return { messageId: "line-1" };
     });
     const first = queueChannelMessage("group-a", "thread-a", "first follow-up", {
       sendId: "send_first_123456",
@@ -56,8 +57,26 @@ describe("channel queue", () => {
     expect(cancelChannelMessage("group-b", drop.id)).toBe(false);
     expect(_queuedChannelCount("thread-b")).toBe(1);
 
-    const run = vi.fn();
+    const run = vi.fn(() => ({ messageId: "line-keep" }));
     drainChannelMessages(() => false, run);
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ id: keep.id, text: "keep" }));
+  });
+});
+
+describe("channel queue: authoritative pending list", () => {
+  it("lists the waiting sends of a room for a reload or another device and tells the observer of each change", async () => {
+    const { pendingChannelItems, channelQueueThreads, setChannelQueueObserver } = await import("./channel-queue.ts");
+    const seen: string[] = [];
+    setChannelQueueObserver((threadId) => seen.push(threadId));
+    try {
+      const a = queueChannelMessage("group-p", "thread-p", "from the desktop", { sendId: "send_pending_a_1" });
+      expect(pendingChannelItems("thread-p")).toEqual([{ queueId: a.id, sendId: "send_pending_a_1", text: "from the desktop" }]);
+      expect(channelQueueThreads()).toContain("thread-p");
+      expect(cancelChannelMessage("group-p", a.id)).toBe(true);
+      expect(pendingChannelItems("thread-p")).toEqual([]);
+      expect(seen).toEqual(["thread-p", "thread-p"]);
+    } finally {
+      setChannelQueueObserver(null);
+    }
   });
 });

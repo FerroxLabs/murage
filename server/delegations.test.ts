@@ -850,6 +850,15 @@ describe("busy retries and receipts", () => {
     expect(findDelegationReceipt("bulk-3")).toBeNull(); // oldest pruned
   });
 
+  it("keeps the request a receipt answers across a restart, so a replay can re-ask its delivery authorization", () => {
+    recordDelegationReceipt({ id: "bound-one", sourceThreadId: from.threadId, toBotId: target.id, toBotName: "Helper", status: "done", result: "text", lineage: true, requestId: "req-1" });
+    _loadPending();
+    expect(findDelegationReceipt("bound-one")?.requestId).toBe("req-1");
+    recordDelegationReceipt({ id: "legacy-one", sourceThreadId: from.threadId, toBotId: target.id, toBotName: "Helper", status: "done", result: "text", lineage: true });
+    _loadPending();
+    expect(findDelegationReceipt("legacy-one")?.requestId).toBeUndefined();
+  });
+
   it("writes a dropped receipt for every handoff a failed turn discards", async () => {
     const queued = queueDelegation(commsBus, from, { toBotId: target.id, message: "never runs", depth: 0 }, 1);
     const { discardDelegations } = await import("./delegations.ts");

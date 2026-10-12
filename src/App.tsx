@@ -7,7 +7,6 @@ import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
 import { preloadConnectedApps } from "@/lib/connected-apps-preload";
-import { InspectorPanel } from "@/components/InspectorPanel";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
 import { RemoteConnectionBanner } from "@/components/RemoteConnectionBanner";
@@ -17,7 +16,7 @@ import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { NoEngines } from "@/components/NoEngines";
 import { enginesOnlySwitchedOff } from "@/lib/engines-off";
 import { drawerCloseKey } from "@/lib/drawer-close";
-import { CommandPalette } from "@/components/CommandPalette";
+import { CommandPaletteHost } from "@/components/CommandPaletteHost";
 import { FirstRunPhases } from "@/components/FirstRunPhases";
 import { useSetupView } from "@/components/FirstRunChrome";
 import { firstRunOwnsMainView } from "@/lib/first-run";
@@ -32,7 +31,9 @@ import { useDeepLinks } from "@/components/useDeepLinks";
 import { usePushEnrol } from "@/components/usePushEnrol";
 import { usePresence } from "@/components/usePresence";
 import { LazyFallback } from "@/components/LazyFallback";
+import { canPrefetchWhenIdle, loadBotSettings, loadedBotSettings, preloadBotSettings, subscribeBotSettings } from "@/lib/preload-bot-settings";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
+import { TermsGate } from "@/components/TermsGate";
 
 // Opened by a tap, so loaded by one (spec §6). Settings alone pulls in every
 // settings page and, through House rules and the skill editor, Tiptap; a phone
@@ -40,12 +41,15 @@ import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 // panel loading does not blank one that is already open. One LazyBoundary per
 // surface too, so a chunk that fails to arrive costs that panel a retry
 // button, not the whole app (LazyBoundary.tsx).
-const BotSettings = retryableLazy(() => import("@/components/BotSettingsDialog").then((module) => ({ default: module.BotSettingsDialog })));
+const BotSettings = retryableLazy(() => loadBotSettings().then((module) => ({ default: module.BotSettingsDialog })));
 const Computer = retryableLazy(() => import("@/components/ComputerPanel").then((module) => ({ default: module.ComputerPanel })));
 const Settings = retryableLazy(() => import("@/components/SettingsModal").then((module) => ({ default: module.SettingsModal })));
 const BotSettingsDialog = BotSettings.Component;
 const ComputerPanel = Computer.Component;
 const SettingsModal = Settings.Component;
+// The Inspector opens from a tap; its claim rows and runtime lookups stay off the first paint.
+const Inspector = retryableLazy(() => import("@/components/InspectorPanel").then((module) => ({ default: module.InspectorPanel })));
+const InspectorPanel = Inspector.Component;
 
 const PluginsPanelLazy = retryableLazy(() => import("@/components/PluginsPanel").then((module) => ({ default: module.PluginsPanel })));
 const PluginsPanel = PluginsPanelLazy.Component;
@@ -93,6 +97,14 @@ function Shell() {
   const language = state.config?.language ?? "";
   const configLoaded = state.config !== undefined && state.config !== null;
   useSyncExternalStore(subscribeLocale, localeVersion);
+  const LoadedBotSettings = useSyncExternalStore(subscribeBotSettings, loadedBotSettings);
+  // Desktop: fetch the bot-settings chunk once the app is idle, so the first open has no loading step.
+  useEffect(() => {
+    if (!canPrefetchWhenIdle()) return;
+    const idle = window.requestIdleCallback ?? ((run: () => void) => window.setTimeout(run, 1500));
+    const handle = idle(preloadBotSettings);
+    return () => { if (window.cancelIdleCallback) window.cancelIdleCallback(handle as number); else window.clearTimeout(handle as number); };
+  }, []);
   useEffect(() => {
     // Before config arrives "" means "not known yet": the first paint's
     // language (i18n.ts bootLanguage) stands until config says otherwise.
@@ -430,7 +442,7 @@ function Shell() {
       {state.settingsOpen && bot && (
         <LazyBoundary onRetry={BotSettings.retry} onDismiss={() => dispatch({ type: "toggleSettings", open: false })}>
           <Suspense fallback={<LazyFallback />}>
-            <BotSettingsDialog key={bot.id} bot={bot} />
+            {LoadedBotSettings ? <LoadedBotSettings key={bot.id} bot={bot} /> : <BotSettingsDialog key={bot.id} bot={bot} />}
           </Suspense>
         </LazyBoundary>
       )}
@@ -446,7 +458,13 @@ function Shell() {
           </Suspense>
         </LazyBoundary>
       )}
-      {state.inspectorOpen && bot && <InspectorPanel bot={bot} />}
+      {state.inspectorOpen && bot && (
+        <LazyBoundary onRetry={Inspector.retry} onDismiss={() => dispatch({ type: "toggleInspector", open: false })}>
+          <Suspense fallback={<LazyFallback />}>
+            <InspectorPanel bot={bot} />
+          </Suspense>
+        </LazyBoundary>
+      )}
       {state.appSettingsOpen && (
         <LazyBoundary onRetry={Settings.retry} onDismiss={() => dispatch({ type: "toggleAppSettings", open: false })}>
           <Suspense fallback={<LazyFallback />}>
@@ -457,7 +475,7 @@ function Shell() {
       {state.pluginsOpen && <LazyBoundary onRetry={PluginsPanelLazy.retry}><Suspense fallback={<LazyFallback />}><PluginsPanel /></Suspense></LazyBoundary>}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
-      <CommandPalette onOpenChange={setPaletteOpen} />
+      <CommandPaletteHost onOpenChange={setPaletteOpen} />
       <CallOverlaySlot
         state={state}
         dispatch={dispatch}
@@ -500,7 +518,11 @@ export default function App() {
   return (
     <DesktopCapabilitiesProvider>
       <StoreProvider>
-        <Shell />
+        {/* Before the first-run flow and everything else: nothing is mounted,
+            so nothing can be sent, until the terms are accepted (TermsGate). */}
+        <TermsGate>
+          <Shell />
+        </TermsGate>
         {/* A CONFIRMED remote surface only. The desktop app is already an app;
             `undefined` renders nothing, the same neutral answer the welcome
             gate above takes. */}
